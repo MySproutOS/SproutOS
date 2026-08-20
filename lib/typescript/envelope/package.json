@@ -1,0 +1,20 @@
+{
+  "name": "@lib/envelope",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Envelope encryption for every secret the platform stores at rest. One column convention, one code path in dev and production.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "dependencies": {
+    "@aws-sdk/client-kms": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}
