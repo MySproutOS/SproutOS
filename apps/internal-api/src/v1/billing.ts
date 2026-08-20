@@ -1,11 +1,4 @@
-import {
-  availableBalance,
-  BelowMinimumTopupError,
-  begin,
-  MINIMUM_TOPUP,
-  quote,
-  stripe,
-} from "@lib/billing"
+import { balances, BelowMinimumTopupError, begin, MINIMUM_TOPUP, quote, stripe } from "@lib/billing"
 import { crudAuditLog } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -61,12 +54,13 @@ const app = new Hono()
     async (c) => {
       const organization = c.var.organization
 
-      const available = await availableBalance(db, organization.id)
-      const posted = await availableBalance(db, organization.id, "user_credit")
+      // Both figures come from one read. Calling availableBalance twice returned the same
+      // number — it already subtracts holds — so the held figure was always zero.
+      const { posted, held, available } = await balances(db, organization.id)
 
       return c.json({
         balanceMicroUsd: posted.toString(),
-        heldMicroUsd: (posted - available).toString(),
+        heldMicroUsd: held.toString(),
         availableMicroUsd: available.toString(),
         currency: "USD",
       })

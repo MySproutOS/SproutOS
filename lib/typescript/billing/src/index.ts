@@ -1,6 +1,7 @@
 export {
   type AccountKind,
   availableBalance,
+  balances,
   InsufficientBalanceError,
   post,
   type Posting,
@@ -9,6 +10,15 @@ export {
   type TransactionKind,
   UnbalancedTransactionError,
 } from "./ledger"
+export {
+  expireHolds,
+  HoldNotActiveError,
+  placeHold,
+  type PlaceHold,
+  releaseHold,
+  type SettleHold,
+  settleHold,
+} from "./holds"
 export {
   ceilDiv,
   creditedAmount,

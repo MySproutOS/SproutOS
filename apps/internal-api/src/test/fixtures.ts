@@ -30,7 +30,10 @@ const created = { userIds: [] as string[], organizationIds: [] as string[] }
 
 export async function createTestUser(label: string): Promise<TestUser> {
   const id = v7()
-  const email = `${label}-${id.slice(0, 8)}@rbac.test`
+  // The whole id, not a prefix. The first 8 hex characters of a UUIDv7 are the *high* bits of the
+  // millisecond timestamp, so they are identical for roughly 71 minutes — two runs of the same
+  // suite inside that window collided on user_email_key.
+  const email = `${label}-${id}@rbac.test`
   const name = `Test ${label}`
 
   await db.insertInto("user").values({ id, email, name, isAdmin: false }).execute()

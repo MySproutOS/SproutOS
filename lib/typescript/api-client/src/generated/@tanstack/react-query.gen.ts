@@ -12,28 +12,60 @@ import { client } from "../client.gen"
 import {
   deleteV1OrgsByOrgSlug,
   deleteV1OrgsByOrgSlugInvitesByInviteId,
+  deleteV1OrgsByOrgSlugLeave,
   deleteV1OrgsByOrgSlugMembersByMemberId,
+  deleteV1OrgsByOrgSlugProjectsByProjectId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugRolesByRoleId,
   deleteV1UserMeDelete,
   getV1AuthMe,
   getV1Orgs,
   getV1OrgsByOrgSlug,
+  getV1OrgsByOrgSlugBillingBalance,
+  getV1OrgsByOrgSlugBillingTopupQuote,
+  getV1OrgsByOrgSlugBillingTransactions,
+  getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugInvites,
   getV1OrgsByOrgSlugMembers,
+  getV1OrgsByOrgSlugProjects,
+  getV1OrgsByOrgSlugProjectsByProjectId,
+  getV1OrgsByOrgSlugProjectsByProjectIdEnv,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobs,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
+  getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions,
+  getV1OrgsByOrgSlugRepositories,
   getV1OrgsByOrgSlugRoles,
   getV1OrgsByOrgSlugRolesActions,
+  getV1OrgsByOrgSlugStoreListings,
+  getV1StoreCategories,
+  getV1StoreFeatured,
+  getV1StoreListings,
+  getV1StoreListingsBySlug,
+  getV1StoreTags,
+  getV1UserMePreferences,
   type Options,
   patchV1OrgsByOrgSlug,
+  patchV1OrgsByOrgSlugProjectsByProjectId,
   patchV1OrgsByOrgSlugRolesByRoleId,
   postV1AuthLogout,
   postV1InvitesAccept,
   postV1Orgs,
+  postV1OrgsByOrgSlugBillingTopup,
   postV1OrgsByOrgSlugInvites,
+  postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
+  postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
+  postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
   postV1OrgsByOrgSlugRoles,
+  postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
+  postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
   postV1OrgsByOrgSlugTransferOwnership,
+  postV1StoreListingsBySlugEvents,
   postV1WebhooksGithub,
   postV1WebhooksStripe,
+  putV1OrgsByOrgSlugBillingAutoReload,
   putV1OrgsByOrgSlugMembersByMemberIdRoles,
+  putV1OrgsByOrgSlugProjectsByProjectIdEnv,
 } from "../sdk.gen"
 import type {
   DeleteV1OrgsByOrgSlugData,
@@ -41,9 +73,18 @@ import type {
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdError,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdResponse,
+  DeleteV1OrgsByOrgSlugLeaveData,
+  DeleteV1OrgsByOrgSlugLeaveError,
+  DeleteV1OrgsByOrgSlugLeaveResponse,
   DeleteV1OrgsByOrgSlugMembersByMemberIdData,
   DeleteV1OrgsByOrgSlugMembersByMemberIdError,
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
   DeleteV1OrgsByOrgSlugResponse,
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdError,
@@ -53,14 +94,47 @@ import type {
   DeleteV1UserMeDeleteResponse,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
+  GetV1OrgsByOrgSlugBillingBalanceData,
+  GetV1OrgsByOrgSlugBillingBalanceError,
+  GetV1OrgsByOrgSlugBillingBalanceResponse,
+  GetV1OrgsByOrgSlugBillingTopupQuoteData,
+  GetV1OrgsByOrgSlugBillingTopupQuoteError,
+  GetV1OrgsByOrgSlugBillingTopupQuoteResponse,
+  GetV1OrgsByOrgSlugBillingTransactionsData,
+  GetV1OrgsByOrgSlugBillingTransactionsError,
+  GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugData,
   GetV1OrgsByOrgSlugError,
+  GetV1OrgsByOrgSlugGithubRepositoriesData,
+  GetV1OrgsByOrgSlugGithubRepositoriesError,
+  GetV1OrgsByOrgSlugGithubRepositoriesResponse,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesError,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersData,
   GetV1OrgsByOrgSlugMembersError,
   GetV1OrgsByOrgSlugMembersResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+  GetV1OrgsByOrgSlugProjectsData,
+  GetV1OrgsByOrgSlugProjectsError,
+  GetV1OrgsByOrgSlugProjectsResponse,
+  GetV1OrgsByOrgSlugRepositoriesData,
+  GetV1OrgsByOrgSlugRepositoriesError,
+  GetV1OrgsByOrgSlugRepositoriesResponse,
   GetV1OrgsByOrgSlugResponse,
   GetV1OrgsByOrgSlugRolesActionsData,
   GetV1OrgsByOrgSlugRolesActionsError,
@@ -68,11 +142,31 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesError,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugStoreListingsData,
+  GetV1OrgsByOrgSlugStoreListingsError,
+  GetV1OrgsByOrgSlugStoreListingsResponse,
   GetV1OrgsData,
   GetV1OrgsError,
   GetV1OrgsResponse,
+  GetV1StoreCategoriesData,
+  GetV1StoreCategoriesResponse,
+  GetV1StoreFeaturedData,
+  GetV1StoreFeaturedResponse,
+  GetV1StoreListingsBySlugData,
+  GetV1StoreListingsBySlugError,
+  GetV1StoreListingsBySlugResponse,
+  GetV1StoreListingsData,
+  GetV1StoreListingsError,
+  GetV1StoreListingsResponse,
+  GetV1StoreTagsData,
+  GetV1StoreTagsResponse,
+  GetV1UserMePreferencesData,
+  GetV1UserMePreferencesResponse,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugError,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdData,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdError,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdError,
@@ -83,27 +177,57 @@ import type {
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptError,
   PostV1InvitesAcceptResponse,
+  PostV1OrgsByOrgSlugBillingTopupData,
+  PostV1OrgsByOrgSlugBillingTopupError,
+  PostV1OrgsByOrgSlugBillingTopupResponse,
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesError,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+  PostV1OrgsByOrgSlugProjectsData,
+  PostV1OrgsByOrgSlugProjectsError,
+  PostV1OrgsByOrgSlugProjectsResponse,
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesError,
   PostV1OrgsByOrgSlugRolesResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
   PostV1OrgsByOrgSlugTransferOwnershipData,
   PostV1OrgsByOrgSlugTransferOwnershipError,
   PostV1OrgsByOrgSlugTransferOwnershipResponse,
   PostV1OrgsData,
   PostV1OrgsError,
   PostV1OrgsResponse,
+  PostV1StoreListingsBySlugEventsData,
+  PostV1StoreListingsBySlugEventsError,
+  PostV1StoreListingsBySlugEventsResponse,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubError,
   PostV1WebhooksGithubResponse,
   PostV1WebhooksStripeData,
   PostV1WebhooksStripeError,
   PostV1WebhooksStripeResponse,
+  PutV1OrgsByOrgSlugBillingAutoReloadData,
+  PutV1OrgsByOrgSlugBillingAutoReloadError,
+  PutV1OrgsByOrgSlugBillingAutoReloadResponse,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesData,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesError,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvError,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
 } from "../types.gen"
 
 export type QueryKey<TOptions extends Options> = [
@@ -557,6 +681,33 @@ export const putV1OrgsByOrgSlugMembersByMemberIdRolesMutation = (
 }
 
 /**
+ * Leaves the organization
+ */
+export const deleteV1OrgsByOrgSlugLeaveMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugLeaveData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugLeaveResponse,
+  DeleteV1OrgsByOrgSlugLeaveError,
+  Options<DeleteV1OrgsByOrgSlugLeaveData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugLeaveResponse,
+    DeleteV1OrgsByOrgSlugLeaveError,
+    Options<DeleteV1OrgsByOrgSlugLeaveData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugLeave({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
  * Removes a member from the organization
  */
 export const deleteV1OrgsByOrgSlugMembersByMemberIdMutation = (
@@ -796,6 +947,1208 @@ export const patchV1OrgsByOrgSlugRolesByRoleIdMutation = (
   }
   return mutationOptions
 }
+
+export const getV1OrgsByOrgSlugProjectsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjects", options)
+
+/**
+ * Lists the organization's projects
+ */
+export const getV1OrgsByOrgSlugProjectsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsResponse,
+    GetV1OrgsByOrgSlugProjectsError,
+    GetV1OrgsByOrgSlugProjectsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjects({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugProjectsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugProjects", options, true)
+
+/**
+ * Lists the organization's projects
+ */
+export const getV1OrgsByOrgSlugProjectsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugProjectsResponse,
+    GetV1OrgsByOrgSlugProjectsError,
+    InfiniteData<GetV1OrgsByOrgSlugProjectsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugProjectsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugProjectsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugProjectsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugProjects({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugProjectsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Creates a project from a store listing, from scratch, or on a repository the organization already has
+ */
+export const postV1OrgsByOrgSlugProjectsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsResponse,
+  PostV1OrgsByOrgSlugProjectsError,
+  Options<PostV1OrgsByOrgSlugProjectsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsResponse,
+    PostV1OrgsByOrgSlugProjectsError,
+    Options<PostV1OrgsByOrgSlugProjectsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjects({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Soft-deletes a project and queues its teardown
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdError,
+  Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugProjectsByProjectId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectId", options)
+
+/**
+ * Reads one project with its repository and counters
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdQueryKey(options),
+  })
+
+/**
+ * Updates a project's settings
+ */
+export const patchV1OrgsByOrgSlugProjectsByProjectIdMutation = (
+  options?: Partial<Options<PatchV1OrgsByOrgSlugProjectsByProjectIdData>>,
+): UseMutationOptions<
+  PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdError,
+  Options<PatchV1OrgsByOrgSlugProjectsByProjectIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
+    PatchV1OrgsByOrgSlugProjectsByProjectIdError,
+    Options<PatchV1OrgsByOrgSlugProjectsByProjectIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchV1OrgsByOrgSlugProjectsByProjectId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdJobs", options)
+
+/**
+ * Lists the recent provisioning jobs for a project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdJobs({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId", options)
+
+/**
+ * Polls one provisioning job
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdEnvQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdEnvData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdEnv", options)
+
+/**
+ * Lists a project's environment variables. Values are never included.
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdEnvOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdEnvData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdEnvError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdEnvQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdEnv({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdEnvQueryKey(options),
+  })
+
+/**
+ * Sets one environment variable. The value is envelope-encrypted before storage.
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdEnvMutation = (
+  options?: Partial<Options<PutV1OrgsByOrgSlugProjectsByProjectIdEnvData>>,
+): UseMutationOptions<
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvError,
+  Options<PutV1OrgsByOrgSlugProjectsByProjectIdEnvData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+    PutV1OrgsByOrgSlugProjectsByProjectIdEnvError,
+    Options<PutV1OrgsByOrgSlugProjectsByProjectIdEnvData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putV1OrgsByOrgSlugProjectsByProjectIdEnv({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Decrypts and returns one variable's value. Audited.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Removes one environment variable
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdError,
+  Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions", options)
+
+/**
+ * Lists upstream update suggestions for a forked project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions", options, true)
+
+/**
+ * Lists upstream update suggestions for a forked project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
+    InfiniteData<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Accepts an upstream update suggestion and queues the sync
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } =
+        await postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept({
+          ...options,
+          ...fnOptions,
+          throwOnError: true,
+        })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Dismisses an upstream update suggestion
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissMutation =
+  (
+    options?: Partial<
+      Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData>
+    >,
+  ): UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData>
+  > => {
+    const mutationOptions: UseMutationOptions<
+      PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+      PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError,
+      Options<PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData>
+    > = {
+      mutationFn: async (fnOptions) => {
+        const { data } =
+          await postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss({
+            ...options,
+            ...fnOptions,
+            throwOnError: true,
+          })
+        return data
+      },
+    }
+    return mutationOptions
+  }
+
+export const getV1OrgsByOrgSlugRepositoriesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugRepositoriesData>,
+) => createQueryKey("getV1OrgsByOrgSlugRepositories", options)
+
+/**
+ * Lists the repositories the organization has connected
+ */
+export const getV1OrgsByOrgSlugRepositoriesOptions = (
+  options: Options<GetV1OrgsByOrgSlugRepositoriesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugRepositoriesResponse,
+    GetV1OrgsByOrgSlugRepositoriesError,
+    GetV1OrgsByOrgSlugRepositoriesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugRepositoriesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugRepositories({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugRepositoriesQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugRepositoriesInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugRepositoriesData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugRepositoriesData>> =>
+  createQueryKey("getV1OrgsByOrgSlugRepositories", options, true)
+
+/**
+ * Lists the repositories the organization has connected
+ */
+export const getV1OrgsByOrgSlugRepositoriesInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugRepositoriesData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugRepositoriesResponse,
+    GetV1OrgsByOrgSlugRepositoriesError,
+    InfiniteData<GetV1OrgsByOrgSlugRepositoriesResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugRepositoriesData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugRepositoriesData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugRepositoriesData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugRepositories({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugRepositoriesInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1OrgsByOrgSlugGithubRepositoriesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoriesData>,
+) => createQueryKey("getV1OrgsByOrgSlugGithubRepositories", options)
+
+/**
+ * Lists the repositories the organization's GitHub App installation can reach
+ */
+export const getV1OrgsByOrgSlugGithubRepositoriesOptions = (
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoriesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugGithubRepositoriesResponse,
+    GetV1OrgsByOrgSlugGithubRepositoriesError,
+    GetV1OrgsByOrgSlugGithubRepositoriesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugGithubRepositoriesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugGithubRepositories({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugGithubRepositoriesQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoriesData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugGithubRepositoriesData>> =>
+  createQueryKey("getV1OrgsByOrgSlugGithubRepositories", options, true)
+
+/**
+ * Lists the repositories the organization's GitHub App installation can reach
+ */
+export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoriesData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugGithubRepositoriesResponse,
+    GetV1OrgsByOrgSlugGithubRepositoriesError,
+    InfiniteData<GetV1OrgsByOrgSlugGithubRepositoriesResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugGithubRepositoriesData>>,
+    | number
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugGithubRepositoriesData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugGithubRepositoriesData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  page: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugGithubRepositories({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugGithubRepositoriesInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1OrgsByOrgSlugBillingBalanceQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingBalanceData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingBalance", options)
+
+/**
+ * Reads the organization's spendable credit balance
+ */
+export const getV1OrgsByOrgSlugBillingBalanceOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingBalanceData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingBalanceResponse,
+    GetV1OrgsByOrgSlugBillingBalanceError,
+    GetV1OrgsByOrgSlugBillingBalanceResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingBalanceQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingBalance({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingBalanceQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugBillingTopupQuoteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingTopupQuoteData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingTopupQuote", options)
+
+/**
+ * Quotes the processing fee and resulting credit for a top-up amount
+ */
+export const getV1OrgsByOrgSlugBillingTopupQuoteOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingTopupQuoteData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingTopupQuoteResponse,
+    GetV1OrgsByOrgSlugBillingTopupQuoteError,
+    GetV1OrgsByOrgSlugBillingTopupQuoteResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingTopupQuoteQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingTopupQuote({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingTopupQuoteQueryKey(options),
+  })
+
+/**
+ * Starts a credit top-up and returns a Stripe client secret
+ */
+export const postV1OrgsByOrgSlugBillingTopupMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugBillingTopupData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugBillingTopupResponse,
+  PostV1OrgsByOrgSlugBillingTopupError,
+  Options<PostV1OrgsByOrgSlugBillingTopupData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugBillingTopupResponse,
+    PostV1OrgsByOrgSlugBillingTopupError,
+    Options<PostV1OrgsByOrgSlugBillingTopupData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugBillingTopup({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugBillingTransactionsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingTransactionsData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingTransactions", options)
+
+/**
+ * Lists the organization's credit transactions, newest first
+ */
+export const getV1OrgsByOrgSlugBillingTransactionsOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingTransactionsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingTransactionsResponse,
+    GetV1OrgsByOrgSlugBillingTransactionsError,
+    GetV1OrgsByOrgSlugBillingTransactionsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingTransactionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingTransactions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingTransactionsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugBillingTransactionsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingTransactionsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugBillingTransactionsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugBillingTransactions", options, true)
+
+/**
+ * Lists the organization's credit transactions, newest first
+ */
+export const getV1OrgsByOrgSlugBillingTransactionsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingTransactionsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugBillingTransactionsResponse,
+    GetV1OrgsByOrgSlugBillingTransactionsError,
+    InfiniteData<GetV1OrgsByOrgSlugBillingTransactionsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugBillingTransactionsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugBillingTransactionsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugBillingTransactionsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugBillingTransactions({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugBillingTransactionsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Configures automatic top-ups when the balance falls below a threshold
+ */
+export const putV1OrgsByOrgSlugBillingAutoReloadMutation = (
+  options?: Partial<Options<PutV1OrgsByOrgSlugBillingAutoReloadData>>,
+): UseMutationOptions<
+  PutV1OrgsByOrgSlugBillingAutoReloadResponse,
+  PutV1OrgsByOrgSlugBillingAutoReloadError,
+  Options<PutV1OrgsByOrgSlugBillingAutoReloadData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PutV1OrgsByOrgSlugBillingAutoReloadResponse,
+    PutV1OrgsByOrgSlugBillingAutoReloadError,
+    Options<PutV1OrgsByOrgSlugBillingAutoReloadData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putV1OrgsByOrgSlugBillingAutoReload({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1StoreCategoriesQueryKey = (options?: Options<GetV1StoreCategoriesData>) =>
+  createQueryKey("getV1StoreCategories", options)
+
+/**
+ * Lists the store categories
+ */
+export const getV1StoreCategoriesOptions = (options?: Options<GetV1StoreCategoriesData>) =>
+  queryOptions<
+    GetV1StoreCategoriesResponse,
+    DefaultError,
+    GetV1StoreCategoriesResponse,
+    ReturnType<typeof getV1StoreCategoriesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1StoreCategories({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1StoreCategoriesQueryKey(options),
+  })
+
+export const getV1StoreTagsQueryKey = (options?: Options<GetV1StoreTagsData>) =>
+  createQueryKey("getV1StoreTags", options)
+
+/**
+ * Lists the tags in use across published listings
+ */
+export const getV1StoreTagsOptions = (options?: Options<GetV1StoreTagsData>) =>
+  queryOptions<
+    GetV1StoreTagsResponse,
+    DefaultError,
+    GetV1StoreTagsResponse,
+    ReturnType<typeof getV1StoreTagsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1StoreTags({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1StoreTagsQueryKey(options),
+  })
+
+export const getV1StoreFeaturedQueryKey = (options?: Options<GetV1StoreFeaturedData>) =>
+  createQueryKey("getV1StoreFeatured", options)
+
+/**
+ * The featured rail, ranked by editorial rank and then by stars
+ */
+export const getV1StoreFeaturedOptions = (options?: Options<GetV1StoreFeaturedData>) =>
+  queryOptions<
+    GetV1StoreFeaturedResponse,
+    DefaultError,
+    GetV1StoreFeaturedResponse,
+    ReturnType<typeof getV1StoreFeaturedQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1StoreFeatured({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1StoreFeaturedQueryKey(options),
+  })
+
+export const getV1StoreListingsQueryKey = (options?: Options<GetV1StoreListingsData>) =>
+  createQueryKey("getV1StoreListings", options)
+
+/**
+ * Browses and searches published store listings, newest first
+ */
+export const getV1StoreListingsOptions = (options?: Options<GetV1StoreListingsData>) =>
+  queryOptions<
+    GetV1StoreListingsResponse,
+    GetV1StoreListingsError,
+    GetV1StoreListingsResponse,
+    ReturnType<typeof getV1StoreListingsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1StoreListings({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1StoreListingsQueryKey(options),
+  })
+
+export const getV1StoreListingsInfiniteQueryKey = (
+  options?: Options<GetV1StoreListingsData>,
+): QueryKey<Options<GetV1StoreListingsData>> => createQueryKey("getV1StoreListings", options, true)
+
+/**
+ * Browses and searches published store listings, newest first
+ */
+export const getV1StoreListingsInfiniteOptions = (options?: Options<GetV1StoreListingsData>) => {
+  const opts = infiniteQueryOptions<
+    GetV1StoreListingsResponse,
+    GetV1StoreListingsError,
+    InfiniteData<GetV1StoreListingsResponse>,
+    QueryKey<Options<GetV1StoreListingsData>>,
+    | string
+    | Pick<QueryKey<Options<GetV1StoreListingsData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1StoreListingsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1StoreListings({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1StoreListingsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1StoreListingsBySlugQueryKey = (options: Options<GetV1StoreListingsBySlugData>) =>
+  createQueryKey("getV1StoreListingsBySlug", options)
+
+/**
+ * Reads one published listing with its tags, screenshots, and README
+ */
+export const getV1StoreListingsBySlugOptions = (options: Options<GetV1StoreListingsBySlugData>) =>
+  queryOptions<
+    GetV1StoreListingsBySlugResponse,
+    GetV1StoreListingsBySlugError,
+    GetV1StoreListingsBySlugResponse,
+    ReturnType<typeof getV1StoreListingsBySlugQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1StoreListingsBySlug({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1StoreListingsBySlugQueryKey(options),
+  })
+
+/**
+ * Records a view or an outbound click on a listing
+ */
+export const postV1StoreListingsBySlugEventsMutation = (
+  options?: Partial<Options<PostV1StoreListingsBySlugEventsData>>,
+): UseMutationOptions<
+  PostV1StoreListingsBySlugEventsResponse,
+  PostV1StoreListingsBySlugEventsError,
+  Options<PostV1StoreListingsBySlugEventsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1StoreListingsBySlugEventsResponse,
+    PostV1StoreListingsBySlugEventsError,
+    Options<PostV1StoreListingsBySlugEventsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1StoreListingsBySlugEvents({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugStoreListingsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) => createQueryKey("getV1OrgsByOrgSlugStoreListings", options)
+
+/**
+ * Lists listings in any status, including unpublished submissions
+ */
+export const getV1OrgsByOrgSlugStoreListingsOptions = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    GetV1OrgsByOrgSlugStoreListingsError,
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugStoreListingsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugStoreListings({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugStoreListingsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugStoreListings", options, true)
+
+/**
+ * Lists listings in any status, including unpublished submissions
+ */
+export const getV1OrgsByOrgSlugStoreListingsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    GetV1OrgsByOrgSlugStoreListingsError,
+    InfiniteData<GetV1OrgsByOrgSlugStoreListingsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugStoreListings({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Publishes a listing, making it visible to unauthenticated visitors
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
+  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
+    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdPublish({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Takes a listing out of the public catalogue
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
+  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
+    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1UserMePreferencesQueryKey = (options?: Options<GetV1UserMePreferencesData>) =>
+  createQueryKey("getV1UserMePreferences", options)
+
+/**
+ * The caller's UI preferences and the organization to land them in
+ */
+export const getV1UserMePreferencesOptions = (options?: Options<GetV1UserMePreferencesData>) =>
+  queryOptions<
+    GetV1UserMePreferencesResponse,
+    DefaultError,
+    GetV1UserMePreferencesResponse,
+    ReturnType<typeof getV1UserMePreferencesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1UserMePreferences({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1UserMePreferencesQueryKey(options),
+  })
 
 export const deleteV1UserMeDeleteMutation = (
   options?: Partial<Options<DeleteV1UserMeDeleteData>>,

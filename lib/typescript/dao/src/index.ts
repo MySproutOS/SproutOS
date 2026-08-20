@@ -38,6 +38,9 @@ import {
   type SystemRoleDefinition,
   type SystemRoleStatement,
 } from "./role/systemRoles"
+import { type AgentConfigUpsert, crudAgentConfig } from "./agentConfig/crud"
+import { fetchAgentConfig } from "./agentConfig/fetch"
+import { type CreateAgentCredential, crudAgentCredential } from "./agentCredential/crud"
 import {
   type AgentCredentialKind,
   autoUpdateDefaultFor,
@@ -97,6 +100,7 @@ import { fetchUserPreference } from "./userPreference/fetch"
 
 export {
   ADMIN_ROLE_NAME,
+  AgentConfigUpsert,
   AgentCredentialKind,
   allocateOrganizationSlug,
   allocateProjectSlug,
@@ -105,6 +109,9 @@ export {
   AuthSession,
   authUser,
   autoUpdateDefaultFor,
+  CreateAgentCredential,
+  crudAgentConfig,
+  crudAgentCredential,
   crudAccount,
   crudAuditLog,
   crudBackgroundJob,
@@ -126,6 +133,7 @@ export {
   DeletedProject,
   ENV_VAR_METADATA_FIELDS,
   EnvVarMetadataRow,
+  fetchAgentConfig,
   fetchAgentCredential,
   fetchBackgroundJob,
   fetchGithubInstallation,

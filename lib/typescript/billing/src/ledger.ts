@@ -78,7 +78,8 @@ export async function post(
   return await db.transaction().execute(async (tx) => postWithin(tx, input))
 }
 
-async function postWithin(
+/** Post inside a transaction the caller already owns — holds settle this way. */
+export async function postWithin(
   tx: Transaction<DB>,
   input: PostTransaction,
 ): Promise<{ transactionId: string; created: boolean }> {
@@ -171,6 +172,21 @@ export async function availableBalance(
   organizationId: string,
   kind: AccountKind = "user_credit",
 ): Promise<MicroUsd> {
+  return await balances(db, organizationId, kind).then((b) => b.available)
+}
+
+/**
+ * The two balances, read together.
+ *
+ * `posted` is what the ledger says the account holds; `available` is what may actually be spent,
+ * which is `posted` minus every active hold. They differ exactly when a run is in flight, and a UI
+ * that shows one without the other cannot explain why a top-up did not raise the spendable figure.
+ */
+export async function balances(
+  db: Kysely<DB> | Transaction<DB>,
+  organizationId: string,
+  kind: AccountKind = "user_credit",
+): Promise<{ posted: MicroUsd; held: MicroUsd; available: MicroUsd }> {
   const account = await db
     .selectFrom("creditAccount")
     .select("id")
@@ -178,7 +194,7 @@ export async function availableBalance(
     .where("kind", "=", kind)
     .executeTakeFirst()
 
-  if (!account) return 0n
+  if (!account) return { posted: 0n, held: 0n, available: 0n }
 
   const cached = await db
     .selectFrom("creditBalanceCache")
@@ -201,7 +217,8 @@ export async function availableBalance(
     .executeTakeFirst()
 
   const posted = BigInt(cached?.balanceMicroUsd ?? 0n) + BigInt(tail?.total ?? "0")
-  return posted - BigInt(held?.total ?? "0")
+  const reserved = BigInt(held?.total ?? "0")
+  return { posted, held: reserved, available: posted - reserved }
 }
 
 async function ensureAccounts(

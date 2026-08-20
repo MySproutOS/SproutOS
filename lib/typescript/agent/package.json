@@ -1,8 +1,8 @@
 {
-  "name": "@lib/billing",
+  "name": "@lib/agent",
   "version": "1.0.0",
   "private": true,
-  "description": "The credit ledger: append-only double-entry accounting, holds, and the Stripe top-up path.",
+  "description": "Which model credential an agent run uses, and who pays for the tokens it burns.",
   "license": "BSD-3-Clause",
   "type": "module",
   "sideEffects": false,
@@ -11,9 +11,11 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
+    "@lib/billing": "workspace:*",
+    "@lib/dao": "workspace:*",
+    "@lib/envelope": "workspace:*",
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",
-    "stripe": "catalog:",
     "uuid": "catalog:"
   },
   "devDependencies": {
