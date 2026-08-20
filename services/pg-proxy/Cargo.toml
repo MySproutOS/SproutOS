@@ -1,0 +1,9 @@
+[package]
+name = "pg-proxy"
+description = "Postgres wire proxy: tenant auth, routing, wake-on-connect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

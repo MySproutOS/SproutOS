@@ -7,7 +7,6 @@ on:
 
 env:
   NEXT_TELEMETRY_DISABLED: 1
-  NPM_CONFIG_FUND: false
 
 jobs:
   format:
@@ -77,3 +76,23 @@ jobs:
 
       - name: Test
         run: pnpm run test
+
+  rust:
+    name: (cargo) Format, Clippy, and Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          components: rustfmt, clippy
+          targets: aarch64-unknown-linux-musl
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace

@@ -1,0 +1,9 @@
+[package]
+name = "search-proxy"
+description = "OpenSearch tenant-split proxy and security boundary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

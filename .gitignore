@@ -99,3 +99,6 @@ terraform.rc
 
 # Planning scratchpads and backlog — local only
 private_notes/
+
+# Rust
+target/

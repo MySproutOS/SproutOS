@@ -1,0 +1,7 @@
+# Tenant compute is arm64 Graviton metal, so the deployed target is aarch64 musl:
+# static binaries into scratch images, a few MB and instant start.
+[build]
+rustflags = ["-D", "warnings"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]

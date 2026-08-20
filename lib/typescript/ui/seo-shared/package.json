@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@lib/api-client": "workspace:*",
-    "@tanstack/react-query": "catalog:",
     "@sproutos/db": "workspace:*",
+    "@tanstack/react-query": "catalog:",
     "@ui/base": "workspace:*",
     "lucide-react": "catalog:"
   },

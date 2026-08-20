@@ -1,0 +1,9 @@
+[package]
+name = "sproutos-srn"
+description = "SRN parsing and wildcard matching, mirroring the TypeScript implementation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

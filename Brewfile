@@ -1,3 +1,5 @@
 brew "mise"
 brew "opentofu"
 brew "tflint"
+brew "rustup"
+brew "uv"

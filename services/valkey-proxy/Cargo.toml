@@ -1,0 +1,9 @@
+[package]
+name = "valkey-proxy"
+description = "RESP proxy and master-queue dispatcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
