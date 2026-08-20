@@ -1,5 +1,12 @@
 import type { AgentEvent } from "@lib/agent"
-import { AgentNotConfiguredError, checkout, resolveAgentCredential, runAgentTurn } from "@lib/agent"
+import {
+  AgentNotConfiguredError,
+  checkout,
+  type PlatformMessage,
+  resolveAgentCredential,
+  runAgentTurn,
+  runPlatformChat,
+} from "@lib/agent"
 import { InsufficientBalanceError } from "@lib/billing"
 import {
   crudAgentSession,
@@ -162,14 +169,21 @@ const app = new Hono()
       if (credential.billing === "none") {
         return throwBadRequest(c, `No model credential configured (${credential.reason})`)
       }
-      if (credential.billing === "platform") {
-        return throwBadRequest(
-          c,
-          "Credit-billed chat runs on the platform model and does not use the Claude Code agent",
-        )
-      }
+      /*
+        Two runners, chosen by who pays.
 
-      const repository = await repositoryFor(organization.id, projectId)
+        A customer on their own credential gets the Claude Code agent: a checkout, tools, and a
+        pull request. A customer paying out of credits gets the platform assistant, which answers
+        questions and cannot touch their repository — our key is OpenAI's, and giving a second
+        model harness write access to someone's code is not a thing to add quietly.
+
+        The consequence is visible rather than hidden: the credit-billed path needs no repository,
+        so it does not fail on a missing GitHub App, and it says in its own system prompt that it
+        cannot make changes.
+      */
+      const onPlatformCredit = credential.billing === "platform"
+
+      const repository = onPlatformCredit ? null : await repositoryFor(organization.id, projectId)
       if (typeof repository === "string") return throwBadRequest(c, repository)
 
       await crudAuditLog(db).record({
@@ -211,6 +225,39 @@ const app = new Hono()
 
         let workspace: Awaited<ReturnType<typeof checkout>> | null = null
         try {
+          if (onPlatformCredit) {
+            const history = await priorMessages(sessionId)
+            const outcome = await runPlatformChat(
+              db,
+              {
+                organizationId: organization.id,
+                projectId,
+                sessionId,
+                messages: [...history, { role: "user", content: prompt }],
+                signal: c.req.raw.signal,
+              },
+              emit,
+            )
+
+            await sessions.closeTurn(turn.id, {
+              resultSubtype: outcome.finishReason,
+              estimatedCostMicroUsd: outcome.chargedMicroUsd,
+              numTurns: 1,
+            })
+            await sessions.setStatus(sessionId, "idle")
+            await emit({
+              type: "done",
+              subtype: outcome.finishReason,
+              isError: false,
+              numTurns: 1,
+              durationMs: 0,
+            })
+            await flush()
+            return
+          }
+
+          if (repository === null) return
+
           workspace = await checkout({
             owner: repository.ownerLogin,
             repo: repository.name,
@@ -294,6 +341,52 @@ function describeFailure(error: unknown): string {
  * sent me looking at the project's repository row when the actual gap was an uninstalled GitHub
  * App — a message that is not merely unhelpful but points the wrong way.
  */
+/**
+ * Rebuild the conversation for a stateless runner.
+ *
+ * The Claude Code agent resumes by session id and keeps its own history; a chat completion has no
+ * memory at all, so every turn has to carry the whole exchange back up. Read from `agent_turn`
+ * (the prompts) and `agent_event` (the replies) rather than kept in memory, because the process
+ * that served turn one is not necessarily the one serving turn two.
+ */
+async function priorMessages(sessionId: string): Promise<PlatformMessage[]> {
+  const turns = await db
+    .selectFrom("agentTurn")
+    .select(["id", "seq", "inputText"])
+    .where("agentSessionId", "=", sessionId)
+    .orderBy("seq", "asc")
+    .execute()
+
+  const replies = await db
+    .selectFrom("agentEvent")
+    .select(["agentTurnId", "payload"])
+    .where("agentSessionId", "=", sessionId)
+    .where("type", "=", "text")
+    .orderBy("seq", "asc")
+    .execute()
+
+  const textByTurn = new Map<string, string>()
+  for (const reply of replies) {
+    if (reply.agentTurnId === null) continue
+    const text = (reply.payload as { text?: string }).text ?? ""
+    textByTurn.set(reply.agentTurnId, (textByTurn.get(reply.agentTurnId) ?? "") + text)
+  }
+
+  const messages: PlatformMessage[] = []
+  for (const turn of turns) {
+    // The turn being served right now has its prompt written but no reply yet; the caller appends
+    // it, so including it here would send it twice.
+    const answer = textByTurn.get(turn.id)
+    if (answer === undefined) continue
+    if (turn.inputText !== null) messages.push({ role: "user", content: turn.inputText })
+    messages.push({ role: "assistant", content: answer })
+  }
+
+  // Bounded: a long conversation replayed in full is a bill that grows quadratically with the
+  // number of turns, since every turn resends every earlier one.
+  return messages.slice(-20)
+}
+
 async function repositoryFor(
   organizationId: string,
   projectId: string,
