@@ -12,5 +12,8 @@ export default defineConfig({
   arrowParens: "always",
   bracketSameLine: false,
   bracketSpacing: true,
-  ignorePatterns: ["**/.next", "**/private_notes", "**/lib/typescript/ui/src"],
+  // design/ holds design-canvas source and generated artboards. Wrapping style
+  // attributes across six lines each makes the design unreadable, and the .dc.html
+  // output is generated anyway.
+  ignorePatterns: ["**/.next", "**/private_notes", "**/lib/typescript/ui/src", "design"],
 })

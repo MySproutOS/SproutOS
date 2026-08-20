@@ -1,0 +1,85 @@
+/*
+  Shared by every artboard. Values are copied verbatim from
+  lib/typescript/ui/base/src/theme.css — if they drift, the design is lying.
+*/
+:root {
+  --radius: 10px;
+
+  --soil-900: oklch(0.155 0.018 155);
+  --soil-800: oklch(0.196 0.021 155);
+  --soil-700: oklch(0.253 0.024 155);
+  --soil-600: oklch(0.312 0.026 155);
+  --leaf: oklch(0.79 0.152 145);
+  --leaf-dim: oklch(0.66 0.13 148);
+  --husk: oklch(0.815 0.132 79);
+  --husk-dim: oklch(0.68 0.11 79);
+  --bone: oklch(0.955 0.008 120);
+  --bone-dim: oklch(0.715 0.014 140);
+
+  --background: var(--soil-900);
+  --foreground: var(--bone);
+  --card: var(--soil-800);
+  --primary: var(--leaf);
+  --primary-foreground: oklch(0.16 0.03 152);
+  --secondary: var(--soil-700);
+  --muted-foreground: var(--bone-dim);
+  --destructive: oklch(0.64 0.19 27);
+  --warning: oklch(0.78 0.14 62);
+  --border: oklch(0.3 0.021 155);
+  --ring: var(--leaf);
+
+  --sidebar: oklch(0.175 0.02 155);
+  --sidebar-border: oklch(0.28 0.02 155);
+
+  --chart-1: oklch(0.79 0.152 145);
+  --chart-2: oklch(0.72 0.12 195);
+  --chart-3: oklch(0.68 0.13 255);
+  --chart-4: oklch(0.75 0.13 110);
+  --chart-5: oklch(0.7 0.14 320);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Geist", ui-sans-serif, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--leaf);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--bone);
+}
+
+/* Money is always mono and always tabular so columns line up to the digit. */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Amber is the money channel and nothing else uses it. */
+.money {
+  color: var(--husk);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--leaf-dim);
+}

@@ -1,0 +1,440 @@
+<div style="width: 1280px; height: 800px; display: flex; background: var(--background)">
+  <!-- Conversation -->
+  <div
+    style="
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+    "
+  >
+    <header
+      style="
+        height: 52px;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+      "
+    >
+      <div style="display: flex; align-items: center; gap: 9px">
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--muted-foreground)"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <path d="m15 18-6-6 6-6"></path>
+        </svg>
+        <span style="font-size: 15px; font-weight: 600">Recipe Box</span>
+        <span style="font-size: 12px; color: var(--muted-foreground)">/ Modify</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px">
+        <span class="tnum" style="font-size: 11.5px; color: var(--muted-foreground)"
+          >claude-opus-5</span
+        >
+        <span
+          style="
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid color-mix(in oklch, var(--leaf), transparent 70%);
+            color: var(--leaf);
+            background: color-mix(in oklch, var(--leaf), transparent 88%);
+          "
+          >Subscription</span
+        >
+        <span class="money" style="font-size: 12.5px">$0.0187</span>
+      </div>
+    </header>
+
+    <div
+      style="
+        flex: 1;
+        padding: 22px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        overflow: hidden;
+      "
+    >
+      <!-- User turn -->
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px">
+        <div
+          style="
+            max-width: 74%;
+            padding: 11px 14px;
+            border-radius: 13px 13px 3px 13px;
+            background: var(--secondary);
+            font-size: 13.5px;
+            line-height: 1.55;
+          "
+        >
+          Add a shopping list. When I open a recipe I want a button that adds every ingredient to
+          one list, and the list should merge duplicates.
+        </div>
+        <span class="tnum" style="font-size: 10.5px; color: var(--muted-foreground)">14:22</span>
+      </div>
+
+      <!-- Agent turn -->
+      <div style="display: flex; flex-direction: column; gap: 11px; max-width: 82%">
+        <div style="font-size: 13.5px; line-height: 1.6">
+          I'll add a
+          <code
+            style="
+              font-family: var(--font-mono);
+              font-size: 12.5px;
+              color: var(--leaf);
+              background: var(--soil-800);
+              padding: 1px 5px;
+              border-radius: 5px;
+            "
+            >shopping_list</code
+          >
+          table with a unique constraint on
+          <code
+            style="
+              font-family: var(--font-mono);
+              font-size: 12.5px;
+              color: var(--leaf);
+              background: var(--soil-800);
+              padding: 1px 5px;
+              border-radius: 5px;
+            "
+            >(list_id, ingredient)</code
+          >
+          so merging duplicates happens in the database rather than in the UI.
+        </div>
+
+        <!-- Tool call -->
+        <div
+          style="
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--card);
+            overflow: hidden;
+          "
+        >
+          <div
+            style="
+              height: 32px;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              padding: 0 12px;
+              border-bottom: 1px solid var(--border);
+            "
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--leaf)"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <path d="M20 6 9 17l-5-5"></path>
+            </svg>
+            <span class="tnum" style="font-size: 12px">Write</span>
+            <span class="tnum" style="font-size: 11.5px; color: var(--muted-foreground)"
+              >migrations/0004_shopping_list.ts</span
+            >
+            <span
+              class="tnum"
+              style="font-size: 11px; color: var(--muted-foreground); margin-left: auto"
+              >+34</span
+            >
+          </div>
+          <div
+            style="
+              padding: 11px 12px;
+              font-family: var(--font-mono);
+              font-size: 11.5px;
+              line-height: 1.65;
+              color: var(--muted-foreground);
+            "
+          >
+            <div><span style="color: var(--leaf)">+</span> await db.schema</div>
+            <div>
+              <span style="color: var(--leaf)">+</span>
+              &nbsp;&nbsp;.createTable("shopping_list_item")
+            </div>
+            <div>
+              <span style="color: var(--leaf)">+</span>
+              &nbsp;&nbsp;.addUniqueConstraint("shopping_list_item_key", ["list_id", "ingredient"])
+            </div>
+          </div>
+        </div>
+
+        <!-- Tool call, running -->
+        <div
+          style="
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--card);
+          "
+        >
+          <div style="height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--warning)"
+              stroke-width="2.4"
+              stroke-linecap="round"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+            </svg>
+            <span class="tnum" style="font-size: 12px">Bash</span>
+            <span class="tnum" style="font-size: 11.5px; color: var(--muted-foreground)"
+              >pnpm test</span
+            >
+            <span class="tnum" style="font-size: 11px; color: var(--warning); margin-left: auto"
+              >running</span
+            >
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Composer -->
+    <div style="flex-shrink: 0; padding: 14px 24px 18px">
+      <div
+        style="
+          border: 1px solid var(--border);
+          border-radius: 13px;
+          background: var(--card);
+          padding: 11px 13px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        "
+      >
+        <span style="font-size: 13.5px; color: var(--muted-foreground)">Describe a change…</span>
+        <div style="display: flex; align-items: center; justify-content: space-between">
+          <div style="display: flex; align-items: center; gap: 7px">
+            <div
+              style="
+                height: 26px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 0 9px;
+                border-radius: 7px;
+                border: 1px solid var(--border);
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+              "
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              >
+                <path
+                  d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                ></path>
+              </svg>
+              Attach
+            </div>
+            <div
+              style="
+                height: 26px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 0 9px;
+                border-radius: 7px;
+                border: 1px solid var(--border);
+                font-size: 11.5px;
+                color: var(--muted-foreground);
+              "
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              >
+                <path d="M8 2v4"></path>
+                <path d="M16 2v4"></path>
+                <rect width="18" height="18" x="3" y="4" rx="2"></rect>
+                <path d="M3 10h18"></path>
+              </svg>
+              Branch: dev
+            </div>
+          </div>
+          <div
+            style="
+              width: 30px;
+              height: 30px;
+              border-radius: 9px;
+              background: var(--primary);
+              color: var(--primary-foreground);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            "
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12h14"></path>
+              <path d="m12 5 7 7-7 7"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <p
+        style="margin: 9px 2px 0; font-size: 11px; color: var(--muted-foreground); line-height: 1.5"
+      >
+        Runs in a microVM with your repo checked out. Changes arrive as a pull request — the agent
+        never holds a push credential.
+      </p>
+    </div>
+  </div>
+
+  <!-- Change panel -->
+  <aside
+    style="
+      width: 340px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--sidebar);
+    "
+  >
+    <div
+      style="
+        height: 52px;
+        flex-shrink: 0;
+        border-bottom: 1px solid var(--sidebar-border);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      "
+    >
+      <span style="font-size: 13px; font-weight: 600">Proposed change</span>
+    </div>
+
+    <div style="padding: 16px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <sc-for list="{{files}}" as="f" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 9px">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--muted-foreground)"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>
+              <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
+            </svg>
+            <span
+              class="tnum"
+              style="
+                flex: 1;
+                min-width: 0;
+                font-size: 11.5px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+              "
+              >{{f.path}}</span
+            >
+            <span class="tnum" style="font-size: 11px; color: var(--leaf)">{{f.added}}</span>
+            <span class="tnum" style="font-size: 11px; color: var(--destructive)"
+              >{{f.removed}}</span
+            >
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="height: 1px; background: var(--sidebar-border)"></div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <span class="eyebrow" style="font-size: 10px">This turn</span>
+        <div style="display: flex; align-items: baseline; justify-content: space-between">
+          <span style="font-size: 12.5px; color: var(--muted-foreground)">Input tokens</span>
+          <span class="tnum" style="font-size: 12.5px">18,402</span>
+        </div>
+        <div style="display: flex; align-items: baseline; justify-content: space-between">
+          <span style="font-size: 12.5px; color: var(--muted-foreground)">Output tokens</span>
+          <span class="tnum" style="font-size: 12.5px">2,117</span>
+        </div>
+        <div style="display: flex; align-items: baseline; justify-content: space-between">
+          <span style="font-size: 12.5px; color: var(--muted-foreground)">Sandbox</span>
+          <span class="tnum" style="font-size: 12.5px">1m 42s</span>
+        </div>
+        <div
+          style="
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            padding-top: 6px;
+            border-top: 1px solid var(--sidebar-border);
+          "
+        >
+          <span style="font-size: 12.5px">Cost</span>
+          <span class="money" style="font-size: 13.5px">$0.0187</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 2px">
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius);
+            background: var(--primary);
+            color: var(--primary-foreground);
+            font-size: 13px;
+            font-weight: 500;
+          "
+        >
+          Open pull request
+        </div>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            font-size: 13px;
+          "
+        >
+          Preview deployment
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
