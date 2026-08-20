@@ -22,4 +22,4 @@ export const db = new Kysely<DB>({
   plugins: [new CamelCasePlugin()],
 })
 
-export type { DB }
+export type { DB, Json, JsonArray, JsonObject, JsonPrimitive, JsonValue } from "./types"
