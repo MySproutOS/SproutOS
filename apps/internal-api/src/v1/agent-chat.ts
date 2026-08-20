@@ -127,7 +127,8 @@ const app = new Hono()
         it, which is worse than not supporting it. Hiding the route at the source is the thing that
         actually holds.
 
-        The chat client reads this with EventSource instead.
+        The chat client reads this with fetch and a stream reader, not EventSource — EventSource
+        only issues GET requests, and the prompt has to be a body.
       */
       hide: true,
       description: "Sends a message and streams the agent's response as server-sent events",
@@ -169,7 +170,7 @@ const app = new Hono()
       }
 
       const repository = await repositoryFor(organization.id, projectId)
-      if (repository === null) return throwNotFound(c, "Project has no repository")
+      if (typeof repository === "string") return throwBadRequest(c, repository)
 
       await crudAuditLog(db).record({
         organizationId: organization.id,
@@ -285,18 +286,31 @@ function describeFailure(error: unknown): string {
   return "The agent run failed."
 }
 
-async function repositoryFor(organizationId: string, projectId: string) {
+/**
+ * The repository the agent will work in, or a sentence saying what is missing.
+ *
+ * Three different things can be absent here and they need different answers from the person
+ * reading them. Collapsing them into one "no repository" is what this function used to do, and it
+ * sent me looking at the project's repository row when the actual gap was an uninstalled GitHub
+ * App — a message that is not merely unhelpful but points the wrong way.
+ */
+async function repositoryFor(
+  organizationId: string,
+  projectId: string,
+): Promise<
+  { ownerLogin: string; name: string; defaultBranch: string; installationId: number } | string
+> {
   const project = await fetchProject(db).getInOrganization(organizationId, projectId, [
     "repositoryId",
   ])
-  if (project === undefined) return null
+  if (project === undefined) return "Project not found"
 
   const repository = await fetchRepository(db).getInOrganization(
     organizationId,
     project.repositoryId,
     ["ownerLogin", "name", "defaultBranch"],
   )
-  if (repository === undefined) return null
+  if (repository === undefined) return "This project's repository record is missing"
 
   const installation = await db
     .selectFrom("githubInstallation")
@@ -305,7 +319,9 @@ async function repositoryFor(organizationId: string, projectId: string) {
     .where("suspendedAt", "is", null)
     .executeTakeFirst()
 
-  if (installation === undefined) return null
+  if (installation === undefined) {
+    return "Install the SproutOS GitHub App on this organization so the agent can read the repository"
+  }
 
   return { ...repository, installationId: Number(installation.installationId) }
 }

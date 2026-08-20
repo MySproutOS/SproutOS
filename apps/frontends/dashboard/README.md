@@ -214,3 +214,25 @@ so, because a switch labelled "Secret" next to an unencrypted alternative is a p
 
 The add dialog is controlled rather than wrapping Save in a `DialogClose`: a rejected save has to
 leave the dialog open with the typed value still in it, and only a successful one closes.
+
+## Agent chat
+
+`/orgs/$orgSlug/projects/$projectId/agent`.
+
+**The stream is parsed here, not by the browser.** `EventSource` only issues GET requests and the
+prompt has to be a body, so the transport is `fetch` plus a stream reader — which makes SSE framing
+our problem. A chunk can split a frame anywhere, including through the middle of a JSON payload, so
+the tail stays in a buffer until its blank-line terminator arrives. `agent-chat.test.ts` asserts
+that directly; the naive parse-each-chunk version drops the event entirely.
+
+**A refusal is not a chat response.** No credential, no credit, no GitHub App — these arrive as
+ordinary JSON before the stream starts, and the client raises the API's own message rather than
+rendering an empty bubble. The envelope is OData-shaped (`{ error: { code, message } }`), and
+reading a bare `message` degrades silently to a generic "the agent could not start", which is how
+this was wrong the first time and why there is a test pinning the shape.
+
+**Consecutive text events merge.** The agent emits a content block at a time; a bubble per block
+shreds a paragraph into a column of fragments.
+
+**Leaving the page aborts the run.** A stream into an unmounted component keeps burning tokens
+against a balance nobody is watching.
