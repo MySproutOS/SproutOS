@@ -92,6 +92,16 @@ interface CreateNextCursorProps<ResultType> {
   cursor: string | null
 }
 
+/**
+ * Offset pagination has no anchor, so it has no ordering column either — asking
+ * for one would be a parameter the function cannot use.
+ */
+interface CreateNextOffsetCursorProps<ResultType> {
+  results: ResultType[]
+  pageSize: number
+  cursor: string | null
+}
+
 export function createNextCursor<ResultType>({
   results,
   ordering,
@@ -134,7 +144,7 @@ export function createNextOffsetCursor<ResultType>({
   results,
   pageSize,
   cursor,
-}: CreateNextCursorProps<ResultType>): string | null {
+}: CreateNextOffsetCursorProps<ResultType>): string | null {
   // We always fetch pageSize + 1 to determine if there's a next page
   if (results.length <= pageSize) {
     return null
@@ -221,12 +231,13 @@ export async function cursorOffsetPaginate<
 >({
   query,
   cursor,
-  ordering,
   pageSize = 25,
 }: CursorPaginateProps<Q, R, O, TB>): Promise<{
   results: ExtractRowType<Q>[]
   nextCursor: string | null
 }> {
+  // `ordering` stays in the props for symmetry with cursorPaginate, but an
+  // offset page has no anchor column, so nothing here reads it.
   const { offset } = decodeCursor(cursor)
 
   try {
@@ -240,7 +251,6 @@ export async function cursorOffsetPaginate<
 
     const nextCursor = createNextOffsetCursor<(typeof results)[number]>({
       results,
-      ordering,
       pageSize,
       cursor,
     })
