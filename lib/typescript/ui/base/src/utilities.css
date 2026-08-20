@@ -1,0 +1,108 @@
+/*
+  Shared utilities. The marketing site uses all of these; the dashboard uses the
+  typographic and money ones (`eyebrow`, `tnum`, `container-page`) but leaves the
+  atmosphere — `soil-grid`, the body haze, the scroll reveals — to the marketing
+  side, where a reader is browsing rather than working.
+*/
+
+/* Page gutter. One max-width across marketing and dashboard so they line up. */
+@utility container-page {
+  width: 100%;
+  margin-inline: auto;
+  max-width: 78rem;
+  padding-inline: 1.25rem;
+
+  @media (width >= 40rem) {
+    padding-inline: 2rem;
+  }
+
+  @media (width >= 64rem) {
+    padding-inline: 3rem;
+  }
+}
+
+/* Wider gutter for data-dense dashboard screens. */
+@utility container-wide {
+  width: 100%;
+  margin-inline: auto;
+  max-width: 96rem;
+  padding-inline: 1rem;
+
+  @media (width >= 64rem) {
+    padding-inline: 1.5rem;
+  }
+}
+
+/* Eyebrow: mono, uppercase, wide-tracked. Section identity only. */
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--leaf-dim);
+}
+
+/* Hairline field-plot grid. Marks the canvas as ground without being wallpaper. */
+@utility soil-grid {
+  background-image:
+    linear-gradient(to right, oklch(0.95 0.01 140 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.95 0.01 140 / 0.035) 1px, transparent 1px);
+  background-size: 4.5rem 4.5rem;
+  mask-image: radial-gradient(70% 60% at 50% 30%, #000 20%, transparent 100%);
+}
+
+@utility rule-soft {
+  border-color: oklch(0.95 0.01 140 / 0.09);
+}
+
+/* Soil-tone haze so the marketing canvas isn't a flat void. */
+@utility soil-haze {
+  background-image:
+    radial-gradient(60rem 40rem at 78% -10%, oklch(0.28 0.05 150 / 0.5), transparent 65%),
+    radial-gradient(48rem 34rem at 4% 12%, oklch(0.24 0.035 120 / 0.4), transparent 62%);
+  background-attachment: fixed;
+}
+
+@layer base {
+  /* Money is always mono and always tabular so columns line up to the digit. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+/*
+  Reveal-on-scroll, gated on the `js` class that each app sets on <html> before
+  paint. A failed or disabled script leaves the page fully readable rather than
+  blank — without the gate, every revealed section stays invisible.
+*/
+@layer utilities {
+  .js .reveal {
+    opacity: 0;
+    transform: translateY(0.75rem);
+    transition:
+      opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .js .reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .js .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}

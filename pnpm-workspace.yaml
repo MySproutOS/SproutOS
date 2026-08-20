@@ -11,6 +11,7 @@ allowBuilds:
   sharp: true
 catalog:
   "@base-ui/react": ^1.7.0
+  "@fontsource-variable/bricolage-grotesque": ^5.3.0
   "@fontsource-variable/geist": ^5.3.0
   "@fontsource-variable/geist-mono": ^5.3.0
   # next tag for TypeScript 7 compatibility: https://github.com/hey-api/hey-api/issues/4235

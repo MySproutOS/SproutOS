@@ -18,6 +18,7 @@
     "@tanstack/react-query": "catalog:",
     "@ui/base": "workspace:*",
     "@ui/seo-shared": "workspace:*",
+    "@ui/spa-shared": "workspace:*",
     "@utils/crypto": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",

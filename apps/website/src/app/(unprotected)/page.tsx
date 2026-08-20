@@ -1,13 +1,14 @@
-import { Button } from "@ui/base/ui/button"
-import { NavLinks } from "@ui/seo-shared/nav-links"
 import { getCurrentSession } from "@website/lib/auth"
-import Link from "next/link"
 import { redirect } from "next/navigation"
-
-const footerLinks = [
-  { href: "/blog", label: "Blog" },
-  { href: "/legal", label: "Legal" },
-]
+import { AppStore } from "./_components/landing/app-store"
+import { BackendOps } from "./_components/landing/backend-ops"
+import { FinalCta } from "./_components/landing/final-cta"
+import { ForBusiness } from "./_components/landing/for-business"
+import { Hero } from "./_components/landing/hero"
+import { Nav } from "./_components/landing/nav"
+import { Ownership } from "./_components/landing/ownership"
+import { Pipelines } from "./_components/landing/pipelines"
+import { SiteFooter } from "./_components/landing/site-footer"
 
 export default async function Page() {
   const session = await getCurrentSession()
@@ -16,11 +17,18 @@ export default async function Page() {
   }
 
   return (
-    <div>
-      <Link href={"/login"}>
-        <Button>Login</Button>
-      </Link>
-      <NavLinks className="mt-8" links={footerLinks} />
-    </div>
+    <>
+      <Nav />
+      <main>
+        <Hero />
+        <AppStore />
+        <ForBusiness />
+        <BackendOps />
+        <Ownership />
+        <Pipelines />
+        <FinalCta />
+      </main>
+      <SiteFooter />
+    </>
   )
 }
