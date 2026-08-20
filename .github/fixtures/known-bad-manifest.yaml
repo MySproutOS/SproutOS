@@ -29,3 +29,28 @@ spec:
             # this applies cleanly, reports success, and leaves the container with a writable root
             # filesystem. Only `-strict` catches it.
             readOnlyRootFilesytem: true
+---
+# A second fixture, for the CRD half.
+#
+# `-schema-location` pointing at a CRD catalogue is easy to configure so that it silently finds
+# nothing and validates nothing. This document is schema-valid YAML with a field External Secrets
+# does not define, so it must be rejected — and if it is accepted, the catalogue is not being
+# consulted and every ExternalSecret in `deploy/` is unchecked.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: known-bad-external-secret
+  namespace: default
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: does-not-matter
+    kind: ClusterSecretStore
+  target:
+    name: known-bad
+  # The typo. `data` is the field; `datum` is not, and a CRD's structural schema rejects unknown
+  # fields where a core resource would need `-strict` to.
+  datum:
+    - secretKey: whatever
+      remoteRef:
+        key: whatever

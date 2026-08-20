@@ -292,8 +292,11 @@ jobs:
       # result from the next step is worthless.
       - name: The validator rejects a manifest it should reject
         run: |
-          if kubeconform -strict -kubernetes-version 1.34.0 .github/fixtures/known-bad-manifest.yaml; then
-            echo "::error::kubeconform accepted a manifest with an unknown field. The check is not checking."
+          if kubeconform -strict -kubernetes-version 1.34.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            .github/fixtures/known-bad-manifest.yaml; then
+            echo "::error::kubeconform accepted a manifest with unknown fields. The check is not checking."
             exit 1
           fi
           echo "kubeconform correctly rejected the known-bad fixture"
@@ -301,5 +304,14 @@ jobs:
       # `-strict` rejects unknown fields, which is the check that matters: a typo in a field name is
       # silently ignored by the API server, so `readOnlyRootFilesytem` would apply cleanly and do
       # nothing at all.
+      # `-schema-location default` keeps the built-in Kubernetes schemas; the second location is a
+      # community catalogue of CRD schemas, which is what makes the External Secrets manifests
+      # validated rather than merely well-formed YAML. `-ignore-missing-schemas` is deliberately NOT
+      # set: a CRD whose schema cannot be found should fail, not pass silently, or this whole job
+      # quietly stops covering the files most likely to be wrong.
       - name: Validate
-        run: kubeconform -strict -summary -kubernetes-version 1.34.0 deploy/
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.34.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            deploy/

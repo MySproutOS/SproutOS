@@ -103,6 +103,24 @@ rather than a convenience — and this is the rule that enforces it from the ten
 `TENANT_NAMESPACE` is a placeholder: one namespace per project, created by the control plane, which
 substitutes it.
 
+## `secrets/`
+
+What creates the Secrets everything else reads. Without these, five Secrets do not exist and every
+workload in `platform/` and `metering/` sits in `CreateContainerConfigError` — so this is the
+manifest that makes the rest of the directory something other than decoration.
+
+The store authenticates with `jwt` and a service account, not static keys. A `SecretStore` holding an
+AWS access key would be a long-lived credential sitting in the cluster **in order to fetch
+credentials**, which is a loop worth refusing.
+
+`control-plane-database` reads what RDS wrote. `manage_master_user_password` in `tofu/database.tf`
+means the password lives in Secrets Manager and never in OpenTofu state, so the URL is assembled from
+those fields by a template rather than being stored as one string somebody has to keep in step.
+
+`refreshInterval: 1h` everywhere. Fetching once means a rotated password keeps working until each pod
+restarts and then stops working for all of them — a failure that arrives hours after its cause, all
+at once.
+
 ## `tenant/runtime-classes.yaml`
 
 Two Kata runtime classes, and the split is a constraint rather than a preference. **Kata with
@@ -123,9 +141,13 @@ today both classes reference a handler no node provides and every pod using them
   `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
   applied today, that rule admits nothing. It is a real inconsistency, left visible rather than
   papered over with a placeholder Deployment that would look like an answer.
-- **The ConfigMaps and Secrets every Deployment here reads** — `control-plane-database`,
-  `tenant-postgres`, `tenant-valkey`, `tenant-opensearch`, `metering-ingest`. Nothing creates them;
-  External Secrets is the intended source and does not exist.
+- **The External Secrets operator itself.** `secrets/` declares what it should fetch; nothing
+  installs the controller that would act on it, so those resources are currently inert too.
+- **The ConfigMaps** — `platform-config`, `tenant-valkey`, `tenant-opensearch`. Non-secret
+  configuration, so they belong in OpenTofu output or a plain manifest rather than Secrets Manager,
+  and neither exists yet.
+- **`tenant-valkey` and `tenant-opensearch` Secrets.** Only the Postgres administrative credential
+  has an `ExternalSecret`; the other two proxies read Secrets nothing creates.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
 - **`kata-deploy` itself and the devmapper thin pools.** Phase 11. The runtime classes above name
