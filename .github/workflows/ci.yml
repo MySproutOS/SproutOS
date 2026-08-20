@@ -347,3 +347,100 @@ jobs:
           TAG=ci TENANT_NAMESPACE=ci TENANT_POSTGRES_HOST=a TENANT_VALKEY_HOST=b TENANT_OPENSEARCH_HOST=c \
             pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
           echo "rendered $(grep -c '^---' /tmp/rendered.yaml) document separators"
+
+  cluster:
+    name: (kind) Apply to a real API server
+    runs-on: ubuntu-latest
+    # Everything above validates these manifests without a cluster, and everything above missed the
+    # same class of bug. `kubeconform -strict` checks each document against a schema; it has no idea
+    # whether the namespace exists, whether a Pod Security Standard will reject the pod, or whether
+    # the API version is one the installed operator still serves. Each of those is valid YAML.
+    #
+    # Applied to a real API server for the first time, this directory produced four failures at once:
+    # no namespace was created by anything, the metering DaemonSet was forbidden outright and had
+    # been reporting desired 1 / current 0 in silence, and every External Secrets resource was
+    # rejected because they declared `v1beta1` while current External Secrets serves only `v1`.
+    #
+    # That last one is the reason the schema catalogue is not enough on its own: the catalogue
+    # carries a `v1beta1` schema and validates against it happily, forever, long after no cluster
+    # will accept the version.
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create a cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: sproutos-ci
+
+      # Pinned, not `latest`: an operator that changes its served API versions should break this job
+      # in a diff that bumps the version, not on an unrelated morning.
+      - name: Install External Secrets
+        run: |
+          kubectl apply --server-side -f \
+            https://github.com/external-secrets/external-secrets/releases/download/v2.9.0/external-secrets.yaml
+          kubectl -n external-secrets rollout status deploy/external-secrets --timeout=180s
+
+      - name: Render
+        run: |
+          cat > /tmp/outputs.json <<'JSON'
+          {
+            "aws_account_id": { "value": "123456789012" },
+            "aws_region": { "value": "us-east-1" },
+            "envelope_kms_key_arn": { "value": "arn:aws:kms:us-east-1:123456789012:key/x" },
+            "database_credentials_secret_arn": { "value": "arn:aws:secretsmanager:us-east-1:123456789012:secret:x" }
+          }
+          JSON
+          TAG=ci TENANT_NAMESPACE=tenant-ci TENANT_POSTGRES_HOST=pg.invalid \
+          TENANT_VALKEY_HOST=valkey.invalid TENANT_OPENSEARCH_HOST=os.invalid \
+            pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
+
+      # No `|| true`. Every document has to be accepted, which is what makes the namespace ordering
+      # and the External Secrets API version load-bearing rather than advisory.
+      - name: Apply
+        run: kubectl apply -f /tmp/rendered.yaml
+
+      # The images are ECR references that cannot be pulled here, so the pods will not start — that
+      # is fine and not what this checks. What it checks is that the API server *accepted* every pod
+      # the controllers tried to create. A DaemonSet forbidden by a Pod Security Standard reports
+      # desired > 0 with currentNumberScheduled 0 and no error anywhere else, which is exactly how
+      # the metering agent went unnoticed.
+      - name: Every controller could create its pods
+        run: |
+          sleep 20
+          desired=$(kubectl get ds -n sproutos-metering metering-agent -o jsonpath='{.status.desiredNumberScheduled}')
+          scheduled=$(kubectl get ds -n sproutos-metering metering-agent -o jsonpath='{.status.currentNumberScheduled}')
+          echo "metering-agent: desired=$desired scheduled=$scheduled"
+          if [ "$desired" != "$scheduled" ]; then
+            echo "FAIL: the DaemonSet could not create a pod on every node it wants one on."
+            kubectl describe ds -n sproutos-metering metering-agent | tail -20
+            exit 1
+          fi
+
+          for deploy in internal-api website worker pg-proxy valkey-proxy search-proxy; do
+            want=$(kubectl get deploy -n sproutos-system "$deploy" -o jsonpath='{.spec.replicas}')
+            got=$(kubectl get deploy -n sproutos-system "$deploy" -o jsonpath='{.status.replicas}')
+            echo "$deploy: spec=$want created=${got:-0}"
+            if [ "${got:-0}" != "$want" ]; then
+              echo "FAIL: $deploy could not create its pods."
+              kubectl describe rs -n sproutos-system -l app.kubernetes.io/name="$deploy" | tail -20
+              exit 1
+            fi
+          done
+
+      # Accepted by the CRD *and* by the operator's validating webhook, which is a stronger check
+      # than any schema: the webhook is the code that will actually read these in production.
+      - name: External Secrets resources exist
+        run: |
+          count=$(kubectl get externalsecret -A --no-headers | wc -l)
+          echo "$count ExternalSecret(s)"
+          test "$count" -ge 5
+          kubectl get clustersecretstore aws-secrets-manager
