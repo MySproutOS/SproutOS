@@ -28,6 +28,7 @@
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
     "@lib/jobs": "workspace:*",
+    "@lib/services": "workspace:*",
     "@lib/srn": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
