@@ -456,6 +456,41 @@ export type PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses = {
 export type PutV1OrgsByOrgSlugMembersByMemberIdRolesResponse =
   PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses[keyof PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses]
 
+export type DeleteV1OrgsByOrgSlugLeaveData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/leave"
+}
+
+export type DeleteV1OrgsByOrgSlugLeaveErrors = {
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+  /**
+   * The owner, or a personal organization, cannot be left
+   */
+  409: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugLeaveError =
+  DeleteV1OrgsByOrgSlugLeaveErrors[keyof DeleteV1OrgsByOrgSlugLeaveErrors]
+
+export type DeleteV1OrgsByOrgSlugLeaveResponses = {
+  /**
+   * Left the organization; the next organization to land on, if any
+   */
+  200: {
+    nextOrganizationId: string | null
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugLeaveResponse =
+  DeleteV1OrgsByOrgSlugLeaveResponses[keyof DeleteV1OrgsByOrgSlugLeaveResponses]
+
 export type DeleteV1OrgsByOrgSlugMembersByMemberIdData = {
   body?: never
   path: {
@@ -845,6 +880,1531 @@ export type PatchV1OrgsByOrgSlugRolesByRoleIdResponses = {
 
 export type PatchV1OrgsByOrgSlugRolesByRoleIdResponse =
   PatchV1OrgsByOrgSlugRolesByRoleIdResponses[keyof PatchV1OrgsByOrgSlugRolesByRoleIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    repositoryId?: string
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/projects"
+}
+
+export type GetV1OrgsByOrgSlugProjectsErrors = {
+  /**
+   * Invalid cursor
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsError =
+  GetV1OrgsByOrgSlugProjectsErrors[keyof GetV1OrgsByOrgSlugProjectsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsResponses = {
+  /**
+   * A page of projects
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      slug: string
+      kind: string
+      state: string
+      stateReason: string | null
+      rootDir: string
+      productionBranch: string
+      autoUpdateEnabled: boolean
+      autoUpdateMode: string
+      repositoryId: string
+      storeListingId: string | null
+      agentCredentialId: string | null
+      createdAt: Date
+      repositoryOwnerLogin: string
+      repositoryName: string
+      repositoryProvenance: string
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsResponse =
+  GetV1OrgsByOrgSlugProjectsResponses[keyof GetV1OrgsByOrgSlugProjectsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsData = {
+  body?: {
+    name: string
+    slug?: string
+    kind?: "site" | "workflow"
+    rootDir?: string
+    productionBranch?: string
+    agentCredentialId?: string | null
+    autoUpdateEnabled?: boolean
+    autoUpdateMode?: "suggest" | "auto_merge"
+    idempotencyKey?: string
+    source:
+      | {
+          type: "store"
+          storeListingId: string
+          ownerLogin?: string
+          repositoryName?: string
+          private?: boolean
+        }
+      | {
+          type: "blank"
+          ownerLogin?: string
+          repositoryName?: string
+          private?: boolean
+          templateOwner?: string
+          templateRepo?: string
+        }
+      | {
+          type: "repository"
+          repositoryId: string
+        }
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects"
+}
+
+export type PostV1OrgsByOrgSlugProjectsErrors = {
+  /**
+   * Invalid source, slug, or missing GitHub account
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:create
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+  /**
+   * That repository, directory, and branch are already a project
+   */
+  409: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsError =
+  PostV1OrgsByOrgSlugProjectsErrors[keyof PostV1OrgsByOrgSlugProjectsErrors]
+
+export type PostV1OrgsByOrgSlugProjectsResponses = {
+  /**
+   * The project and the job that will provision it
+   */
+  201: {
+    project: {
+      id: string
+      name: string
+      slug: string
+      kind: string
+      state: string
+      stateReason: string | null
+      rootDir: string
+      productionBranch: string
+      autoUpdateEnabled: boolean
+      autoUpdateMode: string
+      repositoryId: string
+      storeListingId: string | null
+      agentCredentialId: string | null
+      createdAt: Date
+      repositoryOwnerLogin: string
+      repositoryName: string
+      repositoryProvenance: string
+    }
+    job: {
+      id: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsResponse =
+  PostV1OrgsByOrgSlugProjectsResponses[keyof PostV1OrgsByOrgSlugProjectsResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}"
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors = {
+  /**
+   * Caller lacks project:delete
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
+  /**
+   * What was destroyed, what was scheduled, and what was kept
+   */
+  200: {
+    project: {
+      id: string
+      slug: string
+      state: string
+      deletedAt: Date | null
+    }
+    job: {
+      id: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }
+    destroyed: Array<string>
+    scheduledForTeardown: Array<string>
+    retained: Array<string>
+    repositoryReleased: boolean
+    remainingProjectsOnRepository: number
+    message: string
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
+  /**
+   * The project
+   */
+  200: {
+    id: string
+    name: string
+    slug: string
+    kind: string
+    state: string
+    stateReason: string | null
+    rootDir: string
+    productionBranch: string
+    autoUpdateEnabled: boolean
+    autoUpdateMode: string
+    repositoryId: string
+    storeListingId: string | null
+    agentCredentialId: string | null
+    createdAt: Date
+    repositoryOwnerLogin: string
+    repositoryName: string
+    repositoryProvenance: string
+    repository: {
+      id: string
+      githubRepoId: string | null
+      ownerLogin: string
+      name: string
+      defaultBranch: string
+      private: boolean
+      isFork: boolean
+      provenance: string
+      upstreamFullName: string | null
+      githubInstallationId: string | null
+      pendingCreation: boolean
+      liveProjectCount: number
+    }
+    pendingUpdateSuggestions: number
+    envVarCount: number
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdResponses]
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
+  body?: {
+    name?: string
+    slug?: string
+    rootDir?: string
+    productionBranch?: string
+    agentCredentialId?: string | null
+    autoUpdateEnabled?: boolean
+    autoUpdateMode?: "suggest" | "auto_merge"
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}"
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdErrors = {
+  /**
+   * Invalid slug or credential
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+  /**
+   * That directory and branch are already another project
+   */
+  409: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdError =
+  PatchV1OrgsByOrgSlugProjectsByProjectIdErrors[keyof PatchV1OrgsByOrgSlugProjectsByProjectIdErrors]
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
+  /**
+   * The updated project
+   */
+  200: {
+    id: string
+    name: string
+    slug: string
+    kind: string
+    state: string
+    stateReason: string | null
+    rootDir: string
+    productionBranch: string
+    autoUpdateEnabled: boolean
+    autoUpdateMode: string
+    repositoryId: string
+    storeListingId: string | null
+    agentCredentialId: string | null
+    createdAt: Date
+    repositoryOwnerLogin: string
+    repositoryName: string
+    repositoryProvenance: string
+  }
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponse =
+  PatchV1OrgsByOrgSlugProjectsByProjectIdResponses[keyof PatchV1OrgsByOrgSlugProjectsByProjectIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses = {
+  /**
+   * Jobs, most recent first
+   */
+  200: {
+    data: Array<{
+      id: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    jobId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such job for this project
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
+  /**
+   * The job's current state and steps
+   */
+  200: {
+    id: string
+    kind: string
+    state: string
+    progress: number
+    attempt: number
+    errorCode: string | null
+    errorMessage: string | null
+    steps: Array<{
+      key: string
+      label: string
+      state: string
+    }>
+    startedAt: Date | null
+    finishedAt: Date | null
+    createdAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/env"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses = {
+  /**
+   * Variable names and metadata, without values
+   */
+  200: {
+    data: Array<{
+      id: string
+      key: string
+      target: string
+      isSecret: boolean
+      valueKmsKeyId: string
+      createdAt: Date
+      updatedAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdEnvData = {
+  body?: {
+    key: string
+    value: string
+    target?: "production" | "preview" | "development" | "all"
+    isSecret?: boolean
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/env"
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors = {
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdEnvError =
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors[keyof PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses = {
+  /**
+   * The stored variable, without its value
+   */
+  200: {
+    id: string
+    key: string
+    target: string
+    isSecret: boolean
+    valueKmsKeyId: string
+    createdAt: Date
+    updatedAt: Date
+  }
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse =
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses[keyof PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    envVarId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/env/{envVarId}/reveal"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors = {
+  /**
+   * Caller lacks credential:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such variable on this project
+   */
+  404: ErrorResponseT
+  /**
+   * The value could not be decrypted
+   */
+  500: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses = {
+  /**
+   * The plaintext value
+   */
+  200: {
+    id: string
+    key: string
+    target: string
+    value: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    envVarId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/env/{envVarId}"
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors = {
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such variable on this project
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses = {
+  /**
+   * Variable removed
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: {
+    status?: "pending" | "accepted" | "dismissed" | "applied"
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors = {
+  /**
+   * Invalid cursor
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses = {
+  /**
+   * A page of suggestions
+   */
+  200: {
+    data: Array<{
+      id: string
+      status: string
+      summary: string | null
+      resolvedAt: Date | null
+      resolvedByUserId: string | null
+      createdAt: Date
+      upstreamSyncRunId: string
+      branch: string
+      behindBy: number
+      aheadBy: number
+      outcome: string
+      mergeType: string | null
+      pullRequestNumber: number | null
+      pullRequestUrl: string | null
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    suggestionId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/accept"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors = {
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such pending suggestion
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses = {
+  /**
+   * The resolved suggestion
+   */
+  200: {
+    id: string
+    status: string
+    summary: string | null
+    resolvedAt: Date | null
+    resolvedByUserId: string | null
+    createdAt: Date
+    upstreamSyncRunId: string
+    branch: string
+    behindBy: number
+    aheadBy: number
+    outcome: string
+    mergeType: string | null
+    pullRequestNumber: number | null
+    pullRequestUrl: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    suggestionId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/dismiss"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors = {
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such pending suggestion
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses =
+  {
+    /**
+     * The resolved suggestion
+     */
+    200: {
+      id: string
+      status: string
+      summary: string | null
+      resolvedAt: Date | null
+      resolvedByUserId: string | null
+      createdAt: Date
+      upstreamSyncRunId: string
+      branch: string
+      behindBy: number
+      aheadBy: number
+      outcome: string
+      mergeType: string | null
+      pullRequestNumber: number | null
+      pullRequestUrl: string | null
+    }
+  }
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses]
+
+export type GetV1OrgsByOrgSlugRepositoriesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/repositories"
+}
+
+export type GetV1OrgsByOrgSlugRepositoriesErrors = {
+  /**
+   * Invalid cursor
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks repository:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugRepositoriesError =
+  GetV1OrgsByOrgSlugRepositoriesErrors[keyof GetV1OrgsByOrgSlugRepositoriesErrors]
+
+export type GetV1OrgsByOrgSlugRepositoriesResponses = {
+  /**
+   * A page of repositories
+   */
+  200: {
+    data: Array<{
+      id: string
+      githubRepoId: string | null
+      ownerLogin: string
+      name: string
+      defaultBranch: string
+      private: boolean
+      isFork: boolean
+      provenance: string
+      upstreamFullName: string | null
+      githubInstallationId: string | null
+      pendingCreation: boolean
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugRepositoriesResponse =
+  GetV1OrgsByOrgSlugRepositoriesResponses[keyof GetV1OrgsByOrgSlugRepositoriesResponses]
+
+export type GetV1OrgsByOrgSlugGithubRepositoriesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    page?: number
+    perPage?: number
+  }
+  url: "/v1/orgs/{orgSlug}/github/repositories"
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoriesErrors = {
+  /**
+   * Caller lacks github:read
+   */
+  403: ErrorResponseT
+  /**
+   * No usable GitHub installation for this organization
+   */
+  404: ErrorResponseT
+  /**
+   * GitHub rate limit reached
+   */
+  429: ErrorResponseT
+  /**
+   * GitHub App credentials are not configured, or GitHub is unreachable
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoriesError =
+  GetV1OrgsByOrgSlugGithubRepositoriesErrors[keyof GetV1OrgsByOrgSlugGithubRepositoriesErrors]
+
+export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
+  /**
+   * Repositories the installation can reach
+   */
+  200: {
+    data: Array<{
+      githubRepoId: string
+      ownerLogin: string
+      name: string
+      fullName: string
+      defaultBranch: string
+      private: boolean
+      fork: boolean
+    }>
+    installationAccountLogin: string
+    totalCount: number
+  }
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
+  GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
+
+export type GetV1OrgsByOrgSlugBillingBalanceData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/balance"
+}
+
+export type GetV1OrgsByOrgSlugBillingBalanceErrors = {
+  /**
+   * Caller may not read billing
+   */
+  403: ErrorResponseT
+  /**
+   * Organization not found
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingBalanceError =
+  GetV1OrgsByOrgSlugBillingBalanceErrors[keyof GetV1OrgsByOrgSlugBillingBalanceErrors]
+
+export type GetV1OrgsByOrgSlugBillingBalanceResponses = {
+  /**
+   * Current balance
+   */
+  200: {
+    balanceMicroUsd: string
+    heldMicroUsd: string
+    availableMicroUsd: string
+    currency: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingBalanceResponse =
+  GetV1OrgsByOrgSlugBillingBalanceResponses[keyof GetV1OrgsByOrgSlugBillingBalanceResponses]
+
+export type GetV1OrgsByOrgSlugBillingTopupQuoteData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query: {
+    amountMicroUsd: string
+  }
+  url: "/v1/orgs/{orgSlug}/billing/topup/quote"
+}
+
+export type GetV1OrgsByOrgSlugBillingTopupQuoteErrors = {
+  /**
+   * Amount is below the minimum or malformed
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not read billing
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingTopupQuoteError =
+  GetV1OrgsByOrgSlugBillingTopupQuoteErrors[keyof GetV1OrgsByOrgSlugBillingTopupQuoteErrors]
+
+export type GetV1OrgsByOrgSlugBillingTopupQuoteResponses = {
+  /**
+   * Top-up quote
+   */
+  200: {
+    chargeMicroUsd: string
+    feeMicroUsd: string
+    creditMicroUsd: string
+    minimumMicroUsd: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingTopupQuoteResponse =
+  GetV1OrgsByOrgSlugBillingTopupQuoteResponses[keyof GetV1OrgsByOrgSlugBillingTopupQuoteResponses]
+
+export type PostV1OrgsByOrgSlugBillingTopupData = {
+  body?: {
+    amountMicroUsd: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/topup"
+}
+
+export type PostV1OrgsByOrgSlugBillingTopupErrors = {
+  /**
+   * Amount is below the minimum or malformed
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not spend on behalf of the organization
+   */
+  403: ErrorResponseT
+  /**
+   * Stripe rejected the request
+   */
+  502: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugBillingTopupError =
+  PostV1OrgsByOrgSlugBillingTopupErrors[keyof PostV1OrgsByOrgSlugBillingTopupErrors]
+
+export type PostV1OrgsByOrgSlugBillingTopupResponses = {
+  /**
+   * Top-up started
+   */
+  201: {
+    topupId: string
+    clientSecret: string | null
+    chargeMicroUsd: string
+    feeMicroUsd: string
+    creditMicroUsd: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugBillingTopupResponse =
+  PostV1OrgsByOrgSlugBillingTopupResponses[keyof PostV1OrgsByOrgSlugBillingTopupResponses]
+
+export type GetV1OrgsByOrgSlugBillingTransactionsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/billing/transactions"
+}
+
+export type GetV1OrgsByOrgSlugBillingTransactionsErrors = {
+  /**
+   * Caller may not read billing
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingTransactionsError =
+  GetV1OrgsByOrgSlugBillingTransactionsErrors[keyof GetV1OrgsByOrgSlugBillingTransactionsErrors]
+
+export type GetV1OrgsByOrgSlugBillingTransactionsResponses = {
+  /**
+   * Credit transactions
+   */
+  200: {
+    data: Array<{
+      id: string
+      kind: string
+      description: string | null
+      amountMicroUsd: string
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingTransactionsResponse =
+  GetV1OrgsByOrgSlugBillingTransactionsResponses[keyof GetV1OrgsByOrgSlugBillingTransactionsResponses]
+
+export type PutV1OrgsByOrgSlugBillingAutoReloadData = {
+  body?: {
+    enabled: boolean
+    thresholdMicroUsd?: string
+    amountMicroUsd?: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/auto-reload"
+}
+
+export type PutV1OrgsByOrgSlugBillingAutoReloadErrors = {
+  /**
+   * Threshold or amount is malformed
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not change billing
+   */
+  403: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugBillingAutoReloadError =
+  PutV1OrgsByOrgSlugBillingAutoReloadErrors[keyof PutV1OrgsByOrgSlugBillingAutoReloadErrors]
+
+export type PutV1OrgsByOrgSlugBillingAutoReloadResponses = {
+  /**
+   * Auto-reload settings
+   */
+  200: {
+    enabled: boolean
+    thresholdMicroUsd: string | null
+    amountMicroUsd: string | null
+  }
+}
+
+export type PutV1OrgsByOrgSlugBillingAutoReloadResponse =
+  PutV1OrgsByOrgSlugBillingAutoReloadResponses[keyof PutV1OrgsByOrgSlugBillingAutoReloadResponses]
+
+export type GetV1StoreCategoriesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/store/categories"
+}
+
+export type GetV1StoreCategoriesResponses = {
+  /**
+   * Categories, in display order
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      description: string | null
+      sortOrder: number
+    }>
+  }
+}
+
+export type GetV1StoreCategoriesResponse =
+  GetV1StoreCategoriesResponses[keyof GetV1StoreCategoriesResponses]
+
+export type GetV1StoreTagsData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/store/tags"
+}
+
+export type GetV1StoreTagsResponses = {
+  /**
+   * Tags, alphabetically
+   */
+  200: {
+    data: Array<string>
+  }
+}
+
+export type GetV1StoreTagsResponse = GetV1StoreTagsResponses[keyof GetV1StoreTagsResponses]
+
+export type GetV1StoreFeaturedData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/store/featured"
+}
+
+export type GetV1StoreFeaturedResponses = {
+  /**
+   * Featured listings, highest rank first
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      tagline: string
+      platform: string
+      status: string
+      categoryId: string | null
+      licenseSpdx: string | null
+      upstreamOwner: string
+      upstreamRepo: string
+      upstreamRepoUrl: string
+      homepageUrl: string | null
+      starsCount: number
+      forksCount: number
+      installCount: number
+      featuredRank: number | null
+      createdAt: Date
+      tags: Array<string>
+    }>
+  }
+}
+
+export type GetV1StoreFeaturedResponse =
+  GetV1StoreFeaturedResponses[keyof GetV1StoreFeaturedResponses]
+
+export type GetV1StoreListingsData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    category?: string
+    tag?: string
+    platform?: "web" | "android" | "ios" | "windows" | "macos" | "linux_debian"
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/store/listings"
+}
+
+export type GetV1StoreListingsErrors = {
+  /**
+   * Invalid cursor or unknown category
+   */
+  400: ErrorResponseT
+}
+
+export type GetV1StoreListingsError = GetV1StoreListingsErrors[keyof GetV1StoreListingsErrors]
+
+export type GetV1StoreListingsResponses = {
+  /**
+   * A page of listings
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      tagline: string
+      platform: string
+      status: string
+      categoryId: string | null
+      licenseSpdx: string | null
+      upstreamOwner: string
+      upstreamRepo: string
+      upstreamRepoUrl: string
+      homepageUrl: string | null
+      starsCount: number
+      forksCount: number
+      installCount: number
+      featuredRank: number | null
+      createdAt: Date
+      tags: Array<string>
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1StoreListingsResponse =
+  GetV1StoreListingsResponses[keyof GetV1StoreListingsResponses]
+
+export type GetV1StoreListingsBySlugData = {
+  body?: never
+  path: {
+    slug: string
+  }
+  query?: never
+  url: "/v1/store/listings/{slug}"
+}
+
+export type GetV1StoreListingsBySlugErrors = {
+  /**
+   * No such published listing
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1StoreListingsBySlugError =
+  GetV1StoreListingsBySlugErrors[keyof GetV1StoreListingsBySlugErrors]
+
+export type GetV1StoreListingsBySlugResponses = {
+  /**
+   * The listing
+   */
+  200: {
+    id: string
+    slug: string
+    name: string
+    tagline: string
+    descriptionMd: string
+    readmeMd: string | null
+    platform: string
+    status: string
+    categoryId: string | null
+    category: {
+      id: string
+      slug: string
+      name: string
+    } | null
+    licenseSpdx: string | null
+    defaultBranch: string
+    upstreamHost: string
+    upstreamOwner: string
+    upstreamRepo: string
+    upstreamRepoUrl: string
+    homepageUrl: string | null
+    starsCount: number
+    forksCount: number
+    installCount: number
+    featuredRank: number | null
+    upstreamPushedAt: Date | null
+    lastSyncedAt: Date | null
+    createdAt: Date
+    tags: Array<string>
+    screenshots: Array<{
+      id: string
+      url: string
+      altText: string | null
+      width: number | null
+      height: number | null
+      sortOrder: number
+    }>
+  }
+}
+
+export type GetV1StoreListingsBySlugResponse =
+  GetV1StoreListingsBySlugResponses[keyof GetV1StoreListingsBySlugResponses]
+
+export type PostV1StoreListingsBySlugEventsData = {
+  body?: {
+    kind: "view" | "visit_upstream"
+  }
+  path: {
+    slug: string
+  }
+  query?: never
+  url: "/v1/store/listings/{slug}/events"
+}
+
+export type PostV1StoreListingsBySlugEventsErrors = {
+  /**
+   * No such published listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1StoreListingsBySlugEventsError =
+  PostV1StoreListingsBySlugEventsErrors[keyof PostV1StoreListingsBySlugEventsErrors]
+
+export type PostV1StoreListingsBySlugEventsResponses = {
+  /**
+   * Event recorded
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PostV1StoreListingsBySlugEventsResponse =
+  PostV1StoreListingsBySlugEventsResponses[keyof PostV1StoreListingsBySlugEventsResponses]
+
+export type GetV1OrgsByOrgSlugStoreListingsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    status?: "draft" | "pending_review" | "published" | "rejected" | "archived"
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/store/listings"
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsError =
+  GetV1OrgsByOrgSlugStoreListingsErrors[keyof GetV1OrgsByOrgSlugStoreListingsErrors]
+
+export type GetV1OrgsByOrgSlugStoreListingsResponses = {
+  /**
+   * A page of listings
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      tagline: string
+      platform: string
+      status: string
+      categoryId: string | null
+      licenseSpdx: string | null
+      upstreamOwner: string
+      upstreamRepo: string
+      upstreamRepoUrl: string
+      homepageUrl: string | null
+      starsCount: number
+      forksCount: number
+      installCount: number
+      featuredRank: number | null
+      createdAt: Date
+      tags: Array<string>
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsResponse =
+  GetV1OrgsByOrgSlugStoreListingsResponses[keyof GetV1OrgsByOrgSlugStoreListingsResponses]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
+  body?: never
+  path: {
+    orgSlug: string
+    listingId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish"
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
+  /**
+   * The published listing
+   */
+  200: {
+    id: string
+    slug: string
+    status: string
+    reviewedByUserId: string | null
+    reviewedAt: Date | null
+    rejectionReason: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
+  body?: {
+    status?: "archived" | "rejected"
+    reason?: string
+  }
+  path: {
+    orgSlug: string
+    listingId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/unpublish"
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses = {
+  /**
+   * The unpublished listing
+   */
+  200: {
+    id: string
+    slug: string
+    status: string
+    reviewedByUserId: string | null
+    reviewedAt: Date | null
+    rejectionReason: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses]
+
+export type GetV1UserMePreferencesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/me/preferences"
+}
+
+export type GetV1UserMePreferencesResponses = {
+  /**
+   * The caller's preferences
+   */
+  200: {
+    lastOrganizationId: string | null
+    lastOrganizationSlug: string | null
+    sidebarCollapsed: boolean
+    navPinnedProjectIds: Array<string>
+  }
+}
+
+export type GetV1UserMePreferencesResponse =
+  GetV1UserMePreferencesResponses[keyof GetV1UserMePreferencesResponses]
 
 export type DeleteV1UserMeDeleteData = {
   body?: never

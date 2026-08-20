@@ -8,9 +8,18 @@ import type {
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses,
+  DeleteV1OrgsByOrgSlugLeaveData,
+  DeleteV1OrgsByOrgSlugLeaveErrors,
+  DeleteV1OrgsByOrgSlugLeaveResponses,
   DeleteV1OrgsByOrgSlugMembersByMemberIdData,
   DeleteV1OrgsByOrgSlugMembersByMemberIdErrors,
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses,
   DeleteV1OrgsByOrgSlugResponses,
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
@@ -20,14 +29,47 @@ import type {
   DeleteV1UserMeDeleteResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
+  GetV1OrgsByOrgSlugBillingBalanceData,
+  GetV1OrgsByOrgSlugBillingBalanceErrors,
+  GetV1OrgsByOrgSlugBillingBalanceResponses,
+  GetV1OrgsByOrgSlugBillingTopupQuoteData,
+  GetV1OrgsByOrgSlugBillingTopupQuoteErrors,
+  GetV1OrgsByOrgSlugBillingTopupQuoteResponses,
+  GetV1OrgsByOrgSlugBillingTransactionsData,
+  GetV1OrgsByOrgSlugBillingTransactionsErrors,
+  GetV1OrgsByOrgSlugBillingTransactionsResponses,
   GetV1OrgsByOrgSlugData,
   GetV1OrgsByOrgSlugErrors,
+  GetV1OrgsByOrgSlugGithubRepositoriesData,
+  GetV1OrgsByOrgSlugGithubRepositoriesErrors,
+  GetV1OrgsByOrgSlugGithubRepositoriesResponses,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesErrors,
   GetV1OrgsByOrgSlugInvitesResponses,
   GetV1OrgsByOrgSlugMembersData,
   GetV1OrgsByOrgSlugMembersErrors,
   GetV1OrgsByOrgSlugMembersResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses,
+  GetV1OrgsByOrgSlugProjectsData,
+  GetV1OrgsByOrgSlugProjectsErrors,
+  GetV1OrgsByOrgSlugProjectsResponses,
+  GetV1OrgsByOrgSlugRepositoriesData,
+  GetV1OrgsByOrgSlugRepositoriesErrors,
+  GetV1OrgsByOrgSlugRepositoriesResponses,
   GetV1OrgsByOrgSlugResponses,
   GetV1OrgsByOrgSlugRolesActionsData,
   GetV1OrgsByOrgSlugRolesActionsErrors,
@@ -35,11 +77,31 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesErrors,
   GetV1OrgsByOrgSlugRolesResponses,
+  GetV1OrgsByOrgSlugStoreListingsData,
+  GetV1OrgsByOrgSlugStoreListingsErrors,
+  GetV1OrgsByOrgSlugStoreListingsResponses,
   GetV1OrgsData,
   GetV1OrgsErrors,
   GetV1OrgsResponses,
+  GetV1StoreCategoriesData,
+  GetV1StoreCategoriesResponses,
+  GetV1StoreFeaturedData,
+  GetV1StoreFeaturedResponses,
+  GetV1StoreListingsBySlugData,
+  GetV1StoreListingsBySlugErrors,
+  GetV1StoreListingsBySlugResponses,
+  GetV1StoreListingsData,
+  GetV1StoreListingsErrors,
+  GetV1StoreListingsResponses,
+  GetV1StoreTagsData,
+  GetV1StoreTagsResponses,
+  GetV1UserMePreferencesData,
+  GetV1UserMePreferencesResponses,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugErrors,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdData,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdResponses,
   PatchV1OrgsByOrgSlugResponses,
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
@@ -50,27 +112,57 @@ import type {
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptErrors,
   PostV1InvitesAcceptResponses,
+  PostV1OrgsByOrgSlugBillingTopupData,
+  PostV1OrgsByOrgSlugBillingTopupErrors,
+  PostV1OrgsByOrgSlugBillingTopupResponses,
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesErrors,
   PostV1OrgsByOrgSlugInvitesResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses,
+  PostV1OrgsByOrgSlugProjectsData,
+  PostV1OrgsByOrgSlugProjectsErrors,
+  PostV1OrgsByOrgSlugProjectsResponses,
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesErrors,
   PostV1OrgsByOrgSlugRolesResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses,
   PostV1OrgsByOrgSlugTransferOwnershipData,
   PostV1OrgsByOrgSlugTransferOwnershipErrors,
   PostV1OrgsByOrgSlugTransferOwnershipResponses,
   PostV1OrgsData,
   PostV1OrgsErrors,
   PostV1OrgsResponses,
+  PostV1StoreListingsBySlugEventsData,
+  PostV1StoreListingsBySlugEventsErrors,
+  PostV1StoreListingsBySlugEventsResponses,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubErrors,
   PostV1WebhooksGithubResponses,
   PostV1WebhooksStripeData,
   PostV1WebhooksStripeErrors,
   PostV1WebhooksStripeResponses,
+  PutV1OrgsByOrgSlugBillingAutoReloadData,
+  PutV1OrgsByOrgSlugBillingAutoReloadErrors,
+  PutV1OrgsByOrgSlugBillingAutoReloadResponses,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesData,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
 } from "./types.gen"
 
 export type Options<
@@ -257,6 +349,22 @@ export const putV1OrgsByOrgSlugMembersByMemberIdRoles = <ThrowOnError extends bo
   })
 
 /**
+ * Leaves the organization
+ */
+export const deleteV1OrgsByOrgSlugLeave = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugLeaveData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugLeaveResponses,
+  DeleteV1OrgsByOrgSlugLeaveErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugLeaveResponses,
+    DeleteV1OrgsByOrgSlugLeaveErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/leave", ...options })
+
+/**
  * Removes a member from the organization
  */
 export const deleteV1OrgsByOrgSlugMembersByMemberId = <ThrowOnError extends boolean = false>(
@@ -411,6 +519,551 @@ export const patchV1OrgsByOrgSlugRolesByRoleId = <ThrowOnError extends boolean =
       "Content-Type": "application/json",
       ...options.headers,
     },
+  })
+
+/**
+ * Lists the organization's projects
+ */
+export const getV1OrgsByOrgSlugProjects = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsResponses,
+  GetV1OrgsByOrgSlugProjectsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsResponses,
+    GetV1OrgsByOrgSlugProjectsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects", ...options })
+
+/**
+ * Creates a project from a store listing, from scratch, or on a repository the organization already has
+ */
+export const postV1OrgsByOrgSlugProjects = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugProjectsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsResponses,
+  PostV1OrgsByOrgSlugProjectsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsResponses,
+    PostV1OrgsByOrgSlugProjectsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Soft-deletes a project and queues its teardown
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}", ...options })
+
+/**
+ * Reads one project with its repository and counters
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}", ...options })
+
+/**
+ * Updates a project's settings
+ */
+export const patchV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends boolean = false>(
+  options: Options<PatchV1OrgsByOrgSlugProjectsByProjectIdData, ThrowOnError>,
+): RequestResult<
+  PatchV1OrgsByOrgSlugProjectsByProjectIdResponses,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugProjectsByProjectIdResponses,
+    PatchV1OrgsByOrgSlugProjectsByProjectIdErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists the recent provisioning jobs for a project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobs = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs", ...options })
+
+/**
+ * Polls one provisioning job
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}", ...options })
+
+/**
+ * Lists a project's environment variables. Values are never included.
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdEnv = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdEnvData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/env", ...options })
+
+/**
+ * Sets one environment variable. The value is envelope-encrypted before storage.
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdEnv = <ThrowOnError extends boolean = false>(
+  options: Options<PutV1OrgsByOrgSlugProjectsByProjectIdEnvData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
+    PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/env",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Decrypts and returns one variable's value. Audited.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/env/{envVarId}/reveal", ...options })
+
+/**
+ * Removes one environment variable
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/env/{envVarId}", ...options })
+
+/**
+ * Lists upstream update suggestions for a forked project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions", ...options })
+
+/**
+ * Accepts an upstream update suggestion and queues the sync
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
+    ThrowOnError
+  >,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/accept",
+    ...options,
+  })
+
+/**
+ * Dismisses an upstream update suggestion
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData,
+    ThrowOnError
+  >,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/dismiss",
+    ...options,
+  })
+
+/**
+ * Lists the repositories the organization has connected
+ */
+export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugRepositoriesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugRepositoriesResponses,
+  GetV1OrgsByOrgSlugRepositoriesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugRepositoriesResponses,
+    GetV1OrgsByOrgSlugRepositoriesErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/repositories", ...options })
+
+/**
+ * Lists the repositories the organization's GitHub App installation can reach
+ */
+export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoriesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugGithubRepositoriesResponses,
+  GetV1OrgsByOrgSlugGithubRepositoriesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugGithubRepositoriesResponses,
+    GetV1OrgsByOrgSlugGithubRepositoriesErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/github/repositories", ...options })
+
+/**
+ * Reads the organization's spendable credit balance
+ */
+export const getV1OrgsByOrgSlugBillingBalance = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugBillingBalanceData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingBalanceResponses,
+  GetV1OrgsByOrgSlugBillingBalanceErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingBalanceResponses,
+    GetV1OrgsByOrgSlugBillingBalanceErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/balance", ...options })
+
+/**
+ * Quotes the processing fee and resulting credit for a top-up amount
+ */
+export const getV1OrgsByOrgSlugBillingTopupQuote = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugBillingTopupQuoteData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingTopupQuoteResponses,
+  GetV1OrgsByOrgSlugBillingTopupQuoteErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingTopupQuoteResponses,
+    GetV1OrgsByOrgSlugBillingTopupQuoteErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/topup/quote", ...options })
+
+/**
+ * Starts a credit top-up and returns a Stripe client secret
+ */
+export const postV1OrgsByOrgSlugBillingTopup = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugBillingTopupData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugBillingTopupResponses,
+  PostV1OrgsByOrgSlugBillingTopupErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugBillingTopupResponses,
+    PostV1OrgsByOrgSlugBillingTopupErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/billing/topup",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists the organization's credit transactions, newest first
+ */
+export const getV1OrgsByOrgSlugBillingTransactions = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugBillingTransactionsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingTransactionsResponses,
+  GetV1OrgsByOrgSlugBillingTransactionsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingTransactionsResponses,
+    GetV1OrgsByOrgSlugBillingTransactionsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/transactions", ...options })
+
+/**
+ * Configures automatic top-ups when the balance falls below a threshold
+ */
+export const putV1OrgsByOrgSlugBillingAutoReload = <ThrowOnError extends boolean = false>(
+  options: Options<PutV1OrgsByOrgSlugBillingAutoReloadData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugBillingAutoReloadResponses,
+  PutV1OrgsByOrgSlugBillingAutoReloadErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugBillingAutoReloadResponses,
+    PutV1OrgsByOrgSlugBillingAutoReloadErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/billing/auto-reload",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists the store categories
+ */
+export const getV1StoreCategories = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1StoreCategoriesData, ThrowOnError>,
+): RequestResult<GetV1StoreCategoriesResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1StoreCategoriesResponses, unknown, ThrowOnError>({
+    url: "/v1/store/categories",
+    ...options,
+  })
+
+/**
+ * Lists the tags in use across published listings
+ */
+export const getV1StoreTags = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1StoreTagsData, ThrowOnError>,
+): RequestResult<GetV1StoreTagsResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1StoreTagsResponses, unknown, ThrowOnError>({
+    url: "/v1/store/tags",
+    ...options,
+  })
+
+/**
+ * The featured rail, ranked by editorial rank and then by stars
+ */
+export const getV1StoreFeatured = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1StoreFeaturedData, ThrowOnError>,
+): RequestResult<GetV1StoreFeaturedResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1StoreFeaturedResponses, unknown, ThrowOnError>({
+    url: "/v1/store/featured",
+    ...options,
+  })
+
+/**
+ * Browses and searches published store listings, newest first
+ */
+export const getV1StoreListings = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1StoreListingsData, ThrowOnError>,
+): RequestResult<GetV1StoreListingsResponses, GetV1StoreListingsErrors, ThrowOnError> =>
+  (options?.client ?? client).get<
+    GetV1StoreListingsResponses,
+    GetV1StoreListingsErrors,
+    ThrowOnError
+  >({ url: "/v1/store/listings", ...options })
+
+/**
+ * Reads one published listing with its tags, screenshots, and README
+ */
+export const getV1StoreListingsBySlug = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1StoreListingsBySlugData, ThrowOnError>,
+): RequestResult<GetV1StoreListingsBySlugResponses, GetV1StoreListingsBySlugErrors, ThrowOnError> =>
+  (options.client ?? client).get<
+    GetV1StoreListingsBySlugResponses,
+    GetV1StoreListingsBySlugErrors,
+    ThrowOnError
+  >({ url: "/v1/store/listings/{slug}", ...options })
+
+/**
+ * Records a view or an outbound click on a listing
+ */
+export const postV1StoreListingsBySlugEvents = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1StoreListingsBySlugEventsData, ThrowOnError>,
+): RequestResult<
+  PostV1StoreListingsBySlugEventsResponses,
+  PostV1StoreListingsBySlugEventsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1StoreListingsBySlugEventsResponses,
+    PostV1StoreListingsBySlugEventsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/store/listings/{slug}/events",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists listings in any status, including unpublished submissions
+ */
+export const getV1OrgsByOrgSlugStoreListings = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugStoreListingsResponses,
+  GetV1OrgsByOrgSlugStoreListingsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugStoreListingsResponses,
+    GetV1OrgsByOrgSlugStoreListingsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/store/listings", ...options })
+
+/**
+ * Publishes a listing, making it visible to unauthenticated visitors
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdPublish = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish", ...options })
+
+/**
+ * Takes a listing out of the public catalogue
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/unpublish",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * The caller's UI preferences and the organization to land them in
+ */
+export const getV1UserMePreferences = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1UserMePreferencesData, ThrowOnError>,
+): RequestResult<GetV1UserMePreferencesResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1UserMePreferencesResponses, unknown, ThrowOnError>({
+    url: "/v1/user/me/preferences",
+    ...options,
   })
 
 export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(

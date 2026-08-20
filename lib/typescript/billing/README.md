@@ -115,3 +115,27 @@ import { post, spend } from "@lib/billing" // server only
 
 `money.ts` has no imports at all, by design. It is the only part of this package a browser has any
 business loading, and keeping it dependency-free is what makes the subpath safe.
+
+## Holds
+
+`placeHold` / `settleHold` / `releaseHold` / `expireHolds`, for work whose cost is only known when
+it finishes — a metered agent run is the case they exist for.
+
+`availableBalance` already subtracted active holds; what was missing was anything that took one.
+`balances()` now returns `posted`, `held`, and `available` from a single read, because the balance
+endpoint previously called `availableBalance` twice and reported held as zero forever.
+
+A hold ends in exactly one of three states:
+
+- **settled** — the work happened and cost something. The reservation is released and the real
+  amount is posted in the same transaction, so a balance is never briefly both reserved and
+  charged.
+- **released** — it did not happen, or cost nothing. A run that settles for zero releases rather
+  than posting an all-zero transaction, which would be a row that says nothing.
+- **expired** — nobody closed it. `expireHolds` frees the balance and **does not charge**: a hold
+  whose runner vanished has no known cost, and inventing one would bill for work we cannot
+  describe. If the work did happen, the loss is ours — which is the right incentive for keeping
+  runners honest about settling.
+
+An overrun settles in full. The reservation guards against starting work that obviously cannot be
+paid for; it is not a ceiling on a provider's bill.
