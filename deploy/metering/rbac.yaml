@@ -1,0 +1,28 @@
+# The agent's identity, and deliberately almost nothing attached to it.
+#
+# It reads cgroups from the host filesystem and pod ownership from the kubelet's socket, so it needs
+# no Kubernetes API permissions at all — no `list pods`, no watch, nothing. That is the point of
+# reading the socket rather than the API server: the agent runs on every node, and a credential that
+# can list pods cluster-wide, replicated to every node including tenant metal, is a credential worth
+# stealing.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metering-agent
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: metering-agent
+    app.kubernetes.io/part-of: sproutos
+# Deliberately no Role, no ClusterRole, no bindings. If a future version needs the API, the diff
+# that adds them is the diff worth reviewing carefully.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+    # Platform namespace: enforce the restricted Pod Security Standard. The agent already complies;
+    # this stops a future change quietly loosening it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
