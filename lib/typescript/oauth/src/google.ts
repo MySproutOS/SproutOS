@@ -1,4 +1,3 @@
-import { generateUrlSafeToken } from "@utils/crypto"
 import { OAuth2Client } from "./client"
 import { OAuth2ResponseError } from "./errors"
 import { decodeJwtPayload } from "./jwt"
@@ -14,15 +13,6 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
 ] as const
-
-/** A random, unguessable value tying the callback to the authorization request it came from.
- *  Store it in a short-lived httpOnly cookie and compare on the way back — that is what stops
- *  an attacker from feeding you a code they obtained. */
-export const generateState = (): string => generateUrlSafeToken(32)
-
-/** A random PKCE verifier. RFC 7636 requires 43–128 unreserved characters; 32 bytes of
- *  base64url is 43. */
-export const generateCodeVerifier = (): string => generateUrlSafeToken(32)
 
 /** Build the Google client from the environment.
  *

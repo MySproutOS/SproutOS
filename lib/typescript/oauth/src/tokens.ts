@@ -23,6 +23,18 @@ function optionalString(data: Record<string, unknown>, key: string): string | nu
   return typeof value === "string" ? value : null
 }
 
+/** Split a `scope` value into individual scopes.
+ *
+ *  RFC 6749 §3.3 delimits scopes with spaces, but GitHub delimits with commas — a space-only
+ *  split turns "repo,read:user" into a single bogus scope, and step-up re-authentication then
+ *  believes it was granted nothing it recognises. Splitting on either is correct for every
+ *  provider we use. A scope token may technically contain a comma under §3.3's grammar; none in
+ *  the wild does, and breaking GitHub to preserve that is the wrong trade. */
+function parseScopes(scope: string | null): string[] {
+  if (scope === null) return []
+  return scope.split(/[\s,]+/).filter((s) => s !== "")
+}
+
 /** Parse a token endpoint's 200 response body. */
 export function parseTokenResponse(data: Record<string, unknown>): OAuth2Tokens {
   const accessToken = optionalString(data, "access_token")
@@ -40,7 +52,7 @@ export function parseTokenResponse(data: Record<string, unknown>): OAuth2Tokens 
     tokenType: optionalString(data, "token_type") ?? "bearer",
     idToken: optionalString(data, "id_token"),
     refreshToken: optionalString(data, "refresh_token"),
-    scopes: scope === null ? [] : scope.split(" ").filter((s) => s !== ""),
+    scopes: parseScopes(scope),
     accessTokenExpiresInSeconds: typeof expiresIn === "number" ? expiresIn : null,
   }
 }
