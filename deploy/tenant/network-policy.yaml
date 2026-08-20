@@ -27,6 +27,35 @@ spec:
 #
 # Not "anything in the cluster". Without this, one tenant's pod could dial another tenant's service
 # directly by cluster IP, and the VM boundary would not notice — the packet never leaves the network.
+#
+# This used to name `app.kubernetes.io/name: gateway` in `sproutos-system`, which does not exist and
+# never has. With `default-deny` in force and nothing matching that selector, **no tenant
+# application could receive a request at all**.
+#
+# Which of Knative's components actually needs naming was settled by measurement, on a cluster with
+# a CNI that enforces NetworkPolicy, because the answer is not the obvious one:
+#
+#   | ingress rule            | tenant app reachable |
+#   | ----------------------- | -------------------- |
+#   | no rule                 | no                   |
+#   | gateway (Kourier) only  | **no**               |
+#   | activator only          | yes                  |
+#   | both                    | yes                  |
+#
+# The **activator** is what connects to the revision, not the gateway. Knative's default
+# `target-burst-capacity` of 200 keeps the activator in the data path rather than letting the
+# gateway route straight through, so on a default install it is the activator's identity that has to
+# be allowed. Naming only the gateway — the intuitive rule, and the one that reads correctly —
+# produces a tenant application that cannot be reached.
+#
+# Both are named because the activator steps *out* of the path once a revision has capacity beyond
+# the burst target, at which point the gateway connects directly. Under load the traffic changes
+# which pod it comes from; a rule that covers only the state you happened to test is a rule that
+# fails when the platform is busy.
+#
+# The first attempt at this fix asserted the reverse — that the gateway was the verified-necessary
+# clause and the activator was unproven reasoning. That was written from a run on a `kind` cluster
+# whose default CNI silently ignores NetworkPolicy entirely, where every configuration "passes".
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -42,10 +71,16 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: sproutos-system
+              kubernetes.io/metadata.name: kourier-system
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: gateway
+              app: 3scale-kourier-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: knative-serving
+          podSelector:
+            matchLabels:
+              app: activator
 ---
 # Egress: DNS, the tenant's own backing services, and the internet — but never the cluster's insides.
 apiVersion: networking.k8s.io/v1

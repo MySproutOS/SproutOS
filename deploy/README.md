@@ -142,10 +142,8 @@ today both classes reference a handler no node provides and every pod using them
 
 ## Not here
 
-- **The gateway** the tenant ingress policy names. The policy allows traffic from
-  `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
-  applied today, that rule admits nothing. It is a real inconsistency, left visible rather than
-  papered over with a placeholder Deployment that would look like an answer.
+- ~~**The gateway** the tenant ingress policy names.~~ Fixed — the policy now names Knative's actual
+  data path, and which component that is turned out not to be the obvious one. See below.
 - **The External Secrets operator itself.** `secrets/` declares what it should fetch; nothing
   installs the controller that would act on it, so those resources are currently inert too.
 - **Applying any of it.** `.github/workflows/deploy.yml` builds the images, renders the manifests
@@ -203,3 +201,75 @@ a real Postgres) and `/v1/auth/me`; the website serves `/`, `/store` and `/login
 Also confirmed by the failure of something else: a stock `postgres:18-alpine` was rejected outright
 by the `restricted` standard on `sproutos-system`, which is the evidence that the six SproutOS
 workloads satisfying it are actually satisfying something.
+
+## Tenant traffic
+
+A tenant's application now serves a request, isolated, and this is verified in CI rather than
+asserted.
+
+Getting there needed the ingress policy corrected, and the correction was not the one that reads
+correctly. Measured on a cluster with a CNI that enforces NetworkPolicy:
+
+| ingress rule           | tenant app reachable |
+| ---------------------- | -------------------- |
+| no rule                | no                   |
+| gateway (Kourier) only | **no**               |
+| activator only         | yes                  |
+| both                   | yes                  |
+
+The **activator** is what connects to the revision, not the gateway. Knative's default
+`target-burst-capacity` of 200 keeps the activator in the data path instead of letting the gateway
+route straight through, so on a default install it is the activator's identity that has to be
+allowed. Naming only the gateway — the intuitive rule — produces a tenant application that cannot be
+reached at all. Both are named, because the activator steps out of the path once a revision has
+capacity beyond the burst target.
+
+### The CNI has to enforce the thing you are testing
+
+The first run of this was done on a stock `kind` cluster and produced a confident, wrong answer:
+every configuration passed, including deleting the ingress policy outright. `kindnet` accepts
+NetworkPolicy objects and does not enforce them.
+
+So the CI cluster now disables the default CNI and installs Calico, and the test asserts both
+directions:
+
+- through the gateway, the app **must** answer; and
+- straight at the pod's IP from another namespace, it **must not**.
+
+The negative half is the one that keeps the positive half honest. Without it the whole test passes
+just as happily on a cluster that ignores NetworkPolicy entirely — which is precisely the false
+negative that let an ingress rule naming a nonexistent pod survive review.
+
+## `knative/`
+
+`config-network.yaml`, applied after Knative Serving is installed, and both settings in it exist
+because the defaults are wrong for this platform.
+
+**The domain template.** Knative's default is `{{.Name}}.{{.Namespace}}.{{.Domain}}`, which produced
+`myapp.tenant-abc123.sprout.run` — two labels in front of the apex. ADR 0018 is explicit that an ACM
+wildcard covers exactly one; that is the entire reason preview hosts use `pr-42--myapp` rather than
+`pr-42.myapp`. The default violates the same constraint for **every** tenant site, so
+`*.sprout.run` would fail TLS for every production deployment on the platform.
+
+Nothing caught it because nobody had run Knative and read the URL it hands back. The Service reports
+`Ready: True` and publishes a `status.url` that cannot be certificated. CI now asserts the shape of
+that URL directly.
+
+**The tag template.** Knative's default is `{{.Tag}}-{{.Name}}`, a single dash. ADR 0018 requires
+`pr-42--myapp`, and the double dash is load-bearing: a project slug may contain single dashes
+(`my-app`), so `pr-42-my-app` is ambiguous about where the tag ends.
+
+### `knative/config-features.yaml`
+
+Knative **rejects `spec.template.spec.runtimeClassName`** unless
+`kubernetes.podspec-runtimeclassname` is enabled. Its webhook answers `must not set the field(s):
+spec.template.spec.runtimeClassName` and the Service is never created.
+
+That flag is off by default, and nothing here turned it on — because nothing here had ever created a
+Knative Service. With it off, the only way to deploy a tenant is to omit `runtimeClassName`, which
+silently puts customer code on the shared host kernel with the NetworkPolicies as the only remaining
+boundary. ADR 0012's entire hypervisor story depends on this one line.
+
+Set to `enabled` rather than `allowed`: `allowed` permits a Service that omits the field, and a
+tenant deployment quietly running without a hypervisor is precisely the outcome worth making
+impossible.
