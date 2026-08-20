@@ -19,6 +19,30 @@ export async function databaseReachable(): Promise<boolean> {
   }
 }
 
+/**
+ * Whether the LocalStack KMS behind `@lib/envelope` is up.
+ *
+ * Separate from `databaseReachable` because CI has Postgres but not LocalStack: the image is
+ * token-gated, so running it in Actions needs `LOCALSTACK_AUTH_TOKEN` as a repository secret and
+ * a licensing decision that is not a test's to make. Suites that seal or open a secret skip
+ * without it; everything else still runs.
+ */
+export async function kmsReachable(): Promise<boolean> {
+  // The routes call seal() with no explicit config, so the key has to come from the environment.
+  // A machine running LocalStack without KMS_KEY_ID should skip, not fail with MissingKeyError.
+  if ((process.env.KMS_KEY_ID ?? "") === "") return false
+
+  const endpoint = process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566"
+  try {
+    const response = await fetch(`${endpoint}/_localstack/health`, {
+      signal: AbortSignal.timeout(1500),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 export type TestUser = {
   id: string
   email: string

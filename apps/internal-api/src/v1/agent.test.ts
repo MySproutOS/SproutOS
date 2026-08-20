@@ -8,11 +8,14 @@ import {
   cleanupFixtures,
   createTestUser,
   databaseReachable,
+  kmsReachable,
   type TestUser,
   trackOrganization,
 } from "../test/fixtures"
 
 const reachable = await databaseReachable()
+// Storing a credential seals it through KMS, so those tests need LocalStack as well as Postgres.
+const kms = await kmsReachable()
 
 afterAll(async () => {
   if (reachable) await cleanupFixtures()
@@ -40,7 +43,7 @@ async function call(
  * of this suite, and a faked KMS would not exercise the encryption context that keeps one
  * organization's ciphertext from opening in another's row.
  */
-describe.skipIf(!reachable)("agent credentials", () => {
+describe.skipIf(!reachable || !kms)("agent credentials", () => {
   const SECRET = "sk-test-abcdefghijklmnop-9999"
 
   async function orgFor(user: TestUser, name: string): Promise<string> {
@@ -160,7 +163,7 @@ describe.skipIf(!reachable)("who pays for a run", () => {
   })
 
   it("prefers the customer's own credential over their credits", async ({ skip }) => {
-    if (!reachable) skip()
+    if (!reachable || !kms) skip()
     const { user, slug, organizationId } = await setup("both")
 
     const created = await call("POST", `/v1/orgs/${slug}/agent/credentials`, user, {
@@ -183,7 +186,7 @@ describe.skipIf(!reachable)("who pays for a run", () => {
   it("stops rather than falling through to credits when a credential is revoked", async ({
     skip,
   }) => {
-    if (!reachable) skip()
+    if (!reachable || !kms) skip()
     const { user, slug, organizationId } = await setup("revoked")
 
     const created = await call("POST", `/v1/orgs/${slug}/agent/credentials`, user, {
