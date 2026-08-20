@@ -48,8 +48,14 @@ before it evicts the thing that bills for them.
 
 ## `platform/`
 
-Deployments and identities for the platform's own workloads. `pg-proxy` is here in full; the other
-two proxies have identities and no Deployment yet, which is stated rather than papered over.
+Deployments and identities for the platform's own workloads. All three data-plane proxies are here;
+the website, API and worker are not.
+
+The three proxies are separate Deployments rather than one because they scale on different signals —
+queue traffic is bursty per job, search traffic is per request — and because a bad deploy of one
+should not take the other's tenants offline. `search-proxy` gets a larger memory limit than the other
+two: it buffers request and response bodies to rewrite index names, so its working set follows the
+size of a tenant's bulk uploads.
 
 Every ServiceAccount has **no Role and no ClusterRole**. These talk to Postgres, Valkey and
 OpenSearch, not to the Kubernetes API, so a binding would be a permission nobody uses and everybody
@@ -86,11 +92,14 @@ substitutes it.
 
 ## Not here
 
-- **Deployments for the website, API, worker, `valkey-proxy` and `search-proxy`.** Only `pg-proxy`
-  has one. The other two have ServiceAccounts and nothing to run under them.
+- **Deployments for the website, API and worker.**
 - **The gateway** the tenant ingress policy names. The policy allows traffic from
   `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
-  applied today, that rule admits nothing.
+  applied today, that rule admits nothing. It is a real inconsistency, left visible rather than
+  papered over with a placeholder Deployment that would look like an answer.
+- **The ConfigMaps and Secrets every Deployment here reads** — `control-plane-database`,
+  `tenant-postgres`, `tenant-valkey`, `tenant-opensearch`, `metering-ingest`. Nothing creates them;
+  External Secrets is the intended source and does not exist.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
 - **`kata-deploy`, the runtime classes and devmapper thin pools.** Phase 11. The tenant node group
