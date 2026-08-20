@@ -27,6 +27,9 @@ import type {
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
   DeleteV1OrgsByOrgSlugRolesByRoleIdResponses,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdData,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdErrors,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdResponses,
   DeleteV1UserMeDeleteData,
   DeleteV1UserMeDeleteErrors,
   DeleteV1UserMeDeleteResponses,
@@ -89,6 +92,9 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesErrors,
   GetV1OrgsByOrgSlugRolesResponses,
+  GetV1OrgsByOrgSlugServicesData,
+  GetV1OrgsByOrgSlugServicesErrors,
+  GetV1OrgsByOrgSlugServicesResponses,
   GetV1OrgsByOrgSlugStoreListingsData,
   GetV1OrgsByOrgSlugStoreListingsErrors,
   GetV1OrgsByOrgSlugStoreListingsResponses,
@@ -151,6 +157,15 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesErrors,
   PostV1OrgsByOrgSlugRolesResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionData,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses,
+  PostV1OrgsByOrgSlugServicesData,
+  PostV1OrgsByOrgSlugServicesErrors,
+  PostV1OrgsByOrgSlugServicesResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
@@ -981,6 +996,95 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
       ...options.headers,
     },
   })
+
+/**
+ * Lists the organization's backend services. Never includes a connection URI
+ */
+export const getV1OrgsByOrgSlugServices = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugServicesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugServicesResponses,
+  GetV1OrgsByOrgSlugServicesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugServicesResponses,
+    GetV1OrgsByOrgSlugServicesErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/services", ...options })
+
+/**
+ * Provisions a backend service and returns its connection URI, once
+ */
+export const postV1OrgsByOrgSlugServices = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugServicesData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugServicesResponses,
+  PostV1OrgsByOrgSlugServicesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugServicesResponses,
+    PostV1OrgsByOrgSlugServicesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/services",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Reveals the connection URI. Audited, because a credential leaves the system
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdConnection = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
+    PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection", ...options })
+
+/**
+ * Issues a new password and invalidates the old URI
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdRotate = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugServicesByServiceIdRotateData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses,
+    PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}/rotate", ...options })
+
+/**
+ * Destroys a backend service and everything in it
+ */
+export const deleteV1OrgsByOrgSlugServicesByServiceId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugServicesByServiceIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugServicesByServiceIdResponses,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdResponses,
+    DeleteV1OrgsByOrgSlugServicesByServiceIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}", ...options })
 
 /**
  * Reads the organization's spendable credit balance

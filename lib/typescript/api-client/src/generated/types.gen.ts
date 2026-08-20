@@ -2089,6 +2089,198 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses = {
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses]
 
+export type GetV1OrgsByOrgSlugServicesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services"
+}
+
+export type GetV1OrgsByOrgSlugServicesErrors = {
+  /**
+   * Caller lacks database:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugServicesError =
+  GetV1OrgsByOrgSlugServicesErrors[keyof GetV1OrgsByOrgSlugServicesErrors]
+
+export type GetV1OrgsByOrgSlugServicesResponses = {
+  /**
+   * Services
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      kind: "postgres" | "valkey" | "elasticsearch"
+      status: string
+      projectId: string | null
+      host: string | null
+      port: number | null
+      database: string | null
+      username: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugServicesResponse =
+  GetV1OrgsByOrgSlugServicesResponses[keyof GetV1OrgsByOrgSlugServicesResponses]
+
+export type PostV1OrgsByOrgSlugServicesData = {
+  body?: {
+    name: string
+    kind: "postgres" | "valkey" | "elasticsearch"
+    projectId?: string | null
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services"
+}
+
+export type PostV1OrgsByOrgSlugServicesErrors = {
+  /**
+   * Unsupported kind, or the project is not this organization's
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks database:create
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesError =
+  PostV1OrgsByOrgSlugServicesErrors[keyof PostV1OrgsByOrgSlugServicesErrors]
+
+export type PostV1OrgsByOrgSlugServicesResponses = {
+  /**
+   * Provisioned
+   */
+  201: {
+    id: string
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesResponse =
+  PostV1OrgsByOrgSlugServicesResponses[keyof PostV1OrgsByOrgSlugServicesResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors = {
+  /**
+   * Caller lacks database:connect
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionError =
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
+  /**
+   * Connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdRotateData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/rotate"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors = {
+  /**
+   * Caller lacks database:admin
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdRotateError =
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses = {
+  /**
+   * New connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}"
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdErrors = {
+  /**
+   * Caller lacks database:delete
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdError =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdErrors[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdErrors]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponses = {
+  /**
+   * Destroyed
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponse =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdResponses]
+
 export type GetV1OrgsByOrgSlugBillingBalanceData = {
   body?: never
   path: {

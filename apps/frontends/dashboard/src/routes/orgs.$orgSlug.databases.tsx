@@ -1,46 +1,80 @@
-import { formatMicroUsd } from "@lib/billing/money"
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
+import {
+  CheckIcon,
+  CopyIcon,
+  DatabaseIcon,
+  EyeIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react"
+import { useState } from "react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
-import { Money } from "@ui/base/ui/money"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@ui/base/ui/dialog"
 import {
   EmptyState,
-  EmptyStateActions,
   EmptyStateDescription,
   EmptyStateIcon,
   EmptyStateTitle,
 } from "@ui/base/ui/empty-state"
+import { Input } from "@ui/base/ui/input"
+import { Label } from "@ui/base/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/base/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
-  DATABASE_STATUS_LABELS,
-  ENGINE_LABELS,
-  useDatabases,
-  type DatabaseStatus,
+  type BackendService,
+  KIND_AVAILABLE,
+  KIND_LABELS,
+  SERVICE_KINDS,
+  type ServiceKind,
+  useBackendServices,
+  useCreateBackendService,
+  useDeleteBackendService,
+  useRevealConnection,
+  useRotateConnection,
 } from "@frontends/dashboard/data/databases"
 
 export const Route = createFileRoute("/orgs/$orgSlug/databases")({
   component: DatabasesList,
 })
 
-const STATUS_VARIANTS: Record<DatabaseStatus, "success" | "warning" | "outline"> = {
-  ready: "success",
+const STATUS_VARIANTS: Record<string, "success" | "warning" | "outline" | "destructive"> = {
+  active: "success",
   provisioning: "warning",
-  sleeping: "outline",
+  suspended: "outline",
+  deleting: "outline",
+  error: "destructive",
 }
 
 function DatabasesList() {
   const { orgSlug } = Route.useParams()
-  const { data, isPending, isError, refetch } = useDatabases(orgSlug)
+  const { data, isPending, isError, refetch } = useBackendServices(orgSlug)
 
   return (
     <>
-      <PageHeader title="Databases" count={data?.length} />
+      <PageHeader title="Databases" count={data?.length}>
+        <CreateDialog orgSlug={orgSlug} />
+      </PageHeader>
 
       <PageBody>
-        {isPending && <ListSkeleton rows={3} />}
+        <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
+          A database can stand on its own or belong to a project. Connection details are shown here;
+          the password is not — revealing it is a separate action and is recorded in the audit log.
+        </p>
 
+        {isPending && <ListSkeleton rows={3} />}
         {isError && (
           <ListError
             title="Could not load databases"
@@ -51,15 +85,15 @@ function DatabasesList() {
         )}
 
         {data !== undefined && data.length === 0 && (
-          <EmptyState className="my-6">
-            <EmptyStateIcon />
-            <EmptyStateTitle>Nothing here yet</EmptyStateTitle>
+          <EmptyState>
+            <EmptyStateIcon>
+              <DatabaseIcon />
+            </EmptyStateIcon>
+            <EmptyStateTitle>No databases yet</EmptyStateTitle>
             <EmptyStateDescription>
-              A database is provisioned when a project declares one.
+              Spin one up and you get a connection URI straight away. Nothing else has to exist
+              first.
             </EmptyStateDescription>
-            <EmptyStateActions>
-              <Button render={<Link to="/store" />}>Go to store</Button>
-            </EmptyStateActions>
           </EmptyState>
         )}
 
@@ -69,36 +103,35 @@ function DatabasesList() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead className="w-28">Engine</TableHead>
-                <TableHead className="hidden sm:table-cell">Project</TableHead>
                 <TableHead className="w-28">Status</TableHead>
-                <TableHead className="hidden w-24 lg:table-cell">Size</TableHead>
-                <TableHead className="hidden w-28 lg:table-cell">Region</TableHead>
-                <TableHead className="w-24 text-right">Cost</TableHead>
+                <TableHead className="hidden lg:table-cell">Host</TableHead>
+                <TableHead className="w-44" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((database) => (
-                <TableRow key={database.id}>
-                  <TableCell numeric className="text-foreground">
-                    {database.name}
-                  </TableCell>
-                  <TableCell>{ENGINE_LABELS[database.engine]}</TableCell>
-                  <TableCell className="hidden text-muted-foreground sm:table-cell">
-                    {database.project}
+              {data.map((service) => (
+                <TableRow key={service.id}>
+                  <TableCell>
+                    <span className="font-medium">{service.name}</span>
+                    {service.database !== null && (
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        {service.database}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANTS[database.status]}>
-                      {DATABASE_STATUS_LABELS[database.status]}
+                    <Badge variant="muted">{KIND_LABELS[service.kind]}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={STATUS_VARIANTS[service.status] ?? "outline"}>
+                      {service.status}
                     </Badge>
                   </TableCell>
-                  <TableCell numeric className="hidden lg:table-cell">
-                    {database.size}
+                  <TableCell className="hidden font-mono text-[12px] text-muted-foreground lg:table-cell">
+                    {service.host === null ? "—" : `${service.host}:${String(service.port)}`}
                   </TableCell>
-                  <TableCell numeric className="hidden lg:table-cell">
-                    {database.region}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Money size="sm">{formatMicroUsd(database.costMicros)}</Money>
+                  <TableCell>
+                    <RowActions orgSlug={orgSlug} service={service} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -106,6 +139,340 @@ function DatabasesList() {
           </Table>
         )}
       </PageBody>
+    </>
+  )
+}
+
+function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
+  const { reveal, isPending: revealing } = useRevealConnection(orgSlug)
+  const [uri, setUri] = useState<string | null>(null)
+
+  return (
+    <span className="flex items-center justify-end gap-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={revealing || service.status !== "active"}
+        onClick={() => {
+          reveal(service.id)
+            .then(setUri)
+            .catch(() => {
+              setUri(null)
+            })
+        }}
+      >
+        <EyeIcon />
+        <span className="sr-only">Reveal the connection URI for {service.name}</span>
+      </Button>
+
+      <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
+      <DeleteButton orgSlug={orgSlug} service={service} />
+
+      {uri !== null && (
+        <ConnectionDialog
+          uri={uri}
+          name={service.name}
+          onClose={() => {
+            setUri(null)
+          }}
+        />
+      )}
+    </span>
+  )
+}
+
+function RotateButton({
+  orgSlug,
+  service,
+  onRotated,
+}: {
+  orgSlug: string
+  service: BackendService
+  onRotated: (uri: string) => void
+}) {
+  const { rotate, isPending } = useRotateConnection(orgSlug)
+
+  return (
+    <Dialog>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm" disabled={service.status !== "active"}>
+            <RefreshCwIcon />
+            <span className="sr-only">Rotate the password for {service.name}</span>
+          </Button>
+        }
+      />
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rotate the password for {service.name}?</DialogTitle>
+          <DialogDescription>
+            The current connection URI stops working immediately. Anything still using it — a
+            deployed app, a local script — will fail until you give it the new one.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <DialogClose
+            render={
+              <Button
+                disabled={isPending}
+                onClick={() => {
+                  rotate(service.id)
+                    .then(onRotated)
+                    .catch(() => undefined)
+                }}
+              >
+                Rotate
+              </Button>
+            }
+          />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeleteButton({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
+  const { deleteService, isPending } = useDeleteBackendService(orgSlug)
+  const [typed, setTyped] = useState("")
+
+  return (
+    <Dialog
+      onOpenChange={(open) => {
+        if (!open) setTyped("")
+      }}
+    >
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm">
+            <Trash2Icon />
+            <span className="sr-only">Delete {service.name}</span>
+          </Button>
+        }
+      />
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete {service.name}?</DialogTitle>
+          <DialogDescription>
+            The database and everything in it is destroyed. There is no undo and no backup to
+            restore from.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-1.5">
+          {/* Typing the name is friction on purpose: every other destructive action here is
+              recoverable, and this one deletes a customer's data outright. */}
+          <Label htmlFor={`confirm-${service.id}`}>
+            Type <span className="font-mono">{service.name}</span> to confirm
+          </Label>
+          <Input
+            id={`confirm-${service.id}`}
+            value={typed}
+            onChange={(event) => {
+              setTyped(event.target.value)
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <DialogClose
+            render={
+              <Button
+                variant="destructive"
+                disabled={isPending || typed !== service.name}
+                onClick={() => {
+                  void deleteService(service.id)
+                }}
+              >
+                Delete
+              </Button>
+            }
+          />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** The only place a URI is ever on screen. Copy it or lose it. */
+function ConnectionDialog({
+  uri,
+  name,
+  onClose,
+}: {
+  uri: string
+  name: string
+  onClose: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Connection URI for {name}</DialogTitle>
+          <DialogDescription>
+            This contains the password. It is not shown in the list, and reading it again is
+            recorded in the audit log.
+          </DialogDescription>
+        </DialogHeader>
+        <code className="block max-h-32 overflow-y-auto rounded-lg border border-border bg-soil-800 p-3 font-mono text-[12px] break-all">
+          {uri}
+        </code>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              navigator.clipboard
+                .writeText(uri)
+                .then(() => {
+                  setCopied(true)
+                })
+                .catch(() => undefined)
+            }}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+          <DialogClose render={<Button>Done</Button>} />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function CreateDialog({ orgSlug }: { orgSlug: string }) {
+  const { createService, isPending } = useCreateBackendService(orgSlug)
+  const [name, setName] = useState("")
+  const [kind, setKind] = useState<ServiceKind>("postgres")
+  const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const [uri, setUri] = useState<string | null>(null)
+  const [createdName, setCreatedName] = useState("")
+
+  const submit = () => {
+    if (name.trim() === "") {
+      setError("A name is required")
+      return
+    }
+    setError(null)
+    createService({ name: name.trim(), kind })
+      .then((connectionUri) => {
+        // Captured before the field is cleared: the URI dialog names the database, and resetting
+        // first made it say "your new database" for something the person had just named.
+        setCreatedName(name.trim())
+        setName("")
+        setOpen(false)
+        // Shown once, immediately. Nothing stores it, and reading it again costs an audited
+        // request — so losing this dialog means asking for it back on the record.
+        setUri(connectionUri)
+      })
+      .catch(() => {
+        setError(
+          KIND_AVAILABLE[kind]
+            ? "Could not create that database"
+            : `${KIND_LABELS[kind]} is not available yet`,
+        )
+      })
+  }
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) setError(null)
+        }}
+      >
+        <DialogTrigger
+          render={
+            <Button size="sm">
+              <PlusIcon />
+              New database
+            </Button>
+          }
+        />
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New database</DialogTitle>
+            <DialogDescription>
+              You get a connection URI as soon as it is ready. It does not have to belong to a
+              project.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="service-name">Name</Label>
+              <Input
+                id="service-name"
+                placeholder="production"
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value)
+                }}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Engine</Label>
+              <Select
+                items={SERVICE_KINDS.map((option) => ({
+                  label: KIND_LABELS[option],
+                  value: option,
+                }))}
+                value={kind}
+                onValueChange={(next) => {
+                  setKind(next ?? "postgres")
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SERVICE_KINDS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {KIND_LABELS[option]}
+                      {!KIND_AVAILABLE[option] && (
+                        <span className="ml-1.5 text-muted-foreground">— coming soon</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!KIND_AVAILABLE[kind] && (
+                <p className="text-xs text-muted-foreground">
+                  {KIND_LABELS[kind]} is not available yet. Postgres is.
+                </p>
+              )}
+            </div>
+
+            {error !== null && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline">Cancel</Button>} />
+            <Button disabled={isPending || !KIND_AVAILABLE[kind]} onClick={submit}>
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {uri !== null && (
+        <ConnectionDialog
+          uri={uri}
+          name={createdName}
+          onClose={() => {
+            setUri(null)
+          }}
+        />
+      )}
     </>
   )
 }

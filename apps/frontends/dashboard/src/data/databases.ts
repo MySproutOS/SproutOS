@@ -1,65 +1,136 @@
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  deleteV1OrgsByOrgSlugServicesByServiceIdMutation,
+  getV1OrgsByOrgSlugServicesOptions,
+  getV1OrgsByOrgSlugServicesQueryKey,
+  postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation,
+  postV1OrgsByOrgSlugServicesByServiceIdRotateMutation,
+  postV1OrgsByOrgSlugServicesMutation,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
 
-export type DatabaseEngine = "postgres" | "valkey" | "opensearch"
+/** The kinds the API accepts. Only `postgres` is implemented; the others say so when chosen. */
+export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch"] as const
 
-export type DatabaseStatus = "ready" | "sleeping" | "provisioning"
+export type ServiceKind = (typeof SERVICE_KINDS)[number]
 
-export type ManagedDatabase = {
-  id: string
-  name: string
-  engine: DatabaseEngine
-  status: DatabaseStatus
-  project: string
-  size: string
-  region: string
-  costMicros: bigint
-}
-
-export const ENGINE_LABELS: Record<DatabaseEngine, string> = {
+export const KIND_LABELS: Record<ServiceKind, string> = {
   postgres: "Postgres",
   valkey: "Valkey",
-  opensearch: "OpenSearch",
+  elasticsearch: "Elasticsearch",
 }
 
-export const DATABASE_STATUS_LABELS: Record<DatabaseStatus, string> = {
-  ready: "Ready",
-  sleeping: "Sleeping",
-  provisioning: "Provisioning",
+export const KIND_AVAILABLE: Record<ServiceKind, boolean> = {
+  postgres: true,
+  valkey: false,
+  elasticsearch: false,
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugDatabaseOptions(...)`. */
-export function useDatabases(orgSlug: string) {
-  const databases: ManagedDatabase[] = [
-    {
-      id: "db_01j8recipes",
-      name: "recipes",
-      engine: "postgres",
-      status: "ready",
-      project: "Recipe Box",
-      size: "412 MB",
-      region: "us-east-1",
-      costMicros: 110_000n,
+export type BackendService = {
+  id: string
+  name: string
+  kind: ServiceKind
+  status: string
+  projectId: string | null
+  /** Everything about the connection except the secret. */
+  host: string | null
+  port: number | null
+  database: string | null
+  username: string | null
+  createdLabel: string
+}
+
+const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+})
+
+export function useBackendServices(orgSlug: string) {
+  const query = useQuery(getV1OrgsByOrgSlugServicesOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((service): BackendService => ({
+      id: service.id,
+      name: service.name,
+      kind: service.kind,
+      status: service.status,
+      projectId: service.projectId,
+      host: service.host,
+      port: service.port,
+      database: service.database,
+      username: service.username,
+      // The generated type says Date; without transformers.gen.ts it is an ISO string.
+      createdLabel: CREATED_FORMAT.format(new Date(service.createdAt)),
+    })),
+  }
+}
+
+function useServiceInvalidation(orgSlug: string) {
+  const client = useQueryClient()
+  return () =>
+    client.invalidateQueries({
+      queryKey: getV1OrgsByOrgSlugServicesQueryKey({ path: { orgSlug } }),
+    })
+}
+
+/**
+ * Creating returns the connection URI **once**.
+ *
+ * It is not stored anywhere the UI can read it again — revealing costs a separate audited request —
+ * so the caller has to show it to the person now or lose it.
+ */
+export function useCreateBackendService(orgSlug: string) {
+  const invalidate = useServiceInvalidation(orgSlug)
+  const mutation = useMutation(postV1OrgsByOrgSlugServicesMutation())
+
+  return {
+    ...mutation,
+    createService: async (input: { name: string; kind: ServiceKind }): Promise<string> => {
+      const created = await mutation.mutateAsync({ path: { orgSlug }, body: input })
+      await invalidate()
+      return created.connectionUri
     },
-    {
-      id: "db_01j8messages",
-      name: "messages",
-      engine: "opensearch",
-      status: "ready",
-      project: "Message Search",
-      size: "2.0 GB",
-      region: "us-east-1",
-      costMicros: 470_000n,
+  }
+}
+
+/**
+ * Revealing and rotating are mutations, never queries.
+ *
+ * Both write an `audit_log` row, so a cached read would make the trail claim one look when there
+ * were five. Neither result enters the query cache — the URI lives in the component that asked for
+ * it and goes away when that unmounts.
+ */
+export function useRevealConnection(orgSlug: string) {
+  const mutation = useMutation(postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation())
+  return {
+    ...mutation,
+    reveal: async (serviceId: string): Promise<string> =>
+      (await mutation.mutateAsync({ path: { orgSlug, serviceId } })).connectionUri,
+  }
+}
+
+export function useRotateConnection(orgSlug: string) {
+  const invalidate = useServiceInvalidation(orgSlug)
+  const mutation = useMutation(postV1OrgsByOrgSlugServicesByServiceIdRotateMutation())
+  return {
+    ...mutation,
+    rotate: async (serviceId: string): Promise<string> => {
+      const result = await mutation.mutateAsync({ path: { orgSlug, serviceId } })
+      await invalidate()
+      return result.connectionUri
     },
-    {
-      id: "db_01j8queue",
-      name: "followup-queue",
-      engine: "valkey",
-      status: "sleeping",
-      project: "Client Follow-ups",
-      size: "38 MB",
-      region: "us-east-1",
-      costMicros: 20_000n,
+  }
+}
+
+export function useDeleteBackendService(orgSlug: string) {
+  const invalidate = useServiceInvalidation(orgSlug)
+  const mutation = useMutation(deleteV1OrgsByOrgSlugServicesByServiceIdMutation())
+  return {
+    ...mutation,
+    deleteService: async (serviceId: string) => {
+      await mutation.mutateAsync({ path: { orgSlug, serviceId } })
+      await invalidate()
     },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "databases"], databases)
+  }
 }

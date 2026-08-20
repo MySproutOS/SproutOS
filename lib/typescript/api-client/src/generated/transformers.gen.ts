@@ -16,6 +16,7 @@ import type {
   GetV1OrgsByOrgSlugRepositoriesResponse,
   GetV1OrgsByOrgSlugResponse,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesResponse,
   GetV1OrgsByOrgSlugStoreListingsResponse,
   GetV1OrgsResponse,
   GetV1StoreFeaturedResponse,
@@ -295,6 +296,16 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransfor
 ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse> => {
   data.createdAt = new Date(data.createdAt)
   data.updatedAt = new Date(data.updatedAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugServicesResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugServicesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
   return data
 }
 

@@ -18,6 +18,7 @@ import {
   deleteV1OrgsByOrgSlugProjectsByProjectId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugRolesByRoleId,
+  deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
   getV1AuthMe,
   getV1Orgs,
@@ -40,6 +41,7 @@ import {
   getV1OrgsByOrgSlugRepositories,
   getV1OrgsByOrgSlugRoles,
   getV1OrgsByOrgSlugRolesActions,
+  getV1OrgsByOrgSlugServices,
   getV1OrgsByOrgSlugStoreListings,
   getV1StoreCategories,
   getV1StoreFeatured,
@@ -63,6 +65,9 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
   postV1OrgsByOrgSlugRoles,
+  postV1OrgsByOrgSlugServices,
+  postV1OrgsByOrgSlugServicesByServiceIdConnection,
+  postV1OrgsByOrgSlugServicesByServiceIdRotate,
   postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
   postV1OrgsByOrgSlugTransferOwnership,
@@ -99,6 +104,9 @@ import type {
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdError,
   DeleteV1OrgsByOrgSlugRolesByRoleIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdData,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdError,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdResponse,
   DeleteV1UserMeDeleteData,
   DeleteV1UserMeDeleteError,
   DeleteV1UserMeDeleteResponse,
@@ -161,6 +169,9 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesError,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesData,
+  GetV1OrgsByOrgSlugServicesError,
+  GetV1OrgsByOrgSlugServicesResponse,
   GetV1OrgsByOrgSlugStoreListingsData,
   GetV1OrgsByOrgSlugStoreListingsError,
   GetV1OrgsByOrgSlugStoreListingsResponse,
@@ -223,6 +234,15 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesError,
   PostV1OrgsByOrgSlugRolesResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionData,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesData,
+  PostV1OrgsByOrgSlugServicesError,
+  PostV1OrgsByOrgSlugServicesResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
@@ -1813,6 +1833,142 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugServicesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugServicesData>,
+) => createQueryKey("getV1OrgsByOrgSlugServices", options)
+
+/**
+ * Lists the organization's backend services. Never includes a connection URI
+ */
+export const getV1OrgsByOrgSlugServicesOptions = (
+  options: Options<GetV1OrgsByOrgSlugServicesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugServicesResponse,
+    GetV1OrgsByOrgSlugServicesError,
+    GetV1OrgsByOrgSlugServicesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugServicesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugServices({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugServicesQueryKey(options),
+  })
+
+/**
+ * Provisions a backend service and returns its connection URI, once
+ */
+export const postV1OrgsByOrgSlugServicesMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugServicesData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesResponse,
+  PostV1OrgsByOrgSlugServicesError,
+  Options<PostV1OrgsByOrgSlugServicesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesResponse,
+    PostV1OrgsByOrgSlugServicesError,
+    Options<PostV1OrgsByOrgSlugServicesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServices({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Reveals the connection URI. Audited, because a credential leaves the system
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdConnection({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Issues a new password and invalidates the old URI
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdRotateMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugServicesByServiceIdRotateData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdRotateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdRotateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdRotate({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Destroys a backend service and everything in it
+ */
+export const deleteV1OrgsByOrgSlugServicesByServiceIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugServicesByServiceIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugServicesByServiceIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdError,
+  Options<DeleteV1OrgsByOrgSlugServicesByServiceIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdResponse,
+    DeleteV1OrgsByOrgSlugServicesByServiceIdError,
+    Options<DeleteV1OrgsByOrgSlugServicesByServiceIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugServicesByServiceId({
         ...options,
         ...fnOptions,
         throwOnError: true,
