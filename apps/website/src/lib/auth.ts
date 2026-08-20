@@ -1,4 +1,4 @@
-import { authUser } from "@lib/dao/user/auth"
+import { type AuthSession, authUser } from "@lib/dao/user/auth"
 import { type DB, db } from "@sproutos/db"
 import {
   encodeHexLowerCase,
@@ -36,10 +36,7 @@ async function toSessionKey(token: string): Promise<string> {
   return encodeHexLowerCase(await sha256Utf8(token))
 }
 
-export async function createSession(
-  token: string,
-  userId: string,
-): Promise<Selectable<DB["session"]>> {
+export async function createSession(token: string, userId: string): Promise<AuthSession> {
   const sessionKey = await toSessionKey(token)
   const newSession = {
     sessionKey,
@@ -53,7 +50,7 @@ export async function createSession(
 export type SessionUser = Pick<Selectable<DB["user"]>, "id" | "isAdmin" | "name" | "email">
 
 export type SessionValidationResult = {
-  session: Selectable<DB["session"]>
+  session: AuthSession
   user: SessionUser
 } | null
 

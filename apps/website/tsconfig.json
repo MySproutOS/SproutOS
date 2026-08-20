@@ -27,7 +27,8 @@
       "@ui/base/*": ["../../lib/typescript/ui/base/src/*"],
       "@ui/seo-shared/*": ["../../lib/typescript/ui/seo-shared/src/*"],
       "@lib/api-client/*": ["../../lib/typescript/api-client/src/*"],
-      "@ui/spa-shared/*": ["../../lib/typescript/ui/spa-shared/src/*"]
+      "@ui/spa-shared/*": ["../../lib/typescript/ui/spa-shared/src/*"],
+      "@lib/envelope": ["../../lib/typescript/envelope/src/index.ts"]
     }
   },
   "include": [
