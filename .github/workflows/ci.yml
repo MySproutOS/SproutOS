@@ -423,6 +423,18 @@ jobs:
           kubectl apply -f deploy/knative/config-features.yaml
           kubectl patch configmap/config-domain -n knative-serving --type merge \
             -p '{"data":{"sprout.run":""}}'
+          # A GitHub runner has two cores. Stock Knative, Kourier, Calico and External Secrets
+          # together request more than 2000m, and the Kourier gateway — 200m, and last to be
+          # created — is the one that does not fit. It sat Pending with no node for seven minutes
+          # and the rollout timed out.
+          #
+          # These are requests, not limits: nothing here is under load, and the scheduler only cares
+          # about the reservation. Shrinking them is a concession to the runner's size and touches
+          # no SproutOS manifest — `deploy/` is applied exactly as written.
+          for ns in knative-serving kourier-system external-secrets; do
+            kubectl set resources deploy --all -n "$ns" --requests=cpu=25m,memory=64Mi || true
+          done
+
           # `net-kourier-controller` is in this list and before the gateway on purpose: it is what
           # programs the gateway's bootstrap config, and until it has, the gateway's own readiness
           # probe fails. Waiting on the gateway first produced a five-minute timeout with nothing to
@@ -431,7 +443,10 @@ jobs:
             kubectl -n knative-serving rollout status "deploy/$d" --timeout=300s || {
               echo "FAIL: $d never became available."
               kubectl -n knative-serving get pods -o wide
-              kubectl -n knative-serving describe deploy "$d" | tail -30
+              # The *pod*, not the deployment: a scheduling failure ("Insufficient cpu") only
+              # appears in pod events, and describing the deployment shows neither.
+              kubectl -n knative-serving describe pods -l app="$d" | tail -30
+              kubectl describe node --selector='!node-role.kubernetes.io/master' | grep -A12 'Allocated resources' || true
               exit 1
             }
           done
@@ -441,7 +456,8 @@ jobs:
           kubectl -n kourier-system rollout status deploy/3scale-kourier-gateway --timeout=420s || {
             echo "FAIL: the Kourier gateway never became available."
             kubectl -n kourier-system get pods -o wide
-            kubectl -n kourier-system describe deploy/3scale-kourier-gateway | tail -30
+            kubectl -n kourier-system describe pods -l app=3scale-kourier-gateway | tail -30
+            kubectl describe node --selector='!node-role.kubernetes.io/master' | grep -A12 'Allocated resources' || true
             kubectl -n kourier-system logs -l app=3scale-kourier-gateway --tail=50 --all-containers || true
             kubectl -n knative-serving logs -l app=net-kourier-controller --tail=50 || true
             exit 1
@@ -493,6 +509,18 @@ jobs:
               exit 1
             fi
           done
+
+      # The assertion above has already run against `deploy/` exactly as written — every controller
+      # created every pod it wanted. Those pods cannot start here (their images are ECR references
+      # that will not pull) but they still hold ~3200m of CPU *requests* on a two-core node, which
+      # would leave nothing for the tenant revision to schedule into.
+      #
+      # Scaled to zero rather than shrunk, so the manifests under test are never edited: what was
+      # validated is what is checked in.
+      - name: Free the node for the tenant test
+        run: |
+          kubectl scale deploy --all -n sproutos-system --replicas=0
+          kubectl scale deploy --all -n sproutos-metering --replicas=0 2>/dev/null || true
 
       # Accepted by the CRD *and* by the operator's validating webhook, which is a stronger check
       # than any schema: the webhook is the code that will actually read these in production.
