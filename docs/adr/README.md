@@ -1,12 +1,14 @@
 # Architecture Decision Records
 
-These record the decisions taken in **Phase 0** of the SproutOS build plan, before any code was
-written.
+Records **0001–0019** are the decisions taken in **Phase 0** of the SproutOS build plan, before any
+code was written. Records **0020 and up** were taken later, forced by something that only became
+visible once code ran — two of them amend a Phase 0 record whose reasoning was right and whose
+mechanism did not exist. What made them necessary is catalogued in [`../findings/`](../findings/).
 
 Thirteen research areas designed thirteen subtly incompatible systems: two API locations, two
 tenancy nouns, two metering pipelines, two GitHub identity models, two hypervisor assumptions, three
 apex domains, two component libraries. Each conflict was load-bearing in several areas and cheap to
-settle up front — and a rewrite later. These eighteen records are the settlement. Every later phase
+settle up front — and a rewrite later. Records 0001–0019 are that settlement. Every later phase
 cites them rather than relitigating them.
 
 The raw research is in `private_notes/PLANNING_INITIAL_NOTES.md`. It is a scratchpad, not a
@@ -49,3 +51,14 @@ the table above. A decision that supersedes an earlier one says so in both recor
 one's Status becomes `Superseded by NNNN`.
 
 The consolidated schema that these decisions produce is in [`../schema/TABLES.md`](../schema/TABLES.md).
+| [0020](0020-build-images-on-the-target-platform.md) | Images build on the target platform rather than cross-compiling | Build architecture |
+| [0021](0021-builds-run-in-their-own-namespace.md) | Builds run in `sproutos-builds`, never a tenant namespace | Build isolation |
+| [0022](0022-tenant-hostnames-carry-a-discriminator.md) | Tenant hostnames carry a project discriminator (amends 0018) | Hostname collisions |
+| [0023](0023-metering-attribution-from-the-api-server.md) | Metering attribution is listed from the API server (amends 0014) | Usage attribution |
+
+## Later records
+
+0020–0023 exist because something ran and disagreed with a comment. Each names what it amends, and
+none of them deletes the reasoning it replaces — where a superseded argument was sound, it is kept
+alongside what bounds it now. A record that quietly drops the case against itself is a record that
+cannot be re-litigated when circumstances change back.

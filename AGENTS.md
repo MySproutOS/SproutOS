@@ -131,7 +131,13 @@ sides assert against — a divergence in the first two is a security bug.
 ## Conventions
 
 In `.claude/skills/`: `dao-creator`, `hono-backend-api`, `frontend-calling-backend`,
-`frontend-components`. Follow them. Architectural decisions are recorded in `docs/adr/`.
+`frontend-components`. Follow them.
+
+Architectural decisions are recorded in `docs/adr/`. **`docs/findings/` is the companion**: things
+that were wrong, how they looked while they were wrong, and what now stops them coming back. Read it
+before adding a check — most of what is in there passed every check that existed at the time, and
+the recurring lesson is that the question worth asking of a check is not whether it passes but what
+would have to be true for it to fail.
 
 Some load-bearing details those skills assume:
 
