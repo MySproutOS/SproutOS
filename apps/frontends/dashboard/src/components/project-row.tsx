@@ -1,4 +1,4 @@
-import { formatMicroUsd } from "@frontends/dashboard/data/money"
+import { formatMicroUsd } from "@lib/billing/money"
 import { Link } from "@tanstack/react-router"
 import { EllipsisVerticalIcon, RefreshCcwIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"

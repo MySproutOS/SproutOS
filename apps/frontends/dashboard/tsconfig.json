@@ -16,7 +16,8 @@
       "@ui/base/*": ["../../../lib/typescript/ui/base/src/*"],
       "@ui/spa-shared/*": ["../../../lib/typescript/ui/spa-shared/src/*"],
       "@ui/seo-shared/*": ["../../../lib/typescript/ui/seo-shared/src/*"],
-      "@lib/api-client/*": ["../../../lib/typescript/api-client/src/*"]
+      "@lib/api-client/*": ["../../../lib/typescript/api-client/src/*"],
+      "@lib/billing/*": ["../../../lib/typescript/billing/src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

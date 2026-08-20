@@ -1,4 +1,4 @@
-import { formatMicroUsd } from "@frontends/dashboard/data/money"
+import { formatMicroUsd } from "@lib/billing/money"
 import { Link, type LinkProps } from "@tanstack/react-router"
 import {
   ChevronsUpDownIcon,
@@ -28,7 +28,7 @@ import {
 import { cn } from "@ui/base/lib/utils"
 import { useCreditBalance } from "@frontends/dashboard/data/billing"
 import {
-  ROLE_LABELS,
+  organizationRoleLabel,
   useOrganization,
   useOrganizations,
 } from "@frontends/dashboard/data/organizations"
@@ -93,7 +93,7 @@ function TeamSwitcher({ orgSlug }: { orgSlug: string }) {
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-[13px] font-medium">{current?.name ?? "…"}</span>
               <span className="text-[11px] text-muted-foreground">
-                {current === undefined ? "" : ROLE_LABELS[current.role]}
+                {organizationRoleLabel(current)}
               </span>
             </span>
             <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -110,7 +110,7 @@ function TeamSwitcher({ orgSlug }: { orgSlug: string }) {
                 <Link to="/orgs/$orgSlug/projects" params={{ orgSlug: organization.slug }}>
                   <span className="truncate">{organization.name}</span>
                   <span className="ml-auto text-[11px] text-muted-foreground">
-                    {ROLE_LABELS[organization.role]}
+                    {organizationRoleLabel(organization)}
                   </span>
                 </Link>
               }

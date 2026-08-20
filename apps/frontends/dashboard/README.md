@@ -54,10 +54,10 @@ wins — a plain `border-primary` loses to the base `border-transparent` and the
 never appears. The `data-` variant adds specificity, so it wins deterministically. This bit the
 settings tabs before it was caught.
 
-## Data layer: one hook is real, the rest are placeholders
+## Data layer: organizations are real, the rest are placeholders
 
-Only `/v1/auth/me` exists in the generated client in this tree. The organization, project, billing,
-workflow, database, member, and store endpoints do not. Rather than hand-write a parallel client,
+Organizations, members, and the current user are wired to the real client. Project, store, billing,
+workflow, database, and API-key endpoints do not exist yet. Rather than hand-write a parallel client,
 every read lives in `src/data/*.ts` behind a hook that declares the query key and response shape it
 expects and resolves a fixture through `usePlaceholderQuery` (`src/data/placeholder.ts`).
 
@@ -79,25 +79,44 @@ function it becomes.
 | `store.ts`         | `useStoreListings` `useStoreListing`                           |
 | `money.ts`         | `formatMicroUsd` — see below                                   |
 
-### Swap map for the org API
+### Wired to the real API
 
-`useUserProfile` is already wired to `getV1AuthMeOptions()` — the one v1 route that exists in this
-tree — with only its two `user_preference` fields (`timezone`, `productEmails`) left as fixtures.
+| Hook               | Endpoint                                            |
+| ------------------ | --------------------------------------------------- |
+| `useOrganizations` | `GET /v1/orgs`                                      |
+| `useOrganization`  | `GET /v1/orgs/{orgSlug}`                            |
+| `useMembers`       | `GET /v1/orgs/{orgSlug}/members`                    |
+| `useUserProfile`   | `GET /v1/auth/me` (preferences half still fixtures) |
 
-The rest wait on the regenerated client. Each is a one-for-one body replacement:
+Two shape mismatches worth knowing, because the UI had to bend to the API rather than the reverse:
 
-| Hook               | Endpoint                         |
-| ------------------ | -------------------------------- |
-| `useOrganizations` | `GET /v1/orgs`                   |
-| `useOrganization`  | `GET /v1/orgs/{orgSlug}`         |
-| `useMembers`       | `GET /v1/orgs/{orgSlug}/members` |
+**`GET /v1/orgs` does not return the caller's role**, only `ownerUserId`. The team switcher therefore
+says Owner or Member and nothing else — an admin reads as "Member" until the list response carries a
+role. `GET .../members` does have real roles, but fetching it per organization to label one line of
+the sidebar would be a request per team on every page.
 
-`useLastOrganizationSlug` has no endpoint on that list. ADR 0004 puts the target in
-`user_preference.last_org_id`; until that is exposed it returns the first organization from
-`GET /v1/orgs`, which is a correct-but-arbitrary fallback rather than the user's actual last team.
+**Member roles are org-defined RBAC rows**, not a fixed enum, so `Member.roleNames` is `string[]`.
+`isOwner` renders its own badge and a role literally named `owner` is filtered out of the rest,
+otherwise the same word appears twice.
 
-Not consumed by any screen in this app, so deliberately unwrapped: roles, role actions, invites,
-transfer-ownership, and every mutation. Those belong to whoever builds the RBAC screens.
+**Dates from the API are strings, not `Date`.** The generated types say `Date` and
+`transformers.gen.ts` defines seven response transformers — but `sdk.gen.ts` never imports or calls
+any of them, so nothing converts. Formatting a `Date`-typed field directly throws
+`RangeError: Invalid time value`. Coerce with `new Date(...)` at the boundary until the client
+generation is fixed.
+
+### Still placeholder-backed
+
+`useProjects` `useProject` `useWorkflows` `useRecentJobs` `useDatabases` `useCreditBalance`
+`useUsageLines` `useInvoices` `useStoreListings` `useStoreListing` `useApiKeys`.
+
+`useLastOrganizationSlug` is a special case: `GET /v1/user/me/preferences` exists on the API and
+returns `lastOrganizationSlug`, but it is **not in the generated client** — the client predates it.
+Until it is regenerated this returns the first organization from the real list, so a user with
+several teams lands on whichever sorts first rather than the one they last used.
+
+Not consumed by any screen here, so deliberately unwrapped: roles, role actions, invites,
+transfer-ownership, leave, and every mutation. Those belong to whoever builds the RBAC screens.
 
 Swapping one over is mechanical: replace the body with `useQuery(getV1...Options(...))`, delete its
 fixture. **Call sites do not change** — they only ever destructure `{ data, isPending, isError,
@@ -114,14 +133,18 @@ Every amount in `src/data/` is a `bigint` count of micro-USD — `costMicros`, `
 `totalMicros` — never a float and never a pre-formatted string. That is the shape the real endpoints
 return, so the fixtures model the domain rather than the screenshot.
 
-Formatting goes through the single function in `src/data/money.ts`, which is a **stand-in for
-`@lib/billing`'s `formatMicroUsd`**. That package is not in this working tree yet — it arrived with
-PRs #8/#9, this branch is at #7, and `lib/typescript/billing/` currently holds only `node_modules/`.
-Once the merge lands: add `"@lib/billing": "workspace:*"` to `package.json`, point the eight import
-sites at `@lib/billing` instead, and delete `src/data/money.ts`. No other code changes.
+Formatting goes through `formatMicroUsd` from **`@lib/billing/money`** — the subpath, never the
+`@lib/billing` barrel, which re-exports `ledger.ts` (Kysely, pg) and `topup.ts` (the Stripe Node SDK
+with a module-level client singleton). The subpath is safe only as long as `money.ts` stays
+import-free. A verified build contains no Stripe, Kysely, or ledger code.
+
+Resolution needs the `@lib/billing` alias in `vite.config.ts` and the matching `paths` entry in
+`tsconfig.json`: the package's `exports` map turns `@lib/billing/money` into `./src/money` with no
+extension, which neither tsc nor the bundler completes on its own. Same alias shape as every other
+workspace package this SPA consumes.
 
 Sub-cent precision is load-bearing on a metered product: a job costing `$0.0412` must not render as
-`$0.04`, so the formatter keeps up to four decimals and trims back to a minimum of two.
+`$0.04`, and `formatMicroUsd` keeps every significant decimal.
 
 Two behaviours the real endpoints must preserve: switching organizations has to `queryClient.clear()`
 rather than merely re-render — a stale `/orgs/{oldId}/…` cache entry rendering under the new org is
@@ -139,6 +162,14 @@ switcher at top, nav split by a rule, credit balance pinned at the bottom.
   `Sheet`. `collapsed` is a desktop preference, so while the drawer is open the shared context
   reports _expanded_ (an icon-only drawer would be absurd), and the shell closes the drawer on the
   way back up past `md` so the two can never disagree on screen.
+- **An unreachable org slug stops at the layout.** `/orgs/$orgSlug` gates on the lookup erroring and
+  renders a "no access" screen instead of the shell. Falling through renders a fully working
+  dashboard around an empty team switcher — a bookmarked URL for a team you were removed from would
+  look like someone else's account loading, which is worse than an error. Only `isError` gates, so an
+  in-flight lookup does not flash a spinner on every navigation.
+- **The root route has an `errorComponent`.** Without one, a render error anywhere takes the whole
+  SPA to a blank page and TanStack only warns in the console. A route's own error state covers a
+  failed request; this covers the bug that request data provokes.
 - **`PageHeader` is per-route**, not part of the shell: every screen's controls differ, and the shell
   guessing them would be wrong on all of them. It also owns the mobile drawer trigger.
 

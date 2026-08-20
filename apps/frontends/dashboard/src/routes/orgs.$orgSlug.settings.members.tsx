@@ -119,7 +119,14 @@ function MembersSettings() {
                   {member.email}
                 </TableCell>
                 <TableCell>
-                  <Badge>{ROLE_LABELS[member.role]}</Badge>
+                  <span className="flex flex-wrap gap-1">
+                    {member.isOwner && <Badge>{ROLE_LABELS.owner}</Badge>}
+                    {member.roleNames.map((roleName) => (
+                      <Badge key={roleName} variant="muted">
+                        {roleName}
+                      </Badge>
+                    ))}
+                  </span>
                 </TableCell>
                 <TableCell className="hidden text-muted-foreground lg:table-cell">
                   {member.joinedLabel}
