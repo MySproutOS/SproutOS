@@ -49,10 +49,9 @@ const REASON = "Investigating a rendering bug reported in ticket 4471"
 
 afterAll(async () => {
   if (!up) return
-  // `session.impersonated_by_user_id` is RESTRICT, like every other reference to `user` — an
-  // impersonator who closes their account must not take the evidence with them. The shared
-  // teardown deletes users, so the sessions pointing at them have to go first.
-  await db.deleteFrom("session").where("impersonatedByUserId", "is not", null).execute()
+  // `cleanupFixtures` now clears impersonated sessions for the users it deletes, so there is
+  // nothing to do here first. It was done here once, globally, and that was the wrong scope:
+  // whether it worked depended on which suite tore down first.
   await cleanupFixtures()
   await db.destroy()
 })

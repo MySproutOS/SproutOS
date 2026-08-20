@@ -108,6 +108,8 @@ export async function cleanupFixtures(): Promise<void> {
     }
     if (created.userIds.length > 0) {
       await db.deleteFrom("auditLog").where("actorUserId", "in", created.userIds).execute()
+      // Impersonation puts the admin's id on the row as well, and that reference is RESTRICT too.
+      await db.deleteFrom("auditLog").where("impersonatorUserId", "in", created.userIds).execute()
     }
   } finally {
     await sql`alter table audit_log enable trigger audit_log_append_only`.execute(db)
@@ -117,6 +119,15 @@ export async function cleanupFixtures(): Promise<void> {
     await db.deleteFrom("organization").where("id", "in", created.organizationIds).execute()
   }
   if (created.userIds.length > 0) {
+    /*
+      Sessions first, and by *impersonator* as well as by owner.
+
+      `session.impersonated_by_user_id` is `ON DELETE RESTRICT`, like every reference to `user` —
+      an admin who closes their account must not take the evidence with them. Ordinary sessions
+      cascade, so this only matters for impersonated ones, and it only surfaced as an intermittent
+      failure: whether it fired depended on which suite tore down first.
+    */
+    await db.deleteFrom("session").where("impersonatedByUserId", "in", created.userIds).execute()
     await db.deleteFrom("user").where("id", "in", created.userIds).execute()
   }
 

@@ -122,6 +122,74 @@ describe.skipIf(!reachable)("organization, member, and role routes", () => {
     expect(audit?.resourceSrn).toBe(srnFor("org", organizationId, "organization", organizationId))
   })
 
+  describe("the organization list", () => {
+    it("names the caller's own roles, not every member's", async () => {
+      const list = await call("GET", "/v1/orgs", owner)
+      expect(list.status).toBe(200)
+
+      const rows = list.json.data as { id: string; ownerUserId: string; roleNames: string[] }[]
+      const row = rows.find((entry) => entry.id === organizationId)
+
+      expect(row?.ownerUserId).toBe(owner.id)
+      expect(row?.roleNames).toContain("owner")
+    })
+
+    it("labels an admin as an admin rather than as a member", async () => {
+      /*
+        The defect this exists for.
+
+        Without `roleNames` the only thing a client could derive was `ownerUserId === me.id`, so
+        every non-owner — including an organization admin — read as "Member" in the team switcher.
+        A sidebar cannot fix that by fetching `.../members` per organization: that is a request per
+        team on every page load.
+
+        Its own organization, not the suite's. Adding a third member to the shared fixture broke a
+        later test that counts them — shared mutable fixtures are how a passing suite starts
+        depending on the order it runs in.
+      */
+      const created = await call("POST", "/v1/orgs", owner, { name: "Admin Label Suite" })
+      expect(created.status).toBe(201)
+      const labelOrgId = trackOrganization(created.json.id as string)
+      const labelSlug = created.json.slug as string
+
+      const roles = (await call("GET", `/v1/orgs/${labelSlug}/roles`, owner)).json.data as {
+        id: string
+        name: string
+      }[]
+      const adminRoleId = roles.find((role) => role.name === "admin")?.id ?? ""
+      expect(adminRoleId).not.toBe("")
+
+      const admin = await createTestUser("routeadmin")
+      const invite = await call("POST", `/v1/orgs/${labelSlug}/invites`, owner, {
+        email: admin.email,
+        roleId: adminRoleId,
+      })
+      expect(invite.status).toBe(201)
+      const accepted = await call("POST", "/v1/invites/accept", admin, {
+        token: invite.json.token as string,
+      })
+      expect(accepted.status).toBe(200)
+
+      const rows = (await call("GET", "/v1/orgs", admin)).json.data as {
+        id: string
+        ownerUserId: string
+        roleNames: string[]
+      }[]
+      const row = rows.find((entry) => entry.id === labelOrgId)
+
+      expect(row?.roleNames).toStrictEqual(["admin"])
+      // And they are still not the owner, so a client can tell the two apart.
+      expect(row?.ownerUserId).not.toBe(admin.id)
+
+      // The owner's view of the same organization is their own row, not the admin's.
+      const ownerRows = (await call("GET", "/v1/orgs", owner)).json.data as {
+        id: string
+        roleNames: string[]
+      }[]
+      expect(ownerRows.find((entry) => entry.id === labelOrgId)?.roleNames).toStrictEqual(["owner"])
+    })
+  })
+
   describe("invites", () => {
     let memberRoleId: string
     let token: string
