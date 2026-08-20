@@ -2494,6 +2494,94 @@ export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses = {
 export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse =
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses[keyof GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses]
 
+export type GetV1OrgsByOrgSlugWorkflowsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/workflows"
+}
+
+export type GetV1OrgsByOrgSlugWorkflowsErrors = {
+  /**
+   * Caller lacks workflow:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugWorkflowsError =
+  GetV1OrgsByOrgSlugWorkflowsErrors[keyof GetV1OrgsByOrgSlugWorkflowsErrors]
+
+export type GetV1OrgsByOrgSlugWorkflowsResponses = {
+  /**
+   * Workflows
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      slug: string
+      projectId: string
+      projectName: string
+      enabled: boolean
+      cronExpression: string | null
+      timezone: string | null
+      lastRunAt: Date | null
+      lastRunStatus: string | null
+      recentRuns: number
+      recentFailures: number
+      health: string
+      costMicroUsd: string
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugWorkflowsResponse =
+  GetV1OrgsByOrgSlugWorkflowsResponses[keyof GetV1OrgsByOrgSlugWorkflowsResponses]
+
+export type GetV1OrgsByOrgSlugWorkflowRunsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/workflow-runs"
+}
+
+export type GetV1OrgsByOrgSlugWorkflowRunsErrors = {
+  /**
+   * Caller lacks workflow:job:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugWorkflowRunsError =
+  GetV1OrgsByOrgSlugWorkflowRunsErrors[keyof GetV1OrgsByOrgSlugWorkflowRunsErrors]
+
+export type GetV1OrgsByOrgSlugWorkflowRunsResponses = {
+  /**
+   * Runs
+   */
+  200: {
+    data: Array<{
+      id: string
+      workflowId: string
+      workflowName: string
+      projectId: string
+      projectName: string
+      status: string
+      startedAt: Date | null
+      finishedAt: Date | null
+      durationMs: number | null
+      costMicroUsd: string
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugWorkflowRunsResponse =
+  GetV1OrgsByOrgSlugWorkflowRunsResponses[keyof GetV1OrgsByOrgSlugWorkflowRunsResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData = {
   body?: never
   path: {

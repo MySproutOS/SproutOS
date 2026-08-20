@@ -26,7 +26,17 @@ export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/")({
 function ProjectDetail() {
   const { orgSlug, projectId } = Route.useParams()
   const { data, isPending, isError, refetch } = useProject(orgSlug, projectId)
+  /*
+    The organization's recent runs, narrowed to this project.
+
+    The feed is organization-wide because that is the one query the Workflows screen needs, and
+    filtering here beats a second endpoint that differs only by a `where`. It does mean a project
+    whose runs have all scrolled past the feed's limit shows an empty table — which is honest, and
+    the fix is a project-scoped endpoint when a project page needs deeper history than the feed
+    carries.
+  */
   const jobs = useRecentJobs(orgSlug)
+  const projectJobs = jobs.data?.filter((job) => job.projectId === projectId)
 
   return (
     <>
@@ -152,7 +162,12 @@ function ProjectDetail() {
                   }}
                 />
               )}
-              {jobs.data !== undefined && (
+              {projectJobs !== undefined && projectJobs.length === 0 && (
+                <p className="rule-soft rounded-lg border px-3 py-6 text-center text-sm text-muted-foreground">
+                  No runs yet.
+                </p>
+              )}
+              {projectJobs !== undefined && projectJobs.length > 0 && (
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -163,9 +178,15 @@ function ProjectDetail() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {jobs.data.map((job) => (
+                    {projectJobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell numeric>{job.id}</TableCell>
+                        {/*
+                          The last twelve characters of a UUIDv7, which are the random tail.
+                          The leading digits are a timestamp shared by everything created in the
+                          same millisecond, so a prefix would show a column of near-identical
+                          strings.
+                        */}
+                        <TableCell numeric>{job.id.slice(-12)}</TableCell>
                         <TableCell>{job.workflow}</TableCell>
                         <TableCell numeric>{job.duration}</TableCell>
                         <TableCell money>{formatMicroUsd(job.costMicros)}</TableCell>

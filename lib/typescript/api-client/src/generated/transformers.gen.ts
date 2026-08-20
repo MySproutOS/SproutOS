@@ -23,6 +23,8 @@ import type {
   GetV1OrgsByOrgSlugRolesResponse,
   GetV1OrgsByOrgSlugServicesResponse,
   GetV1OrgsByOrgSlugStoreListingsResponse,
+  GetV1OrgsByOrgSlugWorkflowRunsResponse,
+  GetV1OrgsByOrgSlugWorkflowsResponse,
   GetV1OrgsResponse,
   GetV1StoreFeaturedResponse,
   GetV1StoreListingsBySlugResponse,
@@ -342,6 +344,33 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse> => {
   data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugWorkflowsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugWorkflowsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.lastRunAt) {
+      item.lastRunAt = new Date(item.lastRunAt)
+    }
+    return item
+  })
+  return data
+}
+
+export const getV1OrgsByOrgSlugWorkflowRunsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugWorkflowRunsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.startedAt) {
+      item.startedAt = new Date(item.startedAt)
+    }
+    if (item.finishedAt) {
+      item.finishedAt = new Date(item.finishedAt)
+    }
+    return item
+  })
   return data
 }
 

@@ -129,6 +129,12 @@ import type {
   GetV1OrgsByOrgSlugStoreListingsData,
   GetV1OrgsByOrgSlugStoreListingsErrors,
   GetV1OrgsByOrgSlugStoreListingsResponses,
+  GetV1OrgsByOrgSlugWorkflowRunsData,
+  GetV1OrgsByOrgSlugWorkflowRunsErrors,
+  GetV1OrgsByOrgSlugWorkflowRunsResponses,
+  GetV1OrgsByOrgSlugWorkflowsData,
+  GetV1OrgsByOrgSlugWorkflowsErrors,
+  GetV1OrgsByOrgSlugWorkflowsResponses,
   GetV1OrgsData,
   GetV1OrgsErrors,
   GetV1OrgsResponses,
@@ -1196,6 +1202,38 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisId = <ThrowOnError extends bool
     GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/analyses/{analysisId}", ...options })
+
+/**
+ * Every workflow in the organization, with its schedule and recent health
+ */
+export const getV1OrgsByOrgSlugWorkflows = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugWorkflowsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugWorkflowsResponses,
+  GetV1OrgsByOrgSlugWorkflowsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugWorkflowsResponses,
+    GetV1OrgsByOrgSlugWorkflowsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/workflows", ...options })
+
+/**
+ * Recent workflow runs across the organization
+ */
+export const getV1OrgsByOrgSlugWorkflowRuns = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugWorkflowRunsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugWorkflowRunsResponses,
+  GetV1OrgsByOrgSlugWorkflowRunsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugWorkflowRunsResponses,
+    GetV1OrgsByOrgSlugWorkflowRunsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/workflow-runs", ...options })
 
 /**
  * Lists a project's workflows

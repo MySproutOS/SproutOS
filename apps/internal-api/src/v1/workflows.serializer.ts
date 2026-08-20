@@ -143,3 +143,57 @@ export const workflowsSchemaJobEditResponse = Type.Object({
     createdAt: Type.String({ format: "date-time" }),
   }),
 })
+
+/**
+ * A workflow as the organization-wide list shows it.
+ *
+ * More than `workflowsSchemaWorkflow`, which describes one project's workflow in isolation. This
+ * carries the project it belongs to, its schedule, and how it has been doing — the three things a
+ * list spanning every project needs to be worth looking at.
+ */
+export const workflowsSchemaOverview = Type.Object({
+  id: UUID7String,
+  name: Type.String(),
+  slug: Type.String(),
+  projectId: UUID7String,
+  projectName: Type.String(),
+  enabled: Type.Boolean(),
+  /** Null when nothing schedules it — a workflow triggered by webhook or by hand. */
+  cronExpression: Nullable(Type.String()),
+  timezone: Nullable(Type.String()),
+  lastRunAt: Nullable(Type.String({ format: "date-time" })),
+  lastRunStatus: Nullable(Type.String()),
+  /**
+   * Failures among the recent runs the health verdict is drawn from.
+   *
+   * Returned alongside the verdict rather than only the verdict, so a UI can say *why* something is
+   * degraded without asking again.
+   */
+  recentRuns: Type.Integer(),
+  recentFailures: Type.Integer(),
+  health: Type.String(),
+  costMicroUsd: Type.String(),
+})
+
+export const workflowsSchemaOverviewResponse = Type.Object({
+  data: Type.Array(workflowsSchemaOverview),
+})
+
+/** A run in the organization-wide recent-activity list. */
+export const workflowsSchemaRecentRun = Type.Object({
+  id: UUID7String,
+  workflowId: UUID7String,
+  workflowName: Type.String(),
+  projectId: UUID7String,
+  projectName: Type.String(),
+  status: Type.String(),
+  startedAt: Nullable(Type.String({ format: "date-time" })),
+  finishedAt: Nullable(Type.String({ format: "date-time" })),
+  /** Milliseconds, or null while it is still running. */
+  durationMs: Nullable(Type.Integer()),
+  costMicroUsd: Type.String(),
+})
+
+export const workflowsSchemaRecentRunsResponse = Type.Object({
+  data: Type.Array(workflowsSchemaRecentRun),
+})
