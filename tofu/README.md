@@ -10,13 +10,13 @@ the registry. Phase 9 of the plan.
 `tofu validate` and `tflint` both pass, and it is worth being exact about what that does and does not
 establish, because the gap is wider than it looks:
 
-| Checked | Not checked |
-| --- | --- |
-| HCL parses | Whether an instance type exists |
-| Every resource and argument exists in the provider schema | Whether an engine version is real |
-| The reference graph resolves — no unknown resource, no cycle | Whether IAM policies grant what is needed |
-| Types match, required arguments are present | Whether any of it converges |
-| Core lint: unused declarations, undocumented variables | Quotas, capacity, service availability per region |
+| Checked                                                      | Not checked                                       |
+| ------------------------------------------------------------ | ------------------------------------------------- |
+| HCL parses                                                   | Whether an instance type exists                   |
+| Every resource and argument exists in the provider schema    | Whether an engine version is real                 |
+| The reference graph resolves — no unknown resource, no cycle | Whether IAM policies grant what is needed         |
+| Types match, required arguments are present                  | Whether any of it converges                       |
+| Core lint: unused declarations, undocumented variables       | Quotas, capacity, service availability per region |
 
 I confirmed the right-hand column empirically rather than assuming it: with `m8g.metal-nonsense` as
 an instance type and `not-a-real-engine` as the RDS engine, both `tofu validate` and `tflint` — with
@@ -29,14 +29,14 @@ verification starts.
 
 ## Layout
 
-| File | |
-| --- | --- |
-| `main.tf` | Providers, default tags, the account-identity guard |
-| `network.tf` | Dual-stack VPC, three AZs, NAT per AZ, S3 gateway endpoint |
-| `eks.tf` | Cluster, platform and tenant node groups, IRSA |
-| `database.tf` | Aurora Serverless v2, PITR, AWS Backup |
-| `kms.tf` | One key per purpose |
-| `registry.tf` | ECR per image, artifact bucket |
+| File                                |                                                             |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `main.tf`                           | Providers, default tags, the account-identity guard         |
+| `network.tf`                        | Dual-stack VPC, three AZs, NAT per AZ, S3 gateway endpoint  |
+| `eks.tf`                            | Cluster, platform and tenant node groups, IRSA              |
+| `database.tf`                       | Aurora Serverless v2, PITR, AWS Backup                      |
+| `kms.tf`                            | One key per purpose                                         |
+| `registry.tf`                       | ECR per image, artifact bucket                              |
 | `s3.tf`, `cloudfront.tf`, `oidc.tf` | SPA assets and CI's deploy role, from the original scaffold |
 
 ## Decisions worth knowing before changing something
@@ -77,7 +77,9 @@ The deploy layer is a foundation, not a finished estate. Absent, and each is rea
 - **Knative**, and the build pipeline that fills the registry. Phase 10.
 - **The Neon OSS control plane** — pageserver, safekeepers, storage broker, `compute_ctl`. Phase 8,
   and the largest single piece missing.
-- **The metering agent DaemonSet**, the Rust binary for which exists and is tested.
+- **The metering agent**, and the DaemonSet that would run it. `services/metering-agent` is a
+  three-line stub that prints its own name — the `lib/rust/metering-proto` schema and HMAC signing
+  it would use are real and tested, the sampler is not.
 - **Secrets Manager entries and External Secrets**, so the cluster can read what `kms.tf` protects.
 - **State backend.** `main.tf` has no `backend` block, so state is local. S3 with native locking is
   the intended target and is a prerequisite for anyone else running this.
