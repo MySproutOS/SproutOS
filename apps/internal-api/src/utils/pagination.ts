@@ -8,7 +8,16 @@ export function isValidDate(date: any): boolean {
 }
 
 type ValidPositionTypes = string | number
-type ValidCursorType = "date" | "string"
+/**
+ * Which of the two pagination strategies a cursor describes.
+ *
+ * A keyset cursor carries an anchor in `p` and walks with `WHERE id < anchor`.
+ * An offset cursor has no anchor at all — only a row count — so `p` is
+ * meaningless for it. Encoding that as a third type rather than a sentinel
+ * string in `p` is what stops the decoder validating a position that was never
+ * supposed to be one.
+ */
+type ValidCursorType = "date" | "string" | "offset"
 type Cursor = { o: number; p: ValidPositionTypes; t: ValidCursorType }
 type UnknownCursor = { o: number; p: ValidPositionTypes; t: string }
 
@@ -39,17 +48,26 @@ export function decodeCursor(cursor: string | null): DecodedCursor {
     if (!isValidPositiveInteger(tokens.o, true)) {
       throw new Error("Invalid offset")
     }
-    if (!tokens.p || !validateUUID(tokens.p)) {
-      throw new Error("Invalid position")
+
+    // An offset cursor has no anchor, so there is nothing here to validate.
+    if (tokens.t === "offset") {
+      return { offset: tokens.o, position: null, cursorType: "offset", serializedPosition: null }
     }
+
     if (tokens.t === "date") {
+      // A date anchor is epoch milliseconds, not an id. Validating it as a UUID —
+      // which this did, before the type check — rejected every date-ordered
+      // cursor, so that whole branch of createNextCursor was unreachable.
       const convertedDate = new Date(tokens.p)
-      if (!isValidDate(new Date(tokens.p))) {
+      if (!isValidDate(convertedDate)) {
         throw new Error("Invalid position")
       }
       position = convertedDate
     } else if (tokens.t === "string") {
-      if (typeof tokens.p !== "string") {
+      // String anchors are ids that go straight into a WHERE clause. Kysely
+      // parameterizes them, but a cursor is user input and an anchor that is not
+      // an id is a caller bug worth surfacing rather than querying on.
+      if (typeof tokens.p !== "string" || !validateUUID(tokens.p)) {
         throw new Error("Invalid position")
       }
       position = tokens.p
@@ -71,6 +89,16 @@ interface CreateNextCursorProps<ResultType> {
   results: ResultType[]
   pageSize: number
   ordering: KeysWithToString<ResultType>
+  cursor: string | null
+}
+
+/**
+ * Offset pagination has no anchor, so it has no ordering column either — asking
+ * for one would be a parameter the function cannot use.
+ */
+interface CreateNextOffsetCursorProps<ResultType> {
+  results: ResultType[]
+  pageSize: number
   cursor: string | null
 }
 
@@ -116,23 +144,14 @@ export function createNextOffsetCursor<ResultType>({
   results,
   pageSize,
   cursor,
-}: CreateNextCursorProps<ResultType>): string | null {
+}: CreateNextOffsetCursorProps<ResultType>): string | null {
   // We always fetch pageSize + 1 to determine if there's a next page
   if (results.length <= pageSize) {
     return null
   }
 
-  let nextCursor: Cursor
-  if (!cursor) {
-    nextCursor = { o: pageSize, p: "limit/offset", t: "string" }
-  } else {
-    const tokens = decodeCursor(cursor)
-    nextCursor = {
-      o: tokens.serializedPosition ? tokens.offset + pageSize : pageSize,
-      p: "limit/offset",
-      t: "string",
-    }
-  }
+  const previous = cursor ? decodeCursor(cursor).offset : 0
+  const nextCursor: Cursor = { o: previous + pageSize, p: "", t: "offset" }
   return Buffer.from(JSON.stringify(nextCursor)).toString("base64url")
 }
 
@@ -212,12 +231,13 @@ export async function cursorOffsetPaginate<
 >({
   query,
   cursor,
-  ordering,
   pageSize = 25,
 }: CursorPaginateProps<Q, R, O, TB>): Promise<{
   results: ExtractRowType<Q>[]
   nextCursor: string | null
 }> {
+  // `ordering` stays in the props for symmetry with cursorPaginate, but an
+  // offset page has no anchor column, so nothing here reads it.
   const { offset } = decodeCursor(cursor)
 
   try {
@@ -231,7 +251,6 @@ export async function cursorOffsetPaginate<
 
     const nextCursor = createNextOffsetCursor<(typeof results)[number]>({
       results,
-      ordering,
       pageSize,
       cursor,
     })
