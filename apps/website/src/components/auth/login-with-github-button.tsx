@@ -6,6 +6,8 @@ import { ArrowRight } from "lucide-react"
 type Props = {
   children?: React.ReactNode
   className?: string
+  /** A path on this site to return to after signing in. Validated server-side before it is used. */
+  next?: string
   size?: React.ComponentProps<typeof Button>["size"]
   variant?: React.ComponentProps<typeof Button>["variant"]
   withArrow?: boolean
@@ -21,6 +23,7 @@ type Props = {
 export function LoginWithGitHubButton({
   children = "Login with GitHub",
   className,
+  next,
   size = "default",
   variant = "default",
   withArrow = true,
@@ -31,7 +34,14 @@ export function LoginWithGitHubButton({
       variant={variant}
       className={cn("group gap-2", className)}
       // oxlint-disable-next-line next/no-html-link-for-pages, jsx-a11y/anchor-has-content, jsx-a11y/control-has-associated-label -- Route Handler, not a page; Base UI merges children into the rendered anchor
-      render={<a href="/login/github" aria-label="Login with GitHub" />}
+      render={
+        <a
+          href={
+            next === undefined ? "/login/github" : `/login/github?next=${encodeURIComponent(next)}`
+          }
+          aria-label="Login with GitHub"
+        />
+      }
     >
       <GitHubMark className="size-4" />
       {children}

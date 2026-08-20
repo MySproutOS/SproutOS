@@ -11,7 +11,11 @@ const LINKS = [
   { href: "#ownership", label: "Your data" },
 ]
 
-export function Nav() {
+/**
+ * `homeHref` is "" on the landing page, where the section links are same-page anchors, and "/"
+ * everywhere else, where they have to navigate home first or they scroll to nothing.
+ */
+export function Nav({ homeHref = "" }: { homeHref?: string }) {
   const [scrolled, setScrolled] = useState(false)
 
   useEffect(() => {
@@ -35,7 +39,7 @@ export function Nav() {
     >
       <nav className="container-page flex h-16 items-center justify-between gap-6">
         <a
-          href="#top"
+          href={homeHref === "" ? "#top" : homeHref}
           className="flex items-center gap-2.5 rounded-md focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <SproutMark className="size-6 text-primary" />
@@ -48,7 +52,7 @@ export function Nav() {
           {LINKS.map((link) => (
             <a
               key={link.href}
-              href={link.href}
+              href={`${homeHref}${link.href}`}
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               {link.label}
