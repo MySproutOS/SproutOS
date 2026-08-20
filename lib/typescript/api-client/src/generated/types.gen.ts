@@ -2281,6 +2281,718 @@ export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponses = {
 export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponse =
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdResponses]
 
+export type GetV1OrgsByOrgSlugAnalysesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/analyses"
+}
+
+export type GetV1OrgsByOrgSlugAnalysesErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugAnalysesError =
+  GetV1OrgsByOrgSlugAnalysesErrors[keyof GetV1OrgsByOrgSlugAnalysesErrors]
+
+export type GetV1OrgsByOrgSlugAnalysesResponses = {
+  /**
+   * Analyses
+   */
+  200: {
+    data: Array<{
+      id: string
+      status: string
+      owner: string
+      repo: string
+      ref: string
+      commitSha: string | null
+      confidence: number | null
+      manifest: {
+        runtime: string
+        buildCommand: string | null
+        startCommand: string | null
+        port: number | null
+        services: Array<string>
+        envVars: Array<{
+          name: string
+          secret: boolean
+          providedByPlatform: boolean
+          purpose: string
+        }>
+        migrations: string | null
+        modifications: Array<{
+          path: string
+          reason: string
+        }>
+        unknowns: Array<string>
+        summary: string
+      } | null
+      error: string | null
+      costMicroUsd: string
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugAnalysesResponse =
+  GetV1OrgsByOrgSlugAnalysesResponses[keyof GetV1OrgsByOrgSlugAnalysesResponses]
+
+export type PostV1OrgsByOrgSlugAnalysesData = {
+  body?: {
+    owner: string
+    repo: string
+    ref?: string | null
+    projectId?: string | null
+    storeListingId?: string | null
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/analyses"
+}
+
+export type PostV1OrgsByOrgSlugAnalysesErrors = {
+  /**
+   * The project or listing is not this organization's
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:create
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugAnalysesError =
+  PostV1OrgsByOrgSlugAnalysesErrors[keyof PostV1OrgsByOrgSlugAnalysesErrors]
+
+export type PostV1OrgsByOrgSlugAnalysesResponses = {
+  /**
+   * Queued
+   */
+  202: {
+    id: string
+    status: string
+    owner: string
+    repo: string
+    ref: string
+    commitSha: string | null
+    confidence: number | null
+    manifest: {
+      runtime: string
+      buildCommand: string | null
+      startCommand: string | null
+      port: number | null
+      services: Array<string>
+      envVars: Array<{
+        name: string
+        secret: boolean
+        providedByPlatform: boolean
+        purpose: string
+      }>
+      migrations: string | null
+      modifications: Array<{
+        path: string
+        reason: string
+      }>
+      unknowns: Array<string>
+      summary: string
+    } | null
+    error: string | null
+    costMicroUsd: string
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugAnalysesResponse =
+  PostV1OrgsByOrgSlugAnalysesResponses[keyof PostV1OrgsByOrgSlugAnalysesResponses]
+
+export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    analysisId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/analyses/{analysisId}"
+}
+
+export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such analysis
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdError =
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors[keyof GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors]
+
+export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses = {
+  /**
+   * Analysis
+   */
+  200: {
+    id: string
+    status: string
+    owner: string
+    repo: string
+    ref: string
+    commitSha: string | null
+    confidence: number | null
+    manifest: {
+      runtime: string
+      buildCommand: string | null
+      startCommand: string | null
+      port: number | null
+      services: Array<string>
+      envVars: Array<{
+        name: string
+        secret: boolean
+        providedByPlatform: boolean
+        purpose: string
+      }>
+      migrations: string | null
+      modifications: Array<{
+        path: string
+        reason: string
+      }>
+      unknowns: Array<string>
+      summary: string
+    } | null
+    error: string | null
+    costMicroUsd: string
+    createdAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse =
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses[keyof GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors = {
+  /**
+   * Caller lacks workflow:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses = {
+  /**
+   * Workflows
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      runtime: string
+      enabled: boolean
+      currentVersion: number | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData = {
+  body?: {
+    name: string
+    runtime?: "node" | "python"
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors = {
+  /**
+   * Name already used in this project
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks workflow:run
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses = {
+  /**
+   * Created
+   */
+  201: {
+    id: string
+    slug: string
+    name: string
+    runtime: string
+    enabled: boolean
+    currentVersion: number | null
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData = {
+  body?: {
+    graph: {
+      nodes: Array<{
+        id: string
+        type: string
+        name: string
+        config: {
+          [key: string]: unknown
+        }
+        position?: {
+          x: number
+          y: number
+        }
+      }>
+      edges: Array<{
+        from: string
+        to: string
+        branch?: string | null
+      }>
+    }
+  }
+  path: {
+    orgSlug: string
+    workflowId: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/graph"
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphErrors = {
+  /**
+   * The graph cannot run
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks workflow:run
+   */
+  403: ErrorResponseT
+  /**
+   * No such workflow
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphError =
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphErrors[keyof PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphErrors]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponses = {
+  /**
+   * Saved
+   */
+  200: {
+    id: string
+    version: number
+    graphSha256: string
+    unchanged: boolean
+  }
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse =
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponses[keyof PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    workflowId: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors = {
+  /**
+   * Caller lacks workflow:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses = {
+  /**
+   * Runs
+   */
+  200: {
+    data: Array<{
+      id: string
+      status: string
+      triggerType: string
+      queueJobId: string | null
+      bytesEnqueued: string
+      valkeyDwellMs: string
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    workflowId: string
+    runId: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs/{runId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdErrors = {
+  /**
+   * Caller lacks workflow:job:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such run
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponses = {
+  /**
+   * Run detail
+   */
+  200: {
+    run: {
+      id: string
+      status: string
+      triggerType: string
+      queueJobId: string | null
+      bytesEnqueued: string
+      valkeyDwellMs: string
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }
+    steps: Array<{
+      id: string
+      nodeId: string
+      nodeType: string
+      status: string
+      startedAt: Date | null
+      finishedAt: Date | null
+      input: unknown
+      output: unknown
+    }>
+    cost: {
+      usageMicroUsd: string
+      overheadMicroUsd: string
+      totalMicroUsd: string
+      byDimension: {
+        [key: string]: unknown | string
+      }
+    }
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData = {
+  body?: never
+  path: {
+    orgSlug: string
+    workflowId: string
+    runId: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs/{runId}/job"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors = {
+  /**
+   * Caller lacks workflow:job:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such run, or no job behind it
+   */
+  404: ErrorResponseT
+  /**
+   * The project has no queue service
+   */
+  409: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses = {
+  /**
+   * Job
+   */
+  200: {
+    id: string
+    name: string
+    state: string
+    editable: boolean
+    data: unknown
+    attemptsMade: number
+    timestamp: number | null
+    processedOn: number | null
+    finishedOn: number | null
+    failedReason: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses]
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData = {
+  body?: {
+    data: unknown
+    reason: string
+  }
+  path: {
+    orgSlug: string
+    workflowId: string
+    runId: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs/{runId}/job"
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors = {
+  /**
+   * Caller lacks workflow:job:modify
+   */
+  403: ErrorResponseT
+  /**
+   * No such run, or no job behind it
+   */
+  404: ErrorResponseT
+  /**
+   * The job has started or finished, or there is no queue service
+   */
+  409: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError =
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors[keyof PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors]
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses = {
+  /**
+   * The job as it now stands, and the audit row
+   */
+  200: {
+    job: {
+      id: string
+      name: string
+      state: string
+      editable: boolean
+      data: unknown
+      attemptsMade: number
+      timestamp: number | null
+      processedOn: number | null
+      finishedOn: number | null
+      failedReason: string | null
+    }
+    audit: {
+      id: string
+      before: unknown
+      after: unknown
+      createdAt: Date
+    }
+  }
+}
+
+export type PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse =
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses[keyof PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponses]
+
+export type GetV1OrgsByOrgSlugStoreListingsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    status?: "draft" | "pending_review" | "published" | "rejected" | "archived"
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/store/listings"
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsError =
+  GetV1OrgsByOrgSlugStoreListingsErrors[keyof GetV1OrgsByOrgSlugStoreListingsErrors]
+
+export type GetV1OrgsByOrgSlugStoreListingsResponses = {
+  /**
+   * A page of listings
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      tagline: string
+      platform: string
+      status: string
+      categoryId: string | null
+      licenseSpdx: string | null
+      upstreamOwner: string
+      upstreamRepo: string
+      upstreamRepoUrl: string
+      homepageUrl: string | null
+      starsCount: number
+      forksCount: number
+      installCount: number
+      featuredRank: number | null
+      createdAt: Date
+      tags: Array<string>
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugStoreListingsResponse =
+  GetV1OrgsByOrgSlugStoreListingsResponses[keyof GetV1OrgsByOrgSlugStoreListingsResponses]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
+  body?: never
+  path: {
+    orgSlug: string
+    listingId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish"
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
+  /**
+   * The published listing
+   */
+  200: {
+    id: string
+    slug: string
+    status: string
+    reviewedByUserId: string | null
+    reviewedAt: Date | null
+    rejectionReason: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
+  body?: {
+    status?: "archived" | "rejected"
+    reason?: string
+  }
+  path: {
+    orgSlug: string
+    listingId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/unpublish"
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors = {
+  /**
+   * Caller lacks store:listing:moderate
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses = {
+  /**
+   * The unpublished listing
+   */
+  200: {
+    id: string
+    slug: string
+    status: string
+    reviewedByUserId: string | null
+    reviewedAt: Date | null
+    rejectionReason: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses]
+
 export type GetV1OrgsByOrgSlugBillingBalanceData = {
   body?: never
   path: {
@@ -2722,150 +3434,6 @@ export type PostV1StoreListingsBySlugEventsResponses = {
 export type PostV1StoreListingsBySlugEventsResponse =
   PostV1StoreListingsBySlugEventsResponses[keyof PostV1StoreListingsBySlugEventsResponses]
 
-export type GetV1OrgsByOrgSlugStoreListingsData = {
-  body?: never
-  path: {
-    orgSlug: string
-  }
-  query?: {
-    status?: "draft" | "pending_review" | "published" | "rejected" | "archived"
-    cursor?: string
-    limit?: number
-  }
-  url: "/v1/orgs/{orgSlug}/store/listings"
-}
-
-export type GetV1OrgsByOrgSlugStoreListingsErrors = {
-  /**
-   * Caller lacks store:listing:moderate
-   */
-  403: ErrorResponseT
-  /**
-   * No such organization, or the caller is not a member
-   */
-  404: ErrorResponseT
-}
-
-export type GetV1OrgsByOrgSlugStoreListingsError =
-  GetV1OrgsByOrgSlugStoreListingsErrors[keyof GetV1OrgsByOrgSlugStoreListingsErrors]
-
-export type GetV1OrgsByOrgSlugStoreListingsResponses = {
-  /**
-   * A page of listings
-   */
-  200: {
-    data: Array<{
-      id: string
-      slug: string
-      name: string
-      tagline: string
-      platform: string
-      status: string
-      categoryId: string | null
-      licenseSpdx: string | null
-      upstreamOwner: string
-      upstreamRepo: string
-      upstreamRepoUrl: string
-      homepageUrl: string | null
-      starsCount: number
-      forksCount: number
-      installCount: number
-      featuredRank: number | null
-      createdAt: Date
-      tags: Array<string>
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetV1OrgsByOrgSlugStoreListingsResponse =
-  GetV1OrgsByOrgSlugStoreListingsResponses[keyof GetV1OrgsByOrgSlugStoreListingsResponses]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
-  body?: never
-  path: {
-    orgSlug: string
-    listingId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish"
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
-  /**
-   * Caller lacks store:listing:moderate
-   */
-  403: ErrorResponseT
-  /**
-   * No such listing
-   */
-  404: ErrorResponseT
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
-  /**
-   * The published listing
-   */
-  200: {
-    id: string
-    slug: string
-    status: string
-    reviewedByUserId: string | null
-    reviewedAt: Date | null
-    rejectionReason: string | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
-  body?: {
-    status?: "archived" | "rejected"
-    reason?: string
-  }
-  path: {
-    orgSlug: string
-    listingId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/unpublish"
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors = {
-  /**
-   * Caller lacks store:listing:moderate
-   */
-  403: ErrorResponseT
-  /**
-   * No such listing
-   */
-  404: ErrorResponseT
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses = {
-  /**
-   * The unpublished listing
-   */
-  200: {
-    id: string
-    slug: string
-    status: string
-    reviewedByUserId: string | null
-    reviewedAt: Date | null
-    rejectionReason: string | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses]
-
 export type GetV1UserMePreferencesData = {
   body?: never
   path?: never
@@ -2976,3 +3544,128 @@ export type PostV1WebhooksStripeResponses = {
 
 export type PostV1WebhooksStripeResponse =
   PostV1WebhooksStripeResponses[keyof PostV1WebhooksStripeResponses]
+
+export type PostV1OauthConsentData = {
+  body?: {
+    clientId: string
+    redirectUri: string
+    scopes: Array<string>
+    state?: string | null
+    codeChallenge: string
+    codeChallengeMethod?: string
+    organizationId: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/oauth/consent"
+}
+
+export type PostV1OauthConsentErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string
+    error_description: string
+  }
+}
+
+export type PostV1OauthConsentError = PostV1OauthConsentErrors[keyof PostV1OauthConsentErrors]
+
+export type PostV1OauthConsentResponses = {
+  /**
+   * Where to send the browser
+   */
+  200: {
+    redirectTo: string
+  }
+}
+
+export type PostV1OauthConsentResponse =
+  PostV1OauthConsentResponses[keyof PostV1OauthConsentResponses]
+
+export type PostV1OauthTokenData = {
+  body?: {
+    grant_type: "authorization_code" | "refresh_token"
+    client_id: string
+    client_secret?: string
+    code?: string
+    redirect_uri?: string
+    code_verifier?: string
+    refresh_token?: string
+    scope?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/oauth/token"
+}
+
+export type PostV1OauthTokenErrors = {
+  /**
+   * Invalid grant
+   */
+  400: {
+    error: string
+    error_description: string
+  }
+}
+
+export type PostV1OauthTokenError = PostV1OauthTokenErrors[keyof PostV1OauthTokenErrors]
+
+export type PostV1OauthTokenResponses = {
+  /**
+   * Tokens
+   */
+  200: {
+    access_token: string
+    token_type: "Bearer"
+    expires_in: number
+    refresh_token: string
+    scope: string
+  }
+}
+
+export type PostV1OauthTokenResponse = PostV1OauthTokenResponses[keyof PostV1OauthTokenResponses]
+
+export type PostV1OauthIntrospectData = {
+  body?: {
+    token: string
+    token_type_hint?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/oauth/introspect"
+}
+
+export type PostV1OauthIntrospectResponses = {
+  /**
+   * Token state
+   */
+  200: {
+    active: boolean
+    scope?: string
+    client_id?: string
+    sub?: string
+    exp?: number
+  }
+}
+
+export type PostV1OauthIntrospectResponse =
+  PostV1OauthIntrospectResponses[keyof PostV1OauthIntrospectResponses]
+
+export type PostV1OauthRevokeData = {
+  body?: {
+    token: string
+    token_type_hint?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/oauth/revoke"
+}
+
+export type PostV1OauthRevokeResponses = {
+  /**
+   * Revoked, or was never valid
+   */
+  200: unknown
+}

@@ -100,3 +100,46 @@ export const workflowsSchemaRunParam = Type.Object({
   workflowId: UUID7String,
   runId: UUID7String,
 })
+
+/**
+ * A job as it sits in the tenant's queue, for TASK 35.
+ *
+ * `data` is `Unknown` because it is the customer's payload and we do not get to have an opinion
+ * about its shape. `state` is BullMQ's vocabulary, unchanged — translating it into words of our own
+ * would mean an operator reading our UI and an operator reading BullMQ's docs disagreeing about
+ * what "waiting" means.
+ */
+export const workflowsSchemaJob = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  state: Type.String(),
+  editable: Type.Boolean(),
+  data: Type.Unknown(),
+  attemptsMade: Type.Integer(),
+  timestamp: Nullable(Type.Integer()),
+  processedOn: Nullable(Type.Integer()),
+  finishedOn: Nullable(Type.Integer()),
+  failedReason: Nullable(Type.String()),
+})
+
+export const workflowsSchemaJobEditRequest = Type.Object({
+  /** The replacement payload. Whatever the customer's workflow expects. */
+  data: Type.Unknown(),
+  /**
+   * Why. Required, and required to be substantial.
+   *
+   * An audit row saying only who and when answers none of the questions asked after someone edits
+   * what a customer's workflow will do to a customer's data.
+   */
+  reason: Type.String({ minLength: 8, maxLength: 2000 }),
+})
+
+export const workflowsSchemaJobEditResponse = Type.Object({
+  job: workflowsSchemaJob,
+  audit: Type.Object({
+    id: UUID7String,
+    before: Type.Unknown(),
+    after: Type.Unknown(),
+    createdAt: Type.String({ format: "date-time" }),
+  }),
+})

@@ -43,8 +43,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # TASK 35's job inspection reads and writes real BullMQ jobs. Without this the tests skip,
+      # and a skipped test looks exactly like a passing one in the summary.
+      valkey:
+        image: valkey/valkey:9-alpine
+        ports:
+          - 41023:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
+      SERVICE_VALKEY_ADMIN_URL: redis://127.0.0.1:41023
     steps:
       - uses: actions/checkout@v5
       - name: Install pnpm

@@ -92,6 +92,20 @@ export function throwNotFound(
   return throwError(c, 404, code, message, options)
 }
 
+/**
+ * 409, for a request that is well formed and permitted but cannot be carried out in the current
+ * state — a job that has already started, a project with no queue service. Distinct from 400,
+ * which says the request itself is wrong: retrying a 409 after the state changes will work.
+ */
+export function throwConflict(
+  c: Context,
+  message = "Conflict",
+  code: ErrorCode = ErrorCode.Conflict,
+  options?: Parameters<typeof throwError>[4],
+) {
+  return throwError(c, 409, code, message, options)
+}
+
 export function throwTooManyRequests(
   c: Context,
   message = "Too many requests",

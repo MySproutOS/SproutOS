@@ -1,4 +1,13 @@
 import {
+  EDITABLE_STATES,
+  JobNotEditableError,
+  JobNotFoundError,
+  readJob,
+  updateJobData,
+  type JobSnapshot,
+  type QueueLocation,
+} from "@lib/queue"
+import {
   hashGraph,
   InvalidGraphError,
   rateWorkflowRun,
@@ -14,10 +23,13 @@ import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { paramResource, requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
 import {
   workflowsSchemaCreateRequest,
   workflowsSchemaIdParam,
+  workflowsSchemaJob,
+  workflowsSchemaJobEditRequest,
+  workflowsSchemaJobEditResponse,
   workflowsSchemaListResponse,
   workflowsSchemaRunDetailResponse,
   workflowsSchemaRunListResponse,
@@ -363,20 +375,215 @@ app
       })
     },
   )
-/*
-  TASK 35's other half — modifying job data — is deliberately absent.
+  /**
+   * TASK 35: the job itself, as it sits in the queue.
+   *
+   * `workflow_run` records that a run happened and what it cost; it has no `input` column, because
+   * the payload lives in Valkey where the tenant's BullMQ client put it. So this reaches into the
+   * tenant's namespace rather than reading a row.
+   */
+  .get(
+    "/:orgSlug/projects/:projectId/workflows/:workflowId/runs/:runId/job",
+    describeRoute({
+      description: "The queued job behind a run",
+      responses: {
+        200: {
+          description: "Job",
+          content: { "application/json": { schema: resolver(workflowsSchemaJob) } },
+        },
+        403: { description: "Caller lacks workflow:job:read", ...errorResponse },
+        404: { description: "No such run, or no job behind it", ...errorResponse },
+        409: { description: "The project has no queue service", ...errorResponse },
+      },
+    }),
+    requirePermission("workflow:job:read", paramResource("project", "project", "projectId")),
+    validator("param", workflowsSchemaRunParam),
+    async (c) => {
+      const { workflowId, runId } = c.req.valid("param")
+      const located = await locateJob(c.var.organization.id, workflowId, runId)
+      if (located === undefined) return throwNotFound(c, "Run not found")
+      if (located.problem !== undefined) return throwConflict(c, located.problem)
 
-  The payload is not in Postgres. `workflow_run` has no `input` column, because a queued job lives
-  in Valkey where the tenant's BullMQ or Celery client put it; editing it means writing to that
-  queue, through the proxy that TASK 20 describes and that does not exist yet.
+      try {
+        return c.json(presentJob(await readJob(located.location, located.queueJobId)))
+      } catch (cause) {
+        if (cause instanceof JobNotFoundError) {
+          /*
+            The run exists but its job does not.
 
-  `workflow_job_edit_audit` is here waiting for it, with a RESTRICT foreign key so the history
-  cannot be deleted along with the run, and a `reason` column that is NOT NULL — because an audit
-  row saying only who and when answers none of the questions asked after someone edits what a
-  customer's workflow will do to a customer's data.
+            This is ordinary rather than exceptional: BullMQ removes completed jobs once
+            `removeOnComplete` trims them, so a run from last month has a row here and nothing in
+            Valkey. Saying so beats a 500.
+          */
+          return throwNotFound(c, "The job is no longer in the queue")
+        }
+        throw cause
+      }
+    },
+  )
+  /**
+   * TASK 35's other half: modifying job data.
+   *
+   * `workflow:job:modify`, and a `reason` that is not optional. Editing a queued job changes what a
+   * customer's workflow is about to do to a customer's data — the audit row is written in the same
+   * request and records the payload this edit actually replaced.
+   *
+   * The audit is written *after* the queue accepts the edit, deliberately. The other order would
+   * record edits that never landed, which is worse than recording none: a trail that contains
+   * things that did not happen cannot be used to work out what did.
+   */
+  .patch(
+    "/:orgSlug/projects/:projectId/workflows/:workflowId/runs/:runId/job",
+    describeRoute({
+      description: "Replace a queued job's data",
+      responses: {
+        200: {
+          description: "The job as it now stands, and the audit row",
+          content: { "application/json": { schema: resolver(workflowsSchemaJobEditResponse) } },
+        },
+        403: { description: "Caller lacks workflow:job:modify", ...errorResponse },
+        404: { description: "No such run, or no job behind it", ...errorResponse },
+        409: {
+          description: "The job has started or finished, or there is no queue service",
+          ...errorResponse,
+        },
+      },
+    }),
+    requirePermission("workflow:job:modify", paramResource("project", "project", "projectId")),
+    validator("param", workflowsSchemaRunParam),
+    validator("json", workflowsSchemaJobEditRequest),
+    async (c) => {
+      const { workflowId, runId } = c.req.valid("param")
+      const { data, reason } = c.req.valid("json")
 
-  Shipping the endpoint now would mean recording an edit that never reached the queue.
-*/
+      const located = await locateJob(c.var.organization.id, workflowId, runId)
+      if (located === undefined) return throwNotFound(c, "Run not found")
+      if (located.problem !== undefined) return throwConflict(c, located.problem)
+
+      let edit
+      try {
+        edit = await updateJobData(located.location, located.queueJobId, data)
+      } catch (cause) {
+        if (cause instanceof JobNotFoundError) {
+          return throwNotFound(c, "The job is no longer in the queue")
+        }
+        // `active` and the finished states each have their own explanation; the library writes a
+        // better one than a generic 409 message would.
+        if (cause instanceof JobNotEditableError) return throwConflict(c, cause.message)
+        throw cause
+      }
+
+      const auditId = v7()
+      await db
+        .insertInto("workflowJobEditAudit")
+        .values({
+          id: auditId,
+          workflowRunId: runId,
+          organizationId: c.var.organization.id,
+          actorUserId: c.var.user.id,
+          queueJobId: located.queueJobId,
+          jobStateAtEdit: edit.state,
+          before: JSON.stringify(edit.before),
+          after: JSON.stringify(edit.after),
+          reason,
+        })
+        .execute()
+
+      return c.json({
+        job: presentJob(await readJob(located.location, located.queueJobId)),
+        audit: {
+          id: auditId,
+          before: edit.before,
+          after: edit.after,
+          createdAt: new Date().toISOString(),
+        },
+      })
+    },
+  )
+
+/**
+ * Where the shared Valkey actually is.
+ *
+ * The **admin** URL, not the proxy: the control plane connects directly and applies the tenant's
+ * namespace itself. It could not go through the proxy even if it wanted to — the tenant's secret is
+ * stored as a one-way hash, so there is nothing to authenticate with, which is the property that
+ * makes a stolen credential table worthless.
+ */
+function valkeyAdminUrl(): string | undefined {
+  const url = process.env.SERVICE_VALKEY_ADMIN_URL
+  return url === undefined || url === "" ? undefined : url
+}
+
+function presentJob(job: JobSnapshot) {
+  return {
+    ...job,
+    // Computed here rather than left to the client: whether an edit will be accepted is this
+    // service's rule, and a UI that decides for itself will eventually disagree with it.
+    editable: (EDITABLE_STATES as readonly string[]).includes(job.state),
+  }
+}
+
+/**
+ * Resolves a run to the queue its job lives in.
+ *
+ * Returns `undefined` when the run is not this organization's — the same answer as "no such run",
+ * because the two must not be distinguishable. A `problem` is a run that exists but whose job
+ * cannot be reached, which is a different thing from a missing run and gets a 409.
+ */
+async function locateJob(
+  organizationId: string,
+  workflowId: string,
+  runId: string,
+): Promise<
+  | { queueJobId: string; location: QueueLocation; problem?: undefined }
+  | { problem: string; queueJobId?: undefined; location?: undefined }
+  | undefined
+> {
+  const row = await db
+    .selectFrom("workflowRun")
+    .innerJoin("workflow", "workflow.id", "workflowRun.workflowId")
+    .innerJoin("project", "project.id", "workflow.projectId")
+    .select([
+      "workflowRun.queueJobId as queueJobId",
+      "workflow.queueName as queueName",
+      "project.id as projectId",
+    ])
+    .where("workflowRun.id", "=", runId)
+    .where("workflowRun.workflowId", "=", workflowId)
+    .where("project.organizationId", "=", organizationId)
+    .where("workflow.deletedAt", "is", null)
+    .where("project.deletedAt", "is", null)
+    .executeTakeFirst()
+
+  if (row === undefined) return undefined
+  if (row.queueJobId === null) {
+    return { problem: "This run was never enqueued, so it has no job to inspect" }
+  }
+
+  const service = await db
+    .selectFrom("backendService")
+    .select("id")
+    .where("projectId", "=", row.projectId)
+    .where("kind", "=", "valkey")
+    .where("deletedAt", "is", null)
+    .where("status", "in", ["provisioning", "active"])
+    .orderBy("createdAt", "asc")
+    .executeTakeFirst()
+
+  if (service === undefined) {
+    return { problem: "This project has no queue service, so there is no namespace to look in" }
+  }
+
+  const connectionUrl = valkeyAdminUrl()
+  if (connectionUrl === undefined) {
+    return { problem: "Queue inspection is not configured on this deployment" }
+  }
+
+  return {
+    queueJobId: row.queueJobId,
+    location: { connectionUrl, backendServiceId: service.id, queueName: row.queueName },
+  }
+}
 
 async function ownedWorkflow(organizationId: string, workflowId: string) {
   return await db
