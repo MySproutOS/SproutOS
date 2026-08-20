@@ -3,6 +3,8 @@
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
+  GetV1OrgsByOrgSlugAnalysesResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
@@ -12,6 +14,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   GetV1OrgsByOrgSlugProjectsResponse,
   GetV1OrgsByOrgSlugRepositoriesResponse,
   GetV1OrgsByOrgSlugResponse,
@@ -23,12 +28,15 @@ import type {
   GetV1StoreListingsBySlugResponse,
   GetV1StoreListingsResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
+  PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
@@ -309,6 +317,123 @@ export const getV1OrgsByOrgSlugServicesResponseTransformer = async (
   return data
 }
 
+export const getV1OrgsByOrgSlugAnalysesResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugAnalysesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugAnalysesResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugAnalysesResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer =
+  async (
+    data: any,
+  ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse> => {
+    data.data = data.data.map((item: any) => {
+      if (item.startedAt) {
+        item.startedAt = new Date(item.startedAt)
+      }
+      if (item.finishedAt) {
+        item.finishedAt = new Date(item.finishedAt)
+      }
+      item.createdAt = new Date(item.createdAt)
+      return item
+    })
+    return data
+  }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponseTransformer =
+  async (
+    data: any,
+  ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse> => {
+    if (data.run.startedAt) {
+      data.run.startedAt = new Date(data.run.startedAt)
+    }
+    if (data.run.finishedAt) {
+      data.run.finishedAt = new Date(data.run.finishedAt)
+    }
+    data.run.createdAt = new Date(data.run.createdAt)
+    data.steps = data.steps.map((item: any) => {
+      if (item.startedAt) {
+        item.startedAt = new Date(item.startedAt)
+      }
+      if (item.finishedAt) {
+        item.finishedAt = new Date(item.finishedAt)
+      }
+      return item
+    })
+    return data
+  }
+
+export const patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse> => {
+    data.audit.createdAt = new Date(data.audit.createdAt)
+    return data
+  }
+
+export const getV1OrgsByOrgSlugStoreListingsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugStoreListingsResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse> => {
+  if (data.reviewedAt) {
+    data.reviewedAt = new Date(data.reviewedAt)
+  }
+  return data
+}
+
+export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse> => {
+  if (data.reviewedAt) {
+    data.reviewedAt = new Date(data.reviewedAt)
+  }
+  return data
+}
+
 export const getV1OrgsByOrgSlugBillingTransactionsResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugBillingTransactionsResponse> => {
@@ -349,33 +474,5 @@ export const getV1StoreListingsBySlugResponseTransformer = async (
     data.lastSyncedAt = new Date(data.lastSyncedAt)
   }
   data.createdAt = new Date(data.createdAt)
-  return data
-}
-
-export const getV1OrgsByOrgSlugStoreListingsResponseTransformer = async (
-  data: any,
-): Promise<GetV1OrgsByOrgSlugStoreListingsResponse> => {
-  data.data = data.data.map((item: any) => {
-    item.createdAt = new Date(item.createdAt)
-    return item
-  })
-  return data
-}
-
-export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer = async (
-  data: any,
-): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse> => {
-  if (data.reviewedAt) {
-    data.reviewedAt = new Date(data.reviewedAt)
-  }
-  return data
-}
-
-export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer = async (
-  data: any,
-): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse> => {
-  if (data.reviewedAt) {
-    data.reviewedAt = new Date(data.reviewedAt)
-  }
   return data
 }

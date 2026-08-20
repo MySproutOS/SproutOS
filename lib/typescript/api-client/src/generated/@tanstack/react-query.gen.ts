@@ -25,6 +25,8 @@ import {
   getV1OrgsByOrgSlug,
   getV1OrgsByOrgSlugAgentConfig,
   getV1OrgsByOrgSlugAgentCredentials,
+  getV1OrgsByOrgSlugAnalyses,
+  getV1OrgsByOrgSlugAnalysesByAnalysisId,
   getV1OrgsByOrgSlugBillingBalance,
   getV1OrgsByOrgSlugBillingTopupQuote,
   getV1OrgsByOrgSlugBillingTransactions,
@@ -38,6 +40,10 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
   getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunId,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
   getV1OrgsByOrgSlugRepositories,
   getV1OrgsByOrgSlugRoles,
   getV1OrgsByOrgSlugRolesActions,
@@ -52,11 +58,17 @@ import {
   type Options,
   patchV1OrgsByOrgSlug,
   patchV1OrgsByOrgSlugProjectsByProjectId,
+  patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
   patchV1OrgsByOrgSlugRolesByRoleId,
   postV1AuthLogout,
   postV1InvitesAccept,
+  postV1OauthConsent,
+  postV1OauthIntrospect,
+  postV1OauthRevoke,
+  postV1OauthToken,
   postV1Orgs,
   postV1OrgsByOrgSlugAgentCredentials,
+  postV1OrgsByOrgSlugAnalyses,
   postV1OrgsByOrgSlugBillingTopup,
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugProjects,
@@ -64,6 +76,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
+  postV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
   postV1OrgsByOrgSlugRoles,
   postV1OrgsByOrgSlugServices,
   postV1OrgsByOrgSlugServicesByServiceIdConnection,
@@ -78,6 +91,7 @@ import {
   putV1OrgsByOrgSlugBillingAutoReload,
   putV1OrgsByOrgSlugMembersByMemberIdRoles,
   putV1OrgsByOrgSlugProjectsByProjectIdEnv,
+  putV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraph,
 } from "../sdk.gen"
 import type {
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
@@ -118,6 +132,12 @@ import type {
   GetV1OrgsByOrgSlugAgentCredentialsData,
   GetV1OrgsByOrgSlugAgentCredentialsError,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdData,
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdError,
+  GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
+  GetV1OrgsByOrgSlugAnalysesData,
+  GetV1OrgsByOrgSlugAnalysesError,
+  GetV1OrgsByOrgSlugAnalysesResponse,
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceError,
   GetV1OrgsByOrgSlugBillingBalanceResponse,
@@ -156,6 +176,18 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   GetV1OrgsByOrgSlugProjectsData,
   GetV1OrgsByOrgSlugProjectsError,
   GetV1OrgsByOrgSlugProjectsResponse,
@@ -197,6 +229,9 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdData,
   PatchV1OrgsByOrgSlugProjectsByProjectIdError,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdError,
@@ -207,9 +242,21 @@ import type {
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptError,
   PostV1InvitesAcceptResponse,
+  PostV1OauthConsentData,
+  PostV1OauthConsentError,
+  PostV1OauthConsentResponse,
+  PostV1OauthIntrospectData,
+  PostV1OauthIntrospectResponse,
+  PostV1OauthRevokeData,
+  PostV1OauthTokenData,
+  PostV1OauthTokenError,
+  PostV1OauthTokenResponse,
   PostV1OrgsByOrgSlugAgentCredentialsData,
   PostV1OrgsByOrgSlugAgentCredentialsError,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
+  PostV1OrgsByOrgSlugAnalysesData,
+  PostV1OrgsByOrgSlugAnalysesError,
+  PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupError,
   PostV1OrgsByOrgSlugBillingTopupResponse,
@@ -228,6 +275,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsData,
   PostV1OrgsByOrgSlugProjectsError,
   PostV1OrgsByOrgSlugProjectsResponse,
@@ -276,6 +326,9 @@ import type {
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvError,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphError,
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
 } from "../types.gen"
 
 export type QueryKey<TOptions extends Options> = [
@@ -1979,6 +2032,429 @@ export const deleteV1OrgsByOrgSlugServicesByServiceIdMutation = (
   return mutationOptions
 }
 
+export const getV1OrgsByOrgSlugAnalysesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugAnalysesData>,
+) => createQueryKey("getV1OrgsByOrgSlugAnalyses", options)
+
+/**
+ * Lists the organization's repository analyses
+ */
+export const getV1OrgsByOrgSlugAnalysesOptions = (
+  options: Options<GetV1OrgsByOrgSlugAnalysesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugAnalysesResponse,
+    GetV1OrgsByOrgSlugAnalysesError,
+    GetV1OrgsByOrgSlugAnalysesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugAnalysesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugAnalyses({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugAnalysesQueryKey(options),
+  })
+
+/**
+ * Analyses a public repository to work out what it needs to run here
+ */
+export const postV1OrgsByOrgSlugAnalysesMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAnalysesData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAnalysesResponse,
+  PostV1OrgsByOrgSlugAnalysesError,
+  Options<PostV1OrgsByOrgSlugAnalysesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAnalysesResponse,
+    PostV1OrgsByOrgSlugAnalysesError,
+    Options<PostV1OrgsByOrgSlugAnalysesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAnalyses({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugAnalysesByAnalysisIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugAnalysesByAnalysisId", options)
+
+/**
+ * Reads one analysis. Poll this until status is no longer queued or running
+ */
+export const getV1OrgsByOrgSlugAnalysesByAnalysisIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugAnalysesByAnalysisIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
+    GetV1OrgsByOrgSlugAnalysesByAnalysisIdError,
+    GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugAnalysesByAnalysisId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflows", options)
+
+/**
+ * Lists a project's workflows
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdWorkflows({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsQueryKey(options),
+  })
+
+/**
+ * Creates a workflow
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdWorkflows({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Saves a graph as a new version, if it changed
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphMutation = (
+  options?: Partial<Options<PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData>>,
+): UseMutationOptions<
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphError,
+  Options<PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
+    PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphError,
+    Options<PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraph({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns", options)
+
+/**
+ * Lists a workflow's runs
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData>,
+) =>
+  createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunId", options)
+
+/**
+ * One run, its steps, and what it cost
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey:
+      getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData>,
+) =>
+  createQueryKey(
+    "getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob",
+    options,
+  )
+
+/**
+ * The queued job behind a run
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
+    ReturnType<
+      typeof getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobQueryKey
+    >
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } =
+        await getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob({
+          ...options,
+          ...queryKey[0],
+          signal,
+          throwOnError: true,
+        })
+      return data
+    },
+    queryKey:
+      getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobQueryKey(options),
+  })
+
+/**
+ * Replace a queued job's data
+ */
+export const patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobMutation = (
+  options?: Partial<
+    Options<PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData>
+  >,
+): UseMutationOptions<
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
+  PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError,
+  Options<PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
+    PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobError,
+    Options<PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } =
+        await patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob({
+          ...options,
+          ...fnOptions,
+          throwOnError: true,
+        })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugStoreListingsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) => createQueryKey("getV1OrgsByOrgSlugStoreListings", options)
+
+/**
+ * Lists listings in any status, including unpublished submissions
+ */
+export const getV1OrgsByOrgSlugStoreListingsOptions = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    GetV1OrgsByOrgSlugStoreListingsError,
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugStoreListingsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugStoreListings({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugStoreListingsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugStoreListings", options, true)
+
+/**
+ * Lists listings in any status, including unpublished submissions
+ */
+export const getV1OrgsByOrgSlugStoreListingsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugStoreListingsResponse,
+    GetV1OrgsByOrgSlugStoreListingsError,
+    InfiniteData<GetV1OrgsByOrgSlugStoreListingsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugStoreListings({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Publishes a listing, making it visible to unauthenticated visitors
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
+  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
+    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdPublish({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Takes a listing out of the public catalogue
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
+  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
+    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugBillingBalanceQueryKey = (
   options: Options<GetV1OrgsByOrgSlugBillingBalanceData>,
 ) => createQueryKey("getV1OrgsByOrgSlugBillingBalance", options)
@@ -2367,140 +2843,6 @@ export const postV1StoreListingsBySlugEventsMutation = (
   return mutationOptions
 }
 
-export const getV1OrgsByOrgSlugStoreListingsQueryKey = (
-  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
-) => createQueryKey("getV1OrgsByOrgSlugStoreListings", options)
-
-/**
- * Lists listings in any status, including unpublished submissions
- */
-export const getV1OrgsByOrgSlugStoreListingsOptions = (
-  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
-) =>
-  queryOptions<
-    GetV1OrgsByOrgSlugStoreListingsResponse,
-    GetV1OrgsByOrgSlugStoreListingsError,
-    GetV1OrgsByOrgSlugStoreListingsResponse,
-    ReturnType<typeof getV1OrgsByOrgSlugStoreListingsQueryKey>
-  >({
-    queryFn: async ({ queryKey, signal }) => {
-      const { data } = await getV1OrgsByOrgSlugStoreListings({
-        ...options,
-        ...queryKey[0],
-        signal,
-        throwOnError: true,
-      })
-      return data
-    },
-    queryKey: getV1OrgsByOrgSlugStoreListingsQueryKey(options),
-  })
-
-export const getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey = (
-  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
-): QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>> =>
-  createQueryKey("getV1OrgsByOrgSlugStoreListings", options, true)
-
-/**
- * Lists listings in any status, including unpublished submissions
- */
-export const getV1OrgsByOrgSlugStoreListingsInfiniteOptions = (
-  options: Options<GetV1OrgsByOrgSlugStoreListingsData>,
-) => {
-  const opts = infiniteQueryOptions<
-    GetV1OrgsByOrgSlugStoreListingsResponse,
-    GetV1OrgsByOrgSlugStoreListingsError,
-    InfiniteData<GetV1OrgsByOrgSlugStoreListingsResponse>,
-    QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>,
-    | string
-    | Pick<
-        QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
-        "body" | "headers" | "path" | "query"
-      >
-  >(
-    // @ts-ignore
-    {
-      queryFn: async ({ pageParam, queryKey, signal }) => {
-        // @ts-ignore
-        const page: Pick<
-          QueryKey<Options<GetV1OrgsByOrgSlugStoreListingsData>>[0],
-          "body" | "headers" | "path" | "query"
-        > =
-          typeof pageParam === "object"
-            ? pageParam
-            : {
-                query: {
-                  cursor: pageParam,
-                },
-              }
-        const params = createInfiniteParams(queryKey, page)
-        const { data } = await getV1OrgsByOrgSlugStoreListings({
-          ...options,
-          ...params,
-          signal,
-          throwOnError: true,
-        })
-        return data
-      },
-      queryKey: getV1OrgsByOrgSlugStoreListingsInfiniteQueryKey(options),
-    },
-  )
-  return opts as Omit<typeof opts, "initialData">
-}
-
-/**
- * Publishes a listing, making it visible to unauthenticated visitors
- */
-export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishMutation = (
-  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>>,
-): UseMutationOptions<
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
-  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
-    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
-    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdPublish({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
-/**
- * Takes a listing out of the public catalogue
- */
-export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishMutation = (
-  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>>,
-): UseMutationOptions<
-  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
-  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
-    PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
-    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
 export const getV1UserMePreferencesQueryKey = (options?: Options<GetV1UserMePreferencesData>) =>
   createQueryKey("getV1UserMePreferences", options)
 
@@ -2594,6 +2936,110 @@ export const postV1WebhooksStripeMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1WebhooksStripe({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Records consent and mints an authorization code
+ */
+export const postV1OauthConsentMutation = (
+  options?: Partial<Options<PostV1OauthConsentData>>,
+): UseMutationOptions<
+  PostV1OauthConsentResponse,
+  PostV1OauthConsentError,
+  Options<PostV1OauthConsentData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OauthConsentResponse,
+    PostV1OauthConsentError,
+    Options<PostV1OauthConsentData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OauthConsent({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * RFC 6749 token endpoint: authorization_code and refresh_token grants
+ */
+export const postV1OauthTokenMutation = (
+  options?: Partial<Options<PostV1OauthTokenData>>,
+): UseMutationOptions<
+  PostV1OauthTokenResponse,
+  PostV1OauthTokenError,
+  Options<PostV1OauthTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OauthTokenResponse,
+    PostV1OauthTokenError,
+    Options<PostV1OauthTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OauthToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * RFC 7662 introspection. Requires client authentication
+ */
+export const postV1OauthIntrospectMutation = (
+  options?: Partial<Options<PostV1OauthIntrospectData>>,
+): UseMutationOptions<
+  PostV1OauthIntrospectResponse,
+  DefaultError,
+  Options<PostV1OauthIntrospectData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OauthIntrospectResponse,
+    DefaultError,
+    Options<PostV1OauthIntrospectData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OauthIntrospect({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * RFC 7009 revocation. Always 200, even for an unknown token
+ */
+export const postV1OauthRevokeMutation = (
+  options?: Partial<Options<PostV1OauthRevokeData>>,
+): UseMutationOptions<unknown, DefaultError, Options<PostV1OauthRevokeData>> => {
+  const mutationOptions: UseMutationOptions<
+    unknown,
+    DefaultError,
+    Options<PostV1OauthRevokeData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OauthRevoke({
         ...options,
         ...fnOptions,
         throwOnError: true,
