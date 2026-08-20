@@ -15,7 +15,7 @@
     }
   ],
   "scripts": {
-    "db-codegen": "kysely-codegen --config-file ./.config/.kysely-codegenrc.ts"
+    "db-codegen": "kysely-codegen --config-file ./.config/.kysely-codegenrc.cjs && pnpm --dir ../.. run format"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
