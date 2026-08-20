@@ -46,10 +46,51 @@ interval and doing it slowly costs a gap in the billing record.
 `requests == limits` puts the pod in the Guaranteed QoS class, so the kubelet evicts tenant workloads
 before it evicts the thing that bills for them.
 
+## `platform/`
+
+Deployments and identities for the platform's own workloads. `pg-proxy` is here in full; the other
+two proxies have identities and no Deployment yet, which is stated rather than papered over.
+
+Every ServiceAccount has **no Role and no ClusterRole**. These talk to Postgres, Valkey and
+OpenSearch, not to the Kubernetes API, so a binding would be a permission nobody uses and everybody
+inherits. The IRSA annotation is what actually grants anything, and it grants AWS access, not
+cluster access.
+
+`pg-proxy` has a memory limit and deliberately **no CPU limit**. It sits on the per-query path for
+every tenant, and CFS throttling on a latency-sensitive proxy turns a busy moment into a visible
+stall. The request is what the scheduler packs on; memory is what must not run away.
+
+Liveness is slower and more tolerant than readiness. A proxy that misses a readiness check should
+leave the endpoints list; one that misses a liveness check gets killed, dropping every session it
+was holding.
+
+## `tenant/`
+
+The half of tenant isolation that is not the Kata VM boundary. Neither substitutes for the other: a
+hypervisor stops a container escape reaching the host, and does not care which IP a guest dials.
+
+`default-deny` names **both** `Ingress` and `Egress` in `policyTypes`. A NetworkPolicy that omits
+`Egress` does not restrict egress — it is the mistake that makes one of these look applied and do
+nothing.
+
+The egress allowance is the interesting part. Tenants may reach DNS, the three proxies, and the
+internet — with `except` blocks for `10/8`, `172.16/12`, `192.168/16` and **`169.254/16`**. That last
+one is the instance metadata service, whose credentials belong to the node; allowing `0.0.0.0/0`
+outright would hand every tenant the node's IAM role.
+
+Reaching a backing service _only_ through a proxy is what makes the proxies a security boundary
+rather than a convenience — and this is the rule that enforces it from the tenant's side.
+
+`TENANT_NAMESPACE` is a placeholder: one namespace per project, created by the control plane, which
+substitutes it.
+
 ## Not here
 
-- **Deployments for the website, API, worker and the three proxies.** They have images and
-  configuration but no manifests.
+- **Deployments for the website, API, worker, `valkey-proxy` and `search-proxy`.** Only `pg-proxy`
+  has one. The other two have ServiceAccounts and nothing to run under them.
+- **The gateway** the tenant ingress policy names. The policy allows traffic from
+  `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
+  applied today, that rule admits nothing.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
 - **`kata-deploy`, the runtime classes and devmapper thin pools.** Phase 11. The tenant node group
