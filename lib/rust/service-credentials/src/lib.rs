@@ -113,23 +113,30 @@ impl CredentialStore {
             .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
 
         /*
-          The service must still be live, which is why this joins rather than reading one table.
+          The service *and its organization* must still be live, which is why this joins twice.
 
           Revoking the credential is what suspension does, so `revoked_at is null` alone would very
-          nearly do. `deleted_at is null` and the status check are the belt: a service deleted by a
-          path that forgot to revoke — a cascade, a hand-written fix, a future migration — must not
-          leave a working credential behind. Authorization that depends on every writer remembering
-          to do two things is authorization that eventually fails open.
+          nearly do. The rest is the belt: a service deleted by a path that forgot to revoke — a
+          cascade, a hand-written fix, a future migration — must not leave a working credential
+          behind. Authorization that depends on every writer remembering to do two things is
+          authorization that eventually fails open.
+
+          The organization join is that failure, found rather than imagined: deleting an
+          organization soft-deletes the row and nothing else, so without this a deleted customer's
+          queue and search credentials went on working indefinitely. `deleted_at` on one table is
+          not a permission check on another.
         */
         let statement = "
             select c.id, c.secret_hash
               from service_credential c
               join backend_service s on s.id = c.backend_service_id
+              join organization o on o.id = s.organization_id
              where c.username = $1
                and c.revoked_at is null
                and (c.expires_at is null or c.expires_at > now())
                and s.deleted_at is null
                and s.status in ('provisioning', 'active')
+               and o.deleted_at is null
              limit 1
         ";
 
