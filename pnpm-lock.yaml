@@ -318,6 +318,9 @@ importers:
       '@lib/github':
         specifier: workspace:*
         version: link:../../lib/typescript/github
+      '@lib/jobs':
+        specifier: workspace:*
+        version: link:../../lib/typescript/jobs
       '@lib/srn':
         specifier: workspace:*
         version: link:../../lib/typescript/srn
@@ -570,6 +573,25 @@ importers:
         version: 26.2.0
 
   lib/typescript/github:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/jobs:
+    dependencies:
+      '@lib/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

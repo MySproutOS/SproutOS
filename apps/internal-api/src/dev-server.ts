@@ -2,9 +2,8 @@ import { serve } from "@hono/node-server"
 import type { Server } from "node:http"
 import app from "./index"
 
-// Local-only entrypoint. Production is Vercel's zero-config Hono backend, which imports the
-// default export of `src/index.ts` directly and binds the port itself. Deliberately not named
-// `src/server.ts` — that filename is one Vercel auto-detects as the app entrypoint.
+// Local-only entrypoint. Production runs this app as a container on EKS with its own entrypoint;
+// the Vercel deployment the upstream template assumed here does not exist in this repo.
 const port = Number(process.env.API_PORT) || 3001
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
