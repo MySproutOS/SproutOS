@@ -167,7 +167,7 @@ describe("the database's own invariants", () => {
           })
           .execute()
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/sum to .* expected 0/)
   })
 
   it("refuses to mutate a posted entry", async ({ skip }) => {
