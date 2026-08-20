@@ -1,4 +1,4 @@
-const status = {
+const STATUS = {
   ready: {
     status: "Ready",
     statusColor: "var(--leaf)",
@@ -35,7 +35,7 @@ return {
       updated: "2 hours ago",
       region: "us-east-1",
       hasUpdate: true,
-      ...status.ready,
+      ...STATUS.ready,
     },
     {
       glyph: "💬",
@@ -45,7 +45,7 @@ return {
       updated: "yesterday",
       region: "us-east-1",
       hasUpdate: false,
-      ...status.ready,
+      ...STATUS.ready,
     },
     {
       glyph: "📮",
@@ -55,7 +55,7 @@ return {
       updated: "4 minutes ago",
       region: "us-east-1",
       hasUpdate: false,
-      ...status.building,
+      ...STATUS.building,
     },
     {
       glyph: "📊",
@@ -65,7 +65,7 @@ return {
       updated: "12 days ago",
       region: "eu-west-1",
       hasUpdate: false,
-      ...status.sleeping,
+      ...STATUS.sleeping,
     },
   ],
 }
