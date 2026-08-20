@@ -188,3 +188,29 @@ passes). All three are unavoidable here: `render={<Link />}` is Base UI's only c
 hatch, `params={{ orgSlug }}` is TanStack Router's API, and inline handlers are memoized by the React
 Compiler, which is enabled in `vite.config.ts` and does by machine exactly what those rules ask for by
 hand. Worth disabling for React-Compiler packages in `oxlint.config.mts`.
+
+## Environment variables
+
+`/orgs/$orgSlug/projects/$projectId/env`, backed by the `project_env_var` routes that already
+existed on the API.
+
+**Four environments, and one of them is a fallback.** `production`, `preview`, `development`, and
+`all`. A tab shows what that environment would actually _see_ — its own variables plus the `all`
+fallbacks — because listing only exact matches would show an empty Production tab for a project
+whose variables are all set once, which is the common case.
+
+`preview` is the ephemeral environment: one deployment per open pull request. It is deliberately
+not called "staging". A long-lived staging tier would be a fifth value and a CHECK constraint
+change; today, promoting a preview variable to production is a target edit on the row.
+
+**Reveal is a POST and is never cached.** Decrypting a value writes an `audit_log` row, so a cached
+read would make the audit trail claim one look when there were five. The plaintext lives in the
+component that asked for it and nothing else — navigating away unmounts it, and it never enters the
+query cache where the next page would inherit it.
+
+**The Secret switch does not control encryption.** Every value is envelope-encrypted regardless;
+the flag only decides whether the value is masked in build logs and deploy output. The dialog says
+so, because a switch labelled "Secret" next to an unencrypted alternative is a promise nobody made.
+
+The add dialog is controlled rather than wrapping Save in a `DialogClose`: a rejected save has to
+leave the dialog open with the typed value still in it, and only a successful one closes.
