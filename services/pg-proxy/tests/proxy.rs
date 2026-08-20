@@ -29,16 +29,98 @@ fn database_url() -> Option<String> {
         .map(|url| url.split('?').next().unwrap_or(&url).to_owned())
 }
 
+/// The cluster the proxy connects to, derived from `DATABASE_URL`.
+///
+/// Derived rather than defaulted, because the two must agree: the tests provision a tenant through
+/// `DATABASE_URL` and then expect the proxy to find that tenant's database. Hard-coding the compose
+/// port meant they agreed locally and disagreed in CI, where Postgres is on 5432 — the proxy dialled
+/// a port with nothing on it and every positive test failed with `Connection refused`.
+///
+/// The explicit `PG_PROXY_BACKEND_*` variables still win, because the deployed proxy uses a
+/// different credential from whatever ran the migrations.
 fn backend_config() -> BackendConfig {
+    let url = database_url().unwrap_or_default();
+    let parsed = parse_postgres_url(&url);
+
     BackendConfig {
-        host: std::env::var("PG_PROXY_BACKEND_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        host: std::env::var("PG_PROXY_BACKEND_HOST").unwrap_or(parsed.0),
         port: std::env::var("PG_PROXY_BACKEND_PORT")
             .ok()
             .and_then(|value| value.parse().ok())
-            .unwrap_or(25281),
-        user: std::env::var("PG_PROXY_BACKEND_USER").unwrap_or_else(|_| "postgres".into()),
-        password: std::env::var("PG_PROXY_BACKEND_PASSWORD").unwrap_or_else(|_| "postgres".into()),
+            .unwrap_or(parsed.1),
+        user: std::env::var("PG_PROXY_BACKEND_USER").unwrap_or(parsed.2),
+        password: std::env::var("PG_PROXY_BACKEND_PASSWORD").unwrap_or(parsed.3),
     }
+}
+
+/// `postgres://user:password@host:port/database` → its parts, with libpq's defaults.
+///
+/// Deliberately small rather than a URL crate: this is test scaffolding, the shape is fixed, and a
+/// dependency added for four `split_once` calls is a dependency to keep current forever.
+fn parse_postgres_url(url: &str) -> (String, u16, String, String) {
+    let default = (
+        "127.0.0.1".to_owned(),
+        25281u16,
+        "postgres".to_owned(),
+        "postgres".to_owned(),
+    );
+
+    let Some((_, rest)) = url.split_once("://") else {
+        return default;
+    };
+    let (credentials, authority) = rest.split_once('@').unwrap_or(("", rest));
+    let (user, password) = credentials
+        .split_once(':')
+        .unwrap_or((credentials, "postgres"));
+    let authority = authority.split('/').next().unwrap_or(authority);
+    let (host, port) = authority.split_once(':').unwrap_or((authority, "5432"));
+
+    (
+        if host.is_empty() {
+            default.0
+        } else {
+            host.to_owned()
+        },
+        port.parse().unwrap_or(5432),
+        if user.is_empty() {
+            default.2
+        } else {
+            user.to_owned()
+        },
+        if password.is_empty() {
+            default.3
+        } else {
+            password.to_owned()
+        },
+    )
+}
+
+#[test]
+fn a_postgres_url_yields_the_backend_the_tests_provisioned_through() {
+    // The bug this replaces: the compose port hard-coded, so CI's 5432 was never dialled.
+    assert_eq!(
+        parse_postgres_url("postgres://postgres:postgres@localhost:5432/main"),
+        (
+            "localhost".to_owned(),
+            5432,
+            "postgres".to_owned(),
+            "postgres".to_owned()
+        )
+    );
+    assert_eq!(
+        parse_postgres_url("postgresql://sprout:secret@127.0.0.1:25281/main"),
+        (
+            "127.0.0.1".to_owned(),
+            25281,
+            "sprout".to_owned(),
+            "secret".to_owned()
+        )
+    );
+    // No port: libpq's default.
+    assert_eq!(
+        parse_postgres_url("postgres://u:p@db.internal/main").1,
+        5432
+    );
 }
 
 async fn services_up(url: &str) -> bool {
