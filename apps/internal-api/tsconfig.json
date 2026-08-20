@@ -28,5 +28,12 @@
   },
   "include": ["**/*.ts", "**/*.json"],
   "exclude": ["node_modules", "build", "openapi.json", "**/*.test.ts"],
-  "references": [{ "path": "../../packages/db" }, { "path": "../../lib/typescript/dao" }]
+  "references": [
+    {
+      "path": "../../packages/db"
+    },
+    {
+      "path": "../../lib/typescript/dao"
+    }
+  ]
 }

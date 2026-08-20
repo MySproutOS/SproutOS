@@ -288,6 +288,9 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.3)
+      '@lib/billing':
+        specifier: workspace:*
+        version: link:../../lib/typescript/billing
       '@lib/dao':
         specifier: workspace:*
         version: link:../../lib/typescript/dao
@@ -312,6 +315,9 @@ importers:
       kysely:
         specifier: 'catalog:'
         version: 0.29.5
+      stripe:
+        specifier: 'catalog:'
+        version: 22.5.0(@types/node@26.2.0)
       typebox:
         specifier: 'catalog:'
         version: 1.3.16
