@@ -1,3 +1,11 @@
+export {
+  type OpenAiUsage,
+  type PlatformMessage,
+  type PlatformRunInput,
+  type PlatformRunOutcome,
+  runPlatformChat,
+  toTokenUsage,
+} from "./platform"
 export { agentSubprocessEnv, toSdkPermissionMode, UnsupportedCredentialError } from "./env"
 export {
   activeTokenRates,

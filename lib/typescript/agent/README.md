@@ -167,3 +167,61 @@ Excluding it through `input.filters.operations.exclude` in the openapi-ts config
 move and does **not** work: this version accepts the option and ignores it, which is worse than not
 supporting it. `describeRoute({ hide: true })` is the thing that holds — it removes the method from
 the path, leaving the path key with no operations, and the generated client has no method for it.
+
+## The other runner: chat on platform credit
+
+`runPlatformChat` is what a customer paying out of credits gets. It exists because our key is
+OpenAI's and OpenAI is not an Anthropic-shaped endpoint Claude Code can be pointed at, so the two
+billing models genuinely need two runners.
+
+**It answers questions; it does not edit files.** No tools, no checkout, no pull request — giving a
+second model harness write access to a customer's repository is not a thing to add quietly. Its
+system prompt says so, and the route sends it down a path that needs no repository at all, which is
+why credit-billed chat works today while the agent runner is still waiting on the GitHub App.
+
+The key never leaves the API process: no subprocess to inherit it, no tenant VM to hand it to.
+
+### `max_completion_tokens` is headroom, not answer length
+
+On a reasoning model the budget covers reasoning _and_ the visible reply, and the reasoning comes
+first. Observed: a one-word answer spent **128 reasoning tokens and 11 visible ones**. Set the cap
+to 64 and the model uses all of it thinking, stops with `finish_reason: "length"`, and returns an
+empty string — having charged for 64 tokens.
+
+The default is 8192, and a run that ends truncated with nothing to show says so rather than
+presenting a blank answer alongside a charge.
+
+### Two ways to get the bill wrong, in opposite directions
+
+`toTokenUsage` is a pure function with tests, because neither mistake fails visibly:
+
+|                                                           | what happens if you get it wrong                                                                               |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `prompt_tokens` **includes** cached tokens                | leaving them in charges the full input rate for text the model never reprocessed — most of a long conversation |
+| `completion_tokens` **already includes** reasoning tokens | adding `reasoning_tokens` on top double-bills the most expensive dimension                                     |
+
+Real numbers from a live call: `prompt_tokens: 14, completion_tokens: 139,
+completion_tokens_details.reasoning_tokens: 128`.
+
+### Verified against the real key and a real balance
+
+```
+before:  posted $5.00   held $0.00        available $5.00
+reply:   "zorblatt"
+usage:   { inputTokens: 94, outputTokens: 139, cacheReadTokens: 0 }
+holds:   [ { status: 'settled', amount: '$0.605553' } ]
+charged: $0.002918
+after:   posted $4.997082  held $0.00     available $4.997082
+```
+
+`94 × 3.3 + 139 × 16.5 = 2,605` micro-USD, plus 12% overhead, is exactly `$0.002918`. The hold
+reserved $0.605553 up front and returned everything unused at settlement.
+
+### The conversation is replayed, not remembered
+
+A chat completion has no memory, so every turn resends the exchange. `priorMessages` rebuilds it
+from `agent_turn` (the prompts) and `agent_event` (the replies) rather than from process memory,
+because the process that served turn one is not necessarily the one serving turn two.
+
+It is capped at the last 20 messages. A conversation replayed in full is a bill that grows
+quadratically in the number of turns, since every turn resends every earlier one.
