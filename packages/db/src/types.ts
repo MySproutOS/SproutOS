@@ -180,6 +180,20 @@ export interface AgentUsage {
   source: string
 }
 
+export interface ApiKey {
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp | null
+  id: string
+  keyHash: string
+  lastUsedAt: Timestamp | null
+  name: string
+  organizationId: string
+  prefix: string
+  revokedAt: Timestamp | null
+  scopes: Generated<string[]>
+  userId: string
+}
+
 export interface AuditLog {
   action: string
   actorUserId: string | null
@@ -1154,6 +1168,7 @@ export interface DB {
   agentSessionEntry: AgentSessionEntry
   agentTurn: AgentTurn
   agentUsage: AgentUsage
+  apiKey: ApiKey
   auditLog: AuditLog
   backendService: BackendService
   backgroundJob: BackgroundJob

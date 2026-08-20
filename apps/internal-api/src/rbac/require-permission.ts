@@ -1,4 +1,5 @@
 import type { AuthSession, SessionUser } from "@lib/dao"
+import type { AuthContext } from "../middleware"
 import {
   fetchMemberPermission,
   fetchOrganization,
@@ -11,7 +12,7 @@ import type { Context } from "hono"
 import { createMiddleware } from "hono/factory"
 import { ErrorCode } from "../utils/errors.enum"
 import { throwForbidden, throwNotFound } from "../utils/http-exception"
-import { type Action, expandAction } from "./actions"
+import { type Action, actionsCover, expandAction } from "./actions"
 import {
   type MembershipContext,
   type OrganizationContext,
@@ -22,7 +23,10 @@ import {
 
 export type PermissionVariables = {
   user: SessionUser
-  session: AuthSession
+  /** Null when the caller authenticated with a bearer credential rather than a cookie. */
+  session: AuthSession | null
+  /** How they authenticated, and what that credential was granted. See `middleware.ts`. */
+  auth: AuthContext
   organization: OrganizationContext
   membership: MembershipContext
 }
@@ -117,6 +121,22 @@ export function requirePermission(
 ) {
   return createMiddleware<{ Variables: PermissionVariables }>(async (c, next) => {
     const user = c.var.user
+
+    /*
+      A bearer credential's power is the intersection of what the user can do and what the
+      credential was granted, so the scope check comes first — and it is a check on the *action*
+      alone, which is why it can run before the membership lookup.
+
+      Checked before RBAC deliberately: a token that was never granted `project:delete` should be
+      refused whether or not its user happens to have the permission, and doing the cheap check
+      first means a wrong-scope request costs no queries.
+
+      `scopes: null` is a session — a person at a browser, whose RBAC is the whole answer.
+    */
+    const scopes = c.var.auth?.scopes ?? null
+    if (scopes !== null && !actionsCover(scopes, action)) {
+      return throwForbidden(c, "Forbidden", ErrorCode.InsufficientPermissions)
+    }
 
     const resolved = await resolveMembership(c, user.id)
     if (resolved === null) return throwNotFound(c, "Organization not found")

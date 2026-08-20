@@ -1,3 +1,4 @@
+import { KEY_PREFIX, resolveKey, stampUsed } from "@lib/api-keys"
 import { introspect } from "@lib/oauth-provider"
 import { db } from "@sproutos/db"
 import { createMiddleware } from "hono/factory"
@@ -20,8 +21,10 @@ import { createMiddleware } from "hono/factory"
 export type BearerContext = {
   userId: string
   organizationId: string
-  oauthClientId: string
+  /** Null for an API key, which has no client acting on anyone's behalf. */
+  oauthClientId: string | null
   scopes: string[]
+  kind: "oauth" | "api_key"
 }
 
 /** A bearer token from `Authorization: Bearer …`, or nothing. */
@@ -50,6 +53,35 @@ export const bearerMiddleware = createMiddleware<{
     return undefined
   }
 
+  /*
+    An API key travels in the same header as an OAuth token and is told apart by its prefix.
+
+    One header because that is what every HTTP client already sends, and because a route that
+    authenticates one way but authorizes another is how a scope check gets skipped. Both land in the
+    same `oauth` variable and the same `requirePermission`.
+  */
+  if (token.startsWith(KEY_PREFIX)) {
+    const resolved = await resolveKey(db, token)
+    if (resolved === undefined) {
+      // Same answer for an unknown key, a revoked one and an expired one — see `resolveKey`.
+      c.header("WWW-Authenticate", 'Bearer error="invalid_token"')
+      return c.json({ error: "invalid_token", error_description: "The token is not valid" }, 401)
+    }
+
+    // Not awaited: a bookkeeping write must not be able to fail a request.
+    void stampUsed(db, resolved.id)
+
+    c.set("oauth", {
+      userId: resolved.userId,
+      organizationId: resolved.organizationId,
+      oauthClientId: null,
+      scopes: resolved.scopes,
+      kind: "api_key",
+    })
+    await next()
+    return undefined
+  }
+
   const introspected = await introspect(db, token)
   if (
     !introspected.active ||
@@ -68,6 +100,7 @@ export const bearerMiddleware = createMiddleware<{
     organizationId: introspected.organizationId,
     oauthClientId: introspected.oauthClientId,
     scopes: introspected.scopes ?? [],
+    kind: "oauth",
   })
 
   await next()

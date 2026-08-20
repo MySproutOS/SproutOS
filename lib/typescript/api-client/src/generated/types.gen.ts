@@ -3585,6 +3585,124 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses = {
 export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses]
 
+export type GetV1OrgsByOrgSlugApiKeysData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/api-keys"
+}
+
+export type GetV1OrgsByOrgSlugApiKeysErrors = {
+  /**
+   * Caller lacks credential:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugApiKeysError =
+  GetV1OrgsByOrgSlugApiKeysErrors[keyof GetV1OrgsByOrgSlugApiKeysErrors]
+
+export type GetV1OrgsByOrgSlugApiKeysResponses = {
+  /**
+   * Keys
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      prefix: string
+      scopes: Array<string>
+      createdAt: Date
+      lastUsedAt: Date | null
+      expiresAt: Date | null
+      createdByUserId: string
+      createdByName: string
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugApiKeysResponse =
+  GetV1OrgsByOrgSlugApiKeysResponses[keyof GetV1OrgsByOrgSlugApiKeysResponses]
+
+export type PostV1OrgsByOrgSlugApiKeysData = {
+  body?: {
+    name: string
+    scopes?: Array<string>
+    expiresInDays?: number
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/api-keys"
+}
+
+export type PostV1OrgsByOrgSlugApiKeysErrors = {
+  /**
+   * An unknown scope, or one the caller does not hold
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugApiKeysError =
+  PostV1OrgsByOrgSlugApiKeysErrors[keyof PostV1OrgsByOrgSlugApiKeysErrors]
+
+export type PostV1OrgsByOrgSlugApiKeysResponses = {
+  /**
+   * The key, shown once
+   */
+  201: {
+    id: string
+    key: string
+    prefix: string
+    scopes: Array<string>
+    expiresAt: Date | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugApiKeysResponse =
+  PostV1OrgsByOrgSlugApiKeysResponses[keyof PostV1OrgsByOrgSlugApiKeysResponses]
+
+export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    apiKeyId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/api-keys/{apiKeyId}"
+}
+
+export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors = {
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such key
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdError =
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors[keyof DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors]
+
+export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses = {
+  /**
+   * Revoked
+   */
+  204: void
+}
+
+export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponse =
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses[keyof DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses]
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never

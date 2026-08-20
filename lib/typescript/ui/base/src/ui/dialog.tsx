@@ -4,6 +4,21 @@ import type * as React from "react"
 
 import { cn } from "../lib/utils"
 
+/*
+  `data-starting-style` never controls opacity in this file, deliberately.
+
+  Base UI sets that attribute on a popup for its first frame and removes it once the browser has
+  painted, so the element transitions in from the starting style. On Dialog and Sheet — the two that
+  render through a Portal — it is set and **never removed**, so a popup whose visibility depended on
+  it stayed at `opacity: 0` forever. Every dialog in the product opened invisibly: the trigger's
+  `aria-expanded` went true, the popup and backdrop were in the DOM at the right size and position,
+  and nothing appeared on screen.
+
+  So the entrance animation is a scale only. If the attribute is cleared the popup eases in; if it
+  is not, the popup is a couple of percent small and perfectly visible. The failure mode of an
+  effect that does not run must not be an invisible dialog.
+*/
+
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
 const DialogClose = DialogPrimitive.Close
@@ -13,7 +28,7 @@ function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop.Props)
     <DialogPrimitive.Backdrop
       data-slot="dialog-backdrop"
       className={cn(
-        "fixed inset-0 z-50 min-h-dvh bg-black/60 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0",
+        "fixed inset-0 z-50 min-h-dvh bg-black/60 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0",
         className,
       )}
       {...props}
@@ -33,7 +48,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-[28rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl shadow-black/50 outline-none transition-[transform,opacity] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+          "fixed top-1/2 left-1/2 z-50 flex w-[28rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl shadow-black/50 outline-none transition-[transform,opacity] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98]",
           className,
         )}
         {...props}

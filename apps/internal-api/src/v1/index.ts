@@ -13,6 +13,7 @@ import projects from "./projects"
 import roles from "./roles"
 import services from "./services"
 import store, { storeModeration } from "./store"
+import apiKeys from "./api-keys"
 import observability from "./observability"
 import otlp from "./otlp"
 import stripeWebhooks from "./stripe-webhooks"
@@ -55,6 +56,7 @@ orgs.route("/", workflows)
 orgs.route("/", storeModeration)
 orgs.route("/:orgSlug/billing", billing)
 orgs.route("/", observability)
+orgs.route("/", apiKeys)
 
 /**
  * Unauthenticated by design.

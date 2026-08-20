@@ -12,6 +12,7 @@ import { client } from "../client.gen"
 import {
   deleteV1OrgsByOrgSlug,
   deleteV1OrgsByOrgSlugAgentCredentialsByCredentialId,
+  deleteV1OrgsByOrgSlugApiKeysByApiKeyId,
   deleteV1OrgsByOrgSlugInvitesByInviteId,
   deleteV1OrgsByOrgSlugLeave,
   deleteV1OrgsByOrgSlugMembersByMemberId,
@@ -27,6 +28,7 @@ import {
   getV1OrgsByOrgSlugAgentCredentials,
   getV1OrgsByOrgSlugAnalyses,
   getV1OrgsByOrgSlugAnalysesByAnalysisId,
+  getV1OrgsByOrgSlugApiKeys,
   getV1OrgsByOrgSlugBillingBalance,
   getV1OrgsByOrgSlugBillingStatements,
   getV1OrgsByOrgSlugBillingTopupQuote,
@@ -76,6 +78,7 @@ import {
   postV1Orgs,
   postV1OrgsByOrgSlugAgentCredentials,
   postV1OrgsByOrgSlugAnalyses,
+  postV1OrgsByOrgSlugApiKeys,
   postV1OrgsByOrgSlugBillingTopup,
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugProjects,
@@ -105,6 +108,9 @@ import type {
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdError,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponse,
   DeleteV1OrgsByOrgSlugData,
   DeleteV1OrgsByOrgSlugError,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
@@ -146,6 +152,9 @@ import type {
   GetV1OrgsByOrgSlugAnalysesData,
   GetV1OrgsByOrgSlugAnalysesError,
   GetV1OrgsByOrgSlugAnalysesResponse,
+  GetV1OrgsByOrgSlugApiKeysData,
+  GetV1OrgsByOrgSlugApiKeysError,
+  GetV1OrgsByOrgSlugApiKeysResponse,
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceError,
   GetV1OrgsByOrgSlugBillingBalanceResponse,
@@ -286,6 +295,9 @@ import type {
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesError,
   PostV1OrgsByOrgSlugAnalysesResponse,
+  PostV1OrgsByOrgSlugApiKeysData,
+  PostV1OrgsByOrgSlugApiKeysError,
+  PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupError,
   PostV1OrgsByOrgSlugBillingTopupResponse,
@@ -2942,6 +2954,86 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugApiKeysQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugApiKeysData>,
+) => createQueryKey("getV1OrgsByOrgSlugApiKeys", options)
+
+/**
+ * The organization's API keys
+ */
+export const getV1OrgsByOrgSlugApiKeysOptions = (options: Options<GetV1OrgsByOrgSlugApiKeysData>) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugApiKeysResponse,
+    GetV1OrgsByOrgSlugApiKeysError,
+    GetV1OrgsByOrgSlugApiKeysResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugApiKeysQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugApiKeys({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugApiKeysQueryKey(options),
+  })
+
+/**
+ * Mint an API key. The secret is returned once.
+ */
+export const postV1OrgsByOrgSlugApiKeysMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugApiKeysData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugApiKeysResponse,
+  PostV1OrgsByOrgSlugApiKeysError,
+  Options<PostV1OrgsByOrgSlugApiKeysData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugApiKeysResponse,
+    PostV1OrgsByOrgSlugApiKeysError,
+    Options<PostV1OrgsByOrgSlugApiKeysData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugApiKeys({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Revoke an API key
+ */
+export const deleteV1OrgsByOrgSlugApiKeysByApiKeyIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponse,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdError,
+  Options<DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponse,
+    DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdError,
+    Options<DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugApiKeysByApiKeyId({
         ...options,
         ...fnOptions,
         throwOnError: true,

@@ -5,6 +5,7 @@ import type {
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
+  GetV1OrgsByOrgSlugApiKeysResponse,
   GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugBillingUsageResponse,
@@ -37,6 +38,7 @@ import type {
   PatchV1OrgsByOrgSlugResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAnalysesResponse,
+  PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
@@ -506,6 +508,31 @@ export const getV1OrgsByOrgSlugBillingStatementsResponseTransformer = async (
     }
     return item
   })
+  return data
+}
+
+export const getV1OrgsByOrgSlugApiKeysResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugApiKeysResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    if (item.lastUsedAt) {
+      item.lastUsedAt = new Date(item.lastUsedAt)
+    }
+    if (item.expiresAt) {
+      item.expiresAt = new Date(item.expiresAt)
+    }
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugApiKeysResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugApiKeysResponse> => {
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
   return data
 }
 
