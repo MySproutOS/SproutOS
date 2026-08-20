@@ -21,6 +21,7 @@ import {
   deleteV1OrgsByOrgSlugRolesByRoleId,
   deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
+  deleteV1UserMeImpersonation,
   getV1AuthMe,
   getV1Orgs,
   getV1OrgsByOrgSlug,
@@ -64,6 +65,7 @@ import {
   getV1StoreListingsBySlug,
   getV1StoreTags,
   getV1UserMeExport,
+  getV1UserMeImpersonation,
   getV1UserMePreferences,
   getV1UserMeProfile,
   type Options,
@@ -141,6 +143,9 @@ import type {
   DeleteV1UserMeDeleteData,
   DeleteV1UserMeDeleteError,
   DeleteV1UserMeDeleteResponse,
+  DeleteV1UserMeImpersonationData,
+  DeleteV1UserMeImpersonationError,
+  DeleteV1UserMeImpersonationResponse,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
   GetV1OrgsByOrgSlugAgentConfigData,
@@ -266,6 +271,8 @@ import type {
   GetV1UserMeExportData,
   GetV1UserMeExportError,
   GetV1UserMeExportResponse,
+  GetV1UserMeImpersonationData,
+  GetV1UserMeImpersonationResponse,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponse,
   GetV1UserMeProfileData,
@@ -3353,6 +3360,58 @@ export const getV1UserMeExportOptions = (options?: Options<GetV1UserMeExportData
       return data
     },
     queryKey: getV1UserMeExportQueryKey(options),
+  })
+
+/**
+ * End an impersonated session and clear its cookie
+ */
+export const deleteV1UserMeImpersonationMutation = (
+  options?: Partial<Options<DeleteV1UserMeImpersonationData>>,
+): UseMutationOptions<
+  DeleteV1UserMeImpersonationResponse,
+  DeleteV1UserMeImpersonationError,
+  Options<DeleteV1UserMeImpersonationData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1UserMeImpersonationResponse,
+    DeleteV1UserMeImpersonationError,
+    Options<DeleteV1UserMeImpersonationData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1UserMeImpersonation({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1UserMeImpersonationQueryKey = (options?: Options<GetV1UserMeImpersonationData>) =>
+  createQueryKey("getV1UserMeImpersonation", options)
+
+/**
+ * Whether this session belongs to the person using it
+ */
+export const getV1UserMeImpersonationOptions = (options?: Options<GetV1UserMeImpersonationData>) =>
+  queryOptions<
+    GetV1UserMeImpersonationResponse,
+    DefaultError,
+    GetV1UserMeImpersonationResponse,
+    ReturnType<typeof getV1UserMeImpersonationQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1UserMeImpersonation({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1UserMeImpersonationQueryKey(options),
   })
 
 export const deleteV1UserMeDeleteMutation = (

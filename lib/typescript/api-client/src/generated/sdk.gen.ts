@@ -43,6 +43,9 @@ import type {
   DeleteV1UserMeDeleteData,
   DeleteV1UserMeDeleteErrors,
   DeleteV1UserMeDeleteResponses,
+  DeleteV1UserMeImpersonationData,
+  DeleteV1UserMeImpersonationErrors,
+  DeleteV1UserMeImpersonationResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
   GetV1OrgsByOrgSlugAgentConfigData,
@@ -168,6 +171,8 @@ import type {
   GetV1UserMeExportData,
   GetV1UserMeExportErrors,
   GetV1UserMeExportResponses,
+  GetV1UserMeImpersonationData,
+  GetV1UserMeImpersonationResponses,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponses,
   GetV1UserMeProfileData,
@@ -1878,6 +1883,33 @@ export const getV1UserMeExport = <ThrowOnError extends boolean = false>(
     GetV1UserMeExportErrors,
     ThrowOnError
   >({ url: "/v1/user/me/export", ...options })
+
+/**
+ * End an impersonated session and clear its cookie
+ */
+export const deleteV1UserMeImpersonation = <ThrowOnError extends boolean = false>(
+  options?: Options<DeleteV1UserMeImpersonationData, ThrowOnError>,
+): RequestResult<
+  DeleteV1UserMeImpersonationResponses,
+  DeleteV1UserMeImpersonationErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).delete<
+    DeleteV1UserMeImpersonationResponses,
+    DeleteV1UserMeImpersonationErrors,
+    ThrowOnError
+  >({ url: "/v1/user/me/impersonation", ...options })
+
+/**
+ * Whether this session belongs to the person using it
+ */
+export const getV1UserMeImpersonation = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1UserMeImpersonationData, ThrowOnError>,
+): RequestResult<GetV1UserMeImpersonationResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1UserMeImpersonationResponses, unknown, ThrowOnError>({
+    url: "/v1/user/me/impersonation",
+    ...options,
+  })
 
 export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(
   options?: Options<DeleteV1UserMeDeleteData, ThrowOnError>,

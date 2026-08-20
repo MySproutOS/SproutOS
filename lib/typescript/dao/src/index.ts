@@ -103,6 +103,7 @@ import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
 import { exportUser, type UserExport } from "./user/export"
+import { IMPERSONATION_MINUTES, impersonation, type StartImpersonation } from "./user/impersonation"
 import { crudUserPreference } from "./userPreference/crud"
 import { fetchUserPreference } from "./userPreference/fetch"
 
@@ -143,6 +144,8 @@ export {
   crudUser,
   crudUserPreference,
   exportUser,
+  IMPERSONATION_MINUTES,
+  impersonation,
   DeletedProject,
   ENV_VAR_METADATA_FIELDS,
   EnvVarMetadataRow,
@@ -211,5 +214,6 @@ export {
   SystemRoleStatement,
   UpkeepOutcome,
   UpkeepStatus,
+  StartImpersonation,
   UserExport,
 }

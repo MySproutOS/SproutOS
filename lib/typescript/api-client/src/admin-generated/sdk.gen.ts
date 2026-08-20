@@ -2,7 +2,13 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from "./client"
 import { client } from "./client.gen"
-import type { GetAdminUserTestData, GetAdminUserTestResponses } from "./types.gen"
+import type {
+  GetAdminUsersData,
+  GetAdminUsersResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
+} from "./types.gen"
 
 export type Options<
   TData extends TDataShape = TDataShape,
@@ -23,12 +29,35 @@ export type Options<
 }
 
 /**
- * Get messages for a company job posting chat
+ * Find a user across every organization
  */
-export const getAdminUserTest = <ThrowOnError extends boolean = false>(
-  options?: Options<GetAdminUserTestData, ThrowOnError>,
-): RequestResult<GetAdminUserTestResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetAdminUserTestResponses, unknown, ThrowOnError>({
-    url: "/admin/user/test",
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    url: "/admin/users",
     ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

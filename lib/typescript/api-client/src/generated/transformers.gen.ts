@@ -34,6 +34,7 @@ import type {
   GetV1StoreListingsBySlugResponse,
   GetV1StoreListingsResponse,
   GetV1UserMeExportResponse,
+  GetV1UserMeImpersonationResponse,
   GetV1UserMeProfileResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
@@ -623,5 +624,14 @@ export const getV1UserMeExportResponseTransformer = async (
     item.createdAt = new Date(item.createdAt)
     return item
   })
+  return data
+}
+
+export const getV1UserMeImpersonationResponseTransformer = async (
+  data: any,
+): Promise<GetV1UserMeImpersonationResponse> => {
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
   return data
 }
