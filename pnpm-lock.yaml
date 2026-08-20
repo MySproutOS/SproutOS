@@ -242,9 +242,6 @@ importers:
       '@ui/spa-shared':
         specifier: workspace:*
         version: link:../../../lib/typescript/ui/spa-shared
-      lucide-react:
-        specifier: 'catalog:'
-        version: 1.33.0(react@19.2.8)
       react:
         specifier: 'catalog:'
         version: 19.2.8
@@ -482,9 +479,6 @@ importers:
 
   lib/typescript/dao:
     dependencies:
-      '@lib/srn':
-        specifier: workspace:*
-        version: link:../srn
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db
@@ -510,12 +504,6 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../utils/crypto
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.2.0
-
-  lib/typescript/srn:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
