@@ -2,6 +2,7 @@ import { Scalar } from "@scalar/hono-api-reference"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { generateSpecs, type OpenApiSpecsOptions, openAPISpecs } from "hono-typebox-openapi"
+import health from "./health"
 import { apexDomain } from "./utils/env"
 import { ErrorObjectT, ErrorResponseT, InnerErrorT } from "./utils/errors/error.serializer"
 import v1 from "./v1"
@@ -96,6 +97,10 @@ if (process.env.NODE_ENV === "development") {
     }),
   )
 }
+
+// Before v1/admin: the probes must answer without a session, and must keep answering when the
+// rest of the API cannot.
+app.route("", health)
 
 const routes = app.route("", v1).route("", admin)
 

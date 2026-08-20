@@ -62,9 +62,12 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          # /ready checks Postgres; /health does not. A liveness probe that checked the database
+          # would restart every pod during a database blip and crash-loop the fleet through the
+          # recovery. Readiness only pulls the pod out of the Service, which reverses itself.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5

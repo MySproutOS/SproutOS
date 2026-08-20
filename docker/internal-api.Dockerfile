@@ -42,4 +42,4 @@ COPY --from=build /src/packages ./packages
 USER node
 EXPOSE 3001
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "apps/internal-api/build/index.js"]
+CMD ["node", "apps/internal-api/build/server.js"]
