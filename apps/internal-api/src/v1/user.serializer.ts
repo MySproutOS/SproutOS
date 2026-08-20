@@ -22,7 +22,29 @@ export const userSchemaUpdateProfileRequest = Type.Object({
   /** An IANA zone name. Rejected by the database if Postgres does not know it. */
   timezone: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
   productEmails: Type.Optional(Type.Boolean()),
+})
+
+/**
+ * The chrome's own state, separate from the profile.
+ *
+ * `sidebarCollapsed` used to be accepted here by `PATCH /me/profile`, which technically worked and
+ * was the wrong shape twice over. The profile response does not contain it, so a client toggling
+ * the sidebar got back a payload that could not confirm the write; and a client caching by query
+ * key would invalidate *the profile* every time somebody collapsed a sidebar.
+ *
+ * They are also different kinds of thing. A profile is what a person is called and how they want to
+ * be contacted — the sort of change worth a "Saved" confirmation. This is where the furniture was
+ * left, written on every toggle and never worth a word.
+ */
+export const userSchemaUpdatePreferencesRequest = Type.Object({
   sidebarCollapsed: Type.Optional(Type.Boolean()),
+  /**
+   * Projects pinned to the nav, in the order they should appear.
+   *
+   * The whole array, not an add/remove — reordering is a drag on the list and expressing that as a
+   * sequence of moves would let two tabs interleave into an order neither of them chose.
+   */
+  navPinnedProjectIds: Type.Optional(Type.Array(UUID7String, { maxItems: 50 })),
 })
 
 export const userSchemaProfileResponse = Type.Object({

@@ -177,4 +177,63 @@ describe.skipIf(!up)("the caller's profile", () => {
     expect(preferences.json.timezone).toBe("Australia/Sydney")
     expect(preferences.json.productEmails).toBe(true)
   })
+
+  describe("preferences", () => {
+    it("round-trips the sidebar and the pinned projects", async ({ skip }) => {
+      if (!up) skip()
+      const user = await person("prefs-write")
+
+      const written = await call("PATCH", "/v1/user/me/preferences", user, {
+        sidebarCollapsed: true,
+      })
+      expect(written.status).toBe(200)
+      expect(written.json.sidebarCollapsed).toBe(true)
+
+      /*
+        The response is the whole preferences shape, not an acknowledgement.
+
+        That is the point of the endpoint existing separately: a client can write the response
+        straight into the cache it reads from. Merging a partial is where a toggle in one tab starts
+        clobbering a pin made in another.
+      */
+      expect(written.json).toHaveProperty("timezone")
+      expect(written.json).toHaveProperty("lastOrganizationSlug")
+
+      const read = await call("GET", "/v1/user/me/preferences", user)
+      expect(read.json.sidebarCollapsed).toBe(true)
+    })
+
+    it("changes only what it names", async ({ skip }) => {
+      if (!up) skip()
+      // A PATCH is defined by the fields it carries. Collapsing a sidebar must not reset a timezone
+      // somebody set on the other screen.
+      const user = await person("prefs-partial")
+      await call("PATCH", "/v1/user/me/profile", user, { timezone: "Europe/Berlin" })
+      await call("PATCH", "/v1/user/me/preferences", user, { sidebarCollapsed: true })
+
+      const read = await call("GET", "/v1/user/me/preferences", user)
+      expect(read.json.timezone).toBe("Europe/Berlin")
+      expect(read.json.sidebarCollapsed).toBe(true)
+    })
+
+    it("does not let the profile route write the chrome any more", async ({ skip }) => {
+      if (!up) skip()
+      /*
+        `sidebarCollapsed` used to be accepted by `PATCH /me/profile`. It worked, and was the wrong
+        shape twice: the profile response does not contain it, so a client toggling a sidebar got
+        back a payload that could not confirm the write, and a client caching by query key would
+        invalidate the profile every time somebody collapsed a sidebar.
+      */
+      const user = await person("prefs-not-profile")
+      const response = await call("PATCH", "/v1/user/me/profile", user, { sidebarCollapsed: true })
+
+      // Ignored rather than refused, which is the kinder half of the change: a client that has not
+      // moved yet keeps working and simply stops having an effect here. Asserted so that if the
+      // validator ever starts rejecting unknown fields, this says so rather than passing quietly.
+      expect(response.status).toBe(200)
+
+      const read = await call("GET", "/v1/user/me/preferences", user)
+      expect(read.json.sidebarCollapsed).toBe(false)
+    })
+  })
 })

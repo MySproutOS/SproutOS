@@ -242,6 +242,8 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
+  PatchV1UserMePreferencesData,
+  PatchV1UserMePreferencesResponses,
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
@@ -2036,6 +2038,21 @@ export const getV1UserMePreferences = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1UserMePreferencesResponses, unknown, ThrowOnError>({
     url: "/v1/user/me/preferences",
     ...options,
+  })
+
+/**
+ * Update where the caller left the UI
+ */
+export const patchV1UserMePreferences = <ThrowOnError extends boolean = false>(
+  options?: Options<PatchV1UserMePreferencesData, ThrowOnError>,
+): RequestResult<PatchV1UserMePreferencesResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).patch<PatchV1UserMePreferencesResponses, unknown, ThrowOnError>({
+    url: "/v1/user/me/preferences",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })
 
 /**

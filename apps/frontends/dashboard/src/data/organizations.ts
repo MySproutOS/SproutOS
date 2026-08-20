@@ -26,6 +26,16 @@ export const ROLE_LABELS: Record<OrganizationRole, string> = {
   member: "Member",
 }
 
+/*
+  A Map, not `ROLE_LABELS[name]`, because `name` is a customer-typed RBAC role.
+  Indexing a plain object with free text reaches `Object.prototype`: a role named
+  `constructor` or `toString` returns a *function*, which is truthy — so a `??`
+  fallback never fires and React throws on a function child. A Map has no
+  prototype keys, and it needs no `as OrganizationRole` assertion, which is what
+  hid the hole from the type checker in the first place.
+*/
+const SEEDED_ROLE_LABELS = new Map<string, string>(Object.entries(ROLE_LABELS))
+
 type OrganizationResponse = {
   id: string
   slug: string
@@ -69,7 +79,7 @@ export function organizationRoleLabel(organization: Organization | undefined): s
   if (role === undefined) return ROLE_LABELS.member
 
   // A customer's own role name, rendered as they typed it, when it is not one of the three seeded.
-  return ROLE_LABELS[role as OrganizationRole] ?? role
+  return SEEDED_ROLE_LABELS.get(role) ?? role
 }
 
 export function useOrganizations() {

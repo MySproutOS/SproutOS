@@ -3966,6 +3966,33 @@ export type GetV1UserMePreferencesResponses = {
 export type GetV1UserMePreferencesResponse =
   GetV1UserMePreferencesResponses[keyof GetV1UserMePreferencesResponses]
 
+export type PatchV1UserMePreferencesData = {
+  body?: {
+    sidebarCollapsed?: boolean
+    navPinnedProjectIds?: Array<string>
+  }
+  path?: never
+  query?: never
+  url: "/v1/user/me/preferences"
+}
+
+export type PatchV1UserMePreferencesResponses = {
+  /**
+   * Preferences as they now stand
+   */
+  200: {
+    lastOrganizationId: string | null
+    lastOrganizationSlug: string | null
+    sidebarCollapsed: boolean
+    navPinnedProjectIds: Array<string>
+    timezone: string
+    productEmails: boolean
+  }
+}
+
+export type PatchV1UserMePreferencesResponse =
+  PatchV1UserMePreferencesResponses[keyof PatchV1UserMePreferencesResponses]
+
 export type GetV1UserMeProfileData = {
   body?: never
   path?: never
@@ -3994,7 +4021,6 @@ export type PatchV1UserMeProfileData = {
     name?: string
     timezone?: string
     productEmails?: boolean
-    sidebarCollapsed?: boolean
   }
   path?: never
   query?: never

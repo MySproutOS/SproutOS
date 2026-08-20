@@ -73,6 +73,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectId,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
   patchV1OrgsByOrgSlugRolesByRoleId,
+  patchV1UserMePreferences,
   patchV1UserMeProfile,
   postV1AuthLogout,
   postV1InvitesAccept,
@@ -289,6 +290,8 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdError,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponse,
+  PatchV1UserMePreferencesData,
+  PatchV1UserMePreferencesResponse,
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
@@ -3284,6 +3287,33 @@ export const getV1UserMePreferencesOptions = (options?: Options<GetV1UserMePrefe
     },
     queryKey: getV1UserMePreferencesQueryKey(options),
   })
+
+/**
+ * Update where the caller left the UI
+ */
+export const patchV1UserMePreferencesMutation = (
+  options?: Partial<Options<PatchV1UserMePreferencesData>>,
+): UseMutationOptions<
+  PatchV1UserMePreferencesResponse,
+  DefaultError,
+  Options<PatchV1UserMePreferencesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1UserMePreferencesResponse,
+    DefaultError,
+    Options<PatchV1UserMePreferencesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchV1UserMePreferences({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export const getV1UserMeProfileQueryKey = (options?: Options<GetV1UserMeProfileData>) =>
   createQueryKey("getV1UserMeProfile", options)
