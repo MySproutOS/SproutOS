@@ -96,6 +96,15 @@
 }
 
 :root {
+  /*
+    ADR 0010. Without this the browser paints its own chrome — scrollbars, native
+    selects, date pickers — in the light scheme against a dark page. It is also
+    what makes `dark:` utilities redundant rather than load-bearing: Tailwind v4's
+    built-in `dark` variant follows `prefers-color-scheme`, so a `dark:` class in a
+    single-palette product renders differently per reader. There are none left.
+  */
+  color-scheme: dark;
+
   --radius: 0.625rem;
 
   --soil-900: oklch(0.155 0.018 155);

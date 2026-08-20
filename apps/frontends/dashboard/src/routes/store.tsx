@@ -1,18 +1,20 @@
-import { Navigate, createFileRoute } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
 import { Spinner } from "@ui/base/ui/spinner"
+import { DashboardShell } from "@frontends/dashboard/components/shell/dashboard-shell"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { useLastOrganizationSlug } from "@frontends/dashboard/data/organizations"
 
-export const Route = createFileRoute("/dashboard")({
-  component: DashboardRedirect,
+export const Route = createFileRoute("/store")({
+  component: StoreLayout,
 })
 
 /*
-  ADR 0003: `/dashboard` stays a real route that resolves-and-redirects, so the
-  OAuth callback can send everyone here without knowing any org state. The target
-  comes from `user_preference.last_org_id` (ADR 0004).
+  `/store` is a shared route in `apps/website/src/proxy.ts`: Next.js renders it for
+  logged-out visitors and rewrites to this SPA once the session cookie validates.
+  It is not org-scoped, so the shell borrows the reader's current organization to
+  keep the sidebar — and its balance — from disappearing mid-browse.
 */
-function DashboardRedirect() {
+function StoreLayout() {
   const { data: orgSlug, isPending, isError, refetch } = useLastOrganizationSlug()
 
   if (isPending) {
@@ -28,8 +30,7 @@ function DashboardRedirect() {
       <div className="flex min-h-dvh items-center justify-center p-6">
         <div className="w-full max-w-md">
           <ListError
-            title="Could not find your organization"
-            detail="We could not work out which team to open."
+            title="Could not load the store"
             onRetry={() => {
               void refetch()
             }}
@@ -39,5 +40,5 @@ function DashboardRedirect() {
     )
   }
 
-  return <Navigate to="/orgs/$orgSlug/projects" params={{ orgSlug }} replace />
+  return <DashboardShell orgSlug={orgSlug} />
 }
