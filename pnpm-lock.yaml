@@ -327,6 +327,9 @@ importers:
       '@lib/jobs':
         specifier: workspace:*
         version: link:../../lib/typescript/jobs
+      '@lib/oauth-provider':
+        specifier: workspace:*
+        version: link:../../lib/typescript/oauth-provider
       '@lib/services':
         specifier: workspace:*
         version: link:../../lib/typescript/services
@@ -639,6 +642,25 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../utils/crypto
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/oauth-provider:
+    dependencies:
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      '@utils/crypto':
+        specifier: workspace:*
+        version: link:../utils/crypto
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
