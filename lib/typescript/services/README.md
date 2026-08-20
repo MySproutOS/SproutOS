@@ -12,8 +12,8 @@ detail and in **none of the five things a control plane does to them**: provisio
 rotate, suspend, destroy. So there is one `ServiceDriver` interface and adding a kind is a driver,
 not a second set of endpoints with their own shapes.
 
-Today only `postgres` is implemented. An unimplemented kind returns _"valkey services are not
-available yet"_ — a different answer from "something broke", and one the customer can act on.
+`postgres` and `valkey` are implemented. An unimplemented kind returns _"elasticsearch services are
+not available yet"_ — a different answer from "something broke", and one the customer can act on.
 
 ## `sprout`, not Neon, and that is deliberate
 
@@ -91,3 +91,53 @@ customer's deleted database alive indefinitely.
 
 Suspension is `alter role … nologin`, not dropping anything — a suspension that lost data would
 not be a suspension, and there is a test that the database survives it.
+
+## Valkey, which is a credential and nothing else
+
+There is no server to create. Every tenant shares one Valkey instance and is separated by a
+hash-tagged key prefix that `services/valkey-proxy` applies to every command, so provisioning is
+exactly: mint a username, mint a secret, store the hash the proxy will check against. The first
+command the tenant sends creates their first key, and nothing existed before it.
+
+### The stored secret is one-way, and `connectionUri` therefore throws
+
+`database_role.password_ciphertext` is _reversible_ because a real Postgres role has to be created on
+a real server with that exact password — something outside our process needs the plaintext back.
+Nothing outside our process needs a Valkey secret: the proxy **is** the authenticator, so it only
+ever answers "does this match".
+
+So `connectionUri` cannot do what its name promises, and it throws `SecretNotRecoverableError`
+rather than pretending. `rotateCredentials` is the answer, and it is a _different_ answer — the old
+URI stops working — which is why the caller has to handle it rather than getting a silent rotation.
+
+### Rotation revokes before it inserts
+
+`service_credential_live_username_key` is a **partial** unique index, so Postgres evaluates it per
+statement and cannot defer it to commit (`DEFERRABLE` needs a constraint, and a constraint cannot be
+partial). Inserting the new credential first raises a duplicate key on the spot.
+
+Inside one transaction that is not a window anyone can observe: a concurrent proxy lookup sees the
+state before the commit or the state after it, never the moment in between.
+
+The consequence is that the old secret dies the instant the rotation commits, with no grace period.
+That is intended. Rotation exists to recover from a leaked credential, and a leaked credential that
+keeps working for another ten minutes has not been recovered from.
+
+### `suspend` revokes; `destroy` does not delete keys
+
+Revoking the credential _is_ the suspension — the proxy refuses the next connection and the tenant's
+data is untouched. `destroy` does the same and marks the service deleted; everything under
+`{kv:<short-id>}:` becomes unreachable, because the prefix is derived from the service id and no
+other tenant can name it. Actually reclaiming the memory needs an out-of-band reaper, because
+scanning a shared instance is the one operation the proxy refuses on principle.
+
+## `tenant-auth.ts` is half of a cross-language contract
+
+The control plane issues connection credentials in TypeScript; the Rust data-plane proxies verify
+them. The two share no code, so they share fixtures: `tenant-auth.test.ts` asserts the same
+username grammar, short-id encoding and hash format that `lib/rust/tenant-auth`'s tests assert.
+
+**A divergence there is a security bug, not a formatting one.** The username _is_ the routing
+information, so if the encodings drift a proxy either rejects a valid tenant or routes one tenant's
+connection into another's keyspace. Changing one side without the other should turn a test red on
+both.

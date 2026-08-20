@@ -6,6 +6,23 @@ export {
   type SproutPostgresConfig,
 } from "./postgres"
 export {
+  SECRET_BYTES,
+  SHORT_ID_LEN,
+  encodeShortId,
+  generateSecret,
+  hashGeneratedSecret,
+  lastFour,
+  tenantUsername,
+  type ResourceKind,
+} from "./tenant-auth"
+export {
+  SecretNotRecoverableError,
+  valkeyDriver,
+  valkeyServiceConfigFromEnv,
+  valkeyUri,
+  type ValkeyServiceConfig,
+} from "./valkey"
+export {
   type ConnectionDetails,
   type ProvisionInput,
   type ProvisionResult,

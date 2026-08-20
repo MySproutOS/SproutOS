@@ -819,6 +819,18 @@ export interface SearchTenant {
   updatedAt: Generated<Timestamp>
 }
 
+export interface ServiceCredential {
+  backendServiceId: string
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp | null
+  id: string
+  lastFour: string
+  lastUsedAt: Timestamp | null
+  revokedAt: Timestamp | null
+  secretHash: string
+  username: string
+}
+
 export interface Session {
   createdAt: Generated<Timestamp>
   expires: Timestamp
@@ -1191,6 +1203,7 @@ export interface DB {
   sandbox: Sandbox
   searchCluster: SearchCluster
   searchTenant: SearchTenant
+  serviceCredential: ServiceCredential
   session: Session
   statement: Statement
   statementLineItem: StatementLineItem
