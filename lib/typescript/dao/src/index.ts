@@ -38,6 +38,58 @@ import {
   type SystemRoleDefinition,
   type SystemRoleStatement,
 } from "./role/systemRoles"
+import {
+  type AgentCredentialKind,
+  autoUpdateDefaultFor,
+  fetchAgentCredential,
+} from "./agentCredential/fetch"
+import { fetchGithubInstallation } from "./githubInstallation/fetch"
+import { crudProject } from "./project/crud"
+import { fetchProject } from "./project/fetch"
+import {
+  type DeletedProject,
+  type ProvisionedProject,
+  type ProvisionProjectInput,
+  provisionProject,
+  type RepositoryPlan,
+} from "./project/provision"
+import { allocateProjectSlug, isValidProjectSlug, slugifyProjectName } from "./project/slug"
+import {
+  crudProjectEnvVar,
+  type ProjectEnvVarTarget,
+  type SealedEnvValue,
+} from "./projectEnvVar/crud"
+import {
+  ENV_VAR_METADATA_FIELDS,
+  type EnvVarMetadataRow,
+  fetchProjectEnvVar,
+  type SealedEnvVarRow,
+} from "./projectEnvVar/fetch"
+import {
+  crudProjectJob,
+  initialSteps,
+  PROJECT_JOB_STEPS,
+  type ProjectJobKind,
+  type ProjectJobStep,
+} from "./projectJob/crud"
+import { fetchProjectJob } from "./projectJob/fetch"
+import { crudProjectUpdateSuggestion, type SuggestionStatus } from "./projectUpdateSuggestion/crud"
+import { fetchProjectUpdateSuggestion } from "./projectUpdateSuggestion/fetch"
+import { crudRepository, isPendingGithubRepoId, pendingGithubRepoId } from "./repository/crud"
+import { fetchRepository } from "./repository/fetch"
+import { fetchStoreCategory } from "./storeCategory/fetch"
+import { crudStoreListing } from "./storeListing/crud"
+import {
+  fetchStoreListing,
+  PUBLIC_LISTING_STATUS,
+  type StoreListingDetail,
+  type StoreListingFilters,
+} from "./storeListing/fetch"
+import { crudStoreListingEvent, type StoreListingEventKind } from "./storeListingEvent/crud"
+import { fetchStoreListingScreenshot } from "./storeListingScreenshot/fetch"
+import { fetchStoreListingTag, type StoreListingTagRow } from "./storeListingTag/fetch"
+import { crudUpstreamSyncRun } from "./upstreamSyncRun/crud"
+import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
 import { crudUserPreference } from "./userPreference/crud"
@@ -45,11 +97,14 @@ import { fetchUserPreference } from "./userPreference/fetch"
 
 export {
   ADMIN_ROLE_NAME,
+  AgentCredentialKind,
   allocateOrganizationSlug,
+  allocateProjectSlug,
   AuditContext,
   AuditEntry,
   AuthSession,
   authUser,
+  autoUpdateDefaultFor,
   crudAccount,
   crudAuditLog,
   crudBackgroundJob,
@@ -57,31 +112,75 @@ export {
   crudOrganization,
   crudOrganizationInvite,
   crudOrganizationMember,
+  crudProject,
+  crudProjectEnvVar,
+  crudProjectJob,
+  crudProjectUpdateSuggestion,
+  crudRepository,
   crudRole,
+  crudStoreListing,
+  crudStoreListingEvent,
+  crudUpstreamSyncRun,
   crudUser,
   crudUserPreference,
+  DeletedProject,
+  ENV_VAR_METADATA_FIELDS,
+  EnvVarMetadataRow,
+  fetchAgentCredential,
   fetchBackgroundJob,
+  fetchGithubInstallation,
   fetchMemberPermission,
   fetchOrganization,
   fetchOrganizationInvite,
   fetchOrganizationMember,
+  fetchProject,
+  fetchProjectEnvVar,
+  fetchProjectJob,
+  fetchProjectUpdateSuggestion,
+  fetchRepository,
   fetchRole,
+  fetchStoreCategory,
+  fetchStoreListing,
+  fetchStoreListingScreenshot,
+  fetchStoreListingTag,
+  fetchUpstreamSyncRun,
   fetchUserPreference,
+  initialSteps,
+  isPendingGithubRepoId,
   isValidOrganizationSlug,
+  isValidProjectSlug,
   MEMBER_ROLE_NAME,
   MembershipRow,
   OWNER_ROLE_NAME,
+  pendingGithubRepoId,
   PermissionDecision,
   PermissionEffect,
   PermissionGrant,
+  PROJECT_JOB_STEPS,
+  ProjectEnvVarTarget,
+  ProjectJobKind,
+  ProjectJobStep,
   ProvisionedOrganization,
+  ProvisionedProject,
   provisionOrganization,
+  provisionProject,
+  ProvisionProjectInput,
+  PUBLIC_LISTING_STATUS,
+  RepositoryPlan,
   RESERVED_ORGANIZATION_SLUGS,
   RoleStatementRow,
+  SealedEnvValue,
+  SealedEnvVarRow,
   seedSystemRoles,
   SessionUser,
   slugifyOrganizationName,
+  slugifyProjectName,
   StatementInput,
+  StoreListingDetail,
+  StoreListingEventKind,
+  StoreListingFilters,
+  StoreListingTagRow,
+  SuggestionStatus,
   SYSTEM_ROLE_NAMES,
   SYSTEM_ROLES,
   SystemRoleDefinition,
