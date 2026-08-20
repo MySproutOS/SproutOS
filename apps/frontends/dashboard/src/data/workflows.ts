@@ -1,4 +1,9 @@
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import { useQuery } from "@tanstack/react-query"
+import {
+  getV1OrgsByOrgSlugWorkflowRunsOptions,
+  getV1OrgsByOrgSlugWorkflowsOptions,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
+import { relativeLabel } from "@frontends/dashboard/data/projects"
 
 export type WorkflowStatus = "healthy" | "degraded" | "paused" | "failing"
 
@@ -6,6 +11,7 @@ export type Workflow = {
   id: string
   name: string
   project: string
+  projectId: string
   schedule: string
   status: WorkflowStatus
   lastRunLabel: string
@@ -14,9 +20,12 @@ export type Workflow = {
 
 export type Job = {
   id: string
+  workflowId: string
+  projectId: string
   workflow: string
   duration: string
   costMicros: bigint
+  status: string
 }
 
 export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
@@ -26,47 +35,62 @@ export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
   failing: "Failing",
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugWorkflowOptions(...)`. */
-export function useWorkflows(orgSlug: string) {
-  const workflows: Workflow[] = [
-    {
-      id: "wfl_01j8nightlyindex",
-      name: "Nightly reindex",
-      project: "Message Search",
-      schedule: "0 3 * * *",
-      status: "healthy",
-      lastRunLabel: "6 hours ago",
-      costMicros: 940_000n,
-    },
-    {
-      id: "wfl_01j8followupsweep",
-      name: "Follow-up sweep",
-      project: "Client Follow-ups",
-      schedule: "*/15 * * * *",
-      status: "degraded",
-      lastRunLabel: "4 minutes ago",
-      costMicros: 220_000n,
-    },
-    {
-      id: "wfl_01j8digestsend",
-      name: "Digest send",
-      project: "Weekly Digest",
-      schedule: "0 9 * * 1",
-      status: "paused",
-      lastRunLabel: "12 days ago",
-      costMicros: 0n,
-    },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "workflows"], workflows)
+function isWorkflowStatus(value: string): value is WorkflowStatus {
+  return value in WORKFLOW_STATUS_LABELS
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugJobOptions(...)`. */
+/**
+ * A duration as `1m 42s`.
+ *
+ * Null while a run is still going: "so far" is not something a table column can say, and a
+ * stopwatch that ticks in a list is a promise to keep it up to date.
+ */
+export function durationLabel(milliseconds: number | null): string {
+  if (milliseconds === null) return "—"
+  const total = Math.max(0, Math.round(milliseconds / 1000))
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`
+}
+
+/**
+ * Every workflow in the organization.
+ *
+ * `schedule` is an em dash rather than "manual" when nothing schedules it: a workflow can be
+ * triggered by webhook, by an event, or by hand, and calling all three "manual" would be a claim
+ * this list has no way to check.
+ */
+export function useWorkflows(orgSlug: string) {
+  const query = useQuery(getV1OrgsByOrgSlugWorkflowsOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((workflow): Workflow => ({
+      id: workflow.id,
+      name: workflow.name,
+      project: workflow.projectName,
+      projectId: workflow.projectId,
+      schedule: workflow.cronExpression ?? "—",
+      status: isWorkflowStatus(workflow.health) ? workflow.health : "healthy",
+      lastRunLabel: workflow.lastRunAt === null ? "Never run" : relativeLabel(workflow.lastRunAt),
+      // Money is bigint, never a float — see `@lib/billing`.
+      costMicros: BigInt(workflow.costMicroUsd),
+    })),
+  }
+}
+
+/** Recent runs across the organization, newest first. */
 export function useRecentJobs(orgSlug: string) {
-  const jobs: Job[] = [
-    { id: "job_01j8h2q4", workflow: "Nightly reindex", duration: "1m 42s", costMicros: 41_200n },
-    { id: "job_01j8h2q3", workflow: "Follow-up sweep", duration: "0m 08s", costMicros: 3_100n },
-    { id: "job_01j8h2q2", workflow: "Follow-up sweep", duration: "0m 07s", costMicros: 2_900n },
-    { id: "job_01j8h2q1", workflow: "Digest send", duration: "0m 51s", costMicros: 10_400n },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "jobs"], jobs)
+  const query = useQuery(getV1OrgsByOrgSlugWorkflowRunsOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((run): Job => ({
+      id: run.id,
+      workflowId: run.workflowId,
+      projectId: run.projectId,
+      workflow: run.workflowName,
+      duration: durationLabel(run.durationMs),
+      costMicros: BigInt(run.costMicroUsd),
+      status: run.status,
+    })),
+  }
 }

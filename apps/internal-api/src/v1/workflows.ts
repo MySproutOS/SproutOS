@@ -14,6 +14,7 @@ import {
   validateGraph,
   type WorkflowGraph,
 } from "@lib/workflows"
+import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
@@ -21,7 +22,7 @@ import { resolver, validator } from "hono-typebox-openapi/typebox"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
-import { paramResource, requirePermission } from "../rbac"
+import { collectionResource, paramResource, requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
 import {
@@ -31,6 +32,8 @@ import {
   workflowsSchemaJobEditRequest,
   workflowsSchemaJobEditResponse,
   workflowsSchemaListResponse,
+  workflowsSchemaOverviewResponse,
+  workflowsSchemaRecentRunsResponse,
   workflowsSchemaRunDetailResponse,
   workflowsSchemaRunListResponse,
   workflowsSchemaRunParam,
@@ -55,9 +58,276 @@ const errorResponse = {
   with typebox validators on both params and body is enough to reach TS2589 — which reports no
   file and no line, so it is worth stopping here rather than discovering it from the next route.
 */
+/**
+ * How many recent runs a health verdict is drawn from.
+ *
+ * A workflow that failed once six months ago is healthy; one that failed twice this morning is not.
+ * Ten is enough to tell a flake from a pattern and few enough that the window query stays cheap.
+ */
+const RECENT_RUN_WINDOW = 10
+
+/** How many runs the organization-wide activity feed shows. */
+const RECENT_ACTIVITY_LIMIT = 50
+
+/** Run statuses that count against a workflow's health. */
+const FAILED_STATUSES = new Set(["failed", "dead_lettered"])
+
+/**
+ * A workflow's health, in one word.
+ *
+ * Disabled beats everything: a paused workflow is not failing, it is off, and calling it "failing"
+ * would have someone investigate a thing they turned off themselves.
+ *
+ * A workflow with no runs is "healthy" rather than "unknown". Its first run has not happened, which
+ * is not a problem — and a fourth state that means "nothing yet" is a state every list has to
+ * explain.
+ */
+function healthOf(
+  enabled: boolean,
+  recentRuns: number,
+  failures: number,
+  latestStatus: string | undefined,
+): string {
+  if (!enabled) return "paused"
+  if (recentRuns === 0) return "healthy"
+  if (latestStatus !== undefined && FAILED_STATUSES.has(latestStatus)) return "failing"
+  return failures > 0 ? "degraded" : "healthy"
+}
+
+/** Steps per run, which is what `jobsEnqueued` bills on. One query for the whole page. */
+async function stepCountsFor(runIds: readonly string[]): Promise<Map<string, number>> {
+  if (runIds.length === 0) return new Map()
+  const rows = await db
+    .selectFrom("workflowRunStep")
+    .select(["workflowRunId", (eb) => eb.fn.countAll<string>().as("steps")])
+    .where("workflowRunId", "in", runIds)
+    .groupBy("workflowRunId")
+    .execute()
+  return new Map(rows.map((row) => [row.workflowRunId, Number(row.steps)]))
+}
+
 const app: Hono = new Hono()
 app.use(authMiddleware)
 app
+  /**
+   * Every workflow in the organization, across its projects.
+   *
+   * The per-project list exists and is the right shape for a project page. This one is what the
+   * dashboard's Workflows screen needs, and it is a separate endpoint rather than the client
+   * fanning out over projects: a caller with twenty projects would otherwise make twenty requests,
+   * and would have to know which projects exist before it could ask.
+   */
+  .get(
+    "/:orgSlug/workflows",
+    describeRoute({
+      description: "Every workflow in the organization, with its schedule and recent health",
+      responses: {
+        200: {
+          description: "Workflows",
+          content: { "application/json": { schema: resolver(workflowsSchemaOverviewResponse) } },
+        },
+        403: { description: "Caller lacks workflow:read", ...errorResponse },
+      },
+    }),
+    requirePermission("workflow:read", collectionResource("workflow", "workflow")),
+    async (c) => {
+      const organizationId = c.var.organization.id
+
+      const workflows = await db
+        .selectFrom("workflow")
+        .innerJoin("project", "project.id", "workflow.projectId")
+        .leftJoin("workflowSchedule", "workflowSchedule.workflowId", "workflow.id")
+        .select([
+          "workflow.id as id",
+          "workflow.name as name",
+          "workflow.slug as slug",
+          "workflow.enabled as enabled",
+          "project.id as projectId",
+          "project.name as projectName",
+          "workflowSchedule.cronExpression as cronExpression",
+          "workflowSchedule.timezone as timezone",
+          "workflowSchedule.enabled as scheduleEnabled",
+        ])
+        .where("project.organizationId", "=", organizationId)
+        .where("workflow.deletedAt", "is", null)
+        .where("project.deletedAt", "is", null)
+        .orderBy("workflow.name", "asc")
+        .execute()
+
+      if (workflows.length === 0) return c.json({ data: [] })
+
+      const workflowIds = workflows.map((row) => row.id)
+
+      /*
+        Health is drawn from the last few runs, not from all of history.
+
+        A workflow that failed once six months ago is healthy; one that failed twice this morning is
+        not. `RECENT_RUN_WINDOW` runs is what "recently" means here, and taking it per workflow needs
+        a window function — a plain `limit` would take the newest runs across *every* workflow and
+        tell a busy one's story about a quiet one.
+      */
+      const runs = await db
+        .selectFrom(
+          db
+            .selectFrom("workflowRun")
+            .select([
+              "id",
+              "workflowId",
+              "status",
+              "startedAt",
+              "finishedAt",
+              "createdAt",
+              sql<number>`row_number() over (partition by workflow_id order by created_at desc)`.as(
+                "recency",
+              ),
+            ])
+            .where("workflowId", "in", workflowIds)
+            .as("ranked"),
+        )
+        .selectAll()
+        .where("recency", "<=", RECENT_RUN_WINDOW)
+        .execute()
+
+      const byWorkflow = new Map<string, typeof runs>()
+      for (const run of runs) {
+        const existing = byWorkflow.get(run.workflowId) ?? []
+        existing.push(run)
+        byWorkflow.set(run.workflowId, existing)
+      }
+
+      const rated = await rateProjectsForOrganization(db, organizationId, startOfMonth())
+
+      return c.json({
+        data: workflows.map((workflow) => {
+          const recent = (byWorkflow.get(workflow.id) ?? []).sort(
+            (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+          )
+          const latest = recent[0]
+          const failures = recent.filter((run) => FAILED_STATUSES.has(run.status)).length
+
+          return {
+            id: workflow.id,
+            name: workflow.name,
+            slug: workflow.slug,
+            projectId: workflow.projectId,
+            projectName: workflow.projectName,
+            enabled: workflow.enabled,
+            /*
+              A schedule row that exists but is disabled is *not* a schedule. Reporting the cron
+              expression anyway would have the UI show "every 15 minutes" for something that has not
+              run in a month.
+            */
+            cronExpression:
+              workflow.scheduleEnabled === true ? (workflow.cronExpression ?? null) : null,
+            timezone: workflow.scheduleEnabled === true ? (workflow.timezone ?? null) : null,
+            lastRunAt:
+              (latest?.finishedAt ?? latest?.startedAt ?? latest?.createdAt)?.toISOString() ?? null,
+            lastRunStatus: latest?.status ?? null,
+            recentRuns: recent.length,
+            recentFailures: failures,
+            health: healthOf(workflow.enabled, recent.length, failures, latest?.status),
+            /*
+              Cost is the *project's* metered cost, not the workflow's.
+
+              `usage_rollup` has a `project_id` and no `workflow_id`, so this is the honest grain
+              available; attributing a project's spend to one of its workflows would be a number
+              that looks precise and is not.
+
+              **This does not agree with the per-run cost below**, and will not until the metering
+              pipeline writes rollups for workflow runs. A run's cost is rated from its own columns
+              — bytes enqueued, dwell, elapsed — which is an estimate of what that run consumed. A
+              project's cost is what has actually been metered against it, which today is nothing.
+              The two are different questions with different sources, and making them agree by
+              summing run estimates into the project total would be inventing meter readings.
+            */
+            costMicroUsd: (rated.get(workflow.projectId)?.total ?? 0n).toString(),
+          }
+        }),
+      })
+    },
+  )
+  /**
+   * Recent runs across the organization, newest first.
+   *
+   * The activity feed the Workflows screen shows underneath the list. Same reasoning as above: one
+   * request rather than one per workflow.
+   */
+  .get(
+    "/:orgSlug/workflow-runs",
+    describeRoute({
+      description: "Recent workflow runs across the organization",
+      responses: {
+        200: {
+          description: "Runs",
+          content: { "application/json": { schema: resolver(workflowsSchemaRecentRunsResponse) } },
+        },
+        403: { description: "Caller lacks workflow:job:read", ...errorResponse },
+      },
+    }),
+    // `workflow:job:read`, not `workflow:read`: a run carries what the workflow was processing, and
+    // being allowed to see that a workflow exists is a different thing from seeing what it handled.
+    requirePermission("workflow:job:read", collectionResource("workflow", "workflow")),
+    async (c) => {
+      const runs = await db
+        .selectFrom("workflowRun")
+        .innerJoin("workflow", "workflow.id", "workflowRun.workflowId")
+        .innerJoin("project", "project.id", "workflow.projectId")
+        .select([
+          "workflowRun.id as id",
+          "workflowRun.status as status",
+          "workflowRun.startedAt as startedAt",
+          "workflowRun.finishedAt as finishedAt",
+          "workflowRun.createdAt as createdAt",
+          "workflowRun.bytesEnqueued as bytesEnqueued",
+          "workflowRun.valkeyDwellMs as valkeyDwellMs",
+          "workflow.id as workflowId",
+          "workflow.name as workflowName",
+          "project.id as projectId",
+          "project.name as projectName",
+        ])
+        .where("project.organizationId", "=", c.var.organization.id)
+        .where("workflow.deletedAt", "is", null)
+        .where("project.deletedAt", "is", null)
+        .orderBy("workflowRun.createdAt", "desc")
+        .limit(RECENT_ACTIVITY_LIMIT)
+        .execute()
+
+      const stepCounts = await stepCountsFor(runs.map((run) => run.id))
+
+      return c.json({
+        data: await Promise.all(
+          runs.map(async (run) => {
+            const elapsed = elapsedSeconds(run.startedAt, run.finishedAt)
+            const cost = await rateWorkflowRun(db, {
+              jobsEnqueued: stepCounts.get(run.id) ?? 0,
+              bytesEnqueued: BigInt(run.bytesEnqueued),
+              dwellMs: BigInt(run.valkeyDwellMs),
+              vcpuSeconds: elapsed,
+              gibSeconds: elapsed * 0.5,
+            })
+
+            return {
+              id: run.id,
+              workflowId: run.workflowId,
+              workflowName: run.workflowName,
+              projectId: run.projectId,
+              projectName: run.projectName,
+              status: run.status,
+              startedAt: run.startedAt?.toISOString() ?? null,
+              finishedAt: run.finishedAt?.toISOString() ?? null,
+              // Null while it is still running: a duration for something unfinished would be
+              // "so far", and a table column cannot say that.
+              durationMs:
+                run.startedAt !== null && run.finishedAt !== null
+                  ? run.finishedAt.getTime() - run.startedAt.getTime()
+                  : null,
+              costMicroUsd: cost.total.toString(),
+            }
+          }),
+        ),
+      })
+    },
+  )
   .get(
     "/:orgSlug/projects/:projectId/workflows",
     describeRoute({

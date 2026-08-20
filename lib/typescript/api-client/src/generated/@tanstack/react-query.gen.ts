@@ -51,6 +51,8 @@ import {
   getV1OrgsByOrgSlugRolesActions,
   getV1OrgsByOrgSlugServices,
   getV1OrgsByOrgSlugStoreListings,
+  getV1OrgsByOrgSlugWorkflowRuns,
+  getV1OrgsByOrgSlugWorkflows,
   getV1StoreCategories,
   getV1StoreFeatured,
   getV1StoreListings,
@@ -216,6 +218,12 @@ import type {
   GetV1OrgsByOrgSlugStoreListingsData,
   GetV1OrgsByOrgSlugStoreListingsError,
   GetV1OrgsByOrgSlugStoreListingsResponse,
+  GetV1OrgsByOrgSlugWorkflowRunsData,
+  GetV1OrgsByOrgSlugWorkflowRunsError,
+  GetV1OrgsByOrgSlugWorkflowRunsResponse,
+  GetV1OrgsByOrgSlugWorkflowsData,
+  GetV1OrgsByOrgSlugWorkflowsError,
+  GetV1OrgsByOrgSlugWorkflowsResponse,
   GetV1OrgsData,
   GetV1OrgsError,
   GetV1OrgsResponse,
@@ -2125,6 +2133,62 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdOptions = (
       return data
     },
     queryKey: getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugWorkflowsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugWorkflowsData>,
+) => createQueryKey("getV1OrgsByOrgSlugWorkflows", options)
+
+/**
+ * Every workflow in the organization, with its schedule and recent health
+ */
+export const getV1OrgsByOrgSlugWorkflowsOptions = (
+  options: Options<GetV1OrgsByOrgSlugWorkflowsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugWorkflowsResponse,
+    GetV1OrgsByOrgSlugWorkflowsError,
+    GetV1OrgsByOrgSlugWorkflowsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugWorkflowsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugWorkflows({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugWorkflowsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugWorkflowRunsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugWorkflowRunsData>,
+) => createQueryKey("getV1OrgsByOrgSlugWorkflowRuns", options)
+
+/**
+ * Recent workflow runs across the organization
+ */
+export const getV1OrgsByOrgSlugWorkflowRunsOptions = (
+  options: Options<GetV1OrgsByOrgSlugWorkflowRunsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugWorkflowRunsResponse,
+    GetV1OrgsByOrgSlugWorkflowRunsError,
+    GetV1OrgsByOrgSlugWorkflowRunsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugWorkflowRunsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugWorkflowRuns({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugWorkflowRunsQueryKey(options),
   })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsQueryKey = (
