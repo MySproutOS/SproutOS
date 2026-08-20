@@ -99,21 +99,22 @@ the sidebar would be a request per team on every page.
 `isOwner` renders its own badge and a role literally named `owner` is filtered out of the rest,
 otherwise the same word appears twice.
 
-**Dates from the API are strings, not `Date`.** The generated types say `Date` and
-`transformers.gen.ts` defines seven response transformers — but `sdk.gen.ts` never imports or calls
-any of them, so nothing converts. Formatting a `Date`-typed field directly throws
-`RangeError: Invalid time value`. Coerce with `new Date(...)` at the boundary until the client
-generation is fixed.
+**Dates from the API really are `Date`** — but only since the client generation was fixed, and the
+failure it caused is worth remembering. `transformers.gen.ts` was being emitted with 51 response
+transformers and `sdk.gen.ts` never imported or called one of them, so every `Date`-typed field
+arrived as an ISO string. That typechecks perfectly and throws `RangeError: Invalid time value` at
+render, which is how it reached a screen. Listing the `@hey-api/transformers` plugin does not
+enable it; `transformer: true` on the `@hey-api/sdk` plugin is what wires it, and both
+`.config/openapi-ts.config.ts` and the admin config now set it.
 
-### Still placeholder-backed
+The `new Date(...)` coercions left at the boundaries are harmless — `new Date(aDate)` is valid — and
+several of those helpers also take plain strings from callers that never went through the client.
 
-`useProjects` `useProject` `useWorkflows` `useRecentJobs` `useDatabases` `useCreditBalance`
-`useUsageLines` `useInvoices` `useStoreListings` `useStoreListing` `useApiKeys`.
+### Nothing is placeholder-backed
 
-`useLastOrganizationSlug` is a special case: `GET /v1/user/me/preferences` exists on the API and
-returns `lastOrganizationSlug`, but it is **not in the generated client** — the client predates it.
-Until it is regenerated this returns the first organization from the real list, so a user with
-several teams lands on whichever sorts first rather than the one they last used.
+`src/data/placeholder.ts` is gone and every hook on this screen calls a real endpoint, including
+`useLastOrganizationSlug`, which reads `GET /v1/user/me/preferences` and lands a user on the team
+they were last in rather than whichever sorts first.
 
 Not consumed by any screen here, so deliberately unwrapped: roles, role actions, invites,
 transfer-ownership, leave, and every mutation. Those belong to whoever builds the RBAC screens.

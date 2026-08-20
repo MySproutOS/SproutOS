@@ -62,9 +62,9 @@ const RELATIVE = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" })
 /**
  * "2 hours ago", from a timestamp.
  *
- * The generated types say `updatedAt: Date`, but this client has no `transformers.gen.ts` — every
- * date arrives as an ISO string and the type is a lie. Coerced at the boundary, as `members.ts`
- * does, or formatting throws `RangeError: Invalid time value`.
+ * Takes either, and coerces. The generated client now really does return `Date` — `transformer:
+ * true` in `.config/openapi-ts.config.ts` wires the transformers that were previously emitted and
+ * never called — but this is also handed plain ISO strings by callers that never went through it.
  */
 export function relativeLabel(value: Date | string): string {
   const elapsed = Date.now() - new Date(value).getTime()

@@ -2,6 +2,10 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from "./client"
 import { client } from "./client.gen"
+import {
+  getAdminUsersResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
+} from "./transformers.gen"
 import type {
   GetAdminUsersData,
   GetAdminUsersResponses,
@@ -35,6 +39,7 @@ export const getAdminUsers = <ThrowOnError extends boolean = false>(
   options?: Options<GetAdminUsersData, ThrowOnError>,
 ): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
     url: "/admin/users",
     ...options,
   })
@@ -54,6 +59,7 @@ export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
     PostAdminUsersImpersonateErrors,
     ThrowOnError
   >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
     url: "/admin/users/impersonate",
     ...options,
     headers: {

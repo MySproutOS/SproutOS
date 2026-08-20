@@ -45,10 +45,15 @@ export type UserProfile = {
 const JOINED_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" })
 
 /*
-  The generated types say `createdAt: Date`, but this client has no
-  `transformers.gen.ts` — every date arrives as an ISO string and the type is a
-  lie. Formatting one directly throws `RangeError: Invalid time value`, so coerce
-  at the boundary. Applies to every `Date`-typed field the API returns.
+  `new Date(...)` here is now belt and braces rather than load-bearing.
+
+  It used to be the only thing standing between this screen and `RangeError: Invalid time value`:
+  the generated types said `createdAt: Date` and every date arrived as an ISO string, because
+  `transformers.gen.ts` was emitted and never wired into the SDK. `transformer: true` in
+  `.config/openapi-ts.config.ts` fixed that centrally, so the value really is a `Date`.
+
+  Kept because `new Date(aDate)` is valid and costs nothing, and because this function also takes
+  strings from callers that never went through the client.
 */
 
 export function useMembers(orgSlug: string) {
