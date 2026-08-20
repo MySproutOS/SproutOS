@@ -7,7 +7,21 @@
 #
 # Also why the release profile sets `panic = "abort"` and `strip = true`: nothing unwinds, nothing
 # carries symbols, and the binary boots instantly on a node that is billed by the second.
-FROM --platform=$BUILDPLATFORM rust:1.93-alpine AS build
+# `$TARGETPLATFORM`, not `$BUILDPLATFORM`.
+#
+# `$BUILDPLATFORM` runs the compiler natively and cross-compiles, which is faster and does not work:
+# `ring` builds C, and cross-compiling it needs `x86_64-linux-musl-gcc`, which Alpine's `musl-dev`
+# does not provide for a foreign target. The build fails at `ring`'s build script.
+#
+# Worse than failing, it failed *quietly* the first time: a `-q` build hides the error, the tag still
+# resolves to the previous image, and the container that then starts is the stale one. An arm64
+# binary shipped inside an image labelled amd64, and Kubernetes said `exec format error` two steps
+# later.
+#
+# So the build runs on the target platform — natively on CI, under emulation on a developer's
+# machine of the other architecture. Slower there, and correct on both. That matters more now than
+# speed does: these images run on amd64 GKE nodes and on arm64 Graviton metal from the same file.
+FROM --platform=$TARGETPLATFORM rust:1.93-alpine AS build
 
 RUN apk add --no-cache musl-dev pkgconfig
 WORKDIR /src
@@ -19,8 +33,14 @@ COPY Cargo.toml Cargo.lock ./
 COPY lib/rust ./lib/rust
 COPY services ./services
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
+# No `--target`: the toolchain is already the target's, so the host triple is the right one and
+# naming it again would only be a second place to get it wrong.
+#
+# The cache mount is keyed per architecture. Sharing one across both would let an arm64 `target/`
+# satisfy an amd64 build's freshness check and hand back the wrong binary — which is the same
+# failure this file already had once, arriving by a different route.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
+    --mount=type=cache,target=/src/target,id=cargo-target-pg-proxy-$TARGETARCH \
     cargo build --release --locked -p pg-proxy \
     && cp target/release/pg-proxy /pg-proxy
 

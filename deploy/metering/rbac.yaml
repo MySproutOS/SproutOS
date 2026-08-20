@@ -1,10 +1,26 @@
-# The agent's identity, and deliberately almost nothing attached to it.
+# The agent's identity, and the smallest permission that makes it able to bill anything.
 #
-# It reads cgroups from the host filesystem and pod ownership from the kubelet's socket, so it needs
-# no Kubernetes API permissions at all — no `list pods`, no watch, nothing. That is the point of
-# reading the socket rather than the API server: the agent runs on every node, and a credential that
-# can list pods cluster-wide, replicated to every node including tenant metal, is a credential worth
-# stealing.
+# **This file used to claim the agent needed no API permissions at all**, on the grounds that pod
+# ownership came from the kubelet's pod-resources socket. That was the intent and it does not work:
+# the socket reports devices and containers, not pod *labels*, and the attribution SproutOS bills on
+# — `sproutos.dev/organization-id` — is a label. The socket would have needed a second lookup to be
+# useful, so the agent read an empty map and attributed nothing to anyone.
+#
+# The security argument in that comment was sound and is worth keeping rather than deleting: the
+# agent runs on every node including tenant metal, and a credential that can list pods cluster-wide
+# is a credential worth stealing. Three things bound it:
+#
+#   - **`list` and `get` on pods, and nothing else.** No secrets, no exec, no watch on anything
+#     else, no write verb anywhere. What it leaks if stolen is pod metadata.
+#   - **A projected token**, which is audience-bound and expires. A copy taken off a node is not a
+#     credential that works next week from somewhere else.
+#   - **The agent asks for one node's pods** via a field selector. That is a courtesy, not a
+#     control — RBAC cannot express "only pods on your own node", and pretending otherwise would be
+#     the same kind of comfortable inaccuracy as the one this replaces.
+#
+# The genuinely lower-privilege alternative — the kubelet's own `/pods` endpoint, which is
+# node-local by construction — needs `nodes/proxy`, which is a *stronger* permission than this one
+# and grants far more than reading metadata.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -13,8 +29,34 @@ metadata:
   labels:
     app.kubernetes.io/name: metering-agent
     app.kubernetes.io/part-of: sproutos
-# Deliberately no Role, no ClusterRole, no bindings. If a future version needs the API, the diff
-# that adds them is the diff worth reviewing carefully.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metering-agent
+  labels:
+    app.kubernetes.io/name: metering-agent
+    app.kubernetes.io/part-of: sproutos
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metering-agent
+  labels:
+    app.kubernetes.io/name: metering-agent
+    app.kubernetes.io/part-of: sproutos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: metering-agent
+subjects:
+  - kind: ServiceAccount
+    name: metering-agent
+    namespace: sproutos-metering
 # The `sproutos-system` Namespace this lives in is declared in `deploy/00-namespaces.yaml`,
 # which renders first. It used to be here, after the ServiceAccount above and after the DaemonSet
 # in `daemonset.yaml` — so a fresh apply failed before reaching it.

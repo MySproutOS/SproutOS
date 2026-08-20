@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use metering_agent::cgroup::{Attribution, Sample};
-use metering_agent::{fs, ingest, sampler};
+use metering_agent::{discovery, fs, ingest, sampler};
 use tracing::{info, warn};
 
 /// How often to read the cgroups.
@@ -50,10 +50,33 @@ async fn main() -> anyhow::Result<()> {
 
     info!(%node, root = %root.display(), "metering-agent starting");
 
+    // A second client, built to trust the cluster CA. The ingest client above talks to the control
+    // plane over public TLS; the API server signs with the cluster's own CA and needs its own root.
+    let api_client = match discovery::api_client() {
+        Ok(built) => Some(built),
+        Err(cause) => {
+            warn!(%cause, "could not build an API client: nothing can be attributed to a tenant");
+            None
+        }
+    };
+
+    let api = discovery::api_server();
+    if api.is_none() {
+        // Said once, loudly, at startup. The agent still samples — a node's cgroups are readable
+        // either way — but with nothing to attribute them to it bills nothing, and that is worth
+        // knowing at boot rather than inferring from an empty invoice.
+        warn!(
+            "KUBERNETES_SERVICE_HOST/PORT are unset: no pod discovery, so nothing can be attributed \
+             to a tenant and nothing will be billed"
+        );
+    }
+
     let mut watched: BTreeMap<String, sampler::Watched> = BTreeMap::new();
     let mut pending = ingest::Pending::default();
+    let mut labels: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     let mut last_sample = Instant::now();
     let mut last_flush = Instant::now();
+    let mut last_refresh: Option<Instant> = None;
 
     loop {
         tokio::time::sleep(SAMPLE_INTERVAL).await;
@@ -62,18 +85,37 @@ async fn main() -> anyhow::Result<()> {
         last_sample = Instant::now();
 
         /*
-            Pod labels come from the kubelet's own view, not from the API server.
+            Refresh the node's pod list on its own, slower clock.
 
-            A per-node, per-second call to the control plane to ask who owns each pod is the design
-            that takes an API server down at scale. Reading the annotations the kubelet already
-            wrote costs nothing and cannot fail in a way that stops billing.
+            One list per node per refresh interval, filtered to this node. Asking per sample would
+            be a request per node per second against the control plane, which is the design that
+            takes an API server down at scale.
 
-            Not wired yet: this reads an empty map, so the agent runs and bills nothing. The
-            kubelet's pod-resources socket is the intended source and needs the DaemonSet's mounts,
-            which do not exist. Said plainly rather than faked with a placeholder that looks like it
-            works.
+            A failure keeps the previous map rather than clearing it. The alternative — an empty map
+            on a transient 500 — would silently bill nothing for that interval, and nothing about an
+            empty invoice says why.
         */
-        let labels: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let due = last_refresh
+            .map(|at| at.elapsed() >= Duration::from_secs(discovery::REFRESH_INTERVAL_SECS))
+            .unwrap_or(true);
+
+        if due && let (Some(api), Some(api_client)) = (api.as_deref(), api_client.as_ref()) {
+            last_refresh = Some(Instant::now());
+            match discovery::pods_on_node(api_client, api, &node).await {
+                Ok(found) => labels = found,
+                Err(cause) => {
+                    // The chain, not just the outermost message. `reqwest`'s own Display says
+                    // "error sending request for url (...)" and nothing about why — which cost a
+                    // deploy cycle to work out was a TLS handshake against an untrusted CA.
+                    let detail = cause
+                        .chain()
+                        .map(|link| link.to_string())
+                        .collect::<Vec<_>>()
+                        .join(": ");
+                    warn!(cause = %detail, "could not refresh the pod list; keeping the last one");
+                }
+            }
+        }
 
         let readings: BTreeMap<String, (Attribution, Sample)> = fs::read_all(&root, &labels)
             .into_iter()

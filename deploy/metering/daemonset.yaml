@@ -1,3 +1,25 @@
+# The highest priority a workload that is not the cluster's own may have.
+#
+# 1000000000 is not a round number chosen for looks: it is the ceiling Kubernetes enforces on any
+# user-defined PriorityClass. A first attempt at 1999999000 — just under `system-cluster-critical` —
+# was rejected outright with `maximum allowed value of a user defined priority is 1000000000`.
+#
+# That ceiling exists precisely so nothing outside `kube-system` can outrank the control plane, and
+# it is the right constraint. What matters here is only that the agent outranks every tenant
+# workload and every platform Deployment, which this does with a billion to spare.
+#
+# Declared at all rather than reusing `system-node-critical` because GKE refuses that class outside
+# `kube-system` — see the note in the DaemonSet below.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sproutos-node-critical
+  labels:
+    app.kubernetes.io/part-of: sproutos
+value: 1000000000
+globalDefault: false
+description: "SproutOS node agents: evicted after tenant workloads, never before them."
+---
 # The metering agent, one pod per node.
 #
 # This is the manifest `services/metering-agent/README.md` names as absent, and it is what gives the
@@ -32,7 +54,18 @@ spec:
       # taking it would put it on the node's IP for no reason.
       hostNetwork: false
       hostPID: false
-      priorityClassName: system-node-critical
+      # `sproutos-node-critical`, not `system-node-critical`.
+      #
+      # GKE enforces a ResourceQuota that restricts `system-node-critical` and
+      # `system-cluster-critical` to `kube-system`, so this DaemonSet is refused outright there:
+      # `insufficient quota to match these scopes`. Desired 2, current 0, and the only place that
+      # says why is the DaemonSet's own event log.
+      #
+      # It has to keep a high priority for a real reason — the agent runs on tenant metal, and a
+      # node under memory pressure that evicts the meter before the workload it is metering bills
+      # nothing for the period that mattered most. Its own class, declared below, keeps that
+      # property and is accepted everywhere.
+      priorityClassName: sproutos-node-critical
       # Runs on tenant metal, which is tainted so nothing lands there by accident — and tenant metal
       # is precisely where the billable work happens.
       tolerations:
@@ -89,9 +122,16 @@ spec:
             - name: cgroup
               mountPath: /sys/fs/cgroup
               readOnly: true
-            # The kubelet's pod-resources socket: how the agent learns which pod owns which cgroup
-            # without asking the API server. A per-node, per-second call to the control plane to ask
-            # who owns each pod is the design that takes an API server down at scale.
+            # The kubelet's pod-resources socket.
+            #
+            # **Mounted, and not currently read.** It was the intended source of pod ownership, and
+            # it does not carry what is needed: it reports devices and containers, not pod *labels*,
+            # and the attribution SproutOS bills on is a label. The agent lists this node's pods from
+            # the API server instead — once per refresh interval, not once per sample.
+            #
+            # Kept mounted because it is the lower-privilege source and the one to move back to if a
+            # future kubelet exposes labels through it. Said plainly rather than left as a comment
+            # describing something the code stopped doing.
             - name: pod-resources
               mountPath: /var/lib/kubelet/pod-resources
               readOnly: true
