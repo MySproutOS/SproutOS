@@ -14,7 +14,7 @@ resource "aws_cloudfront_response_headers_policy" "spa_cors" {
     origin_override                  = true
 
     access_control_allow_origins {
-      items = ["https://nextjs-spa-split.andrewcwang.com"]
+      items = ["https://${var.control_plane_domain}"]
     }
 
     access_control_allow_methods {
@@ -31,7 +31,7 @@ resource "aws_cloudfront_distribution" "spa" {
   enabled             = true
   default_root_object = "dashboard/index.html"
   price_class         = "PriceClass_100"
-  comment             = "SPA assets for nextjs-spa-split"
+  comment             = "SproutOS SPA assets"
 
 
   origin {

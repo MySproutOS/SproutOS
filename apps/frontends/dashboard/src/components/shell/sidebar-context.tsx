@@ -66,6 +66,13 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
 
     Guarded on `adopted` rather than on the query settling, because a refetch — a window refocus,
     say — would otherwise reach back in and undo a toggle made in the meantime.
+
+    `toggleCollapsed` also sets `adopted`, which closes the narrower race the guard alone does not:
+    someone collapsing the sidebar inside the first few hundred milliseconds, before the query has
+    resolved at all, would otherwise have it snap back when the response arrived. Once a person has
+    said what they want in this session, a value written on an earlier visit does not get to
+    overrule them. Found by the component test rather than by clicking — in a browser the query has
+    always resolved long before a human reaches the control.
   */
   const [adopted, setAdopted] = useState(false)
   const serverCollapsed = preferences.data?.sidebarCollapsed
@@ -82,16 +89,21 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
     }
   }, [collapsed])
 
+  /*
+    The next value is computed here rather than inside a `setCollapsed` updater,
+    because the write has to sit outside it. Updater functions must be pure —
+    React re-invokes them, and StrictMode does so deliberately — so a `mutate`
+    call in there fires twice per toggle. Measured: one click, two PATCHes.
+  */
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((current) => {
-      const next = !current
-      // Fire and forget. This is furniture: a failed write costs the person nothing today and is
-      // corrected the next time they touch it. Blocking the animation on a round trip would cost
-      // them something every time.
-      save.mutate({ body: { sidebarCollapsed: next } })
-      return next
-    })
-  }, [save])
+    const next = !collapsed
+    setCollapsed(next)
+    setAdopted(true)
+    // Fire and forget. This is furniture: a failed write costs the person nothing today and is
+    // corrected the next time they touch it. Blocking the animation on a round trip would cost
+    // them something every time.
+    save.mutate({ body: { sidebarCollapsed: next } })
+  }, [collapsed, save])
 
   /*
     `collapsed` is a desktop preference. The mobile drawer renders the same body,

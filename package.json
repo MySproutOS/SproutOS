@@ -6,6 +6,7 @@
   "author": "",
   "scripts": {
     "build": "turbo run build",
+    "check-types": "turbo run check-types",
     "dev": "turbo run dev",
     "format": "pnpm exec oxfmt --config oxfmt.config.mts",
     "lint": "pnpm exec oxlint --config oxlint.config.mts --disable-nested-config --fix .",

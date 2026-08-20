@@ -3,8 +3,10 @@ import babel from "@rolldown/plugin-babel"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react, { reactCompilerPreset } from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, loadEnv } from "vite"
 import { viteStaticCopy } from "vite-plugin-static-copy"
+
+const REPO_ROOT = path.resolve(__dirname, "../../..")
 
 const fontsourceFiles = (pkg: string) =>
   path.resolve(
@@ -22,8 +24,24 @@ export default defineConfig(({ mode }) => ({
     dashboard that happens to work, because the website proxies it at the same origin. On the admin
     SPA, served under `/admin/` on its own host, it is a 404 — which is how this was found.
   */
-  envDir: path.resolve(__dirname, "../../.."),
-  base: mode === "production" ? "https://d1i66hf38xpie.cloudfront.net/dashboard/" : "/",
+  envDir: REPO_ROOT,
+  /*
+    Relative in production, not an absolute CDN URL.
+
+    This was `https://d1i66hf38xpie.cloudfront.net/dashboard/` — the upstream template's CloudFront
+    distribution, inherited when this repo was copied and never swept. It is not ours: a production
+    build would have loaded every chunk from an account we do not control.
+
+    `VITE_ASSET_BASE` is the override for the day a CDN of our own sits in front.
+
+    It goes through `loadEnv`, not `process.env`. `envDir` tells Vite where to find `.env` for
+    `import.meta.env` in *client* code; it does not put anything on `process.env`, so a config-level
+    `process.env.VITE_ASSET_BASE` only ever saw a real shell variable and silently ignored the
+    repo-root `.env`. Measured: with `VITE_NEXTJS_URL` sitting in that file, `process.env` held zero
+    `VITE_*` keys during config evaluation. `loadEnv` reads the file and merges the shell on top, so
+    both work.
+  */
+  base: loadEnv(mode, REPO_ROOT, "").VITE_ASSET_BASE ?? "/",
   plugins: [
     tanstackRouter({ quoteStyle: "double" }),
     react(),
