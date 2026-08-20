@@ -6,13 +6,13 @@ platform: a bug here is a wrong invoice, and wrong invoices are found by custome
 
 ## Why the layout is what it is
 
-| File | Runs where | Tested where |
-| --- | --- | --- |
-| `cgroup.rs` | anywhere | anywhere — parsing and arithmetic, pure |
-| `sampler.rs` | anywhere | anywhere — readings in, events out, no clock |
-| `ingest.rs` | anywhere | anywhere — buffering and signing |
-| `fs.rs` | Linux | anywhere — a temp directory is indistinguishable from `/sys/fs/cgroup` to `read_to_string` |
-| `main.rs` | Linux | not tested; it is the loop and the configuration |
+| File         | Runs where | Tested where                                                                               |
+| ------------ | ---------- | ------------------------------------------------------------------------------------------ |
+| `cgroup.rs`  | anywhere   | anywhere — parsing and arithmetic, pure                                                    |
+| `sampler.rs` | anywhere   | anywhere — readings in, events out, no clock                                               |
+| `ingest.rs`  | anywhere   | anywhere — buffering and signing                                                           |
+| `fs.rs`      | Linux      | anywhere — a temp directory is indistinguishable from `/sys/fs/cgroup` to `read_to_string` |
+| `main.rs`    | Linux      | not tested; it is the loop and the configuration                                           |
 
 The reads need Linux. The subtraction does not, and the subtraction is where a bug costs somebody
 money — so it takes its inputs as values and is tested against fixtures that are byte-for-byte what
