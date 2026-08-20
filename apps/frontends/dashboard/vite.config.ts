@@ -46,6 +46,10 @@ export default defineConfig(({ mode }) => ({
       "@ui/seo-shared/_internal/seo-link": path.resolve(__dirname, "./src/components/seo-link.tsx"),
       "@ui/seo-shared": path.resolve(__dirname, "../../../lib/typescript/ui/seo-shared/src"),
       "@lib/api-client": path.resolve(__dirname, "../../../lib/typescript/api-client/src"),
+      // The package's exports map resolves "@lib/billing/money" to "./src/money"
+      // with no extension, which neither tsc nor the bundler will complete. Same
+      // alias shape as every other workspace package this SPA consumes.
+      "@lib/billing": path.resolve(__dirname, "../../../lib/typescript/billing/src"),
     },
   },
   server: {

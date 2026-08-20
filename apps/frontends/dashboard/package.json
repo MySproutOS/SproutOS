@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@lib/api-client": "workspace:*",
+    "@lib/billing": "workspace:*",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@ui/base": "workspace:*",

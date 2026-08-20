@@ -1,13 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
-import { getV1AuthMeOptions } from "@lib/api-client/generated/@tanstack/react-query.gen"
+import {
+  getV1AuthMeOptions,
+  getV1OrgsByOrgSlugMembersOptions,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
 import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
-import type { OrganizationRole } from "@frontends/dashboard/data/organizations"
 
 export type Member = {
   id: string
+  /** The API allows a null name; fall back to the email so a row is never blank. */
   name: string
   email: string
-  role: OrganizationRole
+  isOwner: boolean
+  /** Org-defined RBAC roles, so these are arbitrary strings, not a fixed enum. */
+  roleNames: string[]
   joinedLabel: string
 }
 
@@ -26,32 +31,33 @@ export type UserProfile = {
   productEmails: boolean
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugMemberOptions(...)`. */
+const JOINED_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" })
+
+/*
+  The generated types say `createdAt: Date`, but this client has no
+  `transformers.gen.ts` — every date arrives as an ISO string and the type is a
+  lie. Formatting one directly throws `RangeError: Invalid time value`, so coerce
+  at the boundary. Applies to every `Date`-typed field the API returns.
+*/
+
 export function useMembers(orgSlug: string) {
-  const members: Member[] = [
-    {
-      id: "usr_01j8andrew",
-      name: "Andrew Wang",
-      email: "andrew@sproutos.dev",
-      role: "owner",
-      joinedLabel: "Feb 2026",
-    },
-    {
-      id: "usr_01j8dana",
-      name: "Dana Ortiz",
-      email: "dana@acme.co",
-      role: "admin",
-      joinedLabel: "Apr 2026",
-    },
-    {
-      id: "usr_01j8kai",
-      name: "Kai Lindqvist",
-      email: "kai@acme.co",
-      role: "member",
-      joinedLabel: "Jul 2026",
-    },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "members"], members)
+  const query = useQuery(getV1OrgsByOrgSlugMembersOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((member): Member => ({
+      id: member.id,
+      name: member.name ?? member.email,
+      email: member.email,
+      isOwner: member.isOwner,
+      // `isOwner` already renders an Owner badge; the API also lists a role
+      // literally named "owner", which would render the same word twice.
+      roleNames: member.roles
+        .map((role) => role.name)
+        .filter((name) => name.toLowerCase() !== "owner"),
+      joinedLabel: JOINED_FORMAT.format(new Date(member.createdAt)),
+    })),
+  }
 }
 
 /** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugApiKeyOptions(...)`. */

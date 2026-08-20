@@ -1,4 +1,4 @@
-import { formatMicroUsd } from "@frontends/dashboard/data/money"
+import { formatMicroUsd } from "@lib/billing/money"
 import { Link, createFileRoute } from "@tanstack/react-router"
 import { PlusIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"

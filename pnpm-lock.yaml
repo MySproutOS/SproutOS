@@ -236,6 +236,9 @@ importers:
       '@lib/api-client':
         specifier: workspace:*
         version: link:../../../lib/typescript/api-client
+      '@lib/billing':
+        specifier: workspace:*
+        version: link:../../../lib/typescript/billing
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.101.4(react@19.2.8)

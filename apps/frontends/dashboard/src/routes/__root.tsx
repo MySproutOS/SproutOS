@@ -12,11 +12,34 @@ import {
   EmptyStateIcon,
   EmptyStateTitle,
 } from "@ui/base/ui/empty-state"
+import { ListError } from "@frontends/dashboard/components/list-states"
 
 export const Route = createRootRoute({
   component: RootLayout,
   notFoundComponent: NotFound,
+  errorComponent: RootError,
 })
+
+/*
+  Without this, a render error anywhere in the tree takes the whole SPA to a blank
+  page and TanStack only warns about it in the console. A route's own error state
+  covers a failed request; this covers the bug that request data provokes.
+*/
+function RootError({ error }: { error: Error }) {
+  return (
+    <div className="flex min-h-dvh items-center justify-center p-6">
+      <div className="w-full max-w-md">
+        <ListError
+          title="Something broke on this screen"
+          detail={<code>{error.message}</code>}
+          onRetry={() => {
+            window.location.reload()
+          }}
+        />
+      </div>
+    </div>
+  )
+}
 
 function NotFound() {
   return (
