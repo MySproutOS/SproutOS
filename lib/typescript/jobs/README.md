@@ -66,12 +66,28 @@ schedule and is left exactly as the caller gave it.
 
 ## What ships with it
 
-| kind                   | what it does                                                                                                                                                                                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `billing.expire_holds` | Frees reservations whose runner never came back. `availableBalance` subtracts active holds, so an abandoned one makes a customer's money unspendable. Charges nothing.                                                                                             |
-| `agent.purge_events`   | Deletes agent transcripts past `expires_at`. `agent_event.payload` holds file contents from a customer's repository, and the 30-day default was a promise nothing kept. Bounded batches, so a neglected table cannot produce one statement that locks for minutes. |
+| kind                                | what it does                                                                                                                                                                                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `billing.expire_holds`              | Frees reservations whose runner never came back. `availableBalance` subtracts active holds, so an abandoned one makes a customer's money unspendable. Charges nothing.                                                                                             |
+| `agent.purge_events`                | Deletes agent transcripts past `expires_at`. `agent_event.payload` holds file contents from a customer's repository, and the 30-day default was a promise nothing kept. Bounded batches, so a neglected table cannot produce one statement that locks for minutes. |
+| `platform.purge_deleted`            | Finishes a deletion in the stores Postgres has no foreign key into — Valkey keys, OpenSearch indices, ClickHouse log rows. See `@lib/reaper`. Hourly, and retried more than the others because it talks to three systems we do not run in-process.                 |
+| `platform.retention_sweep`          | Deletes rows whose retention window has closed, across seven tables. One job rather than seven schedules to keep in step. Nightly. See `docs/RETENTION.md` and `retention.ts`.                                                                                     |
+| `upkeep.scan` / `upkeep.repository` | Fork upkeep — see below.                                                                                                                                                                                                                                           |
+| `analysis.repository`               | Reads a repository and says what it needs (TASKS 38–39).                                                                                                                                                                                                           |
 
-Both were promised by earlier work and had nothing running them.
+Every one of them exists because something earlier promised a thing and left nothing to do it.
+
+### Retention lives here, deletion does not
+
+`platform.retention_sweep` is a **schedule**: rows stop being useful after a period, and the period
+is defended in `retention.ts` next to the rule that enforces it. `platform.purge_deleted` answers a
+**customer's request**, and runs against tables in three other systems. They are separate jobs
+because they answer to different things — a retention period is our policy to change, and a deletion
+is not.
+
+The subtle one is refresh tokens, which are keyed on the token's own expiry rather than on when it
+was consumed: reuse detection reads consumed tokens, so a sweep keyed on consumption would silently
+delete a security control. `docs/RETENTION.md` has the reasoning, and a test holds the line.
 
 ## Running it
 
