@@ -35,3 +35,10 @@ export {
   revisionOutcome,
   tenantNamespace,
 } from "./deploy"
+export {
+  BUILD_KINDS,
+  BUILD_NAMESPACE,
+  buildImage,
+  type BuildSettings,
+  buildSettingsFromEnv,
+} from "./build"

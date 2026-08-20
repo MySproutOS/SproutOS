@@ -36,6 +36,11 @@ const KNOWN = [
     waiting:
       "KUBE_SERVER — set in the `cluster` job, which runs this suite against a real kind cluster",
   },
+  {
+    suite: "@lib/jobs build",
+    count: 1,
+    waiting: "KUBE_SERVER and BUILD_REGISTRY — a cluster and a registry it can push to",
+  },
 ]
 
 const CEILING = KNOWN.reduce((total, entry) => total + entry.count, 0)
