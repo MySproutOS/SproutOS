@@ -66,10 +66,11 @@ paying for a GC and an event-loop hop.
 
 ### Services (Rust, deployed)
 
-- `services/metering-agent` — **a stub.** Intended as a cgroup v2 sampler DaemonSet: one VM may
-  host several projects, so samples are designed to carry a `project_id` split key rather than
-  assuming one pod is one tenant. `lib/rust/metering-proto` — the event schema and HMAC signing it
-  would emit — is real and tested. The sampler itself is three lines that print its own name.
+- `services/metering-agent` — cgroup v2 sampler. One VM may host several projects, so samples carry
+  a `project_id` split key rather than assuming one pod is one tenant. The parsing, deltas,
+  idempotency keys and retry buffer are pure and tested on any platform; only the reads need Linux.
+  **Pod discovery is not wired** — it reads an empty label map, so it runs and bills nothing until
+  the DaemonSet gives it the kubelet's pod-resources socket.
 - `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
   `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM to the
   cluster, checked against RFC 7677's vector. **Wake-on-connect is not built** — there is no Neon
