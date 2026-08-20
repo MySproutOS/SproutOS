@@ -16,6 +16,18 @@ const organizationEntry = Type.Object({
   name: Type.String(),
   kind: Type.String(),
   ownerUserId: UUID7String,
+  /**
+   * The roles the **caller** holds here. Not every member's — theirs.
+   *
+   * A sidebar that labels each team needs this, and without it the only thing a client could
+   * derive was `ownerUserId === me.id`, so an organization admin read as "Member". The alternative
+   * — fetching `.../members` per organization to label one line — is a request per team on every
+   * page load.
+   *
+   * `string[]` rather than an enum because roles are org-defined RBAC rows: the three system roles
+   * are seeded, and a customer may add their own.
+   */
+  roleNames: Type.Array(Type.String()),
   createdAt: Type.String({ format: "date-time" }),
 })
 

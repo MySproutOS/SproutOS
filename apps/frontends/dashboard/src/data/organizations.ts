@@ -16,6 +16,8 @@ export type Organization = {
   initial: string
   kind: string
   isOwner: boolean
+  /** The roles the caller holds here, as the API named them. */
+  roleNames: string[]
 }
 
 export const ROLE_LABELS: Record<OrganizationRole, string> = {
@@ -30,15 +32,8 @@ type OrganizationResponse = {
   name: string
   kind: string
   ownerUserId: string
+  roleNames: string[]
 }
-
-/*
-  `GET /v1/orgs` returns `ownerUserId`, not the caller's role, so owner-vs-member
-  is all the switcher can honestly say — an admin renders as "Member" until the
-  list response carries a role for the caller. `GET .../members` does have real
-  roles, but fetching it per organization to label one line of the sidebar would
-  be a request per team on every page.
-*/
 function toOrganization(organization: OrganizationResponse, userId: string | null): Organization {
   return {
     id: organization.id,
@@ -47,12 +42,34 @@ function toOrganization(organization: OrganizationResponse, userId: string | nul
     initial: (organization.name.trim()[0] ?? "·").toUpperCase(),
     kind: organization.kind,
     isOwner: organization.ownerUserId === userId,
+    roleNames: organization.roleNames,
   }
 }
 
+/**
+ * What to call the caller in this team.
+ *
+ * `GET /v1/orgs` now carries the caller's own `roleNames`, so an admin reads as "Admin". It used to
+ * carry only `ownerUserId`, and owner-vs-member was the most the switcher could honestly say — the
+ * alternative, fetching `.../members` per organization to label one line of the sidebar, is a
+ * request per team on every page load.
+ *
+ * `isOwner` still wins over the role list. Ownership is a column on the organization rather than a
+ * role, and someone can hold the `owner` role without being the owner of record; the switcher
+ * should say what the database says.
+ *
+ * A member may hold several roles. The first is shown, because one line of sidebar chrome is not
+ * the place to enumerate them — the members screen is.
+ */
 export function organizationRoleLabel(organization: Organization | undefined): string {
   if (organization === undefined) return ""
-  return organization.isOwner ? ROLE_LABELS.owner : ROLE_LABELS.member
+  if (organization.isOwner) return ROLE_LABELS.owner
+
+  const role = organization.roleNames.find((name) => name !== "owner")
+  if (role === undefined) return ROLE_LABELS.member
+
+  // A customer's own role name, rendered as they typed it, when it is not one of the three seeded.
+  return ROLE_LABELS[role as OrganizationRole] ?? role
 }
 
 export function useOrganizations() {

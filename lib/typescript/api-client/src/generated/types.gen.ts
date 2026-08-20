@@ -159,6 +159,7 @@ export type GetV1OrgsResponses = {
       name: string
       kind: string
       ownerUserId: string
+      roleNames: Array<string>
       createdAt: Date
     }>
     nextCursor: string | null
@@ -265,6 +266,7 @@ export type GetV1OrgsByOrgSlugResponses = {
     name: string
     kind: string
     ownerUserId: string
+    roleNames: Array<string>
     createdAt: Date
   }
 }
@@ -311,6 +313,7 @@ export type PatchV1OrgsByOrgSlugResponses = {
     name: string
     kind: string
     ownerUserId: string
+    roleNames: Array<string>
     createdAt: Date
   }
 }

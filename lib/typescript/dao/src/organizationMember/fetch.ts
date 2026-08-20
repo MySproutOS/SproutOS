@@ -84,6 +84,38 @@ export function fetchOrganizationMember(db: Kysely<DB>) {
       .execute()
   }
 
+  /**
+   * The roles one user holds, across several organizations at once.
+   *
+   * For the organization *list*, where the caller's own role is what labels each row. Written as
+   * one query over every organization on the page rather than a correlated subquery per row,
+   * because a member may hold more than one role and a subquery that returns several rows is not a
+   * subquery — the fan-out has to be grouped somewhere, and grouping it in the caller keeps the
+   * query plan a plain join.
+   */
+  async function listRolesForUserInOrganizations(
+    userId: string,
+    organizationIds: readonly string[],
+  ): Promise<{ organizationId: string; roleId: string; name: string }[]> {
+    if (organizationIds.length === 0) return []
+
+    return await db
+      .selectFrom("memberRole")
+      .innerJoin("role", "role.id", "memberRole.roleId")
+      .innerJoin("organizationMember", "organizationMember.id", "memberRole.organizationMemberId")
+      .where("organizationMember.userId", "=", userId)
+      .where("organizationMember.organizationId", "in", [...organizationIds])
+      // Roles are per-organization, so a role row already belongs to exactly one of them — but the
+      // membership is what ties it to *this* user, and without that filter this would return every
+      // member's roles for every organization on the page.
+      .select([
+        "organizationMember.organizationId as organizationId",
+        "role.id as roleId",
+        "role.name as name",
+      ])
+      .execute()
+  }
+
   async function countActive(organizationId: string): Promise<number> {
     const row = await db
       .selectFrom("organizationMember")
@@ -95,5 +127,13 @@ export function fetchOrganizationMember(db: Kysely<DB>) {
     return row ? Number(row.count) : 0
   }
 
-  return { countActive, getForUser, getInOrganization, getOne, listQuery, listRolesForMembers }
+  return {
+    countActive,
+    getForUser,
+    getInOrganization,
+    getOne,
+    listQuery,
+    listRolesForMembers,
+    listRolesForUserInOrganizations,
+  }
 }

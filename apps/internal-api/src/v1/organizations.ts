@@ -4,6 +4,7 @@ import {
   crudOrganization,
   crudUserPreference,
   fetchOrganization,
+  fetchOrganizationMember,
   isValidOrganizationSlug,
   provisionOrganization,
 } from "@lib/dao"
@@ -69,7 +70,32 @@ const app = new Hono()
         pageSize: limit,
       })
 
-      return c.json({ data: results, nextCursor })
+      /*
+        A second query for the page, not a join on the first.
+
+        A member may hold several roles, so joining would multiply each organization row by its
+        role count and the cursor pagination above would then be paginating over the wrong thing.
+        Same two-query-and-group shape the members list uses.
+      */
+      const roles = await fetchOrganizationMember(db).listRolesForUserInOrganizations(
+        user.id,
+        results.map((organization) => organization.id),
+      )
+
+      const rolesByOrganization = new Map<string, string[]>()
+      for (const role of roles) {
+        const bucket = rolesByOrganization.get(role.organizationId) ?? []
+        bucket.push(role.name)
+        rolesByOrganization.set(role.organizationId, bucket)
+      }
+
+      return c.json({
+        data: results.map((organization) => ({
+          ...organization,
+          roleNames: rolesByOrganization.get(organization.id) ?? [],
+        })),
+        nextCursor,
+      })
     },
   )
   .post(
