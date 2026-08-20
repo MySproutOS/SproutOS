@@ -8,11 +8,11 @@ import { viteStaticCopy } from "vite-plugin-static-copy"
 
 const REPO_ROOT = path.resolve(__dirname, "../../..")
 
+// Resolved from this app's own node_modules: the app declares the fontsource packages because it
+// imports them in app.css. Reaching into `@ui/base/node_modules` instead used to work, but only
+// because pnpm happened to place them there — it broke the moment anything else installed.
 const fontsourceFiles = (pkg: string) =>
-  path.resolve(
-    __dirname,
-    `../../../lib/typescript/ui/base/node_modules/@fontsource-variable/${pkg}/files/*.woff2`,
-  )
+  path.resolve(__dirname, `node_modules/@fontsource-variable/${pkg}/files/*.woff2`)
 
 export default defineConfig(({ mode }) => ({
   /*

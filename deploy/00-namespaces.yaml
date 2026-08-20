@@ -1,0 +1,72 @@
+# The namespaces every other document in this directory lives in.
+#
+# `00-` so it renders and applies first. `kubectl apply` processes a multi-document stream in order,
+# and `bin/render-manifests.mjs` concatenates files in sorted path order — so a Namespace declared
+# anywhere else is a Namespace declared *after* something that needs it.
+#
+# That is not a hypothetical. `sproutos-system` used to be the second document inside
+# `metering/rbac.yaml`, which sorts after `metering/daemonset.yaml`; `external-secrets` and the
+# tenant namespace were never declared at all. Applied to a fresh cluster the whole bundle failed
+# on its first document with `namespaces "sproutos-system" not found`, twenty-five times over.
+#
+# Nothing caught it, and nothing was going to. `kubeconform` validates each document against its
+# own schema and has no view of the cluster; a Deployment naming a namespace that does not exist is
+# perfectly valid YAML. Only applying it to a real API server says otherwise.
+#
+# **`external-secrets` is deliberately not here**, though `secrets/` references it. That namespace
+# belongs to the operator's own install, which creates it. Declaring it from here meant stamping a
+# `pod-security.kubernetes.io/enforce` label on a controller nobody here has run under that
+# standard — an assumption that would be discovered by the operator failing to start, at the exact
+# moment nothing can fetch a secret. A `ClusterSecretStore` only needs to *reference* a service
+# account; it does not need us to have created the namespace around it.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+    # Platform namespace: enforce the restricted Pod Security Standard. The six Deployments here
+    # do comply — verified by running them, not by asserting it. The metering agent does not and
+    # cannot, which is why it lives in its own namespace below rather than loosening this one.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# One tenant's namespace. `TENANT_NAMESPACE` is substituted per tenant, so this document is
+# rendered once per tenant rather than once per cluster.
+#
+# `baseline`, not `restricted`: tenant workloads are arbitrary customer code and many ordinary web
+# images do not satisfy `restricted`. The isolation that matters here is the Kata VM boundary and
+# the NetworkPolicies in `tenant/`, not the Pod Security Standard — see `tenant/network-policy.yaml`.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: TENANT_NAMESPACE
+  labels:
+    app.kubernetes.io/part-of: sproutos
+    sproutos.dev/tenant: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# The node agent, alone, because it is the only workload that needs `hostPath`.
+#
+# `metering-agent` reads cgroup v2 accounting off the host — that is the entire job — and `hostPath`
+# is forbidden under `restricted` *and* under `baseline`. Only `privileged` permits it.
+#
+# It used to sit in `sproutos-system`, whose own comment claimed the agent complied with
+# `restricted`. It never did: applied to a real cluster the DaemonSet reported desired 1, current 0,
+# and every pod creation was rejected outright — for as long as anyone cared to look. Nothing said
+# so, because a DaemonSet that creates no pods is not an error condition anywhere except in its own
+# event log.
+#
+# The exemption is scoped to this namespace so that the API, the website, the worker and the three
+# proxies keep enforcing `restricted`. Widening `sproutos-system` to `privileged` would have been
+# one line and would have silently dropped the guarantee for all six.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sproutos-metering
+  labels:
+    app.kubernetes.io/part-of: sproutos
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

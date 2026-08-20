@@ -1,0 +1,3 @@
+Next.js serves this directory at the site root, and docker/website.Dockerfile copies it into the
+standalone image. Keeping it present — even empty — means the first file added here ships without
+anyone remembering to touch the Dockerfile. A COPY of a missing directory is a hard build failure.

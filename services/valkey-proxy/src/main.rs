@@ -24,9 +24,17 @@ async fn main() -> anyhow::Result<()> {
     let listen: SocketAddr = std::env::var("VALKEY_PROXY_LISTEN")
         .unwrap_or_else(|_| "0.0.0.0:6379".into())
         .parse()?;
-    let backend: SocketAddr = std::env::var("VALKEY_PROXY_BACKEND")
-        .unwrap_or_else(|_| "127.0.0.1:6379".into())
-        .parse()?;
+    // A `String`, not a `SocketAddr`. Parsing to `SocketAddr` requires a literal IP, and the value
+    // this actually receives in production is an ElastiCache endpoint — a DNS name. The proxy
+    // refused to start with "invalid socket address syntax" and crash-looped, while every test
+    // passed because the test config is `127.0.0.1:41023`.
+    //
+    // Resolving per connection rather than once at startup is also the correct behaviour: a
+    // `SocketAddr` resolved at boot pins one IP for the process's lifetime, so a failover that
+    // moves the endpoint would be invisible until the pod restarted.
+    // `Arc` for the same reason as the store: every accepted connection spawns a task that needs it.
+    let backend =
+        Arc::new(std::env::var("VALKEY_PROXY_BACKEND").unwrap_or_else(|_| "127.0.0.1:6379".into()));
 
     let database_url = std::env::var("VALKEY_PROXY_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
@@ -49,8 +57,9 @@ async fn main() -> anyhow::Result<()> {
     loop {
         let (client, peer) = listener.accept().await?;
         let store = Arc::clone(&store);
+        let backend = Arc::clone(&backend);
         tokio::spawn(async move {
-            if let Err(cause) = serve(client, backend, &store).await {
+            if let Err(cause) = serve(client, &backend, &store).await {
                 // Debug rather than warn: a client hanging up mid-command is ordinary, and a log
                 // line per disconnect is how a proxy drowns its own useful output.
                 tracing::debug!(%peer, %cause, "connection ended");

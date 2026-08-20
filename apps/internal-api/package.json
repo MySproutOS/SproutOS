@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/dev-server.ts",
-    "build": "tsc -b",
+    "build": "tsc -b && node build.mjs src/server.ts build/server.js && node build.mjs src/worker.ts build/worker.js",
     "generate-specs": "tsx src/index.ts --openapi > openapi.json",
     "worker": "tsx watch src/worker.ts"
   },
@@ -53,6 +53,7 @@
     "@hey-api/openapi-ts": "catalog:",
     "@types/node": "catalog:",
     "@vercel/config": "^0.6.1",
+    "esbuild": "^0.25.0",
     "tsx": "^4.23.12",
     "typescript": "catalog:"
   }

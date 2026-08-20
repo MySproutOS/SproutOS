@@ -22,7 +22,6 @@ pub mod reply;
 pub mod resp;
 
 use std::collections::VecDeque;
-use std::net::SocketAddr;
 
 use bytes::BytesMut;
 use sproutos_tenant_auth::TenantIdentity;
@@ -41,9 +40,10 @@ use sproutos_service_credentials::{Authentication, report};
 const READ_BUFFER: usize = 16 * 1024;
 
 /// One client, from AUTH to hang-up.
+/// `backend` is a host:port string, resolved on each connection — see the note in `main.rs`.
 pub async fn serve(
     mut client: TcpStream,
-    backend: SocketAddr,
+    backend: &str,
     store: &CredentialStore,
 ) -> anyhow::Result<()> {
     let mut buffer = BytesMut::with_capacity(READ_BUFFER);

@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: metering-agent
-  namespace: sproutos-system
+  namespace: sproutos-metering
   labels:
     app.kubernetes.io/name: metering-agent
     app.kubernetes.io/part-of: sproutos

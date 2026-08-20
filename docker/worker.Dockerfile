@@ -26,20 +26,30 @@ COPY --from=deps /src ./
 COPY . .
 RUN pnpm --filter @api/internal run build
 
+# The runtime tree, containing only the production dependencies this app actually declares.
+# `--legacy` because the workspace is not using injected dependencies; without it pnpm 10 refuses.
+#
+# This matters more than it looks. The app is bundled, so the only thing `node_modules` still has
+# to supply is the handful of non-workspace packages esbuild left external. Copying the build
+# stage's `node_modules` instead shipped every dev dependency in the monorepo — 1.6 GB of
+# TypeScript, vitest, esbuild and three frontend toolchains — into an image that runs one bundled
+# file. That is pulled onto every node, on every deploy.
+RUN pnpm deploy --filter=@api/internal --prod --legacy /out
+
 FROM node:24-alpine AS runtime
 # `tini` as PID 1. Node does not reap zombies and does not forward SIGTERM to children, so without
 # it a rolling deploy waits out the full termination grace period on every pod.
 RUN apk add --no-cache tini
 WORKDIR /app
 
-COPY --from=build /src/node_modules ./node_modules
-COPY --from=build /src/apps/internal-api ./apps/internal-api
-COPY --from=build /src/lib ./lib
-COPY --from=build /src/packages ./packages
+COPY --from=build /out/node_modules ./node_modules
+# The bundle, and nothing else from the app: esbuild has already inlined every workspace package,
+# so `lib/` and `packages/` have no runtime reader left.
+COPY --from=build /src/apps/internal-api/build ./build
 
 # `node`, the image's own unprivileged user. Same reasoning as the Rust images: an image that only
 # runs as non-root because the orchestrator said so runs as root everywhere else.
 USER node
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "apps/internal-api/build/worker.js"]
+CMD ["node", "build/worker.js"]

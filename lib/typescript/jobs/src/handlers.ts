@@ -7,6 +7,7 @@ import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { enqueue } from "./queue"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
+import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
 
 /**
@@ -121,6 +122,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
+  [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
 }
 
