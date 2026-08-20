@@ -12,6 +12,13 @@
 # Nothing caught it, and nothing was going to. `kubeconform` validates each document against its
 # own schema and has no view of the cluster; a Deployment naming a namespace that does not exist is
 # perfectly valid YAML. Only applying it to a real API server says otherwise.
+#
+# **`external-secrets` is deliberately not here**, though `secrets/` references it. That namespace
+# belongs to the operator's own install, which creates it. Declaring it from here meant stamping a
+# `pod-security.kubernetes.io/enforce` label on a controller nobody here has run under that
+# standard — an assumption that would be discovered by the operator failing to start, at the exact
+# moment nothing can fetch a secret. A `ClusterSecretStore` only needs to *reference* a service
+# account; it does not need us to have created the namespace around it.
 ---
 apiVersion: v1
 kind: Namespace
@@ -22,18 +29,6 @@ metadata:
     # Platform namespace: enforce the restricted Pod Security Standard. The six Deployments here
     # do comply — verified by running them, not by asserting it. The metering agent does not and
     # cannot, which is why it lives in its own namespace below rather than loosening this one.
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
----
-# Where the External Secrets controller runs, and the service account its ClusterSecretStore names.
-# The operator is not installed by anything here — see the README — but the namespace has to exist
-# before the ClusterSecretStore that references a service account inside it.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: external-secrets
-  labels:
-    app.kubernetes.io/part-of: sproutos
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
 ---

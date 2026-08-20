@@ -383,11 +383,18 @@ jobs:
 
       # Pinned, not `latest`: an operator that changes its served API versions should break this job
       # in a diff that bumps the version, not on an unrelated morning.
+      #
+      # The release manifest bakes `namespace: default` into its objects, so it installs there and
+      # not into `external-secrets`. That is fine for what this job needs — the CRDs and the
+      # validating webhook, which is the code that actually decides whether these documents are
+      # acceptable. Production installs the chart into its own namespace; this is not trying to
+      # reproduce that, only to have a real operator present.
       - name: Install External Secrets
         run: |
           kubectl apply --server-side -f \
             https://github.com/external-secrets/external-secrets/releases/download/v2.9.0/external-secrets.yaml
-          kubectl -n external-secrets rollout status deploy/external-secrets --timeout=180s
+          kubectl -n default rollout status deploy/external-secrets --timeout=300s
+          kubectl -n default rollout status deploy/external-secrets-webhook --timeout=300s
 
       - name: Render
         run: |
