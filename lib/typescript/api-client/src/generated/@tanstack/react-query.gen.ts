@@ -63,6 +63,7 @@ import {
   getV1StoreListings,
   getV1StoreListingsBySlug,
   getV1StoreTags,
+  getV1UserMeExport,
   getV1UserMePreferences,
   getV1UserMeProfile,
   type Options,
@@ -262,6 +263,9 @@ import type {
   GetV1StoreListingsResponse,
   GetV1StoreTagsData,
   GetV1StoreTagsResponse,
+  GetV1UserMeExportData,
+  GetV1UserMeExportError,
+  GetV1UserMeExportResponse,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponse,
   GetV1UserMeProfileData,
@@ -3325,6 +3329,31 @@ export const patchV1UserMeProfileMutation = (
   }
   return mutationOptions
 }
+
+export const getV1UserMeExportQueryKey = (options?: Options<GetV1UserMeExportData>) =>
+  createQueryKey("getV1UserMeExport", options)
+
+/**
+ * Everything the platform holds about the caller, as a downloadable document
+ */
+export const getV1UserMeExportOptions = (options?: Options<GetV1UserMeExportData>) =>
+  queryOptions<
+    GetV1UserMeExportResponse,
+    GetV1UserMeExportError,
+    GetV1UserMeExportResponse,
+    ReturnType<typeof getV1UserMeExportQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1UserMeExport({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1UserMeExportQueryKey(options),
+  })
 
 export const deleteV1UserMeDeleteMutation = (
   options?: Partial<Options<DeleteV1UserMeDeleteData>>,

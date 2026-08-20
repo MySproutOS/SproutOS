@@ -215,6 +215,7 @@ export interface BackendService {
   name: string
   organizationId: string
   projectId: string | null
+  purgedAt: Timestamp | null
   regionId: string
   status: Generated<string>
   updatedAt: Generated<Timestamp>
@@ -583,6 +584,7 @@ export interface Organization {
   kind: string
   name: string
   ownerUserId: string
+  purgedAt: Timestamp | null
   slug: string
   updatedAt: Generated<Timestamp>
 }

@@ -165,6 +165,9 @@ import type {
   GetV1StoreListingsResponses,
   GetV1StoreTagsData,
   GetV1StoreTagsResponses,
+  GetV1UserMeExportData,
+  GetV1UserMeExportErrors,
+  GetV1UserMeExportResponses,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponses,
   GetV1UserMeProfileData,
@@ -1863,6 +1866,18 @@ export const patchV1UserMeProfile = <ThrowOnError extends boolean = false>(
       ...options?.headers,
     },
   })
+
+/**
+ * Everything the platform holds about the caller, as a downloadable document
+ */
+export const getV1UserMeExport = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1UserMeExportData, ThrowOnError>,
+): RequestResult<GetV1UserMeExportResponses, GetV1UserMeExportErrors, ThrowOnError> =>
+  (options?.client ?? client).get<
+    GetV1UserMeExportResponses,
+    GetV1UserMeExportErrors,
+    ThrowOnError
+  >({ url: "/v1/user/me/export", ...options })
 
 export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(
   options?: Options<DeleteV1UserMeDeleteData, ThrowOnError>,

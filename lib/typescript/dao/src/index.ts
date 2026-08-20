@@ -102,6 +102,7 @@ import {
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
+import { exportUser, type UserExport } from "./user/export"
 import { crudUserPreference } from "./userPreference/crud"
 import { fetchUserPreference } from "./userPreference/fetch"
 
@@ -141,6 +142,7 @@ export {
   recordUpkeepRun,
   crudUser,
   crudUserPreference,
+  exportUser,
   DeletedProject,
   ENV_VAR_METADATA_FIELDS,
   EnvVarMetadataRow,
@@ -209,4 +211,5 @@ export {
   SystemRoleStatement,
   UpkeepOutcome,
   UpkeepStatus,
+  UserExport,
 }

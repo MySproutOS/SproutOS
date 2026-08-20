@@ -9,7 +9,12 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { Switch } from "@ui/base/ui/switch"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
-import { useUpdateProfile, useUserProfile } from "@frontends/dashboard/data/members"
+import {
+  useCloseAccount,
+  useExportMyData,
+  useUpdateProfile,
+  useUserProfile,
+} from "@frontends/dashboard/data/members"
 
 export const Route = createFileRoute("/orgs/$orgSlug/settings/profile")({
   component: ProfileSettings,
@@ -36,13 +41,16 @@ function ProfileSettings() {
         />
       )}
       {data !== undefined && (
-        <ProfileForm
-          key={data.email}
-          name={data.name}
-          email={data.email}
-          timezone={data.timezone}
-          productEmails={data.productEmails}
-        />
+        <>
+          <ProfileForm
+            key={data.email}
+            name={data.name}
+            email={data.email}
+            timezone={data.timezone}
+            productEmails={data.productEmails}
+          />
+          <YourData />
+        </>
       )}
     </PageBody>
   )
@@ -156,6 +164,103 @@ function ProfileForm({
           </Button>
         </div>
       </CardFooter>
+    </Card>
+  )
+}
+
+/**
+ * The two things a person can do with their own record.
+ *
+ * They are one card because they are one decision, taken in one order: nobody exports their data
+ * for fun, they export it because they are leaving. Putting the download next to the close button
+ * is what stops closure being the moment someone discovers they cannot get their work back.
+ */
+function YourData() {
+  const [confirmation, setConfirmation] = useState("")
+  const exportData = useExportMyData()
+  const close = useCloseAccount()
+
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle>Your data</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm">Download everything we hold about you</span>
+            <span className="text-[11px] text-muted-foreground">
+              Your profile, teams, keys, sessions and activity, as a JSON file. It carries no
+              passwords or keys — only the record that they exist.
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            disabled={exportData.isPending}
+            onClick={() => {
+              exportData.mutate()
+            }}
+          >
+            {exportData.isPending ? "Preparing…" : "Export"}
+          </Button>
+        </div>
+
+        {exportData.isError ? (
+          <Alert variant="destructive">
+            <AlertDescription>{exportData.error.message}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="rounded-lg border border-destructive/40 p-3">
+          <p className="text-sm">Close your account</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Your name and email are erased and every key, session and grant stops working
+            immediately. Teams you own must be transferred or deleted first — someone has to be
+            responsible for a team&apos;s data and its bill.
+          </p>
+
+          {close.isError ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertDescription>
+                {(close.error as { error?: { message?: string } } | undefined)?.error?.message ??
+                  "Your account could not be closed"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="mt-3 flex flex-col gap-1.5">
+            <Label htmlFor="close-confirm">
+              Type <span className="font-mono">close my account</span> to confirm
+            </Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="close-confirm"
+                value={confirmation}
+                autoComplete="off"
+                onChange={(event) => {
+                  setConfirmation(event.target.value)
+                }}
+              />
+              {/*
+                Typed confirmation rather than a dialog. This is irreversible and one click away
+                from a settings page people visit for ordinary reasons; a modal whose primary
+                action is destructive is dismissed by muscle memory.
+              */}
+              <Button
+                variant="destructive"
+                disabled={
+                  confirmation.trim().toLowerCase() !== "close my account" || close.isPending
+                }
+                onClick={() => {
+                  close.mutate({})
+                }}
+              >
+                {close.isPending ? "Closing…" : "Close account"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardContent>
     </Card>
   )
 }

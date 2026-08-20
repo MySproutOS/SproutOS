@@ -157,6 +157,23 @@ mod tests {
         assert!(validate(&format!("{prefix}products")).is_ok());
     }
 
+    /// The same fixture `tenantIndexPrefix` asserts in
+    /// `lib/typescript/services/src/tenant-auth.test.ts`.
+    ///
+    /// The control plane computes this prefix to delete a destroyed service's indices, and this
+    /// proxy computes it to decide which indices a tenant may name. Nothing is shared between
+    /// them but the algorithm, so a change on one side that is not made on the other has to turn
+    /// a test red on both — the alternative is a reaper that deletes another customer's data.
+    #[test]
+    fn the_prefix_matches_the_control_plane() {
+        let identity = TenantIdentity::new(
+            Uuid::nil(),
+            ResourceKind::SearchIndex,
+            Uuid::parse_str("01912d40-0000-7000-8000-0000000000a1").unwrap(),
+        );
+        assert_eq!(prefix_for(&identity), "t01j4pm0000e008000000000051_");
+    }
+
     #[test]
     fn two_resources_get_two_prefixes() {
         assert_ne!(prefix_for(&identity(1)), prefix_for(&identity(2)));

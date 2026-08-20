@@ -123,3 +123,20 @@ export async function hashGeneratedSecret(secret: string): Promise<string> {
 export function lastFour(secret: string): string {
   return secret.slice(-4)
 }
+
+/**
+ * The index-name namespace for one search service: `t<short-id>_`.
+ *
+ * Mirrors `prefix_for` in `services/search-proxy/src/naming.rs`, which is what actually applies it
+ * to a tenant's requests. It is duplicated here rather than exported from there because the control
+ * plane needs to name a tenant's indices for exactly one reason — deleting them when the service is
+ * destroyed — and a reaper that computed the prefix differently from the proxy would delete either
+ * nothing or somebody else's.
+ *
+ * The leading `t` is load-bearing: a short id starts with a digit `0`-`7`, which is legal, but an
+ * index name may not begin with `-`, `_` or `+`, and a fixed letter makes the namespace obvious in
+ * an operator's `_cat/indices` output.
+ */
+export function tenantIndexPrefix(backendServiceId: string): string {
+  return `t${encodeShortId(backendServiceId)}_`
+}

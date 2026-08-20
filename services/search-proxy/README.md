@@ -129,6 +129,18 @@ means a stray index from an earlier run fails today's test for yesterday's reaso
 The integration tests skip when the services are absent and **fail in CI**, because a skipped
 isolation test looks exactly like a passing one.
 
+## Deleting a tenant
+
+Not here. `destroy` revokes the credential, which makes the indices unreachable; `@lib/reaper`
+deletes them out of band, against the cluster rather than through this proxy. That matters more here
+than for the queue proxy, because an abandoned index holds shards whether anyone can reach it or
+not, and shards are the resource a shared cluster runs out of first.
+
+`prefix_for` in `naming.rs` is duplicated as `tenantIndexPrefix` in
+`lib/typescript/services/src/tenant-auth.ts`, with the same fixture asserted on both sides — a
+reaper that computed the namespace differently from this proxy would delete either nothing or
+another customer's data.
+
 ## Not built yet
 
 - **Query cost caps.** A tenant can still send a query that is expensive for everyone on the shard —
@@ -137,8 +149,5 @@ isolation test looks exactly like a passing one.
   wants real traffic to calibrate against.
 - **Metering.** Bytes indexed and queries run are the two dimensions TASK 25 would bill, and this is
   the only place that can honestly count them.
-- **The index reaper.** `destroy` revokes the credential, which makes the indices unreachable, but
-  does not delete them — and unlike Valkey keys, an abandoned index holds shards, which is the
-  resource a shared cluster actually runs out of.
 - **Scroll and PIT lifecycle.** A point-in-time id is a cluster-wide handle; `_pit` is allowed for
   creation but the ids are not scoped, so one tenant holding another's id is not yet prevented.

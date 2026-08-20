@@ -1,0 +1,25 @@
+{
+  "name": "@lib/reaper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deleting a tenant's data from the stores Postgres does not know about.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@lib/observability": "workspace:*",
+    "@lib/queue": "workspace:*",
+    "@lib/services": "workspace:*",
+    "@sproutos/db": "workspace:*",
+    "ioredis": "^6.0.0",
+    "kysely": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "uuid": "catalog:"
+  }
+}

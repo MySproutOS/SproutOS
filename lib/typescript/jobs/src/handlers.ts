@@ -1,4 +1,6 @@
 import { expireHolds } from "@lib/billing"
+import { observabilityConfigured } from "@lib/observability"
+import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
@@ -9,14 +11,16 @@ import type { JobHandler } from "./worker"
 /**
  * The job kinds the platform ships with.
  *
- * Both of these were promised by earlier work and had nothing running them: the holds design says
- * an abandoned reservation is freed by a reaper, and `agent_event.expires_at` defaults to 30 days
- * on a table that holds customer source code. A default that nothing enforces is a retention
- * policy in name only.
+ * Every one of them exists because something earlier promised a thing and left nothing to do it:
+ * the holds design says an abandoned reservation is freed by a reaper, `agent_event.expires_at`
+ * defaults to 30 days on a table that holds customer source code, and `destroy` marks a service
+ * deleted without deleting anything outside Postgres. A default that nothing enforces is a
+ * retention policy in name only, and a delete that nothing finishes is worse than that.
  */
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   purgeExpiredAgentEvents: "agent.purge_events",
+  purgeDeletedTenants: "platform.purge_deleted",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   analyzeRepository: ANALYSIS_KIND,
@@ -67,9 +71,39 @@ const purgeExpiredAgentEvents: JobHandler = async (_job, { db }) => {
   if (deleted > 0) console.info(`[jobs] purged ${deleted} expired agent events`)
 }
 
+/**
+ * Finish the deletions Postgres cannot cascade.
+ *
+ * Configuration is read here rather than at module load so a deployment without a search cluster —
+ * or without ClickHouse — still starts. What it must never do is silently skip the work: a missing
+ * `SEARCH_ADMIN_URL` throws, the job fails, and the failure is visible in `background_job`. Logs
+ * are the one part with a safe fallback, because `log_record` has a per-row TTL and will empty
+ * itself; indices and keys have nothing of the kind.
+ */
+const purgeDeletedTenants: JobHandler = async (_job, { db }) => {
+  const valkeyUrl = process.env.SERVICE_VALKEY_ADMIN_URL ?? process.env.VALKEY_URL
+  if (valkeyUrl === undefined || valkeyUrl === "") {
+    throw new Error("SERVICE_VALKEY_ADMIN_URL is not set; deleted tenant keys cannot be reaped")
+  }
+
+  const report = await reap(db, {
+    valkeyUrl,
+    search: searchAdminConfigFromEnv(),
+    logs: observabilityConfigured(),
+  })
+
+  if (report.services.length > 0 || report.organizations.length > 0) {
+    const removed = report.services.reduce((total, service) => total + service.removed, 0)
+    console.info(
+      `[jobs] purged ${report.services.length} deleted services (${removed} keys/indices) and ${report.organizations.length} organizations`,
+    )
+  }
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
+  [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
@@ -95,6 +129,13 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     kind: JOB_KINDS.purgeExpiredAgentEvents,
     idempotencyKey: `${JOB_KINDS.purgeExpiredAgentEvents}:${now.toISOString().slice(0, 10)}`,
     maxAttempts: 3,
+  })
+  await enqueue(db, {
+    kind: JOB_KINDS.purgeDeletedTenants,
+    idempotencyKey: `${JOB_KINDS.purgeDeletedTenants}:${hour}`,
+    // Retried more than the others: this one talks to three systems we do not run in-process, and
+    // a transient cluster error is the expected failure rather than a surprising one.
+    maxAttempts: 5,
   })
   await scheduleUpkeepScan(db, now)
 }
