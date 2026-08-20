@@ -24,6 +24,7 @@
 //! Step 5 is the one that matters. Without it every tenant would be connected as an administrator
 //! to a cluster holding every other tenant's data.
 
+pub mod cancel;
 pub mod protocol;
 pub mod routing;
 pub mod scram;
@@ -103,6 +104,7 @@ pub async fn serve_connection(
     mut client: TcpStream,
     store: Arc<CredentialStore>,
     backend: BackendConfig,
+    cancels: cancel::Registry,
 ) -> Result<(), SessionError> {
     let parameters = loop {
         match protocol::read_startup(&mut client).await? {
@@ -119,16 +121,30 @@ pub async fn serve_connection(
                 client.write_all(b"N").await?;
                 client.flush().await?;
             }
-            Startup::Cancel { .. } => {
+            Startup::Cancel {
+                process_id,
+                secret_key,
+            } => {
                 /*
-                    Cancellation arrives on a fresh connection carrying a key the *backend* issued,
-                    and this proxy does not keep a map from those keys to their sessions. Closing
-                    silently is what Postgres itself does with a key it does not recognise — a
-                    cancel is advisory, and a client that sent one carries on regardless.
+                    A cancellation, on its own connection, carrying a pair this proxy issued.
 
-                    Making this work means holding backend keys per session and reissuing our own,
-                    which is real work and is noted in the README rather than half-done here.
+                    Looked up and replayed against the backend with *its* pair. A pair we never
+                    issued — or already forgot, because the query finished — finds nothing and the
+                    connection closes silently, which is what Postgres itself does with a key it does
+                    not recognise. The two cases are deliberately indistinguishable: a
+                    `CancelRequest` is unauthenticated, so telling a caller which of the two happened
+                    would let them probe for live sessions.
                 */
+                let key = cancel::ClientKey {
+                    process_id,
+                    secret_key,
+                };
+                if let Some(target) = cancels.lookup(key).await {
+                    // Best effort, and never surfaced. A cancel is advisory — the client carries on
+                    // regardless — so a backend that refuses the connection is not worth an error
+                    // path the caller has no way to see.
+                    let _ = cancel::send(&backend, target).await;
+                }
                 return Ok(());
             }
             Startup::Connect(parameters) => break parameters,
@@ -185,8 +201,23 @@ pub async fn serve_connection(
 
         Only the trailing `ReadyForQuery` is ours, because the backend's was spent on `SET ROLE`.
     */
+    /*
+        Our own cancellation pair, not the backend's.
+
+        Registered before the client is told it is connected, so a cancel that arrives immediately
+        after the first query finds it. Leaking the backend's pair would also leak a real PID on the
+        shared cluster, which is true information a tenant has no use for.
+    */
+    let client_key = cancel::generate_client_key();
+    if let Some(backend_key) = backend_session.key {
+        cancels.register(backend_key, client_key).await;
+    }
+
     send_authentication_ok(&mut client).await?;
     client.write_all(&backend_session.handshake).await?;
+    client
+        .write_all(&cancel::backend_key_data(client_key))
+        .await?;
     send_ready_for_query(&mut client).await?;
 
     let (mut client_read, mut client_write) = client.into_split();
@@ -199,11 +230,21 @@ pub async fn serve_connection(
         be dropped rather than left waiting for a query that will never come. A leaked backend
         session holds a connection slot on a shared cluster, which is the resource that runs out.
     */
-    tokio::select! {
-        result = tokio::io::copy(&mut client_read, &mut server_write) => { result?; }
-        result = tokio::io::copy(&mut server_read, &mut client_write) => { result?; }
-    }
+    let outcome = tokio::select! {
+        result = tokio::io::copy(&mut client_read, &mut server_write) => result.map(|_| ()),
+        result = tokio::io::copy(&mut server_read, &mut client_write) => result.map(|_| ()),
+    };
 
+    /*
+        Forget the session however it ended.
+
+        Not in a `?` path: an error on the splice must still drop the registration, or the map grows
+        for the life of the process and a reissued pair could eventually route a cancel into a
+        session belonging to somebody else.
+    */
+    cancels.forget(client_key).await;
+
+    outcome?;
     Ok(())
 }
 

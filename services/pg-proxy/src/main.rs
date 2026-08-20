@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use pg_proxy::{BackendConfig, serve_connection};
+use pg_proxy::{BackendConfig, cancel, serve_connection};
 use sproutos_service_credentials::CredentialStore;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -53,6 +53,10 @@ async fn main() -> anyhow::Result<()> {
         })?,
     };
 
+    // One registry for the process: a `CancelRequest` arrives on a different connection from the
+    // session it cancels, so the mapping cannot live in either one.
+    let cancels = cancel::Registry::new();
+
     let listener = TcpListener::bind(listen).await?;
     info!(%listen, backend = %format!("{}:{}", backend.host, backend.port), "pg-proxy listening");
 
@@ -64,9 +68,10 @@ async fn main() -> anyhow::Result<()> {
 
         let store = Arc::clone(&store);
         let backend = backend.clone();
+        let cancels = cancels.clone();
 
         tokio::spawn(async move {
-            if let Err(cause) = serve_connection(client, store, backend).await {
+            if let Err(cause) = serve_connection(client, store, backend, cancels).await {
                 // Info, not error: a refused password is a normal event on a public endpoint, and
                 // logging it at error level trains people to ignore the level.
                 info!(%peer, %cause, "session ended");
