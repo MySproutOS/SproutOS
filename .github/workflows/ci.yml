@@ -277,6 +277,14 @@ jobs:
       # `kubeconform`, not `kubectl --dry-run=client`. kubectl downloads the OpenAPI schema from a
       # live cluster, so without one it validates nothing — it fails with `connection refused`,
       # which is not the same as passing. kubeconform carries the schemas.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Install kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
@@ -292,8 +300,11 @@ jobs:
       # result from the next step is worthless.
       - name: The validator rejects a manifest it should reject
         run: |
-          if kubeconform -strict -kubernetes-version 1.34.0 .github/fixtures/known-bad-manifest.yaml; then
-            echo "::error::kubeconform accepted a manifest with an unknown field. The check is not checking."
+          if kubeconform -strict -kubernetes-version 1.34.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            .github/fixtures/known-bad-manifest.yaml; then
+            echo "::error::kubeconform accepted a manifest with unknown fields. The check is not checking."
             exit 1
           fi
           echo "kubeconform correctly rejected the known-bad fixture"
@@ -301,5 +312,32 @@ jobs:
       # `-strict` rejects unknown fields, which is the check that matters: a typo in a field name is
       # silently ignored by the API server, so `readOnlyRootFilesytem` would apply cleanly and do
       # nothing at all.
+      # `-schema-location default` keeps the built-in Kubernetes schemas; the second location is a
+      # community catalogue of CRD schemas, which is what makes the External Secrets manifests
+      # validated rather than merely well-formed YAML. `-ignore-missing-schemas` is deliberately NOT
+      # set: a CRD whose schema cannot be found should fail, not pass silently, or this whole job
+      # quietly stops covering the files most likely to be wrong.
       - name: Validate
-        run: kubeconform -strict -summary -kubernetes-version 1.34.0 deploy/
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.34.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            deploy/
+
+      # The renderer's own tests run in the `build` job; this asserts the two halves agree — that
+      # every placeholder in a checked-in manifest is one the renderer knows how to fill. A
+      # placeholder added to a manifest and not to `PLACEHOLDERS` renders to itself, passes every
+      # schema check, and is applied to a cluster as a literal string.
+      - name: Every placeholder is one the renderer knows
+        run: |
+          cat > /tmp/outputs.json <<'JSON'
+          {
+            "aws_account_id": { "value": "123456789012" },
+            "aws_region": { "value": "us-east-1" },
+            "envelope_kms_key_arn": { "value": "arn:aws:kms:us-east-1:123456789012:key/x" },
+            "database_credentials_secret_arn": { "value": "arn:aws:secretsmanager:us-east-1:123456789012:secret:x" }
+          }
+          JSON
+          TAG=ci TENANT_NAMESPACE=ci TENANT_POSTGRES_HOST=a TENANT_VALKEY_HOST=b TENANT_OPENSEARCH_HOST=c \
+            pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
+          echo "rendered $(grep -c '^---' /tmp/rendered.yaml) document separators"

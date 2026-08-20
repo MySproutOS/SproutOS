@@ -1,0 +1,74 @@
+# Identities for the platform workloads.
+#
+# Every one of these has no Role and no ClusterRole, for the same reason the metering agent has none:
+# they talk to Postgres, Valkey and OpenSearch, not to the Kubernetes API. A ServiceAccount with no
+# bindings is a token that grants nothing beyond identity, and identity is all IRSA needs.
+#
+# The annotation is what IRSA keys on — not EKS Pod Identity, whose agent serves credentials on
+# link-local 169.254.170.23, which a Kata pod's in-guest namespace cannot reach and which the tenant
+# NetworkPolicy blocks anyway.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pg-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: pg-proxy
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-pg-proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: valkey-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: valkey-proxy
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-valkey-proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: search-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: search-proxy
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-search-proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: internal-api
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: internal-api
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    # The API is the only platform workload that needs KMS: `@lib/envelope` unwraps data keys
+    # through it to read OAuth tokens and tenant credentials.
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-internal-api
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: website
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: website
+    app.kubernetes.io/part-of: sproutos
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-worker

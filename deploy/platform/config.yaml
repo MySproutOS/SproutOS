@@ -1,0 +1,55 @@
+# Non-secret configuration.
+#
+# Deliberately ConfigMaps rather than Secrets: none of this is confidential, and putting a hostname
+# in Secrets Manager would mean a KMS decrypt and an API call to learn something printed in the
+# OpenTofu outputs. Treating everything as secret is how the things that genuinely are stop getting
+# the attention they need.
+#
+# The values are placeholders. A deploy substitutes them from the OpenTofu outputs of the same name —
+# `envelope_kms_key_arn`, `database_endpoint`, and so on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  # `tofu output envelope_kms_key_arn`. A key id, not key material: `@lib/envelope` never holds
+  # plaintext material — KMS does the unwrapping — which is why this belongs here and not in a
+  # Secret.
+  kms-key-id: KMS_KEY_ARN
+  aws-region: REGION
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-postgres
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  # The shared cluster tenants' databases live on. Not the control plane's — `pg-proxy` reads the
+  # control-plane database for credentials and connects tenants here, and confusing the two would
+  # route a customer into the table holding every customer's billing.
+  host: TENANT_POSTGRES_HOST
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-valkey
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  address: TENANT_VALKEY_HOST:6379
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-opensearch
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  url: https://TENANT_OPENSEARCH_HOST:9200

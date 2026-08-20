@@ -33,7 +33,9 @@ pub fn backend_config_from_env() -> Result<BackendConfig, SessionError> {
 /// A backend session, plus the handshake the client still needs to see.
 pub struct Backend {
     pub stream: TcpStream,
-    /// `ParameterStatus` and `BackendKeyData` as the backend sent them.
+    /// `ParameterStatus` as the backend sent it.
+    ///
+    /// **Not** `BackendKeyData` — that is replaced, see `key`.
     ///
     /// The client is mid-handshake and expects these after `AuthenticationOk`. They were consumed
     /// here while waiting for the backend's `ReadyForQuery`, so they have to be handed on rather
@@ -44,6 +46,12 @@ pub struct Backend {
     /// them would mean a client's `SHOW server_version` disagreeing with the server it is talking
     /// to.
     pub handshake: Vec<u8>,
+
+    /// The backend's cancellation pair, held so a `CancelRequest` can be routed to it.
+    ///
+    /// `None` when the backend sent no `BackendKeyData`, which is legal — cancellation is optional —
+    /// and means this session simply cannot be cancelled.
+    pub key: Option<crate::cancel::BackendKey>,
 }
 
 /// Connect, authenticate, and drop to the tenant's role.
@@ -60,12 +68,13 @@ pub async fn connect(
     let _ = server.set_nodelay(true);
 
     send_startup(&mut server, &backend.user, database).await?;
-    let handshake = complete_authentication(&mut server, &backend.password).await?;
+    let (handshake, key) = complete_authentication(&mut server, &backend.password).await?;
     set_role(&mut server, role).await?;
 
     Ok(Backend {
         stream: server,
         handshake,
+        key,
     })
 }
 
@@ -106,12 +115,15 @@ async fn send_startup(
 /// Postgres's default since 14 and is therefore the case a real deployment hits — it is a
 /// multi-round exchange with channel binding, and doing it badly is worse than not doing it. The
 /// README says so; this is the honest edge of what is implemented.
+type Handshake = (Vec<u8>, Option<crate::cancel::BackendKey>);
+
 async fn complete_authentication(
     server: &mut TcpStream,
     password: &str,
-) -> Result<Vec<u8>, SessionError> {
+) -> Result<Handshake, SessionError> {
     // Everything the client will need to be told, kept in the bytes the backend used to say it.
     let mut handshake = Vec::new();
+    let mut key = None;
 
     loop {
         let mut tag = [0u8; 1];
@@ -156,20 +168,25 @@ async fn complete_authentication(
             }
             // ReadyForQuery: the session is usable. Not forwarded from here — one is sent to the
             // client after `SET ROLE`, so the client's first query starts from a clean state.
-            b'Z' => return Ok(handshake),
+            b'Z' => return Ok((handshake, key)),
             b'E' => {
                 return Err(SessionError::Backend(error_message(&body)));
             }
-            // `ParameterStatus` and `BackendKeyData` are the client's to receive.
-            //
-            // `BackendKeyData` is forwarded as the backend's own, which means a client's cancel
-            // request carries a key this proxy cannot route — see the note on `Startup::Cancel`.
-            // Rewriting it needs a key map per session, and forwarding the backend's is the honest
-            // half-measure: the key is real, it just does not reach us.
-            b'S' | b'K' => {
+            // `ParameterStatus` is the client's to receive, verbatim.
+            b'S' => {
                 handshake.push(tag[0]);
                 handshake.extend_from_slice(&length_bytes);
                 handshake.extend_from_slice(&body);
+            }
+            /*
+                `BackendKeyData` is captured, not forwarded.
+
+                The pair identifies a session on the *backend*, and a cancel arrives at the *proxy* —
+                so a client holding the backend's pair holds a key it can only send somewhere that
+                cannot act on it. The proxy issues its own pair instead and keeps this one to replay.
+            */
+            b'K' => {
+                key = crate::cancel::parse_backend_key(&body);
             }
             // NoticeResponse and anything else: the client did not ask and does not need it.
             _ => {}

@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pg_proxy::{BackendConfig, serve_connection};
+use pg_proxy::{BackendConfig, cancel, serve_connection};
 use sproutos_service_credentials::CredentialStore;
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
@@ -287,6 +287,7 @@ async fn start_proxy(url: &str) -> SocketAddr {
 
     let store = Arc::new(CredentialStore::connect(url, 2).expect("store"));
     let backend = backend_config();
+    let cancels = cancel::Registry::new();
 
     tokio::spawn(async move {
         loop {
@@ -295,10 +296,11 @@ async fn start_proxy(url: &str) -> SocketAddr {
             };
             let store = Arc::clone(&store);
             let backend = backend.clone();
+            let cancels = cancels.clone();
             tokio::spawn(async move {
                 // Printed, not discarded. A proxy that refuses a connection for a reason the test
                 // cannot see turns every failure into "Closed", which says nothing.
-                if let Err(cause) = serve_connection(client, store, backend).await {
+                if let Err(cause) = serve_connection(client, store, backend, cancels).await {
                     eprintln!("pg-proxy session ended: {cause}");
                 }
             });
@@ -615,4 +617,92 @@ async fn an_ssl_request_is_answered_rather_than_ignored() {
         .expect("read");
 
     assert_eq!(&reply, b"N", "the proxy should decline TLS, not hang");
+}
+
+#[tokio::test]
+async fn a_running_query_can_be_cancelled_through_the_proxy() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let tenant = provision(&url).await;
+    let address = start_proxy(&url).await;
+
+    let client = connect_through(address, &tenant.username, &tenant.secret)
+        .await
+        .expect("connect");
+
+    /*
+        The whole point, and it cannot be faked.
+
+        `tokio_postgres::Client::cancel_token` builds a `CancelRequest` from the `BackendKeyData` the
+        *proxy* issued, and sends it on a fresh connection to the *proxy*. For the query to actually
+        stop, the proxy must have kept the backend's pair, looked ours up, and replayed theirs
+        against the cluster. Nothing short of the full path produces this result.
+    */
+    let token = client.cancel_token();
+
+    let query = tokio::spawn(async move {
+        // Long enough that the cancel lands mid-flight rather than after it finished.
+        client.batch_execute("select pg_sleep(30)").await
+    });
+
+    // Let the query reach the backend before cancelling it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    token
+        .cancel_query(tokio_postgres::NoTls)
+        .await
+        .expect("the proxy should route the cancellation");
+
+    let outcome = tokio::time::timeout(Duration::from_secs(10), query)
+        .await
+        .expect("the query should not still be running")
+        .expect("join");
+
+    let error = outcome.expect_err("a cancelled query is an error, not a success");
+    /*
+        `57014` is `query_canceled`. Asserted on the code rather than the message because the message
+        is localised — and because any *other* error would mean the query died for a reason unrelated
+        to the cancellation, which would make this test pass for the wrong reason.
+    */
+    assert_eq!(
+        error.code().map(|state| state.code()),
+        Some("57014"),
+        "expected query_canceled, got {error:?}"
+    );
+
+    cleanup(&url, &tenant).await;
+}
+
+#[tokio::test]
+async fn a_cancellation_for_an_unknown_session_is_ignored() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+
+    // A pair the proxy never issued. It must be dropped silently rather than answered — a
+    // `CancelRequest` is unauthenticated, so a reply that distinguished "no such session" from
+    // "cancelled" would let anyone probe for live sessions.
+    let mut stream = TcpStream::connect(address).await.expect("connect");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    stream.write_all(&16i32.to_be_bytes()).await.expect("write");
+    stream
+        .write_all(&80_877_102i32.to_be_bytes())
+        .await
+        .expect("write");
+    stream.write_all(&1i32.to_be_bytes()).await.expect("write");
+    stream.write_all(&2i32.to_be_bytes()).await.expect("write");
+    stream.flush().await.expect("flush");
+
+    // The proxy closes without replying. Read returns zero bytes rather than hanging.
+    let mut buffer = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+        .await
+        .expect("the proxy should close rather than hang")
+        .expect("read");
+    assert_eq!(read, 0, "the proxy should say nothing to an unknown cancel");
 }

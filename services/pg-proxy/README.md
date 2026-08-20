@@ -85,6 +85,36 @@ The honest reading of (2) is that the check is defence in depth: a tenant's queu
 different resource ids, so the derived names already diverge. This is what holds if that stops being
 true.
 
+## Query cancellation
+
+The one part of the protocol that does not happen on the connection it affects. A client wanting to
+stop a query opens a **second** connection and sends the `(process_id, secret_key)` pair it was given
+at startup, with no authentication beyond knowing it.
+
+That breaks a naive proxy: the pair the backend issued identifies a session on the _backend_, and the
+cancel arrives at the _proxy_. So the proxy issues its own pair, keeps a map to the backend's, and
+replays the backend's on a fresh connection when a cancel arrives.
+
+Both halves of our pair are random, from `OsRng`. Possession of the pair _is_ the authorization, so a
+predictable secret would let anyone who can reach the proxy cancel any tenant's queries by guessing —
+a denial of service against every customer at once, from an unauthenticated endpoint. The
+`process_id` is random too: nothing requires it to be a real PID, and forwarding the backend's would
+leak something true about the shared cluster for no benefit.
+
+A pair we never issued, or already forgot because the query finished, finds nothing and the
+connection closes silently. The two are indistinguishable on purpose — a reply that told them apart
+would let someone probe for live sessions.
+
+The registration is dropped however the session ends, including on a splice error. Otherwise the map
+grows for the life of the process, and a reissued pair could eventually route a cancel into somebody
+else's session.
+
+`a_running_query_can_be_cancelled_through_the_proxy` runs a real `pg_sleep(30)` and asserts the
+client sees `57014` — `query_canceled`. Asserted on the code rather than the message, because any
+_other_ error would mean the query died for an unrelated reason and the test passed for the wrong
+one. Three mutations turn it red: forwarding the backend's pair, skipping the registration, and
+putting a type byte on the `CancelRequest`.
+
 ## Not built
 
 - **Query cancellation.** `CancelRequest` arrives on a fresh connection carrying a key the _backend_
