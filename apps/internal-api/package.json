@@ -17,7 +17,8 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/dev-server.ts",
     "build": "tsc -b",
-    "generate-specs": "tsx src/index.ts --openapi > openapi.json"
+    "generate-specs": "tsx src/index.ts --openapi > openapi.json",
+    "worker": "tsx watch src/worker.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
@@ -26,6 +27,7 @@
     "@lib/dao": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
+    "@lib/jobs": "workspace:*",
     "@lib/srn": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
