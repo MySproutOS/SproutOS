@@ -17,16 +17,11 @@ import { useProjects } from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/")({
   component: ProjectsList,
-  // Optional, not `{ empty: boolean }` — a required key would force every link to
-  // `/orgs/$orgSlug/projects` anywhere in the app to carry a `search` prop.
-  validateSearch: (search: Record<string, unknown>): { empty?: true } =>
-    search.empty === undefined ? {} : { empty: true },
 })
 
 function ProjectsList() {
   const { orgSlug } = Route.useParams()
-  const { empty } = Route.useSearch()
-  const { data, isPending, isError, refetch } = useProjects(orgSlug, empty === true)
+  const { data, isPending, isError, refetch } = useProjects(orgSlug)
   const [filter, setFilter] = useState("")
 
   const needle = filter.trim().toLowerCase()

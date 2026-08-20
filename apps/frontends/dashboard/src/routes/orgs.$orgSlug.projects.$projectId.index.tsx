@@ -125,11 +125,19 @@ function ProjectDetail() {
                     </dd>
                   </div>
                 </dl>
-                <div>
-                  <Button variant="outline" size="sm" render={<a href={data.url}>{data.url}</a>}>
-                    <ExternalLinkIcon />
-                  </Button>
-                </div>
+                {/*
+                  No link until the project has deployed. A project that has never deployed has no
+                  URL, and a button pointing at a guessed one is a 404 with our name on it.
+                */}
+                {data.url === null ? (
+                  <p className="font-mono text-xs text-muted-foreground">Not deployed yet</p>
+                ) : (
+                  <div>
+                    <Button variant="outline" size="sm" render={<a href={data.url}>{data.url}</a>}>
+                      <ExternalLinkIcon />
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

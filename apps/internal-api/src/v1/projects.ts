@@ -24,6 +24,7 @@ import {
   provisionProject,
   type RepositoryPlan,
 } from "@lib/dao"
+import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import type { DB } from "@sproutos/db"
@@ -81,6 +82,94 @@ const notFoundResponse = {
   ...errorResponse,
 }
 
+type ProjectRow = {
+  id: string
+  repositoryId: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+/**
+ * Adds what the project list actually shows: what it has cost, where it runs, and whether its
+ * upstream has moved.
+ *
+ * Three lookups for the whole page rather than three per project. A dashboard with thirty projects
+ * would otherwise make ninety round trips to render one screen, and none of the three needs to know
+ * about any single project to answer for all of them.
+ */
+async function enrich<T extends ProjectRow>(organizationId: string, rows: readonly T[]) {
+  if (rows.length === 0) return []
+  const projectIds = rows.map((row) => row.id)
+
+  const [rated, regions, behind] = await Promise.all([
+    /*
+      Rated at read time against the price book in force, never stored. A stored cost is wrong the
+      moment a rate changes, and wrong in a way nobody can reconstruct.
+
+      A deployment with no price book seeded is a seeding bug that would otherwise show every
+      customer a free product; `rateProjectsForOrganization` throws, and this lets it.
+    */
+    rateProjectsForOrganization(db, organizationId, startOfMonth()),
+
+    /*
+      Region comes from the project's backend services, because a project has no region of its own —
+      it is where its *data* lives that a customer cares about, and that is a property of the
+      database or queue rather than of the repository.
+    */
+    db
+      .selectFrom("backendService")
+      .innerJoin("region", "region.id", "backendService.regionId")
+      .select(["backendService.projectId as projectId", "region.code as code"])
+      .where("backendService.projectId", "in", projectIds)
+      .where("backendService.deletedAt", "is", null)
+      .orderBy("backendService.createdAt", "asc")
+      .execute(),
+
+    /*
+      TASK 17's "your fork is behind" flag, from the most recent sync run per repository.
+
+      `behind_by > 0` on the *latest* run, not on any run: a repository that was behind last week
+      and has since been merged is not behind now, and a flag that lit up on history would never go
+      out.
+    */
+    db
+      .selectFrom("upstreamSyncRun")
+      // `distinct on` is Postgres's "one row per group", and the order clause is what picks *which*
+      // row — the leading key must match the distinct key or the result is arbitrary.
+      .distinctOn("repositoryId")
+      .select(["repositoryId", "behindBy"])
+      .where(
+        "repositoryId",
+        "in",
+        rows.map((row) => row.repositoryId),
+      )
+      .orderBy("repositoryId")
+      .orderBy("createdAt", "desc")
+      .execute(),
+  ])
+
+  // First region wins, matching the `order by created_at` above: a project's first service is the
+  // one it was provisioned in, and a later one in another region does not move the project.
+  const regionByProject = new Map<string, string>()
+  for (const row of regions) {
+    if (row.projectId !== null && !regionByProject.has(row.projectId)) {
+      regionByProject.set(row.projectId, row.code)
+    }
+  }
+  const behindByRepository = new Map(behind.map((row) => [row.repositoryId, row.behindBy]))
+
+  return rows.map((row) => ({
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    // Absent from the rating map means no metered usage, which is genuinely zero rather than
+    // unknown — nothing has been recorded against this project.
+    costMicroUsd: (rated.get(row.id)?.total ?? 0n).toString(),
+    region: regionByProject.get(row.id) ?? null,
+    hasUpstreamUpdate: (behindByRepository.get(row.repositoryId) ?? 0) > 0,
+  }))
+}
+
 const PROJECT_FIELDS = [
   "id",
   "name",
@@ -96,6 +185,7 @@ const PROJECT_FIELDS = [
   "storeListingId",
   "agentCredentialId",
   "createdAt",
+  "updatedAt",
 ] as const
 
 const JOB_FIELDS = [
@@ -174,9 +264,33 @@ function serializeProject(
     storeListingId: project.storeListingId,
     agentCredentialId: project.agentCredentialId,
     createdAt: project.createdAt.toISOString(),
+    updatedAt: project.updatedAt.toISOString(),
     repositoryOwnerLogin: repository.ownerLogin,
     repositoryName: repository.name,
     repositoryProvenance: repository.provenance,
+  }
+}
+
+/**
+ * One project, with the same three enrichments the list gets.
+ *
+ * Routed through `enrich` rather than reimplemented so a project cannot show one cost on the list
+ * and a different one on its own page. It costs three queries for one row, which is the right trade
+ * for a detail view rendered once.
+ */
+async function serializeOneProject(
+  organizationId: string,
+  project: Pick<Selectable<DB["project"]>, (typeof PROJECT_FIELDS)[number]>,
+  repository: { ownerLogin: string; name: string; provenance: string },
+) {
+  const [enriched] = await enrich(organizationId, [
+    { ...project, id: project.id, repositoryId: project.repositoryId },
+  ])
+  return {
+    ...serializeProject(project, repository),
+    costMicroUsd: enriched?.costMicroUsd ?? "0",
+    region: enriched?.region ?? null,
+    hasUpstreamUpdate: enriched?.hasUpstreamUpdate ?? false,
   }
 }
 
@@ -292,10 +406,7 @@ const app = new Hono()
         pageSize: limit,
       })
 
-      return c.json({
-        data: results.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
-        nextCursor,
-      })
+      return c.json({ data: await enrich(organization.id, results), nextCursor })
     },
   )
   .post(
@@ -510,7 +621,11 @@ const app = new Hono()
       return c.json(
         {
           job: serializeJob(provisioned.job),
-          project: serializeProject(provisioned.project, provisioned.repository),
+          project: await serializeOneProject(
+            organization.id,
+            provisioned.project,
+            provisioned.repository,
+          ),
         },
         201,
       )
@@ -567,7 +682,7 @@ const app = new Hono()
       const pendingCreation = isPendingGithubRepoId(repository.githubRepoId)
 
       return c.json({
-        ...serializeProject(project, repository),
+        ...(await serializeOneProject(c.var.organization.id, project, repository)),
         envVarCount,
         pendingUpdateSuggestions,
         repository: {
@@ -723,7 +838,11 @@ const app = new Hono()
       )
 
       return c.json(
-        serializeProject(updated, repository ?? { name: "", ownerLogin: "", provenance: "new" }),
+        await serializeOneProject(
+          c.var.organization.id,
+          updated,
+          repository ?? { name: "", ownerLogin: "", provenance: "new" },
+        ),
       )
     },
   )

@@ -10,7 +10,7 @@ import {
 } from "@ui/base/ui/empty-state"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
-import { useProjectList } from "@frontends/dashboard/data/projects"
+import { useProjects } from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/observability")({
   component: Observability,
@@ -28,7 +28,7 @@ export const Route = createFileRoute("/orgs/$orgSlug/observability")({
  */
 function Observability() {
   const { orgSlug } = Route.useParams()
-  const projects = useProjectList(orgSlug)
+  const projects = useProjects(orgSlug)
 
   return (
     <>
