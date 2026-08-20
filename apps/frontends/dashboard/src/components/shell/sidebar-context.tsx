@@ -82,16 +82,20 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
     }
   }, [collapsed])
 
+  /*
+    The next value is computed here rather than inside a `setCollapsed` updater,
+    because the write has to sit outside it. Updater functions must be pure —
+    React re-invokes them, and StrictMode does so deliberately — so a `mutate`
+    call in there fires twice per toggle. Measured: one click, two PATCHes.
+  */
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((current) => {
-      const next = !current
-      // Fire and forget. This is furniture: a failed write costs the person nothing today and is
-      // corrected the next time they touch it. Blocking the animation on a round trip would cost
-      // them something every time.
-      save.mutate({ body: { sidebarCollapsed: next } })
-      return next
-    })
-  }, [save])
+    const next = !collapsed
+    setCollapsed(next)
+    // Fire and forget. This is furniture: a failed write costs the person nothing today and is
+    // corrected the next time they touch it. Blocking the animation on a round trip would cost
+    // them something every time.
+    save.mutate({ body: { sidebarCollapsed: next } })
+  }, [collapsed, save])
 
   /*
     `collapsed` is a desktop preference. The mobile drawer renders the same body,

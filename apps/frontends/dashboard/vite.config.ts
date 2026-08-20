@@ -12,7 +12,7 @@ const fontsourceFiles = (pkg: string) =>
     `../../../lib/typescript/ui/base/node_modules/@fontsource-variable/${pkg}/files/*.woff2`,
   )
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(() => ({
   /*
     The repo-root `.env`, not one per SPA.
 
@@ -23,7 +23,17 @@ export default defineConfig(({ mode }) => ({
     SPA, served under `/admin/` on its own host, it is a 404 — which is how this was found.
   */
   envDir: path.resolve(__dirname, "../../.."),
-  base: mode === "production" ? "https://d1i66hf38xpie.cloudfront.net/dashboard/" : "/",
+  /*
+    Relative in production, not an absolute CDN URL.
+
+    This was `https://d1i66hf38xpie.cloudfront.net/dashboard/` — the upstream template's CloudFront
+    distribution, inherited when this repo was copied and never swept. It is not ours: a production
+    build would have loaded every chunk from an account we do not control.
+
+    `VITE_ASSET_BASE` is the override for the day a CDN of our own sits in front, and it is read
+    from the repo-root `.env` via `envDir` below.
+  */
+  base: process.env.VITE_ASSET_BASE ?? "/",
   plugins: [
     tanstackRouter({ quoteStyle: "double" }),
     react(),

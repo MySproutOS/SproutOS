@@ -120,7 +120,21 @@ function rewriteToSpa(
   prodFolder: string,
 ): NextResponse {
   const isDev = process.env.NODE_ENV === "development"
-  const spaOrigin = isDev ? `http://localhost:${devPort}` : "https://d1i66hf38xpie.cloudfront.net"
+  /*
+    Same origin in production, because the SPAs are served by this deployment.
+
+    This used to be `https://d1i66hf38xpie.cloudfront.net` — the upstream template's CloudFront
+    distribution, inherited when the repo was copied and never swept. It is not our distribution:
+    a production build would have fetched the dashboard's JavaScript from an account we do not
+    control, which is a supply-chain hole rather than a broken link.
+
+    Empty string keeps `new URL(pathname, ...)` relative to the incoming request, which is what the
+    EKS deployment wants — the ALB fronts both. `SPA_ASSET_ORIGIN` is here for the day a CDN sits in
+    front of it, and is ours to set.
+  */
+  const spaOrigin = isDev
+    ? `http://localhost:${devPort}`
+    : (process.env.SPA_ASSET_ORIGIN ?? request.nextUrl.origin)
 
   const spaUrl = new URL(pathname, spaOrigin)
   spaUrl.search = request.nextUrl.search

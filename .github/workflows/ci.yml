@@ -130,6 +130,13 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # Separate from `build`, because `vite build` does not typecheck: it strips types with
+      # esbuild and never runs `tsc`, so a green build said nothing about the two SPAs. A `process`
+      # reference in `@lib/api-client` had been a type error in both of them for as long as the
+      # file existed, and every "build clean" reported here was blind to it.
+      - name: Check types
+        run: pnpm run check-types
+
       - name: Test
         run: pnpm run test
 

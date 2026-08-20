@@ -7,6 +7,11 @@
       "inputs": ["src/**", "index.html", "vite.config.ts", "tsconfig.json"],
       "passThroughEnv": ["NEXT_PHASE", "DATABASE_URL"]
     },
+    "check-types": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": []
+    },
     "dev": {
       "dependsOn": ["^build"],
       "persistent": true,
