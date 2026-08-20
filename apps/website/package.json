@@ -11,6 +11,7 @@
   "dependencies": {
     "@base-ui/react": "catalog:",
     "@lib/api-client": "workspace:*",
+    "@lib/envelope": "workspace:*",
     "@lib/oauth": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@tailwindcss/postcss": "catalog:",

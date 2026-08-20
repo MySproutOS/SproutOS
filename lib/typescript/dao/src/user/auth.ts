@@ -3,8 +3,16 @@ import type { Kysely, Selectable } from "kysely"
 
 export type SessionUser = Pick<Selectable<DB["user"]>, "id" | "isAdmin" | "name" | "email">
 
+/** The session columns an authorization decision actually needs.
+ *
+ *  The row also carries `reauthenticated_at` for step-up re-auth and
+ *  `user_agent` / `ip` for a sign-out-other-sessions screen. Selecting those on
+ *  every request would cost a wider read on the hottest path in the product for
+ *  data no caller here reads. */
+export type AuthSession = Pick<Selectable<DB["session"]>, "sessionKey" | "userId" | "expires">
+
 type SessionValidationResult = {
-  session: Selectable<DB["session"]>
+  session: AuthSession
   user: SessionUser
 } | null
 
@@ -28,7 +36,7 @@ export function authUser(db: Kysely<DB>) {
     if (!row) {
       return null
     }
-    const session: Selectable<DB["session"]> = {
+    const session: AuthSession = {
       sessionKey: row.sessionKey,
       userId: row.userId,
       expires: row.expires,

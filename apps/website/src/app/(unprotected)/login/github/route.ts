@@ -1,8 +1,8 @@
 import {
-  GOOGLE_SCOPES,
+  GITHUB_IDENTITY_SCOPES,
   generateCodeVerifier,
   generateState,
-  googleOAuthClient,
+  githubOAuthClient,
 } from "@website/lib/oauth"
 import { cookies } from "next/headers"
 
@@ -12,23 +12,20 @@ const TRANSIENT_COOKIE = {
   path: "/",
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 10, // 10 minutes
+  maxAge: 60 * 10,
   sameSite: "lax",
 } as const
 
 export async function GET() {
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
-  const url = await googleOAuthClient().createAuthorizationUrl(state, codeVerifier, GOOGLE_SCOPES)
+  const url = await githubOAuthClient().createAuthorizationUrl(state, codeVerifier, [
+    ...GITHUB_IDENTITY_SCOPES,
+  ])
 
   const cookieStore = await cookies()
-  cookieStore.set("google_oauth_state", state, TRANSIENT_COOKIE)
-  cookieStore.set("google_code_verifier", codeVerifier, TRANSIENT_COOKIE)
+  cookieStore.set("github_oauth_state", state, TRANSIENT_COOKIE)
+  cookieStore.set("github_code_verifier", codeVerifier, TRANSIENT_COOKIE)
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: url.toString(),
-    },
-  })
+  return new Response(null, { status: 302, headers: { Location: url.toString() } })
 }

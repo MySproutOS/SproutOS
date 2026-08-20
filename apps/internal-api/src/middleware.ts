@@ -1,4 +1,4 @@
-import { authUser } from "@lib/dao"
+import { type AuthSession, authUser } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import { db } from "@sproutos/db"
 import { encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
@@ -14,11 +14,8 @@ type SessionUser = Pick<Selectable<DB["user"]>, "id" | "isAdmin" | "name" | "ema
 
 export async function getSession(
   c:
-    | Context<{ Variables: { user: SessionUser; session: Selectable<DB["session"]> } }, string>
-    | Context<
-        { Variables: { user: SessionUser | null; session: Selectable<DB["session"]> | null } },
-        string
-      >,
+    | Context<{ Variables: { user: SessionUser; session: AuthSession } }, string>
+    | Context<{ Variables: { user: SessionUser | null; session: AuthSession | null } }, string>,
 ) {
   const sessionToken = getCookie(c, "session")
   if (!sessionToken) {
@@ -44,7 +41,7 @@ export async function getSession(
 export const authMiddleware = createMiddleware<{
   Variables: {
     user: SessionUser
-    session: Selectable<DB["session"]>
+    session: AuthSession
   }
 }>(async (c, next) => {
   const session = await getSession(c)
@@ -57,7 +54,7 @@ export const authMiddleware = createMiddleware<{
 export const authNoThrowMiddleware = createMiddleware<{
   Variables: {
     user: SessionUser | null
-    session: Selectable<DB["session"]> | null
+    session: AuthSession | null
   }
 }>(async (c, next) => {
   try {

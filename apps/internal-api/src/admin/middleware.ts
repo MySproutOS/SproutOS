@@ -1,14 +1,12 @@
-import type { DB } from "@sproutos/db"
-import type { SessionUser } from "@lib/dao/user/auth"
+import type { AuthSession, SessionUser } from "@lib/dao/user/auth"
 import { createMiddleware } from "hono/factory"
 import { HTTPException } from "hono/http-exception"
-import type { Selectable } from "kysely"
 import { getSession } from "../middleware"
 
 export const adminAuthMiddleware = createMiddleware<{
   Variables: {
     user: SessionUser
-    session: Selectable<DB["session"]>
+    session: AuthSession
   }
 }>(async (c, next) => {
   const session = await getSession(c)

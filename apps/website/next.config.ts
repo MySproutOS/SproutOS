@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@sproutos/db",
     "@lib/api-client",
+    "@lib/envelope",
     "@lib/oauth",
     "@ui/base",
     "@ui/seo-shared",
