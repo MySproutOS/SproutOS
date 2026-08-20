@@ -46,6 +46,38 @@ services:
     volumes:
       - clickhouse:/var/lib/clickhouse
 
+  # Tenant search (TASK 33). One cluster, many tenants, split by index name.
+  #
+  # OpenSearch rather than Elasticsearch: Elastic's licence has not been open source since 7.11, and
+  # "we manage the database ourselves in EC2 instances" is precisely the deployment that licence is
+  # written to prevent. OpenSearch is the Apache-2.0 fork of the same codebase and speaks the same
+  # API, so a customer's Elasticsearch client works unchanged.
+  opensearch:
+    container_name: sproutos_opensearch
+    image: opensearchproject/opensearch:2.19.0
+    ports:
+      - "29200:9200"
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      # A development heap. Production sizing is phase 9's problem; 512 MB is enough to hold a few
+      # tenant indices and small enough to sit alongside Postgres, Valkey and ClickHouse on a laptop.
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      # The security plugin is off here and the proxy is the boundary regardless: document- and
+      # field-level security are not in the open-source tier, which is *why* services/search-proxy
+      # exists rather than being a convenience.
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch:/usr/share/opensearch/data
+
   localstack:
     container_name: sproutos_localstack
     image: localstack/localstack:2026.07.5
@@ -66,6 +98,8 @@ volumes:
   valkey:
     driver: local
   clickhouse:
+    driver: local
+  opensearch:
     driver: local
   localstack:
     driver: local

@@ -20,6 +20,7 @@ repository = "https://github.com/Andrew-Chen-Wang/sproutos"
 sproutos-srn = { path = "lib/rust/srn" }
 sproutos-metering-proto = { path = "lib/rust/metering-proto" }
 sproutos-tenant-auth = { path = "lib/rust/tenant-auth" }
+sproutos-service-credentials = { path = "lib/rust/service-credentials" }
 
 anyhow = "1"
 thiserror = "2"
@@ -33,6 +34,7 @@ sha2 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v7", "serde"] }
 bytes = "1"
+axum = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 deadpool-postgres = "0.14"
 rand = "0.8"

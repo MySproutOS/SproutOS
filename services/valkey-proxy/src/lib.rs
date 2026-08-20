@@ -17,7 +17,6 @@
 //! between BullMQ and Valkey would pay an event-loop hop and a GC pause for what is byte-shuffling.
 
 pub mod commands;
-pub mod credentials;
 pub mod keyspace;
 pub mod reply;
 pub mod resp;
@@ -32,11 +31,11 @@ use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 use crate::commands::namespace_command;
-pub use crate::credentials::CredentialStore;
-use crate::credentials::{Authentication, report};
 use crate::keyspace::{prefix_for, strip};
 use crate::reply::{echoes_key, frame};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
+pub use sproutos_service_credentials::CredentialStore;
+use sproutos_service_credentials::{Authentication, report};
 
 /// Read buffer per connection. Large enough for a typical BullMQ payload in one syscall.
 const READ_BUFFER: usize = 16 * 1024;
