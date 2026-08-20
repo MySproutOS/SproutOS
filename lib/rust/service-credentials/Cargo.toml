@@ -1,0 +1,17 @@
+[package]
+name = "sproutos-service-credentials"
+description = "Authenticating a tenant connection against the control plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+deadpool-postgres.workspace = true
+sproutos-tenant-auth.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
+uuid.workspace = true

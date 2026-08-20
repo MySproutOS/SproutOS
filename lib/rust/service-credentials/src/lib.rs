@@ -1,4 +1,10 @@
-//! Turning an `AUTH` into a tenant, against the control plane's records.
+//! Turning a connection's credentials into a tenant, against the control plane's records.
+//!
+//! Shared by every data-plane proxy — valkey, search, and pg when it lands. They all face the same
+//! problem and the same table, and two implementations of "is this secret right" is one more than
+//! can be kept correct: a divergence here is not a bug in one proxy, it is a tenant reading another
+//! tenant's data through whichever one drifted.
+//!
 //!
 //! The username says who the connection *claims* to be — `lib/rust/tenant-auth` parses it, and that
 //! is identification, not authentication. This is the part that makes the claim true: look up the

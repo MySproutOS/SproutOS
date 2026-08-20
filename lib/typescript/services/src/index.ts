@@ -16,6 +16,12 @@ export {
   type ResourceKind,
 } from "./tenant-auth"
 export {
+  searchDriver,
+  searchServiceConfigFromEnv,
+  searchUri,
+  type SearchServiceConfig,
+} from "./search"
+export {
   SecretNotRecoverableError,
   valkeyDriver,
   valkeyServiceConfigFromEnv,

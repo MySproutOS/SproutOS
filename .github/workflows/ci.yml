@@ -144,9 +144,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # TASK 33's shared cluster. The tests that check one tenant cannot read another's index are
+      # the whole point of the proxy, and they skip without this.
+      opensearch:
+        image: opensearchproject/opensearch:2.19.0
+        ports:
+          - 29200:9200
+        env:
+          discovery.type: single-node
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+          DISABLE_SECURITY_PLUGIN: true
+          DISABLE_INSTALL_DEMO_CONFIG: true
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       VALKEY_PROXY_BACKEND: 127.0.0.1:41023
+      SEARCH_PROXY_UPSTREAM: http://127.0.0.1:29200
     steps:
       - uses: actions/checkout@v5
       - name: Setup Rust
