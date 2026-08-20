@@ -152,12 +152,31 @@ describe.skipIf(!up)("what a key can do", () => {
     const response = await withKey("GET", `/v1/orgs/${orgSlug}/projects`, key)
     expect(response.status).toBe(200)
 
-    const stored = await db
-      .selectFrom("apiKey")
-      .select("lastUsedAt")
-      .where("id", "=", id)
-      .executeTakeFirstOrThrow()
-    expect(stored.lastUsedAt).not.toBeNull()
+    /*
+      Polled, not read once.
+
+      `stampUsed` is `void`-ed on purpose in `bearer.ts`: it is the "last used" column on a settings
+      page, and refusing a request because a bookkeeping write failed would trade a real capability
+      for a cosmetic one. The consequence is that the write lands *after* the response, so reading
+      the column the instant the request returns is a race — one this passed locally against a
+      warm database and lost in CI against a container.
+
+      Waiting for it is the honest assertion: the claim is "this eventually records the use", not
+      "it records it before the response".
+    */
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .selectFrom("apiKey")
+              .select("lastUsedAt")
+              .where("id", "=", id)
+              .executeTakeFirstOrThrow()
+          ).lastUsedAt,
+        { timeout: 5000 },
+      )
+      .not.toBeNull()
   })
 
   it("is refused outside its scopes even though its user is the owner", async ({ skip }) => {

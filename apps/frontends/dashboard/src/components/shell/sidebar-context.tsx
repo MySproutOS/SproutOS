@@ -66,6 +66,13 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
 
     Guarded on `adopted` rather than on the query settling, because a refetch — a window refocus,
     say — would otherwise reach back in and undo a toggle made in the meantime.
+
+    `toggleCollapsed` also sets `adopted`, which closes the narrower race the guard alone does not:
+    someone collapsing the sidebar inside the first few hundred milliseconds, before the query has
+    resolved at all, would otherwise have it snap back when the response arrived. Once a person has
+    said what they want in this session, a value written on an earlier visit does not get to
+    overrule them. Found by the component test rather than by clicking — in a browser the query has
+    always resolved long before a human reaches the control.
   */
   const [adopted, setAdopted] = useState(false)
   const serverCollapsed = preferences.data?.sidebarCollapsed
@@ -91,6 +98,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const toggleCollapsed = useCallback(() => {
     const next = !collapsed
     setCollapsed(next)
+    setAdopted(true)
     // Fire and forget. This is furniture: a failed write costs the person nothing today and is
     // corrected the next time they touch it. Blocking the animation on a round trip would cost
     // them something every time.
