@@ -236,3 +236,26 @@ shreds a paragraph into a column of fragments.
 
 **Leaving the page aborts the run.** A stream into an unmounted component keeps burning tokens
 against a balance nobody is watching.
+
+## Databases
+
+`/orgs/$orgSlug/databases`, backed by the `@lib/services` driver from TASK 37. A database can stand
+on its own or belong to a project — the create dialog does not ask, because the API does not
+require one.
+
+**The connection URI is on screen exactly twice**: once when the database is created, and once per
+explicit reveal. It is never in the list response, because a URI in a list is cached by clients,
+logged by proxies, and rendered on pages nobody meant to expose. Both dialogs say that reading it
+again is recorded in the audit log, because it is.
+
+Reveal and rotate are mutations, not queries. Each writes an audit row, so a cached read would make
+the trail claim one look when there were five. Neither result enters the query cache — the URI
+lives in the component that asked for it.
+
+**Deleting asks you to type the name.** Every other destructive action here is recoverable;
+this one destroys a customer's data outright, with no backup to restore from. Rotating gets a
+plain confirmation instead, and says what breaks: every client still using the old URI.
+
+Engines that are not implemented appear in the picker marked "coming soon" and disable the create
+button, rather than being hidden. A person looking for Valkey should find out it is planned, not
+conclude it does not exist.

@@ -160,7 +160,7 @@ describe("default fallback (non-public, non-shared route)", () => {
     ["production", "/dashboard"],
     ["development", "http://localhost:3002"],
   ])("valid session in %s → rewrite to dashboard SPA", async (mode, expected) => {
-    vi.stubEnv("NODE_ENV", mode as "production")
+    vi.stubEnv("NODE_ENV", mode)
     try {
       mockValidate.mockResolvedValueOnce(VALID_SESSION)
       const res = await proxy(makeRequest("/settings", "tok"))
