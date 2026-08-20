@@ -1,9 +1,13 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  deleteV1OrgsByOrgSlugApiKeysByApiKeyIdMutation,
   getV1AuthMeOptions,
+  getV1OrgsByOrgSlugApiKeysOptions,
+  getV1OrgsByOrgSlugApiKeysQueryKey,
   getV1OrgsByOrgSlugMembersOptions,
+  postV1OrgsByOrgSlugApiKeysMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import { relativeLabel } from "@frontends/dashboard/data/projects"
 
 export type Member = {
   id: string
@@ -22,6 +26,8 @@ export type ApiKey = {
   prefix: string
   createdLabel: string
   lastUsedLabel: string | null
+  /** RBAC actions the key was granted. `["*"]` means "everything its creator can do". */
+  scopes: string[]
 }
 
 export type UserProfile = {
@@ -60,25 +66,55 @@ export function useMembers(orgSlug: string) {
   }
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugApiKeyOptions(...)`. */
+/** The organization's live API keys. Revoked ones are not listed — see the route. */
 export function useApiKeys(orgSlug: string) {
-  const keys: ApiKey[] = [
-    {
-      id: "key_01j8ciimport",
-      name: "CI import",
-      prefix: "sk_live_9f2a…",
-      createdLabel: "Mar 2026",
-      lastUsedLabel: "2 hours ago",
+  const query = useQuery(getV1OrgsByOrgSlugApiKeysOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((key): ApiKey => ({
+      id: key.id,
+      name: key.name,
+      // The stored prefix plus an ellipsis: enough to tell two keys apart, far too little to use.
+      prefix: `${key.prefix}\u2026`,
+      createdLabel: relativeLabel(key.createdAt),
+      // Null means never used, which the table renders differently from a date — a key nothing
+      // has picked up is worth noticing.
+      lastUsedLabel: key.lastUsedAt === null ? null : relativeLabel(key.lastUsedAt),
+      scopes: key.scopes,
+    })),
+  }
+}
+
+/**
+ * Mints a key.
+ *
+ * The secret comes back once and is deliberately **not** put in the query cache — caching it would
+ * keep a live credential in memory for the rest of the session and, with devtools open, on screen.
+ * The caller shows it and forgets it.
+ */
+export function useCreateApiKey(orgSlug: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    ...postV1OrgsByOrgSlugApiKeysMutation(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugApiKeysQueryKey({ path: { orgSlug } }),
+      })
     },
-    {
-      id: "key_01j8localdev",
-      name: "Local dev",
-      prefix: "sk_live_41cd…",
-      createdLabel: "Jun 2026",
-      lastUsedLabel: null,
+  })
+}
+
+export function useRevokeApiKey(orgSlug: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    ...deleteV1OrgsByOrgSlugApiKeysByApiKeyIdMutation(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugApiKeysQueryKey({ path: { orgSlug } }),
+      })
     },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "api-keys"], keys)
+  })
 }
 
 /*

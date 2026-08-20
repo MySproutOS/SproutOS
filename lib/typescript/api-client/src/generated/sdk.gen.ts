@@ -13,6 +13,9 @@ import type {
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses,
   DeleteV1OrgsByOrgSlugData,
   DeleteV1OrgsByOrgSlugErrors,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
@@ -54,6 +57,9 @@ import type {
   GetV1OrgsByOrgSlugAnalysesData,
   GetV1OrgsByOrgSlugAnalysesErrors,
   GetV1OrgsByOrgSlugAnalysesResponses,
+  GetV1OrgsByOrgSlugApiKeysData,
+  GetV1OrgsByOrgSlugApiKeysErrors,
+  GetV1OrgsByOrgSlugApiKeysResponses,
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceErrors,
   GetV1OrgsByOrgSlugBillingBalanceResponses,
@@ -195,6 +201,9 @@ import type {
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesErrors,
   PostV1OrgsByOrgSlugAnalysesResponses,
+  PostV1OrgsByOrgSlugApiKeysData,
+  PostV1OrgsByOrgSlugApiKeysErrors,
+  PostV1OrgsByOrgSlugApiKeysResponses,
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupErrors,
   PostV1OrgsByOrgSlugBillingTopupResponses,
@@ -1673,6 +1682,61 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey = <
       ...options.headers,
     },
   })
+
+/**
+ * The organization's API keys
+ */
+export const getV1OrgsByOrgSlugApiKeys = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugApiKeysData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugApiKeysResponses,
+  GetV1OrgsByOrgSlugApiKeysErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugApiKeysResponses,
+    GetV1OrgsByOrgSlugApiKeysErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/api-keys", ...options })
+
+/**
+ * Mint an API key. The secret is returned once.
+ */
+export const postV1OrgsByOrgSlugApiKeys = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugApiKeysData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugApiKeysResponses,
+  PostV1OrgsByOrgSlugApiKeysErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugApiKeysResponses,
+    PostV1OrgsByOrgSlugApiKeysErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/api-keys",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Revoke an API key
+ */
+export const deleteV1OrgsByOrgSlugApiKeysByApiKeyId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses,
+  DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses,
+    DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/api-keys/{apiKeyId}", ...options })
 
 /**
  * Lists the store categories

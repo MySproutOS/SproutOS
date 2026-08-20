@@ -315,6 +315,9 @@ importers:
       '@lib/analyzer':
         specifier: workspace:*
         version: link:../../lib/typescript/analyzer
+      '@lib/api-keys':
+        specifier: workspace:*
+        version: link:../../lib/typescript/api-keys
       '@lib/billing':
         specifier: workspace:*
         version: link:../../lib/typescript/billing
@@ -579,6 +582,25 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.2.4(@types/react@19.2.18)
+
+  lib/typescript/api-keys:
+    dependencies:
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      '@utils/crypto':
+        specifier: workspace:*
+        version: link:../utils/crypto
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
 
   lib/typescript/billing:
     dependencies:
