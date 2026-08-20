@@ -93,11 +93,28 @@ describe.each(dashboardPages)("shared dashboard route %s", (pattern) => {
     expect(isRewrite(res)).toBe(false)
   })
 
-  it("valid session → rewrite to dashboard SPA", async () => {
-    mockValidate.mockResolvedValueOnce(VALID_SESSION)
-    const res = await proxy(makeRequest(url, "tok"))
-    expect(isRewrite(res)).toBe(true)
-    expect(getRewrittenUrl(res)).toContain("/dashboard")
+  /*
+    Both modes, explicitly.
+
+    `rewriteToSpa` sends development traffic to `http://localhost:3002/` and production traffic to
+    the CDN under `/dashboard`. Asserting `toContain("/dashboard")` without pinning the mode passes
+    only when NODE_ENV is not "development" — so this suite went green in CI, where there is no
+    `.env`, and red on any machine that has one. A test that depends on a file being absent is
+    worse than no test.
+  */
+  it.each([
+    ["production", "/dashboard"],
+    ["development", "http://localhost:3002"],
+  ])("valid session in %s → rewrite to dashboard SPA", async (mode, expected) => {
+    vi.stubEnv("NODE_ENV", mode)
+    try {
+      mockValidate.mockResolvedValueOnce(VALID_SESSION)
+      const res = await proxy(makeRequest(url, "tok"))
+      expect(isRewrite(res)).toBe(true)
+      expect(getRewrittenUrl(res)).toContain(expected)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it("invalid session → no rewrite", async () => {
@@ -138,11 +155,20 @@ describe("default fallback (non-public, non-shared route)", () => {
     expect(res.headers.get("location")).toContain("/login")
   })
 
-  it("valid session → rewrite to dashboard SPA", async () => {
-    mockValidate.mockResolvedValueOnce(VALID_SESSION)
-    const res = await proxy(makeRequest("/settings", "tok"))
-    expect(isRewrite(res)).toBe(true)
-    expect(getRewrittenUrl(res)).toContain("/dashboard")
+  // Same mode sensitivity as the shared-route suite above.
+  it.each([
+    ["production", "/dashboard"],
+    ["development", "http://localhost:3002"],
+  ])("valid session in %s → rewrite to dashboard SPA", async (mode, expected) => {
+    vi.stubEnv("NODE_ENV", mode as "production")
+    try {
+      mockValidate.mockResolvedValueOnce(VALID_SESSION)
+      const res = await proxy(makeRequest("/settings", "tok"))
+      expect(isRewrite(res)).toBe(true)
+      expect(getRewrittenUrl(res)).toContain(expected)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it("invalid session → redirect to /login", async () => {

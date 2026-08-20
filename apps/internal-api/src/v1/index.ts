@@ -9,6 +9,7 @@ import members, { invites } from "./members"
 import organizations from "./organizations"
 import projects from "./projects"
 import roles from "./roles"
+import services from "./services"
 import store, { storeModeration } from "./store"
 import stripeWebhooks from "./stripe-webhooks"
 import user from "./user"
@@ -27,6 +28,7 @@ const app = new Hono({
   .route("/orgs", githubRepos)
   .route("/orgs", agent)
   .route("/orgs", agentChat)
+  .route("/orgs", services)
   .route("/orgs/:orgSlug/billing", billing)
   // The catalogue itself is public (TASK 4); only moderation is org-scoped, and it is mounted
   // under /orgs so the organization whose grants apply is named in the path rather than inferred
