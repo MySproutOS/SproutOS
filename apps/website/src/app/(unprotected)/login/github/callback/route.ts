@@ -7,6 +7,7 @@ import { db } from "@sproutos/db"
 import { constantTimeEqualUtf8 } from "@utils/crypto"
 import { createSession, generateSessionToken, setSessionTokenCookie } from "@website/lib/auth"
 import { fetchGitHubUser, githubOAuthClient } from "@website/lib/oauth"
+import { RETURN_TO_COOKIE, sanitizeReturnTo } from "@website/lib/return-to"
 import { cookies } from "next/headers"
 
 const PROVIDER = "github"
@@ -15,8 +16,8 @@ function badRequest(): Response {
   return new Response(null, { status: 400 })
 }
 
-function redirectToDashboard(): Response {
-  return new Response(null, { status: 302, headers: { Location: "/dashboard" } })
+function redirectAfterLogin(returnTo: string | null): Response {
+  return new Response(null, { status: 302, headers: { Location: returnTo ?? "/dashboard" } })
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -27,9 +28,13 @@ export async function GET(request: Request): Promise<Response> {
   const cookieStore = await cookies()
   const storedState = cookieStore.get("github_oauth_state")?.value ?? null
   const codeVerifier = cookieStore.get("github_code_verifier")?.value ?? null
+  // Re-sanitized on the way out as well as in: the cookie is httpOnly, but validating a
+  // redirect target at exactly the point it becomes a Location header is worth the two lines.
+  const returnTo = sanitizeReturnTo(cookieStore.get(RETURN_TO_COOKIE)?.value ?? null)
   // Single-use: clear them whether or not the rest of the flow succeeds.
   cookieStore.delete("github_oauth_state")
   cookieStore.delete("github_code_verifier")
+  cookieStore.delete(RETURN_TO_COOKIE)
 
   if (code === null || state === null || storedState === null || codeVerifier === null) {
     return badRequest()
@@ -118,7 +123,7 @@ export async function GET(request: Request): Promise<Response> {
   const sessionToken = generateSessionToken()
   const session = await createSession(sessionToken, userId)
   await setSessionTokenCookie(sessionToken, session.expires)
-  return redirectToDashboard()
+  return redirectAfterLogin(returnTo)
 }
 
 /**
