@@ -420,10 +420,29 @@ jobs:
             -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
           kubectl patch configmap/config-domain -n knative-serving --type merge \
             -p '{"data":{"sprout.run":""}}'
-          for d in controller webhook activator autoscaler; do
-            kubectl -n knative-serving rollout status "deploy/$d" --timeout=300s
+          # `net-kourier-controller` is in this list and before the gateway on purpose: it is what
+          # programs the gateway's bootstrap config, and until it has, the gateway's own readiness
+          # probe fails. Waiting on the gateway first produced a five-minute timeout with nothing to
+          # show for it.
+          for d in controller webhook activator autoscaler net-kourier-controller; do
+            kubectl -n knative-serving rollout status "deploy/$d" --timeout=300s || {
+              echo "FAIL: $d never became available."
+              kubectl -n knative-serving get pods -o wide
+              kubectl -n knative-serving describe deploy "$d" | tail -30
+              exit 1
+            }
           done
-          kubectl -n kourier-system rollout status deploy/3scale-kourier-gateway --timeout=300s
+
+          # A bare `timed out waiting for the condition` costs a whole CI cycle to diagnose. If this
+          # is going to fail, it should say why in the same run.
+          kubectl -n kourier-system rollout status deploy/3scale-kourier-gateway --timeout=420s || {
+            echo "FAIL: the Kourier gateway never became available."
+            kubectl -n kourier-system get pods -o wide
+            kubectl -n kourier-system describe deploy/3scale-kourier-gateway | tail -30
+            kubectl -n kourier-system logs -l app=3scale-kourier-gateway --tail=50 --all-containers || true
+            kubectl -n knative-serving logs -l app=net-kourier-controller --tail=50 || true
+            exit 1
+          }
 
       - name: Render
         run: |
