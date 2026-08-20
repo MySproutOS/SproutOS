@@ -102,3 +102,7 @@ private_notes/
 
 # Rust
 target/
+
+# Design canvas build output
+design/*.dc.html
+design/sproutos-dashboard-design-system.html

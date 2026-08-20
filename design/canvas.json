@@ -1,0 +1,63 @@
+{
+  "pages": [
+    { "id": "screens", "name": "Screens" },
+    { "id": "foundations", "name": "Foundations" }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Projects",
+      "page": "screens",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "file": "AgentChat.dc.html",
+      "title": "Modify · agent chat",
+      "page": "screens",
+      "x": 1360,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "file": "Tokens.dc.html",
+      "title": "Tokens",
+      "page": "foundations",
+      "x": 0,
+      "y": 0,
+      "w": 880,
+      "h": 1180
+    },
+    {
+      "file": "Components.dc.html",
+      "title": "Components",
+      "page": "foundations",
+      "x": 960,
+      "y": 0,
+      "w": 1060,
+      "h": 1400
+    }
+  ],
+  "annotations": [
+    {
+      "id": "money-rule",
+      "page": "foundations",
+      "x": 0,
+      "y": -140,
+      "w": 420,
+      "text": "Amber marks money and nothing else.\n\nNot warnings, not highlighted rows, not chart series. A reader who has scanned two screens learns that amber means a number that costs them something."
+    },
+    {
+      "id": "density",
+      "page": "screens",
+      "x": 0,
+      "y": -140,
+      "w": 420,
+      "text": "Same tokens as the marketing site, dashboard density.\n\n32px controls, no radial haze, no soil-grid, no scroll reveals. A project list has to fit on a laptop screen."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "screens" }
+}

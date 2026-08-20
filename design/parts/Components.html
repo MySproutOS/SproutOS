@@ -1,0 +1,615 @@
+<div style="width: 1060px; padding: 40px; display: flex; flex-direction: column; gap: 34px">
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <p class="eyebrow" style="margin: 0">Component sheet</p>
+    <h1
+      style="
+        margin: 0;
+        font-family: var(--font-display);
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      "
+    >
+      What we have to build
+    </h1>
+    <p
+      style="
+        margin: 0;
+        max-width: 66ch;
+        color: var(--muted-foreground);
+        font-size: 14px;
+        line-height: 1.55;
+      "
+    >
+      <code style="font-family: var(--font-mono); color: var(--leaf)">@ui/base</code> currently
+      ships three primitives: button, checkbox, label. Everything below is missing. Each entry is a
+      real implementation target, not decoration — the frontend-components skill promises about
+      thirty-five components that do not exist.
+    </p>
+  </div>
+
+  <!-- Buttons -->
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Button</h2>
+      <span class="tnum" style="font-size: 11px; color: var(--leaf)">exists</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          background: var(--primary);
+          color: var(--primary-foreground);
+          font-size: 13px;
+          font-weight: 500;
+        "
+      >
+        Default
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          background: var(--secondary);
+          font-size: 13px;
+          font-weight: 500;
+        "
+      >
+        Secondary
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          border: 1px solid var(--border);
+          background: var(--soil-800);
+          font-size: 13px;
+          font-weight: 500;
+        "
+      >
+        Outline
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--muted-foreground);
+        "
+      >
+        Ghost
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          background: color-mix(in oklch, var(--destructive), transparent 88%);
+          color: var(--destructive);
+          font-size: 13px;
+          font-weight: 500;
+        "
+      >
+        Destructive
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          background: var(--primary);
+          color: var(--primary-foreground);
+          font-size: 13px;
+          font-weight: 500;
+          opacity: 0.5;
+        "
+      >
+        Disabled
+      </div>
+      <div
+        style="
+          height: 32px;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          padding: 0 12px;
+          border-radius: var(--radius);
+          background: var(--primary);
+          color: var(--primary-foreground);
+          font-size: 13px;
+          font-weight: 500;
+        "
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          style="opacity: 0.7"
+        >
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+        </svg>
+        Loading
+      </div>
+    </div>
+  </section>
+
+  <!-- Inputs -->
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">
+        Input · Select · Textarea · Switch
+      </h2>
+      <span class="tnum" style="font-size: 11px; color: var(--husk)">to build</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500">Project name</span>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--soil-800);
+            font-size: 13px;
+          "
+        >
+          recipe-box
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500">Focused</span>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            border: 1px solid var(--ring);
+            border-radius: var(--radius);
+            background: var(--soil-800);
+            font-size: 13px;
+            box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring), transparent 80%);
+          "
+        >
+          recipe-box
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500; color: var(--destructive)">Invalid</span>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            border: 1px solid var(--destructive);
+            border-radius: var(--radius);
+            background: var(--soil-800);
+            font-size: 13px;
+          "
+        >
+          recipe box
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500">Region</span>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--soil-800);
+            font-size: 13px;
+          "
+        >
+          us-east-1
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--muted-foreground)"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500">Auto-update forks</span>
+        <div style="height: 32px; display: flex; align-items: center; gap: 9px">
+          <div
+            style="
+              width: 34px;
+              height: 19px;
+              border-radius: 999px;
+              background: var(--leaf);
+              position: relative;
+            "
+          >
+            <div
+              style="
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                width: 15px;
+                height: 15px;
+                border-radius: 999px;
+                background: var(--primary-foreground);
+              "
+            ></div>
+          </div>
+          <span style="font-size: 13px; color: var(--muted-foreground)">On</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 12px; font-weight: 500">Disabled</span>
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--soil-900);
+            font-size: 13px;
+            color: var(--muted-foreground);
+            opacity: 0.6;
+          "
+        >
+          Not available
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Badges -->
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Badge</h2>
+      <span class="tnum" style="font-size: 11px; color: var(--husk)">to build</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+      <span
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in oklch, var(--leaf), transparent 70%);
+          color: var(--leaf);
+          background: color-mix(in oklch, var(--leaf), transparent 88%);
+        "
+        >Ready</span
+      >
+      <span
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in oklch, var(--warning), transparent 70%);
+          color: var(--warning);
+          background: color-mix(in oklch, var(--warning), transparent 88%);
+        "
+        >Building</span
+      >
+      <span
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in oklch, var(--destructive), transparent 70%);
+          color: var(--destructive);
+          background: color-mix(in oklch, var(--destructive), transparent 88%);
+        "
+        >Failed</span
+      >
+      <span
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid var(--border);
+          color: var(--muted-foreground);
+        "
+        >Sleeping</span
+      >
+      <span
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: var(--secondary);
+          color: var(--foreground);
+        "
+        >Owner</span
+      >
+      <span
+        class="tnum"
+        style="
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: var(--secondary);
+          color: var(--muted-foreground);
+        "
+        >v3</span
+      >
+    </div>
+  </section>
+
+  <!-- Table -->
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Table</h2>
+      <span class="tnum" style="font-size: 11px; color: var(--husk)">to build</span>
+      <span style="font-size: 11.5px; color: var(--muted-foreground)"
+        >28px rows · ids in mono · money right-aligned and tabular</span
+      >
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden">
+      <div
+        style="
+          display: grid;
+          grid-template-columns: 200px 1fr 120px 110px;
+          height: 30px;
+          align-items: center;
+          padding: 0 14px;
+          background: var(--soil-800);
+          border-bottom: 1px solid var(--border);
+        "
+      >
+        <span class="eyebrow" style="font-size: 10px">Job</span>
+        <span class="eyebrow" style="font-size: 10px">Workflow</span>
+        <span class="eyebrow" style="font-size: 10px">Duration</span>
+        <span class="eyebrow" style="font-size: 10px; text-align: right">Cost</span>
+      </div>
+      <sc-for list="{{jobs}}" as="j" hint-placeholder-count="4">
+        <div
+          style="
+            display: grid;
+            grid-template-columns: 200px 1fr 120px 110px;
+            height: 34px;
+            align-items: center;
+            padding: 0 14px;
+            border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 55%);
+          "
+        >
+          <span class="tnum" style="font-size: 12px; color: var(--muted-foreground)">{{j.id}}</span>
+          <span style="font-size: 13px">{{j.workflow}}</span>
+          <span class="tnum" style="font-size: 12px; color: var(--muted-foreground)"
+            >{{j.duration}}</span
+          >
+          <span class="money" style="font-size: 12px; text-align: right">{{j.cost}}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- Empty / loading / error -->
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Empty · Loading · Error</h2>
+      <span class="tnum" style="font-size: 11px; color: var(--husk)">to build</span>
+      <span style="font-size: 11.5px; color: var(--muted-foreground)"
+        >every list screen owes all three</span
+      >
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px">
+      <div
+        style="
+          border: 1px dashed var(--border);
+          border-radius: var(--radius);
+          padding: 26px 18px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+          text-align: center;
+        "
+      >
+        <svg
+          width="26"
+          height="26"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--leaf)"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M12 21v-8.4"></path>
+          <path d="M12 13.2C12 9.9 9.6 7.4 6 6.9c-.5 3.6 1.8 6.6 6 6.3Z"></path>
+          <path d="M12 12.4c.2-3.6 2.6-6.2 6.2-6.7.4 3.8-2 6.8-6.2 6.7Z"></path>
+        </svg>
+        <span style="font-size: 13px; font-weight: 500">Nothing here yet</span>
+        <span style="font-size: 12px; color: var(--muted-foreground); line-height: 1.5"
+          >Start from an app that already works.</span
+        >
+        <div
+          style="
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            border-radius: var(--radius);
+            background: var(--primary);
+            color: var(--primary-foreground);
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 2px;
+          "
+        >
+          Go to store
+        </div>
+      </div>
+      <div
+        style="
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          padding: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 11px;
+        "
+      >
+        <div
+          style="height: 11px; width: 55%; border-radius: 4px; background: var(--soil-700)"
+        ></div>
+        <div
+          style="height: 11px; width: 82%; border-radius: 4px; background: var(--soil-700)"
+        ></div>
+        <div
+          style="height: 11px; width: 68%; border-radius: 4px; background: var(--soil-700)"
+        ></div>
+        <div
+          style="height: 11px; width: 40%; border-radius: 4px; background: var(--soil-700)"
+        ></div>
+        <span style="font-size: 11px; color: var(--muted-foreground); margin-top: 3px"
+          >Skeleton, not a spinner — the shape is known.</span
+        >
+      </div>
+      <div
+        style="
+          border: 1px solid color-mix(in oklch, var(--destructive), transparent 70%);
+          border-radius: var(--radius);
+          padding: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+          background: color-mix(in oklch, var(--destructive), transparent 94%);
+        "
+      >
+        <div style="display: flex; align-items: center; gap: 8px">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--destructive)"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 8v4"></path>
+            <path d="M12 16h.01"></path>
+          </svg>
+          <span style="font-size: 13px; font-weight: 500; color: var(--destructive)"
+            >Build failed</span
+          >
+        </div>
+        <span style="font-size: 12px; color: var(--muted-foreground); line-height: 1.5">
+          <code style="font-family: var(--font-mono); font-size: 11.5px">pnpm build</code> exited 1
+          at step 3 of 5.
+        </span>
+        <div style="display: flex; gap: 7px; margin-top: 2px">
+          <div
+            style="
+              height: 28px;
+              display: flex;
+              align-items: center;
+              padding: 0 10px;
+              border-radius: 8px;
+              border: 1px solid var(--border);
+              font-size: 12px;
+            "
+          >
+            View logs
+          </div>
+          <div
+            style="
+              height: 28px;
+              display: flex;
+              align-items: center;
+              padding: 0 10px;
+              border-radius: 8px;
+              border: 1px solid var(--border);
+              font-size: 12px;
+            "
+          >
+            Retry
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- The money rule -->
+  <section
+    style="
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      border: 1px solid color-mix(in oklch, var(--husk), transparent 72%);
+      border-radius: var(--radius);
+      background: color-mix(in oklch, var(--husk), transparent 95%);
+    "
+  >
+    <h2 style="margin: 0; font-size: 15px; font-weight: 600; color: var(--husk)">The one rule</h2>
+    <p
+      style="
+        margin: 0;
+        max-width: 74ch;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--foreground);
+      "
+    >
+      Amber is the money channel. It appears on costs, balances, prices, and usage totals — and on
+      nothing else, ever. Not on a warning, not on a highlighted row, not on a chart series. A
+      reader who has scanned two screens learns that amber means a number that costs them something,
+      and every bill after that is scannable rather than parsed.
+    </p>
+    <div style="display: flex; gap: 26px; align-items: center; margin-top: 2px">
+      <div style="display: flex; flex-direction: column; gap: 3px">
+        <span class="money" style="font-size: 19px">$0.0412</span>
+        <span style="font-size: 11px; color: var(--muted-foreground)">correct — a cost</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px">
+        <span style="font-size: 19px; color: var(--warning); font-family: var(--font-mono)"
+          >Degraded</span
+        >
+        <span style="font-size: 11px; color: var(--muted-foreground)"
+          >warning uses its own token</span
+        >
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 3px">
+        <span style="font-size: 19px; color: var(--leaf); font-family: var(--font-mono)"
+          >1,204</span
+        >
+        <span style="font-size: 11px; color: var(--muted-foreground)">a count is not money</span>
+      </div>
+    </div>
+  </section>
+</div>
