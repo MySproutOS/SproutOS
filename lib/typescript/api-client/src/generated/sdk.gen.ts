@@ -3,14 +3,74 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from "./client"
 import { client } from "./client.gen"
 import type {
+  DeleteV1OrgsByOrgSlugData,
+  DeleteV1OrgsByOrgSlugErrors,
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors,
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses,
+  DeleteV1OrgsByOrgSlugMembersByMemberIdData,
+  DeleteV1OrgsByOrgSlugMembersByMemberIdErrors,
+  DeleteV1OrgsByOrgSlugMembersByMemberIdResponses,
+  DeleteV1OrgsByOrgSlugResponses,
+  DeleteV1OrgsByOrgSlugRolesByRoleIdData,
+  DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
+  DeleteV1OrgsByOrgSlugRolesByRoleIdResponses,
   DeleteV1UserMeDeleteData,
   DeleteV1UserMeDeleteErrors,
   DeleteV1UserMeDeleteResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
+  GetV1OrgsByOrgSlugData,
+  GetV1OrgsByOrgSlugErrors,
+  GetV1OrgsByOrgSlugInvitesData,
+  GetV1OrgsByOrgSlugInvitesErrors,
+  GetV1OrgsByOrgSlugInvitesResponses,
+  GetV1OrgsByOrgSlugMembersData,
+  GetV1OrgsByOrgSlugMembersErrors,
+  GetV1OrgsByOrgSlugMembersResponses,
+  GetV1OrgsByOrgSlugResponses,
+  GetV1OrgsByOrgSlugRolesActionsData,
+  GetV1OrgsByOrgSlugRolesActionsErrors,
+  GetV1OrgsByOrgSlugRolesActionsResponses,
+  GetV1OrgsByOrgSlugRolesData,
+  GetV1OrgsByOrgSlugRolesErrors,
+  GetV1OrgsByOrgSlugRolesResponses,
+  GetV1OrgsData,
+  GetV1OrgsErrors,
+  GetV1OrgsResponses,
+  PatchV1OrgsByOrgSlugData,
+  PatchV1OrgsByOrgSlugErrors,
+  PatchV1OrgsByOrgSlugResponses,
+  PatchV1OrgsByOrgSlugRolesByRoleIdData,
+  PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
+  PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1InvitesAcceptData,
+  PostV1InvitesAcceptErrors,
+  PostV1InvitesAcceptResponses,
+  PostV1OrgsByOrgSlugInvitesData,
+  PostV1OrgsByOrgSlugInvitesErrors,
+  PostV1OrgsByOrgSlugInvitesResponses,
+  PostV1OrgsByOrgSlugRolesData,
+  PostV1OrgsByOrgSlugRolesErrors,
+  PostV1OrgsByOrgSlugRolesResponses,
+  PostV1OrgsByOrgSlugTransferOwnershipData,
+  PostV1OrgsByOrgSlugTransferOwnershipErrors,
+  PostV1OrgsByOrgSlugTransferOwnershipResponses,
+  PostV1OrgsData,
+  PostV1OrgsErrors,
+  PostV1OrgsResponses,
+  PostV1WebhooksGithubData,
+  PostV1WebhooksGithubErrors,
+  PostV1WebhooksGithubResponses,
+  PostV1WebhooksStripeData,
+  PostV1WebhooksStripeErrors,
+  PostV1WebhooksStripeResponses,
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesData,
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors,
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses,
 } from "./types.gen"
 
 export type Options<
@@ -46,6 +106,313 @@ export const postV1AuthLogout = <ThrowOnError extends boolean = false>(
     { url: "/v1/auth/logout", ...options },
   )
 
+/**
+ * Redeems an invite token and joins the organization
+ */
+export const postV1InvitesAccept = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1InvitesAcceptData, ThrowOnError>,
+): RequestResult<PostV1InvitesAcceptResponses, PostV1InvitesAcceptErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1InvitesAcceptResponses,
+    PostV1InvitesAcceptErrors,
+    ThrowOnError
+  >({
+    url: "/v1/invites/accept",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Lists the organizations the caller is an active member of
+ */
+export const getV1Orgs = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1OrgsData, ThrowOnError>,
+): RequestResult<GetV1OrgsResponses, GetV1OrgsErrors, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1OrgsResponses, GetV1OrgsErrors, ThrowOnError>({
+    url: "/v1/orgs",
+    ...options,
+  })
+
+/**
+ * Creates an organization owned by the caller
+ */
+export const postV1Orgs = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1OrgsData, ThrowOnError>,
+): RequestResult<PostV1OrgsResponses, PostV1OrgsErrors, ThrowOnError> =>
+  (options?.client ?? client).post<PostV1OrgsResponses, PostV1OrgsErrors, ThrowOnError>({
+    url: "/v1/orgs",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Soft-deletes an organization
+ */
+export const deleteV1OrgsByOrgSlug = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugData, ThrowOnError>,
+): RequestResult<DeleteV1OrgsByOrgSlugResponses, DeleteV1OrgsByOrgSlugErrors, ThrowOnError> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugResponses,
+    DeleteV1OrgsByOrgSlugErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}", ...options })
+
+/**
+ * Reads one organization
+ */
+export const getV1OrgsByOrgSlug = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugData, ThrowOnError>,
+): RequestResult<GetV1OrgsByOrgSlugResponses, GetV1OrgsByOrgSlugErrors, ThrowOnError> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugResponses,
+    GetV1OrgsByOrgSlugErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}", ...options })
+
+/**
+ * Renames an organization or changes its slug
+ */
+export const patchV1OrgsByOrgSlug = <ThrowOnError extends boolean = false>(
+  options: Options<PatchV1OrgsByOrgSlugData, ThrowOnError>,
+): RequestResult<PatchV1OrgsByOrgSlugResponses, PatchV1OrgsByOrgSlugErrors, ThrowOnError> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugResponses,
+    PatchV1OrgsByOrgSlugErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Hands the organization to another active member
+ */
+export const postV1OrgsByOrgSlugTransferOwnership = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugTransferOwnershipData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugTransferOwnershipResponses,
+  PostV1OrgsByOrgSlugTransferOwnershipErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugTransferOwnershipResponses,
+    PostV1OrgsByOrgSlugTransferOwnershipErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/transfer-ownership",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists the organization's members and the roles each holds
+ */
+export const getV1OrgsByOrgSlugMembers = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugMembersData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugMembersResponses,
+  GetV1OrgsByOrgSlugMembersErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugMembersResponses,
+    GetV1OrgsByOrgSlugMembersErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/members", ...options })
+
+/**
+ * Replaces the roles one member holds
+ */
+export const putV1OrgsByOrgSlugMembersByMemberIdRoles = <ThrowOnError extends boolean = false>(
+  options: Options<PutV1OrgsByOrgSlugMembersByMemberIdRolesData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses,
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses,
+    PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/members/{memberId}/roles",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Removes a member from the organization
+ */
+export const deleteV1OrgsByOrgSlugMembersByMemberId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugMembersByMemberIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugMembersByMemberIdResponses,
+  DeleteV1OrgsByOrgSlugMembersByMemberIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugMembersByMemberIdResponses,
+    DeleteV1OrgsByOrgSlugMembersByMemberIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/members/{memberId}", ...options })
+
+/**
+ * Lists invites that are still pending
+ */
+export const getV1OrgsByOrgSlugInvites = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugInvitesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugInvitesResponses,
+  GetV1OrgsByOrgSlugInvitesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugInvitesResponses,
+    GetV1OrgsByOrgSlugInvitesErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/invites", ...options })
+
+/**
+ * Invites an email address to join the organization with one role
+ */
+export const postV1OrgsByOrgSlugInvites = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugInvitesData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugInvitesResponses,
+  PostV1OrgsByOrgSlugInvitesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugInvitesResponses,
+    PostV1OrgsByOrgSlugInvitesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/invites",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Revokes a pending invite
+ */
+export const deleteV1OrgsByOrgSlugInvitesByInviteId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugInvitesByInviteIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses,
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses,
+    DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/invites/{inviteId}", ...options })
+
+/**
+ * Lists the organization's roles and their statements
+ */
+export const getV1OrgsByOrgSlugRoles = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugRolesData, ThrowOnError>,
+): RequestResult<GetV1OrgsByOrgSlugRolesResponses, GetV1OrgsByOrgSlugRolesErrors, ThrowOnError> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugRolesResponses,
+    GetV1OrgsByOrgSlugRolesErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/roles", ...options })
+
+/**
+ * Creates a custom role
+ */
+export const postV1OrgsByOrgSlugRoles = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugRolesData, ThrowOnError>,
+): RequestResult<PostV1OrgsByOrgSlugRolesResponses, PostV1OrgsByOrgSlugRolesErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugRolesResponses,
+    PostV1OrgsByOrgSlugRolesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/roles",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * The action catalogue a role statement may draw from
+ */
+export const getV1OrgsByOrgSlugRolesActions = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugRolesActionsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugRolesActionsResponses,
+  GetV1OrgsByOrgSlugRolesActionsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugRolesActionsResponses,
+    GetV1OrgsByOrgSlugRolesActionsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/roles/actions", ...options })
+
+/**
+ * Deletes a custom role that nobody holds
+ */
+export const deleteV1OrgsByOrgSlugRolesByRoleId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1OrgsByOrgSlugRolesByRoleIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugRolesByRoleIdResponses,
+  DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugRolesByRoleIdResponses,
+    DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/roles/{roleId}", ...options })
+
+/**
+ * Renames a custom role or replaces its statements
+ */
+export const patchV1OrgsByOrgSlugRolesByRoleId = <ThrowOnError extends boolean = false>(
+  options: Options<PatchV1OrgsByOrgSlugRolesByRoleIdData, ThrowOnError>,
+): RequestResult<
+  PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
+  PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
+    PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/roles/{roleId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
 export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(
   options?: Options<DeleteV1UserMeDeleteData, ThrowOnError>,
 ): RequestResult<DeleteV1UserMeDeleteResponses, DeleteV1UserMeDeleteErrors, ThrowOnError> =>
@@ -54,3 +421,27 @@ export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(
     DeleteV1UserMeDeleteErrors,
     ThrowOnError
   >({ url: "/v1/user/me/delete", ...options })
+
+/**
+ * Receives every GitHub App webhook delivery
+ */
+export const postV1WebhooksGithub = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1WebhooksGithubData, ThrowOnError>,
+): RequestResult<PostV1WebhooksGithubResponses, PostV1WebhooksGithubErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1WebhooksGithubResponses,
+    PostV1WebhooksGithubErrors,
+    ThrowOnError
+  >({ url: "/v1/webhooks/github", ...options })
+
+/**
+ * Receives Stripe webhook deliveries
+ */
+export const postV1WebhooksStripe = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1WebhooksStripeData, ThrowOnError>,
+): RequestResult<PostV1WebhooksStripeResponses, PostV1WebhooksStripeErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1WebhooksStripeResponses,
+    PostV1WebhooksStripeErrors,
+    ThrowOnError
+  >({ url: "/v1/webhooks/stripe", ...options })

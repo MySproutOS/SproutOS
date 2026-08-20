@@ -5,6 +5,7 @@ import { v7 } from "uuid"
 import { crudAuditLog } from "../auditLog/crud"
 import { crudMemberPermission } from "../memberPermission/crud"
 import { OWNER_ROLE_NAME, SYSTEM_ROLES } from "../role/systemRoles"
+import { fetchOrganization } from "./fetch"
 import { allocateOrganizationSlug, slugifyOrganizationName } from "./slug"
 
 /** Request context an audit row wants but the database cannot know. */
@@ -333,5 +334,100 @@ export function provisionOrganization(db: Kysely<DB>) {
     })
   }
 
-  return { createOrganization, ensureDefaultOrganization, transferOwnership }
+  /**
+   * Removes the caller's own membership.
+   *
+   * Leaving is not a permission. Any active member may always leave, so this takes no action and
+   * evaluates no policy — being unable to walk out of a team someone invited you to is a trap,
+   * not a security property. The two refusals are structural rather than authorization:
+   *
+   * - A **personal** organization cannot be left. It is the user's default and the thing
+   *   `last_org_id` falls back to, so leaving it would strand them with nowhere to land.
+   * - The **owner** cannot leave, because `organization.owner_user_id` is `ON DELETE RESTRICT`
+   *   against a member row that would no longer exist, and an organization whose owner is not in
+   *   the member list is a state no screen can render. They transfer or delete instead.
+   *
+   * Personal is checked first: a personal organization is always owned by its user, so both rules
+   * fire at once and "you cannot leave your personal team" is the more actionable of the two.
+   */
+  async function leaveOrganization(input: {
+    organizationId: string
+    userId: string
+    audit?: AuditContext
+  }): Promise<
+    | { ok: true; nextOrganizationId: string | null }
+    | { ok: false; reason: "gone" | "not-a-member" | "owner" | "personal" }
+  > {
+    return await db.transaction().execute(async (tx) => {
+      const organization = await tx
+        .selectFrom("organization")
+        .select(["id", "ownerUserId", "kind", "slug", "name"])
+        .where("id", "=", input.organizationId)
+        .where("deletedAt", "is", null)
+        .forUpdate()
+        .executeTakeFirst()
+
+      if (!organization) return { ok: false as const, reason: "gone" as const }
+      if (organization.kind === "personal") {
+        return { ok: false as const, reason: "personal" as const }
+      }
+      if (organization.ownerUserId === input.userId) {
+        return { ok: false as const, reason: "owner" as const }
+      }
+
+      const membership = await tx
+        .selectFrom("organizationMember")
+        .select(["id", "status"])
+        .where("organizationId", "=", input.organizationId)
+        .where("userId", "=", input.userId)
+        .executeTakeFirst()
+
+      if (!membership) return { ok: false as const, reason: "not-a-member" as const }
+
+      await tx.deleteFrom("organizationMember").where("id", "=", membership.id).execute()
+
+      // `member_role` cascades from the membership and `member_permission` from `member_role`, so
+      // the departing member's grants are already gone. Rebuilding anyway keeps one unconditional
+      // rule — every membership change rebuilds — rather than a second rule about which changes
+      // happen to be covered by a cascade.
+      await crudMemberPermission(tx).rebuildOrganization(input.organizationId)
+
+      const preference = await tx
+        .selectFrom("userPreference")
+        .select(["lastOrgId"])
+        .where("userId", "=", input.userId)
+        .executeTakeFirst()
+
+      let nextOrganizationId = preference?.lastOrgId ?? null
+
+      if (preference?.lastOrgId === input.organizationId) {
+        const fallback = await fetchOrganization(tx).getFallbackForUser(
+          input.userId,
+          input.organizationId,
+        )
+        nextOrganizationId = fallback?.id ?? null
+
+        await tx
+          .updateTable("userPreference")
+          .set({ lastOrgId: nextOrganizationId, updatedAt: new Date() })
+          .where("userId", "=", input.userId)
+          .execute()
+      }
+
+      await crudAuditLog(tx).record({
+        organizationId: input.organizationId,
+        actorUserId: input.userId,
+        action: "member:leave",
+        resourceSrn: srnFor("org", input.organizationId, "member", membership.id),
+        before: { userId: input.userId, status: membership.status },
+        after: null,
+        ip: input.audit?.ip,
+        userAgent: input.audit?.userAgent,
+      })
+
+      return { ok: true as const, nextOrganizationId }
+    })
+  }
+
+  return { createOrganization, ensureDefaultOrganization, leaveOrganization, transferOwnership }
 }

@@ -17,4 +17,9 @@ export {
   type ResourceTarget,
   resolveResourceTarget,
 } from "./resources"
-export { hasPermission, type PermissionVariables, requirePermission } from "./require-permission"
+export {
+  hasPermission,
+  type PermissionVariables,
+  requireMembership,
+  requirePermission,
+} from "./require-permission"

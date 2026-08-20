@@ -90,6 +90,762 @@ export type PostV1AuthLogoutResponses = {
 
 export type PostV1AuthLogoutResponse = PostV1AuthLogoutResponses[keyof PostV1AuthLogoutResponses]
 
+export type PostV1InvitesAcceptData = {
+  body?: {
+    token: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/invites/accept"
+}
+
+export type PostV1InvitesAcceptErrors = {
+  /**
+   * The invite is expired, revoked, or already used
+   */
+  400: ErrorResponseT
+  /**
+   * The invite was issued to a different address
+   */
+  403: ErrorResponseT
+  /**
+   * No such invite
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1InvitesAcceptError = PostV1InvitesAcceptErrors[keyof PostV1InvitesAcceptErrors]
+
+export type PostV1InvitesAcceptResponses = {
+  /**
+   * Joined the organization
+   */
+  200: {
+    organizationId: string
+    organizationSlug: string
+  }
+}
+
+export type PostV1InvitesAcceptResponse =
+  PostV1InvitesAcceptResponses[keyof PostV1InvitesAcceptResponses]
+
+export type GetV1OrgsData = {
+  body?: never
+  path?: never
+  query?: {
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs"
+}
+
+export type GetV1OrgsErrors = {
+  /**
+   * Invalid cursor
+   */
+  400: ErrorResponseT
+}
+
+export type GetV1OrgsError = GetV1OrgsErrors[keyof GetV1OrgsErrors]
+
+export type GetV1OrgsResponses = {
+  /**
+   * Organizations the caller belongs to
+   */
+  200: {
+    data: Array<{
+      id: string
+      slug: string
+      name: string
+      kind: string
+      ownerUserId: string
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsResponse = GetV1OrgsResponses[keyof GetV1OrgsResponses]
+
+export type PostV1OrgsData = {
+  body?: {
+    name: string
+    slug?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/orgs"
+}
+
+export type PostV1OrgsErrors = {
+  /**
+   * Invalid name or slug
+   */
+  400: ErrorResponseT
+}
+
+export type PostV1OrgsError = PostV1OrgsErrors[keyof PostV1OrgsErrors]
+
+export type PostV1OrgsResponses = {
+  /**
+   * Organization created
+   */
+  201: {
+    id: string
+    slug: string
+  }
+}
+
+export type PostV1OrgsResponse = PostV1OrgsResponses[keyof PostV1OrgsResponses]
+
+export type DeleteV1OrgsByOrgSlugData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}"
+}
+
+export type DeleteV1OrgsByOrgSlugErrors = {
+  /**
+   * Caller lacks org:delete
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugError =
+  DeleteV1OrgsByOrgSlugErrors[keyof DeleteV1OrgsByOrgSlugErrors]
+
+export type DeleteV1OrgsByOrgSlugResponses = {
+  /**
+   * Organization deleted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugResponse =
+  DeleteV1OrgsByOrgSlugResponses[keyof DeleteV1OrgsByOrgSlugResponses]
+
+export type GetV1OrgsByOrgSlugData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}"
+}
+
+export type GetV1OrgsByOrgSlugErrors = {
+  /**
+   * Caller lacks org:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugError = GetV1OrgsByOrgSlugErrors[keyof GetV1OrgsByOrgSlugErrors]
+
+export type GetV1OrgsByOrgSlugResponses = {
+  /**
+   * The organization
+   */
+  200: {
+    id: string
+    slug: string
+    name: string
+    kind: string
+    ownerUserId: string
+    createdAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugResponse =
+  GetV1OrgsByOrgSlugResponses[keyof GetV1OrgsByOrgSlugResponses]
+
+export type PatchV1OrgsByOrgSlugData = {
+  body?: {
+    name?: string
+    slug?: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}"
+}
+
+export type PatchV1OrgsByOrgSlugErrors = {
+  /**
+   * Invalid name or slug
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks org:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugError = PatchV1OrgsByOrgSlugErrors[keyof PatchV1OrgsByOrgSlugErrors]
+
+export type PatchV1OrgsByOrgSlugResponses = {
+  /**
+   * The updated organization
+   */
+  200: {
+    id: string
+    slug: string
+    name: string
+    kind: string
+    ownerUserId: string
+    createdAt: Date
+  }
+}
+
+export type PatchV1OrgsByOrgSlugResponse =
+  PatchV1OrgsByOrgSlugResponses[keyof PatchV1OrgsByOrgSlugResponses]
+
+export type PostV1OrgsByOrgSlugTransferOwnershipData = {
+  body?: {
+    newOwnerUserId: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/transfer-ownership"
+}
+
+export type PostV1OrgsByOrgSlugTransferOwnershipErrors = {
+  /**
+   * The named user cannot become the owner
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks org:transfer_ownership
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugTransferOwnershipError =
+  PostV1OrgsByOrgSlugTransferOwnershipErrors[keyof PostV1OrgsByOrgSlugTransferOwnershipErrors]
+
+export type PostV1OrgsByOrgSlugTransferOwnershipResponses = {
+  /**
+   * Ownership transferred
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PostV1OrgsByOrgSlugTransferOwnershipResponse =
+  PostV1OrgsByOrgSlugTransferOwnershipResponses[keyof PostV1OrgsByOrgSlugTransferOwnershipResponses]
+
+export type GetV1OrgsByOrgSlugMembersData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: {
+    cursor?: string
+    limit?: number
+  }
+  url: "/v1/orgs/{orgSlug}/members"
+}
+
+export type GetV1OrgsByOrgSlugMembersErrors = {
+  /**
+   * Invalid cursor
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks member:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugMembersError =
+  GetV1OrgsByOrgSlugMembersErrors[keyof GetV1OrgsByOrgSlugMembersErrors]
+
+export type GetV1OrgsByOrgSlugMembersResponses = {
+  /**
+   * Members of the organization
+   */
+  200: {
+    data: Array<{
+      id: string
+      userId: string
+      name: string | null
+      email: string
+      status: string
+      isOwner: boolean
+      roles: Array<{
+        id: string
+        name: string
+      }>
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugMembersResponse =
+  GetV1OrgsByOrgSlugMembersResponses[keyof GetV1OrgsByOrgSlugMembersResponses]
+
+export type PutV1OrgsByOrgSlugMembersByMemberIdRolesData = {
+  body?: {
+    roleIds: Array<string>
+  }
+  path: {
+    orgSlug: string
+    memberId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/members/{memberId}/roles"
+}
+
+export type PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors = {
+  /**
+   * Unknown role, or the owner role was named
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks member:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization or member
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugMembersByMemberIdRolesError =
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors[keyof PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors]
+
+export type PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses = {
+  /**
+   * Roles updated
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PutV1OrgsByOrgSlugMembersByMemberIdRolesResponse =
+  PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses[keyof PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses]
+
+export type DeleteV1OrgsByOrgSlugMembersByMemberIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    memberId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/members/{memberId}"
+}
+
+export type DeleteV1OrgsByOrgSlugMembersByMemberIdErrors = {
+  /**
+   * The owner cannot be removed
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks member:remove
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization or member
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugMembersByMemberIdError =
+  DeleteV1OrgsByOrgSlugMembersByMemberIdErrors[keyof DeleteV1OrgsByOrgSlugMembersByMemberIdErrors]
+
+export type DeleteV1OrgsByOrgSlugMembersByMemberIdResponses = {
+  /**
+   * Member removed
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugMembersByMemberIdResponse =
+  DeleteV1OrgsByOrgSlugMembersByMemberIdResponses[keyof DeleteV1OrgsByOrgSlugMembersByMemberIdResponses]
+
+export type GetV1OrgsByOrgSlugInvitesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/invites"
+}
+
+export type GetV1OrgsByOrgSlugInvitesErrors = {
+  /**
+   * Caller lacks member:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugInvitesError =
+  GetV1OrgsByOrgSlugInvitesErrors[keyof GetV1OrgsByOrgSlugInvitesErrors]
+
+export type GetV1OrgsByOrgSlugInvitesResponses = {
+  /**
+   * Pending invites
+   */
+  200: {
+    data: Array<{
+      id: string
+      email: string
+      roleId: string
+      roleName: string
+      invitedByUserId: string | null
+      expiresAt: Date
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugInvitesResponse =
+  GetV1OrgsByOrgSlugInvitesResponses[keyof GetV1OrgsByOrgSlugInvitesResponses]
+
+export type PostV1OrgsByOrgSlugInvitesData = {
+  body?: {
+    email: string
+    roleId: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/invites"
+}
+
+export type PostV1OrgsByOrgSlugInvitesErrors = {
+  /**
+   * Unknown role, or the address is already invited
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks member:invite
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugInvitesError =
+  PostV1OrgsByOrgSlugInvitesErrors[keyof PostV1OrgsByOrgSlugInvitesErrors]
+
+export type PostV1OrgsByOrgSlugInvitesResponses = {
+  /**
+   * Invite created; the token is shown once
+   */
+  201: {
+    id: string
+    email: string
+    token: string
+    expiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugInvitesResponse =
+  PostV1OrgsByOrgSlugInvitesResponses[keyof PostV1OrgsByOrgSlugInvitesResponses]
+
+export type DeleteV1OrgsByOrgSlugInvitesByInviteIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    inviteId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/invites/{inviteId}"
+}
+
+export type DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors = {
+  /**
+   * Caller lacks member:invite
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization or pending invite
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugInvitesByInviteIdError =
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors[keyof DeleteV1OrgsByOrgSlugInvitesByInviteIdErrors]
+
+export type DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses = {
+  /**
+   * Invite revoked
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugInvitesByInviteIdResponse =
+  DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses[keyof DeleteV1OrgsByOrgSlugInvitesByInviteIdResponses]
+
+export type GetV1OrgsByOrgSlugRolesData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/roles"
+}
+
+export type GetV1OrgsByOrgSlugRolesErrors = {
+  /**
+   * Caller lacks role:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugRolesError =
+  GetV1OrgsByOrgSlugRolesErrors[keyof GetV1OrgsByOrgSlugRolesErrors]
+
+export type GetV1OrgsByOrgSlugRolesResponses = {
+  /**
+   * Roles in the organization
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      description: string | null
+      isSystem: boolean
+      statements: Array<{
+        id: string
+        effect: string
+        actions: Array<string>
+        resources: Array<string>
+      }>
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugRolesResponse =
+  GetV1OrgsByOrgSlugRolesResponses[keyof GetV1OrgsByOrgSlugRolesResponses]
+
+export type PostV1OrgsByOrgSlugRolesData = {
+  body?: {
+    name: string
+    description?: string | null
+    statements: Array<{
+      effect: "allow" | "deny"
+      actions: Array<string>
+      resources: Array<string>
+    }>
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/roles"
+}
+
+export type PostV1OrgsByOrgSlugRolesErrors = {
+  /**
+   * Reserved name, unknown action, or foreign resource
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks role:create
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+  /**
+   * A role with that name already exists
+   */
+  409: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugRolesError =
+  PostV1OrgsByOrgSlugRolesErrors[keyof PostV1OrgsByOrgSlugRolesErrors]
+
+export type PostV1OrgsByOrgSlugRolesResponses = {
+  /**
+   * Role created
+   */
+  201: {
+    id: string
+    name: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugRolesResponse =
+  PostV1OrgsByOrgSlugRolesResponses[keyof PostV1OrgsByOrgSlugRolesResponses]
+
+export type GetV1OrgsByOrgSlugRolesActionsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/roles/actions"
+}
+
+export type GetV1OrgsByOrgSlugRolesActionsErrors = {
+  /**
+   * Caller lacks role:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization, or the caller is not a member
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugRolesActionsError =
+  GetV1OrgsByOrgSlugRolesActionsErrors[keyof GetV1OrgsByOrgSlugRolesActionsErrors]
+
+export type GetV1OrgsByOrgSlugRolesActionsResponses = {
+  /**
+   * Every action in the catalogue
+   */
+  200: {
+    data: Array<string>
+  }
+}
+
+export type GetV1OrgsByOrgSlugRolesActionsResponse =
+  GetV1OrgsByOrgSlugRolesActionsResponses[keyof GetV1OrgsByOrgSlugRolesActionsResponses]
+
+export type DeleteV1OrgsByOrgSlugRolesByRoleIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    roleId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/roles/{roleId}"
+}
+
+export type DeleteV1OrgsByOrgSlugRolesByRoleIdErrors = {
+  /**
+   * System roles cannot be deleted
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks role:delete
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization or role
+   */
+  404: ErrorResponseT
+  /**
+   * The role is still assigned or invited into
+   */
+  409: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugRolesByRoleIdError =
+  DeleteV1OrgsByOrgSlugRolesByRoleIdErrors[keyof DeleteV1OrgsByOrgSlugRolesByRoleIdErrors]
+
+export type DeleteV1OrgsByOrgSlugRolesByRoleIdResponses = {
+  /**
+   * Role deleted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugRolesByRoleIdResponse =
+  DeleteV1OrgsByOrgSlugRolesByRoleIdResponses[keyof DeleteV1OrgsByOrgSlugRolesByRoleIdResponses]
+
+export type PatchV1OrgsByOrgSlugRolesByRoleIdData = {
+  body?: {
+    name?: string
+    description?: string | null
+    statements?: Array<{
+      effect: "allow" | "deny"
+      actions: Array<string>
+      resources: Array<string>
+    }>
+  }
+  path: {
+    orgSlug: string
+    roleId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/roles/{roleId}"
+}
+
+export type PatchV1OrgsByOrgSlugRolesByRoleIdErrors = {
+  /**
+   * System role, unknown action, or foreign resource
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks role:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such organization or role
+   */
+  404: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugRolesByRoleIdError =
+  PatchV1OrgsByOrgSlugRolesByRoleIdErrors[keyof PatchV1OrgsByOrgSlugRolesByRoleIdErrors]
+
+export type PatchV1OrgsByOrgSlugRolesByRoleIdResponses = {
+  /**
+   * Role updated
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PatchV1OrgsByOrgSlugRolesByRoleIdResponse =
+  PatchV1OrgsByOrgSlugRolesByRoleIdResponses[keyof PatchV1OrgsByOrgSlugRolesByRoleIdResponses]
+
 export type DeleteV1UserMeDeleteData = {
   body?: never
   path?: never
@@ -114,3 +870,67 @@ export type DeleteV1UserMeDeleteResponses = {
 
 export type DeleteV1UserMeDeleteResponse =
   DeleteV1UserMeDeleteResponses[keyof DeleteV1UserMeDeleteResponses]
+
+export type PostV1WebhooksGithubData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/webhooks/github"
+}
+
+export type PostV1WebhooksGithubErrors = {
+  /**
+   * Malformed delivery
+   */
+  400: ErrorResponseT
+  /**
+   * Signature missing or invalid
+   */
+  401: ErrorResponseT
+}
+
+export type PostV1WebhooksGithubError = PostV1WebhooksGithubErrors[keyof PostV1WebhooksGithubErrors]
+
+export type PostV1WebhooksGithubResponses = {
+  /**
+   * Delivery accepted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PostV1WebhooksGithubResponse =
+  PostV1WebhooksGithubResponses[keyof PostV1WebhooksGithubResponses]
+
+export type PostV1WebhooksStripeData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/webhooks/stripe"
+}
+
+export type PostV1WebhooksStripeErrors = {
+  /**
+   * Malformed delivery
+   */
+  400: ErrorResponseT
+  /**
+   * Signature missing or invalid
+   */
+  401: ErrorResponseT
+}
+
+export type PostV1WebhooksStripeError = PostV1WebhooksStripeErrors[keyof PostV1WebhooksStripeErrors]
+
+export type PostV1WebhooksStripeResponses = {
+  /**
+   * Event accepted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PostV1WebhooksStripeResponse =
+  PostV1WebhooksStripeResponses[keyof PostV1WebhooksStripeResponses]

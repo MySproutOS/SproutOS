@@ -175,6 +175,7 @@ transaction as the mutation.
 | GET    | `/v1/orgs/:orgSlug/members`                 | `member:read`            |
 | PUT    | `/v1/orgs/:orgSlug/members/:memberId/roles` | `member:update`          |
 | DELETE | `/v1/orgs/:orgSlug/members/:memberId`       | `member:remove`          |
+| DELETE | `/v1/orgs/:orgSlug/leave`                   | — (membership only)      |
 | GET    | `/v1/orgs/:orgSlug/invites`                 | `member:read`            |
 | POST   | `/v1/orgs/:orgSlug/invites`                 | `member:invite`          |
 | DELETE | `/v1/orgs/:orgSlug/invites/:inviteId`       | `member:invite`          |
@@ -184,8 +185,54 @@ transaction as the mutation.
 | POST   | `/v1/orgs/:orgSlug/roles`                   | `role:create`            |
 | PATCH  | `/v1/orgs/:orgSlug/roles/:roleId`           | `role:update`            |
 | DELETE | `/v1/orgs/:orgSlug/roles/:roleId`           | `role:delete`            |
+| GET    | `/v1/user/me/preferences`                   | — (the caller's own)     |
 
 Lists are cursor-paginated through `src/utils/pagination.ts`.
+
+`GET /v1/user/me/preferences` is what `/dashboard` redirects against. It returns
+`last_org_id` as a **slug**, verified against live membership, and falls back deterministically —
+the caller's personal organization first, then the oldest team they belong to — when the pointer
+is null or stale. Without it the redirect lands on whichever organization happens to sort first,
+so a user with three teams does not reliably return to the one they were last in (ADR 0004).
+
+### Leaving is membership, not permission
+
+`DELETE /v1/orgs/:orgSlug/leave` takes **no action and evaluates no policy**. Any active member may
+always leave; being unable to walk out of a team someone invited you to is a trap, not a security
+property. It uses `requireMembership()` — the organization is resolved and active membership is
+asserted with the same 404-never-leaks rule, and nothing else is checked.
+
+There is deliberately **no `member:remove_self` action**. An action no route evaluates would let a
+custom role carry a `deny member:remove_self` that silently does nothing, which is exactly the lie
+the catalogue exists to prevent. The absence of a check is the honest encoding of "any member,
+always". The audit row's action string is `member:leave`; `audit_log.action` is free text and
+already carries non-catalogue strings such as `member:invite:accept`.
+
+Two refusals, both **409**, both structural rather than authorization — a 403 would misdescribe
+them:
+
+- **A personal organization cannot be left.** It is the user's default and the thing `last_org_id`
+  falls back to, so leaving would strand them with nowhere to land.
+- **The owner cannot leave.** `organization.owner_user_id` is `ON DELETE RESTRICT` against a member
+  row that would no longer exist, and an organization whose owner is absent from the member list is
+  a state no screen can render. They transfer ownership or delete the organization; the error names
+  both.
+
+Personal is checked first, because a personal organization is always owned by its user, so both
+rules fire at once and "you cannot leave your personal team" is the more actionable message.
+
+On success the membership is deleted (cascading `member_role`, then `member_permission`), the
+denormalization is rebuilt anyway to keep that rule unconditional, and `last_org_id` is repointed
+if it named the organization being left. The response carries `nextOrganizationId` so the dashboard
+knows where to send them instead of guessing.
+
+**The path is `/leave`, not `/members/me`.** `RegExpRouter` cannot hold a static segment and a
+parameter at the same position for the same method, so `DELETE /members/me` collides with
+`DELETE /members/:memberId` and throws `UnsupportedPathError` at startup. (`GET /roles/actions`
+coexists with `PATCH /roles/:roleId` only because they are different methods.) Folding self-removal
+into the `:memberId` route was the other option, but it would demote that route's
+`requirePermission("member:remove")` to a check buried in the handler, and the gate on these routes
+should stay visible in the route definition.
 
 ### Rules the routes enforce that the schema cannot
 
@@ -194,7 +241,7 @@ Lists are cursor-paginated through `src/utils/pagination.ts`.
   `org:delete` for anyone holding it — precisely the authority the admin role's deny statement
   exists to withhold. Ownership moves only through `transfer-ownership`, which requires the
   incoming owner to already be an active member and demotes the outgoing owner to `admin`.
-- **The owner cannot be removed** while they own the organization.
+- **The owner cannot be removed** while they own the organization, by anyone including themselves.
 - **System roles cannot be edited, deleted, or shadowed by name.**
 - **A role that anyone still holds cannot be deleted** (409). `member_role` cascades from `role`,
   so deleting an assigned role would silently strip permissions from everyone holding it.

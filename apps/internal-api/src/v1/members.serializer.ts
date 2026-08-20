@@ -74,3 +74,7 @@ export const inviteSchemaAcceptResponse = Type.Object({
   organizationId: UUID7String,
   organizationSlug: Type.String(),
 })
+
+export const memberSchemaLeaveResponse = Type.Object({
+  nextOrganizationId: Nullable(UUID7String),
+})

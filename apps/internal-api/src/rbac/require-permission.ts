@@ -57,6 +57,50 @@ async function resolveOrganization(
 }
 
 /**
+ * Resolves the organization *and* asserts the caller is an active member of it.
+ *
+ * The single home of the "404 never leaks existence" rule. A caller who is not a member, one who
+ * names an organization that does not exist, and one whose membership is suspended are all the
+ * same `null` here, so no caller of this function can accidentally distinguish them.
+ */
+async function resolveMembership(
+  c: Context,
+  userId: string,
+): Promise<{ organization: OrganizationContext; membership: MembershipContext } | null> {
+  const organization = await resolveOrganization(c, userId)
+  if (organization === null) return null
+
+  const membership = await fetchOrganizationMember(db).getForUser(organization.id, userId)
+  if (!membership || membership.status !== "active") return null
+
+  return {
+    organization,
+    membership: { id: membership.id, userId: membership.userId, status: membership.status },
+  }
+}
+
+/**
+ * Resolve the organization and require active membership, with no permission check at all.
+ *
+ * For the handful of routes whose authority is membership itself rather than a granted action —
+ * leaving a team is the whole set today. Deliberately not expressed as an action in the
+ * catalogue: an action no route evaluates would let a custom role carry a `deny` that silently
+ * does nothing, which is the exact failure the catalogue exists to prevent.
+ */
+export function requireMembership() {
+  return createMiddleware<{ Variables: PermissionVariables }>(async (c, next) => {
+    const resolved = await resolveMembership(c, c.var.user.id)
+    if (resolved === null) return throwNotFound(c, "Organization not found")
+
+    c.set("organization", resolved.organization)
+    c.set("membership", resolved.membership)
+
+    await next()
+    return undefined
+  })
+}
+
+/**
  * Gate a route on one action against one resource.
  *
  * Runs after `authMiddleware`, which it does not replace: it reads `c.var.user` and would throw
@@ -74,13 +118,10 @@ export function requirePermission(
   return createMiddleware<{ Variables: PermissionVariables }>(async (c, next) => {
     const user = c.var.user
 
-    const organization = await resolveOrganization(c, user.id)
-    if (organization === null) return throwNotFound(c, "Organization not found")
+    const resolved = await resolveMembership(c, user.id)
+    if (resolved === null) return throwNotFound(c, "Organization not found")
 
-    const membership = await fetchOrganizationMember(db).getForUser(organization.id, user.id)
-    if (!membership || membership.status !== "active") {
-      return throwNotFound(c, "Organization not found")
-    }
+    const { organization, membership } = resolved
 
     const target = await resolveResourceTarget(resource, c, organization)
     const srn = srnFor(target.service, organization.id, target.type, target.id)
@@ -101,7 +142,7 @@ export function requirePermission(
     }
 
     c.set("organization", organization)
-    c.set("membership", { id: membership.id, userId: membership.userId, status: membership.status })
+    c.set("membership", membership)
 
     await next()
     return undefined

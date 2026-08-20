@@ -35,5 +35,21 @@ export function fetchUserPreference(db: Kysely<DB>) {
     return row?.id ?? null
   }
 
-  return { getForUser, getLastOrganizationId }
+  /** The same check as [[getLastOrganizationId]], but carrying the slug the URL needs. */
+  async function getLastOrganization(userId: string): Promise<{ id: string; slug: string } | null> {
+    const row = await db
+      .selectFrom("userPreference")
+      .innerJoin("organization", "organization.id", "userPreference.lastOrgId")
+      .innerJoin("organizationMember", "organizationMember.organizationId", "organization.id")
+      .where("userPreference.userId", "=", userId)
+      .where("organizationMember.userId", "=", userId)
+      .where("organizationMember.status", "=", "active")
+      .where("organization.deletedAt", "is", null)
+      .select(["organization.id as id", "organization.slug as slug"])
+      .executeTakeFirst()
+
+    return row ?? null
+  }
+
+  return { getForUser, getLastOrganization, getLastOrganizationId }
 }
