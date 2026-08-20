@@ -5,7 +5,9 @@ import type {
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
+  GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
+  GetV1OrgsByOrgSlugBillingUsageResponse,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -480,6 +482,28 @@ export const getV1OrgsByOrgSlugBillingTransactionsResponseTransformer = async (
 ): Promise<GetV1OrgsByOrgSlugBillingTransactionsResponse> => {
   data.data = data.data.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const getV1OrgsByOrgSlugBillingUsageResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugBillingUsageResponse> => {
+  data.periodStart = new Date(data.periodStart)
+  data.periodEnd = new Date(data.periodEnd)
+  return data
+}
+
+export const getV1OrgsByOrgSlugBillingStatementsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugBillingStatementsResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.periodStart = new Date(item.periodStart)
+    item.periodEnd = new Date(item.periodEnd)
+    if (item.finalizedAt) {
+      item.finalizedAt = new Date(item.finalizedAt)
+    }
     return item
   })
   return data

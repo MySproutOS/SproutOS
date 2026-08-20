@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   ceilDiv,
   creditedAmount,
+  formatBalanceMicroUsd,
   formatMicroUsd,
   MICRO_PER_USD,
   MINIMUM_TOPUP,
@@ -94,5 +95,32 @@ describe("formatMicroUsd", () => {
 
   it("does not lose precision on a value no float could hold", () => {
     expect(formatMicroUsd(9_007_199_254_740_993_000n)).toBe("$9,007,199,254,740.993")
+  })
+})
+
+describe("formatBalanceMicroUsd", () => {
+  it("shows dollars and cents", () => {
+    expect(formatBalanceMicroUsd(11_292_288n)).toBe("$11.29")
+    expect(formatBalanceMicroUsd(1_000_000n)).toBe("$1.00")
+    expect(formatBalanceMicroUsd(0n)).toBe("$0.00")
+  })
+
+  it("rounds down, never to nearest", () => {
+    /*
+      `$11.30` for a balance of 11.299999 tells a customer they can spend a cent they do not have,
+      and the failure lands at the moment they try to.
+    */
+    expect(formatBalanceMicroUsd(11_299_999n)).toBe("$11.29")
+    expect(formatBalanceMicroUsd(9_999n)).toBe("$0.00")
+  })
+
+  it("groups thousands", () => {
+    expect(formatBalanceMicroUsd(1_204_560_000n)).toBe("$1,204.56")
+  })
+
+  it("handles a negative balance", () => {
+    // Overdraft should not happen — `spend()` locks and checks — but a display that renders it as a
+    // large positive number would hide the one case worth noticing.
+    expect(formatBalanceMicroUsd(-2_500_000n)).toBe("-$2.50")
   })
 })

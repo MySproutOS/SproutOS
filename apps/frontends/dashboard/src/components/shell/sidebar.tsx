@@ -1,4 +1,4 @@
-import { formatMicroUsd } from "@lib/billing/money"
+import { formatBalanceMicroUsd } from "@lib/billing/money"
 import { Link, type LinkProps } from "@tanstack/react-router"
 import {
   ChevronsUpDownIcon,
@@ -157,7 +157,7 @@ function CreditBalanceCard({ orgSlug }: { orgSlug: string }) {
         <TooltipContent side="right">
           {data === undefined
             ? "Balance"
-            : `${formatMicroUsd(data.balanceMicros)} — ${data.runwayLabel}`}
+            : `${formatBalanceMicroUsd(data.balanceMicros)} — ${data.runwayLabel}`}
         </TooltipContent>
       </Tooltip>
     )
@@ -174,7 +174,9 @@ function CreditBalanceCard({ orgSlug }: { orgSlug: string }) {
         {isPending ? (
           <Skeleton className="h-4 w-12" />
         ) : (
-          <Money size="lg">{data === undefined ? "" : formatMicroUsd(data.balanceMicros)}</Money>
+          <Money size="lg">
+            {data === undefined ? "" : formatBalanceMicroUsd(data.balanceMicros)}
+          </Money>
         )}
       </span>
       <Progress

@@ -1,4 +1,9 @@
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import { useQuery } from "@tanstack/react-query"
+import {
+  getV1OrgsByOrgSlugBillingBalanceOptions,
+  getV1OrgsByOrgSlugBillingStatementsOptions,
+  getV1OrgsByOrgSlugBillingUsageOptions,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type CreditBalance = {
   balanceMicros: bigint
@@ -21,38 +26,87 @@ export type Invoice = {
   totalMicros: bigint
 }
 
+const PERIOD_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+})
+
 /**
- * PLACEHOLDER — swap for `getV1OrganizationByOrgSlugCreditBalanceOptions(...)`.
- * The ledger is append-only and double-entry (AGENTS.md), so this reads a
- * projection, never a mutable balance column.
+ * The meter under the balance, and how long the credit lasts.
+ *
+ * **There is no "full".** A credit balance has no ceiling — a customer can top up any amount — so a
+ * percentage needs a denominator that does not exist. The meter is scaled against 30 days of the
+ * current burn instead: full means "a month of runway", which is a thing a person can act on, and
+ * an empty meter means "top up now".
+ *
+ * With no burn there is nothing to run out of, so the meter is full and the label says so rather
+ * than dividing by zero and claiming infinity days.
  */
 export function useCreditBalance(orgSlug: string) {
-  const balance: CreditBalance = {
-    balanceMicros: 4_130_000n,
-    percentRemaining: 41,
-    runwayLabel: "~31 days at current burn",
+  const balance = useQuery(getV1OrgsByOrgSlugBillingBalanceOptions({ path: { orgSlug } }))
+  const usage = useQuery(getV1OrgsByOrgSlugBillingUsageOptions({ path: { orgSlug } }))
+
+  const available = balance.data === undefined ? 0n : BigInt(balance.data.availableMicroUsd)
+  const burnPerDay = usage.data === undefined ? 0n : BigInt(usage.data.burnPerDayMicroUsd)
+
+  const days = burnPerDay > 0n ? Number(available / burnPerDay) : null
+  const percent = days === null ? 100 : Math.max(0, Math.min(100, Math.round((days / 30) * 100)))
+
+  return {
+    isPending: balance.isPending || usage.isPending,
+    isError: balance.isError || usage.isError,
+    refetch: () => {
+      void balance.refetch()
+      void usage.refetch()
+    },
+    data:
+      balance.data === undefined
+        ? undefined
+        : ({
+            balanceMicros: available,
+            percentRemaining: percent,
+            runwayLabel:
+              days === null
+                ? "No usage recorded yet"
+                : `~${days} ${days === 1 ? "day" : "days"} at current burn`,
+          } satisfies CreditBalance),
   }
-  return usePlaceholderQuery(["organizations", orgSlug, "credit-balance"], balance)
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugUsageOptions(...)`. */
+/** What this organization has used so far this period, most expensive first. */
 export function useUsageLines(orgSlug: string) {
-  const lines: UsageLine[] = [
-    { id: "compute", label: "Compute", quantity: "41h 12m", costMicros: 1_940_000n },
-    { id: "postgres", label: "Postgres storage", quantity: "2.4 GB", costMicros: 580_000n },
-    { id: "queue", label: "Queue commands", quantity: "1,204,882", costMicros: 310_000n },
-    { id: "search", label: "Search documents", quantity: "88,301", costMicros: 120_000n },
-    { id: "egress", label: "Egress", quantity: "14.2 GB", costMicros: 70_000n },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "usage"], lines)
+  const query = useQuery(getV1OrgsByOrgSlugBillingUsageOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.lines.map((line): UsageLine => ({
+      id: line.dimension,
+      label: line.label,
+      // The unit belongs beside the number: "41.2" means nothing without "vCPU-hours".
+      quantity: `${line.quantity} ${line.unit}`,
+      costMicros: BigInt(line.amountMicroUsd),
+    })),
+  }
 }
 
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugInvoiceOptions(...)`. */
+/**
+ * Past statements.
+ *
+ * `status` is narrowed to the two words the table renders. A draft statement is "open" — the period
+ * is still running and the figure will move — and a finalized one is "paid", which is what the
+ * customer's card was charged for.
+ */
 export function useInvoices(orgSlug: string) {
-  const invoices: Invoice[] = [
-    { id: "in_01j8h2", period: "July 2026", status: "paid", totalMicros: 3_020_000n },
-    { id: "in_01j7g4", period: "June 2026", status: "paid", totalMicros: 2_440_000n },
-    { id: "in_01j6f9", period: "May 2026", status: "paid", totalMicros: 880_000n },
-  ]
-  return usePlaceholderQuery(["organizations", orgSlug, "invoices"], invoices)
+  const query = useQuery(getV1OrgsByOrgSlugBillingStatementsOptions({ path: { orgSlug } }))
+
+  return {
+    ...query,
+    data: query.data?.data.map((statement): Invoice => ({
+      id: statement.id,
+      period: PERIOD_FORMAT.format(new Date(statement.periodStart)),
+      status: statement.status === "finalized" ? "paid" : "open",
+      totalMicros: BigInt(statement.totalMicroUsd),
+    })),
+  }
 }
