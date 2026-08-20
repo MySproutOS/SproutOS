@@ -142,10 +142,8 @@ today both classes reference a handler no node provides and every pod using them
 
 ## Not here
 
-- **The gateway** the tenant ingress policy names. The policy allows traffic from
-  `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
-  applied today, that rule admits nothing. It is a real inconsistency, left visible rather than
-  papered over with a placeholder Deployment that would look like an answer.
+- ~~**The gateway** the tenant ingress policy names.~~ Fixed — the policy now names Knative's actual
+  data path, and which component that is turned out not to be the obvious one. See below.
 - **The External Secrets operator itself.** `secrets/` declares what it should fetch; nothing
   installs the controller that would act on it, so those resources are currently inert too.
 - **Applying any of it.** `.github/workflows/deploy.yml` builds the images, renders the manifests
@@ -203,3 +201,41 @@ a real Postgres) and `/v1/auth/me`; the website serves `/`, `/store` and `/login
 Also confirmed by the failure of something else: a stock `postgres:18-alpine` was rejected outright
 by the `restricted` standard on `sproutos-system`, which is the evidence that the six SproutOS
 workloads satisfying it are actually satisfying something.
+
+## Tenant traffic
+
+A tenant's application now serves a request, isolated, and this is verified in CI rather than
+asserted.
+
+Getting there needed the ingress policy corrected, and the correction was not the one that reads
+correctly. Measured on a cluster with a CNI that enforces NetworkPolicy:
+
+| ingress rule           | tenant app reachable |
+| ---------------------- | -------------------- |
+| no rule                | no                   |
+| gateway (Kourier) only | **no**               |
+| activator only         | yes                  |
+| both                   | yes                  |
+
+The **activator** is what connects to the revision, not the gateway. Knative's default
+`target-burst-capacity` of 200 keeps the activator in the data path instead of letting the gateway
+route straight through, so on a default install it is the activator's identity that has to be
+allowed. Naming only the gateway — the intuitive rule — produces a tenant application that cannot be
+reached at all. Both are named, because the activator steps out of the path once a revision has
+capacity beyond the burst target.
+
+### The CNI has to enforce the thing you are testing
+
+The first run of this was done on a stock `kind` cluster and produced a confident, wrong answer:
+every configuration passed, including deleting the ingress policy outright. `kindnet` accepts
+NetworkPolicy objects and does not enforce them.
+
+So the CI cluster now disables the default CNI and installs Calico, and the test asserts both
+directions:
+
+- through the gateway, the app **must** answer; and
+- straight at the pod's IP from another namespace, it **must not**.
+
+The negative half is the one that keeps the positive half honest. Without it the whole test passes
+just as happily on a cluster that ignores NetworkPolicy entirely — which is precisely the false
+negative that let an ingress rule naming a nonexistent pod survive review.

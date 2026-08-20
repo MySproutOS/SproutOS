@@ -376,10 +376,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `kindnet`, kind's default CNI, does not enforce NetworkPolicy — it accepts the objects and
+      # ignores them. Tenant isolation is one of the two controls this design rests on, so a cluster
+      # that silently ignores it can only manufacture confidence: every possible ingress rule
+      # "passes", including one naming a pod that exists nowhere.
       - name: Create a cluster
         uses: helm/kind-action@v1
         with:
           cluster_name: sproutos-ci
+          config: .github/kind-cluster.yaml
+
+      - name: Install Calico
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
+          kubectl -n kube-system rollout status ds/calico-node --timeout=420s
 
       # Pinned, not `latest`: an operator that changes its served API versions should break this job
       # in a diff that bumps the version, not on an unrelated morning.
@@ -395,6 +405,25 @@ jobs:
             https://github.com/external-secrets/external-secrets/releases/download/v2.9.0/external-secrets.yaml
           kubectl -n default rollout status deploy/external-secrets --timeout=300s
           kubectl -n default rollout status deploy/external-secrets-webhook --timeout=300s
+
+      # Knative Serving and Kourier, because the tenant NetworkPolicies exist to let exactly this
+      # data path through and nothing else. Without a real ingress in the cluster, the ingress rule
+      # is a selector nobody evaluates — which is how it came to name a pod that has never existed
+      # in any cluster, while every schema check passed.
+      - name: Install Knative Serving
+        run: |
+          V=knative-v1.23.0
+          kubectl apply -f "https://github.com/knative/serving/releases/download/$V/serving-crds.yaml"
+          kubectl apply -f "https://github.com/knative/serving/releases/download/$V/serving-core.yaml"
+          kubectl apply -f "https://github.com/knative/net-kourier/releases/download/$V/kourier.yaml"
+          kubectl patch configmap/config-network -n knative-serving --type merge \
+            -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+          kubectl patch configmap/config-domain -n knative-serving --type merge \
+            -p '{"data":{"sprout.run":""}}'
+          for d in controller webhook activator autoscaler; do
+            kubectl -n knative-serving rollout status "deploy/$d" --timeout=300s
+          done
+          kubectl -n kourier-system rollout status deploy/3scale-kourier-gateway --timeout=300s
 
       - name: Render
         run: |
@@ -451,3 +480,79 @@ jobs:
           echo "$count ExternalSecret(s)"
           test "$count" -ge 5
           kubectl get clustersecretstore aws-secrets-manager
+
+      # The one that matters. A tenant's application, in a namespace carrying `default-deny`,
+      # reached through the gateway from outside it — and *only* through the gateway.
+      #
+      # This is the product: a customer's app, isolated, serving a request. It had never been run.
+      # The ingress rule named a pod that does not exist, so no tenant application could receive a
+      # request at all, while the Knative Service reported `Ready: True` throughout.
+      - name: A tenant application serves a request, and only that way
+        run: |
+          kubectl apply -f - <<'YAML'
+          apiVersion: serving.knative.dev/v1
+          kind: Service
+          metadata:
+            name: hello
+            namespace: tenant-ci
+          spec:
+            template:
+              spec:
+                containers:
+                  - image: ghcr.io/knative/helloworld-go:latest
+                    ports:
+                      - containerPort: 8080
+                    env:
+                      - name: TARGET
+                        value: SproutOS
+                    # No `runAsNonRoot`. The tenant namespace enforces `baseline`, not `restricted`,
+                    # precisely because customer images routinely run as root — and this sample is
+                    # one of them. Asking for more here would test a stricter namespace than tenants
+                    # actually get.
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: ["ALL"]
+                      seccompProfile:
+                        type: RuntimeDefault
+          YAML
+          kubectl wait --for=condition=Ready ksvc/hello -n tenant-ci --timeout=420s
+
+          # `sh -c` so the container's own shell parses the curl arguments. Passing them straight
+          # through `kubectl run --` word-splits a quoted `-H 'Host: ...'` into pieces and curl
+          # reports "no URL specified" — which looks exactly like a network denial and would have
+          # made the negative assertion below pass for entirely the wrong reason.
+          run_probe() {
+            kubectl delete pod "$1" -n default --ignore-not-found >/dev/null
+            kubectl run "$1" -n default --image=curlimages/curl:latest --restart=Never -- \
+              sh -c "curl -sS -m 30 --fail-with-body $2" >/dev/null
+            for _ in $(seq 1 25); do
+              phase=$(kubectl get pod "$1" -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)
+              case "$phase" in Succeeded|Failed) break;; esac
+              sleep 4
+            done
+            echo "$phase"
+          }
+
+          # Through the gateway: must work. This is a customer's application serving traffic.
+          got=$(run_probe allowed "-H 'Host: hello.tenant-ci.sprout.run' http://kourier-internal.kourier-system.svc.cluster.local/")
+          echo "via gateway: $got"
+          kubectl logs -n default allowed || true
+          if [ "$got" != "Succeeded" ]; then
+            echo "FAIL: the tenant application could not be reached through the gateway."
+            kubectl describe networkpolicy -n tenant-ci
+            exit 1
+          fi
+
+          # Straight at the pod: must NOT work. Without this half the test above passes just as
+          # happily on a cluster whose CNI ignores NetworkPolicy altogether, which is exactly the
+          # false negative that let the broken ingress rule survive.
+          ip=$(kubectl get pods -n tenant-ci -l serving.knative.dev/service=hello \
+                 -o jsonpath='{.items[0].status.podIP}')
+          got=$(run_probe denied "http://$ip:8012/")
+          echo "direct to pod $ip: $got"
+          if [ "$got" != "Failed" ]; then
+            echo "FAIL: a pod outside the tenant namespace reached a tenant pod directly."
+            echo "Either default-deny is not applied, or the CNI is not enforcing NetworkPolicy."
+            exit 1
+          fi
