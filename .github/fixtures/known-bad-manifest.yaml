@@ -1,0 +1,31 @@
+# A manifest that must FAIL validation. Not applied, not part of `deploy/`.
+#
+# The CI job that validates `deploy/` asserts this file is rejected, which makes the check
+# self-checking: if the validator is ever misconfigured — wrong flags, wrong schema version, silently
+# skipping files — this passes, and the build fails on that rather than on a false green.
+#
+# Three times in one session a check here turned out not to be checking: `vite build` never
+# typechecked, `tflint` accepted a nonexistent instance type, and `kubectl --dry-run=client` needs a
+# live cluster to validate anything at all. Assuming was the mistake each time.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: known-bad
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: known-bad
+  template:
+    metadata:
+      labels:
+        app: known-bad
+    spec:
+      containers:
+        - name: agent
+          image: example.invalid/agent:latest
+          securityContext:
+            # The typo this exists for. The API server ignores unknown fields, so a manifest with
+            # this applies cleanly, reports success, and leaves the container with a writable root
+            # filesystem. Only `-strict` catches it.
+            readOnlyRootFilesytem: true

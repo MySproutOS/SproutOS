@@ -284,6 +284,20 @@ jobs:
           tar -xzf kubeconform.tar.gz kubeconform
           sudo mv kubeconform /usr/local/bin/
 
+      # Prove the validator works before trusting what it says.
+      #
+      # `.github/fixtures/known-bad-manifest.yaml` contains `readOnlyRootFilesytem` — a typo the API
+      # server would ignore, applying cleanly and leaving the container with a writable root. If
+      # kubeconform accepts it, the flags are wrong or the schemas did not load, and every green
+      # result from the next step is worthless.
+      - name: The validator rejects a manifest it should reject
+        run: |
+          if kubeconform -strict -kubernetes-version 1.34.0 .github/fixtures/known-bad-manifest.yaml; then
+            echo "::error::kubeconform accepted a manifest with an unknown field. The check is not checking."
+            exit 1
+          fi
+          echo "kubeconform correctly rejected the known-bad fixture"
+
       # `-strict` rejects unknown fields, which is the check that matters: a typo in a field name is
       # silently ignored by the API server, so `readOnlyRootFilesytem` would apply cleanly and do
       # nothing at all.

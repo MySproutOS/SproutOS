@@ -14,6 +14,13 @@ cleanly, reports success, and the container runs with a writable root filesystem
 cluster, so without one it validates nothing and fails with `connection refused` — which is not the
 same as passing, and is the kind of green-looking check this repo has already been bitten by twice.
 
+**The check checks itself.** Before validating `deploy/`, CI runs kubeconform against
+`.github/fixtures/known-bad-manifest.yaml`, which contains `readOnlyRootFilesytem` — a typo the API
+server would ignore — and fails the build if it is _accepted_. Three separate times in one session a
+check here turned out not to be checking: `vite build` never typechecked the SPAs, `tflint` accepted
+a nonexistent instance type and a nonexistent database engine, and `kubectl --dry-run=client` needs a
+cluster to validate anything. A validator nobody has tried to fool is a validator nobody has tested.
+
 **Nothing here has been applied to a cluster.** Schema-valid is not the same as correct: it does not
 check that the image exists, that the secret is present, that the hostPath is mounted on the node, or
 that the agent can actually read what it mounts.
