@@ -2,9 +2,11 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
@@ -21,7 +23,9 @@ import type {
   GetV1StoreListingsResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugResponse,
+  PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
@@ -234,6 +238,63 @@ export const getV1OrgsByOrgSlugRepositoriesResponseTransformer = async (
     item.createdAt = new Date(item.createdAt)
     return item
   })
+  return data
+}
+
+export const getV1OrgsByOrgSlugAgentCredentialsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugAgentCredentialsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.expiresAt) {
+      item.expiresAt = new Date(item.expiresAt)
+    }
+    if (item.lastVerifiedAt) {
+      item.lastVerifiedAt = new Date(item.lastVerifiedAt)
+    }
+    if (item.revokedAt) {
+      item.revokedAt = new Date(item.revokedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugAgentCredentialsResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugAgentCredentialsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.expiresAt) {
+      item.expiresAt = new Date(item.expiresAt)
+    }
+    if (item.lastVerifiedAt) {
+      item.lastVerifiedAt = new Date(item.lastVerifiedAt)
+    }
+    if (item.revokedAt) {
+      item.revokedAt = new Date(item.revokedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    item.updatedAt = new Date(item.updatedAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  data.updatedAt = new Date(data.updatedAt)
   return data
 }
 

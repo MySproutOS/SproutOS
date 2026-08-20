@@ -11,6 +11,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
     "@lib/envelope": "workspace:*",

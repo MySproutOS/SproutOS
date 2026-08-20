@@ -1,0 +1,218 @@
+import { query } from "@anthropic-ai/claude-agent-sdk"
+import type { DB } from "@sproutos/db"
+import type { Kysely } from "kysely"
+import { agentSubprocessEnv, toSdkPermissionMode } from "./env"
+import type { TokenUsage } from "./pricing"
+import { withMeteredRun } from "./run"
+
+/**
+ * The events a chat client actually needs, distilled from the SDK's ~40 message types.
+ *
+ * Deliberately narrow. The SDK stream carries hook lifecycle, plugin installs, worker shutdown
+ * notices, and a dozen other things that are interesting to a CLI and noise to a chat transcript.
+ * Widening this later is additive; persisting everything now would put whatever the SDK emits into
+ * `agent_event`, which holds customer source code and has a 30-day retention promise attached.
+ */
+export type AgentEvent =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; name: string; input: unknown }
+  | { type: "tool_result"; name: string; isError: boolean }
+  | { type: "thinking" }
+  | { type: "session"; sdkSessionId: string }
+  | { type: "done"; subtype: string; isError: boolean; numTurns: number; durationMs: number }
+  | { type: "error"; message: string }
+
+export type AgentRunInput = {
+  organizationId: string
+  projectId: string
+  sessionId: string
+  prompt: string
+  /** The SDK session to continue. Absent starts a new conversation. */
+  resume?: string | null
+  /** Where the agent works. A checkout of the project's repository. */
+  cwd: string
+  maxTurns?: number
+  signal?: AbortSignal
+}
+
+export type AgentRunOutcome = {
+  sdkSessionId: string | null
+  usage: TokenUsage
+  chargedMicroUsd: bigint
+  subtype: string
+  isError: boolean
+  numTurns: number
+  durationMs: number
+}
+
+/**
+ * One turn of agent chat, metered.
+ *
+ * The whole run is wrapped in `withMeteredRun`, so a platform-billed organization has the money
+ * reserved before the first token is bought and settled against what was actually used. A
+ * customer running on their own credential pays nothing to us and reserves nothing; the tokens are
+ * still counted, because the usage is worth showing either way.
+ *
+ * Token accounting reads `modelUsage`, not `usage`. `usage` covers the main agent loop only,
+ * excluding Task subagents and internal calls like compaction — real model calls that a customer's
+ * key really pays for. `modelUsage` is cumulative across turns and each result carries the running
+ * total, so the *latest* result is read rather than summed.
+ */
+export async function runAgentTurn(
+  db: Kysely<DB>,
+  input: AgentRunInput,
+  emit: (event: AgentEvent) => void | Promise<void>,
+): Promise<AgentRunOutcome> {
+  let sdkSessionId: string | null = input.resume ?? null
+  let subtype = "unknown"
+  let isError = false
+  let numTurns = 0
+  let durationMs = 0
+  // The SDK reports cumulative totals, so the last result wins rather than the sum.
+  let latest: TokenUsage | null = null
+
+  const result = await withMeteredRun(
+    db,
+    {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      resourceType: "agent_run",
+      resourceId: input.sessionId,
+      description: "Agent chat",
+    },
+    async ({ credential, report }) => {
+      if (credential.billing !== "byo") {
+        // Platform credits run on our OpenAI key, which is not an Anthropic-shaped endpoint and
+        // therefore cannot drive the Claude Code agent. That path is a plain chat completion, and
+        // routing it here would produce a subprocess with no usable credential.
+        throw new Error("Platform-billed runs do not use the Claude Code agent runner")
+      }
+
+      const stream = query({
+        prompt: input.prompt,
+        options: {
+          cwd: input.cwd,
+          // Replaces the environment entirely — see env.ts. This is the line that keeps the API
+          // process's secrets out of the agent.
+          env: agentSubprocessEnv(credential),
+          permissionMode: toSdkPermissionMode(credential.permissionMode),
+          ...(credential.model === null ? {} : { model: credential.model }),
+          ...(input.resume == null ? {} : { resume: input.resume }),
+          ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
+          ...(input.signal === undefined ? {} : { abortController: toController(input.signal) }),
+          // The agent reads the *project's* configuration, never the runner host's. Without this
+          // it would pick up whatever ~/.claude on the pod happens to contain, which on a shared
+          // runner is another tenant's settings.
+          settingSources: ["project"],
+        },
+      })
+
+      for await (const message of stream) {
+        switch (message.type) {
+          case "system":
+            if (message.subtype === "init") {
+              sdkSessionId = message.session_id
+              await emit({ type: "session", sdkSessionId: message.session_id })
+            }
+            break
+
+          case "assistant":
+            for (const block of message.message.content) {
+              if (block.type === "text") await emit({ type: "text", text: block.text })
+              else if (block.type === "thinking") await emit({ type: "thinking" })
+              else if (block.type === "tool_use") {
+                await emit({ type: "tool_use", name: block.name, input: block.input })
+              }
+            }
+            break
+
+          case "user":
+            for (const block of message.message.content ?? []) {
+              if (typeof block !== "string" && block.type === "tool_result") {
+                await emit({
+                  type: "tool_result",
+                  name: block.tool_use_id,
+                  isError: block.is_error === true,
+                })
+              }
+            }
+            break
+
+          case "result": {
+            subtype = message.subtype
+            isError = message.is_error
+            numTurns = message.num_turns
+            durationMs = message.duration_ms
+            sdkSessionId = message.session_id
+            latest = totalUsage(message.modelUsage)
+            break
+          }
+
+          default:
+            // Everything else — hooks, plugins, status, retries — is CLI chrome.
+            break
+        }
+      }
+
+      // Reported once, at the end, because the SDK's totals are cumulative: reporting per message
+      // would count the same tokens as many times as there were results.
+      if (latest !== null) report(latest)
+
+      return null
+    },
+  )
+
+  return {
+    sdkSessionId,
+    usage: result.usage,
+    chargedMicroUsd: result.chargedMicroUsd,
+    subtype,
+    isError,
+    numTurns,
+    durationMs,
+  }
+}
+
+/**
+ * Cache *creation* tokens rate as input, because that is what they cost — a cache write is billed
+ * at the input rate, and only cache *reads* get the discounted rate. Folding creation into the
+ * cache-read dimension would under-bill every first request of a conversation.
+ */
+function totalUsage(
+  modelUsage: Record<
+    string,
+    {
+      inputTokens: number
+      outputTokens: number
+      cacheReadInputTokens: number
+      cacheCreationInputTokens: number
+    }
+  >,
+): TokenUsage {
+  let inputTokens = 0
+  let outputTokens = 0
+  let cacheReadTokens = 0
+
+  for (const usage of Object.values(modelUsage)) {
+    inputTokens += usage.inputTokens + usage.cacheCreationInputTokens
+    outputTokens += usage.outputTokens
+    cacheReadTokens += usage.cacheReadInputTokens
+  }
+
+  return { inputTokens, outputTokens, cacheReadTokens }
+}
+
+/** The SDK takes an AbortController; a Hono handler has an AbortSignal. */
+function toController(signal: AbortSignal): AbortController {
+  const controller = new AbortController()
+  if (signal.aborted) controller.abort()
+  else
+    signal.addEventListener(
+      "abort",
+      () => {
+        controller.abort()
+      },
+      { once: true },
+    )
+  return controller
+}

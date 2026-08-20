@@ -1,3 +1,4 @@
+export { agentSubprocessEnv, toSdkPermissionMode, UnsupportedCredentialError } from "./env"
 export {
   activeTokenRates,
   estimateRunCost,
@@ -21,3 +22,5 @@ export {
   type MeteredRunResult,
   withMeteredRun,
 } from "./run"
+export { type AgentEvent, type AgentRunInput, type AgentRunOutcome, runAgentTurn } from "./runner"
+export { checkout, cloneUrl, gitAuthEnv, type Workspace } from "./workspace"

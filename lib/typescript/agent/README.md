@@ -89,3 +89,81 @@ The credit ledger says what was **charged**. `usage_event` says what was **consu
 dimension. `withMeteredRun` writes both, keyed on the hold id, so a retried settlement collides on
 `(source, external_id, occurred_at)` rather than double-counting. A charge with no matching events
 is a bill nobody can explain.
+
+## Running a turn
+
+`runAgentTurn` drives `@anthropic-ai/claude-agent-sdk`, which spawns a Claude Code subprocess.
+Everything below follows from that one fact.
+
+### The subprocess environment is built, not inherited
+
+`Options.env` **replaces** the subprocess environment rather than merging with `process.env`, and
+that is the property `env.ts` exists to use. The API process holds `DATABASE_URL`,
+`STRIPE_SECRET_KEY`, `OPENAI_KEY`, the KMS configuration, and every other organization's decrypted
+credentials as they pass through it. Inheriting that into a process whose job is to run a model
+against a customer's repository puts all of it one `printenv` away from whatever the model decides
+to do.
+
+So the allowlist is `PATH HOME SHELL LANG LC_ALL TZ TMPDIR`, plus the one credential, by kind:
+
+| kind                                    | variable                                      |
+| --------------------------------------- | --------------------------------------------- |
+| `claude_subscription`                   | `CLAUDE_CODE_OAUTH_TOKEN`                     |
+| `anthropic_api_key`                     | `ANTHROPIC_API_KEY`                           |
+| `openai_api_key` / `openrouter_api_key` | `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` |
+
+The last row **requires** `base_url`. Claude Code reaches a third party through the Anthropic-shaped
+variables, so the endpoint has to speak that protocol; a bare OpenAI key does not, and starting the
+run anyway would send the customer's key to `api.anthropic.com`. `env.test.ts` asserts the
+allowlist as an allowlist, and fails if anything new appears in it.
+
+**Platform credits do not use this runner.** Our key is OpenAI's, which is not an Anthropic-shaped
+endpoint, so `agentSubprocessEnv` throws rather than building an environment with no credential in
+it and letting the subprocess fall back to whatever the host happens to have configured.
+
+### The checkout carries no credential
+
+`git clone https://x-access-token:TOKEN@github.com/...` writes the token into `.git/config`, inside
+the directory the agent is about to read. `-c http.extraHeader=...` keeps it out of the config and
+puts it in argv, where `ps` shows it to anything on the host.
+
+`gitAuthEnv` uses `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`: per-process, not in argv, never
+written to disk. The remote is then rewritten to the plain URL, so the config is credential-free
+rather than assumed to be. **The agent never gets a push credential** — its output leaves through a
+pull request opened by the control plane.
+
+`workspace.ts` is the _development_ driver. In production the checkout is prepared inside the Kata
+VM that isolates the session; cloning onto the API host is only acceptable while there is no
+compute plane.
+
+### Token accounting reads `modelUsage`, not `usage`
+
+`usage` covers the main agent loop only — it excludes Task subagents, sidechains, and internal
+calls like compaction, all of which are real model calls a customer's key really pays for.
+`modelUsage` is cumulative across turns and each result carries the running total, so the **latest**
+result is read rather than summed.
+
+Cache _creation_ tokens rate as input, because that is what they cost. Only cache _reads_ get the
+discounted rate; folding creation into the cache-read dimension would under-bill the first request
+of every conversation.
+
+### Verified against a live model
+
+A real turn on a `claude_subscription` credential: the agent read a file with Bash and Read, and
+returned 20,335 input / 323 output / 57,080 cache-read tokens in 4 turns. Rated against the seeded
+price book that is **$0.091273** of usage plus **$0.010953** of overhead — and the arithmetic is
+exactly `57,080 × 0.33` micro-USD for the cache reads, the dimension an integer rate would have
+floored to zero.
+
+`chargedMicroUsd` was `0`, which is correct: a customer's own credential costs us nothing.
+
+### The SSE route is hidden from the OpenAPI document
+
+hey-api models a response as one JSON body, so a streaming route would get a generated client
+method that resolves on the first chunk and drops the rest — a function that compiles, runs, and is
+wrong.
+
+Excluding it through `input.filters.operations.exclude` in the openapi-ts config is the obvious
+move and does **not** work: this version accepts the option and ignores it, which is worse than not
+supporting it. `describeRoute({ hide: true })` is the thing that holds — it removes the method from
+the path, leaving the path key with no operations, and the generated client has no method for it.

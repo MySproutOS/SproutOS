@@ -11,6 +11,7 @@ import {
 import { client } from "../client.gen"
 import {
   deleteV1OrgsByOrgSlug,
+  deleteV1OrgsByOrgSlugAgentCredentialsByCredentialId,
   deleteV1OrgsByOrgSlugInvitesByInviteId,
   deleteV1OrgsByOrgSlugLeave,
   deleteV1OrgsByOrgSlugMembersByMemberId,
@@ -21,6 +22,8 @@ import {
   getV1AuthMe,
   getV1Orgs,
   getV1OrgsByOrgSlug,
+  getV1OrgsByOrgSlugAgentConfig,
+  getV1OrgsByOrgSlugAgentCredentials,
   getV1OrgsByOrgSlugBillingBalance,
   getV1OrgsByOrgSlugBillingTopupQuote,
   getV1OrgsByOrgSlugBillingTransactions,
@@ -29,6 +32,7 @@ import {
   getV1OrgsByOrgSlugMembers,
   getV1OrgsByOrgSlugProjects,
   getV1OrgsByOrgSlugProjectsByProjectId,
+  getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
@@ -50,9 +54,11 @@ import {
   postV1AuthLogout,
   postV1InvitesAccept,
   postV1Orgs,
+  postV1OrgsByOrgSlugAgentCredentials,
   postV1OrgsByOrgSlugBillingTopup,
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
@@ -63,11 +69,15 @@ import {
   postV1StoreListingsBySlugEvents,
   postV1WebhooksGithub,
   postV1WebhooksStripe,
+  putV1OrgsByOrgSlugAgentConfig,
   putV1OrgsByOrgSlugBillingAutoReload,
   putV1OrgsByOrgSlugMembersByMemberIdRoles,
   putV1OrgsByOrgSlugProjectsByProjectIdEnv,
 } from "../sdk.gen"
 import type {
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
   DeleteV1OrgsByOrgSlugData,
   DeleteV1OrgsByOrgSlugError,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
@@ -94,6 +104,12 @@ import type {
   DeleteV1UserMeDeleteResponse,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
+  GetV1OrgsByOrgSlugAgentConfigData,
+  GetV1OrgsByOrgSlugAgentConfigError,
+  GetV1OrgsByOrgSlugAgentConfigResponse,
+  GetV1OrgsByOrgSlugAgentCredentialsData,
+  GetV1OrgsByOrgSlugAgentCredentialsError,
+  GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceError,
   GetV1OrgsByOrgSlugBillingBalanceResponse,
@@ -114,6 +130,9 @@ import type {
   GetV1OrgsByOrgSlugMembersData,
   GetV1OrgsByOrgSlugMembersError,
   GetV1OrgsByOrgSlugMembersResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvError,
@@ -177,12 +196,18 @@ import type {
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptError,
   PostV1InvitesAcceptResponse,
+  PostV1OrgsByOrgSlugAgentCredentialsData,
+  PostV1OrgsByOrgSlugAgentCredentialsError,
+  PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupError,
   PostV1OrgsByOrgSlugBillingTopupResponse,
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesError,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
@@ -219,6 +244,9 @@ import type {
   PostV1WebhooksStripeData,
   PostV1WebhooksStripeError,
   PostV1WebhooksStripeResponse,
+  PutV1OrgsByOrgSlugAgentConfigData,
+  PutV1OrgsByOrgSlugAgentConfigError,
+  PutV1OrgsByOrgSlugAgentConfigResponse,
   PutV1OrgsByOrgSlugBillingAutoReloadData,
   PutV1OrgsByOrgSlugBillingAutoReloadError,
   PutV1OrgsByOrgSlugBillingAutoReloadResponse,
@@ -1601,6 +1629,198 @@ export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteOptions = (
     },
   )
   return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1OrgsByOrgSlugAgentCredentialsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugAgentCredentialsData>,
+) => createQueryKey("getV1OrgsByOrgSlugAgentCredentials", options)
+
+/**
+ * Lists the organization's model credentials, without their secrets
+ */
+export const getV1OrgsByOrgSlugAgentCredentialsOptions = (
+  options: Options<GetV1OrgsByOrgSlugAgentCredentialsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugAgentCredentialsResponse,
+    GetV1OrgsByOrgSlugAgentCredentialsError,
+    GetV1OrgsByOrgSlugAgentCredentialsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugAgentCredentialsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugAgentCredentials({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugAgentCredentialsQueryKey(options),
+  })
+
+/**
+ * Stores a model credential, encrypted, and returns everything but the secret
+ */
+export const postV1OrgsByOrgSlugAgentCredentialsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAgentCredentialsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAgentCredentialsResponse,
+  PostV1OrgsByOrgSlugAgentCredentialsError,
+  Options<PostV1OrgsByOrgSlugAgentCredentialsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAgentCredentialsResponse,
+    PostV1OrgsByOrgSlugAgentCredentialsError,
+    Options<PostV1OrgsByOrgSlugAgentCredentialsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAgentCredentials({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Revokes a credential. Runs configured to use it stop rather than fall back
+ */
+export const deleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+  Options<DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
+    DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+    Options<DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugAgentCredentialsByCredentialId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugAgentConfigQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugAgentConfigData>,
+) => createQueryKey("getV1OrgsByOrgSlugAgentConfig", options)
+
+/**
+ * Reads the organization's agent configuration and what a run would do now
+ */
+export const getV1OrgsByOrgSlugAgentConfigOptions = (
+  options: Options<GetV1OrgsByOrgSlugAgentConfigData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugAgentConfigResponse,
+    GetV1OrgsByOrgSlugAgentConfigError,
+    GetV1OrgsByOrgSlugAgentConfigResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugAgentConfigQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugAgentConfig({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugAgentConfigQueryKey(options),
+  })
+
+/**
+ * Saves the organization's agent configuration
+ */
+export const putV1OrgsByOrgSlugAgentConfigMutation = (
+  options?: Partial<Options<PutV1OrgsByOrgSlugAgentConfigData>>,
+): UseMutationOptions<
+  PutV1OrgsByOrgSlugAgentConfigResponse,
+  PutV1OrgsByOrgSlugAgentConfigError,
+  Options<PutV1OrgsByOrgSlugAgentConfigData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PutV1OrgsByOrgSlugAgentConfigResponse,
+    PutV1OrgsByOrgSlugAgentConfigError,
+    Options<PutV1OrgsByOrgSlugAgentConfigData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putV1OrgsByOrgSlugAgentConfig({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions", options)
+
+/**
+ * Lists a project's agent chat sessions
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey(options),
+  })
+
+/**
+ * Starts an agent chat session on a project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
 }
 
 export const getV1OrgsByOrgSlugBillingBalanceQueryKey = (
