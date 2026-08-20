@@ -9,20 +9,12 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: metering-agent
-  namespace: sproutos-system
+  namespace: sproutos-metering
   labels:
     app.kubernetes.io/name: metering-agent
     app.kubernetes.io/part-of: sproutos
 # Deliberately no Role, no ClusterRole, no bindings. If a future version needs the API, the diff
 # that adds them is the diff worth reviewing carefully.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: sproutos-system
-  labels:
-    app.kubernetes.io/part-of: sproutos
-    # Platform namespace: enforce the restricted Pod Security Standard. The agent already complies;
-    # this stops a future change quietly loosening it.
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
+# The `sproutos-system` Namespace this lives in is declared in `deploy/00-namespaces.yaml`,
+# which renders first. It used to be here, after the ServiceAccount above and after the DaemonSet
+# in `daemonset.yaml` — so a fresh apply failed before reaching it.

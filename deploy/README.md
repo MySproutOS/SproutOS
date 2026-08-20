@@ -163,7 +163,43 @@ today both classes reference a handler no node provides and every pod using them
   handlers that only `kata-deploy` provides, and the tenant node group is labelled for it — but
   nothing installs it, so both classes are currently references to nothing.
 - **External Secrets**, so `metering-ingest` above is a Secret somebody has to create by hand.
-- **NetworkPolicies.** The plan treats the NetworkPolicy plus the Kata VM boundary as the only real
-  isolation control for tenant workloads, and neither exists yet.
-- **Image references are placeholders** — `ACCOUNT.dkr.ecr.REGION.amazonaws.com/...` with a literal
-  `TAG`. Substituted at deploy time by a pipeline that does not exist.
+- **A cluster to apply this to that is not a laptop.** See below — it has now been applied to a real
+  one, but a `kind` node is not EKS: no Kata, no metal, no ALB, no IRSA.
+
+## Applied
+
+These were schema-valid and had never touched an API server. They have now been applied to a real
+Kubernetes cluster — `kind`, one node — with the images built locally and loaded in. All six
+Deployments reached full replicas and the DaemonSet reached 1/1.
+
+Applying it found four things `kubeconform` structurally cannot:
+
+1. **Nothing created the namespaces.** `sproutos-system` was declared as the _second_ document
+   inside `metering/rbac.yaml`, which sorts after the DaemonSet that lives in it; `external-secrets`
+   and the tenant namespace were never declared at all. A fresh apply failed on its first document,
+   twenty-five times over. A Deployment naming a namespace that does not exist is perfectly valid
+   YAML. Now `00-namespaces.yaml`, which sorts and applies first.
+2. **The metering DaemonSet could never create a pod.** It reads cgroup v2 through `hostPath`, and
+   `hostPath` is forbidden under `restricted` _and_ `baseline`. `sproutos-system` enforces
+   `restricted` — and its own comment claimed the agent complied. Desired 1, current 0, silently,
+   because a DaemonSet that creates no pods is not an error anywhere but its own event log. It now
+   has its own `privileged` namespace, so the other six workloads keep enforcing `restricted`.
+3. **`valkey-proxy` could not start with a hostname.** It parsed its backend into a Rust
+   `SocketAddr`, which only accepts a literal IP. Production hands it an ElastiCache endpoint — a
+   DNS name — so it would have crash-looped on `invalid socket address syntax` forever. Every test
+   passed because the test config is `127.0.0.1:41023`. It now takes a string and resolves per
+   connection, which also survives a failover that moves the endpoint.
+4. **The website bound to one interface.** Next's standalone server binds
+   `process.env.HOSTNAME || "0.0.0.0"`, and the container runtime sets `HOSTNAME` to the pod name,
+   which `/etc/hosts` maps to the pod IP. The pod passed readiness and served Service traffic —
+   both target the pod IP — while `localhost` inside the pod refused connections, breaking
+   `kubectl port-forward` and anything else in-pod. A pod whose own name failed to resolve would
+   not have bound at all.
+
+Verified afterwards, through the cluster's own Services: the API answers `/health`, `/ready` (against
+a real Postgres) and `/v1/auth/me`; the website serves `/`, `/store` and `/login` and redirects
+`/dashboard` to `/login` when unauthenticated, so `proxy.ts` classifies correctly in-cluster.
+
+Also confirmed by the failure of something else: a stock `postgres:18-alpine` was rejected outright
+by the `restricted` standard on `sproutos-system`, which is the evidence that the six SproutOS
+workloads satisfying it are actually satisfying something.

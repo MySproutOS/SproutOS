@@ -69,6 +69,10 @@ COPY --from=build /src/apps/website/public ./apps/website/public
 
 # `node`, the image's own unprivileged user. Same reasoning as the Rust images: an image that only
 # runs as non-root because the orchestrator said so runs as root everywhere else.
+# See the note in deploy/platform/apps.yaml: Next's standalone server binds whatever HOSTNAME says,
+# and every container runtime sets HOSTNAME to the container's own name. Left alone it binds one
+# interface and refuses localhost. Set here as well as in the pod spec so `docker run` behaves too.
+ENV HOSTNAME=0.0.0.0
 USER node
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]

@@ -71,6 +71,11 @@ spec:
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
+            # Longer than the handler's own 2s database timeout, deliberately. The default is 1s,
+            # which is shorter — so a slow-but-alive database produced a bare kubelet timeout and
+            # the handler's own 503, which names the reason, was never seen. Whichever of the two
+            # is shorter is the one that decides, and it should be the one that can explain itself.
+            timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /health
@@ -121,6 +126,14 @@ spec:
             - name: http
               containerPort: 3000
           env:
+            # Next's standalone server binds `process.env.HOSTNAME || "0.0.0.0"`, and the
+            # container runtime sets HOSTNAME to the pod name — which /etc/hosts maps to the pod
+            # IP. So it bound to the pod IP alone. The pod passed its readiness probe and served
+            # Service traffic normally, because both target the pod IP; what broke was everything
+            # that uses localhost inside the pod, `kubectl port-forward` included. Worse, a pod
+            # whose own name failed to resolve would not bind at all.
+            - name: HOSTNAME
+              value: "0.0.0.0"
             - name: NODE_ENV
               value: production
             - name: DATABASE_URL

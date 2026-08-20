@@ -207,7 +207,9 @@ async fn start_proxy(url: &str) -> SocketAddr {
     let store = std::sync::Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = listener.local_addr().expect("local_addr");
-    let backend: SocketAddr = backend().parse().expect("backend address");
+    // A `String`, matching what `serve` now takes. The proxy resolves it per connection, so a
+    // DNS name works here exactly as it does in production — which a `SocketAddr` never did.
+    let backend = std::sync::Arc::new(backend());
 
     tokio::spawn(async move {
         loop {
@@ -215,8 +217,9 @@ async fn start_proxy(url: &str) -> SocketAddr {
                 return;
             };
             let store = std::sync::Arc::clone(&store);
+            let backend = std::sync::Arc::clone(&backend);
             tokio::spawn(async move {
-                let _ = valkey_proxy::serve(client, backend, &store).await;
+                let _ = valkey_proxy::serve(client, &backend, &store).await;
             });
         }
     });
