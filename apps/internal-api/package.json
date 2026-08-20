@@ -30,6 +30,7 @@
     "@lib/github": "workspace:*",
     "@lib/jobs": "workspace:*",
     "@lib/oauth-provider": "workspace:*",
+    "@lib/observability": "workspace:*",
     "@lib/queue": "workspace:*",
     "@lib/services": "workspace:*",
     "@lib/srn": "workspace:*",

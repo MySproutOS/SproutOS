@@ -330,6 +330,9 @@ importers:
       '@lib/oauth-provider':
         specifier: workspace:*
         version: link:../../lib/typescript/oauth-provider
+      '@lib/observability':
+        specifier: workspace:*
+        version: link:../../lib/typescript/observability
       '@lib/queue':
         specifier: workspace:*
         version: link:../../lib/typescript/queue
@@ -667,6 +670,31 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../utils/crypto
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/observability:
+    dependencies:
+      '@clickhouse/client':
+        specifier: ^1.23.1
+        version: 1.23.1
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      '@utils/crypto':
+        specifier: workspace:*
+        version: link:../utils/crypto
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       kysely:
         specifier: 'catalog:'
         version: 0.29.5
@@ -1102,6 +1130,10 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@clickhouse/client@1.23.1':
+    resolution: {integrity: sha512-vs3/Zc1dHvT171btW5nMoPsPCJ6QVJ5pp7obxzO5sjqwFx/jjz9wwCAqcFOdc2DhprugDBaVn+4dVY8hG3A9nw==}
+    engines: {node: '>=20'}
 
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
@@ -4733,6 +4765,8 @@ snapshots:
       use-sync-external-store: 1.6.0(react@19.2.8)
     optionalDependencies:
       '@types/react': 19.2.18
+
+  '@clickhouse/client@1.23.1': {}
 
   '@emnapi/runtime@1.11.3':
     dependencies:

@@ -13,6 +13,8 @@ import projects from "./projects"
 import roles from "./roles"
 import services from "./services"
 import store, { storeModeration } from "./store"
+import observability from "./observability"
+import otlp from "./otlp"
 import stripeWebhooks from "./stripe-webhooks"
 import user from "./user"
 import webhooks from "./webhooks"
@@ -52,6 +54,7 @@ orgs.route("/", workflows)
 // `user_preference.last_org_id`.
 orgs.route("/", storeModeration)
 orgs.route("/:orgSlug/billing", billing)
+orgs.route("/", observability)
 
 /**
  * Unauthenticated by design.
@@ -64,6 +67,12 @@ const unauthenticated: Hono = new Hono()
 unauthenticated.route("/webhooks", webhooks)
 unauthenticated.route("/webhooks", stripeWebhooks)
 unauthenticated.route("/oauth", oauth)
+/*
+  OTLP ingest authenticates with a project ingest key, not a session: the caller is a customer's own
+  container or collector. The nested `/v1` is not a mistake — an OTel exporter appends `/v1/logs` to
+  whatever endpoint it is given, so `.../v1/otlp` is the whole of what a customer configures.
+*/
+unauthenticated.route("/otlp", otlp)
 
 const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)

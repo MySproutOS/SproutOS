@@ -3198,6 +3198,141 @@ export type PutV1OrgsByOrgSlugBillingAutoReloadResponses = {
 export type PutV1OrgsByOrgSlugBillingAutoReloadResponse =
   PutV1OrgsByOrgSlugBillingAutoReloadResponses[keyof PutV1OrgsByOrgSlugBillingAutoReloadResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: {
+    since?: string
+    until?: string
+    search?: string
+    minSeverity?: string
+    service?: string
+    traceId?: string
+    limit?: string
+    before?: string
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/logs"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors = {
+  /**
+   * Caller lacks observability:logs:read
+   */
+  403: ErrorResponseT
+  /**
+   * Log storage is not configured
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses = {
+  /**
+   * A page of log lines, newest first
+   */
+  200: {
+    lines: Array<{
+      timestamp: string
+      cursor: string
+      severityNumber: number
+      severityText: string
+      body: string
+      serviceName: string
+      scopeName: string
+      traceId: string
+      spanId: string
+      attributes: {
+        [key: string]: unknown | string
+      }
+    }>
+    nextBefore: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/observability"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors = {
+  /**
+   * Caller lacks observability:logs:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses = {
+  /**
+   * Stream
+   */
+  200: {
+    streamId: string | null
+    retentionDays: number
+    endpoint: string
+    services: Array<string>
+    usage: {
+      records: number
+      bytes: number
+    }
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData = {
+  body?: {
+    retentionDays?: 7 | 30 | 90
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/observability/key"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors = {
+  /**
+   * Caller lacks observability:stream:manage
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses = {
+  /**
+   * The key, shown once
+   */
+  201: {
+    key: string
+    streamId: string
+    endpoint: string
+    retentionDays: number
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses]
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never

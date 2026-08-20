@@ -88,6 +88,12 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
@@ -186,6 +192,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponses,
@@ -1502,6 +1511,65 @@ export const putV1OrgsByOrgSlugBillingAutoReload = <ThrowOnError extends boolean
     ThrowOnError
   >({
     url: "/v1/orgs/{orgSlug}/billing/auto-reload",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Search a project's logs
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogs = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/logs", ...options })
+
+/**
+ * A project's ingest settings and usage
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdObservability = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/observability", ...options })
+
+/**
+ * Issue or rotate a project's OTLP ingest key
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/observability/key",
     ...options,
     headers: {
       "Content-Type": "application/json",
