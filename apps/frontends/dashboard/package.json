@@ -14,6 +14,7 @@
     "@tanstack/react-router": "catalog:",
     "@ui/base": "workspace:*",
     "@ui/spa-shared": "workspace:*",
+    "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "tailwindcss": "catalog:",

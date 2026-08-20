@@ -2,10 +2,38 @@ import { useQuery } from "@tanstack/react-query"
 import { Link, Outlet, createRootRoute } from "@tanstack/react-router"
 import { useEffect } from "react"
 import { getV1AuthMeOptions } from "@lib/api-client/generated/@tanstack/react-query.gen"
+import { Button } from "@ui/base/ui/button"
+import { Spinner } from "@ui/base/ui/spinner"
+import { TooltipProvider } from "@ui/base/ui/tooltip"
+import {
+  EmptyState,
+  EmptyStateActions,
+  EmptyStateDescription,
+  EmptyStateIcon,
+  EmptyStateTitle,
+} from "@ui/base/ui/empty-state"
 
 export const Route = createRootRoute({
   component: RootLayout,
+  notFoundComponent: NotFound,
 })
+
+function NotFound() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center p-6">
+      <EmptyState className="max-w-md">
+        <EmptyStateIcon />
+        <EmptyStateTitle>No such page</EmptyStateTitle>
+        <EmptyStateDescription>
+          That URL does not match anything in the dashboard.
+        </EmptyStateDescription>
+        <EmptyStateActions>
+          <Button render={<Link to="/dashboard" />}>Back to your projects</Button>
+        </EmptyStateActions>
+      </EmptyState>
+    </div>
+  )
+}
 
 function RootLayout() {
   const { data, isLoading, isError } = useQuery(getV1AuthMeOptions())
@@ -23,8 +51,8 @@ function RootLayout() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+      <div className="flex min-h-dvh items-center justify-center">
+        <Spinner className="size-5 text-muted-foreground" />
       </div>
     )
   }
@@ -34,33 +62,8 @@ function RootLayout() {
   }
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-64 border-r bg-sidebar p-4">
-        <h2 className="mb-6 text-lg font-semibold text-sidebar-foreground">Dashboard</h2>
-        <nav className="flex flex-col gap-2">
-          <Link
-            to="/dashboard"
-            className="rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent [&.active]:bg-sidebar-accent [&.active]:font-medium"
-          >
-            Home
-          </Link>
-          <Link
-            to="/profile"
-            className="rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent [&.active]:bg-sidebar-accent [&.active]:font-medium"
-          >
-            Profile
-          </Link>
-          <Link
-            to="/settings"
-            className="rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent [&.active]:bg-sidebar-accent [&.active]:font-medium"
-          >
-            Settings
-          </Link>
-        </nav>
-      </aside>
-      <main className="flex-1 p-8">
-        <Outlet />
-      </main>
-    </div>
+    <TooltipProvider>
+      <Outlet />
+    </TooltipProvider>
   )
 }
