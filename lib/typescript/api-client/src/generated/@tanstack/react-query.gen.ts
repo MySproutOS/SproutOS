@@ -43,6 +43,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdObservability,
   getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunId,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
@@ -187,6 +188,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdError,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData,
@@ -2133,6 +2137,34 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdOptions = (
       return data
     },
     queryKey: getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId", options)
+
+/**
+ * One workflow and its current graph
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey(options),
   })
 
 export const getV1OrgsByOrgSlugWorkflowsQueryKey = (

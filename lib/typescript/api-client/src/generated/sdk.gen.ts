@@ -98,6 +98,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobData,
@@ -1202,6 +1205,24 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisId = <ThrowOnError extends bool
     GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/analyses/{analysisId}", ...options })
+
+/**
+ * One workflow and its current graph
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}", ...options })
 
 /**
  * Every workflow in the organization, with its schedule and recent health

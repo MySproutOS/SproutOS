@@ -14,6 +14,7 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
@@ -344,6 +345,13 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse> => {
   data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse> => {
+  data.updatedAt = new Date(data.updatedAt)
   return data
 }
 

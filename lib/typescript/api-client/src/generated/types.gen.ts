@@ -2494,6 +2494,70 @@ export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses = {
 export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse =
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses[keyof GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    workflowId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors = {
+  /**
+   * Caller lacks workflow:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such workflow
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses = {
+  /**
+   * Workflow
+   */
+  200: {
+    id: string
+    slug: string
+    name: string
+    runtime: string
+    enabled: boolean
+    queueName: string
+    currentVersion: number | null
+    graph: {
+      nodes: Array<{
+        id: string
+        type: string
+        name: string
+        config: {
+          [key: string]: unknown
+        }
+        position?: {
+          x: number
+          y: number
+        }
+      }>
+      edges: Array<{
+        from: string
+        to: string
+        branch?: string | null
+      }>
+    } | null
+    graphSha256: string | null
+    updatedAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses]
+
 export type GetV1OrgsByOrgSlugWorkflowsData = {
   body?: never
   path: {

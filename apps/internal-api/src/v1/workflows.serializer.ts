@@ -197,3 +197,28 @@ export const workflowsSchemaRecentRun = Type.Object({
 export const workflowsSchemaRecentRunsResponse = Type.Object({
   data: Type.Array(workflowsSchemaRecentRun),
 })
+
+export const workflowsSchemaWorkflowParam = Type.Object({
+  orgSlug: Type.String(),
+  projectId: UUID7String,
+  workflowId: UUID7String,
+})
+
+/**
+ * One workflow and the graph the editor should open.
+ *
+ * `graph` is null when a workflow has been created but never saved — the editor starts from an
+ * empty canvas rather than from a graph we invented on its behalf.
+ */
+export const workflowsSchemaDetailResponse = Type.Object({
+  id: UUID7String,
+  slug: Type.String(),
+  name: Type.String(),
+  runtime: Type.String(),
+  enabled: Type.Boolean(),
+  queueName: Type.String(),
+  currentVersion: Nullable(Type.Number()),
+  graph: Nullable(graphSchema),
+  graphSha256: Nullable(Type.String()),
+  updatedAt: Type.String({ format: "date-time" }),
+})
