@@ -41,6 +41,8 @@ rand = "0.8"
 tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
 subtle = "2"
 argon2 = { version = "0.5", features = ["std"] }
+base64 = "0.22"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
 [profile.release]
 lto = "thin"

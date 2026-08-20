@@ -70,10 +70,10 @@ paying for a GC and an event-loop hop.
   host several projects, so samples are designed to carry a `project_id` split key rather than
   assuming one pod is one tenant. `lib/rust/metering-proto` — the event schema and HMAC signing it
   would emit — is real and tested. The sampler itself is three lines that print its own name.
-- `services/pg-proxy` — **a stub.** Intended as the Postgres wire proxy: tenant auth, routing,
-  wake-on-connect. Three lines that print its own name. `lib/rust/tenant-auth` and
-  `lib/rust/service-credentials`, which it would authenticate with, are real and shared with the
-  two proxies that do exist.
+- `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
+  `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM to the
+  cluster, checked against RFC 7677's vector. **Wake-on-connect is not built** — there is no Neon
+  control plane to wake.
 - `services/valkey-proxy` — RESP proxy and master-queue dispatcher. Tenants point BullMQ or
   Celery at it as though it were Valkey.
 - `services/search-proxy` — OpenSearch tenant-split proxy. Document- and field-level security
@@ -122,8 +122,8 @@ Any Python used for build or ops scripting runs as `uv run`; there is no project
 Three contracts exist in both Rust and TypeScript. Each has one set of fixture vectors that both
 sides assert against — a divergence in the first two is a security bug.
 
-- **SRN grammar** (`lib/rust/srn` ↔ the TypeScript SRN module) — `valkey-proxy` and `search-proxy`
-  authorize against it, and `pg-proxy` would when it exists.
+- **SRN grammar** (`lib/rust/srn` ↔ the TypeScript SRN module) — all three proxies authorize
+  against it.
 - **Metering event schema and HMAC signing** (`lib/rust/metering-proto` ↔ the ingest route).
 - **Tenant credential parsing** (`lib/rust/tenant-auth` ↔ the control plane that issues them).
 
