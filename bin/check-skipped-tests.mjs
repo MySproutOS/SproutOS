@@ -33,7 +33,8 @@ const KNOWN = [
   {
     suite: "@lib/jobs deploy",
     count: 1,
-    waiting: "KUBE_SERVER — set in the `cluster` job, which runs this suite against a real kind cluster",
+    waiting:
+      "KUBE_SERVER — set in the `cluster` job, which runs this suite against a real kind cluster",
   },
 ]
 
