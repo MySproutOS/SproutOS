@@ -22,13 +22,13 @@ kv_01j4pm0000e008000000000051.01j4pkz2hbfh6sw7sa7d65tvkz
 ix_01j4pm0000e008000000000051.01j4pkz2hbfh6sw7sa7d65tvkz
 ```
 
-| Part | Width | Meaning |
-| --- | --- | --- |
-| `<kind>` | 2 | `db` a Postgres database, `kv` a valkey queue, `ix` a search index |
-| `_` | 1 | separates the kind from the resource it names |
-| `<resource-short-id>` | 26 | the resource UUID, base32 |
-| `.` | 1 | separates the resource from its owner |
-| `<organization-short-id>` | 26 | the organization UUID, base32 |
+| Part                      | Width | Meaning                                                            |
+| ------------------------- | ----- | ------------------------------------------------------------------ |
+| `<kind>`                  | 2     | `db` a Postgres database, `kv` a valkey queue, `ix` a search index |
+| `_`                       | 1     | separates the kind from the resource it names                      |
+| `<resource-short-id>`     | 26    | the resource UUID, base32                                          |
+| `.`                       | 1     | separates the resource from its owner                              |
+| `<organization-short-id>` | 26    | the organization UUID, base32                                      |
 
 Total: **56 bytes**, fixed, for every tenant.
 
@@ -49,7 +49,7 @@ database lookup to learn which tenant is connecting.
 
 The alphabet is Crockford base32 in lowercase — `0123456789abcdefghjkmnpqrstvwxyz`, which drops
 `i`, `l`, `o` and `u`. So the full character set of a username is `[a-z0-9._]`, and that set was
-chosen for what it *cannot* do:
+chosen for what it _cannot_ do:
 
 - **No NUL, CR, LF or space.** A Postgres startup packet is NUL-delimited and RESP is CRLF-framed.
   A username that can contain either is a protocol-injection bug waiting to be written.
@@ -76,7 +76,7 @@ two spellings is a rate limit that can be doubled and an audit trail that splits
 
 ### What parsing does and does not mean
 
-`TenantIdentity::parse_username` is *identification*. It answers "who does this connection claim to
+`TenantIdentity::parse_username` is _identification_. It answers "who does this connection claim to
 be", it involves no secret, and its result must never authorize anything on its own. `verify_secret`
 against the stored hash is what turns the claim into a fact. Keep them in that order and keep the
 identity unusable until the secret checks out.
@@ -86,11 +86,11 @@ identity unusable until the secret checks out.
 Every identity names exactly one [SRN](../srn/README.md), so an authenticated connection can be
 handed straight to the policy layer:
 
-| `ResourceKind` | Username prefix | SRN |
-| --- | --- | --- |
-| `Database` | `db` | `srn:sproutos:db:<org>:database/<resource>` |
-| `Queue` | `kv` | `srn:sproutos:store:<org>:queue/<resource>` |
-| `SearchIndex` | `ix` | `srn:sproutos:search:<org>:index/<resource>` |
+| `ResourceKind` | Username prefix | SRN                                          |
+| -------------- | --------------- | -------------------------------------------- |
+| `Database`     | `db`            | `srn:sproutos:db:<org>:database/<resource>`  |
+| `Queue`        | `kv`            | `srn:sproutos:store:<org>:queue/<resource>`  |
+| `SearchIndex`  | `ix`            | `srn:sproutos:search:<org>:index/<resource>` |
 
 The username prefix and the SRN service deliberately are not the same string: the prefix is
 constrained by a 63-byte budget, the SRN service is the name the rest of the product uses.
@@ -106,15 +106,15 @@ $argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>
 - **Argon2id**, the memory-hard variant, at the OWASP baseline: 19 MiB, 2 passes, 1 lane.
 - **`hash_secret`** draws a fresh 16-byte salt from the OS RNG per call, so two tenants with the
   same secret have different hashes.
-- **`verify_secret`** hashes the candidate with the salt *and parameters recorded in the stored
-  string*, then compares digests in constant time (`password_hash::Output` compares through
+- **`verify_secret`** hashes the candidate with the salt _and parameters recorded in the stored
+  string_, then compares digests in constant time (`password_hash::Output` compares through
   `subtle`). Raising the cost later therefore does not invalidate existing credentials — but it
   also means the stored string dictates how much memory the check allocates, so only ever pass
   hashes that came from our own storage.
-- `Ok(false)` is a wrong secret. `Err` is a *broken stored credential*, an operational fault to
+- `Ok(false)` is a wrong secret. `Err` is a _broken stored credential_, an operational fault to
   page on rather than a login to reject with "wrong password".
 
-A verification costs ~19 MiB and tens of milliseconds, on purpose. That is a per-*connection* cost,
+A verification costs ~19 MiB and tens of milliseconds, on purpose. That is a per-_connection_ cost,
 never a per-query one: the proxies authenticate once at connect time and cache the resulting
 `TenantIdentity` for the life of the connection. A proxy that calls `verify_secret` on a hot path
 has turned its own tenant isolation into a denial-of-service vector.
