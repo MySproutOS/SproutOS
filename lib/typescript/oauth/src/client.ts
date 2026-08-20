@@ -1,4 +1,9 @@
-import { encodeBase64, encodeBase64UrlNoPadding, sha256Utf8 } from "@utils/crypto"
+import {
+  encodeBase64,
+  encodeBase64UrlNoPadding,
+  generateUrlSafeToken,
+  sha256Utf8,
+} from "@utils/crypto"
 import { OAuth2RequestError, OAuth2ResponseError } from "./errors"
 import { type OAuth2Tokens, parseTokenResponse } from "./tokens"
 
@@ -13,6 +18,16 @@ export interface OAuth2ClientConfig {
   readonly redirectUri: string
   readonly endpoints: OAuth2Endpoints
 }
+
+/** A random, unguessable value tying a callback to the authorization request it came from.
+ *
+ *  Store it server-side — we use a short-lived httpOnly cookie — and compare on the way back.
+ *  That is what stops an attacker feeding you a code they obtained elsewhere. */
+export const generateState = (): string => generateUrlSafeToken(32)
+
+/** A random PKCE verifier. RFC 7636 requires 43-128 unreserved characters; 32 bytes of
+ *  base64url is exactly 43. */
+export const generateCodeVerifier = (): string => generateUrlSafeToken(32)
 
 /** The PKCE `code_challenge` for a verifier: base64url(SHA-256(verifier)), per RFC 7636 §4.2.
  *

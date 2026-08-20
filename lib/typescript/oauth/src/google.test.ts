@@ -1,7 +1,8 @@
 import { encodeBase64UrlNoPadding } from "@utils/crypto"
 import { describe, expect, it } from "vitest"
 import { OAuth2ResponseError } from "./errors"
-import { GOOGLE_SCOPES, generateCodeVerifier, generateState, parseGoogleIdToken } from "./google"
+import { generateCodeVerifier, generateState } from "./client"
+import { GOOGLE_SCOPES, parseGoogleIdToken } from "./google"
 import { decodeJwtPayload } from "./jwt"
 
 const rawSegment = (text: string): string =>
