@@ -19,7 +19,13 @@ use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 use valkey_proxy::CredentialStore;
 
-const BACKEND: &str = "127.0.0.1:41023";
+/// The shared Valkey these tests proxy to.
+///
+/// Defaults to the docker-compose port so a developer needs no setup beyond `docker compose up -d`.
+/// CI overrides it, because a workflow's service containers pick their own mapping.
+fn backend() -> String {
+    std::env::var("VALKEY_PROXY_BACKEND").unwrap_or_else(|_| "127.0.0.1:41023".into())
+}
 
 fn database_url() -> Option<String> {
     // The same URL the TypeScript side uses. Read from the environment rather than hard-coded so
@@ -31,13 +37,31 @@ fn database_url() -> Option<String> {
 }
 
 async fn services_up(url: &str) -> bool {
-    if TcpStream::connect(BACKEND).await.is_err() {
-        return false;
-    }
-    let Ok(store) = CredentialStore::connect(url, 2) else {
-        return false;
+    let valkey = TcpStream::connect(backend()).await.is_ok();
+    let postgres = match CredentialStore::connect(url, 2) {
+        Ok(store) => store.check().await.is_ok(),
+        Err(_) => false,
     };
-    store.check().await.is_ok()
+
+    /*
+      On a developer's machine a missing service is a skip: `cargo test` should not fail because
+      docker is not running.
+
+      In CI it is a failure. A skipped isolation test looks exactly like a passing one in the
+      summary, so a workflow that lost its service container would go on reporting green while the
+      tests that check tenants cannot read each other's keys had stopped running entirely.
+    */
+    if (!valkey || !postgres) && std::env::var("CI").is_ok() {
+        panic!(
+            "the integration services are not reachable in CI (valkey={valkey}, postgres={postgres}); \
+             these tests must not silently skip here"
+        );
+    }
+
+    if !valkey || !postgres {
+        eprintln!("skipping: run `docker compose up -d` and apply migrations first");
+    }
+    valkey && postgres
 }
 
 /// A client that speaks just enough RESP to drive the proxy.
@@ -183,7 +207,7 @@ async fn start_proxy(url: &str) -> SocketAddr {
     let store = std::sync::Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = listener.local_addr().expect("local_addr");
-    let backend: SocketAddr = BACKEND.parse().expect("backend address");
+    let backend: SocketAddr = backend().parse().expect("backend address");
 
     tokio::spawn(async move {
         loop {
@@ -204,7 +228,7 @@ async fn start_proxy(url: &str) -> SocketAddr {
 /// actually stored rather than what the proxy chose to show us.
 async fn backend_get(key: &str) -> String {
     let mut raw = Client {
-        stream: TcpStream::connect(BACKEND).await.expect("backend"),
+        stream: TcpStream::connect(backend()).await.expect("backend"),
     };
     raw.send(&["GET", key]).await
 }
@@ -213,7 +237,6 @@ async fn backend_get(key: &str) -> String {
 async fn two_tenants_cannot_see_each_others_keys() {
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
-        eprintln!("skipping: run `docker compose up -d` and apply migrations first");
         return;
     }
 
