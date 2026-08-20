@@ -1,0 +1,347 @@
+{
+  "$comment": "Cross-language contract for the SproutOS Resource Name grammar. Both the Rust crate (lib/rust/srn) and the TypeScript implementation MUST pass every case in this file. `cases` drives pattern matching AND round-trip tests: every `pattern` and `target` here is a valid SRN whose parse -> format output must equal the input byte for byte. `invalid` strings must be rejected by the parser, as an SRN and as an SRN pattern.",
+  "cases": [
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "identical SRNs match"
+    },
+    {
+      "pattern": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "service differs"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "organization differs"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a2",
+      "matches": false,
+      "note": "resource id differs"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:backup/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "resource type differs"
+    },
+    {
+      "pattern": "srn:sproutos:project:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:project/01912d41-0000-7000-8000-0000000000b1",
+      "target": "srn:sproutos:project:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:project/01912d41-0000-7000-8000-0000000000b1",
+      "matches": true,
+      "note": "identical project SRNs match"
+    },
+    {
+      "pattern": "srn:sproutos:billing:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:invoice/inv-2026-01",
+      "target": "srn:sproutos:billing:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:invoice/inv-2026-01",
+      "matches": true,
+      "note": "hyphens are legal token characters"
+    },
+    {
+      "pattern": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders.dlq",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders.dlq",
+      "matches": true,
+      "note": "dots are legal token characters"
+    },
+    {
+      "pattern": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders_dlq-2",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders_dlq-2",
+      "matches": true,
+      "note": "underscores are legal token characters"
+    },
+    {
+      "pattern": "srn:sproutos:*:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "service wildcard"
+    },
+    {
+      "pattern": "srn:sproutos:*:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "service wildcard does not excuse a different organization"
+    },
+    {
+      "pattern": "srn:sproutos:db:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "organization wildcard"
+    },
+    {
+      "pattern": "srn:sproutos:db:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:database/01912d40-0000-7000-8000-0000000000a2",
+      "matches": false,
+      "note": "organization wildcard does not excuse a different resource id"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/*",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "resource id wildcard"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/*",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "resource id wildcard does not excuse a different organization"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "resource type wildcard"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a2",
+      "matches": false,
+      "note": "resource type wildcard, id still has to match"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "bare `*` resource matches any type/id pair"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:snapshot/01912d44-0000-7000-8000-0000000000e1",
+      "matches": true,
+      "note": "bare `*` resource matches a different type too"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/01912d47-0000-7000-8000-000000000111",
+      "matches": false,
+      "note": "bare `*` resource does not widen the service segment"
+    },
+    {
+      "pattern": "srn:sproutos:*:*:*",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "the fully-open pattern matches everything"
+    },
+    {
+      "pattern": "srn:sproutos:*:*:*",
+      "target": "srn:sproutos:workflow:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:run/01912d43-0000-7000-8000-0000000000d1",
+      "matches": true,
+      "note": "the fully-open pattern is service agnostic"
+    },
+    {
+      "pattern": "srn:sproutos:*:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/01912d47-0000-7000-8000-000000000111",
+      "matches": true,
+      "note": "org-scoped, everything-else-open pattern"
+    },
+    {
+      "pattern": "srn:sproutos:*:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:store:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:queue/01912d47-0000-7000-8000-000000000111",
+      "matches": false,
+      "note": "org-scoped pattern rejects another organization"
+    },
+    {
+      "pattern": "srn:sproutos:*:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "a resource-pinned pattern ignores service and organization"
+    },
+    {
+      "pattern": "srn:sproutos:*:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a2",
+      "matches": false,
+      "note": "a resource-pinned pattern still pins the id"
+    },
+    {
+      "pattern": "srn:sproutos:db:*:database/*",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "type-scoped pattern across all organizations"
+    },
+    {
+      "pattern": "srn:sproutos:db:*:database/*",
+      "target": "srn:sproutos:db:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:backup/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "type-scoped pattern rejects another type"
+    },
+    {
+      "pattern": "srn:sproutos:oauth:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*/*",
+      "target": "srn:sproutos:oauth:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:client/01912d46-0000-7000-8000-000000000101",
+      "matches": true,
+      "note": "`*/*` matches any typed resource"
+    },
+    {
+      "pattern": "srn:sproutos:project:*:project/*",
+      "target": "srn:sproutos:project:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:project/01912d41-0000-7000-8000-0000000000b2",
+      "matches": true,
+      "note": "project-wide read pattern"
+    },
+    {
+      "pattern": "srn:sproutos:project:*:project/*",
+      "target": "srn:sproutos:project:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:environment/01912d41-0000-7000-8000-0000000000b2",
+      "matches": false,
+      "note": "project-wide read pattern rejects a sibling type"
+    },
+    {
+      "pattern": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:run/01912d43-0000-7000-8000-0000000000d1",
+      "matches": true,
+      "note": "workflow service wildcard resource"
+    },
+    {
+      "pattern": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:run/*",
+      "target": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:run/01912d43-0000-7000-8000-0000000000d1",
+      "matches": true,
+      "note": "all runs in one organization"
+    },
+    {
+      "pattern": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:run/*",
+      "target": "srn:sproutos:workflow:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:workflow/01912d42-0000-7000-8000-0000000000c1",
+      "matches": false,
+      "note": "run-scoped pattern rejects the workflow itself"
+    },
+    {
+      "pattern": "srn:sproutos:billing:*:invoice/*",
+      "target": "srn:sproutos:billing:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:invoice/01912d45-0000-7000-8000-0000000000f1",
+      "matches": true,
+      "note": "billing invoices across organizations"
+    },
+    {
+      "pattern": "srn:sproutos:billing:*:invoice/*",
+      "target": "srn:sproutos:oauth:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:invoice/01912d45-0000-7000-8000-0000000000f1",
+      "matches": false,
+      "note": "billing pattern rejects the oauth service"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "matches": false,
+      "note": "a `*` in the target is a literal segment, not a request to widen"
+    },
+    {
+      "pattern": "srn:sproutos:oauth:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*/*",
+      "target": "srn:sproutos:oauth:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "matches": false,
+      "note": "`*/*` is a typed pattern and does not match the bare `*` resource"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "matches": true,
+      "note": "bare `*` pattern matches the literal bare `*` target"
+    },
+    {
+      "pattern": "srn:sproutos:*:*:*",
+      "target": "srn:sproutos:*:*:*",
+      "matches": true,
+      "note": "wildcard segments match literal `*` segments"
+    },
+    {
+      "pattern": "srn:sproutos:db:*:*",
+      "target": "srn:sproutos:db:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": true,
+      "note": "an organization wildcard matches a literal `*` organization"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*",
+      "target": "srn:sproutos:db:*:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "a concrete organization does not match the literal `*` organization"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db2:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "service matching is exact, not a prefix test"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:d:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "a shorter service name is not a match"
+    },
+    {
+      "pattern": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders.dlq",
+      "matches": false,
+      "note": "resource ids match exactly, `orders` is not a prefix of `orders.dlq`"
+    },
+    {
+      "pattern": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders.dlq",
+      "target": "srn:sproutos:store:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:queue/orders",
+      "matches": false,
+      "note": "and the reverse is not a match either"
+    },
+    {
+      "pattern": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:databas/01912d40-0000-7000-8000-0000000000a1",
+      "target": "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+      "matches": false,
+      "note": "resource types match exactly"
+    },
+    {
+      "pattern": "srn:sproutos:*:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:*",
+      "target": "srn:sproutos:search:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:index/products",
+      "matches": true,
+      "note": "search indexes use slug ids"
+    },
+    {
+      "pattern": "srn:sproutos:search:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:index/products",
+      "target": "srn:sproutos:search:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:index/products-v2",
+      "matches": false,
+      "note": "slug ids match exactly"
+    },
+    {
+      "pattern": "srn:sproutos:search:*:index/products",
+      "target": "srn:sproutos:search:0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b:index/products",
+      "matches": true,
+      "note": "the same slug across any organization"
+    }
+  ],
+  "invalid": [
+    "",
+    "*",
+    "srn",
+    "srn:sproutos",
+    "srn:sproutos:db",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1:extra",
+    "aws:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:other:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "SRN:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:SPROUTOS:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos::01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db::database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:/",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1/backup",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1/",
+    "srn:sproutos:DB:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912D3F-8A2B-7C4D-9E1F-2A3B4C5D6E7F:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:Database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912D40-0000-7000-8000-0000000000A1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/prod-*",
+    "srn:sproutos:db*:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f*:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:*ase/01912d40-0000-7000-8000-0000000000a1",
+    " srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1 ",
+    "srn:sproutos:db :01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1\n",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:data base/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/id#1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/id%201",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/id/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database\\01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/café",
+    "srn:sproutos:équipe:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/01912d40-0000-7000-8000-0000000000a1",
+    "srn:sproutos:db:01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f:database/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "$comment": "Cross-language contract for SproutOS usage-event signing. The Rust crate (lib/rust/metering-proto) and the TypeScript ingest verifier MUST both reproduce, for every vector: `canonical` from `batch`, and `signature` = lowercase-hex HMAC-SHA256(key, utf8(canonical)) with key = hex-decoded `key_hex`. `canonical` is `<domain>\\n<json>`; quantities are the 16 lowercase hex digits of the IEEE-754 big-endian bit pattern.",
+  "domain": "sproutos.metering.v1",
+  "vectors": [
+    {
+      "name": "empty-batch",
+      "note": "A heartbeat carries no events and still signs; ingest must accept it.",
+      "key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "batch": {
+        "source": "metering-agent",
+        "events": []
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[],\"source\":\"metering-agent\"}",
+      "signature": "8f7b0e6b4a8db67cb45b8c66068577c8ef5b5bff405d22039b89de16061fb1d5"
+    },
+    {
+      "name": "single-event-no-project",
+      "note": "The minimal real event: no project, no attributes.",
+      "key_hex": "2b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfe",
+      "batch": {
+        "source": "metering-agent",
+        "events": [
+          {
+            "external_id": "metering-agent:pod-7:site_vcpu_second:1723459200",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_vcpu_second",
+            "quantity": 1.5,
+            "occurred_at": 1723459200000
+          }
+        ]
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{},\"dimension\":\"site_vcpu_second\",\"external_id\":\"metering-agent:pod-7:site_vcpu_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3ff8000000000000\"}],\"source\":\"metering-agent\"}",
+      "signature": "76edaf6d80732fe6d15acf030c4fb2dda2d6c8e4b5353f78260af49933d808ad"
+    },
+    {
+      "name": "unicode-attributes",
+      "note": "Attribute values are arbitrary UTF-8, including astral characters, control characters and the two characters JSON must escape.",
+      "key_hex": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "batch": {
+        "source": "search-proxy",
+        "events": [
+          {
+            "external_id": "search-proxy:idx-4:search_query:1723459260",
+            "organization_id": "0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b",
+            "project_id": "01912d41-0000-7000-8000-0000000000b1",
+            "dimension": "search_query",
+            "quantity": 42.0,
+            "occurred_at": 1723459260000,
+            "attributes": {
+              "index": "produits-café",
+              "query.locale": "ja-JP",
+              "note": "東京 ☕ 😀 — tab:\ttab, quote:\" backslash:\\ ctl:\u0001",
+              "region": "iad"
+            }
+          }
+        ]
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"index\":\"produits-café\",\"note\":\"東京 ☕ 😀 — tab:\\ttab, quote:\\\" backslash:\\\\ ctl:\\u0001\",\"query.locale\":\"ja-JP\",\"region\":\"iad\"},\"dimension\":\"search_query\",\"external_id\":\"search-proxy:idx-4:search_query:1723459260\",\"occurred_at\":1723459260000,\"organization_id\":\"0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"4045000000000000\"}],\"source\":\"search-proxy\"}",
+      "signature": "d4593973c9914389a2981921973b53b6b474e604ad9fd4dd5c95b88d50fdb5d7"
+    },
+    {
+      "name": "multi-event-unordered-attributes",
+      "note": "Attribute keys are written out of order here on purpose: the canonical form sorts them, so an implementation that preserves insertion order produces a different signature and fails.",
+      "key_hex": "deadbeefcafef00dfeedfacedeadbeefdeadbeefcafef00dfeedfacedeadbeef",
+      "batch": {
+        "source": "pg-proxy",
+        "events": [
+          {
+            "external_id": "pg-proxy:db-1:db_compute_second:1723459200",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "project_id": "01912d41-0000-7000-8000-0000000000b1",
+            "dimension": "db_compute_second",
+            "quantity": 0.25,
+            "occurred_at": 1723459200000,
+            "attributes": {
+              "zone": "use1-az2",
+              "database": "main",
+              "branch": "prod",
+              "a.very.long.attribute.key": "1"
+            }
+          },
+          {
+            "external_id": "pg-proxy:db-1:db_connection_second:1723459200",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "project_id": "01912d41-0000-7000-8000-0000000000b1",
+            "dimension": "db_connection_second",
+            "quantity": 30.0,
+            "occurred_at": 1723459200000,
+            "attributes": {
+              "database": "main",
+              "branch": "prod"
+            }
+          },
+          {
+            "external_id": "pg-proxy:db-1:db_storage_gib_second:1723459200",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "db_storage_gib_second",
+            "quantity": 0.0078125,
+            "occurred_at": 1723459200000,
+            "attributes": {
+              "database": "main"
+            }
+          }
+        ]
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"a.very.long.attribute.key\":\"1\",\"branch\":\"prod\",\"database\":\"main\",\"zone\":\"use1-az2\"},\"dimension\":\"db_compute_second\",\"external_id\":\"pg-proxy:db-1:db_compute_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"3fd0000000000000\"},{\"attributes\":{\"branch\":\"prod\",\"database\":\"main\"},\"dimension\":\"db_connection_second\",\"external_id\":\"pg-proxy:db-1:db_connection_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"403e000000000000\"},{\"attributes\":{\"database\":\"main\"},\"dimension\":\"db_storage_gib_second\",\"external_id\":\"pg-proxy:db-1:db_storage_gib_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3f80000000000000\"}],\"source\":\"pg-proxy\"}",
+      "signature": "978c9ef0c76117e81f1a492768306836d6b3f7814524afd52db5506063d0c080"
+    },
+    {
+      "name": "float-edge-cases",
+      "note": "Quantities whose shortest-decimal spelling differs between Rust and JavaScript, or that a toFixed()-style canonicalization would round together. Signing the IEEE-754 bits makes all of them unambiguous.",
+      "key_hex": "2b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfe",
+      "batch": {
+        "source": "metering-agent",
+        "events": [
+          {
+            "external_id": "edge:0",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_egress_byte",
+            "quantity": 1e21,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:1",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_gib_second",
+            "quantity": 1e-7,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:2",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_gib_second",
+            "quantity": 0.0078125,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:3",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_gib_second",
+            "quantity": 0.1,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:4",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_gib_second",
+            "quantity": 0.30000000000000004,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:5",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_request",
+            "quantity": 0.0,
+            "occurred_at": 1723459200000
+          },
+          {
+            "external_id": "edge:6",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "dimension": "site_request",
+            "quantity": 9007199254740992.0,
+            "occurred_at": 1723459200000
+          }
+        ]
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{},\"dimension\":\"site_egress_byte\",\"external_id\":\"edge:0\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"444b1ae4d6e2ef50\"},{\"attributes\":{},\"dimension\":\"site_gib_second\",\"external_id\":\"edge:1\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3e7ad7f29abcaf48\"},{\"attributes\":{},\"dimension\":\"site_gib_second\",\"external_id\":\"edge:2\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3f80000000000000\"},{\"attributes\":{},\"dimension\":\"site_gib_second\",\"external_id\":\"edge:3\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3fb999999999999a\"},{\"attributes\":{},\"dimension\":\"site_gib_second\",\"external_id\":\"edge:4\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3fd3333333333334\"},{\"attributes\":{},\"dimension\":\"site_request\",\"external_id\":\"edge:5\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"0000000000000000\"},{\"attributes\":{},\"dimension\":\"site_request\",\"external_id\":\"edge:6\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"4340000000000000\"}],\"source\":\"metering-agent\"}",
+      "signature": "a173b18ef6813378e31399b1f69b4a4b465ea5a5f291fe3c97f525d422f6d4b6"
+    }
+  ]
+}

@@ -7,3 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hex = { workspace = true }
+hmac = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
