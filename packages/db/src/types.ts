@@ -712,6 +712,28 @@ export interface Region {
   updatedAt: Generated<Timestamp>
 }
 
+export interface RepoAnalysis {
+  commitSha: string | null
+  confidence: number | null
+  costMicroUsd: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  error: string | null
+  finishedAt: Timestamp | null
+  id: string
+  manifest: Json | null
+  organizationId: string
+  projectId: string | null
+  ref: string
+  requestedByUserId: string | null
+  startedAt: Timestamp | null
+  status: Generated<string>
+  storeListingId: string | null
+  updatedAt: Generated<Timestamp>
+  upstreamHost: Generated<string>
+  upstreamOwner: string
+  upstreamRepo: string
+}
+
 export interface Repository {
   createdAt: Generated<Timestamp>
   defaultBranch: Generated<string>
@@ -1162,6 +1184,7 @@ export interface DB {
   projectUpdateSuggestion: ProjectUpdateSuggestion
   refund: Refund
   region: Region
+  repoAnalysis: RepoAnalysis
   repository: Repository
   role: Role
   roleStatement: RoleStatement

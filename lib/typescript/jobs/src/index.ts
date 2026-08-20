@@ -1,3 +1,4 @@
+export { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 export {
   decideUpkeepAction,
   type UpkeepAction,

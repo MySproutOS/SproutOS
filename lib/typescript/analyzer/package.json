@@ -1,8 +1,8 @@
 {
-  "name": "@lib/jobs",
+  "name": "@lib/analyzer",
   "version": "1.0.0",
   "private": true,
-  "description": "One background job runner: Postgres, SKIP LOCKED, leases, and a dead letter.",
+  "description": "Read a repository and say what it needs to run here.",
   "license": "BSD-3-Clause",
   "type": "module",
   "sideEffects": false,
@@ -11,9 +11,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@lib/analyzer": "workspace:*",
-    "@lib/billing": "workspace:*",
-    "@lib/dao": "workspace:*",
+    "@lib/agent": "workspace:*",
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",
     "uuid": "catalog:"
