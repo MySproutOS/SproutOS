@@ -185,6 +185,42 @@ describe.skipIf(!reachable)("metering ingest", () => {
     expect(response.status).toBe(400)
   })
 
+  it("drops an event for an organization that does not exist, without a 500", async () => {
+    // A pod label can name an organization that has since been deleted. Inserting anyway violates
+    // the foreign key and returns a 500, which the agent retries forever — so one stale label
+    // stalls that node's whole usage stream behind a batch that can never succeed. Found with a
+    // real batch from a real node.
+    const batch = batchOf([{ organizationId: v7() }])
+
+    const response = await post(batch)
+
+    expect(response.status).toBe(202)
+    expect(response.json.accepted).toBe(0)
+    expect(response.json.unknownOrganizations).toBe(1)
+  })
+
+  it("keeps an event whose project does not exist, and nulls the project", async () => {
+    // Different remedy on purpose. No organization means nobody to bill. An unknown *project* means
+    // the organization is real and genuinely used the resource, so dropping the event would lose
+    // revenue for work that was done — only the sub-attribution is unverifiable.
+    const batch = batchOf([{ projectId: v7() }])
+
+    const response = await post(batch)
+
+    expect(response.status).toBe(202)
+    expect(response.json.accepted).toBe(1)
+    expect(response.json.unknownProjects).toBe(1)
+
+    const [stored] = await db
+      .selectFrom("usageEvent")
+      .select(["projectId", "organizationId"])
+      .where("externalId", "=", batch.events[0].externalId)
+      .execute()
+
+    expect(stored?.projectId).toBeNull()
+    expect(stored?.organizationId).toBe(organizationId)
+  })
+
   it("signs over a canonical form, not the bytes on the wire", async () => {
     // Reordering the JSON keys changes the bytes and not the canonical form, so the signature still
     // verifies. This is what makes the contract survive a proxy that re-serialises.

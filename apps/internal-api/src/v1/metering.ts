@@ -73,15 +73,69 @@ const app = new Hono().post(
       return throwUnauthenticated(c, "Invalid signature")
     }
 
+    // Which organizations actually exist.
+    //
+    // A pod's labels can name an organization that has since been deleted, or a label can simply be
+    // wrong. Inserting anyway violates `usage_event_organization_id_fkey` and returns a 500 — which
+    // the agent retries forever, so one stale pod label stalls that node's entire usage stream
+    // behind a batch that can never succeed. Observed exactly that way with a real batch from a real
+    // node.
+    //
+    // Dropped rather than rejected: the rest of the batch is good, and usage for an organization
+    // that no longer exists cannot be billed to anybody in any case.
+    const named = [...new Set(parsed.batch.events.map((event) => event.organizationId))]
+    const known = new Set(
+      (
+        await db
+          .selectFrom("organization")
+          .select("id")
+          .where("id", "in", named)
+          .where("deletedAt", "is", null)
+          .execute()
+      ).map((row) => row.id),
+    )
+
+    // And which projects. A project label can be stale for the same reasons, and the same insert
+    // fails on `usage_event_project_id_fkey` instead.
+    //
+    // The remedy is different, though, and the difference is the point. An unknown *organization*
+    // means there is nobody to bill, so the event is dropped. An unknown *project* means the
+    // organization is real and genuinely consumed the resource — only the sub-attribution is
+    // unverifiable. Dropping that event would lose revenue for work that was actually done, so the
+    // event is kept and `project_id` is nulled, which the column already allows for standalone
+    // services that belong to no project.
+    const namedProjects = [
+      ...new Set(
+        parsed.batch.events
+          .map((event) => event.projectId)
+          .filter((id): id is string => id !== null),
+      ),
+    ]
+    const knownProjects =
+      namedProjects.length === 0
+        ? new Set<string>()
+        : new Set(
+            (
+              await db
+                .selectFrom("project")
+                .select("id")
+                .where("id", "in", namedProjects)
+                .where("deletedAt", "is", null)
+                .execute()
+            ).map((row) => row.id),
+          )
+
     const now = Date.now()
     const rows = parsed.batch.events
+      .filter((event) => known.has(event.organizationId))
       // A batch buffered through a long outage is still worth having; one dated next year is a
       // clock that is wrong, and accepting it would put usage in a partition nobody reads.
       .filter((event) => Math.abs(now - event.occurredAt) <= MAX_SKEW_MS)
       .map((event) => ({
         id: v7(),
         organizationId: event.organizationId,
-        projectId: event.projectId,
+        projectId:
+          event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null,
         // The agent meters pods; every event it sends is a site's compute.
         resourceType: "site",
         dimension: event.dimension,
@@ -105,7 +159,15 @@ const app = new Hono().post(
         .execute()
     }
 
-    return c.json({ accepted: rows.length, received: parsed.batch.events.length }, 202)
+    return c.json(
+      {
+        accepted: rows.length,
+        received: parsed.batch.events.length,
+        unknownOrganizations: named.filter((id) => !known.has(id)).length,
+        unknownProjects: namedProjects.filter((id) => !knownProjects.has(id)).length,
+      },
+      202,
+    )
   },
 )
 

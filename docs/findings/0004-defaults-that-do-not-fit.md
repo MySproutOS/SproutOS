@@ -87,3 +87,24 @@ setup, resolves to a private address.** The build then fails minutes in with an 
 reads like a flaky network. Observed exactly that way against a local registry on `172.30.0.3`.
 
 `BUILD_REGISTRY_CIDR` is `0.0.0.0/0` for public ECR, where the rule costs nothing.
+
+## A foreign key violation is a 500, and a 500 retries forever
+
+Not an upstream default — one of ours, and it belongs here because it has the same shape: correct
+code, valid data, and a failure that compounds instead of surfacing.
+
+A pod label can name an organization or a project that has since been deleted. Inserting the usage
+anyway violates `usage_event_organization_id_fkey`, the route answers 500, and **the agent retries
+that batch forever** — so one stale label stalls a whole node's usage stream behind a batch that can
+never succeed. Found by posting a real batch from a real node, not by any test, because every test
+seeded a real organization first.
+
+The two cases need different remedies, and the difference is the interesting part:
+
+- **Unknown organization: drop the event.** There is nobody to bill.
+- **Unknown project: keep the event, null the project.** The organization is real and genuinely
+  consumed the resource; only the sub-attribution is unverifiable. Dropping it would lose revenue for
+  work that was actually done.
+
+Both are counted in the response, because a node steadily submitting usage for something that does
+not exist is a stale label and nothing else would say so.
