@@ -73,6 +73,9 @@ export const ACTIONS = [
   "cache:read",
   "cache:write",
   "observability:logs:read",
+  // Rotating the ingest key is not a read: it invalidates the old one, so every exporter a project
+  // has deployed stops sending until it is redeployed with the new one.
+  "observability:stream:manage",
 
   "store:fork",
   "store:listing:publish",

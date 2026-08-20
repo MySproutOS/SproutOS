@@ -19,6 +19,33 @@ services:
     volumes:
       - valkey:/data
 
+  # Where logs, traces and metrics land (TASK 34).
+  #
+  # Not Postgres. A log store is append-mostly, queried by time range and by a handful of
+  # low-cardinality columns, and retained for days rather than forever — which is the shape a
+  # columnar store with a TTL is for. The same volume in Postgres would be a table nobody can
+  # vacuum and an index that does not fit in memory.
+  clickhouse:
+    container_name: sproutos_clickhouse
+    image: clickhouse/clickhouse-server:25.8
+    ports:
+      - "28123:8123"
+      - "29000:9000"
+    environment:
+      - CLICKHOUSE_DB=observability
+      - CLICKHOUSE_USER=sproutos
+      - CLICKHOUSE_PASSWORD=sproutos
+      # Without this the `sproutos` user cannot create tables, and the schema bootstrap fails with
+      # a permission error that reads like a connection problem.
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    ulimits:
+      # ClickHouse wants a large fd limit and logs a warning that looks like a failure without it.
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+
   localstack:
     container_name: sproutos_localstack
     image: localstack/localstack:2026.07.5
@@ -37,6 +64,8 @@ volumes:
   postgres:
     driver: local
   valkey:
+    driver: local
+  clickhouse:
     driver: local
   localstack:
     driver: local

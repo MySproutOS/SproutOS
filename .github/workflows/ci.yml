@@ -54,9 +54,29 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # TASK 34's log store. Same reasoning: the tests that check one project cannot read another's
+      # logs are worth nothing if they quietly do not run.
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        ports:
+          - 28123:8123
+        env:
+          CLICKHOUSE_DB: observability
+          CLICKHOUSE_USER: sproutos
+          CLICKHOUSE_PASSWORD: sproutos
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       SERVICE_VALKEY_ADMIN_URL: redis://127.0.0.1:41023
+      CLICKHOUSE_URL: http://127.0.0.1:28123
+      CLICKHOUSE_DATABASE: observability
+      CLICKHOUSE_USER: sproutos
+      CLICKHOUSE_PASSWORD: sproutos
     steps:
       - uses: actions/checkout@v5
       - name: Install pnpm

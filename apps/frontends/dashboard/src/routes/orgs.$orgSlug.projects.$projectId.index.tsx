@@ -5,6 +5,7 @@ import {
   BotIcon,
   ExternalLinkIcon,
   KeyRoundIcon,
+  ScrollTextIcon,
   SlidersHorizontalIcon,
 } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
@@ -57,6 +58,16 @@ function ProjectDetail() {
         >
           <KeyRoundIcon />
           Variables
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          render={
+            <Link to="/orgs/$orgSlug/projects/$projectId/logs" params={{ orgSlug, projectId }} />
+          }
+        >
+          <ScrollTextIcon />
+          Logs
         </Button>
         <Button
           size="sm"

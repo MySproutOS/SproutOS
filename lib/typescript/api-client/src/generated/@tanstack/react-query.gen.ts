@@ -39,6 +39,8 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
+  getV1OrgsByOrgSlugProjectsByProjectIdLogs,
+  getV1OrgsByOrgSlugProjectsByProjectIdObservability,
   getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
@@ -74,6 +76,7 @@ import {
   postV1OrgsByOrgSlugProjects,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
+  postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
@@ -172,6 +175,12 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
@@ -269,6 +278,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
@@ -2635,6 +2647,141 @@ export const putV1OrgsByOrgSlugBillingAutoReloadMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await putV1OrgsByOrgSlugBillingAutoReload({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdLogs", options)
+
+/**
+ * Search a project's logs
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdLogsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdLogs({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdLogsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>> =>
+  createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdLogs", options, true)
+
+/**
+ * Search a project's logs
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsError,
+    InfiniteData<GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  before: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdLogs({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugProjectsByProjectIdLogsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdObservabilityQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdObservability", options)
+
+/**
+ * A project's ingest settings and usage
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdObservabilityOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdObservabilityQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdObservability({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdObservabilityQueryKey(options),
+  })
+
+/**
+ * Issue or rotate a project's OTLP ingest key
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey({
         ...options,
         ...fnOptions,
         throwOnError: true,
