@@ -5,12 +5,11 @@
   "description": "The credit ledger: append-only double-entry accounting, holds, and the Stripe top-up path.",
   "license": "BSD-3-Clause",
   "type": "module",
-  "exports": [
-    {
-      "import": "./src/index.ts",
-      "require": "./src/index.ts"
-    }
-  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
   "dependencies": {
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",

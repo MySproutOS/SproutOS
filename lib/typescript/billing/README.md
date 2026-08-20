@@ -98,3 +98,20 @@ that a hand-written unbalanced posting is refused even when it bypasses `post()`
 Its teardown uses `set local session_replication_role = 'replica'`, the same privileged purge path
 retention and GDPR deletion need. That cleanup is awkward is the point: the ledger is not supposed to
 be easy to erase.
+
+## Importing from a browser
+
+`@lib/billing` re-exports the ledger and the Stripe top-up path, so importing the barrel from a
+browser bundle pulls in Kysely, the Postgres client, and the Stripe Node SDK — the last of which
+constructs a module-level client. Best case that is a large bundle regression; worst case it is a
+build failure on Node builtins with Stripe client code shipped to browsers.
+
+**Import the module, not the barrel:**
+
+```ts
+import { formatMicroUsd } from "@lib/billing/money" // pure: zero imports
+import { post, spend } from "@lib/billing" // server only
+```
+
+`money.ts` has no imports at all, by design. It is the only part of this package a browser has any
+business loading, and keeping it dependency-free is what makes the subpath safe.
