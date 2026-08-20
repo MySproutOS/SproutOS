@@ -1799,6 +1799,296 @@ export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
 export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
   GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
 
+export type GetV1OrgsByOrgSlugAgentCredentialsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/credentials"
+}
+
+export type GetV1OrgsByOrgSlugAgentCredentialsErrors = {
+  /**
+   * Caller may not read credentials
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugAgentCredentialsError =
+  GetV1OrgsByOrgSlugAgentCredentialsErrors[keyof GetV1OrgsByOrgSlugAgentCredentialsErrors]
+
+export type GetV1OrgsByOrgSlugAgentCredentialsResponses = {
+  /**
+   * Credentials
+   */
+  200: {
+    data: Array<{
+      id: string
+      kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key"
+      label: string
+      lastFour: string | null
+      baseUrl: string | null
+      expiresAt: Date | null
+      lastVerifiedAt: Date | null
+      revokedAt: Date | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugAgentCredentialsResponse =
+  GetV1OrgsByOrgSlugAgentCredentialsResponses[keyof GetV1OrgsByOrgSlugAgentCredentialsResponses]
+
+export type PostV1OrgsByOrgSlugAgentCredentialsData = {
+  body?: {
+    kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key"
+    label: string
+    secret: string
+    baseUrl?: string | null
+    expiresAt?: Date | null
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/credentials"
+}
+
+export type PostV1OrgsByOrgSlugAgentCredentialsErrors = {
+  /**
+   * Label already used
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not write credentials
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugAgentCredentialsError =
+  PostV1OrgsByOrgSlugAgentCredentialsErrors[keyof PostV1OrgsByOrgSlugAgentCredentialsErrors]
+
+export type PostV1OrgsByOrgSlugAgentCredentialsResponses = {
+  /**
+   * Stored
+   */
+  201: {
+    data: Array<{
+      id: string
+      kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key"
+      label: string
+      lastFour: string | null
+      baseUrl: string | null
+      expiresAt: Date | null
+      lastVerifiedAt: Date | null
+      revokedAt: Date | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type PostV1OrgsByOrgSlugAgentCredentialsResponse =
+  PostV1OrgsByOrgSlugAgentCredentialsResponses[keyof PostV1OrgsByOrgSlugAgentCredentialsResponses]
+
+export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    credentialId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/credentials/{credentialId}"
+}
+
+export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors = {
+  /**
+   * Caller may not write credentials
+   */
+  403: ErrorResponseT
+  /**
+   * No such credential
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdError =
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors[keyof DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors]
+
+export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses = {
+  /**
+   * Revoked
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse =
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses[keyof DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses]
+
+export type GetV1OrgsByOrgSlugAgentConfigData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/config"
+}
+
+export type GetV1OrgsByOrgSlugAgentConfigErrors = {
+  /**
+   * Caller may not read credentials
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugAgentConfigError =
+  GetV1OrgsByOrgSlugAgentConfigErrors[keyof GetV1OrgsByOrgSlugAgentConfigErrors]
+
+export type GetV1OrgsByOrgSlugAgentConfigResponses = {
+  /**
+   * Configuration
+   */
+  200: {
+    agentCredentialId: string | null
+    useSproutosCredits: boolean
+    model: string | null
+    maxBudgetMicroUsd: string | null
+    permissionMode: "default" | "plan" | "accept_edits" | "bypass_permissions"
+    effectiveBilling: "byo" | "platform" | "none"
+  }
+}
+
+export type GetV1OrgsByOrgSlugAgentConfigResponse =
+  GetV1OrgsByOrgSlugAgentConfigResponses[keyof GetV1OrgsByOrgSlugAgentConfigResponses]
+
+export type PutV1OrgsByOrgSlugAgentConfigData = {
+  body?: {
+    agentCredentialId?: string | null
+    useSproutosCredits?: boolean
+    model?: string | null
+    maxBudgetMicroUsd?: string | null
+    permissionMode?: "default" | "plan" | "accept_edits" | "bypass_permissions"
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/config"
+}
+
+export type PutV1OrgsByOrgSlugAgentConfigErrors = {
+  /**
+   * Credential does not belong to this organization
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not write credentials
+   */
+  403: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugAgentConfigError =
+  PutV1OrgsByOrgSlugAgentConfigErrors[keyof PutV1OrgsByOrgSlugAgentConfigErrors]
+
+export type PutV1OrgsByOrgSlugAgentConfigResponses = {
+  /**
+   * Saved
+   */
+  200: {
+    agentCredentialId: string | null
+    useSproutosCredits: boolean
+    model: string | null
+    maxBudgetMicroUsd: string | null
+    permissionMode: "default" | "plan" | "accept_edits" | "bypass_permissions"
+    effectiveBilling: "byo" | "platform" | "none"
+  }
+}
+
+export type PutV1OrgsByOrgSlugAgentConfigResponse =
+  PutV1OrgsByOrgSlugAgentConfigResponses[keyof PutV1OrgsByOrgSlugAgentConfigResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses = {
+  /**
+   * Sessions
+   */
+  200: {
+    data: Array<{
+      id: string
+      title: string | null
+      status: string
+      createdAt: Date
+      updatedAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData = {
+  body?: {
+    title?: string | null
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors = {
+  /**
+   * Caller lacks sandbox:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses = {
+  /**
+   * Session
+   */
+  201: {
+    id: string
+    title: string | null
+    status: string
+    createdAt: Date
+    updatedAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses]
+
 export type GetV1OrgsByOrgSlugBillingBalanceData = {
   body?: never
   path: {

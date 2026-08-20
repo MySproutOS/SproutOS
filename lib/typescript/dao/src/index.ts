@@ -39,6 +39,7 @@ import {
   type SystemRoleStatement,
 } from "./role/systemRoles"
 import { type AgentConfigUpsert, crudAgentConfig } from "./agentConfig/crud"
+import { type AgentEventRow, crudAgentSession, fetchAgentSession } from "./agentSession/crud"
 import { fetchAgentConfig } from "./agentConfig/fetch"
 import { type CreateAgentCredential, crudAgentCredential } from "./agentCredential/crud"
 import {
@@ -102,6 +103,7 @@ export {
   ADMIN_ROLE_NAME,
   AgentConfigUpsert,
   AgentCredentialKind,
+  AgentEventRow,
   allocateOrganizationSlug,
   allocateProjectSlug,
   AuditContext,
@@ -112,6 +114,7 @@ export {
   CreateAgentCredential,
   crudAgentConfig,
   crudAgentCredential,
+  crudAgentSession,
   crudAccount,
   crudAuditLog,
   crudBackgroundJob,
@@ -135,6 +138,7 @@ export {
   EnvVarMetadataRow,
   fetchAgentConfig,
   fetchAgentCredential,
+  fetchAgentSession,
   fetchBackgroundJob,
   fetchGithubInstallation,
   fetchMemberPermission,

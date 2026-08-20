@@ -3,6 +3,9 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from "./client"
 import { client } from "./client.gen"
 import type {
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
   DeleteV1OrgsByOrgSlugData,
   DeleteV1OrgsByOrgSlugErrors,
   DeleteV1OrgsByOrgSlugInvitesByInviteIdData,
@@ -29,6 +32,12 @@ import type {
   DeleteV1UserMeDeleteResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
+  GetV1OrgsByOrgSlugAgentConfigData,
+  GetV1OrgsByOrgSlugAgentConfigErrors,
+  GetV1OrgsByOrgSlugAgentConfigResponses,
+  GetV1OrgsByOrgSlugAgentCredentialsData,
+  GetV1OrgsByOrgSlugAgentCredentialsErrors,
+  GetV1OrgsByOrgSlugAgentCredentialsResponses,
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceErrors,
   GetV1OrgsByOrgSlugBillingBalanceResponses,
@@ -49,6 +58,9 @@ import type {
   GetV1OrgsByOrgSlugMembersData,
   GetV1OrgsByOrgSlugMembersErrors,
   GetV1OrgsByOrgSlugMembersResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
@@ -112,12 +124,18 @@ import type {
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptErrors,
   PostV1InvitesAcceptResponses,
+  PostV1OrgsByOrgSlugAgentCredentialsData,
+  PostV1OrgsByOrgSlugAgentCredentialsErrors,
+  PostV1OrgsByOrgSlugAgentCredentialsResponses,
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupErrors,
   PostV1OrgsByOrgSlugBillingTopupResponses,
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesErrors,
   PostV1OrgsByOrgSlugInvitesResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
@@ -154,6 +172,9 @@ import type {
   PostV1WebhooksStripeData,
   PostV1WebhooksStripeErrors,
   PostV1WebhooksStripeResponses,
+  PutV1OrgsByOrgSlugAgentConfigData,
+  PutV1OrgsByOrgSlugAgentConfigErrors,
+  PutV1OrgsByOrgSlugAgentConfigResponses,
   PutV1OrgsByOrgSlugBillingAutoReloadData,
   PutV1OrgsByOrgSlugBillingAutoReloadErrors,
   PutV1OrgsByOrgSlugBillingAutoReloadResponses,
@@ -821,6 +842,145 @@ export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolea
     GetV1OrgsByOrgSlugGithubRepositoriesErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/github/repositories", ...options })
+
+/**
+ * Lists the organization's model credentials, without their secrets
+ */
+export const getV1OrgsByOrgSlugAgentCredentials = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugAgentCredentialsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugAgentCredentialsResponses,
+  GetV1OrgsByOrgSlugAgentCredentialsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugAgentCredentialsResponses,
+    GetV1OrgsByOrgSlugAgentCredentialsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/agent/credentials", ...options })
+
+/**
+ * Stores a model credential, encrypted, and returns everything but the secret
+ */
+export const postV1OrgsByOrgSlugAgentCredentials = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugAgentCredentialsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugAgentCredentialsResponses,
+  PostV1OrgsByOrgSlugAgentCredentialsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugAgentCredentialsResponses,
+    PostV1OrgsByOrgSlugAgentCredentialsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/agent/credentials",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Revokes a credential. Runs configured to use it stop rather than fall back
+ */
+export const deleteV1OrgsByOrgSlugAgentCredentialsByCredentialId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
+  DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
+    DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/agent/credentials/{credentialId}", ...options })
+
+/**
+ * Reads the organization's agent configuration and what a run would do now
+ */
+export const getV1OrgsByOrgSlugAgentConfig = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugAgentConfigData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugAgentConfigResponses,
+  GetV1OrgsByOrgSlugAgentConfigErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugAgentConfigResponses,
+    GetV1OrgsByOrgSlugAgentConfigErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/agent/config", ...options })
+
+/**
+ * Saves the organization's agent configuration
+ */
+export const putV1OrgsByOrgSlugAgentConfig = <ThrowOnError extends boolean = false>(
+  options: Options<PutV1OrgsByOrgSlugAgentConfigData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugAgentConfigResponses,
+  PutV1OrgsByOrgSlugAgentConfigErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugAgentConfigResponses,
+    PutV1OrgsByOrgSlugAgentConfigErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/agent/config",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists a project's agent chat sessions
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions", ...options })
+
+/**
+ * Starts an agent chat session on a project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
 
 /**
  * Reads the organization's spendable credit balance

@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { RegExpRouter } from "hono/router/reg-exp-router"
 import agent from "./agent"
+import agentChat from "./agent-chat"
 import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
@@ -25,6 +26,7 @@ const app = new Hono({
   .route("/orgs", projects)
   .route("/orgs", githubRepos)
   .route("/orgs", agent)
+  .route("/orgs", agentChat)
   .route("/orgs/:orgSlug/billing", billing)
   // The catalogue itself is public (TASK 4); only moderation is org-scoped, and it is mounted
   // under /orgs so the organization whose grants apply is named in the path rather than inferred
