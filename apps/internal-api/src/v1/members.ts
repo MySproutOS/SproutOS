@@ -9,6 +9,7 @@ import {
   fetchOrganizationMember,
   fetchRole,
   OWNER_ROLE_NAME,
+  provisionOrganization,
 } from "@lib/dao"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -17,10 +18,10 @@ import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver, validator } from "hono-typebox-openapi/typebox"
 import { authMiddleware } from "../middleware"
-import { paramResource, requirePermission } from "../rbac"
+import { paramResource, requireMembership, requirePermission } from "../rbac"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { ErrorCode } from "../utils/errors.enum"
-import { throwBadRequest, throwForbidden, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwError, throwForbidden, throwNotFound } from "../utils/http-exception"
 import { cursorPaginate, decodeCursor } from "../utils/pagination"
 import { auditContext } from "../utils/request-context"
 import {
@@ -31,6 +32,7 @@ import {
   inviteSchemaCreateResponse,
   inviteSchemaListResponse,
   memberIdParam,
+  memberSchemaLeaveResponse,
   memberSchemaListQuery,
   memberSchemaListResponse,
   memberSchemaRolesRequest,
@@ -196,6 +198,68 @@ const app = new Hono()
       })
 
       return c.json({})
+    },
+  )
+  // Deliberately `/:orgSlug/leave` rather than `/:orgSlug/members/me`. RegExpRouter cannot hold a
+  // static segment and a parameter at the same position for the same method, so a DELETE on
+  // `/members/me` collides with the DELETE on `/members/:memberId` and throws UnsupportedPathError
+  // at startup. The alternative — folding self-removal into the `:memberId` route — would mean
+  // demoting that route's `requirePermission("member:remove")` to a check buried in the handler,
+  // and the gate on the most security-sensitive routes in the product should stay visible in the
+  // route definition.
+  .delete(
+    "/:orgSlug/leave",
+    describeRoute({
+      description: "Leaves the organization",
+      responses: {
+        200: {
+          description: "Left the organization; the next organization to land on, if any",
+          content: { "application/json": { schema: resolver(memberSchemaLeaveResponse) } },
+        },
+        404: {
+          description: "No such organization, or the caller is not a member",
+          ...errorResponse,
+        },
+        409: {
+          description: "The owner, or a personal organization, cannot be left",
+          ...errorResponse,
+        },
+      },
+    }),
+    validator("param", memberSlugParam),
+    // No permission: any active member may always leave. See `requireMembership`.
+    requireMembership(),
+    async (c) => {
+      const user = c.var.user
+      const organization = c.var.organization
+
+      const result = await provisionOrganization(db).leaveOrganization({
+        organizationId: organization.id,
+        userId: user.id,
+        audit: auditContext(c),
+      })
+
+      if (!result.ok) {
+        if (result.reason === "gone" || result.reason === "not-a-member") {
+          return throwNotFound(c, "Organization not found")
+        }
+        if (result.reason === "personal") {
+          return throwError(
+            c,
+            409,
+            ErrorCode.Conflict,
+            "Your personal team cannot be left. Delete it instead.",
+          )
+        }
+        return throwError(
+          c,
+          409,
+          ErrorCode.Conflict,
+          "The owner cannot leave. Transfer ownership to another member, or delete the organization.",
+        )
+      }
+
+      return c.json({ nextOrganizationId: result.nextOrganizationId })
     },
   )
   .delete(

@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely, Selectable } from "kysely"
+import { type Kysely, type Selectable, sql } from "kysely"
 
 /**
  * Reads of `organization` filter `deleted_at IS NULL` by default, per ADR 0017. The table is
@@ -59,6 +59,35 @@ export function fetchOrganization(db: Kysely<DB>) {
     return await listForUserQuery(userId).execute()
   }
 
+  /**
+   * Where to send a user whose current organization just went away.
+   *
+   * Their personal organization wins, because it is the one that always exists and is the one
+   * `ensureDefaultOrganization` created for them; after that, the oldest team they still belong
+   * to. `null` means they belong to nothing, which is a real state for someone who left the only
+   * team they were ever invited to.
+   */
+  async function getFallbackForUser(
+    userId: string,
+    excludeOrganizationId: string | null = null,
+  ): Promise<{ id: string; slug: string } | null> {
+    const row = await db
+      .selectFrom("organization")
+      .innerJoin("organizationMember", "organizationMember.organizationId", "organization.id")
+      .where("organizationMember.userId", "=", userId)
+      .where("organizationMember.status", "=", "active")
+      .where("organization.deletedAt", "is", null)
+      .$if(excludeOrganizationId !== null, (qb) =>
+        qb.where("organization.id", "!=", excludeOrganizationId ?? ""),
+      )
+      .select(["organization.id as id", "organization.slug as slug"])
+      .orderBy(sql`organization.kind = 'personal'`, "desc")
+      .orderBy("organization.id", "asc")
+      .executeTakeFirst()
+
+    return row ?? null
+  }
+
   async function countOwnedBy(userId: string): Promise<number> {
     const row = await db
       .selectFrom("organization")
@@ -70,5 +99,12 @@ export function fetchOrganization(db: Kysely<DB>) {
     return row ? Number(row.count) : 0
   }
 
-  return { countOwnedBy, getBySlug, getOne, listForUser, listForUserQuery }
+  return {
+    countOwnedBy,
+    getBySlug,
+    getFallbackForUser,
+    getOne,
+    listForUser,
+    listForUserQuery,
+  }
 }
