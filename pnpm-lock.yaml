@@ -648,6 +648,12 @@ importers:
         specifier: 'catalog:'
         version: 14.0.2
 
+  lib/typescript/deploy:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
   lib/typescript/envelope:
     dependencies:
       '@aws-sdk/client-kms':

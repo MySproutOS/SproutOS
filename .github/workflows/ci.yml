@@ -277,6 +277,14 @@ jobs:
       # `kubeconform`, not `kubectl --dry-run=client`. kubectl downloads the OpenAPI schema from a
       # live cluster, so without one it validates nothing — it fails with `connection refused`,
       # which is not the same as passing. kubeconform carries the schemas.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Install kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
@@ -315,3 +323,21 @@ jobs:
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             deploy/
+
+      # The renderer's own tests run in the `build` job; this asserts the two halves agree — that
+      # every placeholder in a checked-in manifest is one the renderer knows how to fill. A
+      # placeholder added to a manifest and not to `PLACEHOLDERS` renders to itself, passes every
+      # schema check, and is applied to a cluster as a literal string.
+      - name: Every placeholder is one the renderer knows
+        run: |
+          cat > /tmp/outputs.json <<'JSON'
+          {
+            "aws_account_id": { "value": "123456789012" },
+            "aws_region": { "value": "us-east-1" },
+            "envelope_kms_key_arn": { "value": "arn:aws:kms:us-east-1:123456789012:key/x" },
+            "database_credentials_secret_arn": { "value": "arn:aws:secretsmanager:us-east-1:123456789012:secret:x" }
+          }
+          JSON
+          TAG=ci TENANT_NAMESPACE=ci TENANT_POSTGRES_HOST=a TENANT_VALKEY_HOST=b TENANT_OPENSEARCH_HOST=c \
+            pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
+          echo "rendered $(grep -c '^---' /tmp/rendered.yaml) document separators"
