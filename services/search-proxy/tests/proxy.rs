@@ -503,3 +503,58 @@ async fn a_wrong_secret_is_refused_the_same_way_as_an_unknown_tenant() {
 
     cleanup(&url, &[&tenant]).await;
 }
+
+/// A deleted organization's credentials must stop working.
+///
+/// Deleting an organization soft-deletes the row and nothing else — it does not revoke the service
+/// credentials underneath it. Without the organization join in `lib/rust/service-credentials`, a
+/// deleted customer's search and queue credentials went on working indefinitely, which is a
+/// customer who asked to be gone and was not.
+///
+/// Tested here rather than in both proxies because the lookup is shared: one test covers the code,
+/// and two would drift.
+#[tokio::test]
+async fn a_deleted_organizations_credentials_stop_working() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision(&url).await;
+
+    let (status, _) = as_tenant(address, &tenant, reqwest::Method::GET, "/_search", None).await;
+    assert!(
+        (200..300).contains(&status),
+        "the credential should work first: {status}"
+    );
+
+    let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+        .await
+        .expect("postgres");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+        .execute(
+            "update organization set deleted_at = now() where id = $1",
+            &[&tenant.identity.organization_id],
+        )
+        .await
+        .expect("soft-delete the organization");
+
+    let (after, body) = as_tenant(address, &tenant, reqwest::Method::GET, "/_search", None).await;
+    assert_eq!(
+        after, 401,
+        "a deleted organization still authenticated: {body}"
+    );
+
+    // Undo it so the shared cleanup can still reach the rows.
+    let _ = client
+        .execute(
+            "update organization set deleted_at = null where id = $1",
+            &[&tenant.identity.organization_id],
+        )
+        .await;
+    cleanup(&url, &[&tenant]).await;
+}

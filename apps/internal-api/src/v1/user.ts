@@ -2,12 +2,14 @@ import { fetchOrganization, fetchUserPreference } from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
+import { deleteCookie } from "hono/cookie"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver, validator } from "hono-typebox-openapi/typebox"
 import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
+import { cookieDomain } from "../utils/env"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwInternalServerError } from "../utils/http-exception"
+import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
 import {
   userSchemaPreferencesResponse,
   userSchemaProfileResponse,
@@ -200,9 +202,29 @@ const app = new Hono()
       const user = c.var.user
 
       const result = await crudUser(db).deleteUser(user.id)
-      if (!result) {
-        return throwInternalServerError(c, "Failed to delete user")
+
+      if (!result.ok && result.reason === "not_found") {
+        return throwNotFound(c, "User not found")
       }
+      if (!result.ok) {
+        /*
+          409, and it names the organizations.
+
+          Someone has to be responsible for a team's data and its bill. Orphaning them or cascading
+          the delete are both worse than saying so, and a message that does not say *which* teams
+          leaves the person to guess.
+        */
+        return throwConflict(
+          c,
+          `Transfer or delete these organizations first: ${result.organizations
+            .map((organization) => organization.slug)
+            .join(", ")}`,
+        )
+      }
+
+      // The cookie goes with the account. Without this the browser keeps a session token whose
+      // row was just deleted, and the next request is a confusing 401 rather than a sign-out.
+      deleteCookie(c, "session", { path: "/", domain: cookieDomain() })
 
       return c.json({}, 200)
     },
