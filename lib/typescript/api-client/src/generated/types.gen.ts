@@ -932,9 +932,13 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       storeListingId: string | null
       agentCredentialId: string | null
       createdAt: Date
+      updatedAt: Date
       repositoryOwnerLogin: string
       repositoryName: string
       repositoryProvenance: string
+      costMicroUsd: string
+      region: string | null
+      hasUpstreamUpdate: boolean
     }>
     nextCursor: string | null
   }
@@ -1024,9 +1028,13 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       storeListingId: string | null
       agentCredentialId: string | null
       createdAt: Date
+      updatedAt: Date
       repositoryOwnerLogin: string
       repositoryName: string
       repositoryProvenance: string
+      costMicroUsd: string
+      region: string | null
+      hasUpstreamUpdate: boolean
     }
     job: {
       id: string
@@ -1158,9 +1166,13 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     storeListingId: string | null
     agentCredentialId: string | null
     createdAt: Date
+    updatedAt: Date
     repositoryOwnerLogin: string
     repositoryName: string
     repositoryProvenance: string
+    costMicroUsd: string
+    region: string | null
+    hasUpstreamUpdate: boolean
     repository: {
       id: string
       githubRepoId: string | null
@@ -1242,9 +1254,13 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     storeListingId: string | null
     agentCredentialId: string | null
     createdAt: Date
+    updatedAt: Date
     repositoryOwnerLogin: string
     repositoryName: string
     repositoryProvenance: string
+    costMicroUsd: string
+    region: string | null
+    hasUpstreamUpdate: boolean
   }
 }
 

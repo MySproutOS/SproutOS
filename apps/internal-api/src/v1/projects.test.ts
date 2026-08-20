@@ -1,4 +1,5 @@
 /* oxlint-disable no-await-in-loop */
+import { overhead, rateTimesQuantity } from "@lib/billing/money"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -884,6 +885,248 @@ describe.skipIf(!reachable)("project routes", () => {
       await expect(
         sql`delete from project where id = ${forkedProjectId}`.execute(db),
       ).rejects.toThrow(/violates RESTRICT setting of foreign key constraint/)
+    })
+  })
+
+  describe("what the project list shows", () => {
+    /**
+     * A project of this suite's own, on a repository of its own.
+     *
+     * Not the shared `repositoryId` an earlier block sets: that one is created by a route that
+     * needs GitHub, which is not configured here, so depending on it makes these tests fail for a
+     * reason that has nothing to do with what they assert.
+     */
+    async function ownProject(name: string): Promise<{ id: string; repositoryId: string }> {
+      const repository = v7()
+      await db
+        .insertInto("repository")
+        .values({
+          id: repository,
+          organizationId: orgAId,
+          githubRepoId: BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000)),
+          ownerLogin: "acme-test",
+          name: `list-${repository}`,
+          provenance: "new",
+        })
+        .execute()
+
+      const created = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name,
+        source: { type: "repository", repositoryId: repository },
+      })
+      expect(created.status).toBe(201)
+      return { id: (created.json.project as Json).id as string, repositoryId: repository }
+    }
+    it("reports zero cost for a project with no metered usage", async () => {
+      const { id: projectId } = await ownProject("Unmetered")
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+
+      /*
+        Zero, not absent and not null. Nothing has been recorded against this project, which is a
+        real answer — a project that has not run has not cost anything. A null here would make the
+        UI show a dash where a customer expects a number.
+      */
+      expect(entry?.costMicroUsd).toBe("0")
+      // A string, not a number: micro-USD is bigint, and JSON has no integer wide enough to trust.
+      expect(typeof entry?.costMicroUsd).toBe("string")
+    })
+
+    it("rates metered usage against the price book", async () => {
+      const { id: projectId } = await ownProject("Metered")
+
+      const item = await db
+        .selectFrom("priceBookItem")
+        .innerJoin("priceBook", "priceBook.id", "priceBookItem.priceBookId")
+        .select(["priceBookItem.dimension", "priceBookItem.unitMicroUsd", "priceBook.overheadBps"])
+        .orderBy("priceBook.effectiveAt", "desc")
+        .executeTakeFirstOrThrow()
+
+      const rollupId = v7()
+      await db
+        .insertInto("usageRollup")
+        .values({
+          id: rollupId,
+          organizationId: orgAId,
+          projectId,
+          dimension: item.dimension,
+          bucket: "day",
+          bucketStart: new Date(),
+          quantity: "1000",
+        })
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+
+      const expectedUsage = rateTimesQuantity(String(item.unitMicroUsd), "1000")
+      const expected = expectedUsage + overhead(expectedUsage, item.overheadBps)
+      expect(entry?.costMicroUsd).toBe(expected.toString())
+
+      // The overhead is a real part of the number, not a rounding artefact — a statement has to be
+      // explicable as usage plus overhead.
+      expect(BigInt(entry?.costMicroUsd as string)).toBeGreaterThan(expectedUsage)
+
+      await db.deleteFrom("usageRollup").where("id", "=", rollupId).execute()
+    })
+
+    it("counts each rollup grain once", async () => {
+      /*
+        The same usage is rolled up at minute, hour *and* day grain. Summing across buckets would
+        bill everything three times, which is the kind of bug a customer notices before we do.
+      */
+      const { id: projectId } = await ownProject("Triple")
+
+      const item = await db
+        .selectFrom("priceBookItem")
+        .select(["dimension"])
+        .executeTakeFirstOrThrow()
+
+      const ids: string[] = []
+      for (const bucket of ["minute", "hour", "day"] as const) {
+        const id = v7()
+        ids.push(id)
+        await db
+          .insertInto("usageRollup")
+          .values({
+            id,
+            organizationId: orgAId,
+            projectId,
+            dimension: item.dimension,
+            bucket,
+            bucketStart: new Date(),
+            quantity: "100",
+          })
+          .execute()
+      }
+
+      const withAll = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const withAllCost = BigInt(
+        ((withAll.json.data as Array<Record<string, unknown>>).find(
+          (project) => project.id === projectId,
+        )?.costMicroUsd ?? "0") as string,
+      )
+
+      // Now the day grain alone, which is what the query is supposed to have used all along.
+      await db.deleteFrom("usageRollup").where("id", "in", ids.slice(0, 2)).execute()
+      const dayOnly = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const dayOnlyCost = BigInt(
+        ((dayOnly.json.data as Array<Record<string, unknown>>).find(
+          (project) => project.id === projectId,
+        )?.costMicroUsd ?? "0") as string,
+      )
+
+      expect(withAllCost).toBe(dayOnlyCost)
+      await db.deleteFrom("usageRollup").where("id", "in", ids).execute()
+    })
+
+    it("shows the region of the project's backend service, and null before it has one", async () => {
+      const { id: projectId } = await ownProject("Regioned")
+
+      const before = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const beforeEntry = (before.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      // A project has no region of its own — it is where its *data* lives that matters, and that is
+      // a property of a backend service it may not have yet.
+      expect(beforeEntry?.region).toBeNull()
+
+      const region = await db.selectFrom("region").select(["id", "code"]).executeTakeFirstOrThrow()
+      const serviceId = v7()
+      await db
+        .insertInto("backendService")
+        .values({
+          id: serviceId,
+          organizationId: orgAId,
+          projectId,
+          regionId: region.id,
+          name: "Queue",
+          kind: "valkey",
+          status: "active",
+        })
+        .execute()
+
+      const after = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const afterEntry = (after.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      expect(afterEntry?.region).toBe(region.code)
+
+      await db.deleteFrom("backendService").where("id", "=", serviceId).execute()
+    })
+
+    it("flags a fork only while its latest sync says it is behind", async () => {
+      const { id: projectId, repositoryId } = await ownProject("Behind")
+
+      const olderId = v7()
+      await db
+        .insertInto("upstreamSyncRun")
+        .values({
+          id: olderId,
+          repositoryId,
+          branch: "main",
+          behindBy: 7,
+          aheadBy: 0,
+          // a run that found the fork behind and opened a PR for it
+          outcome: "pr_opened",
+          createdAt: new Date(Date.now() - 60_000),
+        })
+        .execute()
+
+      const behind = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      expect(
+        (behind.json.data as Array<Record<string, unknown>>).find((entry) => entry.id === projectId)
+          ?.hasUpstreamUpdate,
+      ).toBe(true)
+
+      /*
+        A newer run saying "up to date" must turn the flag off.
+
+        Keyed on the *latest* run rather than on any run: a repository that was behind last week and
+        has since been merged is not behind now, and a flag that lit up on history would never go
+        out again.
+      */
+      const newerId = v7()
+      await db
+        .insertInto("upstreamSyncRun")
+        .values({
+          id: newerId,
+          repositoryId,
+          branch: "main",
+          behindBy: 0,
+          aheadBy: 0,
+          outcome: "up_to_date",
+        })
+        .execute()
+
+      const merged = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      expect(
+        (merged.json.data as Array<Record<string, unknown>>).find((entry) => entry.id === projectId)
+          ?.hasUpstreamUpdate,
+      ).toBe(false)
+
+      await db.deleteFrom("upstreamSyncRun").where("id", "in", [olderId, newerId]).execute()
+    })
+
+    it("shows a project the same cost on its own page as in the list", async () => {
+      // Two code paths that disagree about money is worse than either being wrong: a customer
+      // cannot tell which one to believe.
+      const { id: projectId } = await ownProject("Consistent")
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const fromList = (list.json.data as Array<Record<string, unknown>>).find(
+        (entry) => entry.id === projectId,
+      )
+      const detail = await call("GET", `/v1/orgs/${orgA}/projects/${projectId}`, alice)
+
+      expect(detail.json.costMicroUsd).toBe(fromList?.costMicroUsd)
+      expect(detail.json.region).toBe(fromList?.region)
+      expect(detail.json.hasUpstreamUpdate).toBe(fromList?.hasUpstreamUpdate)
     })
   })
 })

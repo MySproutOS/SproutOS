@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { getV1OrgsByOrgSlugProjectsOptions } from "@lib/api-client/generated/@tanstack/react-query.gen"
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import {
+  getV1OrgsByOrgSlugProjectsByProjectIdOptions,
+  getV1OrgsByOrgSlugProjectsOptions,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
 
@@ -20,7 +22,8 @@ export type Project = {
 
 export type ProjectDetail = Project & {
   description: string
-  url: string
+  /** Null until the project has deployed. A project with no deployment has no URL. */
+  url: string | null
   runtime: string
   autoUpdateForks: boolean
   createdLabel: string
@@ -33,111 +36,124 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   sleeping: "Sleeping",
 }
 
-const PROJECTS: Project[] = [
-  {
-    id: "prj_01j8recipebox",
-    name: "Recipe Box",
-    glyph: "🍲",
-    repo: "andrew-chen-wang/recipe-box",
-    status: "ready",
-    costMicros: 40_000n,
-    updatedLabel: "2 hours ago",
-    region: "us-east-1",
-    hasUpstreamUpdate: true,
-  },
-  {
-    id: "prj_01j8messagesearch",
-    name: "Message Search",
-    glyph: "💬",
-    repo: "andrew-chen-wang/imessage-rag",
-    status: "ready",
-    costMicros: 1_870_000n,
-    updatedLabel: "yesterday",
-    region: "us-east-1",
-    hasUpstreamUpdate: false,
-  },
-  {
-    id: "prj_01j8followups",
-    name: "Client Follow-ups",
-    glyph: "📮",
-    repo: "acme-co/csm-automations",
-    status: "building",
-    costMicros: 310_000n,
-    updatedLabel: "4 minutes ago",
-    region: "us-east-1",
-    hasUpstreamUpdate: false,
-  },
-  {
-    id: "prj_01j8weeklydigest",
-    name: "Weekly Digest",
-    glyph: "📊",
-    repo: "andrew-chen-wang/weekly-digest",
-    status: "sleeping",
-    costMicros: 0n,
-    updatedLabel: "12 days ago",
-    region: "eu-west-1",
-    hasUpstreamUpdate: false,
-  },
-]
+/**
+ * `project.state` is the database's word; `ProjectStatus` is the screen's.
+ *
+ * They are not the same vocabulary and should not be conflated: the table's CHECK allows states
+ * this list has no cell for, and a `Record` lookup on an unmapped one renders `undefined`. Anything
+ * unrecognised falls back to "building", which is the honest answer for a project the dashboard
+ * does not yet have a word for — it is doing something.
+ */
+const STATE_TO_STATUS: Record<string, ProjectStatus> = {
+  creating: "building",
+  provisioning: "building",
+  building: "building",
+  deploying: "building",
+  ready: "ready",
+  active: "ready",
+  sleeping: "sleeping",
+  suspended: "sleeping",
+  failed: "failed",
+  error: "failed",
+}
 
-/** The subset of a project the API actually returns today. */
-export type RealProject = {
-  id: string
-  name: string
-  slug: string
-  state: string
-  repo: string
+const RELATIVE = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" })
+
+/**
+ * "2 hours ago", from a timestamp.
+ *
+ * The generated types say `updatedAt: Date`, but this client has no `transformers.gen.ts` — every
+ * date arrives as an ISO string and the type is a lie. Coerced at the boundary, as `members.ts`
+ * does, or formatting throws `RangeError: Invalid time value`.
+ */
+export function relativeLabel(value: Date | string): string {
+  const elapsed = Date.now() - new Date(value).getTime()
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["second", 1000],
+    ["minute", 60_000],
+    ["hour", 3_600_000],
+    ["day", 86_400_000],
+    ["month", 2_592_000_000],
+    ["year", 31_536_000_000],
+  ]
+
+  let chosen: [Intl.RelativeTimeFormatUnit, number] = units[0]
+  for (const unit of units) {
+    if (elapsed >= unit[1]) chosen = unit
+  }
+  return RELATIVE.format(-Math.floor(elapsed / chosen[1]), chosen[0])
 }
 
 /**
- * The real project list.
+ * The organization's projects.
  *
- * Alongside `useProjects` rather than replacing it, deliberately. `GET /v1/orgs/:slug/projects`
- * has no `glyph`, no `costMicros`, no `region` and no `hasUpstreamUpdate` — those come from
- * metering and the region table and are not wired — so swapping the project *list screen* onto this
- * would quietly empty four of its columns. That screen's conversion is its own piece of work.
- *
- * Anything that only needs to know which projects exist should use this one, because the
- * placeholder's ids are not real and every link built from them leads nowhere.
+ * `costMicroUsd` arrives as a string and becomes a `bigint` here rather than a `Number`: it is
+ * money, and `@lib/billing` is explicit that money never touches a float. A project with no metered
+ * usage is genuinely `0n` — nothing has been recorded against it — rather than unknown.
  */
-export function useProjectList(orgSlug: string) {
+export function useProjects(orgSlug: string) {
   const query = useQuery(getV1OrgsByOrgSlugProjectsOptions({ path: { orgSlug } }))
+
   return {
     ...query,
-    data: query.data?.data.map((project): RealProject => ({
+    data: query.data?.data.map((project): Project => ({
       id: project.id,
       name: project.name,
-      slug: project.slug,
-      state: project.state,
+      /*
+          The first letter, not an emoji.
+
+          The design has a glyph per project, but nothing stores one and nothing lets a user pick
+          one — deriving an emoji from the id would be inventing a choice the customer never made.
+          The initial is the same treatment the team switcher uses, and it is honest.
+        */
+      glyph: (project.name.trim()[0] ?? "·").toUpperCase(),
       repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
+      status: STATE_TO_STATUS[project.state] ?? "building",
+      costMicros: BigInt(project.costMicroUsd),
+      updatedLabel: relativeLabel(project.updatedAt),
+      region: project.region ?? "—",
+      hasUpstreamUpdate: project.hasUpstreamUpdate,
     })),
   }
 }
 
 /**
- * PLACEHOLDER — swap for `getV1OrganizationByOrgSlugProjectOptions({ path: { orgSlug } })`.
+ * One project, in full.
  *
- * Append `?empty` to any project-list URL to render the TASK 5 empty state without
- * a database. That escape hatch goes away with the real endpoint.
+ * The list's fields plus what only the detail page needs. `url` is null until a deployment exists —
+ * a project that has never deployed has no URL, and inventing one would be a link that 404s.
  */
-export function useProjects(orgSlug: string, empty = false) {
-  return usePlaceholderQuery(
-    ["organizations", orgSlug, "projects", { empty }],
-    empty ? [] : PROJECTS,
-  )
-}
-
-/** PLACEHOLDER — swap for `getV1OrganizationByOrgSlugProjectByIdOptions(...)`. */
 export function useProject(orgSlug: string, projectId: string) {
-  const base = PROJECTS.find((project) => project.id === projectId) ?? PROJECTS[0]
-  const detail: ProjectDetail = {
-    ...base,
-    id: projectId,
-    description: "Forked from the store listing and deployed on the shared runtime.",
-    url: `https://${base.name.toLowerCase().replaceAll(" ", "-")}.sproutos.app`,
-    runtime: "node22",
-    autoUpdateForks: base.hasUpstreamUpdate,
-    createdLabel: "3 weeks ago",
+  const query = useQuery(
+    getV1OrgsByOrgSlugProjectsByProjectIdOptions({ path: { orgSlug, projectId } }),
+  )
+
+  const project = query.data
+  return {
+    ...query,
+    data:
+      project === undefined
+        ? undefined
+        : ({
+            id: project.id,
+            name: project.name,
+            glyph: (project.name.trim()[0] ?? "\u00b7").toUpperCase(),
+            repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
+            status: STATE_TO_STATUS[project.state] ?? "building",
+            costMicros: BigInt(project.costMicroUsd),
+            updatedLabel: relativeLabel(project.updatedAt),
+            region: project.region ?? "\u2014",
+            hasUpstreamUpdate: project.hasUpstreamUpdate,
+            /*
+              `state_reason` is what the provisioner wrote when it last changed state — an error, a
+              step name, or nothing. It is the only description the database has; the store
+              listing's blurb belongs to the listing, not to the fork.
+            */
+            description: project.stateReason ?? "",
+            url: null,
+            runtime: project.kind,
+            autoUpdateForks: project.autoUpdateEnabled,
+            createdLabel: relativeLabel(project.createdAt),
+          } satisfies ProjectDetail),
   }
-  return usePlaceholderQuery(["organizations", orgSlug, "projects", projectId], detail)
 }

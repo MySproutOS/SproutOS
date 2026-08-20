@@ -111,9 +111,22 @@ const projectEntry = Type.Object({
   storeListingId: Nullable(UUID7String),
   agentCredentialId: Nullable(UUID7String),
   createdAt: Type.String({ format: "date-time" }),
+  updatedAt: Type.String({ format: "date-time" }),
   repositoryOwnerLogin: Type.String(),
   repositoryName: Type.String(),
   repositoryProvenance: Type.String(),
+  /**
+   * Micro-USD, as a string.
+   *
+   * A string because it is `bigint` on the way out and JSON has no integer wide enough to be
+   * trusted with money — `Number` is exact only to 2^53, and a bill is not a place to find out
+   * where that stops mattering.
+   */
+  costMicroUsd: Type.String(),
+  /** Where the project's backend services live. Null until it has one. */
+  region: Nullable(Type.String()),
+  /** Whether the upstream this was forked from has moved ahead (TASK 17). */
+  hasUpstreamUpdate: Type.Boolean(),
 })
 
 export const projectSchemaEntryResponse = projectEntry

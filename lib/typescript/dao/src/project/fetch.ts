@@ -59,6 +59,7 @@ export function fetchProject(db: Kysely<DB>) {
         "project.storeListingId as storeListingId",
         "project.agentCredentialId as agentCredentialId",
         "project.createdAt as createdAt",
+        "project.updatedAt as updatedAt",
         "repository.ownerLogin as repositoryOwnerLogin",
         "repository.name as repositoryName",
         "repository.provenance as repositoryProvenance",

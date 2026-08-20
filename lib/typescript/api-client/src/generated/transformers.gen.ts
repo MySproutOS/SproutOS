@@ -108,6 +108,7 @@ export const getV1OrgsByOrgSlugProjectsResponseTransformer = async (
 ): Promise<GetV1OrgsByOrgSlugProjectsResponse> => {
   data.data = data.data.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
+    item.updatedAt = new Date(item.updatedAt)
     return item
   })
   return data
@@ -117,6 +118,7 @@ export const postV1OrgsByOrgSlugProjectsResponseTransformer = async (
   data: any,
 ): Promise<PostV1OrgsByOrgSlugProjectsResponse> => {
   data.project.createdAt = new Date(data.project.createdAt)
+  data.project.updatedAt = new Date(data.project.updatedAt)
   if (data.job.startedAt) {
     data.job.startedAt = new Date(data.job.startedAt)
   }
@@ -147,6 +149,7 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdResponse> => {
   data.createdAt = new Date(data.createdAt)
+  data.updatedAt = new Date(data.updatedAt)
   return data
 }
 
@@ -154,6 +157,7 @@ export const patchV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer = async 
   data: any,
 ): Promise<PatchV1OrgsByOrgSlugProjectsByProjectIdResponse> => {
   data.createdAt = new Date(data.createdAt)
+  data.updatedAt = new Date(data.updatedAt)
   return data
 }
 
