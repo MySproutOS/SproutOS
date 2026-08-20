@@ -20,6 +20,7 @@
   },
   "scripts": {},
   "dependencies": {
+    "@lib/srn": "workspace:*",
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",
     "uuid": "catalog:"

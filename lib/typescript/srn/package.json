@@ -1,0 +1,17 @@
+{
+  "name": "@lib/srn",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SproutOS Resource Names — the resource grammar every authorization decision is written in. Mirrors lib/rust/srn and passes the same fixture file.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

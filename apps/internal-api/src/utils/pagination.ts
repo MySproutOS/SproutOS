@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
+import { isValidPositiveInteger } from "@utils/numbers"
 import type { ComparisonOperatorExpression, SelectQueryBuilder } from "kysely"
-// import { isValidPositiveInteger } from "@utils/numbers"
 import { validate as validateUUID } from "uuid"
 
 export function isValidDate(date: any): boolean {
@@ -34,13 +34,11 @@ export function decodeCursor(cursor: string | null): DecodedCursor {
     } catch {
       throw new Error("Invalid cursor")
     }
-    if (!validateUUID(tokens.o)) {
+    // `o` is a row offset, not an id. Validating it as a UUID rejected every cursor this module
+    // itself produces, so no caller could ever reach page two.
+    if (!isValidPositiveInteger(tokens.o, true)) {
       throw new Error("Invalid offset")
     }
-    // In case you use a numerical primary key, here's the code
-    // if (!isValidPositiveInteger(tokens.o, true)) {
-    //   throw new Error("Invalid offset")
-    // }
     if (!tokens.p || !validateUUID(tokens.p)) {
       throw new Error("Invalid position")
     }
