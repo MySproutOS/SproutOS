@@ -44,9 +44,9 @@ exits.
 
 - **`internal-api`** — four bugs. `tsc -b` emits extensionless ESM imports Node cannot resolve, so
   the app is bundled with esbuild instead (`apps/internal-api/build.mjs`); esbuild's
-  `packages: "external"` externalised the *workspace* packages too, so Node resolved `@lib/dao` to
+  `packages: "external"` externalised the _workspace_ packages too, so Node resolved `@lib/dao` to
   TypeScript source; the bundle needed a `createRequire` banner for `node:https`; and the `CMD`
-  pointed at a module that only *exports* the Hono app. Nothing listened. `src/server.ts` is the
+  pointed at a module that only _exports_ the Hono app. Nothing listened. `src/server.ts` is the
   production entrypoint that had never been written.
 - **`website`** — three bugs. `output: "standalone"` was not set, so `apps/website/server.js` did
   not exist; the three `@fontsource-variable` packages were imported by the app but declared only by
@@ -59,6 +59,29 @@ exits.
 
 Verified for each: the container starts, serves or works, and runs as a non-root user.
 
+## Size
+
+| image          | size    |
+| -------------- | ------- |
+| `pg-proxy`     | 1.1 MiB |
+| `website`      | 318 MB  |
+| `internal-api` | 847 MB  |
+| `worker`       | 847 MB  |
+
+The two Node service images were **2.46 GB** until they stopped shipping the build stage's
+`node_modules`. The app is bundled, so the only thing `node_modules` still has to supply is the
+handful of non-workspace packages esbuild left external — everything else being copied was the
+monorepo's dev dependency graph: TypeScript, vitest, esbuild and three frontend toolchains, pulled
+onto every node on every deploy to run one bundled file. `pnpm deploy --prod --legacy` produces the
+runtime tree instead.
+
+Of the 847 MB that remain, 310 MB is the Claude Agent SDK's native `linux-arm64-musl` binary. That
+is the product, not waste. The rest is the Alpine base and the real production dependencies.
+
+`website` is smaller than either because Next's standalone output already does this — it traces
+what the server reaches and copies only that. See the `@swc/helpers` note above for where the
+tracing gets it wrong.
+
 `pg-proxy` has been built and run (1.1 MiB, uid 65534, exits on its own config error). The other
 three Rust images are the same file with a name substituted, which is a good reason to expect them
 to work and not the same as knowing.
@@ -69,5 +92,5 @@ to work and not the same as knowing.
 `apps/internal-api/src/health.ts`. A liveness probe that checked Postgres would restart every API
 pod during a database blip and crash-loop the fleet through its own recovery, so `/health` checks
 nothing but the process and `/ready` is where the database check lives. Both were verified against a
-refused connection *and* a blackholed one; the readiness timeout fires in 2 seconds rather than
+refused connection _and_ a blackholed one; the readiness timeout fires in 2 seconds rather than
 waiting out the OS TCP timeout.
