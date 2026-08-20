@@ -5,11 +5,32 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    # Only for the OIDC thumbprint the IRSA provider needs.
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
+
+  # Every resource, tagged, without each one remembering to. `local.tags` is still merged in
+  # explicitly where a `Name` is wanted, because default tags cannot be interpolated per resource.
+  default_tags {
+    tags = {
+      Project   = "SproutOS"
+      ManagedBy = "OpenTofu"
+    }
+  }
+}
+
+locals {
+  tags = {
+    Project   = "SproutOS"
+    ManagedBy = "OpenTofu"
+  }
 }
 
 data "aws_caller_identity" "current" {}
