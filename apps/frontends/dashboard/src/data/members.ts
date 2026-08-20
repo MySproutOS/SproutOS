@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugApiKeysByApiKeyIdMutation,
-  getV1AuthMeOptions,
+  getV1UserMePreferencesQueryKey,
+  getV1UserMeProfileOptions,
+  getV1UserMeProfileQueryKey,
+  patchV1UserMeProfileMutation,
   getV1OrgsByOrgSlugApiKeysOptions,
   getV1OrgsByOrgSlugApiKeysQueryKey,
   getV1OrgsByOrgSlugMembersOptions,
@@ -117,36 +120,47 @@ export function useRevokeApiKey(orgSlug: string) {
   })
 }
 
-/*
-  `user_preference` has no endpoint yet, so these two fields stay fixtures while
-  the identity beside them is real.
-*/
-const PLACEHOLDER_PREFERENCES = {
-  timezone: "America/New_York",
-  productEmails: true,
-} as const
-
 /**
- * REAL (identity) — `/v1/auth/me`, the one v1 route that already exists.
- * PLACEHOLDER (preferences) — `timezone` and `productEmails` come from
- * `user_preference`; swap in that endpoint and delete `PLACEHOLDER_PREFERENCES`.
+ * The caller's own profile.
  *
- * This is user-scoped, not org-scoped: ADR 0003 splits settings by resource
- * ownership, and a profile is owned by the person, not the team.
+ * User-scoped, not organization-scoped: ADR 0003 splits settings by resource ownership, and a
+ * profile belongs to the person rather than the team. There is no user id in the route — it acts on
+ * whoever is calling — which is what makes it safe without a permission check.
  */
 export function useUserProfile() {
-  const query = useQuery(getV1AuthMeOptions())
-  const user = query.data?.user ?? null
+  const query = useQuery(getV1UserMeProfileOptions())
 
   return {
     ...query,
     data:
-      user === null
+      query.data === undefined
         ? undefined
         : ({
-            name: user.name ?? user.email,
-            email: user.email,
-            ...PLACEHOLDER_PREFERENCES,
+            name: query.data.name,
+            email: query.data.email,
+            timezone: query.data.timezone,
+            productEmails: query.data.productEmails,
           } satisfies UserProfile),
   }
+}
+
+/**
+ * Saves the profile.
+ *
+ * A PATCH of only what changed, so two fields edited on different visits do not overwrite each
+ * other — and so a save on a form nobody touched is a no-op rather than a write.
+ */
+export function useUpdateProfile() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    ...patchV1UserMeProfileMutation(),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getV1UserMeProfileQueryKey() }),
+        // The sidebar and the landing redirect read this one; a stale copy would show the old
+        // preferences until the next full reload.
+        queryClient.invalidateQueries({ queryKey: getV1UserMePreferencesQueryKey() }),
+      ])
+    },
+  })
 }

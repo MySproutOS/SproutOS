@@ -77,7 +77,15 @@ function StoreListingDetail() {
                 <div className="flex flex-col gap-1">
                   <dt className="eyebrow text-[10px]">Estimated cost</dt>
                   <dd>
-                    <Money size="sm">{formatMicroUsd(data.estimatedMonthlyCostMicros)}</Money>
+                    {/*
+                      An em dash, not `$0.00`. Nobody has estimated what this costs to run, and a
+                      zero would read as "free".
+                    */}
+                    {data.estimatedMonthlyCostMicros === null ? (
+                      <span className="font-mono text-xs text-muted-foreground">{"\u2014"}</span>
+                    ) : (
+                      <Money size="sm">{formatMicroUsd(data.estimatedMonthlyCostMicros)}</Money>
+                    )}
                     <span className="ml-1 text-[11px] text-muted-foreground">/mo</span>
                   </dd>
                 </div>

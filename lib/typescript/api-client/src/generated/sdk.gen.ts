@@ -167,6 +167,8 @@ import type {
   GetV1StoreTagsResponses,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponses,
+  GetV1UserMeProfileData,
+  GetV1UserMeProfileResponses,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugErrors,
   PatchV1OrgsByOrgSlugProjectsByProjectIdData,
@@ -179,6 +181,9 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
+  PatchV1UserMeProfileData,
+  PatchV1UserMeProfileErrors,
+  PatchV1UserMeProfileResponses,
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
@@ -1827,6 +1832,36 @@ export const getV1UserMePreferences = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1UserMePreferencesResponses, unknown, ThrowOnError>({
     url: "/v1/user/me/preferences",
     ...options,
+  })
+
+/**
+ * The caller's identity and the preferences that belong to them
+ */
+export const getV1UserMeProfile = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1UserMeProfileData, ThrowOnError>,
+): RequestResult<GetV1UserMeProfileResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1UserMeProfileResponses, unknown, ThrowOnError>({
+    url: "/v1/user/me/profile",
+    ...options,
+  })
+
+/**
+ * Update the caller's name and preferences
+ */
+export const patchV1UserMeProfile = <ThrowOnError extends boolean = false>(
+  options?: Options<PatchV1UserMeProfileData, ThrowOnError>,
+): RequestResult<PatchV1UserMeProfileResponses, PatchV1UserMeProfileErrors, ThrowOnError> =>
+  (options?.client ?? client).patch<
+    PatchV1UserMeProfileResponses,
+    PatchV1UserMeProfileErrors,
+    ThrowOnError
+  >({
+    url: "/v1/user/me/profile",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })
 
 export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(

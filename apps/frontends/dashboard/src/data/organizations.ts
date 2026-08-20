@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import {
   getV1AuthMeOptions,
+  getV1UserMePreferencesOptions,
   getV1OrgsByOrgSlugOptions,
   getV1OrgsOptions,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -81,18 +82,20 @@ export function useOrganization(slug: string) {
 }
 
 /**
- * PLACEHOLDER (the choice, not the data) — `GET /v1/user/me/preferences` exists on
- * the API and returns `lastOrganizationSlug`, but it is **not in the generated
- * client**: the client predates it, and regenerating is not mine to run. Until it
- * is there, this returns the first organization from the real list, so a user with
- * several teams lands on whichever sorts first rather than the one they last used.
+ * The organization to land a user in.
  *
- * Swap to `getV1UserMePreferencesOptions()` and read `lastOrganizationSlug`.
+ * `user_preference.last_org_id`, resolved server-side — and the server falls back deterministically
+ * when it does not point at a live membership: the personal organization first, then the oldest
+ * team. The column is `ON DELETE SET NULL`, but nothing clears it when someone is merely *removed*
+ * from a team, so "the row says X" and "X is somewhere they can go" are different questions.
+ *
+ * Doing the fallback there rather than here means the redirect after login and any other caller
+ * agree about where "home" is.
  */
 export function useLastOrganizationSlug() {
-  const query = useOrganizations()
+  const query = useQuery(getV1UserMePreferencesOptions())
   return {
     ...query,
-    data: query.data?.[0]?.slug ?? null,
+    data: query.data?.lastOrganizationSlug ?? null,
   }
 }
