@@ -52,3 +52,18 @@ one exists, and the soil palette has no designed light counterpart to port.
 **Dark-only but keep the `.dark` class scaffolding** (the dashboard-shell design). Rejected: it
 preserves the appearance of theme support without the substance, and the first person to add a
 `dark:` utility will believe it works.
+
+## Amendment, 2026-08-20
+
+The original decision assumed `dark:` utilities would be inert in a dark-only theme. **They are not.**
+Tailwind v4 ships `dark` as a built-in `prefers-color-scheme` variant, so a `dark:` class resolves
+against the _reader's operating system_ rather than against our theme — `button.tsx` and
+`checkbox.tsx` were measurably rendering two different ways depending on who opened them.
+
+Two consequences, both applied:
+
+- `:root` declares `color-scheme: dark`, so the browser's own form controls and scrollbars match.
+- `dark:` utilities are banned outright. There is no light palette for them to switch to, and their
+  presence means a component's appearance depends on something we do not control.
+
+Found by loading the dashboard in a browser, not by reading the CSS.

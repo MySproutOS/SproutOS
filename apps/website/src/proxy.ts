@@ -14,8 +14,8 @@ type SharedRoute = { path: string; spa: "dashboard" | "admin" }
 /** Routes that serve Next.js for unauthenticated users, SPA for authenticated users.
  *  Paths use Next.js conventions: [param], [...catchAll], [[...optionalCatchAll]] */
 const SHARED_ROUTES: SharedRoute[] = [
-  { path: "/posting", spa: "dashboard" },
-  { path: "/posting/[id]", spa: "dashboard" },
+  { path: "/store", spa: "dashboard" },
+  { path: "/store/[slug]", spa: "dashboard" },
 ]
 
 /** Match a URL pathname against a route pattern.
