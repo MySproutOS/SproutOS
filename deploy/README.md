@@ -121,6 +121,11 @@ those fields by a template rather than being stored as one string somebody has t
 restarts and then stops working for all of them — a failure that arrives hours after its cause, all
 at once.
 
+Non-secret configuration lives in `platform/config.yaml` as ConfigMaps instead. Putting a hostname in
+Secrets Manager would mean a KMS decrypt and an API call to learn something printed in the OpenTofu
+outputs — and treating everything as secret is how the things that genuinely are stop getting the
+attention they need.
+
 ## `tenant/runtime-classes.yaml`
 
 Two Kata runtime classes, and the split is a constraint rather than a preference. **Kata with
@@ -143,11 +148,10 @@ today both classes reference a handler no node provides and every pod using them
   papered over with a placeholder Deployment that would look like an answer.
 - **The External Secrets operator itself.** `secrets/` declares what it should fetch; nothing
   installs the controller that would act on it, so those resources are currently inert too.
-- **The ConfigMaps** — `platform-config`, `tenant-valkey`, `tenant-opensearch`. Non-secret
-  configuration, so they belong in OpenTofu output or a plain manifest rather than Secrets Manager,
-  and neither exists yet.
-- **`tenant-valkey` and `tenant-opensearch` Secrets.** Only the Postgres administrative credential
-  has an `ExternalSecret`; the other two proxies read Secrets nothing creates.
+- **Substituting the placeholders.** `ACCOUNT`, `REGION`, `TAG`, `TENANT_NAMESPACE`, `KMS_KEY_ARN`
+  and the three tenant hostnames are literal strings in these files. A deploy pipeline fills them
+  from the OpenTofu outputs of the same name — and that pipeline does not exist, so applied as
+  written these resolve to nothing valid.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
 - **`kata-deploy` itself and the devmapper thin pools.** Phase 11. The runtime classes above name
