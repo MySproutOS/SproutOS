@@ -51,3 +51,12 @@ export {
   type RateLimit,
   userToken,
 } from "./types"
+export {
+  type CompareTarget,
+  compareWithUpstream,
+  positionFromComparison,
+  type RawComparison,
+  type SyncResult,
+  syncWithUpstream,
+  type UpstreamPosition,
+} from "./upstream"

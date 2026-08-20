@@ -27,3 +27,4 @@ export {
   type WorkerEvent,
   type WorkerOptions,
 } from "./worker"
+export { type UpkeepDeps, upkeepRepository } from "./upkeep-repository"

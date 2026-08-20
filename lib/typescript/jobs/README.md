@@ -138,11 +138,11 @@ once and then had nothing to do for four nights would read as five failures in a
 
 `decideUpkeepAction` turns a comparison into one of three answers, and the ordering is the point:
 
-| comparison               | action                   | tokens |
-| ------------------------ | ------------------------ | ------ |
-| not behind               | skip                     | none   |
-| behind, no local commits | fast-forward             | none   |
-| behind **and** ahead     | reconcile with the agent | yes    |
+| comparison               | action       | tokens |
+| ------------------------ | ------------ | ------ |
+| not behind               | skip         | none   |
+| behind, no local commits | fast-forward | none   |
+| behind **and** ahead     | reconcile    | none†  |
 
 The middle row is the common case — someone forked an app and changed configuration, not code —
 and paying a model to perform a mechanical fast-forward would be absurd.
@@ -150,5 +150,34 @@ and paying a model to perform a mechanical fast-forward would be absurd.
 The decision reads `behindBy`, not GitHub's `status` label: a comparison can report `diverged`
 while `behindBy` is 0 depending on the base.
 
-The branch is named after the upstream commit (`sproutos/upkeep-<sha12>`), so a retried job reuses
-it instead of opening a second pull request for one change.
+Both merge paths go through GitHub's `merge-upstream` endpoint, server-side. No runner, no
+checkout, nothing to bill — which is why the fast-forward row costs nothing, and why the
+reconcile row currently costs nothing either.
+
+### † The agent reconciliation is not built yet
+
+`decideUpkeepAction` has always had three answers and the handler has three branches, but the third
+one is not yet what TASK 27 ultimately asks for. Today a `reconcile` is attempted as a server-side
+merge, which resolves everything that is not a genuine textual conflict. What comes back as a
+conflict is recorded as `conflict` and raised to every subscribed project as a
+`project_update_suggestion` — visible to a person, rather than silently dropped.
+
+What is missing is the agent resolving a real conflict. That path needs the merge performed in a
+workspace and then pushed, and **the push cannot come from the runner**: the agent sandbox is never
+given a push credential, so the trusted job has to push on the agent's behalf. That seam does not
+exist yet, and inventing it inside this handler would put a write credential in the one place the
+isolation model says it must never be.
+
+Until then a conflicted fork produces a suggestion, not a pull request. The `pr_opened` outcome and
+the `sproutos/upkeep-<sha12>` branch name are reserved for that work and are not yet written by
+anything.
+
+### How this was found
+
+`upkeep.repository` was declared in `JOB_KINDS` for weeks with **no handler registered**. `claim`
+selects by the kinds the worker has handlers for, so the fanned-out jobs were never claimed, never
+failed, never retried, and never appeared in any failure count — they simply accumulated at state
+`queued` while the scan logged that it had scheduled them.
+
+`handlers.test.ts` now asserts the two halves cannot drift apart in either direction: every declared
+kind has a handler, and every handler answers to a declared kind.
