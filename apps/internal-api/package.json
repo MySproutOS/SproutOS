@@ -32,6 +32,7 @@
     "@lib/oauth-provider": "workspace:*",
     "@lib/services": "workspace:*",
     "@lib/srn": "workspace:*",
+    "@lib/workflows": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
     "@utils/crypto": "workspace:*",
