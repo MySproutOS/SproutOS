@@ -1,6 +1,6 @@
 import { formatMicroUsd } from "@lib/billing/money"
 import { Link, createFileRoute } from "@tanstack/react-router"
-import { ArrowLeftIcon, ExternalLinkIcon, SlidersHorizontalIcon } from "lucide-react"
+import { ArrowLeftIcon, ExternalLinkIcon, KeyRoundIcon, SlidersHorizontalIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/base/ui/card"
@@ -31,6 +31,16 @@ function ProjectDetail() {
         >
           <ArrowLeftIcon />
           All projects
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          render={
+            <Link to="/orgs/$orgSlug/projects/$projectId/env" params={{ orgSlug, projectId }} />
+          }
+        >
+          <KeyRoundIcon />
+          Variables
         </Button>
         <Button
           size="sm"
