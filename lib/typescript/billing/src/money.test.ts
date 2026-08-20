@@ -1,0 +1,98 @@
+import { describe, expect, it } from "vitest"
+import {
+  ceilDiv,
+  creditedAmount,
+  formatMicroUsd,
+  MICRO_PER_USD,
+  MINIMUM_TOPUP,
+  overhead,
+  processingFee,
+  rateTimesQuantity,
+} from "./money"
+
+describe("processing fee", () => {
+  it("covers Stripe's cut on the $0.50 minimum", () => {
+    // 2.9% of $0.50 is $0.0145, plus $0.30 fixed.
+    const fee = processingFee(MINIMUM_TOPUP)
+    expect(fee).toBe(314_500n)
+    // The whole point: a $0.50 top-up that credited $0.50 would lose $0.3145
+    // every time. Here the platform nets zero rather than negative.
+    expect(fee).toBeLessThan(MINIMUM_TOPUP)
+    expect(creditedAmount(MINIMUM_TOPUP)).toBe(185_500n)
+  })
+
+  it("gets proportionally cheaper as the top-up grows", () => {
+    const ratio = (amount: bigint) => Number(processingFee(amount)) / Number(amount)
+    expect(ratio(500_000n)).toBeCloseTo(0.629, 3)
+    expect(ratio(10n * MICRO_PER_USD)).toBeCloseTo(0.059, 3)
+    expect(ratio(100n * MICRO_PER_USD)).toBeCloseTo(0.032, 3)
+  })
+
+  it("never credits a negative amount", () => {
+    expect(creditedAmount(1n)).toBe(0n)
+    expect(creditedAmount(0n)).toBe(0n)
+  })
+
+  it("rounds the fee up, so the remainder is never eaten", () => {
+    // 2.9% of 1 micro-USD is 0.000029 — must not floor to zero.
+    expect(processingFee(1n)).toBe(300_001n)
+  })
+})
+
+describe("overhead", () => {
+  it("applies the price book's basis points", () => {
+    expect(overhead(1_000_000n, 1200)).toBe(120_000n)
+  })
+
+  it("rounds up rather than losing the remainder on every event", () => {
+    expect(overhead(1n, 1200)).toBe(1n)
+    expect(overhead(0n, 1200)).toBe(0n)
+  })
+})
+
+describe("ceilDiv", () => {
+  it("rounds away from zero in both directions", () => {
+    expect(ceilDiv(7n, 2n)).toBe(4n)
+    expect(ceilDiv(-7n, 2n)).toBe(-4n)
+    expect(ceilDiv(6n, 2n)).toBe(3n)
+  })
+
+  it("refuses to divide by zero", () => {
+    expect(() => ceilDiv(1n, 0n)).toThrow(RangeError)
+  })
+})
+
+describe("rateTimesQuantity", () => {
+  it("bills the sub-micro rates that a bigint rate would have floored to zero", () => {
+    // These three are exactly why price_book_item.unit_micro_usd is numeric(38,9).
+    // As integer micro-USD each would be 0, and the dimension would bill nothing.
+    expect(rateTimesQuantity("0.000140000", "1000000")).toBe(140n)
+    expect(rateTimesQuantity("0.000001000", "5000000")).toBe(5n)
+    expect(rateTimesQuantity("0.330000000", "18402")).toBe(6073n)
+  })
+
+  it("rounds a partial micro up rather than to nothing", () => {
+    expect(rateTimesQuantity("0.000140000", "1")).toBe(1n)
+  })
+
+  it("handles whole rates exactly", () => {
+    expect(rateTimesQuantity("3.000000000", "3600")).toBe(10_800n)
+  })
+
+  it("rejects a value that is not a decimal", () => {
+    expect(() => rateTimesQuantity("1e-4", "10")).toThrow(RangeError)
+  })
+})
+
+describe("formatMicroUsd", () => {
+  it("shows cents by default and sub-cent precision when present", () => {
+    expect(formatMicroUsd(1_204_000_000n)).toBe("$1,204.00")
+    expect(formatMicroUsd(41_200n)).toBe("$0.0412")
+    expect(formatMicroUsd(0n)).toBe("$0.00")
+    expect(formatMicroUsd(-500_000n)).toBe("-$0.50")
+  })
+
+  it("does not lose precision on a value no float could hold", () => {
+    expect(formatMicroUsd(9_007_199_254_740_993_000n)).toBe("$9,007,199,254,740.993")
+  })
+})
