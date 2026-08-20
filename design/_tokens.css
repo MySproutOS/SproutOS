@@ -42,6 +42,16 @@
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
 }
 
+:root {
+  /*
+    Dark-only, and this line is load-bearing. Tailwind v4's built-in `dark`
+    variant follows prefers-color-scheme, so without it a `dark:` utility
+    resolves against the reader's OS rather than against the theme, and the same
+    component renders two different ways.
+  */
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }

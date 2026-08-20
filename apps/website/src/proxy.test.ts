@@ -180,3 +180,54 @@ describe("adding a new page to (dashboard) without updating SHARED_ROUTES", () =
     expect(res.headers.get("location")).toContain("/login")
   })
 })
+
+/**
+ * TASK 4: "The store is visible on both unauthenticated and authenticated routes."
+ *
+ * That is what SHARED_ROUTES buys — one URL, SSR for a search engine or a
+ * logged-out visitor, the SPA for a signed-in user. These pin the behaviour so a
+ * later refactor of the route lists cannot quietly send logged-out visitors to
+ * /login and take the store out of the index.
+ */
+describe("the store is reachable signed in or out", () => {
+  beforeEach(() => {
+    mockValidate.mockReset()
+  })
+
+  it("serves Next.js to a visitor with no session", async () => {
+    mockValidate.mockResolvedValue(null)
+    const response = await proxy(makeRequest("/store"))
+    expect(isRewrite(response)).toBe(false)
+    expect(response.headers.get("location")).toBeNull()
+  })
+
+  it("serves Next.js when the session cookie is invalid", async () => {
+    mockValidate.mockResolvedValue(null)
+    const response = await proxy(makeRequest("/store", "expired-token"))
+    expect(isRewrite(response)).toBe(false)
+    expect(response.headers.get("location")).toBeNull()
+  })
+
+  it("rewrites a signed-in visitor to the dashboard SPA", async () => {
+    mockValidate.mockResolvedValue(VALID_SESSION)
+    const response = await proxy(makeRequest("/store", "good-token"))
+    expect(isRewrite(response)).toBe(true)
+  })
+
+  it("treats a listing page the same way", async () => {
+    mockValidate.mockResolvedValue(null)
+    expect(isRewrite(await proxy(makeRequest("/store/recipe-box")))).toBe(false)
+
+    mockValidate.mockResolvedValue(VALID_SESSION)
+    expect(isRewrite(await proxy(makeRequest("/store/recipe-box", "good-token")))).toBe(true)
+  })
+
+  it("does not treat a deeper path as a listing", async () => {
+    // /store/[slug] matches exactly one segment, so this falls through to the
+    // catch-all and requires a session like any other dashboard route.
+    mockValidate.mockResolvedValue(null)
+    const response = await proxy(makeRequest("/store/recipe-box/extra"))
+    expect(isRewrite(response)).toBe(false)
+    expect(response.headers.get("location")).toContain("/login")
+  })
+})
