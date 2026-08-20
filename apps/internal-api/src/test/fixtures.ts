@@ -2,6 +2,7 @@ import { db } from "@sproutos/db"
 import { encodeHexLowerCase, generateSessionToken, sha256Utf8 } from "@utils/crypto"
 import { sql } from "kysely"
 import { v7 } from "uuid"
+import { Redis } from "ioredis"
 
 /**
  * Fixtures for the RBAC suite, which runs against the compose Postgres rather than a mock.
@@ -121,4 +122,39 @@ export async function cleanupFixtures(): Promise<void> {
 
   created.organizationIds.length = 0
   created.userIds.length = 0
+}
+
+/**
+ * Whether the shared Valkey that tenant queues live on is reachable.
+ *
+ * On a developer's machine an absent service is a skip: `pnpm test` should not fail because docker
+ * is not running. **In CI it throws.** A skipped test looks exactly like a passing one in the
+ * summary, so a workflow that lost its service container would go on reporting green while the
+ * tests that check one tenant cannot read another's jobs had stopped running entirely.
+ */
+export async function tenantValkeyReachable(): Promise<boolean> {
+  const url = process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41023"
+  const probe = new Redis(url, {
+    maxRetriesPerRequest: 1,
+    retryStrategy: () => null,
+    lazyConnect: true,
+  })
+
+  let up = false
+  try {
+    await probe.connect()
+    await probe.ping()
+    up = true
+  } catch {
+    up = false
+  } finally {
+    probe.disconnect()
+  }
+
+  if (!up && process.env.CI !== undefined) {
+    throw new Error(
+      `The tenant Valkey at ${url} is not reachable in CI. These tests must not silently skip here.`,
+    )
+  }
+  return up
 }

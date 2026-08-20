@@ -19,23 +19,38 @@ import { tenantQueuePrefix } from "./prefix"
  * is BullMQ's to define, not ours. A mock would assert my reading of its source, which is exactly
  * the assumption most likely to be wrong.
  */
-const CONNECTION = process.env.TEST_VALKEY_URL ?? "redis://127.0.0.1:41023"
+const CONNECTION = process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41023"
 
+/**
+ * On a developer's machine an absent Valkey is a skip: `pnpm test` should not fail because docker
+ * is not running. **In CI it throws** — a skipped test looks exactly like a passing one in the
+ * summary, so a workflow that lost its service container would go on reporting green while the
+ * tests that check one tenant cannot read another's jobs had stopped running.
+ */
 const reachable = await (async () => {
   const probe = new Redis(CONNECTION, {
     maxRetriesPerRequest: 1,
     retryStrategy: () => null,
     lazyConnect: true,
   })
+
+  let up = false
   try {
     await probe.connect()
     await probe.ping()
-    return true
+    up = true
   } catch {
-    return false
+    up = false
   } finally {
     probe.disconnect()
   }
+
+  if (!up && process.env.CI !== undefined) {
+    throw new Error(
+      `The Valkey at ${CONNECTION} is not reachable in CI; these tests must not skip here.`,
+    )
+  }
+  return up
 })()
 
 // A fresh backend-service id per run, so these tests never collide with each other or with a

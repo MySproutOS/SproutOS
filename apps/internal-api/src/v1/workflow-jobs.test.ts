@@ -13,6 +13,7 @@ import {
   cleanupFixtures,
   createTestUser,
   databaseReachable,
+  tenantValkeyReachable,
   type TestUser,
   trackOrganization,
 } from "../test/fixtures"
@@ -29,22 +30,7 @@ const VALKEY_URL = process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41
 
 const reachable = await databaseReachable()
 
-const valkeyUp = await (async () => {
-  const probe = new Redis(VALKEY_URL, {
-    maxRetriesPerRequest: 1,
-    retryStrategy: () => null,
-    lazyConnect: true,
-  })
-  try {
-    await probe.connect()
-    await probe.ping()
-    return true
-  } catch {
-    return false
-  } finally {
-    probe.disconnect()
-  }
-})()
+const valkeyUp = await tenantValkeyReachable()
 
 const up = reachable && valkeyUp
 
