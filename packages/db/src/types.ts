@@ -12,40 +12,1183 @@ export type Generated<T> =
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>
 
+export type Json = JsonValue
+
+export type JsonArray = JsonValue[]
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined
+}
+
+export type JsonPrimitive = boolean | number | string | null
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive
+
+export type Numeric = ColumnType<string, number | string, number | string>
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>
 
 export interface Account {
-  accessToken: string | null
-  expiresAt: Int8 | null
+  accessTokenCiphertext: string | null
+  accessTokenExpiresAt: Timestamp | null
+  accessTokenKmsKeyId: string | null
+  accessTokenWrappedDek: string | null
+  createdAt: Generated<Timestamp>
   id: string
-  idToken: string | null
   provider: string
   providerAccountId: string
-  refreshToken: string | null
-  scope: string | null
-  sessionState: string | null
+  refreshTokenCiphertext: string | null
+  refreshTokenExpiresAt: Timestamp | null
+  refreshTokenKmsKeyId: string | null
+  refreshTokenWrappedDek: string | null
+  scopes: Generated<string[]>
   tokenType: string | null
   type: string
+  updatedAt: Generated<Timestamp>
   userId: string
 }
 
-export interface Session {
-  expires: Timestamp
-  sessionKey: string
+export interface AgentConfig {
+  agentCredentialId: string | null
+  createdAt: Generated<Timestamp>
+  id: string
+  maxBudgetMicroUsd: Int8 | null
+  model: string | null
+  organizationId: string | null
+  permissionMode: Generated<string>
+  projectId: string | null
+  scope: string
+  updatedAt: Generated<Timestamp>
+  useSproutosCredits: Generated<boolean>
+}
+
+export interface AgentCredential {
+  baseUrl: string | null
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  expiresAt: Timestamp | null
+  id: string
+  kind: string
+  label: string
+  lastFour: string | null
+  lastVerifiedAt: Timestamp | null
+  organizationId: string
+  revokedAt: Timestamp | null
+  secretCiphertext: string
+  secretKmsKeyId: string
+  secretWrappedDek: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AgentEvent {
+  agentSessionId: string
+  agentTurnId: string | null
+  createdAt: Generated<Timestamp>
+  expiresAt: Generated<Timestamp>
+  id: string
+  payload: Generated<Json>
+  seq: Int8
+  type: string
+}
+
+export interface AgentJob {
+  concurrencyKey: string | null
+  consecutiveFailures: Generated<number>
+  createdAt: Generated<Timestamp>
+  cronExpression: string | null
+  enabled: Generated<boolean>
+  id: string
+  kind: string
+  lastRunAt: Timestamp | null
+  nextRunAt: Timestamp | null
+  projectId: string
+  timezone: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AgentJobRun {
+  agentJobId: string
+  agentSessionId: string | null
+  attempt: Generated<number>
+  createdAt: Generated<Timestamp>
+  error: string | null
+  finishedAt: Timestamp | null
+  id: string
+  leaseExpiresAt: Timestamp | null
+  prUrl: string | null
+  startedAt: Timestamp | null
+  state: Generated<string>
+  testsPassed: boolean | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AgentSession {
+  archivedAt: Timestamp | null
+  branchName: string | null
+  createdAt: Generated<Timestamp>
+  createdByUserId: string | null
+  dbBranchId: string | null
+  id: string
+  projectId: string
+  runnerPod: string | null
+  sdkSessionId: string | null
+  status: Generated<string>
+  title: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AgentSessionEntry {
+  agentSessionId: string
+  createdAt: Generated<Timestamp>
+  entry: Json
+  entryUuid: string
+  id: string
+  ord: Generated<Int8>
+  sdkSessionId: string | null
+  subpath: string | null
+}
+
+export interface AgentTurn {
+  agentSessionId: string
+  createdAt: Generated<Timestamp>
+  durationMs: number | null
+  error: string | null
+  estimatedCostMicroUsd: Int8 | null
+  id: string
+  inputText: string | null
+  numTurns: number | null
+  resultSubtype: string | null
+  role: string
+  seq: number
+}
+
+export interface AgentUsage {
+  agentSessionId: string | null
+  agentTurnId: string | null
+  billedMicroUsd: Generated<Int8>
+  cacheCreationInputTokens: Generated<Int8>
+  cacheReadInputTokens: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  id: string
+  inputTokens: Generated<Int8>
+  model: string
+  occurredAt: Generated<Timestamp>
+  organizationId: string
+  outputTokens: Generated<Int8>
+  projectId: string | null
+  provider: string
+  source: string
+}
+
+export interface AuditLog {
+  action: string
+  actorUserId: string | null
+  after: Json | null
+  before: Json | null
+  createdAt: Generated<Timestamp>
+  id: string
+  ip: string | null
+  organizationId: string | null
+  resourceSrn: string | null
+  userAgent: string | null
+}
+
+export interface BackendService {
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  id: string
+  kind: string
+  name: string
+  organizationId: string
+  projectId: string | null
+  regionId: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface BackgroundJob {
+  attempt: Generated<number>
+  createdAt: Generated<Timestamp>
+  finishedAt: Timestamp | null
+  id: string
+  idempotencyKey: string | null
+  kind: string
+  lastError: string | null
+  leaseExpiresAt: Timestamp | null
+  lockedBy: string | null
+  maxAttempts: Generated<number>
+  organizationId: string | null
+  payload: Generated<Json>
+  priority: Generated<number>
+  runAt: Generated<Timestamp>
+  startedAt: Timestamp | null
+  state: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface CacheNamespace {
+  aclPasswordCiphertext: string
+  aclPasswordKmsKeyId: string
+  aclPasswordWrappedDek: string
+  aclUsername: string
+  backendServiceId: string
+  createdAt: Generated<Timestamp>
+  id: string
+  keyPrefix: string
+  maxmemoryBytes: Int8 | null
+  projectId: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Cluster {
+  createdAt: Generated<Timestamp>
+  endpoint: string
+  environment: string
+  id: string
+  kubernetesVersion: string
+  name: string
+  regionId: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface ComputeInstance {
+  cgroupPath: string | null
+  createdAt: Generated<Timestamp>
+  deploymentId: string
+  id: string
+  memoryMb: number | null
+  nodeName: string
+  podUid: string
+  startedAt: Generated<Timestamp>
+  stoppedAt: Timestamp | null
+}
+
+export interface CreditAccount {
+  createdAt: Generated<Timestamp>
+  currency: Generated<string>
+  id: string
+  kind: string
+  organizationId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface CreditBalanceCache {
+  balanceMicroUsd: Generated<Int8>
+  compactedThrough: Timestamp | null
+  creditAccountId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface CreditHold {
+  amountMicroUsd: Int8
+  createdAt: Generated<Timestamp>
+  creditAccountId: string
+  expiresAt: Timestamp
+  id: string
+  organizationId: string
+  resourceId: string | null
+  resourceType: string
+  settledTransactionId: string | null
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface CreditLedgerEntry {
+  amountMicroUsd: Int8
+  compactedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  creditAccountId: string
+  creditTransactionId: string
+  id: string
+  seq: Generated<Int8>
+}
+
+export interface CreditTransaction {
+  createdAt: Generated<Timestamp>
+  description: string | null
+  id: string
+  idempotencyKey: string
+  kind: string
+  organizationId: string
+  referenceId: string | null
+  referenceType: string | null
+}
+
+export interface DatabaseBranch {
+  createdAt: Generated<Timestamp>
+  databaseInstanceId: string
+  expiresAt: Timestamp | null
+  host: string | null
+  id: string
+  isProtected: Generated<boolean>
+  kind: Generated<string>
+  name: string
+  parentBranchId: string | null
+  pooledHost: string | null
+  providerBranchId: string | null
+  providerEndpointId: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface DatabaseInstance {
+  autosuspendSeconds: Generated<number>
+  backendServiceId: string
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  id: string
+  pgVersion: number | null
+  projectId: string | null
+  provider: string
+  providerOrgId: string | null
+  providerProjectId: string | null
+  region: string | null
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface DatabaseRole {
+  createdAt: Generated<Timestamp>
+  databaseBranchId: string
+  id: string
+  passwordCiphertext: string
+  passwordKmsKeyId: string
+  passwordWrappedDek: string
+  revealedAt: Timestamp | null
+  roleName: string
+  rotatedAt: Timestamp | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Deployment {
+  containerConcurrency: Generated<number>
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  expiresAt: Timestamp | null
+  gitRef: string | null
+  gitSha: string
+  id: string
+  imageUri: string | null
+  kind: string
+  knativeRevision: string | null
+  maxDurationS: Generated<number>
+  memoryMb: Generated<number>
+  prNumber: number | null
+  projectId: string
+  runtimeClass: Generated<string>
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+  url: string | null
+}
+
+export interface DeploymentBuild {
+  builder: Generated<string>
+  bytesPushed: Int8 | null
+  cacheKey: string | null
+  createdAt: Generated<Timestamp>
+  deploymentId: string
+  exitCode: number | null
+  finishedAt: Timestamp | null
+  id: string
+  logObjectKey: string | null
+  startedAt: Timestamp | null
+}
+
+export interface GithubInstallation {
+  accountLogin: string
+  accountType: string
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  id: string
+  installationId: Int8
+  installedByUserId: string | null
+  organizationId: string
+  permissions: Generated<Json>
+  repositorySelection: Generated<string>
+  suspendedAt: Timestamp | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface InfraDeployment {
+  appliedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  driftDetectedAt: Timestamp | null
+  environment: string
+  gitSha: string
+  id: string
+  planSummary: Generated<Json>
+  stack: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface MemberPermission {
+  actions: Generated<string[]>
+  createdAt: Generated<Timestamp>
+  effect: string
+  id: string
+  memberRoleId: string
+  organizationId: string
+  resources: Generated<string[]>
   userId: string
+}
+
+export interface MemberRole {
+  createdAt: Generated<Timestamp>
+  id: string
+  organizationMemberId: string
+  roleId: string
+}
+
+export interface Node {
+  allocatableCpuMillis: Generated<Int8>
+  allocatableMemoryBytes: Generated<Int8>
+  clusterId: string
+  createdAt: Generated<Timestamp>
+  id: string
+  instanceId: string
+  instanceType: string
+  isBareMetal: Generated<boolean>
+  runtimeClass: string | null
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface OauthAccessToken {
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp
+  oauthClientId: string
+  oauthGrantId: string
+  resource: string | null
+  revokedAt: Timestamp | null
+  scopes: Generated<string[]>
+  tokenHash: string
+  userId: string
+}
+
+export interface OauthAuthorizationCode {
+  codeChallenge: string
+  codeChallengeMethod: Generated<string>
+  codeHash: string
+  consumedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp
+  nonce: string | null
+  oauthClientId: string
+  oauthGrantId: string
+  organizationId: string
+  redirectUri: string
+  scopes: Generated<string[]>
+  userId: string
+}
+
+export interface OauthClient {
+  clientType: string
+  createdAt: Generated<Timestamp>
+  defaultScopes: Generated<string[]>
+  description: string | null
+  homepageUrl: string
+  id: string
+  isFirstParty: Generated<boolean>
+  isVerified: Generated<boolean>
+  logoUrl: string | null
+  name: string
+  organizationId: string
+  ownerUserId: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface OauthClientRedirectUri {
+  createdAt: Generated<Timestamp>
+  id: string
+  oauthClientId: string
+  uri: string
+}
+
+export interface OauthClientSecret {
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp | null
+  id: string
+  lastFour: string
+  lastUsedAt: Timestamp | null
+  oauthClientId: string
+  revokedAt: Timestamp | null
+  secretHash: string
+}
+
+export interface OauthGrant {
+  createdAt: Generated<Timestamp>
+  id: string
+  oauthClientId: string
+  organizationId: string
+  revokedAt: Timestamp | null
+  scopes: Generated<string[]>
+  updatedAt: Generated<Timestamp>
+  userId: string
+}
+
+export interface OauthRefreshToken {
+  consumedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp
+  familyId: string
+  oauthGrantId: string
+  parentTokenHash: string | null
+  revokedAt: Timestamp | null
+  tokenHash: string
+}
+
+export interface OauthSigningKey {
+  algorithm: Generated<string>
+  createdAt: Generated<Timestamp>
+  id: string
+  kid: string
+  privateKeyCiphertext: string
+  privateKeyKmsKeyId: string
+  privateKeyWrappedDek: string
+  publicJwk: Json
+  rotatedAt: Timestamp | null
+  status: Generated<string>
+}
+
+export interface ObservabilityStream {
+  bytesIngestedMonth: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  id: string
+  otlpIngestKeyHash: string
+  projectId: string
+  retentionDays: Generated<number>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Organization {
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  id: string
+  kind: string
+  name: string
+  ownerUserId: string
+  slug: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface OrganizationInvite {
+  acceptedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  email: string
+  expiresAt: Timestamp
+  id: string
+  invitedByUserId: string | null
+  organizationId: string
+  revokedAt: Timestamp | null
+  roleId: string
+  tokenHash: string
+}
+
+export interface OrganizationMember {
+  createdAt: Generated<Timestamp>
+  id: string
+  organizationId: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+  userId: string
+}
+
+export interface PaymentMethod {
+  brand: string | null
+  createdAt: Generated<Timestamp>
+  detachedAt: Timestamp | null
+  expMonth: number | null
+  expYear: number | null
+  id: string
+  isDefault: Generated<boolean>
+  last4: string | null
+  organizationId: string
+  stripePaymentMethodId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface PriceBook {
+  createdAt: Generated<Timestamp>
+  currency: Generated<string>
+  effectiveAt: Timestamp
+  id: string
+  name: string
+  overheadBps: Generated<number>
+  version: number
+}
+
+export interface PriceBookItem {
+  createdAt: Generated<Timestamp>
+  dimension: string
+  id: string
+  includedFreeQuantity: Generated<Numeric>
+  priceBookId: string
+  rounding: Generated<string>
+  unitMicroUsd: Numeric
+}
+
+export interface Project {
+  agentCredentialId: string | null
+  autoUpdateEnabled: Generated<boolean>
+  autoUpdateMode: Generated<string>
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  id: string
+  kind: Generated<string>
+  name: string
+  organizationId: string
+  productionBranch: Generated<string>
+  repositoryId: string
+  rootDir: Generated<string>
+  slug: string
+  state: Generated<string>
+  stateReason: string | null
+  storeListingId: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface ProjectEnvVar {
+  createdAt: Generated<Timestamp>
+  id: string
+  isSecret: Generated<boolean>
+  key: string
+  projectId: string
+  target: Generated<string>
+  updatedAt: Generated<Timestamp>
+  valueCiphertext: string
+  valueKmsKeyId: string
+  valueWrappedDek: string
+}
+
+export interface ProjectJob {
+  attempt: Generated<number>
+  createdAt: Generated<Timestamp>
+  errorCode: string | null
+  errorMessage: string | null
+  finishedAt: Timestamp | null
+  id: string
+  idempotencyKey: string | null
+  kind: string
+  organizationId: string
+  progress: Generated<number>
+  projectId: string | null
+  repositoryId: string | null
+  startedAt: Timestamp | null
+  state: Generated<string>
+  steps: Generated<Json>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface ProjectUpdateSuggestion {
+  createdAt: Generated<Timestamp>
+  id: string
+  projectId: string
+  resolvedAt: Timestamp | null
+  resolvedByUserId: string | null
+  status: Generated<string>
+  summary: string | null
+  updatedAt: Generated<Timestamp>
+  upstreamSyncRunId: string
+}
+
+export interface Refund {
+  amountMicroUsd: Int8
+  clawbackTransactionId: string | null
+  createdAt: Generated<Timestamp>
+  id: string
+  reason: string | null
+  stripeRefundId: string
+  topupId: string
+}
+
+export interface Region {
+  code: string
+  createdAt: Generated<Timestamp>
+  displayName: string
+  id: string
+  isActive: Generated<boolean>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Repository {
+  createdAt: Generated<Timestamp>
+  defaultBranch: Generated<string>
+  deletedAt: Timestamp | null
+  githubInstallationId: string | null
+  githubRepoId: Int8
+  id: string
+  isFork: Generated<boolean>
+  lastSyncedAt: Timestamp | null
+  name: string
+  organizationId: string
+  ownerLogin: string
+  private: Generated<boolean>
+  provenance: string
+  updatedAt: Generated<Timestamp>
+  upstreamDefaultBranch: string | null
+  upstreamFullName: string | null
+  upstreamGithubRepoId: Int8 | null
+}
+
+export interface Role {
+  createdAt: Generated<Timestamp>
+  description: string | null
+  id: string
+  isSystem: Generated<boolean>
+  name: string
+  organizationId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface RoleStatement {
+  actions: Generated<string[]>
+  createdAt: Generated<Timestamp>
+  effect: string
+  id: string
+  resources: Generated<string[]>
+  roleId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Sandbox {
+  alwaysOn: Generated<boolean>
+  createdAt: Generated<Timestamp>
+  hostname: string | null
+  id: string
+  idleTimeoutS: Generated<number>
+  lastActivityAt: Generated<Timestamp>
+  namespace: string | null
+  podName: string | null
+  projectId: string
+  pvcName: string | null
+  runtimeClass: Generated<string>
+  state: Generated<string>
+  updatedAt: Generated<Timestamp>
+  userId: string
+}
+
+export interface SearchCluster {
+  acceptingNewTenants: Generated<boolean>
+  createdAt: Generated<Timestamp>
+  endpoint: string
+  id: string
+  maxShards: Generated<number>
+  name: string
+  nodeCount: Generated<number>
+  totalShards: Generated<number>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface SearchTenant {
+  backendServiceId: string
+  bytesEstimate: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  docCountEstimate: Generated<Int8>
+  id: string
+  indexPattern: string
+  mode: Generated<string>
+  projectId: string | null
+  quotaBytes: Int8 | null
+  quotaQps: number | null
+  routingKey: string
+  searchClusterId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Session {
+  createdAt: Generated<Timestamp>
+  expires: Timestamp
+  ip: string | null
+  reauthenticatedAt: Timestamp | null
+  sessionKey: string
+  userAgent: string | null
+  userId: string
+}
+
+export interface Statement {
+  createdAt: Generated<Timestamp>
+  finalizedAt: Timestamp | null
+  id: string
+  organizationId: string
+  overheadBps: Generated<number>
+  overheadMicroUsd: Generated<Int8>
+  periodEnd: Timestamp
+  periodStart: Timestamp
+  status: Generated<string>
+  subtotalMicroUsd: Generated<Int8>
+  totalMicroUsd: Generated<Int8>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface StatementLineItem {
+  amountMicroUsd: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  description: string | null
+  dimension: string | null
+  id: string
+  kind: Generated<string>
+  projectId: string | null
+  quantity: Generated<Numeric>
+  statementId: string
+  unitMicroUsd: Numeric | null
+}
+
+export interface StoreCategory {
+  createdAt: Generated<Timestamp>
+  description: string | null
+  id: string
+  name: string
+  slug: string
+  sortOrder: Generated<number>
+  updatedAt: Generated<Timestamp>
+}
+
+export interface StoreListing {
+  categoryId: string | null
+  createdAt: Generated<Timestamp>
+  defaultBranch: Generated<string>
+  deletedAt: Timestamp | null
+  descriptionMd: string
+  featuredRank: number | null
+  forksCount: Generated<number>
+  homepageUrl: string | null
+  id: string
+  installCount: Generated<number>
+  lastSyncedAt: Timestamp | null
+  licenseSpdx: string | null
+  name: string
+  platform: Generated<string>
+  readmeEtag: string | null
+  readmeMd: string | null
+  rejectionReason: string | null
+  reviewedAt: Timestamp | null
+  reviewedByUserId: string | null
+  searchVector: Generated<string | null>
+  slug: string
+  starsCount: Generated<number>
+  status: Generated<string>
+  submittedByUserId: string | null
+  syncError: string | null
+  tagline: string
+  updatedAt: Generated<Timestamp>
+  upstreamHost: Generated<string>
+  upstreamOwner: string
+  upstreamPushedAt: Timestamp | null
+  upstreamRepo: string
+  upstreamRepoUrl: string
+}
+
+export interface StoreListingEvent {
+  createdAt: Generated<Timestamp>
+  id: string
+  kind: string
+  storeListingId: string
+  userId: string | null
+}
+
+export interface StoreListingScreenshot {
+  altText: string | null
+  createdAt: Generated<Timestamp>
+  height: number | null
+  id: string
+  sortOrder: Generated<number>
+  storeListingId: string
+  url: string
+  width: number | null
+}
+
+export interface StoreListingTag {
+  createdAt: Generated<Timestamp>
+  id: string
+  storeListingId: string
+  tag: string
+}
+
+export interface StripeCustomer {
+  autoReloadAmountMicroUsd: Generated<Int8>
+  autoReloadEnabled: Generated<boolean>
+  autoReloadThresholdMicroUsd: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  defaultPaymentMethodId: string | null
+  id: string
+  lifetimeMinTopupUsed: Generated<boolean>
+  organizationId: string
+  stripeCustomerId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface StripeWebhookEvent {
+  error: string | null
+  payload: Json
+  processedAt: Timestamp | null
+  receivedAt: Generated<Timestamp>
+  stripeEventId: string
+  type: string
+}
+
+export interface TenantQueue {
+  createdAt: Generated<Timestamp>
+  driver: Generated<string>
+  id: string
+  lastArrivalAt: Timestamp | null
+  maxConcurrency: number | null
+  maxMemoryBytes: Int8 | null
+  projectId: string
+  queueName: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface Topup {
+  amountMicroUsd: Int8
+  createdAt: Generated<Timestamp>
+  creditedMicroUsd: Generated<Int8>
+  creditTransactionId: string | null
+  failureCode: string | null
+  id: string
+  initiatedBy: Generated<string>
+  organizationId: string
+  status: Generated<string>
+  stripeCheckoutSessionId: string | null
+  stripePaymentIntentId: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface UpstreamSyncRun {
+  agentJobRunId: string | null
+  aheadBy: Generated<number>
+  behindBy: Generated<number>
+  branch: string
+  costMicroUsd: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  forkSha: string | null
+  id: string
+  mergeType: string | null
+  outcome: Generated<string>
+  pullRequestNumber: number | null
+  pullRequestUrl: string | null
+  repositoryId: string
+  updatedAt: Generated<Timestamp>
+  upstreamSha: string | null
+}
+
+export interface UsageEvent {
+  dimension: string
+  externalId: string
+  id: string
+  ingestedAt: Generated<Timestamp>
+  nodeId: string | null
+  occurredAt: Timestamp
+  organizationId: string
+  podUid: string | null
+  projectId: string | null
+  quantity: Numeric
+  ratedAt: Timestamp | null
+  resourceId: string | null
+  resourceType: string
+  source: string
+  windowEnd: Timestamp | null
+  windowStart: Timestamp | null
+}
+
+export interface UsageRollup {
+  bucket: string
+  bucketStart: Timestamp
+  createdAt: Generated<Timestamp>
+  dimension: string
+  id: string
+  organizationId: string
+  projectId: string | null
+  quantity: Generated<Numeric>
+  ratedTransactionId: string | null
+  updatedAt: Generated<Timestamp>
 }
 
 export interface User {
   createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
   email: string
+  githubLogin: string | null
+  githubUserId: Int8 | null
   id: string
   image: string | null
   isAdmin: Generated<boolean>
   name: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface UserPreference {
+  createdAt: Generated<Timestamp>
+  id: string
+  lastOrgId: string | null
+  navPinnedProjectIds: Generated<string[]>
+  sidebarCollapsed: Generated<boolean>
+  updatedAt: Generated<Timestamp>
+  userId: string
+}
+
+export interface Workflow {
+  createdAt: Generated<Timestamp>
+  currentVersionId: string | null
+  deletedAt: Timestamp | null
+  enabled: Generated<boolean>
+  id: string
+  name: string
+  projectId: string
+  queueName: string
+  runtime: Generated<string>
+  slug: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface WorkflowJobEditAudit {
+  actorUserId: string | null
+  after: Json | null
+  before: Json | null
+  createdAt: Generated<Timestamp>
+  id: string
+  jobStateAtEdit: string
+  organizationId: string
+  queueJobId: string
+  reason: string
+  workflowRunId: string
+}
+
+export interface WorkflowRun {
+  attempt: Generated<number>
+  bytesEnqueued: Generated<Int8>
+  createdAt: Generated<Timestamp>
+  error: Json | null
+  finishedAt: Timestamp | null
+  id: string
+  queueJobId: string | null
+  startedAt: Timestamp | null
+  status: Generated<string>
+  triggerType: string
+  updatedAt: Generated<Timestamp>
+  valkeyDwellMs: Generated<Int8>
+  workflowId: string
+  workflowVersionId: string | null
+}
+
+export interface WorkflowRunStep {
+  createdAt: Generated<Timestamp>
+  finishedAt: Timestamp | null
+  id: string
+  input: Json | null
+  logRef: string | null
+  nodeId: string
+  nodeType: string
+  output: Json | null
+  startedAt: Timestamp | null
+  status: Generated<string>
+  workflowRunId: string
+}
+
+export interface WorkflowSchedule {
+  createdAt: Generated<Timestamp>
+  cronExpression: string
+  enabled: Generated<boolean>
+  id: string
+  lastRunAt: Timestamp | null
+  nextRunAt: Timestamp | null
+  timezone: Generated<string>
+  updatedAt: Generated<Timestamp>
+  workflowId: string
+}
+
+export interface WorkflowVersion {
+  compiledCommitSha: string | null
+  createdAt: Generated<Timestamp>
+  createdByUserId: string | null
+  graph: Json
+  graphSha256: string
+  id: string
+  version: number
+  workflowId: string
 }
 
 export interface DB {
   account: Account
+  agentConfig: AgentConfig
+  agentCredential: AgentCredential
+  agentEvent: AgentEvent
+  agentJob: AgentJob
+  agentJobRun: AgentJobRun
+  agentSession: AgentSession
+  agentSessionEntry: AgentSessionEntry
+  agentTurn: AgentTurn
+  agentUsage: AgentUsage
+  auditLog: AuditLog
+  backendService: BackendService
+  backgroundJob: BackgroundJob
+  cacheNamespace: CacheNamespace
+  cluster: Cluster
+  computeInstance: ComputeInstance
+  creditAccount: CreditAccount
+  creditBalanceCache: CreditBalanceCache
+  creditHold: CreditHold
+  creditLedgerEntry: CreditLedgerEntry
+  creditTransaction: CreditTransaction
+  databaseBranch: DatabaseBranch
+  databaseInstance: DatabaseInstance
+  databaseRole: DatabaseRole
+  deployment: Deployment
+  deploymentBuild: DeploymentBuild
+  githubInstallation: GithubInstallation
+  infraDeployment: InfraDeployment
+  memberPermission: MemberPermission
+  memberRole: MemberRole
+  node: Node
+  oauthAccessToken: OauthAccessToken
+  oauthAuthorizationCode: OauthAuthorizationCode
+  oauthClient: OauthClient
+  oauthClientRedirectUri: OauthClientRedirectUri
+  oauthClientSecret: OauthClientSecret
+  oauthGrant: OauthGrant
+  oauthRefreshToken: OauthRefreshToken
+  oauthSigningKey: OauthSigningKey
+  observabilityStream: ObservabilityStream
+  organization: Organization
+  organizationInvite: OrganizationInvite
+  organizationMember: OrganizationMember
+  paymentMethod: PaymentMethod
+  priceBook: PriceBook
+  priceBookItem: PriceBookItem
+  project: Project
+  projectEnvVar: ProjectEnvVar
+  projectJob: ProjectJob
+  projectUpdateSuggestion: ProjectUpdateSuggestion
+  refund: Refund
+  region: Region
+  repository: Repository
+  role: Role
+  roleStatement: RoleStatement
+  sandbox: Sandbox
+  searchCluster: SearchCluster
+  searchTenant: SearchTenant
   session: Session
+  statement: Statement
+  statementLineItem: StatementLineItem
+  storeCategory: StoreCategory
+  storeListing: StoreListing
+  storeListingEvent: StoreListingEvent
+  storeListingScreenshot: StoreListingScreenshot
+  storeListingTag: StoreListingTag
+  stripeCustomer: StripeCustomer
+  stripeWebhookEvent: StripeWebhookEvent
+  tenantQueue: TenantQueue
+  topup: Topup
+  upstreamSyncRun: UpstreamSyncRun
+  usageEvent: UsageEvent
+  usageRollup: UsageRollup
   user: User
+  userPreference: UserPreference
+  workflow: Workflow
+  workflowJobEditAudit: WorkflowJobEditAudit
+  workflowRun: WorkflowRun
+  workflowRunStep: WorkflowRunStep
+  workflowSchedule: WorkflowSchedule
+  workflowVersion: WorkflowVersion
 }
