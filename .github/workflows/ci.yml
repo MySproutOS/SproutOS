@@ -416,8 +416,10 @@ jobs:
           kubectl apply -f "https://github.com/knative/serving/releases/download/$V/serving-crds.yaml"
           kubectl apply -f "https://github.com/knative/serving/releases/download/$V/serving-core.yaml"
           kubectl apply -f "https://github.com/knative/net-kourier/releases/download/$V/kourier.yaml"
-          kubectl patch configmap/config-network -n knative-serving --type merge \
-            -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+          # The checked-in configuration, not an inline patch, so CI exercises the same file that a
+          # cluster gets. It is in `deploy/` too and applied again by the Apply step; that is
+          # idempotent and deliberate — the gateway needs `ingress-class` before it can go ready.
+          kubectl apply -f deploy/knative/config-network.yaml
           kubectl patch configmap/config-domain -n knative-serving --type merge \
             -p '{"data":{"sprout.run":""}}'
           # `net-kourier-controller` is in this list and before the gateway on purpose: it is what
@@ -537,6 +539,26 @@ jobs:
           YAML
           kubectl wait --for=condition=Ready ksvc/hello -n tenant-ci --timeout=420s
 
+          # The URL Knative actually hands back has to be coverable by one wildcard certificate.
+          # Knative's default template is `{{.Name}}.{{.Namespace}}.{{.Domain}}`, which puts two
+          # labels in front of the apex — and `*.sprout.run` matches exactly one, so every tenant
+          # site would fail TLS. The Service reports Ready either way and publishes a `status.url`
+          # that simply cannot be certificated, which is why this is asserted rather than assumed.
+          url=$(kubectl get ksvc hello -n tenant-ci -o jsonpath='{.status.url}')
+          echo "tenant URL: $url"
+          host=${url#http://}
+          # Strip the apex and look at what is left. A glob like `*.*.*` will not do this — shell
+          # `*` matches dots, so it flags a correct single-label host as well as a wrong one.
+          label=${host%.sprout.run}
+          if [ "$label" = "$host" ]; then
+            echo "FAIL: $host is not under sprout.run at all."
+            exit 1
+          fi
+          case "$label" in
+            *.*) echo "FAIL: '$label' is more than one label; *.sprout.run covers exactly one, so this host cannot be certificated."; exit 1;;
+          esac
+          echo "single label before the apex: $label"
+
           # `sh -c` so the container's own shell parses the curl arguments. Passing them straight
           # through `kubectl run --` word-splits a quoted `-H 'Host: ...'` into pieces and curl
           # reports "no URL specified" — which looks exactly like a network denial and would have
@@ -554,7 +576,9 @@ jobs:
           }
 
           # Through the gateway: must work. This is a customer's application serving traffic.
-          got=$(run_probe allowed "-H 'Host: hello.tenant-ci.sprout.run' http://kourier-internal.kourier-system.svc.cluster.local/")
+          # `$host` from the Service's own status, not a hardcoded string — the whole point of the
+          # domain template is that the host is not the one Knative would produce by default.
+          got=$(run_probe allowed "-H 'Host: $host' http://kourier-internal.kourier-system.svc.cluster.local/")
           echo "via gateway: $got"
           kubectl logs -n default allowed || true
           if [ "$got" != "Succeeded" ]; then

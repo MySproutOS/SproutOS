@@ -239,3 +239,22 @@ directions:
 The negative half is the one that keeps the positive half honest. Without it the whole test passes
 just as happily on a cluster that ignores NetworkPolicy entirely — which is precisely the false
 negative that let an ingress rule naming a nonexistent pod survive review.
+
+## `knative/`
+
+`config-network.yaml`, applied after Knative Serving is installed, and both settings in it exist
+because the defaults are wrong for this platform.
+
+**The domain template.** Knative's default is `{{.Name}}.{{.Namespace}}.{{.Domain}}`, which produced
+`myapp.tenant-abc123.sprout.run` — two labels in front of the apex. ADR 0018 is explicit that an ACM
+wildcard covers exactly one; that is the entire reason preview hosts use `pr-42--myapp` rather than
+`pr-42.myapp`. The default violates the same constraint for **every** tenant site, so
+`*.sprout.run` would fail TLS for every production deployment on the platform.
+
+Nothing caught it because nobody had run Knative and read the URL it hands back. The Service reports
+`Ready: True` and publishes a `status.url` that cannot be certificated. CI now asserts the shape of
+that URL directly.
+
+**The tag template.** Knative's default is `{{.Tag}}-{{.Name}}`, a single dash. ADR 0018 requires
+`pr-42--myapp`, and the double dash is load-bearing: a project slug may contain single dashes
+(`my-app`), so `pr-42-my-app` is ambiguous about where the tag ends.
