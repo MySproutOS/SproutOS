@@ -6,4 +6,17 @@ export {
   UnknownValueError,
   UnsubstitutedPlaceholderError,
 } from "./render"
-export { type DeploymentSpec, hostLabel, knativeService, type ProjectSpec } from "./knative"
+export {
+  type DeploymentSpec,
+  hostLabel,
+  type KnativeService,
+  knativeService,
+  type ProjectSpec,
+} from "./knative"
+export {
+  createKubeClient,
+  inClusterConfig,
+  type KubeConfig,
+  KubeError,
+  knativeServicePath,
+} from "./kube"

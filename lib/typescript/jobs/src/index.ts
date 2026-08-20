@@ -28,3 +28,10 @@ export {
   type WorkerOptions,
 } from "./worker"
 export { type UpkeepDeps, upkeepRepository } from "./upkeep-repository"
+export {
+  DEPLOY_KINDS,
+  deployRevision,
+  type RevisionOutcome,
+  revisionOutcome,
+  tenantNamespace,
+} from "./deploy"

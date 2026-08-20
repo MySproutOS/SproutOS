@@ -4,6 +4,7 @@ import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
+import { deployRevision, DEPLOY_KINDS } from "./deploy"
 import { enqueue } from "./queue"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
@@ -26,6 +27,7 @@ export const JOB_KINDS = {
   sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
+  deployRevision: DEPLOY_KINDS.revision,
   analyzeRepository: ANALYSIS_KIND,
 } as const
 
@@ -123,6 +125,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
+  [JOB_KINDS.deployRevision]: deployRevision(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
 }
 

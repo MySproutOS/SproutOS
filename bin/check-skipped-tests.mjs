@@ -30,6 +30,11 @@ const KNOWN = [
   },
   { suite: "@api/internal agent", count: 6, waiting: "an Anthropic API key" },
   { suite: "@api/internal generate-openapi", count: 1, waiting: "a running API on :3001" },
+  {
+    suite: "@lib/jobs deploy",
+    count: 1,
+    waiting: "KUBE_SERVER — a Kubernetes API, e.g. `kubectl proxy` against a kind cluster",
+  },
 ]
 
 const CEILING = KNOWN.reduce((total, entry) => total + entry.count, 0)
