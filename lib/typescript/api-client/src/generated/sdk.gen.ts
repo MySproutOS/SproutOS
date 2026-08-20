@@ -132,6 +132,9 @@ import type {
   GetV1OrgsByOrgSlugBillingUsageErrors,
   GetV1OrgsByOrgSlugBillingUsageResponses,
   GetV1OrgsByOrgSlugData,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses,
   GetV1OrgsByOrgSlugErrors,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
   GetV1OrgsByOrgSlugGithubRepositoriesErrors,
@@ -146,6 +149,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
@@ -281,6 +287,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
@@ -1369,6 +1378,65 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisId = <ThrowOnError extends bool
     url: "/v1/orgs/{orgSlug}/analyses/{analysisId}",
     ...options,
   })
+
+/**
+ * Lists a project's deployments, newest first
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployments = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/deployments", ...options })
+
+/**
+ * Deploys a commit, returning immediately with the row to poll
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeployments = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/deployments",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Reads one deployment
+ */
+export const getV1OrgsByOrgSlugDeploymentsByDeploymentId = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses,
+    GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/deployments/{deploymentId}", ...options })
 
 /**
  * One workflow and its current graph

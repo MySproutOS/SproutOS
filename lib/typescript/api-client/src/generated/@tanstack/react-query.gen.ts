@@ -35,12 +35,14 @@ import {
   getV1OrgsByOrgSlugBillingTopupQuote,
   getV1OrgsByOrgSlugBillingTransactions,
   getV1OrgsByOrgSlugBillingUsage,
+  getV1OrgsByOrgSlugDeploymentsByDeploymentId,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugInvites,
   getV1OrgsByOrgSlugMembers,
   getV1OrgsByOrgSlugProjects,
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
+  getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
@@ -89,6 +91,7 @@ import {
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugProjects,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
+  postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
@@ -180,6 +183,9 @@ import type {
   GetV1OrgsByOrgSlugBillingUsageError,
   GetV1OrgsByOrgSlugBillingUsageResponse,
   GetV1OrgsByOrgSlugData,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdError,
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse,
   GetV1OrgsByOrgSlugError,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
   GetV1OrgsByOrgSlugGithubRepositoriesError,
@@ -194,6 +200,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvError,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
@@ -328,6 +337,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
@@ -2178,6 +2190,89 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdOptions = (
       return data
     },
     queryKey: getV1OrgsByOrgSlugAnalysesByAnalysisIdQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeploymentsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdDeployments", options)
+
+/**
+ * Lists a project's deployments, newest first
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeploymentsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdDeploymentsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdDeployments({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdDeploymentsQueryKey(options),
+  })
+
+/**
+ * Deploys a commit, returning immediately with the row to poll
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeploymentsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDeployments({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugDeploymentsByDeploymentIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugDeploymentsByDeploymentId", options)
+
+/**
+ * Reads one deployment
+ */
+export const getV1OrgsByOrgSlugDeploymentsByDeploymentIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse,
+    GetV1OrgsByOrgSlugDeploymentsByDeploymentIdError,
+    GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugDeploymentsByDeploymentIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugDeploymentsByDeploymentId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugDeploymentsByDeploymentIdQueryKey(options),
   })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
