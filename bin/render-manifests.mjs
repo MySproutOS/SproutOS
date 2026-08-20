@@ -32,13 +32,28 @@ if (outputsPath === undefined) {
   process.exit(2)
 }
 
-/** `tofu output -json` wraps each value in `{ value, type }`. */
-const outputs = JSON.parse(readFileSync(outputsPath, "utf8"))
+/**
+ * `tofu output -json` wraps each value in `{ value, type }`.
+ *
+ * Cast rather than left as `any`: reading `.value` off an untyped parse is how a renamed output
+ * becomes a silently missing placeholder instead of an error.
+ *
+ * @type {Record<string, { value?: unknown } | undefined>}
+ */
+const outputs = /** @type {Record<string, { value?: unknown } | undefined>} */ (
+  JSON.parse(readFileSync(outputsPath, "utf8"))
+)
 
+/** @type {Record<string, string>} */
 const values = {}
 for (const [output, placeholder] of Object.entries(FROM_OUTPUTS)) {
   const entry = outputs[output]
-  if (entry?.value !== undefined) values[placeholder] = String(entry.value)
+  // Only scalars. An output that is a list or an object is a configuration mistake, and
+  // `String()` on one produces `[object Object]` — valid YAML, wrong, and silent.
+  const value = entry?.value
+  if (typeof value === "string" || typeof value === "number") {
+    values[placeholder] = String(value)
+  }
 }
 
 // The rest come from the environment: a tag is a build fact, not an infrastructure one, and the
@@ -53,23 +68,42 @@ for (const name of [
   if (process.env[name] !== undefined) values[name] = process.env[name]
 }
 
-function* manifests(directory) {
+/**
+ * Every `.yaml` under a directory, recursively.
+ *
+ * An array rather than a generator: a generator's yield type does not survive JSDoc inference here,
+ * and the whole file then reads as `any` to the type-aware lint — which is the same class of
+ * silently-unchecked that this script exists to prevent.
+ *
+ * @param {string} directory
+ * @returns {string[]}
+ */
+function manifests(directory) {
+  /** @type {string[]} */
+  const found = []
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) yield* manifests(path)
-    else if (entry.name.endsWith(".yaml")) yield path
+    if (entry.isDirectory()) found.push(...manifests(path))
+    else if (entry.name.endsWith(".yaml")) found.push(path)
   }
+  return found
 }
 
 const rendered = []
-for (const path of [...manifests("deploy")].sort()) {
+/*
+  Sorted with an explicit comparator, and sorted at all so the output is byte-identical between
+  runs: a rendered file that reorders itself makes every diff useless for spotting what changed.
+*/
+const paths = manifests("deploy").sort((a, b) => a.localeCompare(b))
+
+for (const path of paths) {
   try {
     rendered.push(render(readFileSync(path, "utf8"), values))
   } catch (cause) {
     // Named, and fatal. Emitting the rest would produce a file that is *mostly* applicable, which
     // is worse than none of it — somebody applies it and finds out which parts were missing by
     // watching what breaks.
-    console.error(`${path}: ${cause.message}`)
+    console.error(`${path}: ${cause instanceof Error ? cause.message : String(cause)}`)
     process.exit(1)
   }
 }

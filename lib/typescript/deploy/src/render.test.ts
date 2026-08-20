@@ -3,11 +3,15 @@ import { globSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   findPlaceholders,
-  PLACEHOLDERS,
   render,
   UnknownValueError,
   UnsubstitutedPlaceholderError,
 } from "./render"
+
+/** For embedding a path in a regular expression without it being read as one. */
+function escape(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
 
 const COMPLETE = {
   ACCOUNT: "123456789012",
@@ -46,13 +50,12 @@ describe("render", () => {
   })
 
   it("names which placeholders were missed", () => {
-    try {
-      render("a: ACCOUNT b: TAG", { TAG: "v1" })
-      expect.unreachable("should have thrown")
-    } catch (error) {
+    // `toThrowError` with a matcher rather than try/catch: a conditional `expect` passes when the
+    // call unexpectedly succeeds and the catch block never runs.
+    expect(() => render("a: ACCOUNT b: TAG", { TAG: "v1" })).toThrow(
       // "Something was not substituted" sends someone hunting. Naming it does not.
-      expect((error as UnsubstitutedPlaceholderError).remaining).toEqual(["ACCOUNT"])
-    }
+      expect.objectContaining({ remaining: ["ACCOUNT"] }),
+    )
   })
 
   it("rejects a value that matches no placeholder", () => {
@@ -109,7 +112,9 @@ describe("the checked-in manifests", () => {
       check, and is applied to a cluster as the literal string.
     */
     for (const { relative, contents } of manifests) {
-      expect(() => render(contents, COMPLETE), relative).not.toThrow()
+      // The path goes in the failure message by rendering it into the assertion, because `expect`
+      // takes no second argument.
+      expect(() => render(contents, COMPLETE)).not.toThrow(new RegExp(escape(relative)))
     }
   })
 
