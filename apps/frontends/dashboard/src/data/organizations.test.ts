@@ -64,6 +64,20 @@ describe("organizationRoleLabel", () => {
     )
   })
 
+  it("survives a role named after something on Object.prototype", () => {
+    /*
+      Roles are free text a customer typed, and the label used to be `ROLE_LABELS[role] ?? role` —
+      a plain object indexed by that text. `ROLE_LABELS.constructor` is `Object`, a *function*, and
+      a truthy one, so the `??` never fired and React was handed a function as a child.
+
+      The `as OrganizationRole` assertion needed to index the object is exactly what hid this from
+      the type checker. A `Map` has no prototype keys and needs no assertion.
+    */
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(organizationRoleLabel(organization({ roleNames: [name] }))).toBe(name)
+    }
+  })
+
   it("says nothing when there is no organization yet", () => {
     expect(organizationRoleLabel(undefined)).toBe("")
   })

@@ -23,6 +23,7 @@ import { IMPERSONATOR_COOKIE } from "../admin/impersonator-cookie"
 import { auditContext } from "../utils/request-context"
 import {
   userSchemaExportResponse,
+  userSchemaUpdatePreferencesRequest,
   userSchemaPreferencesResponse,
   userSchemaProfileResponse,
   userSchemaUpdateProfileRequest,
@@ -73,6 +74,72 @@ const app = new Hono()
         navPinnedProjectIds: preference?.navPinnedProjectIds ?? [],
         // The defaults a user who has never opened the settings screen gets. They match the column
         // defaults, so a row that does not exist yet and a row that was just created read alike.
+        timezone: preference?.timezone ?? "UTC",
+        productEmails: preference?.productEmails ?? false,
+      })
+    },
+  )
+  .patch(
+    "/me/preferences",
+    describeRoute({
+      description: "Update where the caller left the UI",
+      responses: {
+        200: {
+          description: "Preferences as they now stand",
+          content: {
+            "application/json": { schema: resolver(userSchemaPreferencesResponse) },
+          },
+        },
+      },
+    }),
+    validator("json", userSchemaUpdatePreferencesRequest),
+    async (c) => {
+      const user = c.var.user
+      const body = c.req.valid("json")
+
+      const fields = {
+        ...(body.sidebarCollapsed === undefined ? {} : { sidebarCollapsed: body.sidebarCollapsed }),
+        ...(body.navPinnedProjectIds === undefined
+          ? {}
+          : { navPinnedProjectIds: body.navPinnedProjectIds }),
+      }
+
+      if (Object.keys(fields).length > 0) {
+        // Upsert, because a user has no preference row until they change something. Creating one at
+        // signup would be a row per account holding mostly defaults, and one more thing for the
+        // signup path to fail at.
+        await db
+          .insertInto("userPreference")
+          .values({ id: v7(), userId: user.id, ...fields })
+          .onConflict((conflict) =>
+            conflict.column("userId").doUpdateSet({ ...fields, updatedAt: new Date() }),
+          )
+          .execute()
+      }
+
+      /*
+        Returns the same shape `GET /me/preferences` does, including the landing organization.
+
+        One shape means a client can write the response straight into the cache it reads from
+        rather than merging a partial into it — and merging a partial is where a toggle in one tab
+        starts clobbering a pin made in another.
+      */
+      const preference = await fetchUserPreference(db).getForUser(user.id, [
+        "sidebarCollapsed",
+        "navPinnedProjectIds",
+        "timezone",
+        "productEmails",
+      ])
+
+      const landing =
+        (await fetchUserPreference(db).getLastOrganization(user.id)) ??
+        (await fetchOrganization(db).getFallbackForUser(user.id))
+
+      return c.json({
+        lastOrganizationId: landing?.id ?? null,
+        lastOrganizationSlug: landing?.slug ?? null,
+        sidebarCollapsed: preference?.sidebarCollapsed ?? false,
+        navPinnedProjectIds: preference?.navPinnedProjectIds ?? [],
         timezone: preference?.timezone ?? "UTC",
         productEmails: preference?.productEmails ?? false,
       })
@@ -139,7 +206,6 @@ const app = new Hono()
       const preferenceFields = {
         ...(body.timezone === undefined ? {} : { timezone: body.timezone }),
         ...(body.productEmails === undefined ? {} : { productEmails: body.productEmails }),
-        ...(body.sidebarCollapsed === undefined ? {} : { sidebarCollapsed: body.sidebarCollapsed }),
       }
 
       if (Object.keys(preferenceFields).length > 0) {

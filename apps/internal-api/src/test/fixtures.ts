@@ -98,22 +98,41 @@ export function authHeaders(user: TestUser): Record<string, string> {
 export async function cleanupFixtures(): Promise<void> {
   if (created.organizationIds.length === 0 && created.userIds.length === 0) return
 
-  await sql`alter table audit_log disable trigger audit_log_append_only`.execute(db)
-  try {
+  /*
+    One transaction, and that is what makes it safe to run from several suites at once.
+
+    `alter table … disable trigger` is **table-level, not session-level**: it turns the trigger off
+    for everybody. Run unwrapped from two test files at the same time, one suite's `finally`
+    re-enables the trigger while the other is still mid-delete, and that suite dies with
+    "audit_log is append-only; DELETE is not permitted". It presents as flake — which file loses
+    depends on scheduling — and it is the failure that had been showing up intermittently since the
+    impersonation suite added a third delete and widened the window.
+
+    Wrapping it serializes it for free: the first `ALTER TABLE` takes an ACCESS EXCLUSIVE lock on
+    `audit_log` and holds it until commit, so a second cleanup blocks at its own `ALTER` instead of
+    interleaving. No advisory lock needed, and the enable is now part of the same atomic unit as the
+    deletes rather than a `finally` racing them.
+
+    This is only acceptable because it is a local test database. Nothing in the application ever
+    disables this trigger — an audit trail whose rows can be deleted is not one.
+  */
+  await db.transaction().execute(async (tx) => {
+    await sql`alter table audit_log disable trigger audit_log_append_only`.execute(tx)
+
     if (created.organizationIds.length > 0) {
-      await db
+      await tx
         .deleteFrom("auditLog")
         .where("organizationId", "in", created.organizationIds)
         .execute()
     }
     if (created.userIds.length > 0) {
-      await db.deleteFrom("auditLog").where("actorUserId", "in", created.userIds).execute()
+      await tx.deleteFrom("auditLog").where("actorUserId", "in", created.userIds).execute()
       // Impersonation puts the admin's id on the row as well, and that reference is RESTRICT too.
-      await db.deleteFrom("auditLog").where("impersonatorUserId", "in", created.userIds).execute()
+      await tx.deleteFrom("auditLog").where("impersonatorUserId", "in", created.userIds).execute()
     }
-  } finally {
-    await sql`alter table audit_log enable trigger audit_log_append_only`.execute(db)
-  }
+
+    await sql`alter table audit_log enable trigger audit_log_append_only`.execute(tx)
+  })
 
   if (created.organizationIds.length > 0) {
     await db.deleteFrom("organization").where("id", "in", created.organizationIds).execute()
