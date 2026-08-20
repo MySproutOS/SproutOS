@@ -1,6 +1,7 @@
 import { expireHolds } from "@lib/billing"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
+import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { enqueue } from "./queue"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import type { JobHandler } from "./worker"
@@ -18,6 +19,7 @@ export const JOB_KINDS = {
   purgeExpiredAgentEvents: "agent.purge_events",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
+  analyzeRepository: ANALYSIS_KIND,
 } as const
 
 /**
@@ -71,6 +73,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
+  [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
 }
 
 /**

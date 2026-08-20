@@ -309,6 +309,9 @@ importers:
       '@lib/agent':
         specifier: workspace:*
         version: link:../../lib/typescript/agent
+      '@lib/analyzer':
+        specifier: workspace:*
+        version: link:../../lib/typescript/analyzer
       '@lib/billing':
         specifier: workspace:*
         version: link:../../lib/typescript/billing
@@ -518,6 +521,25 @@ importers:
         specifier: 'catalog:'
         version: 26.2.0
 
+  lib/typescript/analyzer:
+    dependencies:
+      '@lib/agent':
+        specifier: workspace:*
+        version: link:../agent
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
   lib/typescript/api-client:
     dependencies:
       '@tanstack/react-query':
@@ -589,6 +611,9 @@ importers:
 
   lib/typescript/jobs:
     dependencies:
+      '@lib/analyzer':
+        specifier: workspace:*
+        version: link:../analyzer
       '@lib/billing':
         specifier: workspace:*
         version: link:../billing
