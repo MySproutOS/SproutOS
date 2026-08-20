@@ -2,17 +2,20 @@ import type { DB } from "@sproutos/db"
 import { organizationScopeSrn, srnFor } from "@lib/srn"
 import type { Kysely, Transaction } from "kysely"
 import { v7 } from "uuid"
-import { crudAuditLog } from "../auditLog/crud"
+import { type AuditContext, crudAuditLog } from "../auditLog/crud"
 import { crudMemberPermission } from "../memberPermission/crud"
 import { OWNER_ROLE_NAME, SYSTEM_ROLES } from "../role/systemRoles"
 import { fetchOrganization } from "./fetch"
 import { allocateOrganizationSlug, slugifyOrganizationName } from "./slug"
 
-/** Request context an audit row wants but the database cannot know. */
-export type AuditContext = {
-  ip?: string | null
-  userAgent?: string | null
-}
+/**
+ * Re-exported, not redefined.
+ *
+ * It *was* redefined here, and the narrower copy silently dropped `impersonatorUserId` — so an
+ * organization created during a support session was attributed to the customer alone. One type is
+ * what stops the next field from going the same way.
+ */
+export type { AuditContext }
 
 export type ProvisionedOrganization = {
   id: string
@@ -140,8 +143,9 @@ export function provisionOrganization(db: Kysely<DB>) {
         kind: organization.kind,
         ownerUserId: organization.ownerUserId,
       },
-      ip: input.audit?.ip,
-      userAgent: input.audit?.userAgent,
+      // Spread, not field by field. Naming the fields is how `impersonatorUserId` came to be
+      // dropped here while every other audited route carried it.
+      ...input.audit,
     })
 
     return {
@@ -326,8 +330,7 @@ export function provisionOrganization(db: Kysely<DB>) {
         resourceSrn: srnFor("org", input.organizationId, "organization", input.organizationId),
         before: { ownerUserId: organization.ownerUserId },
         after: { ownerUserId: input.newOwnerUserId },
-        ip: input.audit?.ip,
-        userAgent: input.audit?.userAgent,
+        ...input.audit,
       })
 
       return { ok: true as const }
@@ -421,8 +424,7 @@ export function provisionOrganization(db: Kysely<DB>) {
         resourceSrn: srnFor("org", input.organizationId, "member", membership.id),
         before: { userId: input.userId, status: membership.status },
         after: null,
-        ip: input.audit?.ip,
-        userAgent: input.audit?.userAgent,
+        ...input.audit,
       })
 
       return { ok: true as const, nextOrganizationId }

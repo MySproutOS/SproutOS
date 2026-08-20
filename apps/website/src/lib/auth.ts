@@ -42,6 +42,9 @@ export async function createSession(token: string, userId: string): Promise<Auth
     sessionKey,
     userId,
     expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+    // Signing in is never impersonation. Impersonated sessions are minted by
+    // `impersonation().start`, which is the only place that sets this.
+    impersonatedByUserId: null,
   }
   await db.insertInto("session").values(newSession).executeTakeFirstOrThrow()
   return newSession

@@ -201,6 +201,7 @@ export interface AuditLog {
   before: Json | null
   createdAt: Generated<Timestamp>
   id: string
+  impersonatorUserId: string | null
   ip: string | null
   organizationId: string | null
   resourceSrn: string | null
@@ -850,6 +851,7 @@ export interface ServiceCredential {
 export interface Session {
   createdAt: Generated<Timestamp>
   expires: Timestamp
+  impersonatedByUserId: string | null
   ip: string | null
   reauthenticatedAt: Timestamp | null
   sessionKey: string

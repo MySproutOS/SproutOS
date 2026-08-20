@@ -4118,6 +4118,57 @@ export type GetV1UserMeExportResponses = {
 
 export type GetV1UserMeExportResponse = GetV1UserMeExportResponses[keyof GetV1UserMeExportResponses]
 
+export type DeleteV1UserMeImpersonationData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/me/impersonation"
+}
+
+export type DeleteV1UserMeImpersonationErrors = {
+  /**
+   * This session is not an impersonated one
+   */
+  400: ErrorResponseT
+}
+
+export type DeleteV1UserMeImpersonationError =
+  DeleteV1UserMeImpersonationErrors[keyof DeleteV1UserMeImpersonationErrors]
+
+export type DeleteV1UserMeImpersonationResponses = {
+  /**
+   * Ended
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1UserMeImpersonationResponse =
+  DeleteV1UserMeImpersonationResponses[keyof DeleteV1UserMeImpersonationResponses]
+
+export type GetV1UserMeImpersonationData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/me/impersonation"
+}
+
+export type GetV1UserMeImpersonationResponses = {
+  /**
+   * Impersonation status
+   */
+  200: {
+    impersonating: boolean
+    impersonatorUserId: string | null
+    impersonatorEmail: string | null
+    expiresAt: Date | null
+  }
+}
+
+export type GetV1UserMeImpersonationResponse =
+  GetV1UserMeImpersonationResponses[keyof GetV1UserMeImpersonationResponses]
+
 export type DeleteV1UserMeDeleteData = {
   body?: never
   path?: never

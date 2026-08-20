@@ -9,7 +9,10 @@ export type SessionUser = Pick<Selectable<DB["user"]>, "id" | "isAdmin" | "name"
  *  `user_agent` / `ip` for a sign-out-other-sessions screen. Selecting those on
  *  every request would cost a wider read on the hottest path in the product for
  *  data no caller here reads. */
-export type AuthSession = Pick<Selectable<DB["session"]>, "sessionKey" | "userId" | "expires">
+export type AuthSession = Pick<
+  Selectable<DB["session"]>,
+  "sessionKey" | "userId" | "expires" | "impersonatedByUserId"
+>
 
 type SessionValidationResult = {
   session: AuthSession
@@ -26,6 +29,9 @@ export function authUser(db: Kysely<DB>) {
         "session.sessionKey",
         "session.expires",
         "session.userId",
+        // Read on every request, unlike the other wide columns, because every *write* has to stamp
+        // it. A route that could not see it would attribute a support action to the customer.
+        "session.impersonatedByUserId",
         "user.id",
         "user.isAdmin",
         "user.name",
@@ -40,6 +46,7 @@ export function authUser(db: Kysely<DB>) {
       sessionKey: row.sessionKey,
       userId: row.userId,
       expires: row.expires,
+      impersonatedByUserId: row.impersonatedByUserId,
     }
     const user: SessionUser = {
       id: row.id,
@@ -51,7 +58,18 @@ export function authUser(db: Kysely<DB>) {
       await db.deleteFrom("session").where("sessionKey", "=", session.sessionKey).execute()
       return null
     }
-    if (Date.now() >= session.expires.getTime() - 1000 * 60 * 60 * 24 * 15) {
+    /*
+      Sliding expiry, but never for an impersonated session.
+
+      This is not a nicety. An impersonated session is issued for one hour, and one hour is well
+      inside the fifteen-day renewal window — so without this guard the *first request* an admin
+      made while impersonating would extend a stranger's session to thirty days. The short expiry
+      would have been decorative, and nothing about the code that set it would have looked wrong.
+    */
+    if (
+      session.impersonatedByUserId === null &&
+      Date.now() >= session.expires.getTime() - 1000 * 60 * 60 * 24 * 15
+    ) {
       session.expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
       await db
         .updateTable("session")

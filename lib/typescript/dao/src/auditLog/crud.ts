@@ -2,15 +2,27 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 import { v7 } from "uuid"
 
-export type AuditEntry = {
+/**
+ * The request-level part of an audit row: who was really at the keyboard, and from where.
+ *
+ * Defined here and imported by everything that forwards it, rather than restated where it is
+ * needed. It had been restated once, in `provisionOrganization`, and that narrower copy silently
+ * dropped `impersonatorUserId` — so an organization created during a support session was attributed
+ * to the customer alone. One type is what stops the next field from going the same way.
+ */
+export type AuditContext = {
+  ip?: string | null
+  userAgent?: string | null
+  impersonatorUserId?: string | null
+}
+
+export type AuditEntry = AuditContext & {
   organizationId: string | null
   actorUserId: string | null
   action: string
   resourceSrn?: string | null
   before?: unknown
   after?: unknown
-  ip?: string | null
-  userAgent?: string | null
 }
 
 function asJson(value: unknown): string | null {
@@ -34,6 +46,7 @@ export function crudAuditLog(db: Kysely<DB>) {
         id: v7(),
         organizationId: entry.organizationId,
         actorUserId: entry.actorUserId,
+        impersonatorUserId: entry.impersonatorUserId ?? null,
         action: entry.action,
         resourceSrn: entry.resourceSrn ?? null,
         before: asJson(entry.before),

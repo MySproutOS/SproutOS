@@ -3,6 +3,7 @@ import { Link, Outlet, createRootRoute } from "@tanstack/react-router"
 import { useEffect } from "react"
 import { getV1AuthMeOptions } from "@lib/api-client/generated/@tanstack/react-query.gen"
 import { Button } from "@ui/base/ui/button"
+import { ImpersonationBanner } from "@frontends/dashboard/components/shell/impersonation-banner"
 import { Spinner } from "@ui/base/ui/spinner"
 import { TooltipProvider } from "@ui/base/ui/tooltip"
 import {
@@ -86,6 +87,16 @@ function RootLayout() {
 
   return (
     <TooltipProvider>
+      {/*
+        Here rather than inside `DashboardShell`, which was the first place it went.
+
+        The shell only renders once an organization has resolved, so on every screen before that —
+        the loading state, and the "could not find your organization" error an admin lands on when
+        they impersonate someone with no team — the banner was absent and there was no way to end
+        the session. An admin stranded on an error page with a stranger's cookie and no exit is the
+        exact situation the banner exists to prevent.
+      */}
+      <ImpersonationBanner />
       <Outlet />
     </TooltipProvider>
   )

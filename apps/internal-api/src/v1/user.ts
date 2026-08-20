@@ -1,8 +1,16 @@
-import { exportUser, fetchOrganization, fetchUserPreference } from "@lib/dao"
+import {
+  authUser,
+  crudAuditLog,
+  exportUser,
+  fetchOrganization,
+  fetchUserPreference,
+  impersonation,
+} from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
 import { db } from "@sproutos/db"
+import { encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
 import { Hono } from "hono"
-import { deleteCookie } from "hono/cookie"
+import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver, validator } from "hono-typebox-openapi/typebox"
 import { v7 } from "uuid"
@@ -10,6 +18,9 @@ import { authMiddleware } from "../middleware"
 import { cookieDomain } from "../utils/env"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
+import { adminSchemaImpersonationStatus } from "../admin/admin.serializer"
+import { IMPERSONATOR_COOKIE } from "../admin/impersonator-cookie"
+import { auditContext } from "../utils/request-context"
 import {
   userSchemaExportResponse,
   userSchemaPreferencesResponse,
@@ -207,6 +218,130 @@ const app = new Hono()
       c.header("Content-Disposition", `attachment; filename="sproutos-export-${day}.json"`)
 
       return c.json(document)
+    },
+  )
+  .get(
+    "/me/impersonation",
+    describeRoute({
+      description: "Whether this session belongs to the person using it",
+      responses: {
+        200: {
+          description: "Impersonation status",
+          content: { "application/json": { schema: resolver(adminSchemaImpersonationStatus) } },
+        },
+      },
+    }),
+    async (c) => {
+      const session = c.var.session
+
+      /*
+        On the ordinary user surface, not the admin one, and readable by every session.
+
+        The dashboard shows a banner from this. Someone acting inside an impersonated session must
+        be able to see that they are — an admin who forgets is how a support session becomes an
+        accidental change to a customer's account, and the customer's audit trail is the only place
+        that would ever have said so.
+      */
+      if (session === null || session.impersonatedByUserId === null) {
+        return c.json({
+          impersonating: false,
+          impersonatorUserId: null,
+          impersonatorEmail: null,
+          expiresAt: null,
+        })
+      }
+
+      const impersonator = await db
+        .selectFrom("user")
+        .select("email")
+        .where("id", "=", session.impersonatedByUserId)
+        .executeTakeFirst()
+
+      return c.json({
+        impersonating: true,
+        impersonatorUserId: session.impersonatedByUserId,
+        impersonatorEmail: impersonator?.email ?? null,
+        expiresAt: session.expires.toISOString(),
+      })
+    },
+  )
+  .delete(
+    "/me/impersonation",
+    describeRoute({
+      description: "End an impersonated session and clear its cookie",
+      responses: {
+        200: {
+          description: "Ended",
+          content: { "application/json": { schema: resolver(EmptyObject) } },
+        },
+        400: { description: "This session is not an impersonated one", ...errorResponse },
+      },
+    }),
+    async (c) => {
+      const session = c.var.session
+
+      if (session === null || session.impersonatedByUserId === null) {
+        return throwBadRequest(c, "This session is not an impersonated one")
+      }
+
+      /*
+        Audited before the session is deleted, and as the impersonated user with the admin recorded
+        alongside — the same shape as everything else done during the session. The row that opened
+        it is the only one written the other way round.
+      */
+      await crudAuditLog(db).record({
+        organizationId: null,
+        actorUserId: session.userId,
+        action: "admin:impersonate:end",
+        resourceSrn: `srn:sproutos:iam::user/${session.userId}`,
+        ...auditContext(c),
+      })
+
+      await impersonation(db).end(session.sessionKey)
+
+      /*
+        Hand the admin their own session back.
+
+        Their session row was never touched, but the browser stopped holding its token the moment
+        `session` was overwritten — so without the stash this is a sign-out, which is what it was
+        until the flow was driven end to end. A support engineer who has to sign in again afterwards
+        is one who leaves the next impersonated session open instead.
+
+        The stashed token is verified to belong to the admin this session actually records. A cookie
+        somebody planted grants nothing it did not already grant — it is a session token, and
+        presenting it as `session` gives whatever it already gave — but restoring an unrelated
+        session would make the audit trail describe a handover that did not happen.
+      */
+      const stashed = getCookie(c, IMPERSONATOR_COOKIE)
+      const restored =
+        stashed === undefined
+          ? null
+          : await authUser(db).validateSessionToken(encodeHexLowerCase(await sha256Utf8(stashed)))
+
+      const cookieOptions = {
+        path: "/",
+        domain: cookieDomain(),
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: process.env.NODE_ENV === "production",
+      } as const
+
+      if (
+        stashed !== undefined &&
+        restored !== null &&
+        restored.user.id === session.impersonatedByUserId
+      ) {
+        setCookie(c, "session", stashed, {
+          ...cookieOptions,
+          expires: restored.session.expires,
+        })
+      } else {
+        deleteCookie(c, "session", { path: "/", domain: cookieDomain() })
+      }
+
+      deleteCookie(c, IMPERSONATOR_COOKIE, { path: "/", domain: cookieDomain() })
+
+      return c.json({}, 200)
     },
   )
   .delete(

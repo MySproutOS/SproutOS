@@ -13,6 +13,16 @@ const fontsourceFiles = (pkg: string) =>
   )
 
 export default defineConfig(({ mode }) => ({
+  /*
+    The repo-root `.env`, not one per SPA.
+
+    Vite looks in the app directory by default, and there is no `.env` there — so every
+    `import.meta.env.VITE_*` read resolved to `undefined`, and each of the five redirects written as
+    `${import.meta.env.VITE_NEXTJS_URL ?? ""}/dashboard` quietly became a same-origin path. On the
+    dashboard that happens to work, because the website proxies it at the same origin. On the admin
+    SPA, served under `/admin/` on its own host, it is a 404 — which is how this was found.
+  */
+  envDir: path.resolve(__dirname, "../../.."),
   base: mode === "production" ? "https://d1i66hf38xpie.cloudfront.net/admin/" : "/admin/",
   plugins: [
     tanstackRouter({ quoteStyle: "double" }),
