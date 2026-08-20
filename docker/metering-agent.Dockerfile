@@ -7,7 +7,7 @@
 #
 # Also why the release profile sets `panic = "abort"` and `strip = true`: nothing unwinds, nothing
 # carries symbols, and the binary boots instantly on a node that is billed by the second.
-FROM --platform=$BUILDPLATFORM rust:1.85-alpine AS build
+FROM --platform=$BUILDPLATFORM rust:1.93-alpine AS build
 
 RUN apk add --no-cache musl-dev pkgconfig
 WORKDIR /src

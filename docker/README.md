@@ -61,12 +61,15 @@ Verified for each: the container starts, serves or works, and runs as a non-root
 
 ## Size
 
-| image          | size    |
-| -------------- | ------- |
-| `pg-proxy`     | 1.1 MiB |
-| `website`      | 318 MB  |
-| `internal-api` | 847 MB  |
-| `worker`       | 847 MB  |
+| image            | size   |
+| ---------------- | ------ |
+| `pg-proxy`       | 3.5 MB |
+| `valkey-proxy`   | 3.5 MB |
+| `metering-agent` | 5.4 MB |
+| `search-proxy`   | 6.7 MB |
+| `website`        | 318 MB |
+| `internal-api`   | 847 MB |
+| `worker`         | 847 MB |
 
 The two Node service images were **2.46 GB** until they stopped shipping the build stage's
 `node_modules`. The app is bundled, so the only thing `node_modules` still has to supply is the
@@ -82,9 +85,21 @@ is the product, not waste. The rest is the Alpine base and the real production d
 what the server reaches and copies only that. See the `@swc/helpers` note above for where the
 tracing gets it wrong.
 
-`pg-proxy` has been built and run (1.1 MiB, uid 65534, exits on its own config error). The other
-three Rust images are the same file with a name substituted, which is a good reason to expect them
-to work and not the same as knowing.
+All four Rust images have now been built and run, and building the other three is what exposed the
+eighth bug: **every Rust Dockerfile pinned `rust:1.85-alpine` while `rust-toolchain.toml` requires
+1.93.0.** `pg-proxy` and `valkey-proxy` built anyway — their dependency trees do not happen to reach
+a crate that demands newer — so the two that worked read as evidence the pin was fine, while
+`metering-agent` and `search-proxy` failed outright on the `icu_*` crates. Two of four images were
+being produced by a compiler eight minor versions behind the one every test runs under.
+
+The version was written down in three places that nothing connected: the workflow, the toolchain
+file, and each Dockerfile. `bin/check-rust-toolchain.mjs` now fails CI when they disagree, and fails
+if its own patterns stop matching rather than passing blind.
+
+Each of the four starts, runs its own configuration validation, and exits with its own error — which
+is what proves the binary executes at all in a `scratch` image with no shell. `pg-proxy` was taken
+further: given a real backend it listens, accepts a `psql` connection, speaks the startup and SCRAM
+exchange, and rejects a role that is not a provisioned tenant.
 
 ## Probes
 

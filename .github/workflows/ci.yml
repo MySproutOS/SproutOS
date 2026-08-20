@@ -207,6 +207,12 @@ jobs:
           targets: aarch64-unknown-linux-musl
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      # The version is written down in three places — this workflow, rust-toolchain.toml, and every
+      # Rust Dockerfile — and nothing connected them. All four images sat on rust:1.85 while the repo
+      # moved to 1.93; two of them built anyway, because their dependency trees do not reach a crate
+      # that demands newer, which is exactly why nobody noticed.
+      - name: Check the Rust toolchain pins agree
+        run: node bin/check-rust-toolchain.mjs
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
