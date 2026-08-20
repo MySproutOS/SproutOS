@@ -233,6 +233,7 @@ coexists with `PATCH /roles/:roleId` only because they are different methods.) F
 into the `:memberId` route was the other option, but it would demote that route's
 `requirePermission("member:remove")` to a check buried in the handler, and the gate on these routes
 should stay visible in the route definition.
+The store and project-lifecycle routes that build on `requirePermission` are documented separately in [`STORE-AND-PROJECTS.md`](STORE-AND-PROJECTS.md).
 
 ### Rules the routes enforce that the schema cannot
 

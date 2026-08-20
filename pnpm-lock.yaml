@@ -297,6 +297,12 @@ importers:
       '@lib/dao':
         specifier: workspace:*
         version: link:../../lib/typescript/dao
+      '@lib/envelope':
+        specifier: workspace:*
+        version: link:../../lib/typescript/envelope
+      '@lib/github':
+        specifier: workspace:*
+        version: link:../../lib/typescript/github
       '@lib/srn':
         specifier: workspace:*
         version: link:../../lib/typescript/srn
@@ -509,6 +515,12 @@ importers:
       '@aws-sdk/client-kms':
         specifier: 'catalog:'
         version: 3.1114.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/github:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

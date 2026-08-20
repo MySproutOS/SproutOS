@@ -1,0 +1,17 @@
+{
+  "name": "@lib/github",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The GitHub REST surface project provisioning needs, split by which credential GitHub actually accepts.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}
