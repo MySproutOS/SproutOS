@@ -1,0 +1,54 @@
+# The two Kata runtime classes tenant workloads run under.
+#
+# ADR-level, and the distinction is not a preference: **Kata with Firecracker has no virtio-fs**, so
+# its only rootfs path is a devmapper thin snapshot. Anything that needs a live filesystem — an agent
+# session writing files, a dev sandbox — cannot use it and must be Cloud Hypervisor.
+#
+# `kata-deploy` installs the handlers these name. Nothing here installs `kata-deploy`.
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-fc
+  labels:
+    app.kubernetes.io/part-of: sproutos
+# Firecracker: the smaller attack surface and the faster boot, for workloads that get a rootfs
+# snapshot and nothing more — workflow runs and deploys.
+handler: kata-fc
+scheduling:
+  nodeSelector:
+    katacontainers.io/kata-runtime: "true"
+  tolerations:
+    - key: sproutos.dev/tenant
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+overhead:
+  # The VM itself costs memory and a little CPU before the workload starts. Declared so the scheduler
+  # accounts for it: without this, a node packs to its apparent capacity and then evicts, because the
+  # sum of the guests exceeds what the host has.
+  podFixed:
+    cpu: 100m
+    memory: 160Mi
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-clh
+  labels:
+    app.kubernetes.io/part-of: sproutos
+# Cloud Hypervisor: supports virtio-fs, so a guest can have a live filesystem. Agent sessions and dev
+# sandboxes run here because they need one — this is the constraint, not a tuning choice.
+handler: kata-clh
+scheduling:
+  nodeSelector:
+    katacontainers.io/kata-runtime: "true"
+  tolerations:
+    - key: sproutos.dev/tenant
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+overhead:
+  podFixed:
+    cpu: 100m
+    memory: 224Mi

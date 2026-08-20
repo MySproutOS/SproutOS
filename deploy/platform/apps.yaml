@@ -1,0 +1,223 @@
+# The website, the API, and the job worker.
+#
+# The worker is separate from the API on purpose and not for scale: a long job holding an event-loop
+# turn inside the API delays every request behind it, and a worker that needs restarting should not
+# take the API down with it. They read the same `background_job` table and nothing else coordinates
+# them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-api
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: internal-api
+    app.kubernetes.io/part-of: sproutos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: internal-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: internal-api
+    spec:
+      serviceAccountName: internal-api
+      containers:
+        - name: api
+          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/internal-api:TAG
+          ports:
+            - name: http
+              containerPort: 3001
+          env:
+            - name: API_PORT
+              value: "3001"
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-database
+                  key: url
+            # The key `@lib/envelope` wraps data keys with. The application never sees plaintext
+            # material — KMS does the unwrapping — so this is a key *id*, not a secret.
+            - name: KMS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: kms-key-id
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-api
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: internal-api
+    app.kubernetes.io/part-of: sproutos
+spec:
+  selector:
+    app.kubernetes.io/name: internal-api
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: website
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: website
+    app.kubernetes.io/part-of: sproutos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: website
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: website
+    spec:
+      serviceAccountName: website
+      containers:
+        - name: website
+          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/website:TAG
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-database
+                  key: url
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            # Next.js writes its incremental cache to disk. `readOnlyRootFilesystem` with an
+            # `emptyDir` over `.next/cache` would be the tidy answer; it is left false and flagged
+            # rather than guessed at, because getting the mount path wrong fails at request time on
+            # a cache miss, not at startup.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: website
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: website
+    app.kubernetes.io/part-of: sproutos
+spec:
+  selector:
+    app.kubernetes.io/name: website
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: sproutos
+spec:
+  # Two, not three. The job runner claims with `FOR UPDATE SKIP LOCKED`, so workers never contend —
+  # adding replicas adds throughput and nothing else. Two is for availability during a rolling
+  # deploy, not for capacity.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+    spec:
+      serviceAccountName: worker
+      # A worker holding a job lease should be allowed to finish it. The default 30 seconds would
+      # kill mid-job and leave the lease to expire, which the runner handles — but re-running a job
+      # that was nearly done is work paid for twice.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/worker:TAG
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-database
+                  key: url
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault

@@ -48,8 +48,21 @@ before it evicts the thing that bills for them.
 
 ## `platform/`
 
-Deployments and identities for the platform's own workloads. All three data-plane proxies are here;
-the website, API and worker are not.
+Deployments and identities for the platform's own workloads: the website, the API, the worker, and
+all three data-plane proxies.
+
+The worker is separate from the API not for scale but because a long job holding an event-loop turn
+inside the API delays every request behind it, and a worker that needs restarting should not take the
+API down with it. Two replicas, not three: the job runner claims with `FOR UPDATE SKIP LOCKED`, so
+workers never contend and replicas buy throughput — the second one is for availability during a
+rolling deploy. Its `terminationGracePeriodSeconds` is 120, because a worker holding a lease should
+finish the job; the default 30 kills mid-job and leaves the lease to expire, and re-running a job
+that was nearly done is work paid for twice.
+
+`website` is the one Deployment with `readOnlyRootFilesystem: false`. Next.js writes its incremental
+cache to disk, and an `emptyDir` over `.next/cache` is the tidy answer — left unwritten and flagged
+rather than guessed, because getting that mount path wrong fails at request time on a cache miss
+rather than at startup, which is the worst place to discover it.
 
 The three proxies are separate Deployments rather than one because they scale on different signals —
 queue traffic is bursty per job, search traffic is per request — and because a bad deploy of one
@@ -90,9 +103,22 @@ rather than a convenience — and this is the rule that enforces it from the ten
 `TENANT_NAMESPACE` is a placeholder: one namespace per project, created by the control plane, which
 substitutes it.
 
+## `tenant/runtime-classes.yaml`
+
+Two Kata runtime classes, and the split is a constraint rather than a preference. **Kata with
+Firecracker has no virtio-fs**, so its only rootfs path is a devmapper thin snapshot — anything
+needing a live filesystem cannot use it. `kata-fc` runs workflow and deploy workloads; `kata-clh`
+runs agent sessions and dev sandboxes, which write files.
+
+Both declare `overhead.podFixed`. The VM costs memory and a little CPU before the workload starts,
+and without declaring it the scheduler packs a node to its apparent capacity and then evicts, because
+the sum of the guests exceeds what the host has.
+
+`kata-deploy` installs the handlers these name. **Nothing here installs `kata-deploy`**, so applied
+today both classes reference a handler no node provides and every pod using them stays Pending.
+
 ## Not here
 
-- **Deployments for the website, API and worker.**
 - **The gateway** the tenant ingress policy names. The policy allows traffic from
   `app.kubernetes.io/name: gateway` in `sproutos-system`, and nothing by that name exists yet — so
   applied today, that rule admits nothing. It is a real inconsistency, left visible rather than
@@ -102,8 +128,9 @@ substitutes it.
   External Secrets is the intended source and does not exist.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
-- **`kata-deploy`, the runtime classes and devmapper thin pools.** Phase 11. The tenant node group
-  is labelled `katacontainers.io/kata-runtime` and nothing installs it.
+- **`kata-deploy` itself and the devmapper thin pools.** Phase 11. The runtime classes above name
+  handlers that only `kata-deploy` provides, and the tenant node group is labelled for it — but
+  nothing installs it, so both classes are currently references to nothing.
 - **External Secrets**, so `metering-ingest` above is a Secret somebody has to create by hand.
 - **NetworkPolicies.** The plan treats the NetworkPolicy plus the Kata VM boundary as the only real
   isolation control for tenant workloads, and neither exists yet.
