@@ -229,3 +229,41 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  tofu:
+    name: (tofu) Format and Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.10.6"
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.59.1
+
+      - name: Format
+        run: tofu fmt -check -recursive
+        working-directory: tofu
+
+      # `-backend=false`: the state backend needs credentials and this job has none. Everything
+      # below is a check on the configuration itself, which is the only kind available without an
+      # account.
+      - name: Init
+        run: tofu init -backend=false
+        working-directory: tofu
+
+      - name: Validate
+        run: tofu validate
+        working-directory: tofu
+
+      # Worth being clear about the ceiling: this catches unused declarations and undocumented
+      # variables. It does *not* catch an invalid instance type or a nonexistent database engine —
+      # I checked, and both pass. See tofu/README.md.
+      - name: Lint
+        run: |
+          tflint --init
+          tflint
+        working-directory: tofu
