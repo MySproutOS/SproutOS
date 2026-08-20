@@ -29,6 +29,7 @@
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
     "@lib/jobs": "workspace:*",
+    "@lib/oauth-provider": "workspace:*",
     "@lib/services": "workspace:*",
     "@lib/srn": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",

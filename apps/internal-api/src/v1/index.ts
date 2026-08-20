@@ -7,6 +7,7 @@ import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
 import members, { invites } from "./members"
+import oauth from "./oauth"
 import organizations from "./organizations"
 import projects from "./projects"
 import roles from "./roles"
@@ -31,6 +32,9 @@ const app = new Hono({
   .route("/orgs", agentChat)
   .route("/orgs", services)
   .route("/orgs", analysis)
+  // Unauthenticated by design: the token, introspection, and revocation endpoints authenticate
+  // the *client*, not a session, and discovery is public by definition.
+  .route("/oauth", oauth)
   .route("/orgs/:orgSlug/billing", billing)
   // The catalogue itself is public (TASK 4); only moderation is org-scoped, and it is mounted
   // under /orgs so the organization whose grants apply is named in the path rather than inferred
