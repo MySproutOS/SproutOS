@@ -148,10 +148,15 @@ today both classes reference a handler no node provides and every pod using them
   papered over with a placeholder Deployment that would look like an answer.
 - **The External Secrets operator itself.** `secrets/` declares what it should fetch; nothing
   installs the controller that would act on it, so those resources are currently inert too.
+- **Applying any of it.** `.github/workflows/deploy.yml` builds the images, renders the manifests
+  and validates the result — and deliberately stops there. A workflow that would `kubectl apply` on
+  merge, written blind and never rehearsed, is a worse artefact than one that builds the inputs and
+  hands them over.
 - **Substituting the placeholders.** `ACCOUNT`, `REGION`, `TAG`, `TENANT_NAMESPACE`, `KMS_KEY_ARN`
   and the three tenant hostnames are literal strings in these files. A deploy pipeline fills them
-  from the OpenTofu outputs of the same name — and that pipeline does not exist, so applied as
-  written these resolve to nothing valid.
+  from the OpenTofu outputs of the same name. That is `bin/render-manifests.mjs`, driven by the
+  deploy workflow — so this one is now done, and the entry stays only to say that the _checked-in_
+  files are templates rather than manifests.
 - **Knative**, the build pipeline, and everything that turns a tenant's repository into a running
   revision. Phase 10.
 - **`kata-deploy` itself and the devmapper thin pools.** Phase 11. The runtime classes above name

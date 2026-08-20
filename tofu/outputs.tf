@@ -64,3 +64,18 @@ output "vpc_id" {
   description = "VPC everything is deployed into"
   value       = aws_vpc.main.id
 }
+
+# Read by `bin/render-manifests.mjs` to fill the `ACCOUNT` and `REGION` placeholders in `deploy/`.
+#
+# Outputs rather than variables on the manifest side: the account is whatever we actually applied
+# into, confirmed by `aws_caller_identity`, not whatever a variable claimed. The `check` block in
+# `main.tf` asserts the two agree; this is the value that was true.
+output "aws_account_id" {
+  description = "Account these resources live in, as observed rather than as declared"
+  value       = data.aws_caller_identity.current.account_id
+}
+
+output "aws_region" {
+  description = "Region these resources live in"
+  value       = var.aws_region
+}
