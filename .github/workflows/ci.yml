@@ -138,7 +138,15 @@ jobs:
         run: pnpm run check-types
 
       - name: Test
-        run: pnpm run test
+        run: pnpm exec vitest --run --config .config/vitest.config.mts --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # A skipped test reads exactly like a passing one in the summary. Several suites gate on a
+      # capability this environment lacks — LocalStack for KMS, a GitHub App, an Anthropic key — so
+      # CI has never executed the envelope-encryption suite that protects OAuth tokens and database
+      # credentials, and nothing said so. The known skips are now written down with what each is
+      # waiting for, and the count is a ceiling: anything newly silent fails the build.
+      - name: No new silent skips
+        run: node bin/check-skipped-tests.mjs vitest-report.json
 
   rust:
     name: (cargo) Format, Clippy, and Test
