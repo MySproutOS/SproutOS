@@ -2497,6 +2497,161 @@ export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses = {
 export type GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse =
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses[keyof GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/deployments"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors = {
+  /**
+   * Caller lacks deployment:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
+  /**
+   * Deployments
+   */
+  200: {
+    data: Array<{
+      id: string
+      projectId: string
+      kind: string
+      status: string
+      gitSha: string
+      gitRef: string | null
+      prNumber: number | null
+      url: string | null
+      imageUri: string | null
+      knativeRevision: string | null
+      runtimeClass: string
+      createdAt: string
+      updatedAt: string
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData = {
+  body?: {
+    gitSha: string
+    gitRef?: string | null
+    kind?: "production" | "preview"
+    prNumber?: number | null
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/deployments"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors = {
+  /**
+   * A preview needs a PR number
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks deployment:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
+  /**
+   * Queued
+   */
+  202: {
+    id: string
+    projectId: string
+    kind: string
+    status: string
+    gitSha: string
+    gitRef: string | null
+    prNumber: number | null
+    url: string | null
+    imageUri: string | null
+    knativeRevision: string | null
+    runtimeClass: string
+    createdAt: string
+    updatedAt: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses]
+
+export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    deploymentId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/deployments/{deploymentId}"
+}
+
+export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors = {
+  /**
+   * Caller lacks deployment:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such deployment in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdError =
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors[keyof GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors]
+
+export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
+  /**
+   * Deployment
+   */
+  200: {
+    id: string
+    projectId: string
+    kind: string
+    status: string
+    gitSha: string
+    gitRef: string | null
+    prNumber: number | null
+    url: string | null
+    imageUri: string | null
+    knativeRevision: string | null
+    runtimeClass: string
+    createdAt: string
+    updatedAt: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse =
+  GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses[keyof GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
   body?: never
   path: {

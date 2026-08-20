@@ -351,6 +351,25 @@ jobs:
   cluster:
     name: (kind) Apply to a real API server
     runs-on: ubuntu-latest
+    # Postgres because the deploy handler's end-to-end test needs both halves at once: a
+    # `deployment` row to read and a cluster to apply it to. Without it that test skips, and a
+    # skipped test reads exactly like a passing one.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: main
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
     # Everything above validates these manifests without a cluster, and everything above missed the
     # same class of bug. `kubeconform -strict` checks each document against a schema; it has no idea
     # whether the namespace exists, whether a Pod Security Standard will reject the pod, or whether
@@ -665,3 +684,35 @@ jobs:
                   -o jsonpath='{.spec.template.spec.runtimeClassName}')
           echo "runtimeClassName as stored by the API server: $got"
           test "$got" = "kata-fc"
+
+      # The deploy handler, end to end: a row in Postgres becomes a Knative Service in the cluster,
+      # the revision comes up, and the row records the URL it was given.
+      #
+      # This is the test that found Knative's `Ready: False` meaning two different things. It only
+      # runs where both halves exist, which until now was nowhere.
+      - name: A deployment row becomes a running URL
+        run: |
+          pnpm --filter=dbmigrator run migrate:latest
+
+          # `kata-clh` names a handler no `kind` node provides, so the revision would sit Pending
+          # and the deploy would correctly be recorded as failed. Pointing the runtime classes at
+          # the default runtime is what makes the *success* path reachable here; the failure path is
+          # already covered by unit tests. The handler still sets `runtimeClassName` and the API
+          # server still stores it — what changes is only which handler that name resolves to.
+          # JSON on one line rather than a nested heredoc: a heredoc terminator has to sit at
+          # column zero, and everything inside a `run: |` block is indented.
+          for class in kata-fc kata-clh; do
+            kubectl delete runtimeclass "$class" --ignore-not-found
+            echo "{\"apiVersion\":\"node.k8s.io/v1\",\"kind\":\"RuntimeClass\",\"metadata\":{\"name\":\"$class\"},\"handler\":\"runc\"}" \
+              | kubectl apply -f -
+          done
+
+          kubectl proxy --port=18001 &
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:18001/version >/dev/null && break
+            sleep 1
+          done
+
+          KUBE_SERVER=http://127.0.0.1:18001 \
+            pnpm exec vitest --run --config .config/vitest.config.mts \
+              lib/typescript/jobs/src/deploy.test.ts

@@ -135,6 +135,30 @@ export async function cleanupFixtures(): Promise<void> {
   })
 
   if (created.organizationIds.length > 0) {
+    /*
+      Deployments before organizations.
+
+      `deployment.project_id` is `ON DELETE RESTRICT` — deliberately, because `usage_event`
+      references a deployment for as long as its billing history exists, so a project cannot take
+      the evidence behind a charge with it. That makes a deployment block deleting its project, and
+      therefore the organization above it.
+
+      Scoped through `project` because `deployment` has no `organization_id` of its own.
+    */
+    await db
+      .deleteFrom("deployment")
+      .where((eb) =>
+        eb(
+          "projectId",
+          "in",
+          eb
+            .selectFrom("project")
+            .select("project.id")
+            .where("project.organizationId", "in", created.organizationIds),
+        ),
+      )
+      .execute()
+
     await db.deleteFrom("organization").where("id", "in", created.organizationIds).execute()
   }
   if (created.userIds.length > 0) {
