@@ -33,9 +33,11 @@ import type {
   GetV1StoreFeaturedResponse,
   GetV1StoreListingsBySlugResponse,
   GetV1StoreListingsResponse,
+  GetV1UserMeProfileResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
+  PatchV1UserMeProfileResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugApiKeysResponse,
@@ -565,6 +567,20 @@ export const getV1StoreListingsBySlugResponseTransformer = async (
   if (data.lastSyncedAt) {
     data.lastSyncedAt = new Date(data.lastSyncedAt)
   }
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1UserMeProfileResponseTransformer = async (
+  data: any,
+): Promise<GetV1UserMeProfileResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const patchV1UserMeProfileResponseTransformer = async (
+  data: any,
+): Promise<PatchV1UserMeProfileResponse> => {
   data.createdAt = new Date(data.createdAt)
   return data
 }

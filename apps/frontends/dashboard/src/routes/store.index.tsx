@@ -71,7 +71,15 @@ function StoreList() {
                     {listing.installs} installs
                   </span>
                   <span className="flex items-baseline gap-1">
-                    <Money size="sm">{formatMicroUsd(listing.estimatedMonthlyCostMicros)}</Money>
+                    {/*
+                      An em dash, not `$0.00`. Nobody has estimated what this costs to run, and a
+                      zero would read as "free".
+                    */}
+                    {listing.estimatedMonthlyCostMicros === null ? (
+                      <span className="font-mono text-xs text-muted-foreground">{"\u2014"}</span>
+                    ) : (
+                      <Money size="sm">{formatMicroUsd(listing.estimatedMonthlyCostMicros)}</Money>
+                    )}
                     <span className="text-[11px] text-muted-foreground">/mo est.</span>
                   </span>
                 </div>

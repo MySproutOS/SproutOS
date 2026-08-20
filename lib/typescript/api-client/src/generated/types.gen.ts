@@ -3955,11 +3955,73 @@ export type GetV1UserMePreferencesResponses = {
     lastOrganizationSlug: string | null
     sidebarCollapsed: boolean
     navPinnedProjectIds: Array<string>
+    timezone: string
+    productEmails: boolean
   }
 }
 
 export type GetV1UserMePreferencesResponse =
   GetV1UserMePreferencesResponses[keyof GetV1UserMePreferencesResponses]
+
+export type GetV1UserMeProfileData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/me/profile"
+}
+
+export type GetV1UserMeProfileResponses = {
+  /**
+   * Profile
+   */
+  200: {
+    name: string
+    email: string
+    timezone: string
+    productEmails: boolean
+    createdAt: Date
+  }
+}
+
+export type GetV1UserMeProfileResponse =
+  GetV1UserMeProfileResponses[keyof GetV1UserMeProfileResponses]
+
+export type PatchV1UserMeProfileData = {
+  body?: {
+    name?: string
+    timezone?: string
+    productEmails?: boolean
+    sidebarCollapsed?: boolean
+  }
+  path?: never
+  query?: never
+  url: "/v1/user/me/profile"
+}
+
+export type PatchV1UserMeProfileErrors = {
+  /**
+   * An unknown timezone
+   */
+  400: ErrorResponseT
+}
+
+export type PatchV1UserMeProfileError = PatchV1UserMeProfileErrors[keyof PatchV1UserMeProfileErrors]
+
+export type PatchV1UserMeProfileResponses = {
+  /**
+   * The profile as it now stands
+   */
+  200: {
+    name: string
+    email: string
+    timezone: string
+    productEmails: boolean
+    createdAt: Date
+  }
+}
+
+export type PatchV1UserMeProfileResponse =
+  PatchV1UserMeProfileResponses[keyof PatchV1UserMeProfileResponses]
 
 export type DeleteV1UserMeDeleteData = {
   body?: never

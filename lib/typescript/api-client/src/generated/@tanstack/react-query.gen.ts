@@ -64,11 +64,13 @@ import {
   getV1StoreListingsBySlug,
   getV1StoreTags,
   getV1UserMePreferences,
+  getV1UserMeProfile,
   type Options,
   patchV1OrgsByOrgSlug,
   patchV1OrgsByOrgSlugProjectsByProjectId,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
   patchV1OrgsByOrgSlugRolesByRoleId,
+  patchV1UserMeProfile,
   postV1AuthLogout,
   postV1InvitesAccept,
   postV1OauthConsent,
@@ -262,6 +264,8 @@ import type {
   GetV1StoreTagsResponse,
   GetV1UserMePreferencesData,
   GetV1UserMePreferencesResponse,
+  GetV1UserMeProfileData,
+  GetV1UserMeProfileResponse,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugError,
   PatchV1OrgsByOrgSlugProjectsByProjectIdData,
@@ -274,6 +278,9 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdError,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponse,
+  PatchV1UserMeProfileData,
+  PatchV1UserMeProfileError,
+  PatchV1UserMeProfileResponse,
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
@@ -3266,6 +3273,58 @@ export const getV1UserMePreferencesOptions = (options?: Options<GetV1UserMePrefe
     },
     queryKey: getV1UserMePreferencesQueryKey(options),
   })
+
+export const getV1UserMeProfileQueryKey = (options?: Options<GetV1UserMeProfileData>) =>
+  createQueryKey("getV1UserMeProfile", options)
+
+/**
+ * The caller's identity and the preferences that belong to them
+ */
+export const getV1UserMeProfileOptions = (options?: Options<GetV1UserMeProfileData>) =>
+  queryOptions<
+    GetV1UserMeProfileResponse,
+    DefaultError,
+    GetV1UserMeProfileResponse,
+    ReturnType<typeof getV1UserMeProfileQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1UserMeProfile({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1UserMeProfileQueryKey(options),
+  })
+
+/**
+ * Update the caller's name and preferences
+ */
+export const patchV1UserMeProfileMutation = (
+  options?: Partial<Options<PatchV1UserMeProfileData>>,
+): UseMutationOptions<
+  PatchV1UserMeProfileResponse,
+  PatchV1UserMeProfileError,
+  Options<PatchV1UserMeProfileData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1UserMeProfileResponse,
+    PatchV1UserMeProfileError,
+    Options<PatchV1UserMeProfileData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchV1UserMeProfile({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export const deleteV1UserMeDeleteMutation = (
   options?: Partial<Options<DeleteV1UserMeDeleteData>>,

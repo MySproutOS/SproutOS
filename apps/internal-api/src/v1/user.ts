@@ -3,11 +3,20 @@ import { crudUser } from "@lib/dao/user/crud"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
-import { resolver } from "hono-typebox-openapi/typebox"
+import { resolver, validator } from "hono-typebox-openapi/typebox"
+import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwInternalServerError } from "../utils/http-exception"
-import { userSchemaPreferencesResponse } from "./user.serializer"
+import { throwBadRequest, throwInternalServerError } from "../utils/http-exception"
+import {
+  userSchemaPreferencesResponse,
+  userSchemaProfileResponse,
+  userSchemaUpdateProfileRequest,
+} from "./user.serializer"
+
+const errorResponse = {
+  content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
+}
 
 const app = new Hono()
   .use(authMiddleware)
@@ -30,6 +39,8 @@ const app = new Hono()
       const preference = await fetchUserPreference(db).getForUser(user.id, [
         "sidebarCollapsed",
         "navPinnedProjectIds",
+        "timezone",
+        "productEmails",
       ])
 
       // `last_org_id` is authoritative only while it still points at a live membership: the column
@@ -46,6 +57,120 @@ const app = new Hono()
         lastOrganizationSlug: landing?.slug ?? null,
         sidebarCollapsed: preference?.sidebarCollapsed ?? false,
         navPinnedProjectIds: preference?.navPinnedProjectIds ?? [],
+        // The defaults a user who has never opened the settings screen gets. They match the column
+        // defaults, so a row that does not exist yet and a row that was just created read alike.
+        timezone: preference?.timezone ?? "UTC",
+        productEmails: preference?.productEmails ?? false,
+      })
+    },
+  )
+  .get(
+    "/me/profile",
+    describeRoute({
+      description: "The caller's identity and the preferences that belong to them",
+      responses: {
+        200: {
+          description: "Profile",
+          content: { "application/json": { schema: resolver(userSchemaProfileResponse) } },
+        },
+      },
+    }),
+    async (c) => {
+      const user = c.var.user
+      const [row, preference] = await Promise.all([
+        db
+          .selectFrom("user")
+          .select(["name", "email", "createdAt"])
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow(),
+        fetchUserPreference(db).getForUser(user.id, ["timezone", "productEmails"]),
+      ])
+
+      return c.json({
+        // `user.name` is nullable — GitHub does not require a display name. The email is the only
+        // thing every account definitely has, so it is what a blank name falls back to.
+        name: row.name ?? row.email,
+        email: row.email,
+        timezone: preference?.timezone ?? "UTC",
+        productEmails: preference?.productEmails ?? false,
+        createdAt: row.createdAt.toISOString(),
+      })
+    },
+  )
+  .patch(
+    "/me/profile",
+    describeRoute({
+      description: "Update the caller's name and preferences",
+      responses: {
+        200: {
+          description: "The profile as it now stands",
+          content: { "application/json": { schema: resolver(userSchemaProfileResponse) } },
+        },
+        400: { description: "An unknown timezone", ...errorResponse },
+      },
+    }),
+    validator("json", userSchemaUpdateProfileRequest),
+    async (c) => {
+      const user = c.var.user
+      const body = c.req.valid("json")
+
+      if (body.name !== undefined) {
+        await db
+          .updateTable("user")
+          .set({ name: body.name.trim(), updatedAt: new Date() })
+          .where("id", "=", user.id)
+          .execute()
+      }
+
+      const preferenceFields = {
+        ...(body.timezone === undefined ? {} : { timezone: body.timezone }),
+        ...(body.productEmails === undefined ? {} : { productEmails: body.productEmails }),
+        ...(body.sidebarCollapsed === undefined ? {} : { sidebarCollapsed: body.sidebarCollapsed }),
+      }
+
+      if (Object.keys(preferenceFields).length > 0) {
+        try {
+          /*
+            Upsert, because a user has no preference row until they change something.
+
+            Creating one at signup would be a row per account that mostly holds defaults, and a
+            signup path with one more thing to fail at.
+          */
+          await db
+            .insertInto("userPreference")
+            .values({ id: v7(), userId: user.id, ...preferenceFields })
+            .onConflict((conflict) =>
+              conflict.column("userId").doUpdateSet({ ...preferenceFields, updatedAt: new Date() }),
+            )
+            .execute()
+        } catch (cause) {
+          /*
+            The database is the authority on what a timezone is — it checks against
+            `pg_timezone_names`, the same list `at time zone` accepts. Catching it here turns a 500
+            into the 400 it actually is.
+          */
+          if (String(cause).includes("unknown timezone")) {
+            return throwBadRequest(c, `\`${body.timezone}\` is not a timezone this platform knows`)
+          }
+          throw cause
+        }
+      }
+
+      const [row, preference] = await Promise.all([
+        db
+          .selectFrom("user")
+          .select(["name", "email", "createdAt"])
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow(),
+        fetchUserPreference(db).getForUser(user.id, ["timezone", "productEmails"]),
+      ])
+
+      return c.json({
+        name: row.name ?? row.email,
+        email: row.email,
+        timezone: preference?.timezone ?? "UTC",
+        productEmails: preference?.productEmails ?? false,
+        createdAt: row.createdAt.toISOString(),
       })
     },
   )

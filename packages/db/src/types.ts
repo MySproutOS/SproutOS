@@ -1071,7 +1071,9 @@ export interface UserPreference {
   id: string
   lastOrgId: string | null
   navPinnedProjectIds: Generated<string[]>
+  productEmails: Generated<boolean>
   sidebarCollapsed: Generated<boolean>
+  timezone: Generated<string>
   updatedAt: Generated<Timestamp>
   userId: string
 }

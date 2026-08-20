@@ -1,4 +1,8 @@
-import { usePlaceholderQuery } from "@frontends/dashboard/data/placeholder"
+import { useQuery } from "@tanstack/react-query"
+import {
+  getV1StoreListingsBySlugOptions,
+  getV1StoreListingsOptions,
+} from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type StoreListing = {
   slug: string
@@ -7,7 +11,15 @@ export type StoreListing = {
   tagline: string
   author: string
   installs: string
-  estimatedMonthlyCostMicros: bigint
+  /**
+   * Null when nobody has estimated it.
+   *
+   * Not `0n`: zero renders as `$0.00`, which tells a customer this is free to run. Estimating it
+   * would mean guessing how much compute a project a stranger wrote will use, and a number someone
+   * plans around has to come from a curator's declared figure or the metered cost of existing
+   * forks. Neither exists yet, and a plausible invented one is worse than an honest absence.
+   */
+  estimatedMonthlyCostMicros: bigint | null
   tags: string[]
 }
 
@@ -18,65 +30,78 @@ export type StoreListingDetail = StoreListing & {
   requires: string[]
 }
 
-const LISTINGS: StoreListing[] = [
-  {
-    slug: "recipe-box",
-    name: "Recipe Box",
-    glyph: "🍲",
-    tagline: "A private recipe site with photo upload and a weekly shopping list.",
-    author: "andrew-chen-wang",
-    installs: "1,204",
-    estimatedMonthlyCostMicros: 400_000n,
-    tags: ["Postgres", "Auth"],
-  },
-  {
-    slug: "imessage-rag",
-    name: "Message Search",
-    glyph: "💬",
-    tagline: "Full-text and semantic search over an exported message archive.",
-    author: "andrew-chen-wang",
-    installs: "842",
-    estimatedMonthlyCostMicros: 2_100_000n,
-    tags: ["OpenSearch", "Workflows"],
-  },
-  {
-    slug: "csm-automations",
-    name: "Client Follow-ups",
-    glyph: "📮",
-    tagline: "Watches a shared inbox and drafts follow-ups on a schedule.",
-    author: "acme-co",
-    installs: "377",
-    estimatedMonthlyCostMicros: 350_000n,
-    tags: ["Queue", "Email"],
-  },
-  {
-    slug: "weekly-digest",
-    name: "Weekly Digest",
-    glyph: "📊",
-    tagline: "Rolls up the week's numbers and mails a single summary on Mondays.",
-    author: "andrew-chen-wang",
-    installs: "265",
-    estimatedMonthlyCostMicros: 50_000n,
-    tags: ["Workflows", "Email"],
-  },
-]
+const INSTALLS = new Intl.NumberFormat("en-US")
 
-/** PLACEHOLDER — swap for `getV1StoreListingOptions()`. */
-export function useStoreListings() {
-  return usePlaceholderQuery(["store", "listings"], LISTINGS)
+/**
+ * The listing's letter, not an emoji.
+ *
+ * `store_listing` has no glyph column and nothing lets a curator pick one, so deriving an emoji
+ * from the slug would be inventing a choice nobody made. The initial is the same treatment the
+ * project list and the team switcher use.
+ */
+function glyphFor(name: string): string {
+  return (name.trim()[0] ?? "·").toUpperCase()
 }
 
-/** PLACEHOLDER — swap for `getV1StoreListingBySlugOptions({ path: { slug } })`. */
-export function useStoreListing(slug: string) {
-  const base = LISTINGS.find((listing) => listing.slug === slug) ?? LISTINGS[0]
-  const detail: StoreListingDetail = {
-    ...base,
-    slug,
-    description:
-      "Forking this listing copies the repository into your organization, provisions the resources it declares, and deploys it. Upstream releases show up as an update you choose to take.",
-    repo: `${base.author}/${base.slug}`,
-    version: "v3",
-    requires: base.tags,
+/** See `StoreListing.estimatedMonthlyCostMicros`. */
+const UNKNOWN_MONTHLY_COST = null
+
+export function useStoreListings() {
+  const query = useQuery(getV1StoreListingsOptions())
+
+  return {
+    ...query,
+    data: query.data?.data.map((listing): StoreListing => ({
+      slug: listing.slug,
+      name: listing.name,
+      glyph: glyphFor(listing.name),
+      tagline: listing.tagline,
+      author: listing.upstreamOwner,
+      installs: INSTALLS.format(listing.installCount),
+      estimatedMonthlyCostMicros: UNKNOWN_MONTHLY_COST,
+      tags: listing.tags,
+    })),
   }
-  return usePlaceholderQuery(["store", "listings", slug], detail)
+}
+
+export function useStoreListing(slug: string) {
+  const query = useQuery(getV1StoreListingsBySlugOptions({ path: { slug } }))
+  const listing = query.data
+
+  return {
+    ...query,
+    data:
+      listing === undefined
+        ? undefined
+        : ({
+            slug: listing.slug,
+            name: listing.name,
+            glyph: glyphFor(listing.name),
+            tagline: listing.tagline,
+            author: listing.upstreamOwner,
+            installs: INSTALLS.format(listing.installCount),
+            estimatedMonthlyCostMicros: UNKNOWN_MONTHLY_COST,
+            tags: listing.tags,
+            description: listing.descriptionMd,
+            repo: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+            /*
+              The branch, not a version.
+
+              A listing tracks an upstream repository, and most of them do not publish releases —
+              `store_listing` records `default_branch` and a last-synced time, which is genuinely
+              what a fork would take. Showing "v1.4.2" would be a version number we made up.
+            */
+            version: listing.defaultBranch,
+            /*
+              What the project needs, as declared by its licence and platform.
+
+              The *services* it needs come from TASKs 38/39's analyzer, whose manifest is stored on
+              `repo_analysis` rather than on the listing — a listing that has never been analysed
+              has nothing honest to say here.
+            */
+            requires: [listing.platform, listing.licenseSpdx].filter(
+              (entry): entry is string => entry !== null && entry !== "",
+            ),
+          } satisfies StoreListingDetail),
+  }
 }
