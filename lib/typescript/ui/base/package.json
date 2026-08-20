@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
+    "@fontsource-variable/bricolage-grotesque": "catalog:",
     "@fontsource-variable/geist": "catalog:",
     "@fontsource-variable/geist-mono": "catalog:",
     "class-variance-authority": "catalog:",

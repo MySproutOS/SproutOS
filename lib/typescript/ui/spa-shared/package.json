@@ -10,6 +10,7 @@
     "@lib/api-client": "workspace:*",
     "@tanstack/react-router": "catalog:",
     "@ui/base": "workspace:*",
+    "clsx": "catalog:",
     "lucide-react": "catalog:"
   },
   "peerDependencies": {

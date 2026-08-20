@@ -2,7 +2,19 @@
 @source "../../seo-shared/src";
 @source "../../spa-shared/src";
 
-@custom-variant dark (&:is(.dark *));
+@import "./utilities.css";
+
+/*
+  SproutOS — "soil & receipt"
+
+  The palette is dug out of the subject: wet soil for the canvas, new-growth leaf
+  for action, dried husk/amber reserved exclusively for money. Amber never appears
+  on anything that isn't a cost, so price reads as its own channel on the page.
+  That rule holds on the dashboard too — it is what makes a bill scannable.
+
+  Dark-only by design. Tokens live on bare `:root` with no `.dark` selector; the
+  marketing site and both SPAs import this one file.
+*/
 
 @theme inline {
   --radius-lg: var(--radius);
@@ -33,9 +45,27 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
 
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* Raw palette, exposed so components can reach a tone directly. */
+  --color-soil-900: var(--soil-900);
+  --color-soil-800: var(--soil-800);
+  --color-soil-700: var(--soil-700);
+  --color-soil-600: var(--soil-600);
+  --color-leaf: var(--leaf);
+  --color-leaf-dim: var(--leaf-dim);
+  --color-husk: var(--husk);
+  --color-husk-dim: var(--husk-dim);
+  --color-bone: var(--bone);
+  --color-bone-dim: var(--bone-dim);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -51,91 +81,93 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-geist), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  /*
+    Dashboard density. Controls are 32px, not the 36-40px the marketing site can
+    afford — a project list or a job table has to fit on a laptop screen.
+  */
+  --spacing-control: 2rem;
+  --spacing-control-sm: 1.75rem;
+  --spacing-control-lg: 2.25rem;
 }
 
 :root {
-  --background: hsl(0 0% 100%);
-  --foreground: hsl(20 14.3% 4.1%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(20 14.3% 4.1%);
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(20 14.3% 4.1%);
-  --primary: hsl(230 85% 60%);
-  --primary-foreground: hsl(223 100% 99%);
-  --secondary: hsl(60 4.8% 95.9%);
-  --secondary-foreground: hsl(24 9.8% 10%);
-  --muted: hsl(60 4.8% 95.9%);
-  --muted-foreground: hsl(25 5.3% 44.7%);
-  --accent: hsl(60 4.8% 95.9%);
-  --accent-foreground: hsl(24 9.8% 10%);
-  --destructive: hsl(0 84.2% 60.2%);
-  --destructive-foreground: hsl(60 9.1% 97.8%);
-  --border: hsl(20 5.9% 90%);
-  --input: hsl(20 5.9% 90%);
-  --ring: hsl(20 14.3% 4.1%);
-  --chart-1: hsl(12 76% 61%);
-  --chart-2: hsl(173 58% 39%);
-  --chart-3: hsl(197 37% 24%);
-  --chart-4: hsl(43 74% 66%);
-  --chart-5: hsl(27 87% 67%);
-  --radius: 0.5rem;
-  --sidebar-background: hsl(0 0% 98%);
-  --sidebar-foreground: hsl(240 5.3% 26.1%);
-  --sidebar-primary: hsl(240 5.9% 10%);
-  --sidebar-primary-foreground: hsl(0 0% 98%);
-  --sidebar-accent: hsl(240 4.8% 95.9%);
-  --sidebar-accent-foreground: hsl(240 5.9% 10%);
-  --sidebar-border: hsl(220 13% 91%);
-  --sidebar-ring: hsl(217.2 91.2% 59.8%);
-  --sidebar: hsl(0 0% 98%);
-}
+  --radius: 0.625rem;
 
-.dark {
-  --background: hsl(240 10% 3.9%);
-  --foreground: hsl(0 0% 98%);
-  --card: hsl(240 10% 3.9%);
-  --card-foreground: hsl(0 0% 98%);
-  --popover: hsl(240 10% 3.9%);
-  --popover-foreground: hsl(0 0% 98%);
-  --primary: hsl(0 0% 98%);
-  --primary-foreground: hsl(240 5.9% 10%);
-  --secondary: hsl(240 3.7% 15.9%);
-  --secondary-foreground: hsl(0 0% 98%);
-  --muted: hsl(240 3.7% 15.9%);
-  --muted-foreground: hsl(240 5% 64.9%);
-  --accent: hsl(240 3.7% 15.9%);
-  --accent-foreground: hsl(0 0% 98%);
-  --destructive: hsl(0 62.8% 30.6%);
-  --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 3.7% 15.9%);
-  --input: hsl(240 3.7% 15.9%);
-  --ring: hsl(240 4.9% 83.9%);
-  --chart-1: hsl(220 70% 50%);
-  --chart-2: hsl(160 60% 45%);
-  --chart-3: hsl(30 80% 55%);
-  --chart-4: hsl(280 65% 60%);
-  --chart-5: hsl(340 75% 55%);
-  --sidebar-background: hsl(240 5.9% 10%);
-  --sidebar-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-primary: hsl(224.3 76.3% 48%);
-  --sidebar-primary-foreground: hsl(0 0% 100%);
-  --sidebar-accent: hsl(240 3.7% 15.9%);
-  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-border: hsl(240 3.7% 15.9%);
-  --sidebar-ring: hsl(217.2 91.2% 59.8%);
-  --sidebar: hsl(240 5.9% 10%);
+  --soil-900: oklch(0.155 0.018 155);
+  --soil-800: oklch(0.196 0.021 155);
+  --soil-700: oklch(0.253 0.024 155);
+  --soil-600: oklch(0.312 0.026 155);
+  --leaf: oklch(0.79 0.152 145);
+  --leaf-dim: oklch(0.66 0.13 148);
+  --husk: oklch(0.815 0.132 79);
+  --husk-dim: oklch(0.68 0.11 79);
+  --bone: oklch(0.955 0.008 120);
+  --bone-dim: oklch(0.715 0.014 140);
+
+  --background: var(--soil-900);
+  --foreground: var(--bone);
+  --card: var(--soil-800);
+  --card-foreground: var(--bone);
+  --popover: var(--soil-800);
+  --popover-foreground: var(--bone);
+  --primary: var(--leaf);
+  --primary-foreground: oklch(0.16 0.03 152);
+  --secondary: var(--soil-700);
+  --secondary-foreground: var(--bone);
+  --muted: var(--soil-800);
+  --muted-foreground: var(--bone-dim);
+  --accent: var(--soil-700);
+  --accent-foreground: var(--bone);
+  --destructive: oklch(0.64 0.19 27);
+  --destructive-foreground: oklch(0.16 0.02 27);
+  --success: var(--leaf);
+  --success-foreground: oklch(0.16 0.03 152);
+  --warning: oklch(0.78 0.14 62);
+  --warning-foreground: oklch(0.18 0.03 62);
+  --border: oklch(0.3 0.021 155);
+  --input: oklch(0.3 0.021 155);
+  --ring: var(--leaf);
+
+  /*
+    Charts stay inside the soil/leaf family and step by hue, so a series never
+    borrows amber — that channel means money and nothing else.
+  */
+  --chart-1: oklch(0.79 0.152 145);
+  --chart-2: oklch(0.72 0.12 195);
+  --chart-3: oklch(0.68 0.13 255);
+  --chart-4: oklch(0.75 0.13 110);
+  --chart-5: oklch(0.7 0.14 320);
+
+  --sidebar-background: oklch(0.175 0.02 155);
+  --sidebar-foreground: var(--bone-dim);
+  --sidebar-primary: var(--leaf);
+  --sidebar-primary-foreground: oklch(0.16 0.03 152);
+  --sidebar-accent: var(--soil-700);
+  --sidebar-accent-foreground: var(--bone);
+  --sidebar-border: oklch(0.28 0.02 155);
+  --sidebar-ring: var(--leaf);
+  --sidebar: var(--sidebar-background);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
-}
 
-@layer base {
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  ::selection {
+    background: var(--leaf);
+    color: var(--primary-foreground);
+  }
+
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
