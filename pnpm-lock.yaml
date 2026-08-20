@@ -711,6 +711,9 @@ importers:
       '@lib/dao':
         specifier: workspace:*
         version: link:../dao
+      '@lib/deploy':
+        specifier: workspace:*
+        version: link:../deploy
       '@lib/github':
         specifier: workspace:*
         version: link:../github
