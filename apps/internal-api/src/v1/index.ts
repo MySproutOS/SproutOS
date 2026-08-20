@@ -16,36 +16,61 @@ import store, { storeModeration } from "./store"
 import stripeWebhooks from "./stripe-webhooks"
 import user from "./user"
 import webhooks from "./webhooks"
+import workflows from "./workflows"
 
-const app = new Hono({
-  router: new RegExpRouter(),
-})
-  .basePath("/v1")
-  .route("/auth", auth)
-  .route("/invites", invites)
-  .route("/orgs", organizations)
-  .route("/orgs", members)
-  .route("/orgs", roles)
-  .route("/orgs", projects)
-  .route("/orgs", githubRepos)
-  .route("/orgs", agent)
-  .route("/orgs", agentChat)
-  .route("/orgs", services)
-  .route("/orgs", analysis)
-  // Unauthenticated by design: the token, introspection, and revocation endpoints authenticate
-  // the *client*, not a session, and discovery is public by definition.
-  .route("/oauth", oauth)
-  .route("/orgs/:orgSlug/billing", billing)
-  // The catalogue itself is public (TASK 4); only moderation is org-scoped, and it is mounted
-  // under /orgs so the organization whose grants apply is named in the path rather than inferred
-  // from `user_preference.last_org_id`.
-  .route("/store", store)
-  .route("/orgs", storeModeration)
-  .route("/user", user)
-  // Unauthenticated by design: GitHub and Stripe each sign their deliveries and the handlers
-  // verify over the raw bytes. Adding authMiddleware or requirePermission here would reject
-  // every delivery, since neither sender carries a session.
-  .route("/webhooks", webhooks)
-  .route("/webhooks", stripeWebhooks)
+/*
+  Grouped rather than chained flat.
+
+  `.route()` returns a type accumulating every path registered so far, so a single chain of
+  nineteen of them hits `TS2589: Type instantiation is excessively deep` — and it does so with no
+  file or line, which makes it a genuinely unpleasant thing to hit while adding route twenty.
+
+  Splitting into groups keeps each chain short. Nothing depends on the accumulated type: the typed
+  client is generated from the OpenAPI document, not from Hono's inference.
+*/
+
+/**
+ * Everything scoped to an organization, mounted at /orgs.
+ *
+ * Annotated `Hono` and registered with statements rather than a chain. Each `.route()` returns a
+ * type carrying every path registered so far, so the chain is what accumulates — the annotation
+ * stops it, and the statements make it stay stopped.
+ */
+const orgs: Hono = new Hono()
+orgs.route("/", organizations)
+orgs.route("/", members)
+orgs.route("/", roles)
+orgs.route("/", projects)
+orgs.route("/", githubRepos)
+orgs.route("/", agent)
+orgs.route("/", agentChat)
+orgs.route("/", services)
+orgs.route("/", analysis)
+orgs.route("/", workflows)
+// The store catalogue itself is public (TASK 4); only moderation is org-scoped, and it lives here
+// so the organization whose grants apply is named in the path rather than inferred from
+// `user_preference.last_org_id`.
+orgs.route("/", storeModeration)
+orgs.route("/:orgSlug/billing", billing)
+
+/**
+ * Unauthenticated by design.
+ *
+ * GitHub and Stripe each sign their deliveries and the handlers verify over the raw bytes, so
+ * `authMiddleware` here would reject every delivery. The OAuth endpoints authenticate the *client*
+ * rather than a session, and discovery is public by definition.
+ */
+const unauthenticated: Hono = new Hono()
+unauthenticated.route("/webhooks", webhooks)
+unauthenticated.route("/webhooks", stripeWebhooks)
+unauthenticated.route("/oauth", oauth)
+
+const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
+app.route("/auth", auth)
+app.route("/invites", invites)
+app.route("/orgs", orgs)
+app.route("/store", store)
+app.route("/user", user)
+app.route("/", unauthenticated)
 
 export default app

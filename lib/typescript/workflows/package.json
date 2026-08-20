@@ -1,0 +1,23 @@
+{
+  "name": "@lib/workflows",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Workflow graphs: validation, versioning, and what a run costs.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@lib/billing": "workspace:*",
+    "@sproutos/db": "workspace:*",
+    "@utils/crypto": "workspace:*",
+    "kysely": "catalog:",
+    "uuid": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

@@ -336,6 +336,9 @@ importers:
       '@lib/srn':
         specifier: workspace:*
         version: link:../../lib/typescript/srn
+      '@lib/workflows':
+        specifier: workspace:*
+        version: link:../../lib/typescript/workflows
       '@scalar/hono-api-reference':
         specifier: ^0.11.14
         version: 0.11.14(hono@4.13.3)
@@ -785,6 +788,28 @@ importers:
         version: 26.2.0
 
   lib/typescript/utils/numbers: {}
+
+  lib/typescript/workflows:
+    dependencies:
+      '@lib/billing':
+        specifier: workspace:*
+        version: link:../billing
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      '@utils/crypto':
+        specifier: workspace:*
+        version: link:../utils/crypto
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
 
   packages/db:
     dependencies:
