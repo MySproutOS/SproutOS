@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
@@ -29,6 +30,7 @@
     "hono": "catalog:",
     "hono-typebox-openapi": "^0.2.1",
     "kysely": "catalog:",
+    "stripe": "catalog:",
     "typebox": "catalog:",
     "uuid": "catalog:"
   },
