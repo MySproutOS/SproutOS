@@ -68,6 +68,12 @@ jobs:
       - name: Run migrations
         run: pnpm --filter=dbmigrator run migrate:latest
 
+      # The price book, regions, store categories, and system roles are reference
+      # data the API cannot function without — a migrated-but-unseeded database is
+      # a state no deployment ever has, and the route tests read against it.
+      - name: Seed reference data
+        run: pnpm --filter=dbmigrator run seed:run
+
       - name: Build
         run: pnpm run build
 
