@@ -294,6 +294,9 @@ importers:
       '@lib/dao':
         specifier: workspace:*
         version: link:../../lib/typescript/dao
+      '@lib/srn':
+        specifier: workspace:*
+        version: link:../../lib/typescript/srn
       '@scalar/hono-api-reference':
         specifier: ^0.11.14
         version: 0.11.14(hono@4.13.3)
@@ -485,6 +488,9 @@ importers:
 
   lib/typescript/dao:
     dependencies:
+      '@lib/srn':
+        specifier: workspace:*
+        version: link:../srn
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db
@@ -510,6 +516,12 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../utils/crypto
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/srn:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
