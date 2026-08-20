@@ -17,11 +17,18 @@
 import { readFileSync } from "node:fs"
 
 const KNOWN = [
-  { suite: "@lib/envelope", count: 8, waiting: "LOCALSTACK_AUTH_TOKEN — KMS envelope encryption" },
+  {
+    suite: "@lib/envelope",
+    count: 8,
+    // LocalStack is gone. These now need real KMS, and a customer-managed key is $1/month —
+    // outside the free tier the account is on, so this is a spending decision rather than a
+    // configuration one.
+    waiting: "a real KMS key (AWS CMK, ~$1/month) — envelope encryption",
+  },
   {
     suite: "@lib/services postgres",
     count: 6,
-    waiting: "LOCALSTACK_AUTH_TOKEN — KMS, for tenant database provisioning",
+    waiting: "a real KMS key (AWS CMK, ~$1/month) — tenant database provisioning",
   },
   {
     suite: "@api/internal projects",

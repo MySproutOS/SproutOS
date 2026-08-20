@@ -4,6 +4,7 @@ import agent from "./agent"
 import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
+import metering from "./metering"
 import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
@@ -77,6 +78,13 @@ unauthenticated.route("/oauth", oauth)
   whatever endpoint it is given, so `.../v1/otlp` is the whole of what a customer configures.
 */
 unauthenticated.route("/otlp", otlp)
+/*
+  Metering ingest authenticates with an HMAC over a canonical form, not a session: the caller is a
+  DaemonSet on every node. `/internal` because nothing outside the platform has any business posting
+  usage — it is not part of the customer-facing API surface, and saying so in the path means a future
+  reader does not have to infer it from the absence of `authMiddleware`.
+*/
+unauthenticated.route("/internal", metering)
 
 const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)

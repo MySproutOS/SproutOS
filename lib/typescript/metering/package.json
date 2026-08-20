@@ -1,0 +1,16 @@
+{
+  "name": "@lib/metering",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The TypeScript half of the metering signing contract.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

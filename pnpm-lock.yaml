@@ -363,6 +363,9 @@ importers:
       '@lib/jobs':
         specifier: workspace:*
         version: link:../../lib/typescript/jobs
+      '@lib/metering':
+        specifier: workspace:*
+        version: link:../../lib/typescript/metering
       '@lib/oauth-provider':
         specifier: workspace:*
         version: link:../../lib/typescript/oauth-provider
@@ -732,6 +735,12 @@ importers:
       uuid:
         specifier: 'catalog:'
         version: 14.0.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
+  lib/typescript/metering:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
