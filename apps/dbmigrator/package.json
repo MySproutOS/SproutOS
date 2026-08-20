@@ -12,13 +12,15 @@
     "migrate:up": "kysely migrate:up --cwd src",
     "migrate:down": "kysely migrate:down --cwd src",
     "migrate:latest": "kysely migrate:latest --cwd src",
-    "seed:run": "kysely seed:run --cwd src"
+    "seed:run": "kysely seed:run --cwd src",
+    "migrate:deploy": "tsx src/cli.ts"
   },
   "dependencies": {
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:"
   },
   "devDependencies": {
-    "kysely-ctl": "^0.21.0"
+    "kysely-ctl": "^0.21.0",
+    "tsx": "^4.23.12"
   }
 }

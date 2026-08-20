@@ -178,6 +178,9 @@ importers:
       kysely-ctl:
         specifier: ^0.21.0
         version: 0.21.0(kysely@0.29.5)
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.12
 
   apps/frontends/admin:
     dependencies:

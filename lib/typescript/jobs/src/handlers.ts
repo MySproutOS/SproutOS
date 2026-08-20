@@ -5,6 +5,7 @@ import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { enqueue } from "./queue"
+import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import type { JobHandler } from "./worker"
 
@@ -21,6 +22,7 @@ export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
+  sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   analyzeRepository: ANALYSIS_KIND,
@@ -100,10 +102,22 @@ const purgeDeletedTenants: JobHandler = async (_job, { db }) => {
   }
 }
 
+/**
+ * Delete the rows whose retention window has closed.
+ *
+ * One job for seven tables, because they share one policy — see `retention.ts`. Splitting them
+ * would mean seven schedules to keep in step and seven places for one of them to quietly stop.
+ */
+const retentionSweep: JobHandler = async (_job, { db }) => {
+  const swept = await sweepExpired(db)
+  for (const { label, deleted } of swept) console.info(`[jobs] retention: ${deleted} ${label}`)
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
+  [JOB_KINDS.sweepExpired]: retentionSweep,
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
@@ -136,6 +150,14 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     // Retried more than the others: this one talks to three systems we do not run in-process, and
     // a transient cluster error is the expected failure rather than a surprising one.
     maxAttempts: 5,
+  })
+  await enqueue(db, {
+    // Daily, not hourly. Nothing here is urgent — a row that outlives its window by a few hours has
+    // harmed nobody — and a nightly sweep is one lock contention with the tables it deletes from
+    // rather than twenty-four.
+    kind: JOB_KINDS.sweepExpired,
+    idempotencyKey: `${JOB_KINDS.sweepExpired}:${now.toISOString().slice(0, 10)}`,
+    maxAttempts: 3,
   })
   await scheduleUpkeepScan(db, now)
 }

@@ -7,6 +7,7 @@ export {
 } from "./upkeep-decision"
 export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
+export { RETENTION, type RetentionRule, sweepExpired, type SweepResult } from "./retention"
 export {
   claim,
   enqueue,

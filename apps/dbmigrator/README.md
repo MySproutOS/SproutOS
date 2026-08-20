@@ -17,6 +17,42 @@ pnpm --filter=dbmigrator run seed:run               # run every seed, in filenam
 pnpm --filter=@sproutos/db run db-codegen           # regenerate packages/db/src/types.ts
 ```
 
+## Migrating on deploy
+
+`migrate:latest` is the command for a developer at a terminal. `migrate:deploy` is the one a
+deployment runs, and the difference is a Postgres advisory lock.
+
+```bash
+pnpm --filter=dbmigrator run migrate:deploy      # takes a lock, applies, releases, exits non-zero on failure
+```
+
+A rollout starts N pods at once and every one of them wants the schema current. Left alone they
+race: two `create table` statements collide and one pod crash-loops, or — worse — two data
+migrations both run and the second operates on rows the first already moved. Kysely's migration
+table has a unique constraint, which turns the first case into an error rather than corruption, but
+an error at boot is still a failed rollout and it does nothing about the second.
+
+The lock lives in the database being migrated, which is the point. A Kubernetes lease or a flag in
+Redis puts the coordination somewhere other than the resource being coordinated, and then a network
+partition gets you two holders of a lock protecting one database.
+
+Three details that are easy to get wrong and are commented where they live:
+
+- The lock is taken on a **pinned** connection (`db.connection()`). `pg_advisory_lock` is
+  session-scoped, so taking it through the pool acquires it on whichever connection came free and
+  releases it on whichever comes free next — which is to say, releases somebody else's.
+- It is released in a `finally`, because a pooled connection returns to the pool rather than
+  closing, and one still holding an advisory lock hands that lock to whatever runs on it next.
+- The key is a hard-coded constant, not `hashtext('…')`. `hashtext` is internal and its output has
+  changed between major versions, so a computed key would differ between a pod on the old version
+  and a pod on the new one — exactly when two migrators must not both think they hold the lock.
+
+`deploy.test.ts` proves the exclusion by _being_ the first process: it takes the lock on its own
+connection and requires `deploy` to fail with `55P03` rather than proceed. Racing two real migrators
+would not prove it — process startup staggers them by more than a migration takes, so the unlocked
+version passes such a test almost every time, which is how a missing lock survives review and turns
+up on a rollout at scale instead.
+
 `migrate:latest` → `migrate:down` → `migrate:latest` is the real structural test. It is what catches
 the circular foreign key, a dangling reference, and any ordering mistake, and it must pass before a
 schema change is proposed. `down()` deliberately does **not** use `CASCADE`: if the reverse order is
