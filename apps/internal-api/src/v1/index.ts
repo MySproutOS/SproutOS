@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { RegExpRouter } from "hono/router/reg-exp-router"
 import auth from "./auth"
+import billing from "./billing"
 import members, { invites } from "./members"
 import organizations from "./organizations"
 import roles from "./roles"
@@ -17,6 +18,7 @@ const app = new Hono({
   .route("/orgs", organizations)
   .route("/orgs", members)
   .route("/orgs", roles)
+  .route("/orgs/:orgSlug/billing", billing)
   .route("/user", user)
   // Unauthenticated by design: GitHub and Stripe each sign their deliveries and the handlers
   // verify over the raw bytes. Adding authMiddleware or requirePermission here would reject

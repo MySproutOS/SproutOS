@@ -1,4 +1,5 @@
 import { crudAccount } from "@lib/dao/account/crud"
+import { provisionOrganization } from "@lib/dao/organization/provision"
 import { crudUser } from "@lib/dao/user/crud"
 import { seal } from "@lib/envelope"
 import type { OAuth2Tokens } from "@lib/oauth"
@@ -99,6 +100,20 @@ export async function GET(request: Request): Promise<Response> {
   } else {
     await crudAccount(db).createAccount(accountValues)
   }
+
+  // Every user belongs to an organization, so the first sign-in creates
+  // "<Name>'s Team". Idempotent and cheap on every later sign-in — an existing
+  // membership returns without writing — so it runs unconditionally rather than
+  // only on the branch that created the user.
+  await provisionOrganization(db).ensureDefaultOrganization({
+    userId,
+    name: profile.name,
+    email: profile.email,
+    audit: {
+      ip: request.headers.get("x-forwarded-for"),
+      userAgent: request.headers.get("user-agent"),
+    },
+  })
 
   const sessionToken = generateSessionToken()
   const session = await createSession(sessionToken, userId)
