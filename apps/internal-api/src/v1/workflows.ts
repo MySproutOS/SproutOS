@@ -27,6 +27,7 @@ import { ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
 import {
   workflowsSchemaCreateRequest,
+  workflowsSchemaDetailResponse,
   workflowsSchemaIdParam,
   workflowsSchemaJob,
   workflowsSchemaJobEditRequest,
@@ -40,6 +41,7 @@ import {
   workflowsSchemaVersionRequest,
   workflowsSchemaVersionResponse,
   workflowsSchemaWorkflow,
+  workflowsSchemaWorkflowParam,
 } from "./workflows.serializer"
 
 const errorResponse = {
@@ -109,6 +111,72 @@ async function stepCountsFor(runIds: readonly string[]): Promise<Map<string, num
 const app: Hono = new Hono()
 app.use(authMiddleware)
 app
+  /**
+   * One workflow, with the graph the editor opens.
+   *
+   * Separate from the list because a graph is large and a list of them would be a page nobody can
+   * load. `workflow:read` rather than `workflow:job:read`: a graph is the *shape* of the work, not
+   * the data it handled.
+   */
+  .get(
+    "/:orgSlug/projects/:projectId/workflows/:workflowId",
+    describeRoute({
+      description: "One workflow and its current graph",
+      responses: {
+        200: {
+          description: "Workflow",
+          content: { "application/json": { schema: resolver(workflowsSchemaDetailResponse) } },
+        },
+        403: { description: "Caller lacks workflow:read", ...errorResponse },
+        404: { description: "No such workflow", ...errorResponse },
+      },
+    }),
+    requirePermission("workflow:read", paramResource("project", "project", "projectId")),
+    validator("param", workflowsSchemaWorkflowParam),
+    async (c) => {
+      const { workflowId } = c.req.valid("param")
+
+      const row = await db
+        .selectFrom("workflow")
+        .innerJoin("project", "project.id", "workflow.projectId")
+        .leftJoin("workflowVersion", "workflowVersion.id", "workflow.currentVersionId")
+        .select([
+          "workflow.id as id",
+          "workflow.slug as slug",
+          "workflow.name as name",
+          "workflow.runtime as runtime",
+          "workflow.enabled as enabled",
+          "workflow.queueName as queueName",
+          "workflow.updatedAt as updatedAt",
+          "workflowVersion.version as version",
+          "workflowVersion.graph as graph",
+          "workflowVersion.graphSha256 as graphSha256",
+        ])
+        .where("workflow.id", "=", workflowId)
+        .where("project.organizationId", "=", c.var.organization.id)
+        .where("workflow.deletedAt", "is", null)
+        .where("project.deletedAt", "is", null)
+        .executeTakeFirst()
+
+      if (row === undefined) return throwNotFound(c, "Workflow not found")
+
+      return c.json({
+        id: row.id,
+        slug: row.slug,
+        name: row.name,
+        runtime: row.runtime,
+        enabled: row.enabled,
+        queueName: row.queueName,
+        currentVersion: row.version ?? null,
+        // Null, not an empty graph: a workflow that has never been saved has no graph, and handing
+        // the editor `{nodes: [], edges: []}` would make "never saved" and "saved empty"
+        // indistinguishable — and the second is a graph `validateGraph` refuses.
+        graph: (row.graph as unknown) ?? null,
+        graphSha256: row.graphSha256 ?? null,
+        updatedAt: row.updatedAt.toISOString(),
+      })
+    },
+  )
   /**
    * Every workflow in the organization, across its projects.
    *

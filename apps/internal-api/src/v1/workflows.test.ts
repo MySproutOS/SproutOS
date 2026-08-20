@@ -356,4 +356,121 @@ describe.skipIf(!up)("recent runs across the organization", () => {
     expect(entry?.durationMs).toBeNull()
     expect(entry?.finishedAt).toBeNull()
   })
+
+  describe.skipIf(!up)("one workflow and its graph", () => {
+    it("has no graph before anything is saved", async ({ skip }) => {
+      if (!up) skip()
+      const workflowId = await makeWorkflow("Unsaved")
+
+      const response = await call(
+        "GET",
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}`,
+        actor(),
+      )
+      expect(response.status).toBe(200)
+      /*
+      Null, not `{nodes: [], edges: []}`.
+
+      An empty graph is a graph `validateGraph` refuses, so handing one to the editor would make
+      "never saved" and "saved something invalid" look the same.
+    */
+      expect(response.json.graph).toBeNull()
+      expect(response.json.currentVersion).toBeNull()
+    })
+
+    it("returns the graph that was saved", async ({ skip }) => {
+      if (!up) skip()
+      const workflowId = await makeWorkflow("Saved")
+      const graph = {
+        nodes: [
+          {
+            id: "start",
+            type: "trigger.cron",
+            name: "Every night",
+            config: {},
+            position: { x: 0, y: 0 },
+          },
+          {
+            id: "fetch",
+            type: "action.http",
+            name: "Fetch",
+            config: { url: "https://example.com" },
+            position: { x: 240, y: 0 },
+          },
+        ],
+        edges: [{ from: "start", to: "fetch" }],
+      }
+
+      const saved = await app.request(
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/graph`,
+        { method: "PUT", headers: authHeaders(actor()), body: JSON.stringify({ graph }) },
+      )
+      expect(saved.status).toBe(200)
+
+      const response = await call(
+        "GET",
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}`,
+        actor(),
+      )
+      expect(response.json.currentVersion).toBe(1)
+      expect(response.json.graph).toEqual(graph)
+      expect(response.json.graphSha256).toMatch(/^[0-9a-f]{64}$/)
+    })
+
+    it("round-trips node positions the editor set", async ({ skip }) => {
+      if (!up) skip()
+      /*
+      Positions are the editor's, and the server never interprets them — but it does have to give
+      them back. A graph that loses its layout on save is one a person has to re-arrange every time
+      they open it.
+    */
+      const workflowId = await makeWorkflow("Positioned")
+      const graph = {
+        nodes: [
+          {
+            id: "only",
+            type: "trigger.manual",
+            name: "Start",
+            config: {},
+            position: { x: 137.5, y: -42 },
+          },
+        ],
+        edges: [],
+      }
+      await app.request(`/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/graph`, {
+        method: "PUT",
+        headers: authHeaders(actor()),
+        body: JSON.stringify({ graph }),
+      })
+
+      const response = await call(
+        "GET",
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}`,
+        actor(),
+      )
+      const nodes = (response.json.graph as Json).nodes as Json[]
+      expect(nodes[0]?.position).toEqual({ x: 137.5, y: -42 })
+    })
+
+    it("hides another organization's workflow behind a 404", async ({ skip }) => {
+      if (!up) skip()
+      const workflowId = await makeWorkflow("Private")
+      const stranger = await createTestUser("wf-graph-outsider")
+      const created = await app.request("/v1/orgs", {
+        method: "POST",
+        headers: authHeaders(stranger),
+        body: JSON.stringify({ name: `Graph Outsider ${v7()}` }),
+      })
+      const organization = (await created.json()) as Json
+      trackOrganization(organization.id as string)
+
+      const response = await call(
+        "GET",
+        `/v1/orgs/${organization.slug as string}/projects/${projectId}/workflows/${workflowId}`,
+        stranger,
+      )
+      // A 403 would confirm the workflow exists. The answer has to be the one a missing workflow gets.
+      expect([403, 404]).toContain(response.status)
+    })
+  })
 })

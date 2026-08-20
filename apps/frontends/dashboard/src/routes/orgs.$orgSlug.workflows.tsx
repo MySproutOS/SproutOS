@@ -84,7 +84,15 @@ function WorkflowsList() {
             <TableBody>
               {data.map((workflow) => (
                 <TableRow key={workflow.id}>
-                  <TableCell className="font-medium">{workflow.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      to="/orgs/$orgSlug/projects/$projectId/workflows/$workflowId"
+                      params={{ orgSlug, projectId: workflow.projectId, workflowId: workflow.id }}
+                      className="hover:underline"
+                    >
+                      {workflow.name}
+                    </Link>
+                  </TableCell>
                   <TableCell className="hidden text-muted-foreground sm:table-cell">
                     {workflow.project}
                   </TableCell>
