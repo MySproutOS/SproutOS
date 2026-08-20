@@ -22,6 +22,7 @@ export {
 export {
   ceilDiv,
   creditedAmount,
+  formatBalanceMicroUsd,
   formatMicroUsd,
   MICRO_PER_CENT,
   MICRO_PER_USD,

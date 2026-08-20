@@ -104,6 +104,25 @@ function decimalToScaled(value: string): bigint {
   return negative ? -scaled : scaled
 }
 
+/**
+ * Render micro-USD as dollars and cents, rounding **down**.
+ *
+ * For a balance, not for a usage line. `formatMicroUsd` keeps every significant digit because a
+ * metered line item genuinely costs a fraction of a cent and hiding that makes the column not add
+ * up. A *balance* is different: `$11.292288` is not how anyone reads what they have left.
+ *
+ * Down, never nearest. Showing `$11.30` for a balance of 11.292288 tells a customer they can spend
+ * a cent they do not have, and the failure lands at the moment they try.
+ */
+export function formatBalanceMicroUsd(amount: MicroUsd): string {
+  const negative = amount < 0n
+  const abs = negative ? -amount : amount
+  // Truncating division on a bigint is already toward zero, which on the absolute value is down.
+  const cents = abs / 10_000n
+  const body = `${(cents / 100n).toLocaleString("en-US")}.${(cents % 100n).toString().padStart(2, "0")}`
+  return `${negative ? "-" : ""}$${body}`
+}
+
 /** Render micro-USD for display: `$1,204.00`, `$0.0412`. */
 export function formatMicroUsd(amount: MicroUsd, minimumFractionDigits = 2): string {
   const negative = amount < 0n

@@ -28,8 +28,10 @@ import {
   getV1OrgsByOrgSlugAnalyses,
   getV1OrgsByOrgSlugAnalysesByAnalysisId,
   getV1OrgsByOrgSlugBillingBalance,
+  getV1OrgsByOrgSlugBillingStatements,
   getV1OrgsByOrgSlugBillingTopupQuote,
   getV1OrgsByOrgSlugBillingTransactions,
+  getV1OrgsByOrgSlugBillingUsage,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugInvites,
   getV1OrgsByOrgSlugMembers,
@@ -147,12 +149,18 @@ import type {
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceError,
   GetV1OrgsByOrgSlugBillingBalanceResponse,
+  GetV1OrgsByOrgSlugBillingStatementsData,
+  GetV1OrgsByOrgSlugBillingStatementsError,
+  GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTopupQuoteData,
   GetV1OrgsByOrgSlugBillingTopupQuoteError,
   GetV1OrgsByOrgSlugBillingTopupQuoteResponse,
   GetV1OrgsByOrgSlugBillingTransactionsData,
   GetV1OrgsByOrgSlugBillingTransactionsError,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
+  GetV1OrgsByOrgSlugBillingUsageData,
+  GetV1OrgsByOrgSlugBillingUsageError,
+  GetV1OrgsByOrgSlugBillingUsageResponse,
   GetV1OrgsByOrgSlugData,
   GetV1OrgsByOrgSlugError,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
@@ -2752,6 +2760,62 @@ export const putV1OrgsByOrgSlugBillingAutoReloadMutation = (
   }
   return mutationOptions
 }
+
+export const getV1OrgsByOrgSlugBillingUsageQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingUsageData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingUsage", options)
+
+/**
+ * Metered usage so far this period, rated against the current price book
+ */
+export const getV1OrgsByOrgSlugBillingUsageOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingUsageData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingUsageResponse,
+    GetV1OrgsByOrgSlugBillingUsageError,
+    GetV1OrgsByOrgSlugBillingUsageResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingUsageQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingUsage({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingUsageQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugBillingStatementsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingStatements", options)
+
+/**
+ * Past statements
+ */
+export const getV1OrgsByOrgSlugBillingStatementsOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingStatementsResponse,
+    GetV1OrgsByOrgSlugBillingStatementsError,
+    GetV1OrgsByOrgSlugBillingStatementsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingStatementsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingStatements({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingStatementsQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdLogsQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsData>,

@@ -3366,6 +3366,90 @@ export type PutV1OrgsByOrgSlugBillingAutoReloadResponses = {
 export type PutV1OrgsByOrgSlugBillingAutoReloadResponse =
   PutV1OrgsByOrgSlugBillingAutoReloadResponses[keyof PutV1OrgsByOrgSlugBillingAutoReloadResponses]
 
+export type GetV1OrgsByOrgSlugBillingUsageData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/usage"
+}
+
+export type GetV1OrgsByOrgSlugBillingUsageErrors = {
+  /**
+   * Caller lacks usage:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingUsageError =
+  GetV1OrgsByOrgSlugBillingUsageErrors[keyof GetV1OrgsByOrgSlugBillingUsageErrors]
+
+export type GetV1OrgsByOrgSlugBillingUsageResponses = {
+  /**
+   * Usage
+   */
+  200: {
+    periodStart: Date
+    periodEnd: Date
+    lines: Array<{
+      dimension: string
+      label: string
+      quantity: string
+      unit: string
+      amountMicroUsd: string
+    }>
+    subtotalMicroUsd: string
+    overheadMicroUsd: string
+    totalMicroUsd: string
+    overheadBps: number
+    burnPerDayMicroUsd: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingUsageResponse =
+  GetV1OrgsByOrgSlugBillingUsageResponses[keyof GetV1OrgsByOrgSlugBillingUsageResponses]
+
+export type GetV1OrgsByOrgSlugBillingStatementsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/statements"
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsErrors = {
+  /**
+   * Caller lacks billing:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsError =
+  GetV1OrgsByOrgSlugBillingStatementsErrors[keyof GetV1OrgsByOrgSlugBillingStatementsErrors]
+
+export type GetV1OrgsByOrgSlugBillingStatementsResponses = {
+  /**
+   * Statements
+   */
+  200: {
+    data: Array<{
+      id: string
+      periodStart: Date
+      periodEnd: Date
+      status: string
+      subtotalMicroUsd: string
+      overheadMicroUsd: string
+      totalMicroUsd: string
+      finalizedAt: Date | null
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsResponse =
+  GetV1OrgsByOrgSlugBillingStatementsResponses[keyof GetV1OrgsByOrgSlugBillingStatementsResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsData = {
   body?: never
   path: {

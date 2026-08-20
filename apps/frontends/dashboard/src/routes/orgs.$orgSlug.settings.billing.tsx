@@ -1,4 +1,4 @@
-import { formatMicroUsd } from "@lib/billing/money"
+import { formatBalanceMicroUsd, formatMicroUsd } from "@lib/billing/money"
 import { createFileRoute } from "@tanstack/react-router"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
@@ -34,7 +34,12 @@ function BillingSettings() {
             {balance.data !== undefined && (
               <>
                 <Money size="lg" className="text-2xl">
-                  {formatMicroUsd(balance.data.balanceMicros)}
+                  {/*
+                    Rounded down for a balance. The usage lines below keep every significant digit,
+                    because a metered line genuinely costs a fraction of a cent — but nobody reads
+                    what they have left as `$11.292288`.
+                  */}
+                  {formatBalanceMicroUsd(balance.data.balanceMicros)}
                 </Money>
                 <Progress
                   value={balance.data.percentRemaining}
@@ -106,7 +111,12 @@ function BillingSettings() {
             }}
           />
         )}
-        {invoices.data !== undefined && (
+        {invoices.data !== undefined && invoices.data.length === 0 && (
+          <p className="rule-soft rounded-lg border px-3 py-6 text-center text-sm text-muted-foreground">
+            No statements yet. The first one closes at the end of the month.
+          </p>
+        )}
+        {invoices.data !== undefined && invoices.data.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>

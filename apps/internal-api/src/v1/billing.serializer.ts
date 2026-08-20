@@ -70,3 +70,51 @@ export const billingSchemaAutoReloadResponse = Type.Object({
   thresholdMicroUsd: Nullable(MicroUsdString),
   amountMicroUsd: Nullable(MicroUsdString),
 })
+
+/**
+ * One line of "what you have used this month", rated.
+ *
+ * `quantity` is a decimal string, not a number: byte-seconds run to 1e11 within a day and the
+ * dimension rates are fractions of a micro-USD. Either end of that range loses precision as a
+ * float, and this is the number a customer checks a bill against.
+ */
+export const billingSchemaUsageLine = Type.Object({
+  dimension: Type.String(),
+  label: Type.String(),
+  quantity: Type.String(),
+  unit: Type.String(),
+  amountMicroUsd: Type.String(),
+})
+
+export const billingSchemaUsageResponse = Type.Object({
+  periodStart: Type.String({ format: "date-time" }),
+  periodEnd: Type.String({ format: "date-time" }),
+  lines: Type.Array(billingSchemaUsageLine),
+  /** Usage before the platform's overhead. */
+  subtotalMicroUsd: Type.String(),
+  overheadMicroUsd: Type.String(),
+  totalMicroUsd: Type.String(),
+  overheadBps: Type.Integer(),
+  /**
+   * Micro-USD per day, averaged over the period so far.
+   *
+   * What "runway" is computed from. Averaged rather than extrapolated from the last day, because a
+   * single busy day would tell a customer they have three days left when they have thirty.
+   */
+  burnPerDayMicroUsd: Type.String(),
+})
+
+export const billingSchemaStatement = Type.Object({
+  id: UUID7String,
+  periodStart: Type.String({ format: "date-time" }),
+  periodEnd: Type.String({ format: "date-time" }),
+  status: Type.String(),
+  subtotalMicroUsd: Type.String(),
+  overheadMicroUsd: Type.String(),
+  totalMicroUsd: Type.String(),
+  finalizedAt: Nullable(Type.String({ format: "date-time" })),
+})
+
+export const billingSchemaStatementsResponse = Type.Object({
+  data: Type.Array(billingSchemaStatement),
+})

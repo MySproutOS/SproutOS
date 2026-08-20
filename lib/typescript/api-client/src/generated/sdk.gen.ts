@@ -57,12 +57,18 @@ import type {
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceErrors,
   GetV1OrgsByOrgSlugBillingBalanceResponses,
+  GetV1OrgsByOrgSlugBillingStatementsData,
+  GetV1OrgsByOrgSlugBillingStatementsErrors,
+  GetV1OrgsByOrgSlugBillingStatementsResponses,
   GetV1OrgsByOrgSlugBillingTopupQuoteData,
   GetV1OrgsByOrgSlugBillingTopupQuoteErrors,
   GetV1OrgsByOrgSlugBillingTopupQuoteResponses,
   GetV1OrgsByOrgSlugBillingTransactionsData,
   GetV1OrgsByOrgSlugBillingTransactionsErrors,
   GetV1OrgsByOrgSlugBillingTransactionsResponses,
+  GetV1OrgsByOrgSlugBillingUsageData,
+  GetV1OrgsByOrgSlugBillingUsageErrors,
+  GetV1OrgsByOrgSlugBillingUsageResponses,
   GetV1OrgsByOrgSlugData,
   GetV1OrgsByOrgSlugErrors,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
@@ -1576,6 +1582,38 @@ export const putV1OrgsByOrgSlugBillingAutoReload = <ThrowOnError extends boolean
       ...options.headers,
     },
   })
+
+/**
+ * Metered usage so far this period, rated against the current price book
+ */
+export const getV1OrgsByOrgSlugBillingUsage = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugBillingUsageData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingUsageResponses,
+  GetV1OrgsByOrgSlugBillingUsageErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingUsageResponses,
+    GetV1OrgsByOrgSlugBillingUsageErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/usage", ...options })
+
+/**
+ * Past statements
+ */
+export const getV1OrgsByOrgSlugBillingStatements = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingStatementsResponses,
+  GetV1OrgsByOrgSlugBillingStatementsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingStatementsResponses,
+    GetV1OrgsByOrgSlugBillingStatementsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/statements", ...options })
 
 /**
  * Search a project's logs
