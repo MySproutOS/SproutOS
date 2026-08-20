@@ -1,0 +1,27 @@
+{
+  "name": "@lib/dao",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Common database access modules for reusability and clean testing",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    },
+    "./*": {
+      "import": "./src/*.ts",
+      "require": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@sproutos/db": "workspace:*",
+    "kysely": "catalog:",
+    "uuid": "catalog:"
+  }
+}

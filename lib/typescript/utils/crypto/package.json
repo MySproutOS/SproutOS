@@ -1,0 +1,23 @@
+{
+  "name": "@utils/crypto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hashing, encoding and random-token helpers built on Web Crypto. Replaces @oslojs/crypto and @oslojs/encoding, both deprecated.",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {},
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "config": {}
+}

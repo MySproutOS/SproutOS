@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "NEXT_PUBLIC_API_URL",
+        "VERCEL",
+        "VERCEL_EXPERIMENTAL_BACKENDS"
+      ]
+    }
+  }
+}

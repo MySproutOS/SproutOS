@@ -1,0 +1,32 @@
+{
+  "name": "sproutos",
+  "version": "1.0.0",
+  "private": true,
+  "license": "BSD-3-Clause",
+  "author": "",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "format": "pnpm exec oxfmt --config oxfmt.config.mts",
+    "lint": "pnpm exec oxlint --config oxlint.config.mts --disable-nested-config --fix .",
+    "test": "vitest --run --config .config/vitest.config.mts"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jiti": "^2.7.0",
+    "lefthook": "^2.1.10",
+    "oxfmt": "^0.64.0",
+    "oxlint": "1.79.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "tsx": "^4.23.12",
+    "turbo": "^2.10.11",
+    "typescript": "catalog:",
+    "vitest": "^4.1.11"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.62.4"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

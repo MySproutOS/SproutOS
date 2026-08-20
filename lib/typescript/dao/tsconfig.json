@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": false,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "composite": true,
+    "declaration": true,
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "allowImportingTsExtensions": false,
+    "paths": {},
+    "rootDir": "./src",
+    "outDir": "./build"
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "build"],
+  "references": [{ "path": "../../../packages/db" }]
+}

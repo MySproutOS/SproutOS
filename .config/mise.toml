@@ -1,0 +1,9 @@
+[env]
+NEXT_TELEMETRY_DISABLED = "1"
+NPM_CONFIG_FUND = "false"
+
+[tools]
+node = "24.14.0"
+
+[settings.npm]
+package_manager = "pnpm"

@@ -1,0 +1,25 @@
+{
+  "name": "@lib/oauth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal OAuth 2.0 authorization-code + PKCE client and Google provider. Replaces arctic, which is deprecated.",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {},
+  "dependencies": {
+    "@utils/crypto": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "config": {}
+}

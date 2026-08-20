@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(ls:*)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "mcp__postgres__query",
+      "Bash(curl:*)",
+      "mcp__postgres-main__query"
+    ],
+    "deny": []
+  },
+  "enabledMcpjsonServers": ["context7", "postgres-main"]
+}

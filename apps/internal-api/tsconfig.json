@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": ["node"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": false,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@api/internal/*": ["./src/*"],
+      "@sproutos/db/*": ["../../packages/db/src/*"],
+      "@lib/dao/*": ["../../lib/typescript/dao/src/*"]
+    },
+    "rootDir": "./src",
+    "outDir": "./build",
+    "composite": true,
+    "declaration": true
+  },
+  "include": ["**/*.ts", "**/*.json"],
+  "exclude": ["node_modules", "build", "openapi.json", "**/*.test.ts"],
+  "references": [{ "path": "../../packages/db" }, { "path": "../../lib/typescript/dao" }]
+}

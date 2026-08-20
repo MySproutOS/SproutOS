@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@frontends/admin/*": ["./src/*"],
+      "@ui/base/*": ["../../../lib/typescript/ui/base/src/*"],
+      "@ui/spa-shared/*": ["../../../lib/typescript/ui/spa-shared/src/*"],
+      "@ui/seo-shared/*": ["../../../lib/typescript/ui/seo-shared/src/*"],
+      "@lib/api-client/*": ["../../../lib/typescript/api-client/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

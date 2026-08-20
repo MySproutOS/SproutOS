@@ -1,0 +1,33 @@
+{
+  "name": "@sproutos/db",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {
+    "db-codegen": "kysely-codegen --config-file ./.config/.kysely-codegenrc.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "kysely": "catalog:",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "^8.23.1",
+    "kysely-codegen": "^0.20.0"
+  },
+  "config": {
+    "codegenoverrides": {}
+  }
+}

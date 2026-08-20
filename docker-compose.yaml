@@ -1,0 +1,42 @@
+services:
+  postgres:
+    container_name: sproutos_postgres
+    image: postgres:18
+    ports:
+      - "25281:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=main
+
+  valkey:
+    image: valkey/valkey:9
+    container_name: sproutos_valkey
+    ports:
+      - "41023:6379"
+    volumes:
+      - valkey:/data
+
+  localstack:
+    container_name: sproutos_localstack
+    image: localstack/localstack:2026.07.5
+    ports:
+      - "127.0.0.1:4566:4566"
+      - "127.0.0.1:4510-4559:4510-4559"
+    environment:
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
+      - SERVICES=kms,s3,secretsmanager,ssm,kinesis,ses,sqs,sns,iam,sts
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      - localstack:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  postgres:
+    driver: local
+  valkey:
+    driver: local
+  localstack:
+    driver: local

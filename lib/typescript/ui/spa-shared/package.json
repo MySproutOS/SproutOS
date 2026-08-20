@@ -1,0 +1,19 @@
+{
+  "name": "@ui/spa-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "@lib/api-client": "workspace:*",
+    "@tanstack/react-router": "catalog:",
+    "@ui/base": "workspace:*",
+    "lucide-react": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

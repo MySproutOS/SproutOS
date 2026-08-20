@@ -1,0 +1,17 @@
+# Refer for explanation to following link:
+# https://github.com/evilmartians/lefthook/blob/master/docs/configuration.md
+
+pre-commit:
+  parallel: false
+  commands:
+    oxlint:
+      glob: "*.{js,ts,jsx,tsx}"
+      run: pnpm exec oxlint -c oxlint.config.mts --fix {staged_files}
+      stage_fixed: true
+    oxfmt:
+      glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"
+      run: pnpm exec oxfmt --config oxfmt.config.mts {staged_files}
+      stage_fixed: true
+    tflint:
+      glob: "tofu/*.tf"
+      run: cd tofu && tflint

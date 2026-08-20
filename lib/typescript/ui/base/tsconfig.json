@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": false,
+    "target": "ESNext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "composite": true,
+    "declaration": true,
+    "allowImportingTsExtensions": false,
+    "rootDir": "./src",
+    "outDir": "./build",
+    "paths": {
+      "@ui/base/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "build"]
+}

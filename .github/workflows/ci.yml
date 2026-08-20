@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+  NPM_CONFIG_FUND: false
+
+jobs:
+  format:
+    name: (oxfmt) Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting with Oxfmt
+        run: pnpm run format --check
+
+  build:
+    name: Build, Lint, and Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: main
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache for Turbo
+        uses: rharkor/caching-for-turbo@v2.4.2
+        with:
+          max-age: 1w
+          max-files: 50
+          max-size: 3gb
+
+      - name: Run migrations
+        run: pnpm --filter=dbmigrator run migrate:latest
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm run test

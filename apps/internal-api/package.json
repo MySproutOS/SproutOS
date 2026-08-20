@@ -1,0 +1,42 @@
+{
+  "name": "@api/internal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "bin": "src/index.ts",
+  "type": "module",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/dev-server.ts",
+    "build": "tsc -b",
+    "generate-specs": "tsx src/index.ts --openapi > openapi.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@lib/dao": "workspace:*",
+    "@scalar/hono-api-reference": "^0.11.14",
+    "@sproutos/db": "workspace:*",
+    "@utils/crypto": "workspace:*",
+    "@utils/numbers": "workspace:*",
+    "hono": "catalog:",
+    "hono-typebox-openapi": "^0.2.1",
+    "kysely": "catalog:",
+    "typebox": "catalog:",
+    "uuid": "catalog:"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "catalog:",
+    "@types/node": "catalog:",
+    "@vercel/config": "^0.6.1",
+    "tsx": "^4.23.12",
+    "typescript": "catalog:"
+  }
+}

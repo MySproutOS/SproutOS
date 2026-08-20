@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": false,
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@website/*": ["./src/*"],
+      "@sproutos/db/*": ["../../packages/db/src/*"],
+      "@lib/dao/*": ["../../lib/typescript/dao/src/*"],
+      "@ui/base/*": ["../../lib/typescript/ui/base/src/*"],
+      "@ui/seo-shared/*": ["../../lib/typescript/ui/seo-shared/src/*"],
+      "@lib/api-client/*": ["../../lib/typescript/api-client/src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}
