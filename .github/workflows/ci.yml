@@ -420,6 +420,7 @@ jobs:
           # cluster gets. It is in `deploy/` too and applied again by the Apply step; that is
           # idempotent and deliberate — the gateway needs `ingress-class` before it can go ready.
           kubectl apply -f deploy/knative/config-network.yaml
+          kubectl apply -f deploy/knative/config-features.yaml
           kubectl patch configmap/config-domain -n knative-serving --type merge \
             -p '{"data":{"sprout.run":""}}'
           # `net-kourier-controller` is in this list and before the gateway on purpose: it is what
@@ -599,3 +600,40 @@ jobs:
             echo "Either default-deny is not applied, or the CNI is not enforcing NetworkPolicy."
             exit 1
           fi
+
+      # The renderer's output has to be something Knative will actually accept. Unit tests check the
+      # shape of the object; only the admission webhook decides whether it is a Knative Service.
+      #
+      # This caught that Knative rejects `runtimeClassName` outright unless
+      # `kubernetes.podspec-runtimeclassname` is enabled — which is off by default, and nothing in
+      # the repository turned it on, because nothing had ever created a Knative Service. With it off
+      # the only way to deploy a tenant is to drop the field, which silently puts customer code on
+      # the shared host kernel.
+      #
+      # The pod will not schedule here: `kata-fc` names a handler no `kind` node provides. That is
+      # the phase-11 gap and is expected. Acceptance is what is being tested.
+      - name: A rendered tenant deployment is a valid Knative Service
+        run: |
+          pnpm exec tsx -e "
+            import { knativeService } from './lib/typescript/deploy/src/knative'
+            console.log(JSON.stringify(knativeService(
+              { id: '01a01e12-1700-76ac-9713-dd208babdf5a', slug: 'myapp' },
+              { kind: 'production', imageUri: 'ghcr.io/knative/helloworld-go:latest',
+                runtimeClass: 'kata-fc', containerConcurrency: 20, memoryMb: 256, maxDurationS: 300 },
+              'tenant-ci',
+            )))
+          " > /tmp/ksvc.json
+          kubectl apply -f /tmp/ksvc.json
+
+          url=$(kubectl get ksvc myapp-abdf5a -n tenant-ci -o jsonpath='{.status.url}')
+          echo "rendered deployment URL: $url"
+          label=${url#http://}
+          label=${label%.sprout.run}
+          case "$label" in
+            *.*) echo "FAIL: '$label' is more than one label."; exit 1;;
+          esac
+
+          got=$(kubectl get ksvc myapp-abdf5a -n tenant-ci \
+                  -o jsonpath='{.spec.template.spec.runtimeClassName}')
+          echo "runtimeClassName as stored by the API server: $got"
+          test "$got" = "kata-fc"

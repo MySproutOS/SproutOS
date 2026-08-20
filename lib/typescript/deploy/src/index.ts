@@ -6,3 +6,4 @@ export {
   UnknownValueError,
   UnsubstitutedPlaceholderError,
 } from "./render"
+export { type DeploymentSpec, hostLabel, knativeService, type ProjectSpec } from "./knative"

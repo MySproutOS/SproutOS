@@ -258,3 +258,18 @@ that URL directly.
 **The tag template.** Knative's default is `{{.Tag}}-{{.Name}}`, a single dash. ADR 0018 requires
 `pr-42--myapp`, and the double dash is load-bearing: a project slug may contain single dashes
 (`my-app`), so `pr-42-my-app` is ambiguous about where the tag ends.
+
+### `knative/config-features.yaml`
+
+Knative **rejects `spec.template.spec.runtimeClassName`** unless
+`kubernetes.podspec-runtimeclassname` is enabled. Its webhook answers `must not set the field(s):
+spec.template.spec.runtimeClassName` and the Service is never created.
+
+That flag is off by default, and nothing here turned it on — because nothing here had ever created a
+Knative Service. With it off, the only way to deploy a tenant is to omit `runtimeClassName`, which
+silently puts customer code on the shared host kernel with the NetworkPolicies as the only remaining
+boundary. ADR 0012's entire hypervisor story depends on this one line.
+
+Set to `enabled` rather than `allowed`: `allowed` permits a Service that omits the field, and a
+tenant deployment quietly running without a hypervisor is precisely the outcome worth making
+impossible.
