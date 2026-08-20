@@ -107,6 +107,10 @@ jobs:
           TENANT_POSTGRES_HOST: ${{ vars.TENANT_POSTGRES_HOST }}
           TENANT_VALKEY_HOST: ${{ vars.TENANT_VALKEY_HOST }}
           TENANT_OPENSEARCH_HOST: ${{ vars.TENANT_OPENSEARCH_HOST }}
+          # `0.0.0.0/0` when pushing to public ECR, where the rule it fills costs nothing. Set to
+          # the endpoint's subnet when pushing through a VPC interface endpoint, whose address is
+          # private and would otherwise be blocked by the build egress policy.
+          BUILD_REGISTRY_CIDR: ${{ vars.BUILD_REGISTRY_CIDR }}
         # Exits non-zero if any placeholder is left unsubstituted, which is the entire reason the
         # renderer is a tested module rather than a `sed` — an unsubstituted placeholder is valid
         # YAML that fails at image pull in production.

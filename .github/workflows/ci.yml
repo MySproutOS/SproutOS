@@ -345,6 +345,7 @@ jobs:
           }
           JSON
           TAG=ci TENANT_NAMESPACE=ci TENANT_POSTGRES_HOST=a TENANT_VALKEY_HOST=b TENANT_OPENSEARCH_HOST=c \
+          BUILD_REGISTRY_CIDR=0.0.0.0/0 \
             pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
           echo "rendered $(grep -c '^---' /tmp/rendered.yaml) document separators"
 
@@ -494,6 +495,7 @@ jobs:
           JSON
           TAG=ci TENANT_NAMESPACE=tenant-ci TENANT_POSTGRES_HOST=pg.invalid \
           TENANT_VALKEY_HOST=valkey.invalid TENANT_OPENSEARCH_HOST=os.invalid \
+          BUILD_REGISTRY_CIDR=0.0.0.0/0 \
             pnpm exec tsx bin/render-manifests.mjs /tmp/outputs.json > /tmp/rendered.yaml
 
       # No `|| true`. Every document has to be accepted, which is what makes the namespace ordering

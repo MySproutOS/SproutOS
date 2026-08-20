@@ -64,6 +64,7 @@ for (const name of [
   "TENANT_POSTGRES_HOST",
   "TENANT_VALKEY_HOST",
   "TENANT_OPENSEARCH_HOST",
+  "BUILD_REGISTRY_CIDR",
 ]) {
   if (process.env[name] !== undefined) values[name] = process.env[name]
 }

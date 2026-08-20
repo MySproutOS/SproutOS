@@ -8,6 +8,7 @@ import {
   type KubeConfig,
 } from "@lib/deploy"
 import { enqueue } from "./queue"
+import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
 
 export const DEPLOY_KINDS = {
@@ -63,11 +64,6 @@ export function revisionOutcome(service: ServiceStatus): RevisionOutcome {
   return { state: "progressing" }
 }
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms).unref()
-  })
-
 /**
  * Turn one `deployment` row into a running Knative Service.
  *
@@ -82,7 +78,7 @@ const sleep = (ms: number) =>
  * the common case in one pass; anything slower re-enqueues and costs nothing while it waits.
  */
 export function deployRevision(config?: KubeConfig): JobHandler {
-  return async (job, { db, keepAlive }) => {
+  return async (job, { db, keepAlive, signal }) => {
     const { deploymentId } = job.payload as DeployPayload
 
     const found = await fetchDeployment(db).withProject(deploymentId)
@@ -149,7 +145,7 @@ export function deployRevision(config?: KubeConfig): JobHandler {
         throw new Error(`Revision failed: ${outcome.message}`)
       }
 
-      await sleep(POLL_INTERVAL_MS)
+      await sleep(POLL_INTERVAL_MS, signal)
     }
 
     // Still coming up. Hand the wait back rather than holding a worker for it.

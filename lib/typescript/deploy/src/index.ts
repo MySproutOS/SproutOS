@@ -20,3 +20,4 @@ export {
   KubeError,
   knativeServicePath,
 } from "./kube"
+export { type BuildJob, buildJob, buildJobName, type BuildSpec, imageUri } from "./build"

@@ -30,6 +30,7 @@ export const PLACEHOLDERS = [
   "TENANT_POSTGRES_HOST",
   "TENANT_VALKEY_HOST",
   "TENANT_OPENSEARCH_HOST",
+  "BUILD_REGISTRY_CIDR",
 ] as const
 
 export type Placeholder = (typeof PLACEHOLDERS)[number]
