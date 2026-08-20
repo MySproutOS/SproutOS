@@ -9,6 +9,59 @@ import {
   type TDataShape,
 } from "./client"
 import { client } from "./client.gen"
+import {
+  deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
+  getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
+  getV1OrgsByOrgSlugAnalysesResponseTransformer,
+  getV1OrgsByOrgSlugApiKeysResponseTransformer,
+  getV1OrgsByOrgSlugBillingStatementsResponseTransformer,
+  getV1OrgsByOrgSlugBillingTransactionsResponseTransformer,
+  getV1OrgsByOrgSlugBillingUsageResponseTransformer,
+  getV1OrgsByOrgSlugInvitesResponseTransformer,
+  getV1OrgsByOrgSlugMembersResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsResponseTransformer,
+  getV1OrgsByOrgSlugRepositoriesResponseTransformer,
+  getV1OrgsByOrgSlugResponseTransformer,
+  getV1OrgsByOrgSlugRolesResponseTransformer,
+  getV1OrgsByOrgSlugServicesResponseTransformer,
+  getV1OrgsByOrgSlugStoreListingsResponseTransformer,
+  getV1OrgsByOrgSlugWorkflowRunsResponseTransformer,
+  getV1OrgsByOrgSlugWorkflowsResponseTransformer,
+  getV1OrgsResponseTransformer,
+  getV1StoreFeaturedResponseTransformer,
+  getV1StoreListingsBySlugResponseTransformer,
+  getV1StoreListingsResponseTransformer,
+  getV1UserMeExportResponseTransformer,
+  getV1UserMeImpersonationResponseTransformer,
+  getV1UserMeProfileResponseTransformer,
+  patchV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
+  patchV1OrgsByOrgSlugResponseTransformer,
+  patchV1UserMeProfileResponseTransformer,
+  postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
+  postV1OrgsByOrgSlugAnalysesResponseTransformer,
+  postV1OrgsByOrgSlugApiKeysResponseTransformer,
+  postV1OrgsByOrgSlugInvitesResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
+  postV1OrgsByOrgSlugProjectsResponseTransformer,
+  postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
+  postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
+  putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
+} from "./transformers.gen"
 import type {
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
@@ -353,6 +406,7 @@ export const getV1Orgs = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1OrgsData, ThrowOnError>,
 ): RequestResult<GetV1OrgsResponses, GetV1OrgsErrors, ThrowOnError> =>
   (options?.client ?? client).get<GetV1OrgsResponses, GetV1OrgsErrors, ThrowOnError>({
+    responseTransformer: getV1OrgsResponseTransformer,
     url: "/v1/orgs",
     ...options,
   })
@@ -394,7 +448,11 @@ export const getV1OrgsByOrgSlug = <ThrowOnError extends boolean = false>(
     GetV1OrgsByOrgSlugResponses,
     GetV1OrgsByOrgSlugErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugResponseTransformer,
+    url: "/v1/orgs/{orgSlug}",
+    ...options,
+  })
 
 /**
  * Renames an organization or changes its slug
@@ -407,6 +465,7 @@ export const patchV1OrgsByOrgSlug = <ThrowOnError extends boolean = false>(
     PatchV1OrgsByOrgSlugErrors,
     ThrowOnError
   >({
+    responseTransformer: patchV1OrgsByOrgSlugResponseTransformer,
     url: "/v1/orgs/{orgSlug}",
     ...options,
     headers: {
@@ -452,7 +511,11 @@ export const getV1OrgsByOrgSlugMembers = <ThrowOnError extends boolean = false>(
     GetV1OrgsByOrgSlugMembersResponses,
     GetV1OrgsByOrgSlugMembersErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/members", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugMembersResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/members",
+    ...options,
+  })
 
 /**
  * Replaces the roles one member holds
@@ -523,7 +586,11 @@ export const getV1OrgsByOrgSlugInvites = <ThrowOnError extends boolean = false>(
     GetV1OrgsByOrgSlugInvitesResponses,
     GetV1OrgsByOrgSlugInvitesErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/invites", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugInvitesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/invites",
+    ...options,
+  })
 
 /**
  * Invites an email address to join the organization with one role
@@ -540,6 +607,7 @@ export const postV1OrgsByOrgSlugInvites = <ThrowOnError extends boolean = false>
     PostV1OrgsByOrgSlugInvitesErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugInvitesResponseTransformer,
     url: "/v1/orgs/{orgSlug}/invites",
     ...options,
     headers: {
@@ -574,7 +642,11 @@ export const getV1OrgsByOrgSlugRoles = <ThrowOnError extends boolean = false>(
     GetV1OrgsByOrgSlugRolesResponses,
     GetV1OrgsByOrgSlugRolesErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/roles", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugRolesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/roles",
+    ...options,
+  })
 
 /**
  * Creates a custom role
@@ -664,7 +736,11 @@ export const getV1OrgsByOrgSlugProjects = <ThrowOnError extends boolean = false>
     GetV1OrgsByOrgSlugProjectsResponses,
     GetV1OrgsByOrgSlugProjectsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects",
+    ...options,
+  })
 
 /**
  * Creates a project from a store listing, from scratch, or on a repository the organization already has
@@ -681,6 +757,7 @@ export const postV1OrgsByOrgSlugProjects = <ThrowOnError extends boolean = false
     PostV1OrgsByOrgSlugProjectsErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects",
     ...options,
     headers: {
@@ -703,7 +780,11 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends bo
     DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses,
     DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}", ...options })
+  >({
+    responseTransformer: deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}",
+    ...options,
+  })
 
 /**
  * Reads one project with its repository and counters
@@ -719,7 +800,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends boole
     GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}",
+    ...options,
+  })
 
 /**
  * Updates a project's settings
@@ -736,6 +821,7 @@ export const patchV1OrgsByOrgSlugProjectsByProjectId = <ThrowOnError extends boo
     PatchV1OrgsByOrgSlugProjectsByProjectIdErrors,
     ThrowOnError
   >({
+    responseTransformer: patchV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}",
     ...options,
     headers: {
@@ -758,7 +844,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobs = <ThrowOnError extends b
     GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdJobsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdJobsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs",
+    ...options,
+  })
 
 /**
  * Polls one provisioning job
@@ -776,7 +866,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId = <
     GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}",
+    ...options,
+  })
 
 /**
  * Lists a project's environment variables. Values are never included.
@@ -792,7 +886,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdEnv = <ThrowOnError extends bo
     GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/env", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/env",
+    ...options,
+  })
 
 /**
  * Sets one environment variable. The value is envelope-encrypted before storage.
@@ -809,6 +907,7 @@ export const putV1OrgsByOrgSlugProjectsByProjectIdEnv = <ThrowOnError extends bo
     PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
     ThrowOnError
   >({
+    responseTransformer: putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/env",
     ...options,
     headers: {
@@ -869,7 +968,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions = <
     GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions",
+    ...options,
+  })
 
 /**
  * Accepts an upstream update suggestion and queues the sync
@@ -891,6 +994,8 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestion
     PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptErrors,
     ThrowOnError
   >({
+    responseTransformer:
+      postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/accept",
     ...options,
   })
@@ -915,6 +1020,8 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestion
     PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissErrors,
     ThrowOnError
   >({
+    responseTransformer:
+      postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/update-suggestions/{suggestionId}/dismiss",
     ...options,
   })
@@ -933,7 +1040,11 @@ export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = fa
     GetV1OrgsByOrgSlugRepositoriesResponses,
     GetV1OrgsByOrgSlugRepositoriesErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/repositories", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugRepositoriesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/repositories",
+    ...options,
+  })
 
 /**
  * Lists the repositories the organization's GitHub App installation can reach
@@ -965,7 +1076,11 @@ export const getV1OrgsByOrgSlugAgentCredentials = <ThrowOnError extends boolean 
     GetV1OrgsByOrgSlugAgentCredentialsResponses,
     GetV1OrgsByOrgSlugAgentCredentialsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/agent/credentials", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/credentials",
+    ...options,
+  })
 
 /**
  * Stores a model credential, encrypted, and returns everything but the secret
@@ -982,6 +1097,7 @@ export const postV1OrgsByOrgSlugAgentCredentials = <ThrowOnError extends boolean
     PostV1OrgsByOrgSlugAgentCredentialsErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/agent/credentials",
     ...options,
     headers: {
@@ -1063,7 +1179,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
     GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions",
+    ...options,
+  })
 
 /**
  * Starts an agent chat session on a project
@@ -1082,6 +1202,7 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
     PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions",
     ...options,
     headers: {
@@ -1104,7 +1225,11 @@ export const getV1OrgsByOrgSlugServices = <ThrowOnError extends boolean = false>
     GetV1OrgsByOrgSlugServicesResponses,
     GetV1OrgsByOrgSlugServicesErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/services", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugServicesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/services",
+    ...options,
+  })
 
 /**
  * Provisions a backend service and returns its connection URI, once
@@ -1193,7 +1318,11 @@ export const getV1OrgsByOrgSlugAnalyses = <ThrowOnError extends boolean = false>
     GetV1OrgsByOrgSlugAnalysesResponses,
     GetV1OrgsByOrgSlugAnalysesErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/analyses", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugAnalysesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/analyses",
+    ...options,
+  })
 
 /**
  * Analyses a public repository to work out what it needs to run here
@@ -1210,6 +1339,7 @@ export const postV1OrgsByOrgSlugAnalyses = <ThrowOnError extends boolean = false
     PostV1OrgsByOrgSlugAnalysesErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugAnalysesResponseTransformer,
     url: "/v1/orgs/{orgSlug}/analyses",
     ...options,
     headers: {
@@ -1232,7 +1362,11 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisId = <ThrowOnError extends bool
     GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponses,
     GetV1OrgsByOrgSlugAnalysesByAnalysisIdErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/analyses/{analysisId}", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/analyses/{analysisId}",
+    ...options,
+  })
 
 /**
  * One workflow and its current graph
@@ -1250,7 +1384,12 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId = <
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}", ...options })
+  >({
+    responseTransformer:
+      getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}",
+    ...options,
+  })
 
 /**
  * Every workflow in the organization, with its schedule and recent health
@@ -1266,7 +1405,11 @@ export const getV1OrgsByOrgSlugWorkflows = <ThrowOnError extends boolean = false
     GetV1OrgsByOrgSlugWorkflowsResponses,
     GetV1OrgsByOrgSlugWorkflowsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/workflows", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugWorkflowsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/workflows",
+    ...options,
+  })
 
 /**
  * Recent workflow runs across the organization
@@ -1282,7 +1425,11 @@ export const getV1OrgsByOrgSlugWorkflowRuns = <ThrowOnError extends boolean = fa
     GetV1OrgsByOrgSlugWorkflowRunsResponses,
     GetV1OrgsByOrgSlugWorkflowRunsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/workflow-runs", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugWorkflowRunsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/workflow-runs",
+    ...options,
+  })
 
 /**
  * Lists a project's workflows
@@ -1300,7 +1447,11 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflows = <
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows",
+    ...options,
+  })
 
 /**
  * Creates a workflow
@@ -1319,6 +1470,7 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflows = <
     PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows",
     ...options,
     headers: {
@@ -1374,7 +1526,12 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns = <
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses,
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs", ...options })
+  >({
+    responseTransformer:
+      getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs",
+    ...options,
+  })
 
 /**
  * One run, its steps, and what it cost
@@ -1396,6 +1553,8 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRun
     GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdErrors,
     ThrowOnError
   >({
+    responseTransformer:
+      getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs/{runId}",
     ...options,
   })
@@ -1444,6 +1603,8 @@ export const patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByR
     PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobErrors,
     ThrowOnError
   >({
+    responseTransformer:
+      patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs/{runId}/job",
     ...options,
     headers: {
@@ -1466,7 +1627,11 @@ export const getV1OrgsByOrgSlugStoreListings = <ThrowOnError extends boolean = f
     GetV1OrgsByOrgSlugStoreListingsResponses,
     GetV1OrgsByOrgSlugStoreListingsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/store/listings", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugStoreListingsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/store/listings",
+    ...options,
+  })
 
 /**
  * Publishes a listing, making it visible to unauthenticated visitors
@@ -1484,7 +1649,11 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdPublish = <
     PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
     PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish", ...options })
+  >({
+    responseTransformer: postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish",
+    ...options,
+  })
 
 /**
  * Takes a listing out of the public catalogue
@@ -1503,6 +1672,7 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish = <
     PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
     url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/unpublish",
     ...options,
     headers: {
@@ -1580,7 +1750,11 @@ export const getV1OrgsByOrgSlugBillingTransactions = <ThrowOnError extends boole
     GetV1OrgsByOrgSlugBillingTransactionsResponses,
     GetV1OrgsByOrgSlugBillingTransactionsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/billing/transactions", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugBillingTransactionsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/billing/transactions",
+    ...options,
+  })
 
 /**
  * Configures automatic top-ups when the balance falls below a threshold
@@ -1619,7 +1793,11 @@ export const getV1OrgsByOrgSlugBillingUsage = <ThrowOnError extends boolean = fa
     GetV1OrgsByOrgSlugBillingUsageResponses,
     GetV1OrgsByOrgSlugBillingUsageErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/billing/usage", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugBillingUsageResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/billing/usage",
+    ...options,
+  })
 
 /**
  * Past statements
@@ -1635,7 +1813,11 @@ export const getV1OrgsByOrgSlugBillingStatements = <ThrowOnError extends boolean
     GetV1OrgsByOrgSlugBillingStatementsResponses,
     GetV1OrgsByOrgSlugBillingStatementsErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/billing/statements", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugBillingStatementsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/billing/statements",
+    ...options,
+  })
 
 /**
  * Search a project's logs
@@ -1710,7 +1892,11 @@ export const getV1OrgsByOrgSlugApiKeys = <ThrowOnError extends boolean = false>(
     GetV1OrgsByOrgSlugApiKeysResponses,
     GetV1OrgsByOrgSlugApiKeysErrors,
     ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/api-keys", ...options })
+  >({
+    responseTransformer: getV1OrgsByOrgSlugApiKeysResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/api-keys",
+    ...options,
+  })
 
 /**
  * Mint an API key. The secret is returned once.
@@ -1727,6 +1913,7 @@ export const postV1OrgsByOrgSlugApiKeys = <ThrowOnError extends boolean = false>
     PostV1OrgsByOrgSlugApiKeysErrors,
     ThrowOnError
   >({
+    responseTransformer: postV1OrgsByOrgSlugApiKeysResponseTransformer,
     url: "/v1/orgs/{orgSlug}/api-keys",
     ...options,
     headers: {
@@ -1780,6 +1967,7 @@ export const getV1StoreFeatured = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1StoreFeaturedData, ThrowOnError>,
 ): RequestResult<GetV1StoreFeaturedResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1StoreFeaturedResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1StoreFeaturedResponseTransformer,
     url: "/v1/store/featured",
     ...options,
   })
@@ -1794,7 +1982,11 @@ export const getV1StoreListings = <ThrowOnError extends boolean = false>(
     GetV1StoreListingsResponses,
     GetV1StoreListingsErrors,
     ThrowOnError
-  >({ url: "/v1/store/listings", ...options })
+  >({
+    responseTransformer: getV1StoreListingsResponseTransformer,
+    url: "/v1/store/listings",
+    ...options,
+  })
 
 /**
  * Reads one published listing with its tags, screenshots, and README
@@ -1806,7 +1998,11 @@ export const getV1StoreListingsBySlug = <ThrowOnError extends boolean = false>(
     GetV1StoreListingsBySlugResponses,
     GetV1StoreListingsBySlugErrors,
     ThrowOnError
-  >({ url: "/v1/store/listings/{slug}", ...options })
+  >({
+    responseTransformer: getV1StoreListingsBySlugResponseTransformer,
+    url: "/v1/store/listings/{slug}",
+    ...options,
+  })
 
 /**
  * Records a view or an outbound click on a listing
@@ -1849,6 +2045,7 @@ export const getV1UserMeProfile = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1UserMeProfileData, ThrowOnError>,
 ): RequestResult<GetV1UserMeProfileResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1UserMeProfileResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1UserMeProfileResponseTransformer,
     url: "/v1/user/me/profile",
     ...options,
   })
@@ -1864,6 +2061,7 @@ export const patchV1UserMeProfile = <ThrowOnError extends boolean = false>(
     PatchV1UserMeProfileErrors,
     ThrowOnError
   >({
+    responseTransformer: patchV1UserMeProfileResponseTransformer,
     url: "/v1/user/me/profile",
     ...options,
     headers: {
@@ -1882,7 +2080,11 @@ export const getV1UserMeExport = <ThrowOnError extends boolean = false>(
     GetV1UserMeExportResponses,
     GetV1UserMeExportErrors,
     ThrowOnError
-  >({ url: "/v1/user/me/export", ...options })
+  >({
+    responseTransformer: getV1UserMeExportResponseTransformer,
+    url: "/v1/user/me/export",
+    ...options,
+  })
 
 /**
  * End an impersonated session and clear its cookie
@@ -1907,6 +2109,7 @@ export const getV1UserMeImpersonation = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1UserMeImpersonationData, ThrowOnError>,
 ): RequestResult<GetV1UserMeImpersonationResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1UserMeImpersonationResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1UserMeImpersonationResponseTransformer,
     url: "/v1/user/me/impersonation",
     ...options,
   })
