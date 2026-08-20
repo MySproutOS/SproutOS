@@ -383,23 +383,103 @@ pub fn hash_secret(secret: &[u8]) -> Result<String, SecretError> {
         })
 }
 
-/// Checks a presented secret against a stored PHC hash.
+/// Checks a presented secret against a stored Argon2 PHC hash.
 ///
-/// The comparison is constant time: the candidate is hashed with the salt and parameters recorded
-/// in `stored`, and the two digests are compared with `subtle`'s constant-time equality (via
-/// `password_hash::Output`), so a wrong secret takes the same time to reject whatever prefix it
-/// shares with the real one.
+/// The candidate is hashed with the salt and parameters recorded in `stored`, and the two digests
+/// are compared with `subtle`'s constant-time equality (via `password_hash::Output`), so a wrong
+/// secret takes the same time to reject whatever prefix it shares with the real one.
+///
+/// Because the cost parameters come from `stored`, only ever pass hashes from our own storage.
+///
+/// A verification costs ~19 MiB and tens of milliseconds by design. Call it once per connection,
+/// never once per query, and cache the resulting [`TenantIdentity`] for the connection's lifetime.
+/// How long a generated connection secret is, in bytes of entropy.
+///
+/// 32 bytes is 256 bits. It is written as 52 characters of lowercase Crockford base32 in a
+/// connection URI, which survives being pasted through a shell, a YAML file and a `.env` without
+/// quoting.
+pub const SECRET_BYTES: usize = 32;
+
+/// Prefix marking a stored hash as the SHA-256 kind. Everything else is a PHC string.
+const SHA256_PREFIX: &str = "sha256$";
+
+/// Generates a connection secret.
+///
+/// Drawn from the OS CSPRNG. A tenant never chooses this — it is issued with the connection URI
+/// and rotated wholesale — which is exactly what makes [`hash_generated_secret`] sound.
+pub fn generate_secret() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; SECRET_BYTES];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+
+    // Crockford base32 over the whole buffer, five bits at a time. Not `encode_short_id`: that one
+    // is fixed at 128 bits, and truncating a secret to fit it would throw away half the entropy.
+    let mut out = String::with_capacity(SECRET_BYTES * 8 / 5 + 1);
+    let (mut accumulator, mut bits) = (0u16, 0u8);
+    for byte in bytes {
+        accumulator = (accumulator << 8) | u16::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(ALPHABET[((accumulator >> bits) & 0x1f) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(ALPHABET[((accumulator << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    out
+}
+
+/// Hashes a secret this system generated, for storage.
+///
+/// **Plain SHA-256, deliberately, and only ever for a secret from [`generate_secret`].**
+///
+/// Argon2 exists to make a *guessable* secret expensive to guess. A 256-bit random string is not
+/// guessable: an attacker with the hash has 2^256 candidates whatever the KDF, so the work factor
+/// buys nothing. What it does buy is a denial-of-service lever — every proxy authentication would
+/// cost 19 MiB and tens of milliseconds, so a few hundred concurrent connection attempts would
+/// exhaust a proxy's memory before any of them sent a command. See [`verify_secret`], which reads
+/// both encodings, and [`hash_secret`] for the case where a human picked the secret.
+pub fn hash_generated_secret(secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(secret.as_bytes());
+    format!("{SHA256_PREFIX}{}", hex::encode(digest))
+}
+
+/// Checks a presented secret against a stored hash of either kind.
+///
+/// Dispatches on the stored value: `sha256$…` is a generated secret, anything else is parsed as a
+/// PHC string and verified with Argon2. Storage decides the algorithm, never the caller — so a
+/// credential written before the SHA-256 path existed keeps verifying, and rotating one upgrades
+/// it without a migration.
+///
+/// The comparison is constant time in both arms.
 ///
 /// `Ok(false)` means the secret is wrong. `Err` means the *stored* credential is unusable, which
 /// is an operational fault and not a failed login — the caller should log it loudly rather than
 /// telling the client its password was wrong.
-///
-/// Because the cost parameters come from `stored`, only ever pass hashes from our own storage.
-///
-/// A verification costs ~19 MiB and tens of milliseconds by design. The proxies run it once per
-/// connection, not once per query; hot paths must cache the resulting [`TenantIdentity`] for the
-/// lifetime of the connection.
 pub fn verify_secret(secret: &[u8], stored: &str) -> Result<bool, SecretError> {
+    if let Some(expected) = stored.strip_prefix(SHA256_PREFIX) {
+        use sha2::{Digest, Sha256};
+        use subtle::ConstantTimeEq;
+
+        let expected = hex::decode(expected).map_err(|error| SecretError::MalformedHash {
+            reason: error.to_string(),
+        })?;
+        if expected.len() != 32 {
+            return Err(SecretError::MalformedHash {
+                reason: format!("a sha256 digest is 32 bytes, found {}", expected.len()),
+            });
+        }
+        let actual = Sha256::digest(secret);
+        return Ok(actual.ct_eq(expected.as_slice()).into());
+    }
+
+    verify_argon2_secret(secret, stored)
+}
+
+/// The Argon2 arm of [`verify_secret`], for a secret a human chose.
+pub fn verify_argon2_secret(secret: &[u8], stored: &str) -> Result<bool, SecretError> {
     let parsed = PasswordHash::new(stored).map_err(|error| SecretError::MalformedHash {
         reason: error.to_string(),
     })?;
@@ -654,6 +734,77 @@ mod tests {
         c.resource_kind = ResourceKind::Queue;
         assert_ne!(a.username(), c.username());
         assert_ne!(a.srn(), c.srn());
+    }
+
+    #[test]
+    fn generated_secrets_are_long_and_wire_safe() {
+        let secret = generate_secret();
+        // 32 bytes at 5 bits a character: 51 full characters plus one for the remaining 2 bits.
+        assert_eq!(secret.len(), 52);
+        assert!(
+            secret.bytes().all(|b| ALPHABET.contains(&b)),
+            "a secret goes into a connection URI unquoted: {secret}"
+        );
+    }
+
+    #[test]
+    fn generated_secrets_do_not_repeat() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..256 {
+            assert!(
+                seen.insert(generate_secret()),
+                "the CSPRNG returned a duplicate"
+            );
+        }
+    }
+
+    #[test]
+    fn hash_and_verify_a_generated_secret() {
+        let secret = generate_secret();
+        let stored = hash_generated_secret(&secret);
+        assert!(stored.starts_with("sha256$"));
+        assert_eq!(stored.len(), "sha256$".len() + 64);
+        assert!(verify_secret(secret.as_bytes(), &stored).unwrap());
+        assert!(!verify_secret(b"wrong", &stored).unwrap());
+        assert!(!verify_secret(b"", &stored).unwrap());
+        assert!(!verify_secret(&secret.as_bytes()[..secret.len() - 1], &stored).unwrap());
+    }
+
+    /// The control plane writes these hashes in TypeScript and this crate reads them. The two
+    /// implementations share no code, so they share a fixture instead — if this value changes,
+    /// every credential already issued stops verifying.
+    #[test]
+    fn the_generated_hash_is_plain_sha256_of_the_secret() {
+        assert_eq!(
+            hash_generated_secret("abc"),
+            "sha256$ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            hash_generated_secret(""),
+            "sha256$e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// Storage decides the algorithm. A credential written before the SHA-256 path existed must
+    /// keep verifying, or rotating every tenant's secret becomes a prerequisite for deploying.
+    #[test]
+    fn verify_reads_both_encodings() {
+        let argon = hash_secret(b"chosen by a human").unwrap();
+        assert!(verify_secret(b"chosen by a human", &argon).unwrap());
+        assert!(!verify_secret(b"something else", &argon).unwrap());
+
+        let sha = hash_generated_secret("generated");
+        assert!(verify_secret(b"generated", &sha).unwrap());
+        // A PHC string must never be verified as a digest, nor a digest as a PHC string.
+        assert!(!verify_secret(argon.as_bytes(), &sha).unwrap());
+        assert!(matches!(
+            verify_secret(b"x", "sha256$not-hex"),
+            Err(SecretError::MalformedHash { .. })
+        ));
+        assert!(matches!(
+            verify_secret(b"x", "sha256$ab"),
+            Err(SecretError::MalformedHash { .. })
+        ));
     }
 
     #[test]

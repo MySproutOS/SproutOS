@@ -134,3 +134,26 @@ if verify_secret(password, &stored)? {
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Two hash encodings, and which to use
+
+`verify_secret` dispatches on the stored value: `sha256$<hex>` is a secret this system generated,
+anything else is parsed as an Argon2 PHC string. Storage decides the algorithm, never the caller, so
+a credential written before the SHA-256 path existed keeps verifying and rotating one upgrades it
+without a migration.
+
+Use `hash_generated_secret` for a secret from `generate_secret` — 256 bits from the OS CSPRNG, which
+a tenant never chooses. Argon2 exists to make a _guessable_ secret expensive to guess, and there is
+nothing to guess here: an attacker holding the hash faces 2^256 candidates whatever the KDF. What a
+work factor would buy is a denial-of-service lever on the proxies, where 19 MiB and tens of
+milliseconds per connection attempt means a few hundred concurrent ones exhaust the process before
+any of them sends a command.
+
+Use `hash_secret` (Argon2id) only where a human picked the secret.
+
+## The TypeScript mirror
+
+`lib/typescript/services/src/tenant-auth.ts` implements the same username grammar, short-id encoding
+and generated-hash format. The control plane writes these values and this crate reads them, with no
+shared code between the two — so both test suites assert the same literal fixtures, and changing one
+side without the other turns a test red on both.

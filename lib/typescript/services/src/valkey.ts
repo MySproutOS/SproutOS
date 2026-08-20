@@ -1,0 +1,258 @@
+import type { DB } from "@sproutos/db"
+import type { Kysely } from "kysely"
+import { v7 } from "uuid"
+import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
+import {
+  type ConnectionDetails,
+  type ProvisionInput,
+  type ProvisionResult,
+  ServiceNotProvisionedError,
+  type ServiceDriver,
+} from "./types"
+
+/**
+ * A Valkey service, which is a credential and nothing else.
+ *
+ * There is no server to create. Every tenant shares one Valkey instance and is separated by a
+ * hash-tagged key prefix that `services/valkey-proxy` applies to every command — so provisioning is
+ * exactly: mint a username, mint a secret, store the hash the proxy will check against. The first
+ * command the tenant sends creates their first key, and nothing existed before it.
+ *
+ * That is the whole cost argument for TASK 20. A Valkey per project would be a container per
+ * project sitting idle between jobs; a prefix per project is a few dozen bytes.
+ *
+ * **The stored secret is one-way**, unlike `database_role.password_ciphertext`. Postgres needs the
+ * plaintext to create a real role on a real server. Nothing outside our process needs a Valkey
+ * secret: the proxy *is* the authenticator, so it only ever answers "does this match".
+ *
+ * The consequence is that `connectionUri` cannot exist as written — see below.
+ */
+
+export type ValkeyServiceConfig = {
+  /** What goes in the tenant's URI: the proxy, never the shared Valkey behind it. */
+  publicHost: string
+  publicPort: number
+  /** `rediss` where the proxy terminates TLS. Local development is plain `redis`. */
+  scheme?: "redis" | "rediss"
+}
+
+export function valkeyServiceConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ValkeyServiceConfig {
+  const host = env.SERVICE_VALKEY_PUBLIC_HOST
+  if (host === undefined || host === "") {
+    throw new Error("SERVICE_VALKEY_PUBLIC_HOST is not set")
+  }
+  return {
+    publicHost: host,
+    publicPort: Number(env.SERVICE_VALKEY_PUBLIC_PORT ?? 6379),
+    scheme: env.SERVICE_VALKEY_SCHEME === "redis" ? "redis" : "rediss",
+  }
+}
+
+/**
+ * Thrown by `connectionUri`, always.
+ *
+ * A caller reaching for it wants to show a tenant their URI again, and that is not something this
+ * driver can do: the secret was hashed, so it is not recoverable by us or by anyone who steals the
+ * table. `rotateCredentials` is the answer, and it is a different answer — the old URI stops
+ * working — which is why this is an error the caller has to handle rather than a silent rotation.
+ */
+export class SecretNotRecoverableError extends Error {
+  override readonly name = "SecretNotRecoverableError"
+
+  constructor(readonly backendServiceId: string) {
+    super(
+      `The secret for backend service ${backendServiceId} is stored as a one-way hash and cannot be revealed. Rotate it to get a new connection URI.`,
+    )
+  }
+}
+
+/**
+ * Build a Valkey connection URI.
+ *
+ * The username and secret are percent-encoded even though neither can contain a character that
+ * means anything in a URI — both are drawn from a 32-character alphabet with no `@`, `/` or `#`.
+ * Encoding them anyway costs nothing and means a future change to either alphabet cannot silently
+ * produce a URI that parses to the wrong host.
+ */
+export function valkeyUri(parts: {
+  scheme: "redis" | "rediss"
+  host: string
+  port: number
+  username: string
+  secret: string
+}): string {
+  const auth = `${encodeURIComponent(parts.username)}:${encodeURIComponent(parts.secret)}`
+  return `${parts.scheme}://${auth}@${parts.host}:${parts.port}`
+}
+
+export function valkeyDriver(db: Kysely<DB>, config: ValkeyServiceConfig): ServiceDriver {
+  const scheme = config.scheme ?? "rediss"
+
+  async function locate(backendServiceId: string) {
+    const row = await db
+      .selectFrom("serviceCredential")
+      .select(["id", "username", "lastFour"])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirst()
+
+    if (row === undefined) throw new ServiceNotProvisionedError(backendServiceId)
+    return row
+  }
+
+  function detailsFor(username: string): ConnectionDetails {
+    return {
+      host: config.publicHost,
+      port: config.publicPort,
+      // Valkey Cluster has database 0 and nothing else, which is why tenancy here is a key prefix
+      // rather than a numbered database. `0` is the only honest answer.
+      database: "0",
+      username,
+    }
+  }
+
+  async function issue(backendServiceId: string, username: string): Promise<string> {
+    const secret = generateSecret()
+
+    await db
+      .insertInto("serviceCredential")
+      .values({
+        id: v7(),
+        backendServiceId,
+        username,
+        secretHash: await hashGeneratedSecret(secret),
+        lastFour: lastFour(secret),
+      })
+      .execute()
+
+    return secret
+  }
+
+  async function provision(input: ProvisionInput): Promise<ProvisionResult> {
+    const username = tenantUsername({
+      organizationId: input.organizationId,
+      kind: "queue",
+      resourceId: input.backendServiceId,
+    })
+    const secret = await issue(input.backendServiceId, username)
+
+    return {
+      ...detailsFor(username),
+      connectionUri: valkeyUri({
+        scheme,
+        host: config.publicHost,
+        port: config.publicPort,
+        username,
+        secret,
+      }),
+    }
+  }
+
+  async function connectionUri(backendServiceId: string): Promise<string> {
+    // Not a stub: revealing it is impossible by construction, and saying so is the correct
+    // behaviour. See SecretNotRecoverableError.
+    await locate(backendServiceId)
+    throw new SecretNotRecoverableError(backendServiceId)
+  }
+
+  async function details(backendServiceId: string): Promise<ConnectionDetails> {
+    return detailsFor((await locate(backendServiceId)).username)
+  }
+
+  async function rotateCredentials(backendServiceId: string): Promise<string> {
+    const existing = await locate(backendServiceId)
+
+    /*
+      Revoke the old credential, then insert the new one, in one transaction.
+
+      There is no window: a concurrent proxy lookup runs outside this transaction and by MVCC sees
+      either the state before it or the state after it, never the moment in between. The order is
+      forced rather than chosen — `service_credential_live_username_key` is a *partial* unique
+      index, so Postgres evaluates it per statement and cannot defer it to commit (DEFERRABLE needs
+      a constraint, and a constraint cannot be partial). Inserting first raises a duplicate key on
+      the spot.
+
+      The old secret therefore stops working the instant this commits, with no grace period. That
+      is the intended behaviour and not a limitation to work around: rotation exists to recover
+      from a leaked credential, and a leaked credential that keeps working for another ten minutes
+      has not been recovered from.
+    */
+    const secret = await db.transaction().execute(async (trx) => {
+      const fresh = generateSecret()
+      await trx
+        .updateTable("serviceCredential")
+        .set({ revokedAt: new Date() })
+        .where("id", "=", existing.id)
+        .execute()
+      await trx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId,
+          // Deliberately the same username: it encodes which tenant this is, so changing it would
+          // change which keyspace the connection lands in.
+          username: existing.username,
+          secretHash: await hashGeneratedSecret(fresh),
+          lastFour: lastFour(fresh),
+        })
+        .execute()
+      return fresh
+    })
+
+    return valkeyUri({
+      scheme,
+      host: config.publicHost,
+      port: config.publicPort,
+      username: existing.username,
+      secret,
+    })
+  }
+
+  async function suspend(backendServiceId: string): Promise<void> {
+    // Revoking the credential is the whole suspension: the proxy refuses the next connection, and
+    // the tenant's keys are untouched. There is no server to stop.
+    await db
+      .updateTable("serviceCredential")
+      .set({ revokedAt: new Date() })
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .execute()
+
+    await db
+      .updateTable("backendService")
+      .set({ status: "suspended", updatedAt: new Date() })
+      .where("id", "=", backendServiceId)
+      .execute()
+  }
+
+  async function destroy(backendServiceId: string): Promise<void> {
+    await suspend(backendServiceId)
+
+    /*
+      The keys themselves are not deleted here.
+
+      Everything under `{kv:<short-id>}:` is unreachable the moment the credential is revoked — the
+      prefix is derived from the service id and no other tenant can name it. Scanning a shared
+      instance to delete them would mean `SCAN` over every tenant's keyspace, which is the one
+      operation this proxy refuses on principle. A reaper job walks the prefix out of band; that is
+      TASK 20's dispatcher work, and this driver marking the service deleted is what tells it to.
+    */
+    await db
+      .updateTable("backendService")
+      .set({ status: "deleting", deletedAt: new Date(), updatedAt: new Date() })
+      .where("id", "=", backendServiceId)
+      .execute()
+  }
+
+  return {
+    kind: "valkey",
+    connectionUri,
+    destroy,
+    details,
+    provision,
+    rotateCredentials,
+    suspend,
+  }
+}
