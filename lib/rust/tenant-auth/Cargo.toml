@@ -7,3 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+argon2 = { workspace = true }
+sproutos-srn = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
