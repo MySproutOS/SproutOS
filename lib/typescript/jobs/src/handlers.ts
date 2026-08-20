@@ -2,6 +2,7 @@ import { expireHolds } from "@lib/billing"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { enqueue } from "./queue"
+import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import type { JobHandler } from "./worker"
 
 /**
@@ -15,6 +16,8 @@ import type { JobHandler } from "./worker"
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   purgeExpiredAgentEvents: "agent.purge_events",
+  upkeepScan: UPKEEP_KINDS.scan,
+  upkeepRepository: UPKEEP_KINDS.repository,
 } as const
 
 /**
@@ -65,6 +68,9 @@ const purgeExpiredAgentEvents: JobHandler = async (_job, { db }) => {
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
+  // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
+  [JOB_KINDS.upkeepScan]: (job, context) =>
+    scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
 }
 
 /**
@@ -87,4 +93,5 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.purgeExpiredAgentEvents}:${now.toISOString().slice(0, 10)}`,
     maxAttempts: 3,
   })
+  await scheduleUpkeepScan(db, now)
 }

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@lib/billing": "workspace:*",
+    "@lib/dao": "workspace:*",
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",
     "uuid": "catalog:"

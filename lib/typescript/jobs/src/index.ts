@@ -1,3 +1,10 @@
+export {
+  decideUpkeepAction,
+  type UpkeepAction,
+  upkeepBranchName,
+  type UpstreamComparison,
+} from "./upkeep-decision"
+export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
 export {
   claim,

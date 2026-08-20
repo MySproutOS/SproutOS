@@ -92,7 +92,13 @@ import {
 import { crudStoreListingEvent, type StoreListingEventKind } from "./storeListingEvent/crud"
 import { fetchStoreListingScreenshot } from "./storeListingScreenshot/fetch"
 import { fetchStoreListingTag, type StoreListingTagRow } from "./storeListingTag/fetch"
-import { crudUpstreamSyncRun } from "./upstreamSyncRun/crud"
+import { crudUpstreamSyncRun, recordUpkeepRun, type RecordSyncRun } from "./upstreamSyncRun/crud"
+import {
+  CONSECUTIVE_FAILURE_LIMIT,
+  fetchUpkeepStatus,
+  type UpkeepOutcome,
+  type UpkeepStatus,
+} from "./upstreamSyncRun/policy"
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
@@ -104,6 +110,7 @@ export {
   AgentConfigUpsert,
   AgentCredentialKind,
   AgentEventRow,
+  CONSECUTIVE_FAILURE_LIMIT,
   allocateOrganizationSlug,
   allocateProjectSlug,
   AuditContext,
@@ -131,6 +138,7 @@ export {
   crudStoreListing,
   crudStoreListingEvent,
   crudUpstreamSyncRun,
+  recordUpkeepRun,
   crudUser,
   crudUserPreference,
   DeletedProject,
@@ -155,6 +163,7 @@ export {
   fetchStoreListing,
   fetchStoreListingScreenshot,
   fetchStoreListingTag,
+  fetchUpkeepStatus,
   fetchUpstreamSyncRun,
   fetchUserPreference,
   initialSteps,
@@ -191,10 +200,13 @@ export {
   StoreListingDetail,
   StoreListingEventKind,
   StoreListingFilters,
+  RecordSyncRun,
   StoreListingTagRow,
   SuggestionStatus,
   SYSTEM_ROLE_NAMES,
   SYSTEM_ROLES,
   SystemRoleDefinition,
   SystemRoleStatement,
+  UpkeepOutcome,
+  UpkeepStatus,
 }
