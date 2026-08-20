@@ -1,4 +1,4 @@
-import { fetchOrganization, fetchUserPreference } from "@lib/dao"
+import { exportUser, fetchOrganization, fetchUserPreference } from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -11,6 +11,7 @@ import { cookieDomain } from "../utils/env"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
 import {
+  userSchemaExportResponse,
   userSchemaPreferencesResponse,
   userSchemaProfileResponse,
   userSchemaUpdateProfileRequest,
@@ -174,6 +175,38 @@ const app = new Hono()
         productEmails: preference?.productEmails ?? false,
         createdAt: row.createdAt.toISOString(),
       })
+    },
+  )
+  .get(
+    "/me/export",
+    describeRoute({
+      description: "Everything the platform holds about the caller, as a downloadable document",
+      responses: {
+        200: {
+          description: "The caller's data",
+          content: { "application/json": { schema: resolver(userSchemaExportResponse) } },
+        },
+        404: { description: "No such user", ...errorResponse },
+      },
+    }),
+    async (c) => {
+      const user = c.var.user
+
+      const document = await exportUser(db).forUser(user.id)
+      if (document === null) return throwNotFound(c, "User not found")
+
+      /*
+        `Content-Disposition: attachment`, so a browser saves it rather than rendering it.
+
+        This is the one endpoint whose response is a *file* rather than a view: the right of access
+        is satisfied by handing someone a document they keep, and a JSON blob rendered in a tab is
+        not that. The filename carries the date because a person exercising this right twice wants
+        to be able to tell the two apart.
+      */
+      const day = new Date().toISOString().slice(0, 10)
+      c.header("Content-Disposition", `attachment; filename="sproutos-export-${day}.json"`)
+
+      return c.json(document)
     },
   )
   .delete(

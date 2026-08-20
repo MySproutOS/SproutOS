@@ -6,6 +6,7 @@ import {
   generateSecret,
   hashGeneratedSecret,
   lastFour,
+  tenantIndexPrefix,
   tenantUsername,
 } from "./tenant-auth"
 
@@ -126,5 +127,26 @@ describe("lastFour", () => {
     const secret = generateSecret()
     expect(lastFour(secret)).toHaveLength(4)
     expect(secret.endsWith(lastFour(secret))).toBe(true)
+  })
+})
+
+describe("tenantIndexPrefix", () => {
+  it("matches the prefix the search proxy applies", () => {
+    // Duplicated in `services/search-proxy/src/naming.rs`. A divergence here means the reaper
+    // deletes either nothing or another tenant's indices, so both sides pin the literal.
+    expect(tenantIndexPrefix(RESOURCE)).toBe("t01j4pm0000e008000000000051_")
+  })
+
+  it("starts with a letter and ends with the separator", () => {
+    const prefix = tenantIndexPrefix(RESOURCE)
+    expect(prefix.startsWith("t")).toBe(true)
+    expect(prefix.endsWith("_")).toBe(true)
+    // An index name is lowercased by OpenSearch on creation, so a prefix that was not already
+    // lowercase would not match the index it named.
+    expect(prefix).toBe(prefix.toLowerCase())
+  })
+
+  it("gives two services two namespaces", () => {
+    expect(tenantIndexPrefix(RESOURCE)).not.toBe(tenantIndexPrefix(ORG))
   })
 })

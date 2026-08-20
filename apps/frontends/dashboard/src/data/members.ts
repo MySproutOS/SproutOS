@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugApiKeysByApiKeyIdMutation,
+  deleteV1UserMeDeleteMutation,
   getV1UserMePreferencesQueryKey,
   getV1UserMeProfileOptions,
   getV1UserMeProfileQueryKey,
@@ -10,6 +11,7 @@ import {
   getV1OrgsByOrgSlugMembersOptions,
   postV1OrgsByOrgSlugApiKeysMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
+import { baseUrl } from "@lib/api-client/index"
 import { relativeLabel } from "@frontends/dashboard/data/projects"
 
 export type Member = {
@@ -161,6 +163,50 @@ export function useUpdateProfile() {
         // preferences until the next full reload.
         queryClient.invalidateQueries({ queryKey: getV1UserMePreferencesQueryKey() }),
       ])
+    },
+  })
+}
+
+/**
+ * Downloads the caller's data as a file.
+ *
+ * Not a `useQuery`. The response is a document rather than state: caching it would keep a copy of
+ * someone's personal data in memory long after they saved it, and re-fetching it on focus would be
+ * a second download nobody asked for. It is a one-shot fetch that ends at a save dialog.
+ *
+ * `credentials: "include"` because the session is a cookie and this bypasses the generated client.
+ */
+export function useExportMyData() {
+  return useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${baseUrl}/v1/user/me/export`, { credentials: "include" })
+      if (!response.ok) throw new Error(`The export could not be prepared (${response.status})`)
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `sproutos-export-${new Date().toISOString().slice(0, 10)}.json`
+      anchor.click()
+      // Without this the blob is held for the lifetime of the document, which for a single-page app
+      // is until the tab closes — and the thing being held is the user's entire personal record.
+      URL.revokeObjectURL(url)
+    },
+  })
+}
+
+/**
+ * Closes the account.
+ *
+ * On success the session is already gone — the API cleared the cookie — so there is nothing to
+ * invalidate and no authenticated view left to return to. A hard navigation to the marketing site
+ * is the honest end: anything else leaves a shell rendering against a session that no longer exists.
+ */
+export function useCloseAccount() {
+  return useMutation({
+    ...deleteV1UserMeDeleteMutation(),
+    onSuccess: () => {
+      window.location.href = "/"
     },
   })
 }

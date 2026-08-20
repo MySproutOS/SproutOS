@@ -128,8 +128,10 @@ keeps working for another ten minutes has not been recovered from.
 Revoking the credential _is_ the suspension — the proxy refuses the next connection and the tenant's
 data is untouched. `destroy` does the same and marks the service deleted; everything under
 `{kv:<short-id>}:` becomes unreachable, because the prefix is derived from the service id and no
-other tenant can name it. Actually reclaiming the memory needs an out-of-band reaper, because
-scanning a shared instance is the one operation the proxy refuses on principle.
+other tenant can name it. Actually reclaiming the memory is `@lib/reaper`'s job, out of band — it
+connects to the shared Valkey directly, because scanning it is the one operation the proxy refuses
+on principle and we could not authenticate as the tenant in any case: their secret was stored as a
+one-way hash.
 
 ## `tenant-auth.ts` is half of a cross-language contract
 

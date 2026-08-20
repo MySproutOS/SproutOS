@@ -33,6 +33,7 @@ import type {
   GetV1StoreFeaturedResponse,
   GetV1StoreListingsBySlugResponse,
   GetV1StoreListingsResponse,
+  GetV1UserMeExportResponse,
   GetV1UserMeProfileResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
@@ -582,5 +583,45 @@ export const patchV1UserMeProfileResponseTransformer = async (
   data: any,
 ): Promise<PatchV1UserMeProfileResponse> => {
   data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1UserMeExportResponseTransformer = async (
+  data: any,
+): Promise<GetV1UserMeExportResponse> => {
+  data.exportedAt = new Date(data.exportedAt)
+  data.profile.createdAt = new Date(data.profile.createdAt)
+  data.profile.updatedAt = new Date(data.profile.updatedAt)
+  data.identities.items = data.identities.items.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  data.organizations.items = data.organizations.items.map((item: any) => {
+    item.joinedAt = new Date(item.joinedAt)
+    return item
+  })
+  data.apiKeys.items = data.apiKeys.items.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    if (item.lastUsedAt) {
+      item.lastUsedAt = new Date(item.lastUsedAt)
+    }
+    if (item.revokedAt) {
+      item.revokedAt = new Date(item.revokedAt)
+    }
+    return item
+  })
+  data.authorizedApplications.items = data.authorizedApplications.items.map((item: any) => {
+    item.grantedAt = new Date(item.grantedAt)
+    return item
+  })
+  data.sessions.items = data.sessions.items.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    item.expiresAt = new Date(item.expiresAt)
+    return item
+  })
+  data.activity.items = data.activity.items.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
   return data
 }

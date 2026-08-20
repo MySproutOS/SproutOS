@@ -70,9 +70,27 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # The reaper deletes a destroyed tenant's indices, and everything it claims is a claim about
+      # how OpenSearch answers. Without a cluster here those tests skip, and a skipped deletion test
+      # reads as a pass while the data it should have removed is still on disk.
+      opensearch:
+        image: opensearchproject/opensearch:2.19.0
+        ports:
+          - 29200:9200
+        env:
+          discovery.type: single-node
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+          DISABLE_SECURITY_PLUGIN: true
+          DISABLE_INSTALL_DEMO_CONFIG: true
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       SERVICE_VALKEY_ADMIN_URL: redis://127.0.0.1:41023
+      SEARCH_ADMIN_URL: http://127.0.0.1:29200
       CLICKHOUSE_URL: http://127.0.0.1:28123
       CLICKHOUSE_DATABASE: observability
       CLICKHOUSE_USER: sproutos

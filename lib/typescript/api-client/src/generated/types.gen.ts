@@ -4023,6 +4023,101 @@ export type PatchV1UserMeProfileResponses = {
 export type PatchV1UserMeProfileResponse =
   PatchV1UserMeProfileResponses[keyof PatchV1UserMeProfileResponses]
 
+export type GetV1UserMeExportData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/me/export"
+}
+
+export type GetV1UserMeExportErrors = {
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1UserMeExportError = GetV1UserMeExportErrors[keyof GetV1UserMeExportErrors]
+
+export type GetV1UserMeExportResponses = {
+  /**
+   * The caller's data
+   */
+  200: {
+    exportedAt: Date
+    format: "sproutos.user-export.v1"
+    profile: {
+      id: string
+      email: string
+      name: string | null
+      image: string | null
+      githubLogin: string | null
+      createdAt: Date
+      updatedAt: Date
+    }
+    preferences: {
+      [key: string]: unknown
+    } | null
+    identities: {
+      items: Array<{
+        provider: string
+        providerAccountId: string
+        createdAt: Date
+      }>
+      truncated: boolean
+    }
+    organizations: {
+      items: Array<{
+        id: string
+        slug: string
+        name: string
+        role: string | null
+        owner: boolean
+        joinedAt: Date
+      }>
+      truncated: boolean
+    }
+    apiKeys: {
+      items: Array<{
+        id: string
+        name: string
+        prefix: string
+        createdAt: Date
+        lastUsedAt: Date | null
+        revokedAt: Date | null
+      }>
+      truncated: boolean
+    }
+    authorizedApplications: {
+      items: Array<{
+        clientId: string
+        clientName: string
+        scopes: Array<string>
+        grantedAt: Date
+      }>
+      truncated: boolean
+    }
+    sessions: {
+      items: Array<{
+        createdAt: Date
+        expiresAt: Date
+      }>
+      truncated: boolean
+    }
+    activity: {
+      items: Array<{
+        action: string
+        resource: string | null
+        organizationId: string | null
+        createdAt: Date
+      }>
+      truncated: boolean
+    }
+  }
+}
+
+export type GetV1UserMeExportResponse = GetV1UserMeExportResponses[keyof GetV1UserMeExportResponses]
+
 export type DeleteV1UserMeDeleteData = {
   body?: never
   path?: never
