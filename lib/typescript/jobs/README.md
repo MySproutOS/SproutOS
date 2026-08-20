@@ -85,3 +85,54 @@ with it. Both read the same table and nothing else coordinates them.
 
 `runOne` is exported so a single job can be driven directly — which is what makes a new job type
 testable without a poller running.
+
+## Fork upkeep (TASK 27)
+
+Two job kinds, and a rule about when to stop.
+
+**`upkeep.scan`** finds repositories due for upkeep and enqueues one `upkeep.repository` job each,
+keyed on the repository and the day. Scan-then-fan-out rather than one large job, because a single
+job holding a lease while it reconciles two hundred forks is two hundred failures riding on one
+lease.
+
+**One job per _repository_, not per project.** TASK 21 lets several projects share a repository —
+in this schema that means a monorepo, since `project_repository_target_live_key` is unique on
+`(organization, repository, root_dir, production_branch)`. One reconciliation serves all of them,
+and enqueueing per project would bill three times for one piece of work.
+
+### When upkeep stops
+
+Five consecutive `failed` runs pause a repository. Upkeep costs money on every run, and a fork
+whose upstream has diverged past reconciliation fails identically every night forever.
+
+**Derived from `upstream_sync_run`, not a counter column.** A counter is a second copy of something
+the history already records, and the two disagree the first time a run is written by a path that
+forgets to bump it — at which point the honest answer is in the history and the counter is a lie
+that silently stops a customer's updates. Deriving it also means recovery needs no reset: one
+successful run and the repository is due again.
+
+**A `conflict` is not a failure.** It means upstream and the fork both changed the same lines,
+which is the normal state of a fork someone is actually working on, and it produces a pull request
+a person resolves. Counting it would pause exactly the repositories that are being used.
+
+Runs are recorded for _every_ outcome, `up_to_date` included — otherwise a repository that failed
+once and then had nothing to do for four nights would read as five failures in a row.
+
+### What triggers work, and what it costs
+
+`decideUpkeepAction` turns a comparison into one of three answers, and the ordering is the point:
+
+| comparison               | action                   | tokens |
+| ------------------------ | ------------------------ | ------ |
+| not behind               | skip                     | none   |
+| behind, no local commits | fast-forward             | none   |
+| behind **and** ahead     | reconcile with the agent | yes    |
+
+The middle row is the common case — someone forked an app and changed configuration, not code —
+and paying a model to perform a mechanical fast-forward would be absurd.
+
+The decision reads `behindBy`, not GitHub's `status` label: a comparison can report `diverged`
+while `behindBy` is 0 depending on the base.
+
+The branch is named after the upstream commit (`sproutos/upkeep-<sha12>`), so a retried job reuses
+it instead of opening a second pull request for one change.

@@ -583,6 +583,9 @@ importers:
       '@lib/billing':
         specifier: workspace:*
         version: link:../billing
+      '@lib/dao':
+        specifier: workspace:*
+        version: link:../dao
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db
