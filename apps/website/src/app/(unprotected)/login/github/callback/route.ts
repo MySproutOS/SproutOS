@@ -5,14 +5,28 @@ import { seal } from "@lib/envelope"
 import type { OAuth2Tokens } from "@lib/oauth"
 import { db } from "@sproutos/db"
 import { constantTimeEqualUtf8 } from "@utils/crypto"
-import { createSession, generateSessionToken, setSessionTokenCookie } from "@website/lib/auth"
+import {
+  cookieDomain,
+  createSession,
+  generateSessionToken,
+  setSessionTokenCookie,
+} from "@website/lib/auth"
 import { fetchGitHubUser, githubOAuthClient } from "@website/lib/oauth"
 import { RETURN_TO_COOKIE, sanitizeReturnTo } from "@website/lib/return-to"
 import { cookies } from "next/headers"
 
 const PROVIDER = "github"
 
-function badRequest(): Response {
+/**
+ * A refused callback, with the reason in the log.
+ *
+ * The reason never reaches the browser: telling an attacker which half of the check failed is free
+ * information, and a person who lands here can only retry the sign-in anyway. It does reach the
+ * operator, because it did not, and a 400 with no cause took a live cluster round-trip to explain
+ * when the state cookie turned out to be scoped to the wrong host.
+ */
+function badRequest(reason: string): Response {
+  console.error(`github oauth callback refused: ${reason}`)
   return new Response(null, { status: 400 })
 }
 
@@ -26,36 +40,42 @@ export async function GET(request: Request): Promise<Response> {
   const state = url.searchParams.get("state")
 
   const cookieStore = await cookies()
+  // Deleted with the same `Domain` they were set with. A `delete` that omits it clears a host-only
+  // cookie of that name and leaves the domain-scoped one in place, which is the same class of bug
+  // as setting it host-only in the first place.
+  const transientScope = { path: "/", domain: cookieDomain() } as const
   const storedState = cookieStore.get("github_oauth_state")?.value ?? null
   const codeVerifier = cookieStore.get("github_code_verifier")?.value ?? null
   // Re-sanitized on the way out as well as in: the cookie is httpOnly, but validating a
   // redirect target at exactly the point it becomes a Location header is worth the two lines.
   const returnTo = sanitizeReturnTo(cookieStore.get(RETURN_TO_COOKIE)?.value ?? null)
   // Single-use: clear them whether or not the rest of the flow succeeds.
-  cookieStore.delete("github_oauth_state")
-  cookieStore.delete("github_code_verifier")
-  cookieStore.delete(RETURN_TO_COOKIE)
+  cookieStore.delete({ name: "github_oauth_state", ...transientScope })
+  cookieStore.delete({ name: "github_code_verifier", ...transientScope })
+  cookieStore.delete({ name: RETURN_TO_COOKIE, ...transientScope })
 
   if (code === null || state === null || storedState === null || codeVerifier === null) {
-    return badRequest()
+    return badRequest(
+      `missing code=${code !== null} state=${state !== null} storedState=${storedState !== null} verifier=${codeVerifier !== null}`,
+    )
   }
   if (!constantTimeEqualUtf8(state, storedState)) {
-    return badRequest()
+    return badRequest("state did not match the cookie")
   }
 
   let tokens: OAuth2Tokens
   try {
     tokens = await githubOAuthClient().validateAuthorizationCode(code, codeVerifier)
-  } catch {
+  } catch (cause) {
     // Invalid or replayed code, or bad client credentials.
-    return badRequest()
+    return badRequest(`authorization code exchange failed: ${String(cause)}`)
   }
 
   let profile: Awaited<ReturnType<typeof fetchGitHubUser>>
   try {
     profile = await fetchGitHubUser(tokens.accessToken)
-  } catch {
-    return badRequest()
+  } catch (cause) {
+    return badRequest(`fetching the GitHub profile failed: ${String(cause)}`)
   }
 
   const existingAccount = await db

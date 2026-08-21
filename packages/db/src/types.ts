@@ -655,6 +655,7 @@ export interface Project {
   autoUpdateMode: Generated<string>
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
+  dockerfilePath: Generated<string>
   id: string
   kind: Generated<string>
   name: string
@@ -909,6 +910,7 @@ export interface StoreListing {
   defaultBranch: Generated<string>
   deletedAt: Timestamp | null
   descriptionMd: string
+  dockerfilePath: Generated<string>
   featuredRank: number | null
   forksCount: Generated<number>
   homepageUrl: string | null
@@ -923,6 +925,7 @@ export interface StoreListing {
   rejectionReason: string | null
   reviewedAt: Timestamp | null
   reviewedByUserId: string | null
+  rootDir: Generated<string>
   searchVector: Generated<string | null>
   slug: string
   starsCount: Generated<number>

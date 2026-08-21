@@ -1,3 +1,4 @@
+import { cookieDomain } from "@website/lib/auth"
 import {
   GITHUB_IDENTITY_SCOPES,
   GITHUB_REPOSITORY_SCOPES,
@@ -8,15 +9,31 @@ import {
 import { RETURN_TO_COOKIE, sanitizeReturnTo } from "@website/lib/return-to"
 import { cookies } from "next/headers"
 
-/** State and PKCE verifier live in short-lived httpOnly cookies: the callback compares them to
- *  prove the redirect belongs to a flow this browser actually started. */
-const TRANSIENT_COOKIE = {
-  path: "/",
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  maxAge: 60 * 10,
-  sameSite: "lax",
-} as const
+/**
+ * State and PKCE verifier live in short-lived httpOnly cookies: the callback compares them to
+ * prove the redirect belongs to a flow this browser actually started.
+ *
+ * `domain` matters as much here as it does on the session cookie, and for longer than it should
+ * have taken to notice. The OAuth App's callback URL is one fixed host — `NEXT_PUBLIC_HOST_URL` —
+ * but this route is reachable from every host the website serves, because the marketing pages sit
+ * on the apex and the "Sign in with GitHub" button on them links here. So a sign-in that begins on
+ * `selloutjobs.com` finishes on `app.selloutjobs.com`, and a host-only cookie set on the first is
+ * not sent to the second. The callback then found `storedState === null` and returned 400 to every
+ * visitor who signed in from the front page. Observed on the live deployment, not reasoned about.
+ *
+ * A function rather than a `const`: `cookieDomain()` reads the environment, and dotenv has not
+ * necessarily run when this module is evaluated.
+ */
+function transientCookie() {
+  return {
+    path: "/",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 10,
+    sameSite: "lax",
+    domain: cookieDomain(),
+  } as const
+}
 
 /**
  * TASK 9's step-up re-authentication.
@@ -61,9 +78,10 @@ export async function GET(request: Request) {
   const url = await githubOAuthClient().createAuthorizationUrl(state, codeVerifier, [...scopes])
 
   const cookieStore = await cookies()
-  cookieStore.set("github_oauth_state", state, TRANSIENT_COOKIE)
-  cookieStore.set("github_code_verifier", codeVerifier, TRANSIENT_COOKIE)
-  if (returnTo !== null) cookieStore.set(RETURN_TO_COOKIE, returnTo, TRANSIENT_COOKIE)
+  const transient = transientCookie()
+  cookieStore.set("github_oauth_state", state, transient)
+  cookieStore.set("github_code_verifier", codeVerifier, transient)
+  if (returnTo !== null) cookieStore.set(RETURN_TO_COOKIE, returnTo, transient)
 
   return new Response(null, { status: 302, headers: { Location: url.toString() } })
 }

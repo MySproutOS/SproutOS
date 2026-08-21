@@ -19,6 +19,25 @@ export type BuildSpec = {
   imageRepository: string
   /** Set when the registry speaks plain HTTP — a local test registry, never production. */
   insecureRegistry?: boolean
+  /**
+   * The directory within the repository to build, from `project.root_dir`.
+   *
+   * That column has existed since the first migration. It is settable on create, settable on
+   * update, part of the uniqueness key that decides whether two projects are the same target, and
+   * shown in the UI — and **nothing read it**. A customer pointing a project at `apps/web` got a
+   * build of the repository root, and the only symptom was a Dockerfile-not-found for a Dockerfile
+   * that was right there in the directory they named.
+   */
+  contextSubdir?: string
+  /**
+   * The Dockerfile's path, relative to the build context.
+   *
+   * Defaulted rather than assumed. BuildKit's `dockerfile.v0` frontend looks for `Dockerfile` and
+   * nothing else, which is most of why the store's own catalogue could not be deployed: of six
+   * listed applications only two keep one at the repository root, and the rest are perfectly
+   * ordinary projects that put it in `docker/` or name it for a variant.
+   */
+  dockerfilePath?: string
   timeoutSeconds?: number
 }
 
@@ -43,6 +62,20 @@ export function imageUri(spec: BuildSpec): string {
 /** One build per deployment, named so a retried job addresses the same Job rather than a second one. */
 export function buildJobName(deploymentId: string): string {
   return `build-${deploymentId}`
+}
+
+/**
+ * BuildKit's git context, as one string.
+ *
+ * The `#<ref>:<subdir>` form is BuildKit's own syntax for building a subdirectory of a git
+ * repository, so the subdirectory never becomes a separate clone or a `cd` in a shell wrapper. An
+ * empty or `.` subdir is omitted rather than written as `#sha:.`, which BuildKit accepts but which
+ * makes every context string in the logs read as though something unusual was configured.
+ */
+export function buildContext(spec: BuildSpec): string {
+  const subdir = spec.contextSubdir
+  const suffix = subdir === undefined || subdir === "" || subdir === "." ? "" : `:${subdir}`
+  return `${spec.repositoryUrl}#${spec.gitSha}${suffix}`
 }
 
 export function buildJob(spec: BuildSpec, namespace: string): BuildJob {
@@ -98,7 +131,8 @@ export function buildJob(spec: BuildSpec, namespace: string): BuildJob {
                 "--frontend=dockerfile.v0",
                 // BuildKit fetches the git context itself. No clone step, no shared volume, and the
                 // credential never touches a filesystem the build can read after it is done.
-                `--opt=context=${spec.repositoryUrl}#${spec.gitSha}`,
+                `--opt=context=${buildContext(spec)}`,
+                `--opt=filename=${spec.dockerfilePath ?? "Dockerfile"}`,
                 `--output=${output}`,
               ],
               env: [{ name: "BUILDKITD_FLAGS", value: "--oci-worker-no-process-sandbox" }],

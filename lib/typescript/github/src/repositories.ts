@@ -251,3 +251,39 @@ export async function listInstallationRepositories(
     repositories: repositories.map((raw) => toRepository(raw)),
   }
 }
+
+/**
+ * The commit a branch currently points at.
+ *
+ * A deployment is of a commit, never of a branch: `deployment.git_sha` is what the build checks
+ * out, what the image is tagged with, and what a rollback names. The fork response does not carry
+ * one — it describes a repository, not a revision — so provisioning has to ask.
+ *
+ * `GET /repos/{owner}/{repo}/commits/{ref}` rather than the git-ref endpoint, because it resolves a
+ * branch name, a tag, or an abbreviated sha with the same call, and a caller that has a branch name
+ * from `default_branch` should not have to know which kind of ref it holds.
+ *
+ * A freshly forked repository can answer 404 here for a moment — GitHub creates the fork
+ * asynchronously and the commits are the last part to appear. The caller decides what to do about
+ * that; this function reports it as the `GitHubNotFoundError` the client already raises.
+ */
+export async function getBranchHeadSha(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  owner: string,
+  repo: string,
+  ref: string,
+): Promise<string> {
+  const response = await client.request<{ sha?: unknown }>({
+    method: "GET",
+    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}`,
+    credential,
+  })
+
+  const sha = response.data.sha
+  if (typeof sha !== "string" || sha === "") {
+    throw new Error(`GitHub returned no commit sha for ${owner}/${repo}@${ref}`)
+  }
+
+  return sha
+}

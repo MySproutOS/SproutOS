@@ -32,6 +32,7 @@ export {
   createPersonalRepository,
   forkRepository,
   generateFromTemplate,
+  getBranchHeadSha,
   getRepository,
   type InstallationRepositoryPage,
   listInstallationRepositories,

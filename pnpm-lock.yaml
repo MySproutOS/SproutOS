@@ -208,6 +208,9 @@ importers:
       '@ui/base':
         specifier: workspace:*
         version: link:../../../lib/typescript/ui/base
+      '@ui/seo-shared':
+        specifier: workspace:*
+        version: link:../../../lib/typescript/ui/seo-shared
       '@ui/spa-shared':
         specifier: workspace:*
         version: link:../../../lib/typescript/ui/spa-shared
@@ -278,6 +281,9 @@ importers:
       '@ui/base':
         specifier: workspace:*
         version: link:../../../lib/typescript/ui/base
+      '@ui/seo-shared':
+        specifier: workspace:*
+        version: link:../../../lib/typescript/ui/seo-shared
       '@ui/spa-shared':
         specifier: workspace:*
         version: link:../../../lib/typescript/ui/spa-shared
@@ -487,6 +493,9 @@ importers:
       '@lib/api-client':
         specifier: workspace:*
         version: link:../../lib/typescript/api-client
+      '@lib/dao':
+        specifier: workspace:*
+        version: link:../../lib/typescript/dao
       '@lib/envelope':
         specifier: workspace:*
         version: link:../../lib/typescript/envelope

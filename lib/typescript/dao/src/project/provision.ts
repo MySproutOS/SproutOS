@@ -38,6 +38,8 @@ export type ProvisionProjectInput = {
   slug: string
   kind: string
   rootDir: string
+  /** Relative to `rootDir`. Defaulted by the caller from the store listing, or to `Dockerfile`. */
+  dockerfilePath: string
   productionBranch: string
   agentCredentialId: string | null
   autoUpdateEnabled: boolean
@@ -131,6 +133,7 @@ export function provisionProject(db: Kysely<DB>) {
         slug: input.slug,
         kind: input.kind,
         rootDir: input.rootDir,
+        dockerfilePath: input.dockerfilePath,
         productionBranch: input.productionBranch,
         state: "creating",
         autoUpdateEnabled: input.autoUpdateEnabled,

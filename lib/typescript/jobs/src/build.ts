@@ -92,7 +92,14 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
     const source = await db
       .selectFrom("project")
       .innerJoin("repository", "repository.id", "project.repositoryId")
-      .select(["repository.ownerLogin as ownerLogin", "repository.name as repoName"])
+      .select([
+        "repository.ownerLogin as ownerLogin",
+        "repository.name as repoName",
+        // The two build settings. `root_dir` has been on `project` since the first migration and
+        // was read by nothing; the build assumed the repository root and a Dockerfile beside it.
+        "project.rootDir as rootDir",
+        "project.dockerfilePath as dockerfilePath",
+      ])
       .where("project.id", "=", project.id)
       .executeTakeFirst()
 
@@ -123,6 +130,8 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       // registry policy can be written per organization rather than per project.
       imageRepository: `${project.organizationId}/${project.slug}`,
       insecureRegistry: resolved.insecureRegistry,
+      contextSubdir: source.rootDir,
+      dockerfilePath: source.dockerfilePath,
     }
 
     const kube = createKubeClient(config ?? inClusterConfig())

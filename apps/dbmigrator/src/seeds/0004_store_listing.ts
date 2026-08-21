@@ -15,6 +15,25 @@ type Listing = {
   homepageUrl: string | null
   licenseSpdx: string
   tags: string[]
+  /**
+   * Where this application's Dockerfile is, relative to `rootDir`.
+   *
+   * Required, with no default, on purpose. The builder used to assume `Dockerfile` at the
+   * repository root, and of the six applications originally listed here **two** kept one there —
+   * the other four forked, built, and died on `failed to read dockerfile`. A store of forkable
+   * applications whose entries cannot be deployed is not a store, and a field that could be
+   * omitted is a field that would be.
+   */
+  rootDir: string
+  dockerfilePath: string
+  /**
+   * The upstream's default branch, which is not always `main`.
+   *
+   * It was hardcoded to `main` for every listing, and it is what the fork's production branch and
+   * the first deploy's ref are both taken from. WriteFreely's is `develop`; a listing seeded with
+   * `main` would fork correctly and then deploy a branch that does not exist.
+   */
+  defaultBranch: string
 }
 
 const LISTINGS: Listing[] = [
@@ -31,6 +50,10 @@ const LISTINGS: Listing[] = [
     homepageUrl: null,
     licenseSpdx: "MIT",
     tags: ["bookmarks", "search", "django"],
+    rootDir: ".",
+    // `docker/alpine.Dockerfile` is the other one; the default is the glibc build.
+    dockerfilePath: "docker/default.Dockerfile",
+    defaultBranch: "main",
   },
   {
     slug: "memos",
@@ -45,6 +68,9 @@ const LISTINGS: Listing[] = [
     homepageUrl: "https://www.usememos.com",
     licenseSpdx: "MIT",
     tags: ["notes", "markdown", "go"],
+    rootDir: ".",
+    dockerfilePath: "scripts/Dockerfile",
+    defaultBranch: "main",
   },
   {
     slug: "shiori",
@@ -59,6 +85,9 @@ const LISTINGS: Listing[] = [
     homepageUrl: null,
     licenseSpdx: "MIT",
     tags: ["read-later", "archive", "go"],
+    rootDir: ".",
+    dockerfilePath: "Dockerfile",
+    defaultBranch: "main",
   },
   {
     slug: "vikunja",
@@ -73,42 +102,78 @@ const LISTINGS: Listing[] = [
     homepageUrl: "https://vikunja.io",
     licenseSpdx: "AGPL-3.0-only",
     tags: ["tasks", "kanban", "teams"],
+    rootDir: ".",
+    dockerfilePath: "Dockerfile",
+    defaultBranch: "main",
   },
   {
-    slug: "focalboard",
-    name: "Focalboard",
-    tagline: "Project boards for teams that want their data in their own database.",
+    slug: "glance",
+    name: "Glance",
+    tagline: "One dashboard for every feed, calendar, and server you watch.",
     descriptionMd:
-      "Board, table, and calendar views over the same cards. Forks cleanly and deploys as a " +
-      "single service.",
+      "Widgets for RSS, GitHub releases, weather, Docker, and monitoring, arranged in columns " +
+      "you configure in one YAML file.",
     categorySlug: "productivity",
-    upstreamOwner: "mattermost",
-    upstreamRepo: "focalboard",
+    upstreamOwner: "glanceapp",
+    upstreamRepo: "glance",
     homepageUrl: null,
-    licenseSpdx: "MIT",
-    tags: ["boards", "planning", "teams"],
+    licenseSpdx: "AGPL-3.0-only",
+    tags: ["dashboard", "feeds", "go"],
+    rootDir: ".",
+    dockerfilePath: "Dockerfile",
+    defaultBranch: "main",
   },
   {
-    slug: "astro-blog-starter",
-    name: "Astro Blog Starter",
-    tagline: "A content-first blog that builds to static files and costs almost nothing to run.",
+    slug: "writefreely",
+    name: "WriteFreely",
+    tagline: "A writing-first blog with no dashboard to get lost in.",
     descriptionMd:
-      "Markdown and MDX posts, RSS, sitemap, and typed content collections. The cheapest thing " +
-      "in the catalogue to keep online.",
+      "Markdown in, a clean page out, and ActivityPub if you want the posts to federate. One " +
+      "binary and a database.",
     categorySlug: "publishing",
-    upstreamOwner: "withastro",
-    upstreamRepo: "astro",
-    homepageUrl: "https://astro.build",
-    licenseSpdx: "MIT",
-    tags: ["blog", "static", "astro"],
+    upstreamOwner: "writefreely",
+    upstreamRepo: "writefreely",
+    homepageUrl: "https://writefreely.org",
+    licenseSpdx: "AGPL-3.0-only",
+    tags: ["blog", "writing", "activitypub"],
+    rootDir: ".",
+    dockerfilePath: "Dockerfile",
+    defaultBranch: "develop",
   },
 ]
+
+/**
+ * Listings this file used to carry and no longer does.
+ *
+ * `mattermost/focalboard` is archived upstream and has no Dockerfile at its final commit;
+ * `withastro/astro` is the framework's monorepo, listed as "Astro Blog Starter", and has no
+ * deployable image anywhere in it. Both forked cleanly and then failed at the build, which is the
+ * worst place for a catalogue to be wrong: after the customer has a repository.
+ *
+ * Withdrawn rather than deleted. `project.store_listing_id` points at them from any project already
+ * forked, `usage_event` is downstream of that, and a listing nobody can fork is exactly what
+ * `status` is for.
+ */
+const WITHDRAWN = ["focalboard", "astro-blog-starter"] as const
+
+/** From `store_listing_status_check`. Asserted against `pg_constraint` in the seed's test. */
+export const LISTING_ARCHIVED = "archived"
 
 export async function seed(db: Kysely<any>): Promise<void> {
   const categories = asRows(await db.selectFrom("store_category").select(["id", "slug"]).execute())
   const categoryIdBySlug = new Map<string, string>(
     categories.map((row: Row) => [text(row, "slug"), text(row, "id")]),
   )
+
+  await db
+    .updateTable("store_listing")
+    // `archived`, checked against `store_listing_status_check` rather than chosen. The natural word
+    // for this is "withdrawn" and the constraint does not have it — draft, pending_review,
+    // published, rejected, archived.
+    .set({ status: LISTING_ARCHIVED })
+    .where("slug", "in", [...WITHDRAWN])
+    .where("status", "=", "published")
+    .execute()
 
   for (const listing of LISTINGS) {
     const existing = asRow(
@@ -119,7 +184,28 @@ export async function seed(db: Kysely<any>): Promise<void> {
         .executeTakeFirst(),
     )
 
+    /*
+      An existing listing is reconciled, not skipped.
+
+      The original wrote `continue` here, which makes the seed create-only: a corrected value never
+      reaches a deployment that already ran it. That is how four listings kept a `dockerfile_path`
+      of `Dockerfile` after the correct paths were known — the seed had them and had no way to say
+      so. Everything reconciled below is catalogue metadata that only this file owns; nothing a
+      customer or a moderator can edit is touched.
+    */
     if (existing) {
+      await db
+        .updateTable("store_listing")
+        .set({
+          root_dir: listing.rootDir,
+          dockerfile_path: listing.dockerfilePath,
+          default_branch: listing.defaultBranch,
+          upstream_owner: listing.upstreamOwner,
+          upstream_repo: listing.upstreamRepo,
+          upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
+        })
+        .where("id", "=", text(existing, "id"))
+        .execute()
       continue
     }
 
@@ -138,7 +224,9 @@ export async function seed(db: Kysely<any>): Promise<void> {
         upstream_repo: listing.upstreamRepo,
         upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
         homepage_url: listing.homepageUrl,
-        default_branch: "main",
+        root_dir: listing.rootDir,
+        dockerfile_path: listing.dockerfilePath,
+        default_branch: listing.defaultBranch,
         license_spdx: listing.licenseSpdx,
         platform: "web",
         category_id: categoryIdBySlug.get(listing.categorySlug) ?? null,

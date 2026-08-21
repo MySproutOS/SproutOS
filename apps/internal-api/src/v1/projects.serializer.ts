@@ -78,6 +78,10 @@ export const projectSchemaCreateRequest = Type.Object({
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   kind: Type.Optional(ProjectKind),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
+  /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */
+  dockerfilePath: Type.Optional(
+    Type.String({ minLength: 1, maxLength: 255, pattern: "^(?!/)(?!.*\\.\\.).+$" }),
+  ),
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
@@ -90,6 +94,10 @@ export const projectSchemaUpdateRequest = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
+  /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */
+  dockerfilePath: Type.Optional(
+    Type.String({ minLength: 1, maxLength: 255, pattern: "^(?!/)(?!.*\\.\\.).+$" }),
+  ),
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
@@ -104,6 +112,7 @@ const projectEntry = Type.Object({
   state: Type.String(),
   stateReason: Nullable(Type.String()),
   rootDir: Type.String(),
+  dockerfilePath: Type.String(),
   productionBranch: Type.String(),
   autoUpdateEnabled: Type.Boolean(),
   autoUpdateMode: Type.String(),

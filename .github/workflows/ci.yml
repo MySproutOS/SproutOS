@@ -148,6 +148,11 @@ jobs:
       - name: No new silent skips
         run: node bin/check-skipped-tests.mjs vitest-report.json
 
+      # An import that resolves only because pnpm's virtual store leaves every workspace package
+      # reachable from the repo root. Three apps had one; all three built, type-checked, and shipped.
+      - name: Every imported workspace package is declared
+        run: node bin/check-workspace-deps.mjs
+
   rust:
     name: (cargo) Format, Clippy, and Test
     runs-on: ubuntu-latest

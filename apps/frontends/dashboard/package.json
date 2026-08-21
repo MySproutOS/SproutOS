@@ -18,6 +18,7 @@
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@ui/base": "workspace:*",
+    "@ui/seo-shared": "workspace:*",
     "@ui/spa-shared": "workspace:*",
     "@xyflow/react": "^12.11.3",
     "lucide-react": "catalog:",

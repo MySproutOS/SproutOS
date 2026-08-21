@@ -15,6 +15,7 @@
     "@fontsource-variable/geist": "catalog:",
     "@fontsource-variable/geist-mono": "catalog:",
     "@lib/api-client": "workspace:*",
+    "@lib/dao": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@lib/oauth": "workspace:*",
     "@sproutos/db": "workspace:*",

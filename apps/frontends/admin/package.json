@@ -17,6 +17,7 @@
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@ui/base": "workspace:*",
+    "@ui/seo-shared": "workspace:*",
     "@ui/spa-shared": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",

@@ -4,14 +4,19 @@ import {
   createPersonalRepository,
   forkRepository,
   generateFromTemplate,
+  getBranchHeadSha,
   getRepository,
   type GitHubCredential,
   type GitHubRepository,
   userGitHubCredential,
 } from "@lib/github"
+import { crudDeployment } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
+import { v7 } from "uuid"
 import type { ProjectJobStep } from "@lib/dao/projectJob/crud"
+import { DEPLOY_KINDS } from "./deploy"
+import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 
 /**
@@ -72,7 +77,26 @@ function withStep(
  * returns. The background-job runner already guarantees one claimant per *background* job, but the
  * `project_job` is a separate row and a retry after a crash would otherwise fork twice.
  */
-export async function runProvision(db: Kysely<DB>, payload: ProvisionPayload): Promise<void> {
+/**
+ * The GitHub side, injectable.
+ *
+ * Production passes nothing and gets the real client plus the signed-in user's token. A test passes
+ * both, which is the only way to exercise this function at all: everything it does that matters
+ * happens *after* the GitHub call, and a version that could only be run against github.com could
+ * only be checked by forking a repository for real.
+ *
+ * The same shape `tearDownProject` uses for its Kubernetes client, for the same reason.
+ */
+export type ProvisionGitHub = {
+  client: ReturnType<typeof createGitHubClient>
+  credential: GitHubCredential
+}
+
+export async function runProvision(
+  db: Kysely<DB>,
+  payload: ProvisionPayload,
+  github?: ProvisionGitHub,
+): Promise<void> {
   const claimed = await db
     .updateTable("projectJob")
     .set({ state: "running", startedAt: new Date(), updatedAt: new Date() })
@@ -112,10 +136,10 @@ export async function runProvision(db: Kysely<DB>, payload: ProvisionPayload): P
     const createStep = job.kind === "fork" ? "fork_repository" : "create_repository"
     await mark(createStep, "running")
 
-    const credential = await userGitHubCredential(db, payload.userId)
+    const credential = github?.credential ?? (await userGitHubCredential(db, payload.userId))
     if (credential === undefined) throw new NoUsableCredentialError()
 
-    const client = createGitHubClient()
+    const client = github?.client ?? createGitHubClient()
     const created = await createOnGitHub(client, credential, job.kind, repository)
 
     await db
@@ -132,12 +156,63 @@ export async function runProvision(db: Kysely<DB>, payload: ProvisionPayload): P
     await mark(createStep, "succeeded")
 
     /*
-      The remaining three steps are honestly `skipped`, not `succeeded`.
+      The first deploy.
 
-      Linking an installation needs a GitHub App private key this deployment does not have;
-      detecting build settings is the TASK 38/39 analyzer; the first deploy is the build pipeline.
-      Each exists elsewhere in the repository and none is wired to this job yet. Marking them
-      `succeeded` would be the same lie the whole job used to tell — a progress bar reaching 100%
+      This step was `skipped`, with a comment saying the build pipeline "exists elsewhere in the
+      repository and is not wired to this job yet". That was true and it was the whole product: a
+      customer clicked "Fork this app", got a repository on GitHub, and got a project marked `ready`
+      that had never been built and was serving nothing. `deployment` held one row, from a seed.
+
+      Wiring it is two calls, because everything downstream already works — `DEPLOY_KINDS.revision`
+      finds no image, enqueues the build, and the build enqueues the deploy back. What was missing
+      was only the first push.
+
+      The sha is read rather than assumed. A deployment is of a commit: it is what the build checks
+      out, what the image is tagged with, and what a rollback names, and `deployment.git_sha` is not
+      nullable. A fork is asynchronous on GitHub's side, so this can 404 for a moment after the
+      repository itself is readable; that failure belongs to the step, which is why the deploy is
+      marked `running` before the lookup rather than after it.
+    */
+    if (job.projectId !== null) {
+      await mark("first_deploy", "running")
+
+      const branch = created.defaultBranch
+      const sha = await getBranchHeadSha(
+        client,
+        credential,
+        created.ownerLogin,
+        created.name,
+        branch,
+      )
+
+      const deployment = await crudDeployment(db).create({
+        id: v7(),
+        projectId: job.projectId,
+        kind: "production",
+        gitSha: sha,
+        gitRef: branch,
+        prNumber: null,
+        status: "queued",
+      })
+
+      await enqueue(db, {
+        kind: DEPLOY_KINDS.revision,
+        organizationId: job.organizationId,
+        payload: { deploymentId: deployment.id },
+        idempotencyKey: `${DEPLOY_KINDS.revision}:${deployment.id}`,
+      })
+
+      await mark("first_deploy", "succeeded")
+    }
+
+    /*
+      The two that remain are honestly `skipped`, not `succeeded`.
+
+      Linking an installation needs a GitHub App installation on the account that owns the fork, and
+      the fork's owner is whoever signed in — not necessarily anywhere the App is installed.
+      Detecting build settings is the TASK 38/39 analyzer, which is an LLM call that costs real
+      money per fork; it is offered as its own action rather than run unasked. Marking either
+      `succeeded` would be the lie this job used to tell wholesale — a progress bar reaching 100%
       for work nobody did.
     */
     for (const step of steps) {

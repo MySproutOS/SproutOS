@@ -181,6 +181,7 @@ const PROJECT_FIELDS = [
   "state",
   "stateReason",
   "rootDir",
+  "dockerfilePath",
   "productionBranch",
   "autoUpdateEnabled",
   "autoUpdateMode",
@@ -260,6 +261,7 @@ function serializeProject(
     state: project.state,
     stateReason: project.stateReason,
     rootDir: project.rootDir,
+    dockerfilePath: project.dockerfilePath,
     productionBranch: project.productionBranch,
     autoUpdateEnabled: project.autoUpdateEnabled,
     autoUpdateMode: project.autoUpdateMode,
@@ -476,6 +478,16 @@ const app = new Hono()
       let jobKind: ProjectJobKind
       let storeListingId: string | null = null
       let productionBranch = json.productionBranch ?? null
+      /*
+        Build settings, defaulted from the listing.
+
+        A customer forking Memos has no reason to know that its Dockerfile lives under `docker/`,
+        and asking them is asking them to do the one thing the store exists to save them from. The
+        listing knows, so the listing supplies it; the request may still override, and the project
+        owns the value from then on.
+      */
+      let listingRootDir: string | null = null
+      let listingDockerfilePath: string | null = null
 
       if (source.type === "repository") {
         const repository = await fetchRepository(db).getInOrganization(
@@ -496,6 +508,8 @@ const app = new Hono()
           "defaultBranch",
           "upstreamOwner",
           "upstreamRepo",
+          "rootDir",
+          "dockerfilePath",
         ])
 
         if (!listing || listing.status !== "published") {
@@ -520,6 +534,8 @@ const app = new Hono()
         }
 
         storeListingId = listing.id
+        listingRootDir = listing.rootDir
+        listingDockerfilePath = listing.dockerfilePath
         jobKind = "fork"
         productionBranch ??= listing.defaultBranch
         plan = {
@@ -562,7 +578,8 @@ const app = new Hono()
         }
       }
 
-      const rootDir = json.rootDir ?? "."
+      const rootDir = json.rootDir ?? listingRootDir ?? "."
+      const dockerfilePath = json.dockerfilePath ?? listingDockerfilePath ?? "Dockerfile"
 
       if (plan.mode === "existing") {
         const conflict = await fetchProject(db).findConflictingTarget({
@@ -625,6 +642,7 @@ const app = new Hono()
         name: json.name,
         organizationId: organization.id,
         productionBranch,
+        dockerfilePath,
         repository: plan,
         rootDir,
         slug,
@@ -830,6 +848,7 @@ const app = new Hono()
           ...(json.name === undefined ? {} : { name: json.name }),
           ...(json.slug === undefined ? {} : { slug: json.slug }),
           ...(json.rootDir === undefined ? {} : { rootDir: json.rootDir }),
+          ...(json.dockerfilePath === undefined ? {} : { dockerfilePath: json.dockerfilePath }),
           ...(json.productionBranch === undefined
             ? {}
             : { productionBranch: json.productionBranch }),
