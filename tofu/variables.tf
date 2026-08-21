@@ -125,3 +125,15 @@ variable "deletion_protection" {
   type        = bool
   default     = true
 }
+
+variable "tenant_bucket_prefix" {
+  description = <<-EOT
+    The prefix every tenant object-storage bucket carries.
+
+    `bucketNameFor` in `lib/typescript/services` produces `v-<short-id>`, and the IAM policies in
+    `storage.tf` are scoped to this prefix. Changing it in one place and not the other does not fail
+    a plan — it produces a platform that provisions buckets the proxy is not allowed to read.
+  EOT
+  type        = string
+  default     = "v-"
+}

@@ -16,6 +16,7 @@ locals {
     "pg-proxy",
     "valkey-proxy",
     "search-proxy",
+    "storage-proxy",
     "metering-agent",
   ]
 }

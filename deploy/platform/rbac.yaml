@@ -43,6 +43,21 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  name: storage-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: storage-proxy
+    app.kubernetes.io/part-of: sproutos
+  annotations:
+    # The only proxy whose role grants anything at the cloud provider: it re-signs every tenant
+    # request with the platform's own credential. Scoped to the `v-*` bucket prefix and to the six
+    # operations in `bucketPolicy` — not `s3:*`, so a compromised proxy still cannot delete a vault
+    # wholesale or read a bucket that is not a tenant's.
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-storage-proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: internal-api
   namespace: sproutos-system
   labels:

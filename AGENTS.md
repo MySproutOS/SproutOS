@@ -79,6 +79,11 @@ paying for a GC and an event-loop hop.
   Celery at it as though it were Valkey.
 - `services/search-proxy` — OpenSearch tenant-split proxy. Document- and field-level security
   is not in the OSS tier, so this proxy _is_ the security boundary.
+- `services/storage-proxy` — S3 tenant-split proxy. Verifies a tenant's SigV4 signature against a
+  secret *derived* from one root key, checks the bucket in the path is theirs, and re-signs with the
+  platform's credential. A customer never holds a cloud credential. Replaced a per-tenant IAM user,
+  which capped the platform at 5,000 buckets and put the boundary in a policy document nothing here
+  could test.
 
 ### Libraries
 
@@ -88,7 +93,8 @@ paying for a GC and an event-loop hop.
 - `lib/typescript/oauth` — **Vendored** OAuth2 client (`@lib/oauth`). No arctic.
 - `lib/typescript/utils/crypto` — **Vendored** encoding/hash/random (`@utils/crypto`). No oslo.
 - `lib/typescript/ui/{base,seo-shared,spa-shared}` — shared components and theme.
-- `lib/rust/{srn,metering-proto,tenant-auth}` — shared crates.
+- `lib/rust/{srn,metering-proto,tenant-auth,s3-sigv4,service-credentials}` — shared crates.
+  `s3-sigv4` is SigV4 from the *verifying* end, which no published crate exposes.
 
 ### The SPA split
 
@@ -127,6 +133,9 @@ sides assert against — a divergence in the first two is a security bug.
   against it.
 - **Metering event schema and HMAC signing** (`lib/rust/metering-proto` ↔ the ingest route).
 - **Tenant credential parsing** (`lib/rust/tenant-auth` ↔ the control plane that issues them).
+- **Object-storage secret derivation** (`lib/rust/s3-sigv4/src/tenant.rs` ↔ `lib/typescript/services`),
+  vectors in `lib/rust/s3-sigv4/fixtures/tenant-secret.json`. A divergence here is loud rather than
+  dangerous — a tenant who cannot authenticate at all — but only because both sides read the file.
 
 ## Conventions
 

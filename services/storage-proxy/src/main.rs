@@ -178,6 +178,21 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
     let origin = headers.get("origin").cloned();
 
     /*
+      Liveness, before anything that needs a credential.
+
+      A probe cannot sign a request, and the alternative — a TCP check — goes ready as soon as the
+      socket binds, which is before the control-plane pool has been checked. `/healthz` cannot
+      collide with a bucket: every bucket this serves is named `v-<short-id>`.
+
+      It says only "up". Whether the database is reachable is deliberately not reported: a
+      control-plane blip would then roll every proxy pod at once, and a proxy that cannot look up a
+      credential should refuse requests, not leave the cluster.
+    */
+    if path == "/healthz" {
+        return (StatusCode::OK, "ok").into_response();
+    }
+
+    /*
       The preflight is answered here and never forwarded.
 
       A browser sends `OPTIONS` with no `Authorization` — that is the point of a preflight — so it

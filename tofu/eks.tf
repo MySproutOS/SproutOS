@@ -100,6 +100,13 @@ data "tls_certificate" "cluster" {
   url = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
+locals {
+  # The issuer without its scheme, which is the form an IRSA trust-policy condition key takes.
+  # `https://` left on produces a condition that matches nothing and a role nothing can assume — with
+  # no error anywhere, because a trust policy that never matches is valid.
+  oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
+}
+
 resource "aws_iam_openid_connect_provider" "cluster" {
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]

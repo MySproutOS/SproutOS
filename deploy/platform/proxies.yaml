@@ -1,9 +1,13 @@
-# The three data-plane proxies.
+# The four data-plane proxies.
 #
-# Each is the security boundary for its backend: a tenant reaches Postgres, Valkey and OpenSearch
-# only through these, which is what the tenant NetworkPolicy enforces from the other side. That
-# makes them the most security-relevant Deployments in the platform and the reason they share a file
-# — the three are one decision, not three.
+# Each is the security boundary for its backend: a tenant reaches Postgres, Valkey, OpenSearch and
+# object storage only through these, which is what the tenant NetworkPolicy enforces from the other
+# side. That makes them the most security-relevant Deployments in the platform and the reason they
+# share a file — the four are one decision, not four.
+#
+# `storage-proxy` is the newest and was the exception until it was not: object storage used to hand
+# the customer a real cloud credential scoped by a policy on somebody else's system. Its README
+# argues why that had to change.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -267,4 +271,122 @@ spec:
   ports:
     - name: http
       port: 9200
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: storage-proxy
+    app.kubernetes.io/part-of: sproutos
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storage-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: storage-proxy
+    spec:
+      serviceAccountName: storage-proxy
+      containers:
+        - name: proxy
+          image: ${IMAGE_REGISTRY}/storage-proxy:${TAG}
+          ports:
+            - name: http
+              containerPort: 9000
+          env:
+            - name: STORAGE_PROXY_LISTEN
+              value: 0.0.0.0:9000
+            - name: STORAGE_PROXY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: control-plane-database
+                  key: url
+            # Where the buckets actually are. A customer never receives this address.
+            - name: STORAGE_PROXY_UPSTREAM
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-object-storage
+                  key: endpoint
+            - name: STORAGE_PROXY_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-object-storage
+                  key: region
+            # Every tenant's S3 secret is derived from this. It is the same value the control plane
+            # holds — the control plane issues the credential, this verifies it — and the only
+            # secret in the platform that two different deployments must agree on exactly.
+            - name: SERVICE_OBJECT_STORAGE_ROOT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: object-storage-root-key
+                  key: key
+            # The platform's own credential for the store, which the proxy re-signs with. On EKS
+            # these come from IRSA and the three variables are absent; they are named here for the
+            # clusters where they do not.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-object-storage
+                  key: accessKeyId
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-object-storage
+                  key: secretAccessKey
+                  optional: true
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              # As large as search-proxy and for the same reason: verifying a signature means having
+              # the payload, so a request body is buffered whole. `livesync` chunks large files
+              # itself, but nothing stops a customer using `rclone` on a video.
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            # A real HTTP request, unlike the other three proxies' TCP checks: a probe cannot sign
+            # one, and `/healthz` is the one path served without a credential. It exercises the
+            # router rather than only the socket, which goes ready as soon as the port binds.
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-proxy
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/name: storage-proxy
+    app.kubernetes.io/part-of: sproutos
+spec:
+  selector:
+    app.kubernetes.io/name: storage-proxy
+  ports:
+    - name: http
+      port: 9000
       targetPort: http
