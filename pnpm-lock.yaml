@@ -351,6 +351,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 'catalog:'
         version: 0.3.237(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+      '@aws-sdk/client-ecr':
+        specifier: 'catalog:'
+        version: 3.1115.0
       '@aws-sdk/client-kms':
         specifier: 'catalog:'
         version: 3.1114.0

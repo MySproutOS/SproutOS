@@ -204,3 +204,103 @@ if (failures.length > 0) {
 }
 
 console.log(`ok: ${packages.size} workspace packages, every imported one declared.`)
+
+/*
+  ── The second check: what a deployed image will actually contain ──────────────────────────────
+
+  `pnpm deploy --prod --legacy /out` flattens exactly one package's dependency graph into a single
+  `node_modules`. The workspace libraries it pulls in are *copied*, with their `package.json` intact
+  and **no `node_modules` of their own** — so a third-party package that only a library declares is
+  resolvable in the repository, resolvable in every test, present in the image's virtual store, and
+  not reachable from the bundle at runtime.
+
+  That is not a hypothesis. `@lib/deploy` gained `@aws-sdk/client-ecr` to mint the registry push
+  credential; the repository built, type-checked and tested; the image started and died on
+  `ERR_MODULE_NOT_FOUND: Cannot find package '@aws-sdk/client-ecr'`. Its sibling `@lib/envelope` has
+  needed `@aws-sdk/client-kms` since the beginning and has never had the problem — because
+  `@api/internal` happens to declare that one directly too.
+
+  So an app that is `pnpm deploy`d must declare every third-party package anything in its workspace
+  closure imports. Redundant on paper, load-bearing in the image.
+*/
+
+/**
+ * The packages a Dockerfile hands to `pnpm deploy`. Read, not listed, so a new image is covered.
+ *
+ * @returns {Set<string>}
+ */
+function deployedPackages() {
+  /** @type {Set<string>} */
+  const found = new Set()
+  let entries
+  try {
+    entries = readdirSync(join(ROOT, "docker"), { withFileTypes: true })
+  } catch {
+    return found
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    const source = readFileSync(join(ROOT, "docker", entry.name), "utf8")
+    for (const match of source.matchAll(/pnpm deploy\s+--filter=(\S+)/g)) {
+      if (match[1] !== undefined) found.add(match[1])
+    }
+  }
+  return found
+}
+
+/**
+ * Every workspace package reachable from `name` through declared dependencies, `name` included.
+ *
+ * @param {string} name
+ * @param {Set<string>} seen
+ * @returns {Set<string>}
+ */
+function workspaceClosure(name, seen = new Set()) {
+  if (seen.has(name)) return seen
+  seen.add(name)
+  const entry = packages.get(name)
+  if (entry === undefined) return seen
+  for (const dependency of Object.keys(entry.manifest.dependencies ?? {})) {
+    if (names.has(dependency)) workspaceClosure(dependency, seen)
+  }
+  return seen
+}
+
+/** @type {string[]} */
+const runtimeFailures = []
+
+for (const app of deployedPackages()) {
+  const entry = packages.get(app)
+  if (entry === undefined) {
+    runtimeFailures.push(`a Dockerfile deploys ${app}, which is not a workspace package`)
+    continue
+  }
+
+  const declared = new Set(Object.keys(entry.manifest.dependencies ?? {}))
+
+  for (const member of workspaceClosure(app)) {
+    if (member === app) continue
+    const library = packages.get(member)
+    if (library === undefined) continue
+
+    for (const dependency of Object.keys(library.manifest.dependencies ?? {})) {
+      // Workspace links are copied by `pnpm deploy`; only third-party packages go missing.
+      if (names.has(dependency)) continue
+      if (declared.has(dependency)) continue
+      runtimeFailures.push(
+        `${app} is deployed as an image and does not declare ${dependency}, which ${member} needs — ` +
+          `it will be absent from that image's node_modules at runtime`,
+      )
+    }
+  }
+}
+
+if (runtimeFailures.length > 0) {
+  for (const failure of runtimeFailures) console.error(`error: ${failure}`)
+  console.error(
+    `\n${runtimeFailures.length} ${runtimeFailures.length === 1 ? "dependency" : "dependencies"} that a deployed image would not contain.`,
+  )
+  process.exit(1)
+}
+
+console.log(`ok: every deployed image declares what its workspace closure imports.`)
