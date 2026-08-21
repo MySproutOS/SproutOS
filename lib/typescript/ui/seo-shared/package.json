@@ -6,6 +6,9 @@
   "exports": {
     "./*": "./src/*"
   },
+  "scripts": {
+    "check-types": "tsc -b"
+  },
   "dependencies": {
     "@lib/api-client": "workspace:*",
     "@sproutos/db": "workspace:*",

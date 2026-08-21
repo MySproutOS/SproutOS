@@ -42,6 +42,7 @@ this platform's constraints, and none announces itself.
 | [0003](0003-manifests-never-applied.md)            | Manifests that had never met an API server | `kubectl apply`              |
 | [0004](0004-defaults-that-do-not-fit.md)           | Upstream defaults that do not survive here | Running Knative and GKE      |
 | [0005](0005-the-product-was-never-in-the-image.md) | The product was never in the image         | Pointing a real domain at it |
+| [0006](0006-features-with-no-executor.md)          | Features with no executor                  | Clicking the buttons         |
 
 ## Running it on more than one cloud
 

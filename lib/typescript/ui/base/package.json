@@ -6,6 +6,9 @@
   "exports": {
     "./*": "./src/*"
   },
+  "scripts": {
+    "check-types": "tsc -b"
+  },
   "dependencies": {
     "@base-ui/react": "catalog:",
     "@fontsource-variable/bricolage-grotesque": "catalog:",

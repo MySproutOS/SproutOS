@@ -11,6 +11,9 @@
       "require": "./src/index.ts"
     }
   ],
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
   "devDependencies": {
     "@types/node": "catalog:"
   }

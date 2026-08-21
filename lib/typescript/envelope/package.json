@@ -11,6 +11,9 @@
       "require": "./src/index.ts"
     }
   ],
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@aws-sdk/client-kms": "catalog:"
   },

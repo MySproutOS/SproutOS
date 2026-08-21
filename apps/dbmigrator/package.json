@@ -9,11 +9,12 @@
   "bin": "src/index.ts",
   "type": "module",
   "scripts": {
-    "migrate:up": "kysely migrate:up --cwd src",
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "migrate:deploy": "tsx src/cli.ts",
     "migrate:down": "kysely migrate:down --cwd src",
     "migrate:latest": "kysely migrate:latest --cwd src",
-    "seed:run": "kysely seed:run --cwd src",
-    "migrate:deploy": "tsx src/cli.ts"
+    "migrate:up": "kysely migrate:up --cwd src",
+    "seed:run": "kysely seed:run --cwd src"
   },
   "dependencies": {
     "@sproutos/db": "workspace:*",

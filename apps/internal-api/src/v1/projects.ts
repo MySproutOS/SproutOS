@@ -17,6 +17,7 @@ import {
   fetchProjectUpdateSuggestion,
   fetchRepository,
   fetchStoreListing,
+  fetchUser,
   initialSteps,
   isPendingGithubRepoId,
   isValidProjectSlug,
@@ -451,6 +452,25 @@ const app = new Hono()
       ])
       const defaultInstallation = installation[0]
 
+      /*
+        Where a repository goes when nothing says otherwise.
+
+        The caller's own GitHub account, read from `user.github_login`. It used to be the App
+        installation or nothing, and "nothing" meant a 400 telling a signed-in user to install a
+        GitHub App before they could fork anything — while the platform already knew exactly which
+        GitHub account they were, because that is how they signed in.
+
+        Last, not first. An organization that *has* installed the App has said where its
+        repositories belong, and a member forking into their personal account instead would be
+        putting a team's project somewhere the team cannot administer.
+
+        Null for an account that has never signed in through GitHub — an invited member who has only
+        ever used the API. That still produces the 400 below, which is the right answer for them.
+      */
+      const signedInAs = await fetchUser(db).getOne(user.id, ["githubLogin"])
+      const forkDestination =
+        defaultInstallation?.accountLogin ?? signedInAs?.githubLogin ?? undefined
+
       let plan: RepositoryPlan
       let jobKind: ProjectJobKind
       let storeListingId: string | null = null
@@ -488,11 +508,11 @@ const app = new Hono()
           )
         }
 
-        const ownerLogin = source.ownerLogin ?? defaultInstallation?.accountLogin
+        const ownerLogin = source.ownerLogin ?? forkDestination
         if (ownerLogin === undefined) {
           return throwBadRequest(
             c,
-            "No GitHub account is connected to this organization. Install the SproutOS GitHub App, or name the account to fork into with source.ownerLogin.",
+            "No GitHub account to fork into. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
             ErrorCode.ValidationFailed,
             { target: "source.ownerLogin" },
           )
@@ -514,11 +534,11 @@ const app = new Hono()
           upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
         }
       } else {
-        const ownerLogin = source.ownerLogin ?? defaultInstallation?.accountLogin
+        const ownerLogin = source.ownerLogin ?? forkDestination
         if (ownerLogin === undefined) {
           return throwBadRequest(
             c,
-            "No GitHub account is connected to this organization. Install the SproutOS GitHub App, or name the account to create the repository in with source.ownerLogin.",
+            "No GitHub account to create the repository in. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
             ErrorCode.ValidationFailed,
             { target: "source.ownerLogin" },
           )

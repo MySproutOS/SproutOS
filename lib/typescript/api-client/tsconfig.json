@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
-    "lib": ["esnext"],
+    // `dom` for `BodyInit`, `Headers`, `RequestInit` — the generated client is a fetch client and
+    // this package is bundled into two browser apps. Without it `client.gen.ts` does not compile.
+    //
+    // It never surfaced because this package had no `check-types` script, so `turbo run check-types`
+    // silently skipped it along with 28 others and reported success.
+    "lib": ["esnext", "dom"],
     "types": ["node"],
     "allowJs": true,
     "skipLibCheck": true,

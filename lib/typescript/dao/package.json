@@ -18,7 +18,9 @@
       "require": "./src/*.ts"
     }
   },
-  "scripts": {},
+  "scripts": {
+    "check-types": "tsc -b"
+  },
   "dependencies": {
     "@lib/srn": "workspace:*",
     "@sproutos/db": "workspace:*",

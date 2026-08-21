@@ -102,6 +102,7 @@ import {
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
+import { fetchUser } from "./user/fetch"
 import { exportUser, type UserExport } from "./user/export"
 import { IMPERSONATION_MINUTES, impersonation, type StartImpersonation } from "./user/impersonation"
 import { crudUserPreference } from "./userPreference/crud"
@@ -142,6 +143,7 @@ export {
   crudUpstreamSyncRun,
   recordUpkeepRun,
   crudUser,
+  fetchUser,
   crudUserPreference,
   exportUser,
   IMPERSONATION_MINUTES,

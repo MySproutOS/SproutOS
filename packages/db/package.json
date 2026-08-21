@@ -15,6 +15,7 @@
     }
   ],
   "scripts": {
+    "check-types": "tsc -b",
     "db-codegen": "kysely-codegen --config-file ./.config/.kysely-codegenrc.cjs && pnpm --dir ../.. run format"
   },
   "dependencies": {

@@ -10,6 +10,9 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:",
