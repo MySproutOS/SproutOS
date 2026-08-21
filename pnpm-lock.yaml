@@ -704,6 +704,16 @@ importers:
         version: 26.2.0
 
   lib/typescript/github:
+    dependencies:
+      '@lib/envelope':
+        specifier: workspace:*
+        version: link:../envelope
+      '@sproutos/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.5
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

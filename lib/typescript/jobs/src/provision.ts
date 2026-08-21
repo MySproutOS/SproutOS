@@ -1,4 +1,3 @@
-import { open } from "@lib/envelope"
 import {
   createGitHubClient,
   createOrganizationRepository,
@@ -8,6 +7,7 @@ import {
   getRepository,
   type GitHubCredential,
   type GitHubRepository,
+  userGitHubCredential,
 } from "@lib/github"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
@@ -51,48 +51,6 @@ export class NoUsableCredentialError extends Error {
         "/login/github?scopes=repository to grant it.",
     )
   }
-}
-
-/**
- * The scope a repository operation needs from a *user* token.
- *
- * GitHub has no finer-grained OAuth App scope, which is why the identity login deliberately does
- * not ask for it and why this is checked rather than assumed: a token without it fails with a 404
- * on a private repository, not a 403, and a 404 sends the reader looking for a typo.
- */
-const REPOSITORY_SCOPE = "repo"
-
-/**
- * The user's GitHub token, decrypted, if it can do repository work.
- *
- * Returns `undefined` rather than throwing when the scope is missing, so the caller can fall back
- * to an installation token before giving up.
- */
-async function userCredential(
-  db: Kysely<DB>,
-  userId: string,
-): Promise<GitHubCredential | undefined> {
-  const account = await db
-    .selectFrom("account")
-    .select(["accessTokenCiphertext", "accessTokenWrappedDek", "accessTokenKmsKeyId", "scopes"])
-    .where("userId", "=", userId)
-    .where("provider", "=", "github")
-    .executeTakeFirst()
-
-  if (account?.accessTokenCiphertext == null) return undefined
-  if (account.accessTokenWrappedDek == null || account.accessTokenKmsKeyId == null) return undefined
-  if (!account.scopes.includes(REPOSITORY_SCOPE)) return undefined
-
-  const token = await open(
-    {
-      ciphertext: account.accessTokenCiphertext,
-      wrappedDek: account.accessTokenWrappedDek,
-      kmsKeyId: account.accessTokenKmsKeyId,
-    },
-    { userId, provider: "github", field: "access_token" },
-  )
-
-  return { kind: "user", token }
 }
 
 /** Mark one step, and recompute `progress` from the step list rather than tracking it separately. */
@@ -154,7 +112,7 @@ export async function runProvision(db: Kysely<DB>, payload: ProvisionPayload): P
     const createStep = job.kind === "fork" ? "fork_repository" : "create_repository"
     await mark(createStep, "running")
 
-    const credential = await userCredential(db, payload.userId)
+    const credential = await userGitHubCredential(db, payload.userId)
     if (credential === undefined) throw new NoUsableCredentialError()
 
     const client = createGitHubClient()

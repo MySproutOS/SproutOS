@@ -60,3 +60,4 @@ export {
   syncWithUpstream,
   type UpstreamPosition,
 } from "./upstream"
+export { REPOSITORY_SCOPE, userGitHubCredential } from "./user-credential"

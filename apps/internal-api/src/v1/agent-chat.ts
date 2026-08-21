@@ -15,7 +15,13 @@ import {
   fetchProject,
   fetchRepository,
 } from "@lib/dao"
-import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
+import {
+  createGitHubClient,
+  createInstallationTokenStore,
+  envAppJwtSigner,
+  type GitHubCredential,
+  userGitHubCredential,
+} from "@lib/github"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -183,7 +189,9 @@ const app = new Hono()
       */
       const onPlatformCredit = credential.billing === "platform"
 
-      const repository = onPlatformCredit ? null : await repositoryFor(organization.id, projectId)
+      const repository = onPlatformCredit
+        ? null
+        : await repositoryFor(organization.id, projectId, c.var.user.id)
       if (typeof repository === "string") return throwBadRequest(c, repository)
 
       await crudAuditLog(db).record({
@@ -262,7 +270,7 @@ const app = new Hono()
             owner: repository.ownerLogin,
             repo: repository.name,
             ref: repository.defaultBranch,
-            token: await installationTokenFor(repository.installationId),
+            token: repository.credential.token,
           })
 
           const outcome = await runAgentTurn(
@@ -387,11 +395,24 @@ async function priorMessages(sessionId: string): Promise<PlatformMessage[]> {
   return messages.slice(-20)
 }
 
+/**
+ * The repository the agent will check out, and a credential that can clone it.
+ *
+ * The App installation first — ADR 0005 — because an installation token is scoped to what the
+ * customer granted, carries its own rate-limit budget, and does not depend on anyone being signed
+ * in. Then the caller's own OAuth token, which is a real credential for a repository that is
+ * theirs, issued to them, for work they are asking for right now.
+ *
+ * Without that fallback this returned "Install the SproutOS GitHub App on this organization" to a
+ * user who had just signed in with `repo` scope and forked the very repository in question with
+ * that same token. The App is better; its absence is not a reason to refuse.
+ */
 async function repositoryFor(
   organizationId: string,
   projectId: string,
+  userId: string,
 ): Promise<
-  { ownerLogin: string; name: string; defaultBranch: string; installationId: number } | string
+  { ownerLogin: string; name: string; defaultBranch: string; credential: GitHubCredential } | string
 > {
   const project = await fetchProject(db).getInOrganization(organizationId, projectId, [
     "repositoryId",
@@ -412,11 +433,27 @@ async function repositoryFor(
     .where("suspendedAt", "is", null)
     .executeTakeFirst()
 
-  if (installation === undefined) {
-    return "Install the SproutOS GitHub App on this organization so the agent can read the repository"
+  if (installation !== undefined) {
+    const installationId = Number(installation.installationId)
+    return {
+      ...repository,
+      credential: {
+        kind: "installation",
+        installationId,
+        // The store hands back the expiry too. Carried rather than dropped: an installation token
+        // lasts an hour, and a caller that holds one across a long agent turn needs to know.
+        ...(await installationTokenFor(installationId)),
+      },
+    }
   }
 
-  return { ...repository, installationId: Number(installation.installationId) }
+  const user = await userGitHubCredential(db, userId)
+  if (user !== undefined) return { ...repository, credential: user }
+
+  return (
+    "The agent cannot read this repository. Install the SproutOS GitHub App on this organization, " +
+    "or sign in again through /login/github?scopes=repository to grant repository access."
+  )
 }
 
 /**
@@ -426,13 +463,15 @@ async function repositoryFor(
  */
 let tokenStore: ReturnType<typeof createInstallationTokenStore> | null = null
 
-async function installationTokenFor(installationId: number): Promise<string> {
+async function installationTokenFor(
+  installationId: number,
+): Promise<{ token: string; expiresAt: Date }> {
   tokenStore ??= createInstallationTokenStore({
     client: createGitHubClient(),
     signJwt: envAppJwtSigner(),
   })
   const token = await tokenStore.get(installationId)
-  return token.token
+  return { token: token.token, expiresAt: token.expiresAt }
 }
 
 export default app
