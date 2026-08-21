@@ -181,6 +181,7 @@ const PROJECT_FIELDS = [
   "stateReason",
   "rootDir",
   "dockerfilePath",
+  "scaleMode",
   "productionBranch",
   "autoUpdateEnabled",
   "autoUpdateMode",
@@ -261,6 +262,7 @@ function serializeProject(
     stateReason: project.stateReason,
     rootDir: project.rootDir,
     dockerfilePath: project.dockerfilePath,
+    scaleMode: project.scaleMode,
     productionBranch: project.productionBranch,
     autoUpdateEnabled: project.autoUpdateEnabled,
     autoUpdateMode: project.autoUpdateMode,
@@ -642,6 +644,7 @@ const app = new Hono()
         organizationId: organization.id,
         productionBranch,
         dockerfilePath,
+        ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
         repository: plan,
         rootDir,
         slug,
@@ -870,6 +873,7 @@ const app = new Hono()
             ? {}
             : { autoUpdateEnabled: json.autoUpdateEnabled }),
           ...(json.autoUpdateMode === undefined ? {} : { autoUpdateMode: json.autoUpdateMode }),
+          ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
         })
 
         if (row === undefined) return undefined

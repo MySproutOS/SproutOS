@@ -40,6 +40,8 @@ export type ProvisionProjectInput = {
   rootDir: string
   /** Relative to `rootDir`. Defaulted by the caller from the store listing, or to `Dockerfile`. */
   dockerfilePath: string
+  /** `cold` scales to zero, `warm` keeps one. Omitted takes the column default, which is `cold`. */
+  scaleMode?: string
   productionBranch: string
   agentCredentialId: string | null
   autoUpdateEnabled: boolean
@@ -134,6 +136,7 @@ export function provisionProject(db: Kysely<DB>) {
         kind: input.kind,
         rootDir: input.rootDir,
         dockerfilePath: input.dockerfilePath,
+        ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
         productionBranch: input.productionBranch,
         state: "creating",
         autoUpdateEnabled: input.autoUpdateEnabled,

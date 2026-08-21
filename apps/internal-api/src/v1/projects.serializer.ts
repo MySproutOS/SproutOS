@@ -36,6 +36,7 @@ export const projectSchemaListQuery = Type.Object({
 
 const ProjectKind = Type.Union([Type.Literal("site"), Type.Literal("workflow")])
 const AutoUpdateMode = Type.Union([Type.Literal("suggest"), Type.Literal("auto_merge")])
+const ScaleMode = Type.Union([Type.Literal("cold"), Type.Literal("warm")])
 const EnvTarget = Type.Union([
   Type.Literal("production"),
   Type.Literal("preview"),
@@ -85,6 +86,15 @@ export const projectSchemaCreateRequest = Type.Object({
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
+  /**
+   * `cold` scales to zero; `warm` keeps one instance running. ADR 0024.
+   *
+   * `cold` is the default because the platform's premise is that idle costs nothing. `warm` trades
+   * a reserved slot for never making a request wait on a container start — and stays cheap for the
+   * customer because SproutOS bills measured CPU and memory rather than reserved size, so an idle
+   * instance meters close to nothing.
+   */
+  scaleMode: Type.Optional(ScaleMode),
   autoUpdateMode: Type.Optional(AutoUpdateMode),
   idempotencyKey: Type.Optional(Type.String({ minLength: 8, maxLength: 128 })),
   source: ProjectSource,
@@ -101,6 +111,15 @@ export const projectSchemaUpdateRequest = Type.Object({
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
+  /**
+   * `cold` scales to zero; `warm` keeps one instance running. ADR 0024.
+   *
+   * `cold` is the default because the platform's premise is that idle costs nothing. `warm` trades
+   * a reserved slot for never making a request wait on a container start — and stays cheap for the
+   * customer because SproutOS bills measured CPU and memory rather than reserved size, so an idle
+   * instance meters close to nothing.
+   */
+  scaleMode: Type.Optional(ScaleMode),
   autoUpdateMode: Type.Optional(AutoUpdateMode),
 })
 
@@ -116,6 +135,7 @@ const projectEntry = Type.Object({
   productionBranch: Type.String(),
   autoUpdateEnabled: Type.Boolean(),
   autoUpdateMode: Type.String(),
+  scaleMode: Type.String(),
   repositoryId: UUID7String,
   storeListingId: Nullable(UUID7String),
   agentCredentialId: Nullable(UUID7String),

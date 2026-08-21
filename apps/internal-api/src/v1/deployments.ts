@@ -217,7 +217,7 @@ const app = new Hono()
 
       const project = await db
         .selectFrom("project")
-        .select(["id", "productionBranch"])
+        .select(["id", "productionBranch", "scaleMode"])
         .where("id", "=", projectId)
         .where("organizationId", "=", c.var.organization.id)
         .where("deletedAt", "is", null)
@@ -242,6 +242,14 @@ const app = new Hono()
         gitRef: body.gitRef ?? null,
         prNumber: kind === "preview" ? (body.prNumber ?? null) : null,
         status: "queued",
+        /*
+          Copied from the project, not read from it later.
+
+          A deployment is a historical fact. Reading the mode off the project at deploy time would
+          let a settings change re-describe how a revision that already ran was configured — the
+          same reasoning `runtime_class` carries.
+        */
+        scaleMode: project.scaleMode,
       })
 
       await enqueue(db, {

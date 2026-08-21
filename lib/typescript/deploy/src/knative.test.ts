@@ -11,6 +11,7 @@ const production: DeploymentSpec = {
   kind: "production",
   imageUri: "123.dkr.ecr.us-east-1.amazonaws.com/tenant/myapp:abc123",
   runtimeClass: "kata-fc",
+  scaleMode: "cold",
   containerConcurrency: 20,
   memoryMb: 1024,
   maxDurationS: 300,
@@ -160,5 +161,40 @@ describe("the runtime class", () => {
         effect: "NoSchedule",
       })
     }
+  })
+})
+
+describe("scale modes", () => {
+  /*
+    Two options, and the difference is what they cost when nothing is happening. ADR 0024.
+
+    Vercel's Fluid keeps one instance too, but *paused* — their pricing documentation is where the
+    mechanism shows: "After all requests complete, the instance is paused, and no CPU or memory
+    charges apply until the next invocation." That is a Firecracker snapshot and it needs bare
+    metal. On managed Kubernetes a retained pod is a running pod.
+  */
+  function annotationsFor(scaleMode: "cold" | "warm") {
+    const service = knativeService(project, { ...production, scaleMode }, "tenant-x")
+    return (service.spec as { template: { metadata: { annotations: Record<string, string> } } })
+      .template.metadata.annotations
+  }
+
+  it("scales to zero when cold, so idle reserves nothing", () => {
+    expect(annotationsFor("cold")["autoscaling.knative.dev/min-scale"]).toBe("0")
+  })
+
+  it("keeps one when warm, so no request waits for a container to start", () => {
+    expect(annotationsFor("warm")["autoscaling.knative.dev/min-scale"]).toBe("1")
+  })
+
+  it("holds a cold instance for a few minutes after the last request", () => {
+    // Knative's default tears it down as soon as the stable window closes, so a second visitor
+    // thirty seconds behind the first pays a full cold start — and bursty traffic is the normal
+    // shape for a small site.
+    expect(annotationsFor("cold")["autoscaling.knative.dev/scale-down-delay"]).toBe("5m")
+  })
+
+  it("does not delay scale-down on a warm revision, where there is nothing to delay", () => {
+    expect(annotationsFor("warm")).not.toHaveProperty("autoscaling.knative.dev/scale-down-delay")
   })
 })

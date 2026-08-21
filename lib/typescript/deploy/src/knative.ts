@@ -33,6 +33,14 @@ export type DeploymentSpec = {
    * NetworkPolicy, and — where the node pool provides it — gVisor.
    */
   runtimeClass: string | null
+  /**
+   * `cold` scales to zero; `warm` keeps one instance. ADR 0024.
+   *
+   * Recorded on the deployment rather than read from the project, for the reason
+   * `runtime_class` is: a deployment is a historical fact, and a later settings change must not
+   * re-describe how a revision that already ran was configured.
+   */
+  scaleMode: "cold" | "warm"
   containerConcurrency: number
   memoryMb: number
   maxDurationS: number
@@ -59,7 +67,7 @@ export type KnativeService = {
         this renderer had no pod labels at all. Every tenant revision the platform ever served was
         unattributable, which is to say free.
       */
-      metadata: { labels: Record<string, string> }
+      metadata: { labels: Record<string, string>; annotations: Record<string, string> }
       spec: {
         runtimeClassName?: string
         tolerations?: { key: string; operator: string; value: string; effect: string }[]
@@ -130,6 +138,38 @@ export function hostLabel(project: ProjectSpec, deployment: DeploymentSpec): str
 }
 
 /**
+ * How long a `cold` revision is kept after its last request.
+ *
+ * Not zero. Knative's default tears the instance down as soon as the stable window closes, so a
+ * second visitor thirty seconds behind the first pays a full cold start — and bursty traffic is the
+ * normal shape for a small site. Five minutes covers a person clicking around and costs nothing
+ * overnight, which is the case `cold` exists for.
+ */
+const COLD_SCALE_DOWN_DELAY = "5m"
+
+/**
+ * The autoscaling annotations for a scale mode. ADR 0024.
+ *
+ * `warm` is `min-scale: 1` and nothing more exotic. Vercel's Fluid keeps one instance too, but
+ * *paused* — their pricing documentation is where the mechanism shows: "After all requests
+ * complete, the instance is paused, and no CPU or memory charges apply until the next invocation."
+ * That is a Firecracker snapshot and it needs bare metal. On managed Kubernetes a retained pod is a
+ * running pod, and pretending otherwise would be the kind of claim `docs/findings/` is full of.
+ *
+ * What makes `warm` cheap here is the other end: `services/metering-agent` bills measured CPU and
+ * memory, not reserved size, so an idle instance's metered cost is close to nothing. Vercel stops
+ * the clock; SproutOS measures the work. Different mechanism, same bill.
+ */
+export function scaleAnnotations(mode: "cold" | "warm"): Record<string, string> {
+  return mode === "warm"
+    ? { "autoscaling.knative.dev/min-scale": "1" }
+    : {
+        "autoscaling.knative.dev/min-scale": "0",
+        "autoscaling.knative.dev/scale-down-delay": COLD_SCALE_DOWN_DELAY,
+      }
+}
+
+/**
  * The Knative Service for one deployment.
  *
  * `containerConcurrency` and the request timeout come from the row rather than a constant because
@@ -163,6 +203,7 @@ export function knativeService(
             // What makes the revision billable. See `attributionLabels`.
             ...attributionLabels(project.organizationId, project.id),
           },
+          annotations: scaleAnnotations(deployment.scaleMode),
         },
         spec: {
           /*

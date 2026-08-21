@@ -129,6 +129,7 @@ export function deployRevision(config?: KubeConfig): JobHandler {
         prNumber: deployment.prNumber,
         imageUri: deployment.imageUri,
         runtimeClass: deployment.runtimeClass,
+        scaleMode: deployment.scaleMode === "warm" ? "warm" : "cold",
         containerConcurrency: deployment.containerConcurrency,
         memoryMb: deployment.memoryMb,
         maxDurationS: deployment.maxDurationS,
