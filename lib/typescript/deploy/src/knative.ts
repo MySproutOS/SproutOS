@@ -150,11 +150,11 @@ const COLD_SCALE_DOWN_DELAY = "5m"
 /**
  * The autoscaling annotations for a scale mode. ADR 0024.
  *
- * `warm` is `min-scale: 1` and nothing more exotic. Vercel's Fluid keeps one instance too, but
- * *paused* — their pricing documentation is where the mechanism shows: "After all requests
- * complete, the instance is paused, and no CPU or memory charges apply until the next invocation."
- * That is a Firecracker snapshot and it needs bare metal. On managed Kubernetes a retained pod is a
- * running pod, and pretending otherwise would be the kind of claim `docs/findings/` is full of.
+ * `warm` is `min-scale: 1` and nothing more exotic. Vercel's Fluid keeps one instance too, and
+ * theirs is *paused* between requests — "no CPU or memory charges apply until the next
+ * invocation." What that pause actually is, they have never published; the earlier version of this
+ * comment guessed "a Firecracker snapshot" and their own isolation documentation contradicts it.
+ * Either way Knative has no retained-but-paused revision, so here a kept instance is a running one.
  *
  * What makes `warm` cheap here is the other end: `services/metering-agent` bills measured CPU and
  * memory, not reserved size, so an idle instance's metered cost is close to nothing. Vercel stops

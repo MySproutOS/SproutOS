@@ -168,10 +168,9 @@ describe("scale modes", () => {
   /*
     Two options, and the difference is what they cost when nothing is happening. ADR 0024.
 
-    Vercel's Fluid keeps one instance too, but *paused* — their pricing documentation is where the
-    mechanism shows: "After all requests complete, the instance is paused, and no CPU or memory
-    charges apply until the next invocation." That is a Firecracker snapshot and it needs bare
-    metal. On managed Kubernetes a retained pod is a running pod.
+    Vercel's Fluid keeps one instance too, and theirs is *paused* between requests — "no CPU or
+    memory charges apply until the next invocation." What that pause is has never been published.
+    Knative has no retained-but-paused revision, so a kept instance here is a running one.
   */
   function annotationsFor(scaleMode: "cold" | "warm") {
     const service = knativeService(project, { ...production, scaleMode }, "tenant-x")

@@ -30,18 +30,36 @@ extra — _"you only pay when your app receives usage, unlike dedicated servers 
 
 Those two statements are only compatible because of the third thing.
 
-**A retained instance is paused, not running.** Their pricing documentation is where the mechanism
-leaks: _"After all requests complete, the instance is paused, and no CPU or memory charges apply
-until the next invocation."_ Active CPU is billed at $0.128/hour and provisioned memory at
-$0.0106/GB-hour, and both stop between requests. So "scale to one" means _keep the instance in a
-resumable state_, not _keep a server running_. The retention is what removes the cold start; the
-pause is what makes it free.
+**A retained instance is paused between requests.** Their pricing documentation is explicit:
+_"After all requests complete, the instance is paused, and no CPU or memory charges apply until the
+next invocation."_ Active CPU is billed at $0.128/hour and provisioned memory at $0.0106/GB-hour,
+and both stop between requests. So "scale to one" means _keep the instance in a resumable state_,
+not _keep a server running_: the retention removes the cold start and the pause is what makes it
+free.
 
-That is a Firecracker-shaped capability — freeze a microVM's memory and restore it in milliseconds —
-and it needs bare metal and a snapshotting runtime. **SproutOS runs on managed Kubernetes with
-Knative, where a retained pod is a running pod.** We cannot pause one and stop paying for it.
+### A correction, and the limit of what is known
 
-Claiming otherwise would be the kind of thing `docs/findings/` is full of.
+An earlier draft of this ADR said that pause "is a Firecracker snapshot and it needs bare metal."
+**That was an inference from one sentence and the documentation contradicts it.** Vercel's own page
+on isolation says the opposite of what a per-invocation microVM would imply:
+
+> Because each function uses a microVM for isolation, which can lead to slower start-up times, you
+> can see an increase in resource usage due to idle periods when the microVM remains inactive.
+> Fluid compute uses a different approach to isolation. Instead of using a microVM for each function
+> invocation, multiple invocations can share the same physical instance (a global state/process)
+> concurrently.
+
+Fluid moves _away_ from a microVM per invocation, toward many invocations sharing one process. What
+is paused is a process, not a snapshotted VM.
+
+**What the pause actually is — freeze, suspend, or simply not billed — is not documented anywhere
+public.** It is stated as a billing property every time it appears, and the mechanism is never
+named. This ADR asserts only what the sources say, and the design below does not depend on knowing.
+
+**There is also no cold/warm switch on Vercel.** The settings a user controls are `fluid`,
+`maxDuration`, `region` and `memory`; scale-to-one is automatic on Pro and Enterprise. The two modes
+below are SproutOS's design, not a reproduction of theirs, and are offered because on Knative the
+two genuinely cost different amounts and only the customer knows which trade they want.
 
 ## Decision
 
@@ -55,7 +73,8 @@ cold start for bursty traffic without holding capacity overnight.
 
 **`warm` — keep one.** `minScale: 1`. One instance always exists, so no request ever waits for a
 container to start. This is genuinely a running pod and the platform reserves its memory
-continuously.
+continuously — Knative has no notion of a retained-but-paused revision, and whatever Vercel does
+between requests, we cannot do it here.
 
 The default is `cold`, because the platform's premise is that idle costs nothing.
 
@@ -80,11 +99,11 @@ is the reason this is a choice rather than a default.
   a historical fact and must not be re-described by a later settings change.
 - The renderer sets `autoscaling.knative.dev/min-scale` from it. Nothing else in the spec changes,
   so switching modes is a new revision and not a different code path.
-- **We do not get Vercel's third property**, and the difference is worth stating rather than
-  implying: a `warm` instance here is running, and it is billed for the memory it holds. If SproutOS
-  ever runs on bare metal with Kata (ADR 0012), snapshot-and-resume becomes available and `warm`
-  can become what Vercel's is — retained and free. That would be a change to this ADR, not a change
-  to the customer's setting.
+- **A `warm` instance here is running and reserves memory.** Vercel's is not billed between
+  requests; ours is. Whether that gap is closable depends on a mechanism nobody has published, so
+  this ADR does not promise a path to it. If a future runtime here can suspend a revision and stop
+  charging for it, `warm` changes meaning and this ADR changes with it — the customer's setting
+  would not.
 
 ## Sources
 
@@ -92,3 +111,4 @@ is the reason this is a choice rather than a default.
 - [How Fluid compute works on Vercel](https://vercel.com/blog/how-fluid-compute-works-on-vercel)
 - [Introducing Active CPU pricing for Fluid compute](https://vercel.com/blog/introducing-active-cpu-pricing-for-fluid-compute)
 - [Fluid compute pricing](https://vercel.com/docs/functions/usage-and-pricing)
+- [Fluid compute — isolation boundaries and global state](https://vercel.com/docs/fluid-compute)

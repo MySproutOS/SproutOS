@@ -53,14 +53,6 @@ const KNOWN = [
     waiting: "a policy engine that enforces — real AWS IAM, or LocalStack Pro",
   },
   {
-    suite: "@lib/services couchdb",
-    count: 0,
-    // `docker compose up -d couchdb`. Skips without one, and the suite is the only place the
-    // no-proxy claim for CouchDB is actually tested — a second tenant's credential failing against
-    // the first tenant's database is the whole argument.
-    waiting: "nothing — the compose CouchDB on :25984",
-  },
-  {
     suite: "@lib/services postgres",
     // Also zero. Same cause, plus `SERVICE_POSTGRES_*`, which was missing from `.template.env`
     // entirely while the Valkey and search equivalents beside it were present.

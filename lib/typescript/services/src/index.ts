@@ -12,12 +12,6 @@ export {
   type CredentialIssuer,
   type ObjectStorageConfig,
 } from "./object-storage"
-export {
-  couchDbDriver,
-  couchDbServiceConfigFromEnv,
-  type CouchDbServiceConfig,
-  CouchDbError,
-} from "./couchdb"
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
   rolePasswordContext,

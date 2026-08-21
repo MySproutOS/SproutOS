@@ -48,16 +48,17 @@ describe.runIf(reachable)("the backend service kinds", () => {
     const allowed = new Set(await allowedKinds())
     const declared = new Set<string>(SERVICE_KINDS)
 
-    expect(
-      Object.fromEntries(
-        ["couchdb", "object_storage"].map((kind) => [
-          kind,
-          { constraint: allowed.has(kind), api: declared.has(kind) },
-        ]),
-      ),
-    ).toEqual({
-      couchdb: { constraint: true, api: true },
+    expect({
+      object_storage: {
+        constraint: allowed.has("object_storage"),
+        api: declared.has("object_storage"),
+      },
+      // Withdrawn: it was exposed directly to tenants, which is not how any other datastore here
+      // works. See the `drop_couchdb_kind` migration.
+      couchdb: { constraint: allowed.has("couchdb"), api: declared.has("couchdb") },
+    }).toEqual({
       object_storage: { constraint: true, api: true },
+      couchdb: { constraint: false, api: false },
     })
   })
 })
