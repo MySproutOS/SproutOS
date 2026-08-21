@@ -18,7 +18,8 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@lib/deploy": "workspace:*"
+    "@lib/deploy": "workspace:*",
+    "@lib/metering": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

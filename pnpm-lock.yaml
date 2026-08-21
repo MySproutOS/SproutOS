@@ -715,6 +715,10 @@ importers:
         version: 14.0.2
 
   lib/typescript/deploy:
+    dependencies:
+      '@lib/metering':
+        specifier: workspace:*
+        version: link:../metering
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -910,6 +914,9 @@ importers:
       '@lib/deploy':
         specifier: workspace:*
         version: link:../deploy
+      '@lib/metering':
+        specifier: workspace:*
+        version: link:../metering
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

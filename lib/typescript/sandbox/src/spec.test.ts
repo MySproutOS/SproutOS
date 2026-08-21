@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { DEFAULT_TIMEOUT_S, sandboxJob } from "./spec"
 
+const ORGANIZATION = "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f"
+const PROJECT = "01912d40-0000-7000-8000-0000000000a1"
+
 const base = {
   namespace: "tenant-acme",
+  organizationId: ORGANIZATION,
+  projectId: PROJECT,
   name: "sandbox-abc",
   image: "alpine:3",
   command: ["echo", "hi"],
@@ -29,6 +34,33 @@ describe("the sandbox pod", () => {
     // Without the right namespace, none of it applies.
     const job = sandboxJob(base) as { metadata: { namespace: string } }
     expect(job.metadata.namespace).toBe("tenant-acme")
+  })
+
+  /*
+    Attribution, on the pod template rather than the Job.
+
+    The metering agent reads labels off pods. A Job's own labels are invisible to it, and this
+    template carried `sproutos.dev/sandbox` and nothing else — so every workflow node the platform
+    ever ran was billed to nobody. There is no error state for that: the sample is valid, the batch
+    is well-formed, and the invoice is empty.
+  */
+  it("labels the pod with who pays for it", () => {
+    const spec = sandboxJob(base).spec as {
+      template: { metadata: { labels: Record<string, string> } }
+    }
+    expect(spec.template.metadata.labels).toMatchObject({
+      "sproutos.dev/organization-id": ORGANIZATION,
+      "sproutos.dev/project-id": PROJECT,
+    })
+  })
+
+  it("omits the project label for a standalone service, which has no project", () => {
+    const { projectId: _projectId, ...standalone } = base
+    const spec = sandboxJob(standalone).spec as {
+      template: { metadata: { labels: Record<string, string> } }
+    }
+    expect(spec.template.metadata.labels).toHaveProperty("sproutos.dev/organization-id")
+    expect(spec.template.metadata.labels).not.toHaveProperty("sproutos.dev/project-id")
   })
 
   it("carries no service-account token", () => {

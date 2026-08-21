@@ -1,3 +1,4 @@
+import { attributionLabels } from "@lib/metering"
 /**
  * The pod a piece of untrusted work runs in.
  *
@@ -20,6 +21,16 @@
 export type SandboxSpec = {
   /** The tenant namespace. This is the security boundary; it is not a label. */
   namespace: string
+  /**
+   * Who pays for the compute this burns.
+   *
+   * Required, not optional. A sandbox with no attribution is a sandbox nobody is charged for, and
+   * every one of them was: the pod template carried `sproutos.dev/sandbox` and nothing the metering
+   * agent reads. Making it required means a new caller cannot forget — the compiler asks.
+   */
+  organizationId: string
+  /** The project, when the work belongs to one. A standalone service has none. */
+  projectId?: string
   /** Distinguishes one run from another. Becomes the Job name, so it must be a DNS label. */
   name: string
   image: string
@@ -79,7 +90,14 @@ export function sandboxJob(spec: SandboxSpec): SandboxJob {
       backoffLimit: 0,
       activeDeadlineSeconds: spec.timeoutSeconds ?? DEFAULT_TIMEOUT_S,
       template: {
-        metadata: { labels: { "sproutos.dev/sandbox": "true" } },
+        metadata: {
+          labels: {
+            "sproutos.dev/sandbox": "true",
+            // Pod labels, which is where the metering agent looks. The Job's own labels above are
+            // invisible to it.
+            ...attributionLabels(spec.organizationId, spec.projectId),
+          },
+        },
         spec: {
           restartPolicy: "Never",
           ...(spec.runtimeClassName === undefined

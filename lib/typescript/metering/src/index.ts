@@ -9,3 +9,4 @@ export {
   verify,
 } from "./canonical"
 export { type ParsedBatch, parseBatch } from "./parse"
+export { attributionLabels, ORGANIZATION_ID_LABEL, PROJECT_ID_LABEL } from "./attribution"

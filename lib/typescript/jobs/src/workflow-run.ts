@@ -100,14 +100,14 @@ export async function runWorkflow(
     `tenantNamespace`. `undefined` when the project has never been provisioned, which is the one
     case those nodes still cannot run in.
   */
-  const namespace = await tenantNamespaceFor(db, claimed.workflowId)
+  const tenant = await tenantNamespaceFor(db, claimed.workflowId)
 
   try {
     for (const step of steps) {
       const runtime = NODE_RUNTIME[step.nodeType as keyof typeof NODE_RUNTIME]
 
       if (runtime === "sandbox") {
-        if (namespace === undefined) {
+        if (tenant === undefined) {
           /*
             Nowhere safe to run it.
 
@@ -141,7 +141,9 @@ export async function runWorkflow(
           .execute()
 
         const result = await runNodeInSandbox({
-          namespace,
+          namespace: tenant.namespace,
+          organizationId: tenant.organizationId,
+          projectId: tenant.projectId,
           runId: claimed.id,
           nodeId: step.nodeId,
           nodeType: step.nodeType,
@@ -299,13 +301,30 @@ export const workflowRunJob: JobHandler = async (job, { db, signal }) => {
  * namespace that does not exist, and the Job would have been rejected rather than unprotected,
  * which is the lucky version of that mistake.
  */
-async function tenantNamespaceFor(db: Kysely<DB>, workflowId: string): Promise<string | undefined> {
+async function tenantNamespaceFor(
+  db: Kysely<DB>,
+  workflowId: string,
+): Promise<{ namespace: string; organizationId: string; projectId: string } | undefined> {
   const row = await db
     .selectFrom("workflow")
     .innerJoin("project", "project.id", "workflow.projectId")
-    .select(["project.organizationId as organizationId"])
+    .select(["project.organizationId as organizationId", "project.id as projectId"])
     .where("workflow.id", "=", workflowId)
     .executeTakeFirst()
 
-  return row === undefined ? undefined : tenantNamespace(row.organizationId)
+  /*
+    The ids come back with the namespace, rather than the namespace alone.
+
+    They are the same query and the same row, and the sandbox needs both: the namespace is the
+    isolation and the ids are the attribution. Returning only the namespace meant the caller had the
+    boundary and not the invoice — which is exactly what shipped, and why every workflow node ran
+    for free.
+  */
+  return row === undefined
+    ? undefined
+    : {
+        namespace: tenantNamespace(row.organizationId),
+        organizationId: row.organizationId,
+        projectId: row.projectId,
+      }
 }

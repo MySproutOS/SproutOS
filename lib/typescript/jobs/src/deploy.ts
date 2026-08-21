@@ -100,7 +100,7 @@ export function deployRevision(config?: KubeConfig): JobHandler {
 
     const namespace = tenantNamespace(project.organizationId)
     const service = knativeService(
-      { id: project.id, slug: project.slug },
+      { id: project.id, slug: project.slug, organizationId: project.organizationId },
       {
         kind: deployment.kind,
         prNumber: deployment.prNumber,

@@ -139,19 +139,85 @@ pub struct Attribution {
 /// call to the control plane, which is the design that takes an API server down at scale.
 pub fn attribution_from_labels(labels: &BTreeMap<String, String>) -> Option<Attribution> {
     let organization_id = labels
-        .get("sproutos.dev/organization-id")
+        .get(ORGANIZATION_ID_LABEL)
         .and_then(|value| uuid::Uuid::parse_str(value).ok())?;
 
     // A project is optional: a tenant's standalone backend service belongs to an organization and
     // to no project, and TASK 37 says that is a supported shape.
     let project_id = labels
-        .get("sproutos.dev/project-id")
+        .get(PROJECT_ID_LABEL)
         .and_then(|value| uuid::Uuid::parse_str(value).ok());
 
     Some(Attribution {
         organization_id,
         project_id,
     })
+}
+
+/// The label keys, as the shared contract names them.
+///
+/// Constants rather than string literals inline, so the one place they are written is the one place
+/// the vectors check. See `fixtures/attribution-labels.json` in `metering-proto`.
+pub const ORGANIZATION_ID_LABEL: &str = "sproutos.dev/organization-id";
+pub const PROJECT_ID_LABEL: &str = "sproutos.dev/project-id";
+
+#[cfg(test)]
+mod attribution_vectors {
+    //! The label names are a cross-language contract, and they had drifted.
+    //!
+    //! This agent read `sproutos.dev/organization-id`. The TypeScript control plane wrote
+    //! `sproutos.dev/project` onto a Knative revision and nothing at all onto a sandbox. So
+    //! `attribution_from_labels` returned `None` for every pod on every node, and the agent
+    //! sampled cgroups, computed deltas, signed batches and delivered them — attributed to nobody.
+    //!
+    //! Nothing failed. Pods Running, samples flowing, `usage_event` empty. There is no error state
+    //! for billing the wrong amount, which is why this is a vector file and not a comment.
+
+    use super::*;
+
+    const FIXTURE: &str =
+        include_str!("../../../lib/rust/metering-proto/fixtures/attribution-labels.json");
+
+    #[test]
+    fn every_vector_attributes_the_way_typescript_expects() {
+        let parsed: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture parses");
+
+        // The key names themselves, not only the outcomes: a rename on one side has to fail here.
+        assert_eq!(
+            parsed["organizationId"].as_str().unwrap(),
+            ORGANIZATION_ID_LABEL
+        );
+        assert_eq!(parsed["projectId"].as_str().unwrap(), PROJECT_ID_LABEL);
+
+        let cases = parsed["cases"].as_array().expect("cases is an array");
+        assert!(cases.len() > 3, "expected vectors, found {}", cases.len());
+
+        for case in cases {
+            let labels: BTreeMap<String, String> = case["labels"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(key, value)| (key.clone(), value.as_str().unwrap().to_string()))
+                .collect();
+
+            let attribution = attribution_from_labels(&labels);
+            let note = case["note"].as_str().unwrap_or("");
+
+            match case["organizationId"].as_str() {
+                None => assert!(attribution.is_none(), "expected no attribution: {note}"),
+                Some(expected) => {
+                    let attribution =
+                        attribution.unwrap_or_else(|| panic!("expected attribution: {note}"));
+                    assert_eq!(attribution.organization_id.to_string(), expected, "{note}");
+                    assert_eq!(
+                        attribution.project_id.map(|id| id.to_string()),
+                        case["projectId"].as_str().map(str::to_string),
+                        "{note}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

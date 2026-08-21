@@ -13,6 +13,9 @@
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@lib/metering": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "catalog:"
   }

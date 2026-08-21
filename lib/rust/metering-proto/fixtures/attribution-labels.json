@@ -1,0 +1,47 @@
+{
+  "$comment": "The pod labels a usage sample is attributed by. A cross-language contract with the same standing as the signing vectors next to it, and for a blunter reason: these strings are how work becomes money. `services/metering-agent` reads them off each pod; the TypeScript control plane writes them onto every workload it creates. The two were different. The agent read `sproutos.dev/organization-id` and the control plane wrote `sproutos.dev/project` — a different key, no organization at all — so `attribution_from_labels` returned `None` for every pod on every node and the agent sampled cgroups, delivered batches, and billed nobody. Nothing failed: pods Running, samples flowing, `usage_event` empty. Both sides now assert this file.",
+  "organizationId": "sproutos.dev/organization-id",
+  "projectId": "sproutos.dev/project-id",
+  "cases": [
+    {
+      "note": "a project-bound workload: a tenant's deployed site, the main billable thing",
+      "labels": {
+        "sproutos.dev/organization-id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+        "sproutos.dev/project-id": "01912d40-0000-7000-8000-0000000000a1"
+      },
+      "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "projectId": "01912d40-0000-7000-8000-0000000000a1"
+    },
+    {
+      "note": "a standalone backend service: TASK 37 says an organization may own one with no project",
+      "labels": {
+        "sproutos.dev/organization-id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f"
+      },
+      "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "projectId": null
+    },
+    {
+      "note": "the key the control plane actually wrote for a year. Attributable to nobody, and the reason this file exists",
+      "labels": {
+        "sproutos.dev/project": "01912d40-0000-7000-8000-0000000000a1"
+      },
+      "organizationId": null,
+      "projectId": null
+    },
+    {
+      "note": "an organization id that is not a UUID is not an organization",
+      "labels": {
+        "sproutos.dev/organization-id": "not-a-uuid",
+        "sproutos.dev/project-id": "01912d40-0000-7000-8000-0000000000a1"
+      },
+      "organizationId": null,
+      "projectId": null
+    },
+    {
+      "note": "a platform pod, which is ours and must never be billed to a tenant",
+      "labels": { "app.kubernetes.io/part-of": "sproutos" },
+      "organizationId": null,
+      "projectId": null
+    }
+  ]
+}

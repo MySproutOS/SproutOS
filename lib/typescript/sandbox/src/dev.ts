@@ -1,3 +1,4 @@
+import { attributionLabels } from "@lib/metering"
 import { execInPod, type ExecResult } from "./exec"
 
 /**
@@ -20,6 +21,10 @@ import { execInPod, type ExecResult } from "./exec"
 
 export type DevSandboxSpec = {
   namespace: string
+  /** Who pays for the pod. Required, for the reason `SandboxSpec.organizationId` gives. */
+  organizationId: string
+  /** The project the workspace belongs to. A dev sandbox always has one. */
+  projectId: string
   /** The pod's name. `sandbox.pod_name`. */
   name: string
   image: string
@@ -46,6 +51,9 @@ export function devSandboxPod(spec: DevSandboxSpec): Record<string, unknown> {
       labels: {
         "app.kubernetes.io/part-of": "sproutos",
         "sproutos.dev/sandbox": "dev",
+        // A dev sandbox holds a pod for fifteen minutes past the last keystroke. That is real
+        // compute on a real node and it was billed to nobody.
+        ...attributionLabels(spec.organizationId, spec.projectId),
       },
       annotations: {
         // Read by the reaper. An annotation rather than a field, because Kubernetes has no notion

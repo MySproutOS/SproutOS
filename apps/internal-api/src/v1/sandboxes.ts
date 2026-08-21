@@ -123,11 +123,32 @@ async function activeSandbox(
   if (row === undefined || row.podName === null || row.namespace === null) return undefined
   if (row.state !== "running") return undefined
 
+  const config = inClusterConfig()
+
+  /*
+    The row says running. Check that the pod agrees.
+
+    Without this, a pod that has gone away — evicted, node drained, deleted — leaves every file and
+    exec route throwing whatever the exec attempt happens to fail with, which reached the client as
+    a 500. A 500 says the platform is broken; the truth is that this customer's sandbox stopped,
+    which is a 409 and a "start it again" button.
+
+    The row is corrected on the way past, so the next `POST` builds a pod instead of short-circuiting
+    on a state that is no longer true. One `GET` per operation, against an API server call the
+    operation was about to make anyway.
+  */
+  const pod = await createKubeClient(config).get<{ metadata?: { deletionTimestamp?: string } }>(
+    podPath(row.namespace, row.podName),
+  )
+  if (pod === undefined || pod.metadata?.deletionTimestamp !== undefined) {
+    await crudSandbox(db).update(row.id, { state: "stopped" })
+    return undefined
+  }
+
   // Every read counts as activity. A person reading code for twenty minutes is using the sandbox,
   // and a reaper that only watched writes would stop it underneath them.
   await crudSandbox(db).touch(row.id)
 
-  const config = inClusterConfig()
   return {
     id: row.id,
     server: config.server,
@@ -190,14 +211,50 @@ const app = new Hono()
       if (!project) return throwNotFound(c, "Project not found")
 
       const existing = await fetchSandbox(db).forUser(organization.id, projectId, c.var.user.id)
-      // Idempotent. Two clicks on "open" are the common case and the second must not create a
-      // second pod holding a second copy of the workspace.
-      if (existing !== undefined && existing.state === "running") {
-        await crudSandbox(db).touch(existing.id)
-        return c.json(serialize(existing), 201)
-      }
-
       const namespace = tenantNamespace(organization.id)
+      const client = createKubeClient(inClusterConfig())
+
+      /*
+        Idempotent, but only when there is really a pod.
+
+        Two clicks on "open" are the common case and the second must not create a second pod holding
+        a second copy of the workspace — so a row saying `running` short-circuits. It short-circuited
+        on the row alone, and a row is not a pod.
+
+        A pod can go away without the row hearing about it: a node drains, the pod is evicted, an
+        operator deletes it, or — the way this was found — a delete issued moments earlier finishes
+        its grace period *after* the create applied a pod of the same name, so the apply succeeds
+        against an object that is already on its way out and the delete takes it.
+
+        The row then says `running` forever. Every `POST` returns 201 and creates nothing, every
+        file operation fails against a pod that is not there, and the API is telling the customer
+        their sandbox is running the whole time. The only escape is a `DELETE` nobody has a reason
+        to try.
+
+        So: ask. One `GET` against the API server per open, which is nothing next to the pod it
+        avoids stranding. A pod that exists but is terminating counts as absent — applying over it
+        is precisely the race above.
+      */
+      if (existing !== undefined && existing.state === "running" && existing.podName !== null) {
+        const pod = await client.get<{ metadata?: { deletionTimestamp?: string } }>(
+          podPath(existing.namespace ?? namespace, existing.podName),
+        )
+
+        if (pod !== undefined && pod.metadata?.deletionTimestamp === undefined) {
+          await crudSandbox(db).touch(existing.id)
+          return c.json(serialize(existing), 201)
+        }
+
+        console.info(
+          JSON.stringify({
+            level: "info",
+            message: "sandbox row said running with no pod; recreating",
+            sandboxId: existing.id,
+            podName: existing.podName,
+            terminating: pod !== undefined,
+          }),
+        )
+      }
       const row =
         existing ??
         (await crudSandbox(db).create({
@@ -215,7 +272,6 @@ const app = new Hono()
       const runtimeClass = sandboxRuntimeClass()
 
       try {
-        const client = createKubeClient(inClusterConfig())
         // Before the pod, every time. The namespace existing is not evidence that its
         // NetworkPolicies are in force — see `ensureTenantNamespace`.
         await ensureTenantNamespace(client, namespace)
@@ -223,6 +279,10 @@ const app = new Hono()
           podPath(namespace, podName),
           devSandboxPod({
             namespace,
+            // Who pays for the pod. Without these the metering agent samples its cgroup, delivers
+            // the batch, and attributes it to nobody.
+            organizationId: organization.id,
+            projectId,
             name: podName,
             image: SANDBOX_IMAGE,
             idleTimeoutSeconds: IDLE_TIMEOUT_S,

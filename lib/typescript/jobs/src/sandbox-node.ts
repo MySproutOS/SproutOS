@@ -62,6 +62,15 @@ export function assertFetchableUrl(raw: unknown): string {
 
 export type NodeRun = {
   namespace: string
+  /**
+   * Who pays for the node's compute, and the project it ran for.
+   *
+   * Threaded from `runWorkflow` rather than derived from `namespace`. The namespace is
+   * `tenant-<organization id>` and parsing it back would work today; an id recovered from a name is
+   * an id that breaks the day the naming changes, and here what breaks is an invoice.
+   */
+  organizationId: string
+  projectId?: string
   runId: string
   nodeId: string
   nodeType: string
@@ -73,6 +82,8 @@ export type NodeRun = {
 export async function runNodeInSandbox(input: NodeRun): Promise<SandboxResult> {
   const common = {
     namespace: input.namespace,
+    organizationId: input.organizationId,
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
     name: sandboxName(input.runId, input.nodeId),
     ...(input.timeoutSeconds === undefined ? {} : { timeoutSeconds: input.timeoutSeconds }),
     ...(sandboxRuntimeClass() === undefined ? {} : { runtimeClassName: sandboxRuntimeClass() }),

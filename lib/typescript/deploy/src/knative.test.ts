@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { type DeploymentSpec, hostLabel, knativeService, type ProjectSpec } from "./knative"
 
-const project: ProjectSpec = { id: "01a01e12-1700-76ac-9713-dd208babdf5a", slug: "myapp" }
+const project: ProjectSpec = {
+  id: "01a01e12-1700-76ac-9713-dd208babdf5a",
+  slug: "myapp",
+  organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+}
 
 const production: DeploymentSpec = {
   kind: "production",
@@ -22,7 +26,11 @@ describe("hostLabel", () => {
   it("distinguishes two projects that share a slug", () => {
     // `project.slug` is unique per organization, not globally. Without this, the second
     // organization to deploy a project called `myapp` takes over the first one's hostname.
-    const other: ProjectSpec = { id: "01a01e12-1700-76ac-9713-dd208bab0000", slug: "myapp" }
+    const other: ProjectSpec = {
+      id: "01a01e12-1700-76ac-9713-dd208bab0000",
+      slug: "myapp",
+      organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+    }
 
     expect(hostLabel(project, production)).not.toBe(hostLabel(other, production))
   })

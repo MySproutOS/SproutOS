@@ -79,7 +79,21 @@ describe("the dev sandbox pod", () => {
     name: "sbx-1",
     image: "node:24-alpine",
     idleTimeoutSeconds: 900,
+    organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+    projectId: "01912d40-0000-7000-8000-0000000000a1",
   }
+
+  /*
+    A dev sandbox holds a pod for fifteen minutes past the last keystroke, on a real node. It
+    carried no attribution label, so all of that was free.
+  */
+  it("labels the pod with who pays for it", () => {
+    const pod = devSandboxPod(base) as { metadata: { labels: Record<string, string> } }
+    expect(pod.metadata.labels).toMatchObject({
+      "sproutos.dev/organization-id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "sproutos.dev/project-id": "01912d40-0000-7000-8000-0000000000a1",
+    })
+  })
 
   it("carries no service-account token", () => {
     const pod = devSandboxPod(base) as { spec: Record<string, unknown> }

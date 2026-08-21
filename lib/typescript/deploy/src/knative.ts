@@ -1,3 +1,4 @@
+import { attributionLabels } from "@lib/metering"
 /**
  * A `deployment` row rendered as a Knative Service.
  *
@@ -38,6 +39,15 @@ export type KnativeService = {
   metadata: { name: string; namespace: string; labels: Record<string, string> }
   spec: {
     template: {
+      /*
+        Pod labels, and the reason this member exists.
+
+        The labels on `metadata` above belong to the *Service*. The metering agent reads labels off
+        each **pod** on its node, so a Service label is invisible to it no matter what it says — and
+        this renderer had no pod labels at all. Every tenant revision the platform ever served was
+        unattributable, which is to say free.
+      */
+      metadata: { labels: Record<string, string> }
       spec: {
         runtimeClassName: string
         containerConcurrency: number
@@ -59,6 +69,14 @@ export type KnativeService = {
 export type ProjectSpec = {
   id: string
   slug: string
+  /**
+   * Who pays for it.
+   *
+   * The namespace already encodes this — `tenant-<organization id>` — and deriving it back out of
+   * a string would work. It is passed instead, because an id recovered by parsing a name is an id
+   * that breaks silently the day the naming changes, and what breaks is the billing.
+   */
+  organizationId: string
 }
 
 /**
@@ -125,6 +143,14 @@ export function knativeService(
     },
     spec: {
       template: {
+        metadata: {
+          labels: {
+            "app.kubernetes.io/part-of": "sproutos",
+            "sproutos.dev/deployment-kind": deployment.kind,
+            // What makes the revision billable. See `attributionLabels`.
+            ...attributionLabels(project.organizationId, project.id),
+          },
+        },
         spec: {
           // The hypervisor, per ADR 0012: `kata-fc` for deploys, `kata-clh` for anything needing a
           // live filesystem. Carried on the row rather than hardcoded because the choice differs
