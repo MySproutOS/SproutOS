@@ -462,6 +462,15 @@ export interface MemberRole {
   roleId: string
 }
 
+export interface NeonShardPlacement {
+  nodeId: number
+  preferredAz: string | null
+  shardNumber: number
+  stripeSize: number | null
+  tenantId: string
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Node {
   allocatableCpuMillis: Generated<Int8>
   allocatableMemoryBytes: Generated<Int8>
@@ -1225,6 +1234,7 @@ export interface DB {
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission
   memberRole: MemberRole
+  neonShardPlacement: NeonShardPlacement
   node: Node
   oauthAccessToken: OauthAccessToken
   oauthAuthorizationCode: OauthAuthorizationCode

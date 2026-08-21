@@ -5,6 +5,7 @@ import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import metering from "./metering"
+import neon from "./neon"
 import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
@@ -87,6 +88,16 @@ unauthenticated.route("/otlp", otlp)
   reader does not have to infer it from the absence of `authMiddleware`.
 */
 unauthenticated.route("/internal", metering)
+/*
+  Neon's storage controller, calling in to say which pageserver holds a tenant.
+
+  Same `/internal` prefix and same reason: the caller is a platform component, not a customer.
+  Unauthenticated for now because the controller reaches this only over the cluster's private
+  network and its `--control-plane-jwt-token` is the mechanism for anything stronger — that token is
+  a deployment decision, and wiring it before there is a deployment would be configuring something
+  nothing can test.
+*/
+unauthenticated.route("/internal", neon)
 
 const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)

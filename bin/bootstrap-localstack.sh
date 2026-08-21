@@ -31,7 +31,9 @@ else
   echo "KMS alias/sproutos-dev already present"
 fi
 
-for bucket in sproutos-dev-artifacts sproutos-dev-uploads; do
+# `sproutos-dev-pageserver` is Neon's remote storage: the pageserver refuses to start
+# without a bucket it can reach, and the failure is a panic at boot rather than a warning.
+for bucket in sproutos-dev-artifacts sproutos-dev-uploads sproutos-dev-pageserver; do
   aws_local s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 \
     || { aws_local s3api create-bucket --bucket "$bucket" >/dev/null; echo "created bucket $bucket"; }
 done
