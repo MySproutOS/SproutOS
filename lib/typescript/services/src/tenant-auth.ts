@@ -35,7 +35,14 @@ const KIND_PREFIX: Record<ResourceKind, string> = {
   searchIndex: "ix",
 }
 
-/** The `backend_service.kind` each maps to, which is what the driver registry keys on. */
+/**
+ * The `backend_service.kind` each maps to.
+ *
+ * **`couchdb` is deliberately absent.** This maps a service kind to the resource kind a *proxy*
+ * parses out of a tenant username, and CouchDB has no proxy — its `_security` object and
+ * `require_valid_user` are the boundary, so its username is an ordinary CouchDB user that nothing
+ * needs to decode. Adding an entry here would imply a proxy that does not exist.
+ */
 export const KIND_FOR_SERVICE: Record<string, ResourceKind> = {
   postgres: "database",
   valkey: "queue",

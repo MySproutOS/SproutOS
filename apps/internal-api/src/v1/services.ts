@@ -5,6 +5,8 @@ import {
   ServiceKindUnavailableError,
   ServiceNotProvisionedError,
   sproutPostgresConfigFromEnv,
+  couchDbDriver,
+  couchDbServiceConfigFromEnv,
   sproutPostgresDriver,
   valkeyDriver,
   valkeyServiceConfigFromEnv,
@@ -69,6 +71,16 @@ function driverFor(kind: string) {
   if (kind === "postgres") return sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
   if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
   if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
+  /*
+    CouchDB, and the only kind with no proxy in front of it.
+
+    The other three have one because their servers cannot enforce a tenant boundary alone — for
+    OpenSearch the proxy *is* the boundary, since document-level security is a paid feature. CouchDB
+    puts a `_security` object on every database and `require_valid_user` refuses everything else, so
+    interposing a proxy would add a component that can be wrong about a decision the server is
+    already making correctly. See `@lib/services`'s `couchdb.ts`.
+  */
+  if (kind === "couchdb") return couchDbDriver(db, couchDbServiceConfigFromEnv())
   // Named rather than 500ing, because "not yet" is a different answer from "something broke" and
   // the customer can act on one of them.
   throw new ServiceKindUnavailableError(kind)

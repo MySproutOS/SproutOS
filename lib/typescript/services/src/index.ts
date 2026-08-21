@@ -1,3 +1,9 @@
+export {
+  couchDbDriver,
+  couchDbServiceConfigFromEnv,
+  type CouchDbServiceConfig,
+  CouchDbError,
+} from "./couchdb"
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
   rolePasswordContext,

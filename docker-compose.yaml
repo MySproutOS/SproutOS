@@ -78,6 +78,31 @@ services:
     volumes:
       - opensearch:/usr/share/opensearch/data
 
+  # CouchDB, for the `couchdb` backend service kind.
+  #
+  # Configured the way `obsidian-livesync` needs — the CORS origins are Obsidian's own
+  # (`app://obsidian.md` on desktop, `capacitor://localhost` on mobile), taken from upstream's
+  # `docker/config/livesync.ini` rather than guessed. Without them the plugin fails inside its own
+  # fetch and the server logs nothing at all.
+  #
+  # `25984`, not 5984: the same reason every other port here is unusual. A CouchDB a developer is
+  # already running should not be silently provisioned into.
+  couchdb:
+    container_name: sproutos_couchdb
+    image: couchdb:3.5
+    ports:
+      - "127.0.0.1:25984:5984"
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=couchdb
+    volumes:
+      - couchdb:/opt/couchdb/data
+      # **Not `:ro`.** CouchDB's entrypoint writes `docker.ini` into this same directory to carry
+      # `COUCHDB_USER`/`COUCHDB_PASSWORD` through, and a read-only bind here makes the container
+      # exit 1 with no logs whatsoever — not a permission error, not a config error, nothing. It
+      # cost half an hour to find, and the only signal was that removing the mount fixed it.
+      - ./docker/couchdb-local.ini:/opt/couchdb/etc/local.d/sproutos.ini
+
   localstack:
     container_name: sproutos_localstack
     image: localstack/localstack:2026.07.5
@@ -93,6 +118,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
+  couchdb:
+    driver: local
   postgres:
     driver: local
   valkey:

@@ -1,7 +1,14 @@
 import { Type } from "typebox"
 import { Nullable, UUID7String } from "../utils/common.serializer"
 
-export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch"] as const
+/**
+ * The kinds a customer may ask for.
+ *
+ * Asserted against `backend_service_kind_check` in `services.test.ts`: this list is what the API
+ * accepts and the constraint is what the database accepts, and a kind in one and not the other is
+ * either a 400 for something that would have worked or a constraint violation surfacing as a 500.
+ */
+export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch", "couchdb"] as const
 
 /**
  * Never carries a connection URI.
