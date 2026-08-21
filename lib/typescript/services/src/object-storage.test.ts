@@ -1,5 +1,4 @@
 import { S3Client } from "@aws-sdk/client-s3"
-import { IAMClient } from "@aws-sdk/client-iam"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -7,21 +6,28 @@ import { afterAll, describe, expect, it } from "vitest"
 import {
   bucketNameFor,
   bucketPolicy,
-  iamCredentialIssuer,
   objectStorageConfigFromEnv,
   objectStorageDriver,
   objectStorageUri,
-  principalNameFor,
+  tenantCredential,
   VAULT_ORIGINS,
+  versionOf,
 } from "./object-storage"
-import { SecretNotRecoverableError } from "./valkey"
+import { deriveObjectStorageSecret } from "./tenant-auth"
 
 /**
- * Object storage for a vault, against LocalStack's real S3 and IAM.
+ * Object storage for a vault, against LocalStack's real S3.
  *
- * The interesting assertions are the two that decide whether this is usable and safe: the credential
- * is scoped to one bucket and cannot touch another, and the bucket answers Obsidian's preflight.
- * Both are things a fake would agree with whatever the code did.
+ * **What is deliberately not asserted here: that one tenant cannot read another's bucket.** That is
+ * now `services/storage-proxy`'s job rather than an IAM policy's, and it is asserted where it is
+ * enforced — `storage-proxy`'s own tests, which run the real binary against this same LocalStack.
+ *
+ * The previous version of this file had two isolation tests gated behind
+ * `SERVICE_OBJECT_STORAGE_ENFORCES_IAM`, because IAM policy *evaluation* is a LocalStack Pro
+ * feature and the free image accepts every IAM call while enforcing none of them. Those tests could
+ * not run anywhere this project can afford to run, which meant the most important property of the
+ * design was the one thing never checked. Moving the boundary into a process we own is what makes
+ * it checkable.
  */
 const config = (() => {
   try {
@@ -42,12 +48,12 @@ const reachable = await (async () => {
   }
 })()
 
-function clients() {
-  const shared = { region: config!.region, endpoint: config!.endpoint }
-  return {
-    s3: new S3Client({ ...shared, forcePathStyle: true }),
-    iam: new IAMClient(shared),
-  }
+function s3Client() {
+  return new S3Client({
+    region: config!.region,
+    endpoint: config!.endpoint,
+    forcePathStyle: true,
+  })
 }
 
 const fixtures: { organizations: string[]; users: string[]; services: string[] } = {
@@ -98,8 +104,7 @@ async function service() {
 
 afterAll(async () => {
   if (!reachable) return
-  const { s3, iam } = clients()
-  const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+  const driver = objectStorageDriver(db, config!, s3Client())
   for (const id of fixtures.services) await driver.destroy(id).catch(() => undefined)
   if (fixtures.services.length > 0) {
     await db.deleteFrom("backendService").where("id", "in", fixtures.services).execute()
@@ -122,12 +127,14 @@ describe("naming and policy", () => {
     expect(name.length).toBeLessThanOrEqual(63)
   })
 
-  it("scopes the policy to one bucket, in two statements", () => {
+  it("scopes the proxy's own policy to one bucket, in two statements", () => {
     /*
       Two, because the bucket and its contents are different ARNs — `ListBucket` on `bucket/*`
       silently matches nothing, and a policy that looks right then lists nothing at all.
 
-      Copied from upstream's own MinIO script so a credential grants what the plugin uses.
+      This is no longer attached to a per-tenant IAM user; there are none. It is the set of
+      operations the proxy may perform on a customer's behalf, and `tofu/` grants it to the proxy's
+      role. Keeping it narrow means a compromised proxy still cannot delete a vault wholesale.
     */
     const policy = JSON.parse(bucketPolicy("v-abc")) as {
       Statement: { Action: string[]; Resource: string[] }[]
@@ -137,7 +144,6 @@ describe("naming and policy", () => {
     expect(policy.Statement[0]?.Resource).toEqual(["arn:aws:s3:::v-abc"])
     expect(policy.Statement[1]?.Resource).toEqual(["arn:aws:s3:::v-abc/*"])
     expect(policy.Statement.flatMap((s) => s.Action)).not.toContain("s3:*")
-    // No bucket-level destruction: a leaked key must not be able to delete the vault wholesale.
     expect(policy.Statement.flatMap((s) => s.Action)).not.toContain("s3:DeleteBucket")
   })
 
@@ -146,10 +152,10 @@ describe("naming and policy", () => {
     // A URI missing one is a URI the customer has to guess the rest of.
     const uri = new URL(
       objectStorageUri({
-        publicEndpoint: "https://s3.example.com",
+        publicEndpoint: "https://storage.example.com",
         bucket: "v-abc",
         region: "us-east-1",
-        accessKeyId: "AKIA",
+        accessKeyId: "SPROUT01",
         secretAccessKey: "shh",
         forcePathStyle: true,
       }),
@@ -158,7 +164,7 @@ describe("naming and policy", () => {
     expect(Object.fromEntries(uri.searchParams)).toEqual({
       bucket: "v-abc",
       region: "us-east-1",
-      accessKeyId: "AKIA",
+      accessKeyId: "SPROUT01",
       secretAccessKey: "shh",
       forcePathStyle: "true",
     })
@@ -166,71 +172,74 @@ describe("naming and policy", () => {
 })
 
 describe("objectStorageConfigFromEnv", () => {
-  it("refuses rather than handing out an in-cluster endpoint", () => {
-    // The control plane may reach storage on a service DNS name a customer's laptop cannot resolve.
+  it("refuses rather than pointing a customer at the bucket itself", () => {
+    // The endpoint a customer receives is the proxy. Falling back to the one this process uses
+    // would hand out a credential AWS has never heard of, and the failure would read as a wrong
+    // password rather than as a misconfiguration.
     expect(() =>
-      objectStorageConfigFromEnv({ SERVICE_OBJECT_STORAGE_REGION: "us-east-1" }),
+      objectStorageConfigFromEnv({
+        SERVICE_OBJECT_STORAGE_REGION: "us-east-1",
+        SERVICE_OBJECT_STORAGE_ENDPOINT: "http://localhost:4566",
+        SERVICE_OBJECT_STORAGE_ROOT_KEY: "k",
+      }),
     ).toThrow(/PUBLIC_ENDPOINT/)
   })
 
-  it("defaults to path style, which is wrong only for real AWS", () => {
-    const resolved = objectStorageConfigFromEnv({
-      SERVICE_OBJECT_STORAGE_REGION: "us-east-1",
-      SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://s3.example.com",
-    })
-    expect(resolved.forcePathStyle).toBe(true)
+  it("refuses to run without a root key rather than defaulting one", () => {
+    // A default would make every deployment's tenant secrets identical, and derivable by anyone who
+    // has read this repository.
+    expect(() =>
+      objectStorageConfigFromEnv({
+        SERVICE_OBJECT_STORAGE_REGION: "us-east-1",
+        SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.example.com",
+      }),
+    ).toThrow(/ROOT_KEY/)
+  })
+})
+
+describe("derived credentials", () => {
+  const serviceId = "01a02486-be04-776f-a9e2-c655b19e16b7"
+
+  it("gives the platform back the same secret without having stored it", async () => {
+    // The property the whole design rests on: the proxy can verify a SigV4 signature, and
+    // `service_credential` still holds nothing reversible.
+    const first = await tenantCredential("root", serviceId, 1)
+    const second = await tenantCredential("root", serviceId, 1)
+
+    expect(second).toEqual(first)
+    expect(first.secretAccessKey).toBe(await deriveObjectStorageSecret("root", first.accessKeyId))
+  })
+
+  it("reads the version back out of an access key id", async () => {
+    const seventh = await tenantCredential("root", serviceId, 7)
+
+    expect(versionOf(seventh.accessKeyId)).toBe(7)
+  })
+
+  it("treats a foreign access key id as version zero", () => {
+    // An `AKIA…` key belongs to AWS, not to us. Parsing a version out of it would place a stranger
+    // in this service's rotation sequence.
+    expect(versionOf("AKIAIOSFODNN7EXAMPLE")).toBe(0)
   })
 })
 
 describe.runIf(reachable)("a provisioned bucket", () => {
-  it("hands back a credential that can write and read the vault", async () => {
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
-    const { backendServiceId, organizationId } = await service()
-
-    const provisioned = await driver.provision({
-      backendServiceId,
-      organizationId,
-      projectId: null,
-      name: "Vault",
-    })
-
-    const uri = new URL(provisioned.connectionUri)
-    const tenant = new S3Client({
-      region: config!.region,
-      endpoint: config!.endpoint,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: uri.searchParams.get("accessKeyId")!,
-        secretAccessKey: uri.searchParams.get("secretAccessKey")!,
-      },
-    })
-
-    const { PutObjectCommand, GetObjectCommand } = await import("@aws-sdk/client-s3")
-    const bucket = bucketNameFor(backendServiceId)
-
-    await tenant.send(
-      new PutObjectCommand({ Bucket: bucket, Key: "notes/one.md", Body: "# hello" }),
-    )
-    const read = await tenant.send(new GetObjectCommand({ Bucket: bucket, Key: "notes/one.md" }))
-
-    expect(await read.Body?.transformToString()).toBe("# hello")
-  }, 90_000)
-
   it("names Obsidian's own origins in the bucket's CORS rules", async () => {
     /*
       Obsidian is not a web page: desktop sends `app://obsidian.md` and mobile
-      `capacitor://localhost`. A bucket that does not name them refuses the preflight, and the
+      `capacitor://localhost`. An endpoint that does not name them refuses the preflight, and the
       plugin reports a failure the customer cannot tell from a wrong key.
+
+      The proxy answers CORS itself now — it is the origin the browser sees. This stays because a
+      bucket addressed directly by an operator should still behave.
     */
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+    const driver = objectStorageDriver(db, config!, s3Client())
     const { backendServiceId, organizationId } = await service()
 
     await driver.provision({ backendServiceId, organizationId, projectId: null, name: "Vault" })
 
     const { GetBucketCorsCommand } = await import("@aws-sdk/client-s3")
-    const cors = await s3.send(
+    const cors = await s3Client().send(
       new GetBucketCorsCommand({ Bucket: bucketNameFor(backendServiceId) }),
     )
 
@@ -240,48 +249,27 @@ describe.runIf(reachable)("a provisioned bucket", () => {
     expect(rule?.ExposeHeaders).toContain("ETag")
   }, 90_000)
 
-  it("gives each vault a policy naming only its own bucket", async () => {
-    /*
-      The whole argument for a bucket per service rather than a shared bucket with prefixes.
+  it("points the customer at the proxy and never at the bucket", async () => {
+    // The single assertion that says this is tenant-based. A customer holding the storage
+    // endpoint holds a key that only the proxy can make sense of.
+    const driver = objectStorageDriver(db, config!, s3Client())
+    const { backendServiceId, organizationId } = await service()
 
-      **Asserted on the policy document, not by attempting a cross-tenant read**, and the reason is
-      worth knowing: LocalStack's free tier accepts IAM calls and does not evaluate policies, so
-      every credential behaves as root there. A test that tried the read would pass on AWS and fail
-      here — and one weakened until it passed here would assert nothing at all. Enforcement is AWS's
-      and is covered by the skipped suite below; what this checks is that the policy we hand IAM
-      names one bucket and cannot name another.
-    */
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+    const provisioned = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Vault",
+    })
+    const uri = new URL(provisioned.connectionUri)
 
-    const mine = await service()
-    const theirs = await service()
-
-    await driver.provision({ ...mine, projectId: null, name: "Mine" })
-    await driver.provision({ ...theirs, projectId: null, name: "Theirs" })
-
-    const { GetUserPolicyCommand } = await import("@aws-sdk/client-iam")
-    const attached = await iam.send(
-      new GetUserPolicyCommand({
-        UserName: principalNameFor(theirs.backendServiceId),
-        PolicyName: "sproutos-bucket",
-      }),
-    )
-
-    const document = JSON.parse(decodeURIComponent(attached.PolicyDocument ?? "{}")) as {
-      Statement: { Resource: string[] }[]
-    }
-    const resources = document.Statement.flatMap((statement) => statement.Resource)
-
-    expect(resources.every((arn) => arn.includes(bucketNameFor(theirs.backendServiceId)))).toBe(
-      true,
-    )
-    expect(resources.some((arn) => arn.includes(bucketNameFor(mine.backendServiceId)))).toBe(false)
+    expect(uri.origin).toBe(new URL(config!.publicEndpoint).origin)
+    expect(uri.origin).not.toBe(new URL(config!.endpoint!).origin)
+    expect(uri.searchParams.get("accessKeyId")).toMatch(/^SPROUT/)
   }, 90_000)
 
-  it("stores a hash, and refuses to reveal the secret afterwards", async () => {
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+  it("stores a hash of a secret it never has to store", async () => {
+    const driver = objectStorageDriver(db, config!, s3Client())
     const { backendServiceId, organizationId } = await service()
 
     const provisioned = await driver.provision({
@@ -300,25 +288,19 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       .executeTakeFirstOrThrow()
 
     expect(stored.secretHash).not.toContain(secret)
-    // The access key id, not the IAM user name: it is what identifies the credential to S3.
     expect(stored.username).toBe(new URL(provisioned.connectionUri).searchParams.get("accessKeyId"))
-    await expect(driver.connectionUri(backendServiceId)).rejects.toBeInstanceOf(
-      SecretNotRecoverableError,
-    )
   }, 90_000)
 
-  it("suspends by removing the policy, leaving the customer's key intact", async () => {
+  it("shows the customer their key again without rotating it", async () => {
     /*
-      Revoked by removing the policy, not by deleting the key.
+      The one capability deriving the secret buys beyond safety.
 
-      The customer's URI carries the key and `resume` has to leave that URI working — the same
-      constraint the CouchDB driver has. Deleting the key would be a rotation nobody was told about.
-
-      Asserted on IAM's own state rather than by attempting a request, for the reason given above:
-      the free LocalStack does not evaluate policies, so a suspended credential still works there.
+      Every other driver here answers `connectionUri` with `SecretNotRecoverableError`, because it
+      only ever held a hash — so a customer who lost their key had to rotate, which breaks whatever
+      device still had the old one. A vault synced across a laptop and a phone is exactly the case
+      where that hurts.
     */
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+    const driver = objectStorageDriver(db, config!, s3Client())
     const { backendServiceId, organizationId } = await service()
 
     const provisioned = await driver.provision({
@@ -327,42 +309,108 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       projectId: null,
       name: "Vault",
     })
-    const keyBefore = new URL(provisioned.connectionUri).searchParams.get("accessKeyId")
 
-    const { GetUserPolicyCommand, ListAccessKeysCommand } = await import("@aws-sdk/client-iam")
-    const principal = principalNameFor(backendServiceId)
+    expect(await driver.connectionUri(backendServiceId)).toBe(provisioned.connectionUri)
+  }, 90_000)
 
+  it("rotates to a new version and revokes the old row", async () => {
+    // Revocation is the row, because a derived secret cannot be deleted — it is a function of a key
+    // and an identifier that both still exist. The proxy's lookup is what ends access.
+    const driver = objectStorageDriver(db, config!, s3Client())
+    const { backendServiceId, organizationId } = await service()
+
+    const first = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Vault",
+    })
+    const second = await driver.rotateCredentials(backendServiceId)
+
+    const before = new URL(first.connectionUri).searchParams.get("accessKeyId")!
+    const after = new URL(second).searchParams.get("accessKeyId")!
+
+    expect(versionOf(after)).toBe(versionOf(before) + 1)
+
+    const rows = await db
+      .selectFrom("serviceCredential")
+      .select(["username", "revokedAt"])
+      .where("backendServiceId", "=", backendServiceId)
+      .execute()
+
+    expect(rows.find((row) => row.username === before)?.revokedAt).not.toBeNull()
+    expect(rows.find((row) => row.username === after)?.revokedAt).toBeNull()
+  }, 90_000)
+
+  it("never reissues an identifier a client might still be retrying with", async () => {
+    // Reuse would silently make a revoked key work again, because the secret is a function of the
+    // identifier. So the sequence is read from every version ever issued, not from the live one.
+    const driver = objectStorageDriver(db, config!, s3Client())
+    const { backendServiceId, organizationId } = await service()
+
+    await driver.provision({ backendServiceId, organizationId, projectId: null, name: "Vault" })
+    await driver.rotateCredentials(backendServiceId)
+    await driver.rotateCredentials(backendServiceId)
+
+    const usernames = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", backendServiceId)
+      .execute()
+
+    expect(new Set(usernames.map((row) => row.username)).size).toBe(usernames.length)
+  }, 120_000)
+
+  it("suspends by writing a row, not by asking the cloud to forget", async () => {
+    /*
+      The same correction Postgres needed. Revoking access at the provider means the platform's
+      belief about a service and the provider's belief are two facts that can disagree, and the one
+      the customer experiences is the provider's. The proxy reads `backend_service.status`.
+    */
+    const driver = objectStorageDriver(db, config!, s3Client())
+    const { backendServiceId, organizationId } = await service()
+
+    await driver.provision({ backendServiceId, organizationId, projectId: null, name: "Vault" })
     await driver.suspend(backendServiceId)
 
-    await expect(
-      iam.send(new GetUserPolicyCommand({ UserName: principal, PolicyName: "sproutos-bucket" })),
-    ).rejects.toThrow(/NoSuchEntity|cannot be found/)
+    const suspended = await db
+      .selectFrom("backendService")
+      .select("status")
+      .where("id", "=", backendServiceId)
+      .executeTakeFirstOrThrow()
+    expect(suspended.status).toBe("suspended")
 
-    // The key survives, which is what makes the customer's URI still theirs afterwards.
-    const keys = await iam.send(new ListAccessKeysCommand({ UserName: principal }))
-    expect(keys.AccessKeyMetadata?.[0]?.AccessKeyId).toBe(keyBefore)
+    // And the credential is untouched, so resuming leaves the customer's saved settings working.
+    const live = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .executeTakeFirst()
+    expect(live).toBeDefined()
 
     await driver.resume?.(backendServiceId)
-    const restored = await iam.send(
-      new GetUserPolicyCommand({ UserName: principal, PolicyName: "sproutos-bucket" }),
-    )
-    expect(decodeURIComponent(restored.PolicyDocument ?? "")).toContain(
-      bucketNameFor(backendServiceId),
-    )
+    const resumed = await db
+      .selectFrom("backendService")
+      .select("status")
+      .where("id", "=", backendServiceId)
+      .executeTakeFirstOrThrow()
+    expect(resumed.status).toBe("active")
   }, 120_000)
 
   it("empties the bucket before deleting it", async () => {
     // S3 refuses to delete a bucket with anything in it, so a teardown that skips this leaves a
     // bucket the customer is billed for and a row nobody can delete.
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
+    const driver = objectStorageDriver(db, config!, s3Client())
     const { backendServiceId, organizationId } = await service()
 
     await driver.provision({ backendServiceId, organizationId, projectId: null, name: "Vault" })
 
     const { PutObjectCommand } = await import("@aws-sdk/client-s3")
     const bucket = bucketNameFor(backendServiceId)
-    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: "notes/left-behind.md", Body: "x" }))
+    await s3Client().send(
+      new PutObjectCommand({ Bucket: bucket, Key: "notes/left-behind.md", Body: "x" }),
+    )
 
     await driver.destroy(backendServiceId)
 
@@ -374,79 +422,7 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       response rather than that the bucket is gone.
     */
     const { ListBucketsCommand } = await import("@aws-sdk/client-s3")
-    const remaining = await s3.send(new ListBucketsCommand({}))
+    const remaining = await s3Client().send(new ListBucketsCommand({}))
     expect((remaining.Buckets ?? []).map((entry) => entry.Name)).not.toContain(bucket)
-  }, 120_000)
-})
-
-/**
- * What only a real policy engine can answer.
- *
- * IAM policy *enforcement* is a LocalStack Pro feature — the free image accepts every IAM call and
- * evaluates no policy, so every credential behaves as root. These are the two assertions that would
- * prove isolation rather than describe it, and they are gated rather than rewritten until they
- * pass, because a test that passes for the wrong reason is worse than one that does not run.
- *
- * Set `SERVICE_OBJECT_STORAGE_ENFORCES_IAM=true` where the endpoint does enforce — real AWS, or
- * LocalStack Pro — and they run. `bin/check-skipped-tests.mjs` carries the count and the reason, so
- * a green suite here is never read as evidence that a tenant cannot reach another tenant's bucket.
- */
-const enforces = reachable && process.env.SERVICE_OBJECT_STORAGE_ENFORCES_IAM === "true"
-
-describe.runIf(enforces)("isolation, where policies are enforced", () => {
-  function tenantClient(uri: string) {
-    const parsed = new URL(uri)
-    return new S3Client({
-      region: config!.region,
-      ...(config!.endpoint === undefined ? {} : { endpoint: config!.endpoint }),
-      forcePathStyle: config!.forcePathStyle,
-      credentials: {
-        accessKeyId: parsed.searchParams.get("accessKeyId") ?? "",
-        secretAccessKey: parsed.searchParams.get("secretAccessKey") ?? "",
-      },
-    })
-  }
-
-  it("refuses one vault's credential against another vault's bucket", async () => {
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
-
-    const mine = await service()
-    const theirs = await service()
-    await driver.provision({ ...mine, projectId: null, name: "Mine" })
-    const intruder = await driver.provision({ ...theirs, projectId: null, name: "Theirs" })
-
-    const { ListObjectsV2Command } = await import("@aws-sdk/client-s3")
-    const asIntruder = tenantClient(intruder.connectionUri)
-
-    await expect(
-      asIntruder.send(new ListObjectsV2Command({ Bucket: bucketNameFor(mine.backendServiceId) })),
-    ).rejects.toThrow(/AccessDenied|Forbidden/)
-  }, 120_000)
-
-  it("refuses a suspended credential", async () => {
-    const { s3, iam } = clients()
-    const driver = objectStorageDriver(db, config!, iamCredentialIssuer(iam), s3)
-    const { backendServiceId, organizationId } = await service()
-
-    const provisioned = await driver.provision({
-      backendServiceId,
-      organizationId,
-      projectId: null,
-      name: "Vault",
-    })
-    const tenant = tenantClient(provisioned.connectionUri)
-    const { ListObjectsV2Command } = await import("@aws-sdk/client-s3")
-
-    await driver.suspend(backendServiceId)
-    await expect(
-      tenant.send(new ListObjectsV2Command({ Bucket: bucketNameFor(backendServiceId) })),
-    ).rejects.toThrow(/AccessDenied|Forbidden/)
-
-    // And the same key works again afterwards, unchanged.
-    await driver.resume?.(backendServiceId)
-    await expect(
-      tenant.send(new ListObjectsV2Command({ Bucket: bucketNameFor(backendServiceId) })),
-    ).resolves.toBeDefined()
   }, 120_000)
 })

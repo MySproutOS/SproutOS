@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
+  ACCESS_KEY_PREFIX,
   SECRET_BYTES,
   SHORT_ID_LEN,
+  decodeShortId,
+  deriveObjectStorageSecret,
   encodeShortId,
   generateSecret,
   hashGeneratedSecret,
   lastFour,
+  objectStorageAccessKeyId,
   tenantIndexPrefix,
   tenantUsername,
 } from "./tenant-auth"
@@ -148,5 +153,60 @@ describe("tenantIndexPrefix", () => {
 
   it("gives two services two namespaces", () => {
     expect(tenantIndexPrefix(RESOURCE)).not.toBe(tenantIndexPrefix(ORG))
+  })
+})
+
+describe("object storage credentials", () => {
+  /*
+    The storage proxy verifies a tenant's SigV4 signature, which means recomputing an HMAC, which
+    means holding the tenant's secret. Deriving it from one root key is what keeps `service_credential`
+    free of anything reversible — see `deriveObjectStorageSecret`.
+  */
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("../../../rust/s3-sigv4/fixtures/tenant-secret.json", import.meta.url),
+      "utf8",
+    ),
+  ) as {
+    cases: {
+      rootKey: string
+      shortId: string
+      version: number
+      accessKeyId: string
+      secret: string
+    }[]
+  }
+
+  it("matches the vectors the Rust crate asserts against", async () => {
+    // Read from the crate rather than copied here. A divergence is a tenant who cannot authenticate
+    // at all — loud, but only if the two sides are actually reading the same bytes.
+    for (const testCase of fixture.cases) {
+      const id = objectStorageAccessKeyId(decodeShortId(testCase.shortId), testCase.version)
+
+      expect(id).toBe(testCase.accessKeyId)
+      expect(await deriveObjectStorageSecret(testCase.rootKey, id)).toBe(testCase.secret)
+    }
+  })
+
+  it("gives a rotated credential a new secret and the same tenant", async () => {
+    const service = "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f"
+    const first = objectStorageAccessKeyId(service, 1)
+    const second = objectStorageAccessKeyId(service, 2)
+
+    expect(await deriveObjectStorageSecret("root", first)).not.toBe(
+      await deriveObjectStorageSecret("root", second),
+    )
+    // The proxy resolves a request to a tenant by decoding the id, so rotation must not move it.
+    expect(decodeShortId(second.slice(ACCESS_KEY_PREFIX.length, -2).toLowerCase())).toBe(service)
+  })
+
+  it("carries nothing that means something in a URI, a shell or a YAML file", async () => {
+    // It is pasted into Obsidian's settings by hand, off a screen.
+    const secret = await deriveObjectStorageSecret(
+      "root",
+      objectStorageAccessKeyId("01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f", 1),
+    )
+
+    expect(secret).toMatch(/^[0-9a-hjkmnp-tv-z]{52}$/)
   })
 })

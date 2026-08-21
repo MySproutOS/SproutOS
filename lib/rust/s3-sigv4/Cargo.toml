@@ -12,3 +12,8 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Only for the shared derivation vectors: `fixtures/tenant-secret.json` is the contract this crate
+# and `lib/typescript/services` both satisfy, and reading it beats copying it.
+serde_json = { workspace = true }

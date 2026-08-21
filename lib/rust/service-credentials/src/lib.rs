@@ -52,6 +52,14 @@ pub enum Authentication {
     Denied,
 }
 
+/// A live object-storage credential and what it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedService {
+    pub credential_id: uuid::Uuid,
+    pub backend_service_id: uuid::Uuid,
+    pub organization_id: uuid::Uuid,
+}
+
 /// Reads credentials from the control plane's Postgres.
 pub struct CredentialStore {
     pool: Pool,
@@ -64,7 +72,7 @@ impl CredentialStore {
     /// purpose: a lookup happens once per *client connection*, not once per command, so even a busy
     /// proxy makes a handful of queries a second.
     pub fn connect(url: &str, size: usize) -> anyhow::Result<Self> {
-        let config: tokio_postgres::Config = url.parse()?;
+        let config: tokio_postgres::Config = normalise_url(url).parse()?;
         let manager = Manager::from_config(
             config,
             NoTls,
@@ -213,12 +221,110 @@ impl CredentialStore {
         }
     }
 
+    /// Resolves an S3 access key id to the service it belongs to.
+    ///
+    /// **Identification only — this proves nothing about the caller.** SigV4 never presents the
+    /// secret, so there is nothing here to compare a hash against; the caller derives the secret
+    /// from the platform's root key and checks the request's signature itself. What this answers is
+    /// the question that has to be answered *before* a signature can be checked at all: which
+    /// tenant is this key, and is that tenant still allowed in.
+    ///
+    /// That makes the liveness joins do more work here than in [`Self::authenticate`], not less.
+    /// A revoked, expired, suspended, deleted-service or deleted-organization credential resolves to
+    /// nothing — and because a derived secret cannot be deleted, this lookup *is* the revocation.
+    /// The customer's client still holds a key that signs correctly forever; it stops meaning
+    /// anything the moment no row answers.
+    ///
+    /// `suspended` is absent from the status list on purpose, and that is the difference from the
+    /// connection-oriented proxies: they revoke the credential to suspend, whereas object storage
+    /// suspends by writing `backend_service.status` — so the status is the check.
+    pub async fn resolve_access_key(
+        &self,
+        access_key_id: &str,
+    ) -> Result<Option<ResolvedService>, StoreError> {
+        // Bounded before the query, as in `authenticate`: a client should not be able to make us
+        // send a megabyte to Postgres.
+        if access_key_id.len() > MAX_USERNAME_LEN {
+            return Ok(None);
+        }
+
+        let client = tokio::time::timeout(LOOKUP_TIMEOUT, self.pool.get())
+            .await
+            .map_err(|_| StoreError::Unavailable("timed out waiting for a connection".into()))?
+            .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+
+        let statement = "
+            select c.id, s.id, s.organization_id
+              from service_credential c
+              join backend_service s on s.id = c.backend_service_id
+              join organization o on o.id = s.organization_id
+             where c.username = $1
+               and c.revoked_at is null
+               and (c.expires_at is null or c.expires_at > now())
+               and s.deleted_at is null
+               and s.status = 'active'
+               and o.deleted_at is null
+        ";
+
+        let rows = tokio::time::timeout(LOOKUP_TIMEOUT, client.query(statement, &[&access_key_id]))
+            .await
+            .map_err(|_| StoreError::Unavailable("the credential lookup timed out".into()))?
+            .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+
+        Ok(Some(ResolvedService {
+            credential_id: row.get(0),
+            backend_service_id: row.get(1),
+            organization_id: row.get(2),
+        }))
+    }
+
+    /// Records that a credential was used. See [`Self::stamp_used`].
+    ///
+    /// Public because the storage proxy verifies the signature itself and so is the only thing that
+    /// knows whether a resolved credential was actually used correctly.
+    pub async fn mark_used(&self, credential_id: uuid::Uuid) {
+        self.stamp_used(credential_id).await;
+    }
+
     /// Checks the connection at startup, so a misconfigured URL fails loudly at boot rather than on
     /// the first tenant's connection attempt.
     pub async fn check(&self) -> anyhow::Result<()> {
         let client = self.pool.get().await?;
         client.query_one("select 1", &[]).await?;
         Ok(())
+    }
+}
+
+/// Drop connection-string parameters `tokio-postgres` refuses but every other client ignores.
+///
+/// **Found by a proxy that would not start.** `DATABASE_URL` in this repository ends
+/// `?schema=public` — a Prisma-ism the Node `pg` driver silently ignores and Kysely never sees.
+/// `tokio-postgres` parses the query string strictly and answers `unknown option \`schema\``, so
+/// every Rust proxy here fails at boot the moment it falls back to `DATABASE_URL` rather than a
+/// `*_PROXY_DATABASE_URL` of its own. That fallback exists precisely so a proxy works without extra
+/// configuration, and it worked nowhere.
+///
+/// `public` is already the default search path, so dropping it changes nothing. A *different*
+/// schema is a different matter — it would silently point the proxy at the wrong tables — so that
+/// one is left in place to fail loudly rather than quietly succeed against the wrong rows.
+pub fn normalise_url(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_owned();
+    };
+
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| *pair != "schema=public")
+        .collect();
+
+    if kept.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}?{}", kept.join("&"))
     }
 }
 
@@ -231,5 +337,44 @@ pub fn report(cause: &StoreError) {
         StoreError::BrokenCredential { username, cause } => {
             error!(username, %cause, "a stored credential is unusable")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalise_url;
+
+    #[test]
+    fn drops_the_schema_parameter_tokio_postgres_refuses() {
+        // The repository's own `DATABASE_URL`. Without this every Rust proxy exits at boot with
+        // "unknown option `schema`", which says nothing about where the option came from.
+        assert_eq!(
+            normalise_url("postgresql://u:p@localhost:25281/main?schema=public"),
+            "postgresql://u:p@localhost:25281/main"
+        );
+    }
+
+    #[test]
+    fn keeps_a_schema_that_is_not_public() {
+        // Dropping it would point the proxy at a different schema's tables without saying so. Better
+        // to fail at boot than to authenticate against the wrong `service_credential`.
+        let url = "postgresql://u:p@localhost/main?schema=tenant";
+
+        assert_eq!(normalise_url(url), url);
+    }
+
+    #[test]
+    fn leaves_every_other_parameter_alone() {
+        assert_eq!(
+            normalise_url("postgresql://u:p@localhost/main?sslmode=require&schema=public"),
+            "postgresql://u:p@localhost/main?sslmode=require"
+        );
+    }
+
+    #[test]
+    fn leaves_a_url_without_a_query_string_untouched() {
+        let url = "postgresql://u:p@localhost/main";
+
+        assert_eq!(normalise_url(url), url);
     }
 }

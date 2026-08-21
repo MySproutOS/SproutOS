@@ -1,0 +1,26 @@
+[package]
+name = "storage-proxy"
+description = "Tenant-split S3 proxy: SigV4 in, SigV4 out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+sproutos-s3-sigv4.workspace = true
+sproutos-service-credentials.workspace = true
+sproutos-tenant-auth.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

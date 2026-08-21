@@ -9,6 +9,7 @@ members = [
   "services/pg-proxy",
   "services/valkey-proxy",
   "services/search-proxy",
+  "services/storage-proxy",
 ]
 
 [workspace.package]

@@ -1,14 +1,4 @@
 import {
-  CreateAccessKeyCommand,
-  CreateUserCommand,
-  DeleteAccessKeyCommand,
-  DeleteUserCommand,
-  DeleteUserPolicyCommand,
-  IAMClient,
-  ListAccessKeysCommand,
-  PutUserPolicyCommand,
-} from "@aws-sdk/client-iam"
-import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
@@ -19,8 +9,14 @@ import {
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { encodeShortId, hashGeneratedSecret, lastFour } from "./tenant-auth"
-import { SecretNotRecoverableError } from "./valkey"
+import {
+  ACCESS_KEY_PREFIX,
+  deriveObjectStorageSecret,
+  encodeShortId,
+  hashGeneratedSecret,
+  lastFour,
+  objectStorageAccessKeyId,
+} from "./tenant-auth"
 import type { ConnectionDetails, ProvisionInput, ProvisionResult, ServiceDriver } from "./types"
 
 /**
@@ -30,46 +26,70 @@ import type { ConnectionDetails, ProvisionInput, ProvisionResult, ServiceDriver 
  * a bucket is nobody's server to run. For a customer syncing a vault between a laptop and a phone
  * that is the cheaper and duller option, which is usually the right one.
  *
- * ## One bucket per service, not one prefix per tenant
+ * ## The customer never receives a cloud credential
  *
- * A shared bucket with a per-tenant prefix needs every credential to carry a prefix condition, and
- * a policy that is one `Condition` block away from letting one customer list another's vault. A
- * bucket is the boundary S3 was built around: the policy below is scoped to a bucket ARN and cannot
- * name another one.
+ * This is the rule every backend service here follows and object storage is not an exception:
+ * **a tenant reaches their data through a proxy that knows who they are, never through the
+ * underlying system directly.** `pg-proxy` does it for Postgres, `valkey-proxy` for queues,
+ * `search-proxy` for OpenSearch, and `services/storage-proxy` does it here.
  *
- * It is also exactly the policy upstream's own MinIO setup script writes — `GetBucketLocation` and
- * `ListBucket` on the bucket, `GetObject`/`PutObject`/`DeleteObject` on its contents — so a
- * credential issued here grants what the plugin needs and nothing else.
+ * The earlier version of this file handed the customer a real AWS access key scoped by an IAM policy
+ * to one bucket. That works, and it was wrong for the same reason a per-tenant CouchDB admin was
+ * wrong: the boundary was a policy document on somebody else's system, so every question about
+ * whether one customer can see another's vault became a question about whether that policy was
+ * written correctly — and about whether the platform still agrees with what IAM was told months ago.
+ * A credential this platform issued, checked by a process this platform runs, against a row in this
+ * platform's database, is a boundary that can be reasoned about in one place.
  *
- * ## The protocol is portable; the credential is not
+ * It also removes a ceiling nobody would have found until it hit: an AWS account allows 5,000 IAM
+ * users, so the previous design supported 5,000 object-storage services and then stopped.
+ *
+ * ## What the customer gets
+ *
+ * An endpoint pointing at the storage proxy, a bucket name, and a `SPROUT…` access key with a
+ * derived secret. Their client signs SigV4 exactly as it would against AWS — `livesync` cannot tell
+ * the difference, which is the point — and the proxy verifies that signature, checks the service is
+ * active and the bucket is theirs, and re-signs the request with the platform's own credential
+ * before forwarding it.
+ *
+ * The secret is *derived*, not stored: see {@link deriveObjectStorageSecret} for why that leaves
+ * `service_credential` with nothing reversible in it.
+ *
+ * ## The protocol is portable; the backing store is not
  *
  * AWS S3, GCS's XML API, MinIO, R2 and LocalStack all speak S3, and `S3Client` talks to all of them
- * given an endpoint. What differs per cloud is *issuing a scoped credential*: IAM users and access
- * keys on AWS, HMAC keys on a service account for GCS, `mc admin user add` for MinIO. That is why
- * issuance is behind an interface and the storage half is not.
+ * given an endpoint. Because the customer now talks to the proxy rather than to any of those, moving
+ * a service between clouds no longer means reissuing the customer's credential.
  */
 
 export type ObjectStorageConfig = {
-  /** The S3 endpoint. Omitted for real AWS, where the SDK derives it from the region. */
+  /** The S3 endpoint *this process* uses. Omitted for real AWS, where the SDK derives it. */
   endpoint?: string
   region: string
   /**
-   * The endpoint a *customer* is given, which is not always the one this process uses.
+   * The endpoint a *customer* is given: `services/storage-proxy`.
    *
-   * Inside a cluster the control plane may reach MinIO at `http://minio.sproutos-system:9000` while
-   * the customer's Obsidian reaches it at `https://storage.example.com`. Defaulting the second to
-   * the first is how a customer receives a URL that resolves only from inside the platform.
+   * Never the bucket's own address. A customer pointed at S3 directly would be authenticating to
+   * AWS with a key AWS has never heard of, and the failure would look like a wrong password rather
+   * than like a misconfiguration.
    */
   publicEndpoint: string
   /**
    * Path-style addressing, i.e. `endpoint/bucket` rather than `bucket.endpoint`.
    *
-   * Required for MinIO and LocalStack, and required for *any* endpoint without a wildcard DNS
-   * record — virtual-host style asks the resolver for a hostname nobody created. `livesync` exposes
-   * the same switch as `force_path_style`, and the value handed to the customer has to match what
-   * the bucket actually answers on.
+   * Always true for the proxy — it is one hostname serving every tenant, and virtual-host style
+   * would ask the resolver for `v-01abc….storage.example.com`, a name nobody created. `livesync`
+   * exposes the same switch as `force_path_style`, and the value handed to the customer has to
+   * match what the endpoint actually answers on.
    */
   forcePathStyle: boolean
+  /**
+   * The root key the tenant secret is derived from. Shared with the proxy and nothing else.
+   *
+   * Held here rather than per-tenant in the database on purpose — {@link deriveObjectStorageSecret}
+   * explains the trade.
+   */
+  rootKey: string
 }
 
 export function objectStorageConfigFromEnv(
@@ -81,12 +101,21 @@ export function objectStorageConfigFromEnv(
   }
 
   const endpoint = env.SERVICE_OBJECT_STORAGE_ENDPOINT ?? env.AWS_ENDPOINT_URL
-  const publicEndpoint = env.SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT ?? endpoint
+  const publicEndpoint = env.SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT
 
   if (publicEndpoint === undefined || publicEndpoint === "") {
     throw new Error(
-      "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT is not set. It is the endpoint a customer's client " +
-        "connects to; defaulting it to the one this process uses hands out an in-cluster address.",
+      "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT is not set. It is the address of the storage proxy, " +
+        "which is the only thing a customer is ever given; it has no sensible default, and " +
+        "falling back to the bucket's own endpoint would hand out a credential AWS will reject.",
+    )
+  }
+
+  const rootKey = env.SERVICE_OBJECT_STORAGE_ROOT_KEY
+  if (rootKey === undefined || rootKey === "") {
+    throw new Error(
+      "SERVICE_OBJECT_STORAGE_ROOT_KEY is not set. Every tenant's S3 secret is derived from it, " +
+        "so a default would make every deployment's credentials identical and guessable.",
     )
   }
 
@@ -94,9 +123,8 @@ export function objectStorageConfigFromEnv(
     ...(endpoint === undefined || endpoint === "" ? {} : { endpoint }),
     region,
     publicEndpoint,
-    // Defaults on. Off is correct only for real AWS S3 with its wildcard DNS, and getting it wrong
-    // in that direction produces a hostname that does not resolve rather than a 403 — a failure the
-    // customer reads as "the platform is down".
+    rootKey,
+    // Defaults on, and off is almost certainly a mistake now that the endpoint is the proxy.
     forcePathStyle: env.SERVICE_OBJECT_STORAGE_PATH_STYLE !== "false",
   }
 }
@@ -107,31 +135,34 @@ export function objectStorageConfigFromEnv(
  * S3 bucket names are DNS labels: lowercase, 3–63 characters, no underscores, and they may not
  * start with a digit under strict validation. The short id is 26 characters of lowercase base32, so
  * `v-` plus it is 28 and always starts with a letter.
+ *
+ * The proxy computes this name from the service it resolved the access key to, and compares it with
+ * the bucket in the request path. That comparison is the tenant boundary.
  */
 export function bucketNameFor(backendServiceId: string): string {
   return `v-${encodeShortId(backendServiceId)}`
-}
-
-/** The IAM user for a service. Distinct from the bucket so neither name constrains the other. */
-export function principalNameFor(backendServiceId: string): string {
-  return `sproutos-${encodeShortId(backendServiceId)}`
 }
 
 /**
  * The origins a vault client sends.
  *
  * Obsidian is not a web page: desktop sends `app://obsidian.md` and mobile sends
- * `capacitor://localhost`. A bucket that does not name them refuses the preflight, and the plugin
+ * `capacitor://localhost`. An endpoint that does not name them refuses the preflight, and the plugin
  * reports a failure the customer cannot tell from a wrong key.
+ *
+ * Set on the bucket *and* answered by the proxy. The bucket's own CORS configuration is no longer
+ * what a browser sees — the proxy is the origin now — but leaving it correct means a bucket stays
+ * usable if it is ever addressed directly by an operator.
  */
 export const VAULT_ORIGINS = ["app://obsidian.md", "capacitor://localhost", "http://localhost"]
 
 /**
- * What a bucket-scoped credential may do.
+ * What the platform's own credential may do to a tenant bucket.
  *
- * Copied from upstream's own MinIO policy rather than invented, so a credential issued here grants
- * what the plugin uses and nothing more. Two statements because the bucket and its contents are
- * different ARNs — `ListBucket` on `bucket/*` silently matches nothing.
+ * No longer attached to a per-tenant IAM user — there are none. It is kept because it is the exact
+ * set of operations the proxy is allowed to perform on a customer's behalf, and `tofu/` attaches it
+ * to the proxy's role scoped to the bucket prefix. Two statements because the bucket and its
+ * contents are different ARNs: `ListBucket` on `bucket/*` silently matches nothing.
  */
 export function bucketPolicy(bucket: string): string {
   return JSON.stringify({
@@ -151,103 +182,30 @@ export function bucketPolicy(bucket: string): string {
   })
 }
 
-/** A credential scoped to one bucket. The half that differs per cloud. */
+/** A credential the customer uses against the proxy. */
 export type BucketCredential = { accessKeyId: string; secretAccessKey: string }
 
-export type CredentialIssuer = {
-  issue: (input: { principal: string; bucket: string }) => Promise<BucketCredential>
-  /** Replace the credential, invalidating the previous one. */
-  rotate: (input: { principal: string; bucket: string }) => Promise<BucketCredential>
-  /** Take access away without destroying the bucket. */
-  revoke: (input: { principal: string }) => Promise<void>
-  /** Give it back. */
-  restore: (input: { principal: string; bucket: string }) => Promise<void>
-  destroy: (input: { principal: string }) => Promise<void>
+/**
+ * The credential for one service at one version.
+ *
+ * Pure. There is nothing to call and nothing to fail: the identity is the service id, the secret
+ * falls out of the root key, and the only durable record is the `service_credential` row the driver
+ * writes so that a revoked version can be told from a live one.
+ */
+export async function tenantCredential(
+  rootKey: string,
+  backendServiceId: string,
+  version: number,
+): Promise<BucketCredential> {
+  const accessKeyId = objectStorageAccessKeyId(backendServiceId, version)
+  return { accessKeyId, secretAccessKey: await deriveObjectStorageSecret(rootKey, accessKeyId) }
 }
 
-/**
- * Credentials as IAM users with an inline bucket policy.
- *
- * Works against real AWS and against LocalStack, which is how it is tested. **It does not scale
- * without bound and that is worth saying here rather than discovering it**: an AWS account allows
- * 5,000 IAM users, so this supports 5,000 buckets and then stops. The replacement when that matters
- * is one role plus `AssumeRole` with a session policy, which issues short-lived credentials instead
- * — a different shape, because the customer's key would then expire and `livesync` stores a static
- * one.
- */
-export function iamCredentialIssuer(client: IAMClient): CredentialIssuer {
-  async function freshKey(principal: string): Promise<BucketCredential> {
-    // Two keys per user is the IAM limit, so the old one goes before the new one is asked for.
-    const existing = await client.send(new ListAccessKeysCommand({ UserName: principal }))
-    for (const key of existing.AccessKeyMetadata ?? []) {
-      if (key.AccessKeyId !== undefined) {
-        await client.send(
-          new DeleteAccessKeyCommand({ UserName: principal, AccessKeyId: key.AccessKeyId }),
-        )
-      }
-    }
-
-    const created = await client.send(new CreateAccessKeyCommand({ UserName: principal }))
-    const key = created.AccessKey
-
-    if (key?.AccessKeyId === undefined || key.SecretAccessKey === undefined) {
-      throw new Error(`IAM returned no access key for ${principal}`)
-    }
-
-    return { accessKeyId: key.AccessKeyId, secretAccessKey: key.SecretAccessKey }
-  }
-
-  async function attach(principal: string, bucket: string): Promise<void> {
-    await client.send(
-      new PutUserPolicyCommand({
-        UserName: principal,
-        PolicyName: "sproutos-bucket",
-        PolicyDocument: bucketPolicy(bucket),
-      }),
-    )
-  }
-
-  return {
-    issue: async ({ principal, bucket }) => {
-      await client.send(new CreateUserCommand({ UserName: principal }))
-      await attach(principal, bucket)
-      return await freshKey(principal)
-    },
-    rotate: async ({ principal, bucket }) => {
-      await attach(principal, bucket)
-      return await freshKey(principal)
-    },
-    /*
-      Revoke by removing the policy, not by deleting the key.
-
-      The customer's URI carries the key, and `resume` has to leave that URI working — the same
-      constraint the CouchDB driver has. A user with no policy can authenticate and do nothing,
-      which is a suspension; a user with no key cannot authenticate, which is a rotation the
-      customer was not told about.
-    */
-    revoke: async ({ principal }) => {
-      await client.send(
-        new DeleteUserPolicyCommand({ UserName: principal, PolicyName: "sproutos-bucket" }),
-      )
-    },
-    restore: async ({ principal, bucket }) => {
-      await attach(principal, bucket)
-    },
-    destroy: async ({ principal }) => {
-      const existing = await client.send(new ListAccessKeysCommand({ UserName: principal }))
-      for (const key of existing.AccessKeyMetadata ?? []) {
-        if (key.AccessKeyId !== undefined) {
-          await client.send(
-            new DeleteAccessKeyCommand({ UserName: principal, AccessKeyId: key.AccessKeyId }),
-          )
-        }
-      }
-      await client
-        .send(new DeleteUserPolicyCommand({ UserName: principal, PolicyName: "sproutos-bucket" }))
-        .catch(() => undefined)
-      await client.send(new DeleteUserCommand({ UserName: principal }))
-    },
-  }
+/** The version encoded in an access key id, or 0 if it is not one of ours. */
+export function versionOf(accessKeyId: string): number {
+  if (!accessKeyId.startsWith(ACCESS_KEY_PREFIX)) return 0
+  const version = Number(accessKeyId.slice(-2))
+  return Number.isInteger(version) ? version : 0
 }
 
 /**
@@ -278,10 +236,9 @@ export function objectStorageUri(input: {
 export function objectStorageDriver(
   db: Kysely<DB>,
   config: ObjectStorageConfig,
-  issuer: CredentialIssuer,
   s3: S3Client,
 ): ServiceDriver {
-  function details(backendServiceId: string): ConnectionDetails {
+  function details(backendServiceId: string, accessKeyId: string): ConnectionDetails {
     const endpoint = new URL(config.publicEndpoint)
     return {
       host: endpoint.host,
@@ -289,14 +246,34 @@ export function objectStorageDriver(
         endpoint.port === "" ? (endpoint.protocol === "https:" ? 443 : 80) : endpoint.port,
       ),
       database: bucketNameFor(backendServiceId),
-      username: principalNameFor(backendServiceId),
+      username: accessKeyId,
     }
   }
 
-  async function recordCredential(
-    backendServiceId: string,
-    credential: BucketCredential,
-  ): Promise<void> {
+  /**
+   * The next credential version for a service.
+   *
+   * Read from the highest version ever issued, including revoked ones, so a rotation never reuses an
+   * identifier a client might still be retrying with — which would silently make a revoked key work
+   * again.
+   */
+  async function nextVersion(backendServiceId: string): Promise<number> {
+    const issued = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", backendServiceId)
+      .execute()
+
+    return Math.max(0, ...issued.map((row) => versionOf(row.username))) + 1
+  }
+
+  async function issue(backendServiceId: string): Promise<BucketCredential> {
+    const credential = await tenantCredential(
+      config.rootKey,
+      backendServiceId,
+      await nextVersion(backendServiceId),
+    )
+
     await db
       .updateTable("serviceCredential")
       .set({ revokedAt: new Date() })
@@ -310,16 +287,31 @@ export function objectStorageDriver(
         id: v7(),
         backendServiceId,
         username: credential.accessKeyId,
+        // Hashed, not sealed. The proxy re-derives the secret from the root key; this row exists so
+        // that a *revoked* version can be recognised, and so the stored shape matches every other
+        // credential kind.
         secretHash: await hashGeneratedSecret(credential.secretAccessKey),
         lastFour: lastFour(credential.secretAccessKey),
         purpose: "tenant",
       })
       .execute()
+
+    return credential
+  }
+
+  function uriFor(backendServiceId: string, credential: BucketCredential): string {
+    return objectStorageUri({
+      publicEndpoint: config.publicEndpoint,
+      bucket: bucketNameFor(backendServiceId),
+      region: config.region,
+      accessKeyId: credential.accessKeyId,
+      secretAccessKey: credential.secretAccessKey,
+      forcePathStyle: config.forcePathStyle,
+    })
   }
 
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {
     const bucket = bucketNameFor(input.backendServiceId)
-    const principal = principalNameFor(input.backendServiceId)
 
     await s3.send(new CreateBucketCommand({ Bucket: bucket }))
 
@@ -349,8 +341,7 @@ export function objectStorageDriver(
       }),
     )
 
-    const credential = await issuer.issue({ principal, bucket })
-    await recordCredential(input.backendServiceId, credential)
+    const credential = await issue(input.backendServiceId)
 
     await db
       .updateTable("backendService")
@@ -359,42 +350,51 @@ export function objectStorageDriver(
       .execute()
 
     return {
-      ...details(input.backendServiceId),
-      connectionUri: objectStorageUri({
-        publicEndpoint: config.publicEndpoint,
-        bucket,
-        region: config.region,
-        accessKeyId: credential.accessKeyId,
-        secretAccessKey: credential.secretAccessKey,
-        forcePathStyle: config.forcePathStyle,
-      }),
+      ...details(input.backendServiceId, credential.accessKeyId),
+      connectionUri: uriFor(input.backendServiceId, credential),
     }
   }
 
-  function connectionUri(backendServiceId: string): Promise<string> {
-    return Promise.reject(new SecretNotRecoverableError(backendServiceId))
+  /**
+   * The live connection URI, reconstructed rather than stored.
+   *
+   * The one place where deriving the secret buys something beyond safety: every other driver here
+   * has to answer this with {@link SecretNotRecoverableError}, because it only ever held a hash. A
+   * customer who loses their key can be shown it again without a rotation that breaks the device
+   * still holding the old one.
+   */
+  async function connectionUri(backendServiceId: string): Promise<string> {
+    const live = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .orderBy("createdAt", "desc")
+      .executeTakeFirst()
+
+    if (live === undefined) {
+      throw new Error(`${backendServiceId} has no live object-storage credential`)
+    }
+
+    return uriFor(backendServiceId, {
+      accessKeyId: live.username,
+      secretAccessKey: await deriveObjectStorageSecret(config.rootKey, live.username),
+    })
   }
 
   async function rotateCredentials(backendServiceId: string): Promise<string> {
-    const bucket = bucketNameFor(backendServiceId)
-    const credential = await issuer.rotate({
-      principal: principalNameFor(backendServiceId),
-      bucket,
-    })
-    await recordCredential(backendServiceId, credential)
-
-    return objectStorageUri({
-      publicEndpoint: config.publicEndpoint,
-      bucket,
-      region: config.region,
-      accessKeyId: credential.accessKeyId,
-      secretAccessKey: credential.secretAccessKey,
-      forcePathStyle: config.forcePathStyle,
-    })
+    return uriFor(backendServiceId, await issue(backendServiceId))
   }
 
+  /**
+   * Suspension is a row, not a permission change.
+   *
+   * The same correction Postgres needed. Revoking access at the cloud provider means the platform's
+   * belief about a service and the provider's belief are two facts that can disagree, and the one
+   * the customer experiences is the provider's. The proxy reads `backend_service.status` on the way
+   * through, so this is the only place the answer lives.
+   */
   async function suspend(backendServiceId: string): Promise<void> {
-    await issuer.revoke({ principal: principalNameFor(backendServiceId) })
     await db
       .updateTable("backendService")
       .set({ status: "suspended", updatedAt: new Date() })
@@ -403,10 +403,6 @@ export function objectStorageDriver(
   }
 
   async function resume(backendServiceId: string): Promise<void> {
-    await issuer.restore({
-      principal: principalNameFor(backendServiceId),
-      bucket: bucketNameFor(backendServiceId),
-    })
     await db
       .updateTable("backendService")
       .set({ status: "active", updatedAt: new Date() })
@@ -415,7 +411,7 @@ export function objectStorageDriver(
   }
 
   /**
-   * Empty the bucket, then delete it, then the principal.
+   * Empty the bucket, then delete it.
    *
    * S3 refuses to delete a bucket with anything in it, so a teardown that skips the emptying leaves
    * a bucket the customer is still billed for and a `backend_service` row nobody can delete. The
@@ -436,8 +432,14 @@ export function objectStorageDriver(
     }
 
     await s3.send(new DeleteBucketCommand({ Bucket: bucket }))
-    await issuer.destroy({ principal: principalNameFor(backendServiceId) })
 
+    /*
+      Revoking the rows is what actually ends access.
+
+      A derived secret cannot be deleted — it is a function of the root key and an identifier that
+      still exists. So the proxy's lookup is the revocation: no live `service_credential` row means
+      no tenant to resolve, whatever the customer's client still has saved.
+    */
     await db
       .updateTable("serviceCredential")
       .set({ revokedAt: new Date() })
@@ -450,7 +452,17 @@ export function objectStorageDriver(
     kind: "object_storage",
     connectionUri,
     destroy,
-    details: (id) => Promise.resolve(details(id)),
+    details: async (id) => {
+      const live = await db
+        .selectFrom("serviceCredential")
+        .select("username")
+        .where("backendServiceId", "=", id)
+        .where("revokedAt", "is", null)
+        .orderBy("createdAt", "desc")
+        .executeTakeFirst()
+
+      return details(id, live?.username ?? objectStorageAccessKeyId(id, 1))
+    },
     provision,
     resume,
     rotateCredentials,
@@ -461,15 +473,14 @@ export function objectStorageDriver(
 /** The driver, wired from the environment. */
 export function objectStorageDriverFromEnv(db: Kysely<DB>): ServiceDriver {
   const config = objectStorageConfigFromEnv()
-  const shared = {
-    region: config.region,
-    ...(config.endpoint === undefined ? {} : { endpoint: config.endpoint }),
-  }
 
   return objectStorageDriver(
     db,
     config,
-    iamCredentialIssuer(new IAMClient(shared)),
-    new S3Client({ ...shared, forcePathStyle: config.forcePathStyle }),
+    new S3Client({
+      region: config.region,
+      ...(config.endpoint === undefined ? {} : { endpoint: config.endpoint }),
+      forcePathStyle: true,
+    }),
   )
 }

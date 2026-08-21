@@ -16,6 +16,8 @@
 //! Implemented rather than taken from the AWS SDK because the SDK signs and does not verify: it has
 //! no notion of "is this signature the one this secret would have produced", which is the whole job.
 
+pub mod tenant;
+
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;

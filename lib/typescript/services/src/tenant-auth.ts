@@ -185,3 +185,67 @@ export function lastFour(secret: string): string {
 export function tenantIndexPrefix(backendServiceId: string): string {
   return `t${encodeShortId(backendServiceId)}_`
 }
+
+/**
+ * Prefix marking an S3 access key id as this platform's. Mirrors `ACCESS_KEY_PREFIX` in
+ * `lib/rust/s3-sigv4`.
+ */
+export const ACCESS_KEY_PREFIX = "SPROUT"
+
+/**
+ * The S3 access key id for one object-storage service and credential version.
+ *
+ * Uppercase because that is the shape every S3 client and every piece of documentation shows, and a
+ * lowercase id gets "corrected" by somebody eventually. The version is part of the identifier so
+ * that rotation changes the derived secret — see {@link deriveObjectStorageSecret}.
+ */
+export function objectStorageAccessKeyId(backendServiceId: string, version: number): string {
+  return `${ACCESS_KEY_PREFIX}${encodeShortId(backendServiceId).toUpperCase()}${String(version).padStart(2, "0")}`
+}
+
+/**
+ * The S3 secret for an access key id, derived from the platform's root key.
+ *
+ * **Why derived rather than stored.** Verifying a SigV4 signature needs the secret itself: the
+ * client sends an HMAC over a canonicalised request, and the only way to check it is to recompute
+ * that HMAC. So `services/storage-proxy` must be able to obtain every tenant's secret — that is
+ * inherent to the protocol, and no storage choice avoids it.
+ *
+ * What a storage choice decides is what a *database* leak is worth. Sealing each secret with KMS
+ * would put a reversible ciphertext in `service_credential` for every tenant; deriving puts nothing
+ * there at all. `service_credential` keeps the access key id and a hash, exactly like every other
+ * credential here, and a dump of it stays unreplayable.
+ *
+ * Rotation bumps the version, which changes the id and therefore the secret, without changing which
+ * tenant the id resolves to and without any state to delete.
+ *
+ * Mirrors `derive_secret` in `lib/rust/s3-sigv4`; `fixtures/tenant-secret.json` in that crate is the
+ * contract both sides assert against.
+ */
+export async function deriveObjectStorageSecret(
+  rootKey: string,
+  accessKeyId: string,
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(rootKey),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  )
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(accessKeyId))
+
+  let out = ""
+  let accumulator = 0
+  let bits = 0
+  for (const byte of new Uint8Array(mac)) {
+    accumulator = (accumulator << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      bits -= 5
+      out += ALPHABET[(accumulator >> bits) & 0x1f]
+    }
+  }
+  if (bits > 0) out += ALPHABET[(accumulator << (5 - bits)) & 0x1f]
+  return out
+}
