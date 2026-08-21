@@ -176,6 +176,32 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       startedAt: new Date(),
     })
 
+    /*
+      A finished Job is deleted before the next attempt, and this is what made a retry possible.
+
+      The Job is named from the deployment so a handler that resumes mid-build addresses the same
+      Job rather than paying for the build twice. That is right while it is *running*. Once it has
+      finished, `spec.template` is immutable and the server refuses the apply outright:
+
+          Job.batch "build-<id>" is invalid: spec.template: Invalid value: …
+
+      So a build that failed could never be retried. The queue dutifully tried five times, every
+      attempt was rejected by the API server before a pod existed, and the deployment
+      dead-lettered under `Build failed` — a message about a build that had not been attempted.
+
+      Only when it has finished. A Job still running is left alone, which keeps the property the
+      name was chosen for.
+    */
+    const existing = await kube.get<JobStatus>(path)
+
+    if (shouldRecreate(existing)) {
+      await kube.remove(path)
+      // The delete is propagated in the background, so the name is not free the instant it returns.
+      // Applying into a terminating Job fails with `object is being deleted`, which reads as a
+      // different problem entirely.
+      await waitForAbsence(kube, path, signal)
+    }
+
     await kube.apply(path, buildJob(spec, BUILD_NAMESPACE))
 
     const deadline = Date.now() + WATCH_BUDGET_MS
@@ -313,4 +339,49 @@ export async function buildFailureReason(
 
 function trim(value: string): string {
   return value.trim().slice(0, FAILURE_REASON_LIMIT)
+}
+
+/**
+ * Whether the Job at this name has to be replaced rather than updated.
+ *
+ * A finished Job must be: `spec.template` is immutable, so applying a new one is refused by the API
+ * server before a pod exists. A running Job must not be — leaving it alone is the whole reason the
+ * Job is named from the deployment.
+ *
+ * Absent is neither: there is nothing to delete, and the apply creates it.
+ */
+export function shouldRecreate(existing: JobStatus | undefined): boolean {
+  if (existing === undefined) return false
+  return (existing.status?.succeeded ?? 0) > 0 || (existing.status?.failed ?? 0) > 0
+}
+
+/** How long to wait for a deleted Job's name to become free. */
+const DELETION_TIMEOUT_MS = 30_000
+
+/**
+ * Wait until the object at `path` is gone.
+ *
+ * `DELETE` with background propagation returns as soon as the deletion is *accepted*, and the name
+ * stays taken while the pods are cleaned up. Applying into that window fails with
+ * `object is being deleted: … already exists`, which names the object rather than the race and
+ * sends the reader looking for a second writer.
+ *
+ * Gives up rather than looping forever: a Job that will not go away is a cluster problem, and the
+ * apply that follows will say so in the cluster's own words.
+ */
+export async function waitForAbsence(
+  kube: Pick<ReturnType<typeof createKubeClient>, "get">,
+  path: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const deadline = Date.now() + DELETION_TIMEOUT_MS
+
+  // `signal.aborted` as well as the deadline: `sleep` *resolves* on abort rather than throwing, so
+  // a loop that only checked the clock would spin as fast as the API server could answer for the
+  // rest of its budget — during a shutdown, which is exactly when it should stop.
+  while (Date.now() < deadline && signal?.aborted !== true) {
+    const current = await kube.get<JobStatus>(path)
+    if (current === undefined) return
+    await sleep(500, signal)
+  }
 }
