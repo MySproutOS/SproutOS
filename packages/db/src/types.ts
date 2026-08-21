@@ -264,6 +264,7 @@ export interface Cluster {
   kubernetesVersion: string
   name: string
   regionId: string
+  registry: string | null
   status: Generated<string>
   updatedAt: Generated<Timestamp>
 }
@@ -377,6 +378,7 @@ export interface DatabaseRole {
 }
 
 export interface Deployment {
+  clusterId: string | null
   containerConcurrency: Generated<number>
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
@@ -726,6 +728,7 @@ export interface Region {
   displayName: string
   id: string
   isActive: Generated<boolean>
+  provider: Generated<string>
   updatedAt: Generated<Timestamp>
 }
 
