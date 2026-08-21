@@ -3,6 +3,7 @@ import { observabilityConfigured } from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import { Redis } from "ioredis"
 import { type DispatchResult, dispatchQueues, type MasterQueueClient } from "./dispatch"
+import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
@@ -63,6 +64,15 @@ export const JOB_KINDS = {
   workflowRun: WORKFLOW_RUN_KIND,
   dispatchQueues: "queue.dispatch",
   tearDownProject: TEARDOWN_KIND,
+  /*
+    The GitHub webhook kinds, declared here as well as produced there.
+
+    `handlers.test.ts` asserts that every registered handler is under a declared kind — "a handler
+    under a kind no caller can enqueue is dead code that reads as coverage". Spreading them in is
+    what keeps that true, and `webhooks.ts` builds its dispatch from the same constant, so the
+    receiver, the registry and the handlers cannot drift into three spellings of one string.
+  */
+  ...GITHUB_EVENT_KINDS,
 } as const
 
 /**
@@ -249,6 +259,14 @@ function describeUnstartable(result: DispatchResult): string {
 }
 
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
+  /*
+    The GitHub webhook handlers.
+
+    Spread rather than listed, because the receiver in `webhooks.ts` decides the kinds and this is
+    the other side of that contract — `github-events.ts` owns both the names and the work. Five
+    kinds were being queued with no handler at all.
+  */
+  ...GITHUB_EVENT_HANDLERS,
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.chargeUsage]: chargeUsageJob,

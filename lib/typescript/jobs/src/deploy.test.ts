@@ -322,8 +322,7 @@ describe("a deployment with no image yet", () => {
     if (!reachable) skip()
 
     const { deploymentId } = await seed({ imageUri: null })
-    const run = () =>
-      deployRevision()({ payload: { deploymentId }, attempt: 1 } as never, context)
+    const run = () => deployRevision()({ payload: { deploymentId }, attempt: 1 } as never, context)
 
     await run()
     await run()

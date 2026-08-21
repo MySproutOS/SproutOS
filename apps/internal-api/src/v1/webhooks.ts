@@ -1,4 +1,5 @@
 import { crudBackgroundJob } from "@lib/dao"
+import { GITHUB_EVENT_KINDS } from "@lib/jobs"
 import { db, type JsonObject } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
@@ -102,15 +103,15 @@ function jobKind(event: string): string {
   switch (event) {
     case "installation":
     case "installation_repositories":
-      return "github.installation.sync"
+      return GITHUB_EVENT_KINDS.installationSync
     case "push":
-      return "github.push"
+      return GITHUB_EVENT_KINDS.push
     case "pull_request":
-      return "github.pull_request"
+      return GITHUB_EVENT_KINDS.pullRequest
     case "ping":
-      return "github.ping"
+      return GITHUB_EVENT_KINDS.ping
     default:
-      return "github.unhandled"
+      return GITHUB_EVENT_KINDS.unhandled
   }
 }
 
