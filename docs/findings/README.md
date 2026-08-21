@@ -51,5 +51,11 @@ anyone expects.**
 
 Not one of them was a manifest problem. A Pod Security Standard on one, a ResourceQuota forbidding a
 priority class on another, a CNI that accepts NetworkPolicy and ignores it on a third, a node service
-account that cannot pull from the registry in the same project. Each was found by applying the same
-files somewhere new and watching a different thing break.
+account that cannot pull from the registry in the same project, an account policy that forbids an
+instance type and says so fifteen minutes later. Each was found by applying the same files somewhere
+new and watching a different thing break.
+
+**All three clouds pass it.** GKE on Dataplane V2, AKS on Azure CNI with Calico, EKS with the VPC CNI
+policy engine enabled — same script, same assertions, same single-label URL, tenant application
+reachable through the gateway and not reachable directly. The EKS cluster was destroyed immediately
+afterwards; its control plane bills whether or not anything runs on it.
