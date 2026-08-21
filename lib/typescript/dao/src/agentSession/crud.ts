@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely, Selectable, Transaction } from "kysely"
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely"
 import { v7 } from "uuid"
 
 export type AgentEventRow = {
@@ -7,6 +7,15 @@ export type AgentEventRow = {
   payload: unknown
   agentTurnId?: string | null
 }
+
+/**
+ * How many times `openTurn` re-derives its sequence after losing the race.
+ *
+ * Three, because the losers of a collision are bounded by how many messages a single session has in
+ * flight at once, and that is a person typing. A number large enough to matter here would mean
+ * something other than concurrency is wrong.
+ */
+const RETRIES = 3
 
 export function crudAgentSession(db: Kysely<DB>) {
   async function createSession(input: {
@@ -30,33 +39,50 @@ export function crudAgentSession(db: Kysely<DB>) {
   /**
    * Open a turn and take its sequence number in one statement.
    *
-   * `agent_turn_session_seq_key` is a unique constraint, so two messages sent at once must not
-   * both read the same max and both write it. Deriving the sequence inside the INSERT lets the
-   * database settle the race: the loser hits the constraint and retries rather than silently
-   * overwriting the winner's turn.
+   * `agent_turn_session_seq_key` is a unique constraint, so two messages sent at once must not both
+   * read the same max and both write it. Deriving the sequence inside the INSERT lets the database
+   * settle that race: the loser hits the constraint, and `RETRIES` below is what turns it into a
+   * second attempt rather than a 500.
+   *
+   * **`max(seq) + 1`, not `max(seq)`.** It was the latter, which is 0 on an empty session — right
+   * by accident for the first turn — and then returns the *existing* maximum forever after. So
+   * every session accepted exactly one turn and the second message failed with
+   * `duplicate key value violates unique constraint "agent_turn_session_seq_key"`, a 500 with no
+   * user-facing explanation. `max(...) + 1` is NULL on an empty set, which is what makes the
+   * `coalesce` give 0 for the first turn and n+1 for every one after it.
    */
   async function openTurn(input: {
     agentSessionId: string
     role: "user" | "assistant" | "system"
     inputText?: string | null
   }): Promise<Selectable<DB["agentTurn"]>> {
-    return await db
-      .insertInto("agentTurn")
-      .values((eb) => ({
-        id: v7(),
-        agentSessionId: input.agentSessionId,
-        role: input.role,
-        inputText: input.inputText ?? null,
-        seq: eb
-          .selectFrom("agentTurn as prior")
-          .select((inner) =>
-            inner.fn.coalesce(inner.fn.max("prior.seq"), inner.lit(0)).as("maxSeq"),
-          )
-          .where("prior.agentSessionId", "=", input.agentSessionId)
-          .$castTo<number>(),
-      }))
-      .returningAll()
-      .executeTakeFirstOrThrow()
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await db
+          .insertInto("agentTurn")
+          .values((eb) => ({
+            id: v7(),
+            agentSessionId: input.agentSessionId,
+            role: input.role,
+            inputText: input.inputText ?? null,
+            seq: eb
+              .selectFrom("agentTurn as prior")
+              .select((inner) =>
+                inner.fn.coalesce(sql<number>`max(prior.seq) + 1`, inner.lit(0)).as("nextSeq"),
+              )
+              .where("prior.agentSessionId", "=", input.agentSessionId)
+              .$castTo<number>(),
+          }))
+          .returningAll()
+          .executeTakeFirstOrThrow()
+      } catch (error) {
+        // Only the sequence collision, and only a bounded number of times. Retrying anything else
+        // would turn a schema error into a slow schema error, and retrying forever would turn a
+        // genuinely stuck session into a spinning request.
+        const collided = String(error).includes("agent_turn_session_seq_key")
+        if (!collided || attempt >= RETRIES) throw error
+      }
+    }
   }
 
   async function closeTurn(
