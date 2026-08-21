@@ -1,4 +1,4 @@
-import { BATCH_SIZE, expireHolds, rollUpUsage } from "@lib/billing"
+import { BATCH_SIZE, chargeUsage, expireHolds, formatMicroUsd, rollUpUsage } from "@lib/billing"
 import { observabilityConfigured } from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import type { DB } from "@sproutos/db"
@@ -47,6 +47,7 @@ function tenMinuteWindow(now: Date): string {
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   rollUpUsage: "billing.roll_up_usage",
+  chargeUsage: "billing.charge_usage",
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   sweepExpired: "platform.retention_sweep",
@@ -162,9 +163,30 @@ const retentionSweep: JobHandler = async (_job, { db }) => {
   for (const { label, deleted } of swept) console.info(`[jobs] retention: ${deleted} ${label}`)
 }
 
+/**
+ * Post the ledger charges for usage that has been rolled up.
+ *
+ * Separate from `rollUpUsage` rather than folded into it, because the two fail differently and
+ * should be retried differently: rolling up is arithmetic over rows this platform wrote, and
+ * charging touches balances. A rollup that has to be retried ten times must not post ten charges.
+ *
+ * Runs after the rollup on the same schedule. `chargeUsage` claims only grains whose quantity
+ * exceeds what has already been charged, so ordering between the two is a matter of latency rather
+ * than correctness.
+ */
+const chargeUsageJob: JobHandler = async (_job, { db }) => {
+  const result = await chargeUsage(db)
+  if (result.rollups > 0) {
+    console.info(
+      `[jobs] charged ${formatMicroUsd(result.chargedMicroUsd)} across ${result.organizations} organization(s), ${result.rollups} grain(s)`,
+    )
+  }
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
+  [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.sweepExpired]: retentionSweep,
@@ -205,6 +227,22 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.rollUpUsage,
     idempotencyKey: `${JOB_KINDS.rollUpUsage}:${tenMinuteWindow(now)}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Every ten minutes too, right behind the rollup.
+
+      The two are separate jobs because they fail differently: rolling up is arithmetic over rows
+      this platform wrote, and charging moves balances. A rollup retried ten times must not post ten
+      charges, and keeping them apart is what makes each retry policy sane on its own.
+
+      Ordering between them is latency, not correctness. `chargeUsage` claims grains whose quantity
+      exceeds what has already been charged, so a grain the rollup writes after the charge has run
+      is simply picked up ten minutes later — the same path a late-arriving event takes.
+    */
+    kind: JOB_KINDS.chargeUsage,
+    idempotencyKey: `${JOB_KINDS.chargeUsage}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

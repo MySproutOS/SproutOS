@@ -1,0 +1,288 @@
+import { createHash } from "node:crypto"
+import type { DB } from "@sproutos/db"
+import { sql, type Kysely } from "kysely"
+import { postWithin } from "./ledger"
+import { type MicroUsd, overhead, rateTimesQuantity } from "./money"
+import { NoActivePriceBookError } from "./usage"
+
+/**
+ * Turn measured usage into money the customer actually owes.
+ *
+ * ## The missing link
+ *
+ * The money path had four steps and three of them existed. A cgroup sample became a `usage_event`,
+ * `rollUpUsage` collapsed events into `usage_rollup`, and `rateProjectsForOrganization` multiplied
+ * quantity by rate at read time so a dashboard could show a cost. Nothing ever posted a ledger
+ * entry. `usage_rollup.rated_transaction_id` — the column whose whole purpose is to record which
+ * transaction charged a grain — had no writer anywhere in the repository, and every organization's
+ * balance was exactly what they had topped up, no matter how much compute they had burned.
+ *
+ * Read-time rating is right for *display*, and the note on `rateProjectsForOrganization` says why:
+ * a stored cost is wrong the moment a rate changes. It is not a charge. A prepaid platform whose
+ * balances never fall is a platform giving compute away.
+ *
+ * ## Charging exactly one grain
+ *
+ * `rollUpUsage` writes the same usage at minute, hour **and** day grain. Summing across buckets
+ * charges everything three times, and nothing about the result looks wrong — the arithmetic is
+ * consistent, the ledger balances, and the customer is billed triple.
+ *
+ * This charges the **hour** grain and nothing else, and `assertSingleGrain` makes that structural
+ * rather than a matter of remembering. Hour rather than day because a prepaid balance that only
+ * moves once a day cannot stop work that has already run out of credit; hour rather than minute
+ * because sixty times the transactions buys nothing.
+ *
+ * A consequence worth stating plainly: `rated_transaction_id` is meaningful **only on hour rows**.
+ * The minute and day rows are other views of the same events and stay null forever. That reads like
+ * "never charged" to anyone who does not know, so it is written here rather than left to be
+ * rediscovered from a confusing query.
+ *
+ * ## Why this posts rather than spends
+ *
+ * `spend` refuses when the balance will not cover the charge. That is right for a top-up-time
+ * decision and wrong here: this compute has already been consumed. Refusing to record it does not
+ * un-run the pods — it loses the revenue and leaves the ledger disagreeing with the world. The
+ * balance is allowed to go negative, and stopping a customer *before* they overdraw is what holds
+ * (`placeHold`) and the balance checks on expensive operations are for.
+ */
+
+/** The grain that gets charged. See the note above. */
+export const CHARGED_BUCKET = "hour"
+
+/** How many rollup rows one run claims. */
+export const CHARGE_BATCH_SIZE = 2000
+
+/**
+ * A short, stable key for one charge.
+ *
+ * SHA-256 of the sorted `id=quantity` pairs, truncated. Sorted because `skip locked` makes the
+ * claim order nondeterministic and the same work must produce the same key; truncated because
+ * `idempotency_key` is one column and an organization with two thousand grains would otherwise
+ * produce a key tens of kilobytes long.
+ */
+export function chargeKey(watermark: readonly string[]): string {
+  return createHash("sha256").update(watermark.slice().sort().join("\n")).digest("hex").slice(0, 32)
+}
+
+export type ChargeResult = {
+  /** Organizations charged. */
+  organizations: number
+  /** Rollup rows stamped. */
+  rollups: number
+  /** Total posted, overhead included. */
+  chargedMicroUsd: MicroUsd
+}
+
+/**
+ * Guard against ever summing more than one grain.
+ *
+ * Called with the rows about to be charged. A row of any other bucket in the set means a query
+ * changed somewhere and the customer is about to be billed two or three times for the same
+ * seconds — the one bug in this file that produces no error of its own.
+ */
+export function assertSingleGrain(buckets: readonly string[]): void {
+  const distinct = [...new Set(buckets)]
+  if (distinct.length > 1 || (distinct[0] !== undefined && distinct[0] !== CHARGED_BUCKET)) {
+    throw new MultipleGrainsError(distinct)
+  }
+}
+
+export class MultipleGrainsError extends Error {
+  override readonly name = "MultipleGrainsError"
+
+  constructor(buckets: string[]) {
+    super(
+      `Refusing to charge buckets [${buckets.join(", ")}]. The same usage is rolled up at ` +
+        `minute, hour and day, so charging more than "${CHARGED_BUCKET}" bills it more than once.`,
+    )
+  }
+}
+
+/**
+ * Charge every organization for its unbilled hours.
+ *
+ * `now` is a parameter so a test can place the boundary; the grace it implies is the rollup's, not
+ * a second one — `rollUpUsage` already refuses to roll up an event younger than
+ * `LATE_ARRIVAL_GRACE_MS`, so a row that exists here is a row whose window has closed.
+ */
+export async function chargeUsage(
+  db: Kysely<DB>,
+  options: { now?: Date; batchSize?: number } = {},
+): Promise<ChargeResult> {
+  const now = options.now ?? new Date()
+  const batchSize = options.batchSize ?? CHARGE_BATCH_SIZE
+
+  const book = await db
+    .selectFrom("priceBook")
+    .select(["id", "overheadBps"])
+    .where("effectiveAt", "<=", now)
+    .orderBy("effectiveAt", "desc")
+    .orderBy("version", "desc")
+    .executeTakeFirst()
+
+  // Charging nothing because no book is in force would be a free platform with a green job. The
+  // same refusal `rateProjectsForOrganization` makes, for the same reason.
+  if (book === undefined) throw new NoActivePriceBookError()
+
+  return await db.transaction().execute(async (trx) => {
+    /*
+      `FOR UPDATE SKIP LOCKED`, and the stamp happens in this same transaction.
+
+      Two workers overlap during a rolling deploy. Without the lock both would select the same
+      rollups, both would post, and the customer would be charged twice with nothing anywhere
+      reporting a problem.
+    */
+    const claimed = await sql<{
+      id: string
+      organizationId: string
+      projectId: string | null
+      dimension: string
+      bucket: string
+      /** What has not been charged yet, not the grain's whole quantity. */
+      uncharged: string
+      quantity: string
+    }>`
+      select
+        id,
+        organization_id as "organizationId",
+        project_id as "projectId",
+        dimension,
+        bucket,
+        (quantity - charged_quantity)::text as uncharged,
+        quantity::text as quantity
+      from usage_rollup
+      where quantity > charged_quantity
+        and bucket = ${CHARGED_BUCKET}
+        and bucket_start < ${now}
+      order by bucket_start
+      limit ${batchSize}
+      for update skip locked
+    `.execute(trx)
+
+    if (claimed.rows.length === 0) {
+      return { organizations: 0, rollups: 0, chargedMicroUsd: 0n }
+    }
+
+    assertSingleGrain(claimed.rows.map((row) => row.bucket))
+
+    const rates = new Map(
+      (
+        await trx
+          .selectFrom("priceBookItem")
+          .select(["dimension", "unitMicroUsd"])
+          .where("priceBookId", "=", book.id)
+          .where("dimension", "in", [...new Set(claimed.rows.map((row) => row.dimension))])
+          .execute()
+      ).map((item) => [item.dimension, item.unitMicroUsd]),
+    )
+
+    /** Per organization: what it owes, which rows that covers, and the state that charge leaves. */
+    const owed = new Map<string, { usage: MicroUsd; ids: string[]; watermark: string[] }>()
+
+    for (const row of claimed.rows) {
+      const rate = rates.get(row.dimension)
+      // A dimension the book does not price is a seeding bug, not a free dimension. Skipping it
+      // quietly is how a customer's bill loses a line and nobody finds out.
+      if (rate === undefined) throw new NoActivePriceBookError()
+
+      /*
+        The *uncharged* part of the grain, not its whole quantity.
+
+        `rollUpUsage` upserts, so a late event adds to a grain that may already have been charged —
+        the metering agent has a retry buffer, so an event delayed past the rollup's grace by a
+        restart or a partition is ordinary rather than exceptional. Charging `quantity` again would
+        bill the paid part twice; skipping the row, which is what a null-marker check did, made the
+        addition free.
+      */
+      const entry = owed.get(row.organizationId) ?? { usage: 0n, ids: [], watermark: [] }
+      entry.usage += rateTimesQuantity(rate, row.uncharged)
+      entry.ids.push(row.id)
+      // Where each row's `charged_quantity` will stand once this charge commits. Part of the
+      // idempotency key — see below.
+      entry.watermark.push(`${row.id}=${row.quantity}`)
+      owed.set(row.organizationId, entry)
+    }
+
+    let organizations = 0
+    let rollups = 0
+    let charged = 0n
+
+    for (const [organizationId, entry] of owed) {
+      const fee = overhead(entry.usage, book.overheadBps)
+      const total = entry.usage + fee
+
+      /*
+        Posted even when it rates to nothing.
+
+        `rated_transaction_id` has a foreign key to `credit_transaction`, so there is no id to write
+        that is not a real transaction — the first version of this generated one, which would have
+        failed on the constraint the first time a grain rated to zero. Leaving it null instead means
+        those rows are reconsidered on every run, forever, as a slowly growing tail.
+
+        `rateTimesQuantity` rounds away from zero, so any non-zero quantity at a non-zero rate costs
+        at least one micro-USD; a zero here means the quantity really was zero or the dimension is
+        priced at nothing. A ledger entry recording that honestly is better than a row that cannot
+        be told apart from one nobody has charged yet.
+      */
+      const posted = await postWithin(trx, {
+        organizationId,
+        kind: "usage",
+        /*
+          Keyed on the rows **and the quantity they will stand at**.
+
+          The row ids alone are not enough, and the way that fails is subtle enough that a test
+          caught it rather than review: a grain charged once, then topped up by a late event, is
+          claimed again with the *same* id and the same count. The key matched the earlier
+          transaction, `postWithin` returned it unchanged, no entry was written — and the late usage
+          was free while the job reported having charged for it.
+
+          Including the post-charge quantity makes the key a function of the state transition. A
+          retry of this exact work recomputes the same key and is correctly a no-op; a later charge
+          for more usage computes a different one.
+        */
+        idempotencyKey: `usage:${organizationId}:${chargeKey(entry.watermark)}`,
+        description: `Metered usage, ${entry.ids.length} grain(s)`,
+        postings: [
+          { account: "user_credit", amount: -total },
+          // Overhead is revenue like the rest of it. Split across two postings rather than one so
+          // a statement can show the amortized fee as its own line, which the plan requires it to.
+          { account: "platform_revenue", amount: entry.usage },
+          { account: "platform_revenue", amount: fee },
+        ],
+      })
+      /*
+        Only what was actually posted.
+
+        `postWithin` returns the existing transaction when the key matches, and writes nothing.
+        Adding `total` regardless made the job report money it had not charged — which is exactly
+        how the idempotency-key bug below looked from the outside: a charge of the right size,
+        reported, with the balance unmoved.
+      */
+      if (posted.created) charged += total
+
+      /*
+        `charged_quantity = quantity`, in the same transaction as the posting.
+
+        Reading the column rather than a value carried from the select, so a concurrent upsert that
+        landed between the claim and here is accounted for rather than silently marked paid — the
+        row lock makes that impossible today, and depending on the lock for a correctness property
+        the SQL can state itself is how it stops being true later.
+
+        `rated_transaction_id` becomes "the transaction that last charged this grain" rather than
+        "this grain has been charged". The difference matters the moment usage arrives late.
+      */
+      await sql`
+        update usage_rollup
+        set charged_quantity = quantity,
+            rated_transaction_id = ${posted.transactionId},
+            updated_at = ${now}
+        where id = any(${entry.ids}::uuid[])
+      `.execute(trx)
+
+      organizations += 1
+      rollups += entry.ids.length
+    }
+
+    return { organizations, rollups, chargedMicroUsd: charged }
+  })
+}

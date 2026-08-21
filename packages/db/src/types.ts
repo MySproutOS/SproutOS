@@ -1051,6 +1051,7 @@ export interface UsageEvent {
 export interface UsageRollup {
   bucket: string
   bucketStart: Timestamp
+  chargedQuantity: Generated<Numeric>
   createdAt: Generated<Timestamp>
   dimension: string
   id: string

@@ -56,3 +56,12 @@ export {
   type Bucket,
   type RollupResult,
 } from "./rollup"
+export {
+  CHARGE_BATCH_SIZE,
+  CHARGED_BUCKET,
+  assertSingleGrain,
+  chargeKey,
+  chargeUsage,
+  MultipleGrainsError,
+  type ChargeResult,
+} from "./charge"

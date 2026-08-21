@@ -2,6 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
+import { acquirePlatformJobLock, releasePlatformJobLock } from "./test-lock"
 import { LATE_ARRIVAL_GRACE_MS, rollUpUsage } from "./rollup"
 
 /*
@@ -62,6 +63,9 @@ beforeAll(async () => {
     return
   }
 
+  // Both this file and its sibling drive platform-wide sweeps. See `test-lock.ts`.
+  await acquirePlatformJobLock()
+
   ownerUserId = v7()
   organizationId = v7()
   projectId = v7()
@@ -107,6 +111,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  if (reachable) await releasePlatformJobLock()
   if (!reachable || !organizationId) return
 
   await db.transaction().execute(async (tx) => {
