@@ -25,7 +25,7 @@ spec:
       serviceAccountName: internal-api
       containers:
         - name: api
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/internal-api:TAG
+          image: IMAGE_REGISTRY/internal-api:TAG
           ports:
             - name: http
               containerPort: 3001
@@ -121,7 +121,7 @@ spec:
       serviceAccountName: website
       containers:
         - name: website
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/website:TAG
+          image: IMAGE_REGISTRY/website:TAG
           ports:
             - name: http
               containerPort: 3000
@@ -212,7 +212,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: worker
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/worker:TAG
+          image: IMAGE_REGISTRY/worker:TAG
           env:
             - name: NODE_ENV
               value: production

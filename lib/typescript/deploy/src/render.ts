@@ -6,7 +6,7 @@
  * carries a templating language needs a templating engine to read.
  *
  * The substitution itself is three lines. Everything else here exists because of the failure mode:
- * **an unsubstituted placeholder is valid YAML.** `image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/...`
+ * **an unsubstituted placeholder is valid YAML.** `image: IMAGE_REGISTRY/internal-api:TAG`
  * passes every schema check, applies cleanly, and fails at image pull — by which point it is a
  * production incident rather than a build error.
  *
@@ -23,6 +23,7 @@
 export const PLACEHOLDERS = [
   "ACCOUNT",
   "REGION",
+  "IMAGE_REGISTRY",
   "TAG",
   "TENANT_NAMESPACE",
   "KMS_KEY_ARN",

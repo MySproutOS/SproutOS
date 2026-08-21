@@ -273,3 +273,15 @@ boundary. ADR 0012's entire hypervisor story depends on this one line.
 Set to `enabled` rather than `allowed`: `allowed` permits a Service that omits the field, and a
 tenant deployment quietly running without a hypervisor is precisely the outcome worth making
 impossible.
+
+## `IMAGE_REGISTRY`
+
+Image references were written as `ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/<name>:TAG` — an ECR
+hostname assembled from two placeholders. That works exactly as long as there is one cloud.
+
+It cannot express `us-central1-docker.pkg.dev/<project>/sproutos` or `<name>.azurecr.io`, so the
+platform could not be deployed to the GKE or AKS clusters it had just been proven to run on. The
+shape of the string, not any value in it, was the AWS assumption.
+
+One placeholder now. `ACCOUNT` and `REGION` remain because IAM role ARNs and the KMS key genuinely
+need them, and those really are AWS-only — the control plane is on AWS by decision.

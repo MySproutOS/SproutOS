@@ -25,7 +25,7 @@ spec:
       serviceAccountName: pg-proxy
       containers:
         - name: proxy
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/pg-proxy:TAG
+          image: IMAGE_REGISTRY/pg-proxy:TAG
           ports:
             - name: postgres
               containerPort: 5432
@@ -124,7 +124,7 @@ spec:
       serviceAccountName: valkey-proxy
       containers:
         - name: proxy
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/valkey-proxy:TAG
+          image: IMAGE_REGISTRY/valkey-proxy:TAG
           ports:
             - name: resp
               containerPort: 6379
@@ -206,7 +206,7 @@ spec:
       serviceAccountName: search-proxy
       containers:
         - name: proxy
-          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sproutos/search-proxy:TAG
+          image: IMAGE_REGISTRY/search-proxy:TAG
           ports:
             - name: http
               containerPort: 9200
