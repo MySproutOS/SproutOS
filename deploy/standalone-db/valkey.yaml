@@ -1,0 +1,97 @@
+# The shared tenant Valkey, for a cluster with no managed one.
+#
+# `valkey-proxy` is the only thing that connects here. Tenants connect to the *proxy*, which
+# authenticates them, rewrites every key into their namespace, and forwards. A tenant reaching this
+# service directly would be in the shared root of the keyspace, which is why the tenant
+# NetworkPolicy permits egress to `sproutos-system` only for the three proxy pods and excludes the
+# private ranges that would otherwise reach a backend directly.
+#
+# On AWS this is ElastiCache and this file is not applied. See `README.md` in this directory —
+# including why it has a `volumeClaimTemplates` rather than an `emptyDir`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant-valkey
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+spec:
+  clusterIP: None
+  selector:
+    app: tenant-valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tenant-valkey
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+spec:
+  serviceName: tenant-valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tenant-valkey
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+  template:
+    metadata:
+      labels:
+        app: tenant-valkey
+    spec:
+      # `sproutos-system` enforces the `restricted` Pod Security Standard, and a StatefulSet whose
+      # pod violates it fails at *pod* creation rather than at apply: the StatefulSet is created,
+      # reports 0/1, and the only place the reason appears is its event log. The apply does print a
+      # warning, which is easy to read past when the next line says the object was created.
+      #
+      # `valkey/valkey` runs as uid 999 and the image's own entrypoint expects to write `/data`.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        # Without this the PersistentVolume arrives owned by root and the appendonly file cannot be
+        # created — which presents as a CrashLoopBackOff with a permission error, one layer removed
+        # from the securityContext that caused it.
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: valkey
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          image: valkey/valkey:8.1-alpine
+          # `appendonly yes` because this holds queues.
+          #
+          # A tenant's BullMQ jobs are not a cache — losing them loses work a customer believes is
+          # scheduled. The default RDB snapshot loses everything since the last save, which for a
+          # queue is the wrong trade even on a trial cluster.
+          args: ["--appendonly", "yes", "--dir", "/data"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data

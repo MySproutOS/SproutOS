@@ -62,7 +62,20 @@ metadata:
   labels:
     app.kubernetes.io/part-of: sproutos
 data:
+  # Where `valkey-proxy` connects. **Customers never do** — see `public-host` below.
   address: ${TENANT_VALKEY_HOST}:6379
+  # The host that goes in a customer's connection URI: the proxy, not the cluster behind it.
+  #
+  # The same two-key split as `tenant-postgres`, for the same reason and with the same consequence
+  # if it is missing. The Postgres driver was given its public host and the Valkey driver was not,
+  # so `SERVICE_VALKEY_PUBLIC_HOST is not set` was the response to every attempt to provision a
+  # tenant queue — a driver that refuses rather than falling back, which is correct, failing on a
+  # variable no manifest supplied.
+  public-host: valkey-proxy.sproutos-system.svc.cluster.local
+  public-port: "6379"
+  # `redis`, not `rediss`, on a cluster where the proxy terminates plaintext inside the mesh. The
+  # driver defaults to `rediss` and that default is right for anything reachable from outside.
+  scheme: redis
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -72,7 +85,14 @@ metadata:
   labels:
     app.kubernetes.io/part-of: sproutos
 data:
+  # Where `search-proxy` connects.
   url: https://${TENANT_OPENSEARCH_HOST}:9200
+  # The host in a customer's URI: the proxy. Document- and field-level security is not in the
+  # OpenSearch OSS tier, so the proxy *is* the tenant boundary — a URI naming the cluster behind it
+  # would hand a customer every tenant's index.
+  public-host: search-proxy.sproutos-system.svc.cluster.local
+  public-port: "9200"
+  scheme: http
 ---
 # The control plane's own Valkey. Not a tenant's.
 #

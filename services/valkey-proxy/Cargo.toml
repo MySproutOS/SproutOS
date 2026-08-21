@@ -21,3 +21,6 @@ uuid.workspace = true
 sproutos-tenant-auth.workspace = true
 tokio-postgres.workspace = true
 uuid = { workspace = true }
+# Test-only: `keyspace.rs` asserts the tenant key prefix against the shared naming vectors, which
+# the TypeScript side asserts too. The proxy itself parses no JSON.
+serde_json.workspace = true

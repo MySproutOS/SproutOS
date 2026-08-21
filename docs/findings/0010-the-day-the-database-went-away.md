@@ -71,7 +71,7 @@ The two failure modes are not equally loud, and the quiet one is the dangerous o
 - the namespace exists **without** its policies — customer code runs with unrestricted egress, and
   nothing anywhere reports a problem.
 
-`ensureTenantNamespace` now applies the namespace *and* all three policies before every workload, in
+`ensureTenantNamespace` now applies the namespace _and_ all three policies before every workload, in
 deny-first order so a partial apply fails closed. It is not "create if missing": a namespace that
 exists is not evidence that it is fenced.
 
@@ -126,12 +126,12 @@ the right answer only because the row was guaranteed wrong.
 `hono-typebox-openapi` runs `Value.Convert` before `Check`. Against
 `Type.Array(Type.String(), { minItems: 1, maxItems: 64 })`:
 
-| body | after Convert | result |
-| --- | --- | --- |
-| `{"command": ["ls","-la"]}` | `["ls","-la"]` | 200 |
-| `{"command": "ls -la"}` | `["ls -la"]` | 200 |
-| `{"command": 42}` | `["42"]` | 200 |
-| `{"command": []}` | `[]` | 400 |
+| body                        | after Convert  | result |
+| --------------------------- | -------------- | ------ |
+| `{"command": ["ls","-la"]}` | `["ls","-la"]` | 200    |
+| `{"command": "ls -la"}`     | `["ls -la"]`   | 200    |
+| `{"command": 42}`           | `["42"]`       | 200    |
+| `{"command": []}`           | `[]`           | 400    |
 
 Only the empty array is refused — by `minItems`. **That is what made the validation look like it was
 working.** Everything else is silently reshaped, and the handler cannot tell, because by the time it
@@ -181,17 +181,17 @@ minutes; they are all in place now.
 
 ## What changed
 
-| Change | Why |
-| --- | --- |
-| `deploy/standalone-db/postgres.yaml` with `volumeClaimTemplates` | the control-plane database was on node scratch space |
-| `bin/render-manifests.mjs` skips `standalone-db` | applying it beside RDS gives two databases and no error |
-| `middleware.ts` logs the cause of a 503 | the only symptom of a wiped database was a status code |
-| `lib/typescript/sandbox/src/tenant-namespace.ts` | nothing created a tenant namespace or applied its policies |
-| `tenant-namespace.test.ts` renders the YAML and asserts equality | two definitions of one security boundary |
-| `ensureTenantNamespace` in `runInSandbox`, `deployRevision`, the sandbox route | every path that runs customer code |
-| `SANDBOX_STATES` / `SANDBOX_RUNTIME_CLASSES` as arrays, asserted against `pg_constraint` both ways | a union that claimed to match a constraint and did not |
-| `2026_08_29…_sandbox_runtime_class_none` | the schema could not say "no VM boundary" |
-| the sandbox serializer reads the row | it reported the server's environment for every sandbox |
-| `requireArray` + `docs` on the coercion | `minItems` was the only thing being enforced |
-| opcode check in `readFrame` | a close frame was read as an error-channel payload |
-| `console.error` before the failure is recorded, in the pod-create path | the recording threw and ate the cause |
+| Change                                                                                             | Why                                                        |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `deploy/standalone-db/postgres.yaml` with `volumeClaimTemplates`                                   | the control-plane database was on node scratch space       |
+| `bin/render-manifests.mjs` skips `standalone-db`                                                   | applying it beside RDS gives two databases and no error    |
+| `middleware.ts` logs the cause of a 503                                                            | the only symptom of a wiped database was a status code     |
+| `lib/typescript/sandbox/src/tenant-namespace.ts`                                                   | nothing created a tenant namespace or applied its policies |
+| `tenant-namespace.test.ts` renders the YAML and asserts equality                                   | two definitions of one security boundary                   |
+| `ensureTenantNamespace` in `runInSandbox`, `deployRevision`, the sandbox route                     | every path that runs customer code                         |
+| `SANDBOX_STATES` / `SANDBOX_RUNTIME_CLASSES` as arrays, asserted against `pg_constraint` both ways | a union that claimed to match a constraint and did not     |
+| `2026_08_29…_sandbox_runtime_class_none`                                                           | the schema could not say "no VM boundary"                  |
+| the sandbox serializer reads the row                                                               | it reported the server's environment for every sandbox     |
+| `requireArray` + `docs` on the coercion                                                            | `minItems` was the only thing being enforced               |
+| opcode check in `readFrame`                                                                        | a close frame was read as an error-channel payload         |
+| `console.error` before the failure is recorded, in the pod-create path                             | the recording threw and ate the cause                      |

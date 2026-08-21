@@ -51,6 +51,49 @@ mod tests {
     use sproutos_tenant_auth::ResourceKind;
     use uuid::Uuid;
 
+    /// The key prefix is a cross-language contract, and it had no vector.
+    ///
+    /// It is built in three places: here, `tenantQueuePrefix` in `@lib/queue`, and
+    /// `tenantKeyPrefix` in `@lib/reaper`. This one writes every tenant key; the last one deletes
+    /// by it when a service is destroyed. A divergence does not fail loudly — the reaper matches
+    /// nothing, reports success, and a deleted customer's queue stays in the shared instance.
+    ///
+    /// The vectors live with the rest of the tenant-naming contract, and the TypeScript side
+    /// asserts the same file. `include_str!` rather than a copy, for the reason the fixture's own
+    /// comment gives.
+    #[test]
+    fn every_vector_gets_the_prefix_typescript_expects() {
+        const FIXTURE: &str =
+            include_str!("../../../lib/rust/tenant-auth/fixtures/naming-vectors.json");
+
+        let parsed: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture parses");
+        let cases = parsed["cases"].as_array().expect("cases is an array");
+        // An empty array would make the loop vacuous, which is the shape of the bug being prevented.
+        assert!(cases.len() > 2, "expected vectors, found {}", cases.len());
+
+        for case in cases {
+            let kind = match case["kind"].as_str().unwrap() {
+                "database" => sproutos_tenant_auth::ResourceKind::Database,
+                "queue" => sproutos_tenant_auth::ResourceKind::Queue,
+                "searchIndex" => sproutos_tenant_auth::ResourceKind::SearchIndex,
+                other => panic!("unknown kind in the vectors: {other}"),
+            };
+
+            let identity = TenantIdentity::new(
+                uuid::Uuid::parse_str(case["organizationId"].as_str().unwrap()).unwrap(),
+                kind,
+                uuid::Uuid::parse_str(case["resourceId"].as_str().unwrap()).unwrap(),
+            );
+
+            assert_eq!(
+                String::from_utf8(prefix_for(&identity)).unwrap(),
+                case["keyPrefix"].as_str().unwrap(),
+                "key prefix for {}",
+                case["resourceId"]
+            );
+        }
+    }
+
     #[test]
     fn a_prefix_carries_exactly_one_hash_tag() {
         let identity = TenantIdentity {

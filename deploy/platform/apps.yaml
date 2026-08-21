@@ -124,6 +124,44 @@ spec:
                 secretKeyRef:
                   name: tenant-valkey
                   key: admin-url
+            # The same two-value split Postgres has above, and it was missing here.
+            #
+            # `valkeyDriver` refuses to start without a public host rather than falling back to the
+            # backend — the fallback is how a customer ends up with a URI that reaches the shared
+            # instance directly, around the proxy that does the namespacing. Correct, and it meant
+            # provisioning a tenant queue answered 500 on every deployment until these lines existed.
+            # The search driver had the same gap. Both are here, and both are on the worker too,
+            # because provisioning runs there as well.
+            - name: SERVICE_VALKEY_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: public-host
+            - name: SERVICE_VALKEY_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: public-port
+            - name: SERVICE_VALKEY_SCHEME
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: scheme
+            - name: SERVICE_SEARCH_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: public-host
+            - name: SERVICE_SEARCH_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: public-port
+            - name: SERVICE_SEARCH_SCHEME
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: scheme
             - name: SEARCH_ADMIN_URL
               valueFrom:
                 secretKeyRef:
@@ -539,6 +577,44 @@ spec:
                 secretKeyRef:
                   name: tenant-valkey
                   key: admin-url
+            # The same two-value split Postgres has above, and it was missing here.
+            #
+            # `valkeyDriver` refuses to start without a public host rather than falling back to the
+            # backend — the fallback is how a customer ends up with a URI that reaches the shared
+            # instance directly, around the proxy that does the namespacing. Correct, and it meant
+            # provisioning a tenant queue answered 500 on every deployment until these lines existed.
+            # The search driver had the same gap. Both are here, and both are on the worker too,
+            # because provisioning runs there as well.
+            - name: SERVICE_VALKEY_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: public-host
+            - name: SERVICE_VALKEY_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: public-port
+            - name: SERVICE_VALKEY_SCHEME
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-valkey
+                  key: scheme
+            - name: SERVICE_SEARCH_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: public-host
+            - name: SERVICE_SEARCH_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: public-port
+            - name: SERVICE_SEARCH_SCHEME
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-opensearch
+                  key: scheme
             - name: SEARCH_ADMIN_URL
               valueFrom:
                 secretKeyRef:
