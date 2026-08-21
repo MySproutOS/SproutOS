@@ -159,6 +159,70 @@ export async function cleanupFixtures(): Promise<void> {
       )
       .execute()
 
+    /*
+      The credit accounts an organization acquires by being billed.
+
+      A fixture organization does not create one — `ensureAccounts` does, lazily, the first time
+      anything posts a transaction for it. That used to mean never, because nothing charged. Now
+      `chargeUsage` sweeps every organization that owes something, so a fixture whose project
+      accumulated a metered sample comes back from an unrelated test file with an account attached,
+      and `credit_account_organization_id_fkey` is `RESTRICT` — so the organization cannot be
+      deleted and the *cleanup* fails, in whichever file happened to own that fixture.
+
+      Ledger entries and transactions first: both reference the account, and both are RESTRICT for
+      the same reason the deployment above is. Deleting billing history is not something the
+      platform does; it is something a test fixture does, which is why this lives here and not in
+      a DAO.
+    */
+    await db.transaction().execute(async (tx) => {
+      /*
+        `credit_ledger_entry` is append-only, enforced by a trigger — a ledger you can delete from
+        is not a ledger. `session_replication_role = 'replica'` suspends triggers for this
+        transaction only, which is the same escape hatch `ledger.test.ts` and `holds.test.ts` use
+        and the only place in the repository where deleting an entry is allowed at all.
+
+        It failed intermittently before this, because an entry only exists for a fixture whose
+        project happened to accumulate a metered sample that a sweep happened to charge.
+      */
+      await sql`set local session_replication_role = 'replica'`.execute(tx)
+
+      await tx
+        .deleteFrom("creditLedgerEntry")
+        .where((eb) =>
+          eb(
+            "creditAccountId",
+            "in",
+            eb
+              .selectFrom("creditAccount")
+              .select("id")
+              .where("organizationId", "in", created.organizationIds),
+          ),
+        )
+        .execute()
+      await tx
+        .deleteFrom("creditHold")
+        .where("organizationId", "in", created.organizationIds)
+        .execute()
+      await tx
+        .deleteFrom("creditTransaction")
+        .where("organizationId", "in", created.organizationIds)
+        .execute()
+      await tx
+        .deleteFrom("creditAccount")
+        .where("organizationId", "in", created.organizationIds)
+        .execute()
+    })
+
+    // The usage that produced those charges, and the grains it rolled into.
+    await db
+      .deleteFrom("usageRollup")
+      .where("organizationId", "in", created.organizationIds)
+      .execute()
+    await db
+      .deleteFrom("usageEvent")
+      .where("organizationId", "in", created.organizationIds)
+      .execute()
+
     await db.deleteFrom("organization").where("id", "in", created.organizationIds).execute()
   }
   if (created.userIds.length > 0) {

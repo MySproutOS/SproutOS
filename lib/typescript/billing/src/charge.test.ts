@@ -257,34 +257,20 @@ describe("chargeUsage", () => {
 
     await event("40")
     await rollUpUsage(db)
-    const first = await chargeUsage(db)
-    expect(first.chargedMicroUsd).toBeGreaterThan(0n)
-
-    const balanceAfterFirst = await availableBalance(db, organizationId)
+    const first = await chargedHere(() => chargeUsage(db))
+    expect(first).toBeGreaterThan(0n)
 
     // The late arrival, into the same hour.
     await event("40")
     await rollUpUsage(db)
-    const rows = await db
-      .selectFrom("usageRollup")
-      .select(["bucket", "quantity", "chargedQuantity"])
-      .where("organizationId", "=", organizationId)
-      .where("bucket", "=", "hour")
-      .execute()
-    console.log("ROLLUPS", JSON.stringify(rows))
-    const second = await chargeUsage(db)
+    const second = await chargedHere(() => chargeUsage(db))
 
-    expect(second.rollups).toBeGreaterThan(0)
-    expect(second.chargedMicroUsd).toBeGreaterThan(0n)
-    // The same quantity as the first charge, so the same money — not the grain's new total.
-    expect(second.chargedMicroUsd).toBe(first.chargedMicroUsd)
-    expect(await availableBalance(db, organizationId)).toBe(
-      balanceAfterFirst - second.chargedMicroUsd,
-    )
+    // The same quantity as the first charge, so the same money — not the grain's new total, and
+    // not nothing.
+    expect(second).toBe(first)
 
     // And a third run, with nothing new, charges nothing.
-    const third = await chargeUsage(db)
-    expect(third.chargedMicroUsd).toBe(0n)
+    expect(await chargedHere(() => chargeUsage(db))).toBe(0n)
   })
 
   /*

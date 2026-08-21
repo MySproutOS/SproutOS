@@ -1,6 +1,6 @@
 # 0011 — The platform was free
 
-Found by asking a question with an obvious answer: *what has this cost anybody?*
+Found by asking a question with an obvious answer: _what has this cost anybody?_
 
 `usage_event` was empty. Not sparse — empty, on a cluster that had served sign-in, a fork of a real
 repository, workflow runs, agent sessions, tenant databases and dev sandboxes.
@@ -19,12 +19,12 @@ Sixty samples, delivered, accepted. Every one of them attributed to nobody.
 
 It reads two labels off each pod. The control plane wrote different ones:
 
-| | key |
-| --- | --- |
-| the agent reads | `sproutos.dev/organization-id`, `sproutos.dev/project-id` |
-| `knativeService` wrote | `sproutos.dev/project` — a different key, and no organization at all |
-| the workflow sandbox Job wrote | nothing |
-| the dev sandbox pod wrote | nothing |
+|                                | key                                                                  |
+| ------------------------------ | -------------------------------------------------------------------- |
+| the agent reads                | `sproutos.dev/organization-id`, `sproutos.dev/project-id`            |
+| `knativeService` wrote         | `sproutos.dev/project` — a different key, and no organization at all |
+| the workflow sandbox Job wrote | nothing                                                              |
+| the dev sandbox pod wrote      | nothing                                                              |
 
 And the labels Knative did get were on the **Service**, not the pod template — invisible to a node
 agent regardless of what they said. The renderer had no pod labels at all.
@@ -64,7 +64,7 @@ and the addition was free. Clearing the marker instead would bill the paid part 
 carries `charged_quantity` and the charge is the difference.
 
 **An idempotency key that could not tell a retry from new work.** Keyed on the row ids and their
-count — which are *identical* when a charged grain is topped up and re-claimed. The key matched the
+count — which are _identical_ when a charged grain is topped up and re-claimed. The key matched the
 earlier transaction, `postWithin` returned it having written nothing, and the job reported a charge
 that never happened: right size, in the logs, balance unmoved. The key is now a function of the
 state transition, and the total only counts a posting that was actually created.
@@ -88,7 +88,7 @@ Worth recording because both failures pointed at innocent files.
 
 `afterAll` in the new charge test ran `deleteFrom("creditLedgerEntry").execute()` — no `where`,
 every ledger entry in the database, belonging to every test file running in parallel against it. The
-failure surfaced in `holds.test.ts`, as *"frees a balance a vanished runner would otherwise strand"*.
+failure surfaced in `holds.test.ts`, as _"frees a balance a vanished runner would otherwise strand"_.
 
 And `rollUpUsage` and `chargeUsage` are platform-wide sweeps by design: they cannot take an
 organization, because their job is to sweep everything owed. Two test files driving them in parallel
@@ -103,7 +103,7 @@ name or a marker that does not line up.
 
 - A label the meter reads and a label the platform writes, differing by five characters.
 - Those labels on the Service rather than on the pod.
-- A column that records *whether* a grain was charged, in a system where a grain can be charged
+- A column that records _whether_ a grain was charged, in a system where a grain can be charged
   twice for different reasons.
 - An idempotency key that describes the rows rather than the work.
 

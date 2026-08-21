@@ -62,7 +62,6 @@ kubectl patch deploy internal-api -n sproutos-system --type merge \
   -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}'
 ```
 
-
 ## Sizing them onto two small nodes
 
 The `deploy/platform/` manifests request 200–250m of CPU per service, which is right for a cluster
@@ -73,13 +72,13 @@ spent its first ten minutes.
 
 Measured on an idle trial cluster:
 
-| pod | request | actual |
-| --- | --- | --- |
-| internal-api | 250m | 1m |
-| website | 250m | 7m |
-| worker | 250m | 4m |
-| pg-proxy / valkey-proxy | 200m | 1m |
-| tenant-opensearch | 200m | 17m |
+| pod                     | request | actual |
+| ----------------------- | ------- | ------ |
+| internal-api            | 250m    | 1m     |
+| website                 | 250m    | 7m     |
+| worker                  | 250m    | 4m     |
+| pg-proxy / valkey-proxy | 200m    | 1m     |
+| tenant-opensearch       | 200m    | 17m    |
 
 Trim the requests on the cluster rather than in the manifests — production sizing is a different
 question and the manifests are the answer to that one:

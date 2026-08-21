@@ -23,7 +23,8 @@ import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
-import { resolver, validator } from "hono-typebox-openapi/typebox"
+import { resolver } from "hono-typebox-openapi/typebox"
+import { validator } from "../utils/validator"
 import { authMiddleware } from "../middleware"
 import { paramResource, requirePermission } from "../rbac"
 import { auditContext } from "../utils/request-context"
@@ -137,13 +138,29 @@ async function activeSandbox(
     on a state that is no longer true. One `GET` per operation, against an API server call the
     operation was about to make anyway.
   */
-  const pod = await createKubeClient(config).get<{ metadata?: { deletionTimestamp?: string } }>(
-    podPath(row.namespace, row.podName),
-  )
+  const pod = await createKubeClient(config).get<{
+    metadata?: { deletionTimestamp?: string }
+    status?: { phase?: string }
+  }>(podPath(row.namespace, row.podName))
+
   if (pod === undefined || pod.metadata?.deletionTimestamp !== undefined) {
     await crudSandbox(db).update(row.id, { state: "stopped" })
     return undefined
   }
+
+  /*
+    Running, not merely existing.
+
+    A pod is `Pending` from the moment the API server accepts it until its image is pulled and the
+    container starts — a few seconds normally, longer on a first pull. Exec against a Pending pod
+    fails with whatever the API server says about a container that is not there, which reached the
+    client as a 500: the platform reporting itself broken because a sandbox was still starting.
+
+    The row is left alone. This is not a sandbox that has stopped, it is one that has not started
+    yet, and rewriting the state would make the next `POST` build a second pod for the first one's
+    workspace.
+  */
+  if (pod.status?.phase !== "Running") return undefined
 
   // Every read counts as activity. A person reading code for twenty minutes is using the sandbox,
   // and a reaper that only watched writes would stop it underneath them.
