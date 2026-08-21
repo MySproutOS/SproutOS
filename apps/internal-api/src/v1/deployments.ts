@@ -35,6 +35,8 @@ type DeploymentRow = {
   knativeRevision: string | null
   /** Null where the cluster has no runtime class to name; see `@lib/deploy`'s `DeploymentSpec`. */
   runtimeClass: string | null
+  /** Why the deploy failed, when it failed after building. */
+  failureReason: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -52,6 +54,14 @@ function present(row: DeploymentRow, buildFailureReason: string | null = null) {
     imageUri: row.imageUri,
     knativeRevision: row.knativeRevision,
     runtimeClass: row.runtimeClass,
+    /*
+      Two reasons, because they answer different questions.
+
+      `buildFailureReason` is "your image would not build" — a Dockerfile problem. `failureReason` is
+      "your image built and would not run" — an application problem. Collapsing them into one field
+      would leave a customer unable to tell which half is theirs.
+    */
+    failureReason: row.failureReason,
     buildFailureReason,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -172,6 +182,7 @@ const app = new Hono()
           "imageUri",
           "knativeRevision",
           "runtimeClass",
+          "failureReason",
           "createdAt",
           "updatedAt",
         ],

@@ -167,9 +167,22 @@ export function deployRevision(config?: KubeConfig): JobHandler {
       }
 
       if (outcome.state === "failed") {
-        // A revision Knative has given up on does not become ready by being asked again. Recorded
-        // as an error so the customer sees Knative's own message rather than a job that vanished.
-        await crudDeployment(db).update(deploymentId, { status: "error" })
+        /*
+          A revision Knative has given up on does not become ready by being asked again.
+
+          The message is written to the row, not only thrown. This comment used to say "recorded as
+          an error so the customer sees Knative's own message" and the message went into the thrown
+          error, which reaches `background_job.last_error` and stops there — a table no customer can
+          read. What they saw was `status: error` and nothing else.
+
+          It is worth reading. The first real one on this platform was `parsing config: reading
+          /app/config/glance.yml: no such file or directory` — not a platform fault, and exactly
+          what the person who forked the application needs in order to know the problem is theirs.
+        */
+        await crudDeployment(db).update(deploymentId, {
+          status: "error",
+          failureReason: outcome.message.slice(0, 4000),
+        })
         throw new Error(`Revision failed: ${outcome.message}`)
       }
 

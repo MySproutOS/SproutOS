@@ -384,6 +384,7 @@ export interface Deployment {
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
   expiresAt: Timestamp | null
+  failureReason: string | null
   gitRef: string | null
   gitSha: string
   id: string

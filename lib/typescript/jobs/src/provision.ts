@@ -39,6 +39,15 @@ import type { JobHandler } from "./worker"
  */
 export const PROVISION_KIND = "project.provision"
 
+/**
+ * How long a `project_job` may sit in `running` before another attempt may take it.
+ *
+ * Longer than any step here takes and shorter than a customer's patience. The steps are GitHub
+ * calls and a deployment enqueue — seconds — and the only thing that legitimately stretches them is
+ * a rate limit, which the client already waits out.
+ */
+export const STALE_AFTER_MS = 10 * 60 * 1000
+
 /** What the background job carries. The `project_job` row holds everything else. */
 export type ProvisionPayload = {
   projectJobId: string
@@ -97,16 +106,42 @@ export async function runProvision(
   payload: ProvisionPayload,
   github?: ProvisionGitHub,
 ): Promise<void> {
+  /*
+    Claim a queued job, or reclaim one abandoned mid-flight.
+
+    `state = 'queued'` alone was the whole condition, and it strands a project permanently. There is
+    no lease on a `project_job`, so a worker that claimed one and then died leaves it `running` with
+    nobody working on it — and the *next* attempt of the background job finds nothing to claim,
+    returns, and reports **success**. Observed exactly that way: `project.provision succeeded` on
+    attempt 2 beside a `project_job` still `running`, a fork that never happened, and a project the
+    customer sees as "Building" forever.
+
+    The old comment reasoned about the right hazard — "a retry of a job whose GitHub call already
+    succeeded must not run it again" — and drew the wrong line. It is correct for a *concurrent*
+    second claimant, which the `queued` predicate already excludes. It is wrong for a retry after a
+    crash, which is indistinguishable from the first case without a clock.
+
+    So a `running` job is reclaimable once it has been silent for `STALE_AFTER_MS`. Re-running is
+    safe for the reason the fork step already documents: GitHub returns the *existing* fork rather
+    than creating a second one, and the row is written from a fresh read either way.
+  */
+  const staleBefore = new Date(Date.now() - STALE_AFTER_MS)
+
   const claimed = await db
     .updateTable("projectJob")
     .set({ state: "running", startedAt: new Date(), updatedAt: new Date() })
     .where("id", "=", payload.projectJobId)
-    .where("state", "=", "queued")
+    .where((eb) =>
+      eb.or([
+        eb("state", "=", "queued"),
+        eb.and([eb("state", "=", "running"), eb("updatedAt", "<", staleBefore)]),
+      ]),
+    )
     .returningAll()
     .executeTakeFirst()
 
-  // Already running or finished. Not an error: the job runner retries, and a retry of a job whose
-  // GitHub call already succeeded must not run it again.
+  // Finished, or running and still fresh. Neither is an error: the first is done and the second has
+  // a live worker on it.
   if (claimed === undefined) return
 
   // Bound to a const so the closure below narrows. `claimed` is already non-undefined here, but

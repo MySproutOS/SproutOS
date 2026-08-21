@@ -336,3 +336,45 @@ describe("a deployment with no image yet", () => {
     expect(queued).toHaveLength(1)
   })
 })
+
+describe("a revision that failed", () => {
+  /*
+    The reason has to reach the row, not just the exception.
+
+    The comment on this path said "recorded as an error so the customer sees Knative's own message
+    rather than a job that vanished" — and the message went into the thrown error, which reaches
+    `background_job.last_error` and stops there, a table no customer can read. What they saw was
+    `status: error` and nothing else.
+
+    The first real one on this platform was `parsing config: reading /app/config/glance.yml: no such
+    file or directory`: not a platform fault, and exactly what the person who forked the application
+    needs in order to know the problem is theirs.
+  */
+  it("carries Knative's message, which is what says whose fault it is", () => {
+    const outcome = revisionOutcome({
+      status: {
+        conditions: [
+          { type: "Ready", status: "False" },
+          {
+            type: "ConfigurationsReady",
+            status: "False",
+            reason: "RevisionFailed",
+            message:
+              'Revision "glance-00001" failed with message: Container failed with: parsing config: reading /app/config/glance.yml: open /app/config/glance.yml: no such file or directory',
+          },
+        ],
+      },
+    })
+
+    expect(outcome.state).toBe("failed")
+    expect(outcome.state === "failed" && outcome.message).toContain("glance.yml")
+  })
+
+  it("does not mistake a revision still coming up for one that failed", () => {
+    // `Ready: False` on its own is every revision for the first few seconds of its life. Only
+    // `ConfigurationsReady: False` with `RevisionFailed` means Knative has given up.
+    expect(
+      revisionOutcome({ status: { conditions: [{ type: "Ready", status: "False" }] } }).state,
+    ).toBe("progressing")
+  })
+})

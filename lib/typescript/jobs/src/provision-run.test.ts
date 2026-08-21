@@ -5,7 +5,7 @@ import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import { DEPLOY_KINDS } from "./deploy"
-import { runProvision } from "./provision"
+import { runProvision, STALE_AFTER_MS } from "./provision"
 
 /**
  * A fork has to end in a deploy, and for the life of the platform it did not.
@@ -245,6 +245,74 @@ describe.runIf(reachable)("provisioning a fork", () => {
       .where("storeListingId", "=", listingId)
       .execute()
     expect(events.map((row) => row.kind)).toEqual(["fork_completed"])
+  })
+})
+
+describe.runIf(reachable)("a provisioning job left running by a worker that died", () => {
+  /*
+    `state = 'queued'` was the whole claim condition, and it strands a project permanently.
+
+    There is no lease on a `project_job`, so a worker that claimed one and then died leaves it
+    `running` with nobody on it — and the next attempt of the background job finds nothing to claim,
+    returns, and reports **success**. Observed exactly that way on the live deployment:
+    `project.provision succeeded` on attempt 2 beside a `project_job` still `running`, a fork that
+    never happened, and a project the customer sees as "Building" forever.
+  */
+  it("is reclaimed once it has been silent long enough", async () => {
+    const seeded = await seed()
+    await db
+      .updateTable("projectJob")
+      .set({
+        state: "running",
+        updatedAt: new Date(Date.now() - STALE_AFTER_MS - 60_000),
+      })
+      .where("id", "=", seeded.projectJobId)
+      .execute()
+
+    await runProvision(
+      db,
+      { projectJobId: seeded.projectJobId, userId: seeded.userId },
+      fakeGitHub("c".repeat(40)),
+    )
+
+    const deployment = await db
+      .selectFrom("deployment")
+      .select(["id"])
+      .where("projectId", "=", seeded.projectId)
+      .executeTakeFirst()
+
+    expect(deployment).toBeDefined()
+    created.push({ table: "deployment", id: deployment!.id })
+
+    const job = await db
+      .selectFrom("projectJob")
+      .select(["state"])
+      .where("id", "=", seeded.projectJobId)
+      .executeTakeFirstOrThrow()
+    expect(job.state).toBe("succeeded")
+  })
+
+  it("leaves a job alone while another worker is still on it", async () => {
+    // The hazard the original condition was reasoning about, and the one it got right: a second
+    // concurrent claimant must not fork the same repository twice.
+    const seeded = await seed()
+    await db
+      .updateTable("projectJob")
+      .set({ state: "running", updatedAt: new Date() })
+      .where("id", "=", seeded.projectJobId)
+      .execute()
+
+    const github = fakeGitHub("d".repeat(40))
+    await runProvision(db, { projectJobId: seeded.projectJobId, userId: seeded.userId }, github)
+
+    expect(github.seen).toEqual([])
+    expect(
+      await db
+        .selectFrom("deployment")
+        .select(["id"])
+        .where("projectId", "=", seeded.projectId)
+        .execute(),
+    ).toEqual([])
   })
 })
 

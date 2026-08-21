@@ -42,6 +42,14 @@ export const deploymentSchemaResponse = Type.Object({
    * pod was never scheduled at all — the three failures this platform has actually had.
    */
   buildFailureReason: Nullable(Type.String()),
+  /**
+   * Why the deploy failed after the image was built — Knative's own message.
+   *
+   * Distinct from `buildFailureReason` on purpose. That one means the image would not build; this
+   * one means it built and would not run, which is the more common failure and the one most likely
+   * to be the customer's own application rather than the platform.
+   */
+  failureReason: Nullable(Type.String()),
   createdAt: Type.String(),
   updatedAt: Type.String(),
 })
