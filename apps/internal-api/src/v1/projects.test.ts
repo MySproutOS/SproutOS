@@ -440,6 +440,139 @@ describe.skipIf(!reachable)("project routes", () => {
     })
   })
 
+  describe.skipIf(!kmsUp)("config files", () => {
+    /*
+      The routes that let a forked project have a config file at all.
+
+      `glance` — forked, built, pushed and deployed by this platform — exited with
+      `reading /app/config/glance.yml: no such file or directory`. Most self-hostable software is
+      configured by a file and reads nothing from the environment, so without these the store is
+      limited to the projects that happen to be fully env-configurable.
+
+      Mirrors the environment-variable suite below, because the routes deliberately mirror those.
+    */
+    let fileId = ""
+    const contents = "pages:\n  - name: Home\n    api-key: hunter2\n"
+
+    it("stores contents envelope-encrypted and returns no plaintext", async () => {
+      const response = await call(
+        "PUT",
+        `/v1/orgs/${orgA}/projects/${forkedProjectId}/files`,
+        alice,
+        { path: "/app/config/glance.yml", contents, target: "production" },
+      )
+
+      expect(response.status).toBe(200)
+      fileId = response.json.id as string
+      expect(response.json.path).toBe("/app/config/glance.yml")
+      // A config file is a mixture by nature — layout next to API keys — so the whole thing is
+      // sealed and the response carries none of it.
+      expect(JSON.stringify(response.json)).not.toContain("hunter2")
+
+      const row = await db
+        .selectFrom("projectFile")
+        .select(["contentsCiphertext", "contentsWrappedDek", "contentsKmsKeyId"])
+        .where("id", "=", fileId)
+        .executeTakeFirstOrThrow()
+
+      expect(row.contentsCiphertext).not.toContain("hunter2")
+      expect(row.contentsWrappedDek.length).toBeGreaterThan(0)
+      expect(row.contentsKmsKeyId.length).toBeGreaterThan(0)
+    })
+
+    it("lists files without their contents", async () => {
+      const response = await call(
+        "GET",
+        `/v1/orgs/${orgA}/projects/${forkedProjectId}/files`,
+        alice,
+      )
+
+      expect(response.status).toBe(200)
+      expect(JSON.stringify(response.json)).not.toContain("hunter2")
+      expect((response.json.data as Json[]).map((row) => row.path)).toContain(
+        "/app/config/glance.yml",
+      )
+    })
+
+    it("reveals the contents through a route named after what it does", async () => {
+      const response = await call(
+        "POST",
+        `/v1/orgs/${orgA}/projects/${forkedProjectId}/files/${fileId}/reveal`,
+        alice,
+      )
+
+      expect(response.status).toBe(200)
+      expect(response.json.contents).toBe(contents)
+    })
+
+    it("writes the reveal to the audit log without the contents", async () => {
+      // A reveal that is not in `audit_log` is a secret read nobody can account for later — and
+      // `before`/`after` are jsonb on an append-only table, so contents there could never be
+      // deleted.
+      const rows = await db
+        .selectFrom("auditLog")
+        .select(["action", "after"])
+        .where("organizationId", "=", orgAId)
+        .where("action", "=", "credential:read")
+        .execute()
+
+      const entries = JSON.stringify(rows)
+      expect(entries).toContain("/app/config/glance.yml")
+      expect(entries).not.toContain("hunter2")
+    })
+
+    it("upserts rather than duplicating the same path", async () => {
+      // Editing a config file is the common case, and `(project_id, path, target)` is unique.
+      const again = await call("PUT", `/v1/orgs/${orgA}/projects/${forkedProjectId}/files`, alice, {
+        path: "/app/config/glance.yml",
+        contents: "pages: []\n",
+        target: "production",
+      })
+
+      expect(again.status).toBe(200)
+      expect(again.json.id).toBe(fileId)
+    })
+
+    it("refuses a path that cannot be mounted", async () => {
+      /*
+        Refused at the edge rather than at the kubelet. A `subPath` containing `..` fails the pod
+        with a message about the volume, and a relative path has no anchor inside the container —
+        both arrive as a broken deployment rather than as a rejected request.
+      */
+      for (const path of ["app/config.yml", "/app/../etc/passwd", "/app/", "/"]) {
+        const response = await call(
+          "PUT",
+          `/v1/orgs/${orgA}/projects/${forkedProjectId}/files`,
+          alice,
+          { path, contents: "x" },
+        )
+        expect(response.status).toBe(400)
+      }
+    })
+
+    it("removes a file", async () => {
+      const response = await call(
+        "DELETE",
+        `/v1/orgs/${orgA}/projects/${forkedProjectId}/files/${fileId}`,
+        alice,
+      )
+      expect(response.status).toBe(200)
+
+      const row = await db
+        .selectFrom("projectFile")
+        .select("id")
+        .where("id", "=", fileId)
+        .executeTakeFirst()
+      // Hard delete: the row holds decryptable contents, and the request was to stop holding them.
+      expect(row).toBeUndefined()
+    })
+
+    it("keeps another organization out", async () => {
+      const response = await call("GET", `/v1/orgs/${orgA}/projects/${forkedProjectId}/files`, bob)
+      expect(response.status).toBe(404)
+    })
+  })
+
   describe.skipIf(!kmsUp)("environment variables", () => {
     let envVarId = ""
     const secret = "postgres://user:hunter2@db.internal:5432/app"
@@ -503,6 +636,10 @@ describe.skipIf(!reachable)("project routes", () => {
         .select(["action", "resourceSrn", "after"])
         .where("organizationId", "=", orgAId)
         .where("action", "=", "credential:read")
+        // Narrowed to *this* variable's row. It used to take whichever row came back first, which
+        // held only while env vars were the sole thing anyone could reveal — adding config-file
+        // reveals broke it, and the assertion was never about "the first audit row" anyway.
+        .where("resourceSrn", "like", `%${envVarId}%`)
         .executeTakeFirstOrThrow()
 
       expect(audit.resourceSrn).toContain(envVarId)
