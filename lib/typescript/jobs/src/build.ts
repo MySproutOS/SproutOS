@@ -1,4 +1,4 @@
-import { crudDeployment, crudDeploymentBuild, fetchDeployment } from "@lib/dao"
+import { crudDeployment, crudDeploymentBuild, fetchDeployment, fetchPlacement } from "@lib/dao"
 import {
   type BuildSpec,
   buildJob,
@@ -101,7 +101,19 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       throw new Error(`Deployment ${deploymentId} has no repository to build from`)
     }
 
-    const resolved = settings ?? buildSettingsFromEnv()
+    // The registry belongs to the cluster this will run on, not to the process doing the building.
+    //
+    // Pulling an image across clouds works — a GKE node can pull from AWS ECR — and it costs
+    // cross-cloud egress on every pull, and the ECR credential it needs expires after twelve hours,
+    // so a static pull secret stops working overnight. An image is pushed to the registry of the
+    // cloud that will run it.
+    const placement = await fetchPlacement(db).forProject(project.id)
+
+    const fallback = settings ?? buildSettingsFromEnv()
+    const resolved =
+      placement?.registry != null
+        ? { registry: placement.registry, insecureRegistry: fallback.insecureRegistry }
+        : fallback
     const spec: BuildSpec = {
       deploymentId,
       gitSha: deployment.gitSha,
@@ -117,7 +129,12 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
     const name = buildJobName(deploymentId)
     const path = jobPath(BUILD_NAMESPACE, name)
 
-    await crudDeployment(db).update(deploymentId, { status: "building" })
+    await crudDeployment(db).update(deploymentId, {
+      status: "building",
+      // Recorded at build time rather than at deploy time: the image lands in this cluster's
+      // registry, so by the time it is built the placement is already a fact rather than a plan.
+      ...(placement === undefined ? {} : { clusterId: placement.clusterId }),
+    })
 
     const build = await crudDeploymentBuild(db).create({
       deploymentId,

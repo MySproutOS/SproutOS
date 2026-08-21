@@ -659,6 +659,7 @@ export interface Project {
   name: string
   organizationId: string
   productionBranch: Generated<string>
+  regionId: string | null
   repositoryId: string
   rootDir: Generated<string>
   slug: string

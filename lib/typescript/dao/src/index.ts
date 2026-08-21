@@ -220,3 +220,4 @@ export {
 export { crudDeployment } from "./deployment/crud"
 export { fetchDeployment } from "./deployment/fetch"
 export { crudDeploymentBuild } from "./deploymentBuild/crud"
+export { fetchPlacement, type Placement } from "./cluster/placement"
