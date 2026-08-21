@@ -39,6 +39,7 @@ export {
   type MintOptions,
   type RegistryCredential,
   type RegistryKind,
+  registryHost,
   registryKind,
   UnsupportedRegistryError,
 } from "./registry-auth"

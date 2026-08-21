@@ -31,7 +31,10 @@ export type DockerConfig = {
 export function dockerConfig(registry: string, username: string, password: string): DockerConfig {
   return {
     auths: {
-      [registry]: {
+      // Keyed on the host. A key carrying the repository path is matched by some clients and not
+      // others, and the one that does not match falls back to anonymous — which is the failure this
+      // whole module exists to remove.
+      [registryHost(registry)]: {
         username,
         password,
         // `auth` as well as the pair, because clients disagree about which they read and a config
@@ -52,9 +55,28 @@ export function dockerConfig(registry: string, username: string, password: strin
 export type RegistryKind = "ecr" | "artifact-registry" | "unknown"
 
 export function registryKind(registry: string): RegistryKind {
-  if (/\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$/.test(registry)) return "ecr"
-  if (/(^|\.)(pkg\.dev|gcr\.io)$/.test(registry)) return "artifact-registry"
+  const host = registryHost(registry)
+  if (/\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$/.test(host)) return "ecr"
+  if (/(^|\.)(pkg\.dev|gcr\.io)$/.test(host)) return "artifact-registry"
   return "unknown"
+}
+
+/**
+ * The host part of a registry, which is not the whole of `BUILD_REGISTRY`.
+ *
+ * Artifact Registry addresses are `host/project/repository` and the project deliberately configures
+ * the full prefix, because that is what an image reference needs. Docker's `auths` map and every
+ * host-matching rule want only the host — and matching the whole string against a host pattern is
+ * what made the live deployment answer
+ *
+ *     BUILD_REGISTRY_AUTH_SECRET is set but "us-central1-docker.pkg.dev/project-…/sproutos"
+ *     is not a registry this can mint a credential for
+ *
+ * on a host that plainly is one. ECR has no path component and is unaffected either way, which is
+ * exactly why a test written against an ECR-shaped value would not have caught it.
+ */
+export function registryHost(registry: string): string {
+  return registry.split("/")[0] ?? registry
 }
 
 export class UnsupportedRegistryError extends Error {

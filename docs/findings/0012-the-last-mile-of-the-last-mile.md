@@ -13,7 +13,7 @@ repository are more reliable than the wiring between them, and the wiring is wha
 **Signing in from the front page returned 400, always.** The OAuth App has one registered callback
 host. The "Sign in with GitHub" button is on the marketing pages, which are served from the apex. So
 a sign-in that begins on `selloutjobs.com` finishes on `app.selloutjobs.com`, and the `state` and
-PKCE cookies were host-only — the *session* cookie had been given a `Domain` and these had not. The
+PKCE cookies were host-only — the _session_ cookie had been given a `Domain` and these had not. The
 callback found no state and refused. It refused silently: five `return badRequest()` calls, no
 reason logged, nothing in the pod's output at all.
 
@@ -33,7 +33,7 @@ One listing pointed at the Astro framework's monorepo and called it "Astro Blog 
 pointed at an archived repository with no Dockerfile at its final commit.
 
 **The build had no credential.** `deploy/builds/namespace.yaml` opens by explaining that a build
-"needs a credential that can *push* to the registry" and why it cannot live in a tenant namespace.
+"needs a credential that can _push_ to the registry" and why it cannot live in a tenant namespace.
 Both true. No Secret was ever created, nothing mounted one, the Job spec had no volumes. Every build
 compiled the application, exported an image, and asked the registry for an anonymous token.
 
@@ -52,12 +52,12 @@ own. `@lib/envelope` has never hit this only because `@api/internal` happens to 
 
 ## Why none of it was caught
 
-Each of these passed every check that existed, and in most cases the check was *shaped so that it
-could not fail*.
+Each of these passed every check that existed, and in most cases the check was _shaped so that it
+could not fail_.
 
 - The transient-cookie bug needs two hosts to appear. Every test uses one.
 - `first_deploy` was `skipped`, and a test asserting "the job succeeds" passes on a job that skips
-  everything. The step list was tested for its *shape* — that the keys exist, that progress cannot
+  everything. The step list was tested for its _shape_ — that the keys exist, that progress cannot
   divide by zero — and never for whether anything moved.
 - The build tests describe a spec with no registry credential, which is the correct configuration
   for the insecure local registry they assume. "No volumes" looked right.
@@ -68,7 +68,7 @@ could not fail*.
 The recurring form is a check that observes the same thing in the same configuration the code was
 written in. `docs/findings/0001` put it as: the question worth asking of a check is not whether it
 passes but what would have to be true for it to fail. Five of the eight above have the same answer —
-*nothing, in this configuration* — and the configuration was never varied.
+_nothing, in this configuration_ — and the configuration was never varied.
 
 ## What now stops them
 

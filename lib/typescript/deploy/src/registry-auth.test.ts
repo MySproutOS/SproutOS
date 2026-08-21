@@ -17,6 +17,8 @@ import {
 
 const ECR = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
 const AR = "us-central1-docker.pkg.dev"
+/** What `BUILD_REGISTRY` actually holds: Artifact Registry addresses carry a repository path. */
+const AR_FULL = "us-central1-docker.pkg.dev/project-e6c082ea/sproutos"
 
 describe("registryKind", () => {
   it("tells the two clouds apart from the hostname", () => {
@@ -27,6 +29,16 @@ describe("registryKind", () => {
     expect(registryKind(AR)).toBe("artifact-registry")
     expect(registryKind("gcr.io")).toBe("artifact-registry")
     expect(registryKind("registry.example.com")).toBe("unknown")
+    /*
+      With the repository path, which is what `BUILD_REGISTRY` is set to.
+
+      Artifact Registry addresses are `host/project/repository` and the deployment configures the
+      whole prefix, because that is what an image reference needs. Matching the full string against
+      a host pattern made the live worker report that `us-central1-docker.pkg.dev/…/sproutos` "is
+      not a registry this can mint a credential for". ECR has no path component, so a test written
+      only against an ECR-shaped value could not have caught it.
+    */
+    expect(registryKind(AR_FULL)).toBe("artifact-registry")
     // Not ECR: the suffix has to end the host, or `…amazonaws.com.evil.test` would match.
     expect(registryKind(`${ECR}.evil.test`)).toBe("unknown")
   })
@@ -45,8 +57,11 @@ describe("dockerConfig", () => {
     })
   })
 
-  it("keys the entry on the registry host, so a second registry does not overwrite the first", () => {
+  it("keys the entry on the host, not the repository path", () => {
+    // Some clients match the path-qualified key and some do not, and the one that does not falls
+    // back to anonymous — the failure this module exists to remove.
     expect(Object.keys(dockerConfig(ECR, "AWS", "p").auths)).toEqual([ECR])
+    expect(Object.keys(dockerConfig(AR_FULL, "oauth2accesstoken", "t").auths)).toEqual([AR])
   })
 })
 
