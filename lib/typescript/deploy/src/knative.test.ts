@@ -197,3 +197,34 @@ describe("scale modes", () => {
     expect(annotationsFor("warm")).not.toHaveProperty("autoscaling.knative.dev/scale-down-delay")
   })
 })
+
+describe("the environment", () => {
+  /*
+    `project_env_var` was written, sealed, listed, revealed and counted, and never delivered: this
+    renderer had no `env` of any kind, so every variable a customer set reached nothing. The backlog
+    item was marked done because the table existed.
+  */
+  function containerOf(envSecretName: string | null) {
+    const service = knativeService(project, { ...production, envSecretName }, "tenant-x")
+    return service.spec.template.spec.containers[0]
+  }
+
+  it("references the environment Secret when there is one", () => {
+    expect(containerOf("env-abcdef-0123456789ab").envFrom).toEqual([
+      { secretRef: { name: "env-abcdef-0123456789ab" } },
+    ])
+  })
+
+  it("omits the field entirely when there is none", () => {
+    // Not `[]`. Knative validates the field, and an empty `envFrom` is an array the webhook
+    // rejects rather than "no environment".
+    expect(containerOf(null)).not.toHaveProperty("envFrom")
+  })
+
+  it("omits it when the caller says nothing at all", () => {
+    // The field is optional, and a project with no variables is the common case.
+    const service = knativeService(project, production, "tenant-x")
+
+    expect(service.spec.template.spec.containers[0]).not.toHaveProperty("envFrom")
+  })
+})

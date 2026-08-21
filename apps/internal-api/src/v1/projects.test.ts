@@ -1,3 +1,4 @@
+import { openEnvVarValue } from "@lib/envelope"
 /* oxlint-disable no-await-in-loop */
 import { overhead, rateTimesQuantity } from "@lib/billing/money"
 import { db } from "@sproutos/db"
@@ -13,7 +14,6 @@ import {
   type TestUser,
   trackOrganization,
 } from "../test/fixtures"
-import { openEnvVarValue } from "./project-env"
 
 const reachable = await databaseReachable()
 

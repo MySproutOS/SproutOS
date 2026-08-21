@@ -1,3 +1,4 @@
+import { openEnvVarValue, sealEnvVarValue } from "@lib/envelope"
 import { JOB_KINDS, enqueue } from "@lib/jobs"
 import {
   allocateProjectSlug,
@@ -47,7 +48,6 @@ import { ErrorCode } from "../utils/errors.enum"
 import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
 import { cursorPaginate, decodeCursor } from "../utils/pagination"
 import { auditContext } from "../utils/request-context"
-import { openEnvVarValue, sealEnvVarValue } from "./project-env"
 import {
   projectSchemaCreateRequest,
   projectSchemaCreateResponse,

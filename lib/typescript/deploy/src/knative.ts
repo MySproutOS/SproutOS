@@ -44,6 +44,14 @@ export type DeploymentSpec = {
   containerConcurrency: number
   memoryMb: number
   maxDurationS: number
+  /**
+   * The Secret holding this revision's environment, or null when the project has none.
+   *
+   * Referenced rather than inlined, and named after its own contents — `env.ts` argues both. Null
+   * rather than an empty Secret: a `secretRef` to an object that does not exist makes the pod fail
+   * to start with `CreateContainerConfigError`, which reads like a broken image.
+   */
+  envSecretName?: string | null
 }
 
 /**
@@ -75,6 +83,7 @@ export type KnativeService = {
         timeoutSeconds: number
         containers: {
           image: string
+          envFrom?: { secretRef: { name: string } }[]
           resources: { limits: { memory: string }; requests: { memory: string } }
           securityContext: {
             allowPrivilegeEscalation: boolean
@@ -237,6 +246,17 @@ export function knativeService(
           containers: [
             {
               image: deployment.imageUri,
+              /*
+                The customer's environment, and for a long time there was none.
+
+                `project_env_var` was written, sealed, listed, revealed and counted, and this block
+                did not exist — so every variable a customer set went into the database and reached
+                nothing. Spread rather than set to `[]` because Knative validates the field: an
+                empty `envFrom` is not "no environment", it is an array the webhook rejects.
+              */
+              ...(deployment.envSecretName == null
+                ? {}
+                : { envFrom: [{ secretRef: { name: deployment.envSecretName } }] }),
               resources: {
                 limits: { memory: `${deployment.memoryMb}Mi` },
                 // A request equal to the limit: tenant pods are billed on what they reserve, and a

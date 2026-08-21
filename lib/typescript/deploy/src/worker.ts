@@ -226,7 +226,13 @@ export function queueSecret(
   }
 }
 
-/** Where a Secret lives in the API. */
+/**
+ * Where a Secret lives in the API.
+ *
+ * An empty name gives the *collection* path, which is what a label-selector delete needs — and is
+ * the shape the API already uses, rather than a second function that would drift from this one.
+ */
 export function secretPath(namespace: string, name: string): string {
-  return `/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets/${encodeURIComponent(name)}`
+  const collection = `/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets`
+  return name === "" ? collection : `${collection}/${encodeURIComponent(name)}`
 }

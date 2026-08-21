@@ -7,8 +7,8 @@ finding.
 
 A customer provisioning object storage received a real AWS access key, belonging to a real IAM user
 created for them, carrying an inline policy scoped to their bucket. Everything worked. The plugin
-connected, the vault synced, and the driver had a test suite with a test in it called *"gives each
-vault a policy naming only its own bucket"*, which passed.
+connected, the vault synced, and the driver had a test suite with a test in it called _"gives each
+vault a policy naming only its own bucket"_, which passed.
 
 It passed by reading the policy document back out of IAM and checking the ARNs in it. That test is
 honest about itself — it says in a comment that it asserts the policy rather than attempting the
@@ -23,7 +23,7 @@ vault — was the single thing never executed, in a suite that was otherwise gre
 ## The question worth asking
 
 `docs/findings/` keeps arriving at the same place: the question is not whether a check passes but
-what would have to be true for it to fail. Here the answer was *nothing*. There was no state of the
+what would have to be true for it to fail. Here the answer was _nothing_. There was no state of the
 code that turned those tests red, because they did not run.
 
 And the escape hatch made it worse than a missing test would have been. A missing test is an absence
@@ -64,8 +64,8 @@ argued out of.
 ## And one the tests caught on the way
 
 Every refusal answered `403 AccessDenied`, which was the design, and three different messages, which
-was not: *"unknown access key"*, *"the signature does not match"*, *"that bucket does not belong to
-this credential"*. That is an oracle. It confirms first that a key exists, and then that a bucket
+was not: _"unknown access key"_, _"the signature does not match"_, _"that bucket does not belong to
+this credential"_. That is an oracle. It confirms first that a key exists, and then that a bucket
 does.
 
 There was a unit test asserting the refusals were indistinguishable. It compared status codes and
@@ -74,5 +74,5 @@ receive — did not.
 
 Both tests were written in the same hour, by the same author, with the same intent. The difference
 is that one asserted on a value the code computes and the other asserted on what a client can see.
-When the property is *"an attacker learns nothing"*, only the second kind of test is about the
+When the property is _"an attacker learns nothing"_, only the second kind of test is about the
 property.

@@ -1,5 +1,6 @@
 import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
 import {
+  secretPath,
   createKubeClient,
   inClusterConfig,
   knativeServicePath,
@@ -70,7 +71,10 @@ export type TeardownResult = {
  * client that makes real connections, so a test passing one reaches the network — which is how this
  * signature started and why it changed.
  */
-export type TeardownKube = Pick<ReturnType<typeof createKubeClient>, "get" | "remove">
+export type TeardownKube = Pick<
+  ReturnType<typeof createKubeClient>,
+  "get" | "remove" | "removeCollection"
+>
 
 export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
   return async (job, { db }) => {
@@ -210,6 +214,17 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
       .where("projectId", "=", projectId)
       .executeTakeFirst()
     result.envVars = Number(envVars.numDeletedRows ?? 0)
+
+    /*
+      And the same values in the cluster, which the database delete does not reach.
+
+      A revision's environment is a Kubernetes Secret named after its own contents, so a project
+      accumulates one per environment it has ever deployed with — there is no list of names to walk,
+      which is why this goes by label. Deleting the rows and leaving these behind would mean a
+      customer who asked the platform to stop holding their data, and was told it had, while their
+      decrypted API keys sat in a namespace indefinitely.
+    */
+    await kube.removeCollection(secretPath(namespace, ""), `sproutos.dev/project=${projectId}`)
 
     await db
       .updateTable("project")

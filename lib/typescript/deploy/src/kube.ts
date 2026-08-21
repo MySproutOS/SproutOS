@@ -149,6 +149,28 @@ export function createKubeClient(config: KubeConfig) {
   }
 
   /**
+   * Delete every object of a kind carrying a label, in one request.
+   *
+   * Kubernetes calls this a collection delete, and it exists here because environment Secrets are
+   * named after their own contents — a project accumulates one per environment it has ever deployed
+   * with, so there is no list of names to walk at teardown. The label is the only handle.
+   *
+   * Separate from [`remove`] rather than a parameter on it, because `remove` appends its own query
+   * string and a second `?` is a URL nothing answers.
+   */
+  async function removeCollection(path: string, labelSelector: string): Promise<void> {
+    try {
+      await request(
+        "DELETE",
+        `${path}?labelSelector=${encodeURIComponent(labelSelector)}&propagationPolicy=Background`,
+      )
+    } catch (error) {
+      if (error instanceof KubeError && error.status === 404) return
+      throw error
+    }
+  }
+
+  /**
    * A pod's logs, which are `text/plain` rather than JSON.
    *
    * Separate from `request` because that one parses every response as JSON, and log output is the
@@ -177,7 +199,7 @@ export function createKubeClient(config: KubeConfig) {
     return text
   }
 
-  return { apply, get, remove, logs }
+  return { apply, get, logs, remove, removeCollection }
 }
 
 /**

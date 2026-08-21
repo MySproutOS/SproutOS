@@ -1,4 +1,15 @@
-import { open, seal, type SealedValue } from "@lib/envelope"
+import { open, seal } from "./envelope"
+import type { SealedValue } from "./types"
+
+/*
+  Here rather than in `apps/internal-api`, where it started, because there are now two callers.
+
+  The API seals a value when a customer sets it; the deploy job opens the whole set to materialize a
+  revision's environment. Those live in different deployments, and a second copy of the context
+  would be a second copy of a rule whose whole purpose is that both sides compute it identically —
+  a divergence would present as "this value could not be decrypted" on a variable nobody had
+  touched.
+*/
 
 /**
  * The encryption context every `project_env_var` value is bound to.

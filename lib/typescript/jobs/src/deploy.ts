@@ -1,5 +1,11 @@
-import { crudDeployment, fetchDeployment } from "@lib/dao"
+import type { DB } from "@sproutos/db"
+import type { Kysely } from "kysely"
+import { crudDeployment, fetchDeployment, fetchProjectEnvVar } from "@lib/dao"
 import {
+  type EnvironmentEntry,
+  environmentSecret,
+  isDeliverableKey,
+  secretPath,
   createKubeClient,
   inClusterConfig,
   type KnativeService,
@@ -7,6 +13,7 @@ import {
   knativeServicePath,
   type KubeConfig,
 } from "@lib/deploy"
+import { openEnvVarValue } from "@lib/envelope"
 import { ensureTenantNamespace } from "@lib/sandbox"
 import { BUILD_KINDS } from "./build"
 import { enqueue } from "./queue"
@@ -18,6 +25,74 @@ export const DEPLOY_KINDS = {
 } as const
 
 type DeployPayload = { deploymentId: string }
+
+/**
+ * Decrypt a project's variables for one deployment target and put them in the cluster.
+ *
+ * Returns the Secret's name, or `null` when there is nothing to deliver — which the renderer turns
+ * into no `envFrom` at all rather than a reference to an empty object.
+ *
+ * **`target` is `all` plus the deployment's own kind.** That is what the column is for: a preview
+ * gets the preview variables and the shared ones, and production's secrets stay out of a pull
+ * request's build — which matters, because a preview deployment runs code from a branch anybody
+ * with a fork can open.
+ *
+ * The Secret is never deleted here. Its name is a hash of its contents, so every environment a
+ * project has ever deployed with keeps its own object, and a rollback to an earlier revision finds
+ * the environment that revision actually ran with. `project.teardown` collects them by label.
+ */
+export async function materializeEnvironment(
+  db: Kysely<DB>,
+  kube: ReturnType<typeof createKubeClient>,
+  projectId: string,
+  namespace: string,
+  target: string,
+): Promise<string | null> {
+  const sealed = await fetchProjectEnvVar(db).listSealedForProject(projectId, target)
+  if (sealed.length === 0) return null
+
+  const entries: EnvironmentEntry[] = []
+  const undeliverable: string[] = []
+
+  for (const row of sealed) {
+    /*
+      Refused rather than renamed.
+
+      A Secret key must match `[-._a-zA-Z0-9]+` and the API server rejects the whole object
+      otherwise — so one variable named with a space would make every *other* variable undeliverable,
+      as a 422 several steps from the cause. Sanitising instead would deliver a variable under a name
+      the customer's code does not read, which looks exactly like the platform ignoring it.
+    */
+    if (!isDeliverableKey(row.key)) {
+      undeliverable.push(row.key)
+      continue
+    }
+
+    entries.push({
+      key: row.key,
+      value: await openEnvVarValue(projectId, row.key, {
+        ciphertext: row.valueCiphertext,
+        kmsKeyId: row.valueKmsKeyId,
+        wrappedDek: row.valueWrappedDek,
+      }),
+    })
+  }
+
+  if (undeliverable.length > 0) {
+    // Not thrown. A deployment that fails outright because one variable has an unusable name is a
+    // worse outcome than one that runs without it and says so.
+    console.warn(
+      `project ${projectId}: ${undeliverable.length} variable(s) have names Kubernetes cannot ` +
+        `carry and were not delivered: ${undeliverable.join(", ")}`,
+    )
+  }
+
+  if (entries.length === 0) return null
+
+  const secret = environmentSecret(projectId, namespace, entries)
+  await kube.apply(secretPath(namespace, secret.metadata.name), secret)
+  return secret.metadata.name
+}
 
 /** How long to wait for a revision before handing the wait back to the queue. */
 const READY_BUDGET_MS = 90_000
@@ -122,6 +197,28 @@ export function deployRevision(config?: KubeConfig): JobHandler {
     if (deployment.status === "torn_down") return
 
     const namespace = tenantNamespace(project.organizationId)
+
+    const kube = createKubeClient(config ?? inClusterConfig())
+
+    // The namespace and its NetworkPolicies first — a deployed revision is customer code too, and
+    // it reaches the network far more than a workflow node does.
+    await ensureTenantNamespace(kube, namespace)
+
+    /*
+      The environment, which for a long time went nowhere.
+
+      Applied before the Service, because the Service references it by name and a `secretRef` to an
+      object that does not exist fails the pod with `CreateContainerConfigError` — a message that
+      reads like a broken image.
+    */
+    const envSecretName = await materializeEnvironment(
+      db,
+      kube,
+      project.id,
+      namespace,
+      deployment.kind,
+    )
+
     const service = knativeService(
       { id: project.id, slug: project.slug, organizationId: project.organizationId },
       {
@@ -133,16 +230,12 @@ export function deployRevision(config?: KubeConfig): JobHandler {
         containerConcurrency: deployment.containerConcurrency,
         memoryMb: deployment.memoryMb,
         maxDurationS: deployment.maxDurationS,
+        envSecretName,
       },
       namespace,
     )
 
-    const kube = createKubeClient(config ?? inClusterConfig())
     const path = knativeServicePath(namespace, service.metadata.name)
-
-    // The namespace and its NetworkPolicies first — a deployed revision is customer code too, and
-    // it reaches the network far more than a workflow node does.
-    await ensureTenantNamespace(kube, namespace)
 
     await kube.apply<KnativeService>(path, service)
     await crudDeployment(db).update(deploymentId, { status: "deploying" })

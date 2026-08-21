@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { TEARDOWN_KIND, tearDownProject } from "./teardown"
+import { TEARDOWN_KIND, tearDownProject, type TeardownKube } from "./teardown"
 
 /**
  * Against the docker-compose Postgres. What is asserted here is which rows change and which
@@ -18,17 +18,33 @@ let projectId: string
 let repositoryId: string
 
 const removed: string[] = []
-const kube = {
-  get: () => Promise.resolve({}),
+/** Collection deletes, as `path` + the selector — see `removeCollection`. */
+const removedCollections: string[] = []
+
+/*
+  Typed as `TeardownKube` rather than cast to `never`.
+
+  The cast is how this stub came to be missing `removeCollection` entirely: the teardown handler
+  gained a call, the type gained a member, and `as never` waved both through — so the first sign was
+  a `TypeError` at runtime, in a test whose whole job is to prove teardown does not throw.
+*/
+const kube: TeardownKube = {
+  // Generic, because `get` is: a non-generic stub only satisfies `Promise<{}>` and the real
+  // signature promises `T | undefined`.
+  get: <T>() => Promise.resolve({} as T),
   remove: (path: string) => {
     removed.push(path)
+    return Promise.resolve()
+  },
+  removeCollection: (path: string, labelSelector: string) => {
+    removedCollections.push(`${path}?${labelSelector}`)
     return Promise.resolve()
   },
 }
 
 /** The handler, with the Kubernetes client replaced by one that records what it deleted. */
 function handler() {
-  return tearDownProject(kube as never)
+  return tearDownProject(kube)
 }
 
 beforeAll(async () => {
@@ -238,5 +254,27 @@ describe("tearing down a deleted project", () => {
 
   it("is registered under the kind the route enqueues", () => {
     expect(TEARDOWN_KIND).toBe("project.teardown")
+  })
+})
+
+describe("the environment secrets in the cluster", () => {
+  it("collects them by label, because their names cannot be enumerated", async ({ skip }) => {
+    /*
+      A revision's environment is a Secret named after its own contents, so a project accumulates
+      one per environment it has ever deployed with. There is no list of names to walk.
+
+      Deleting the `project_env_var` rows and leaving these would mean a customer who asked the
+      platform to stop holding their data, and was told it had, while their *decrypted* values sat
+      in a namespace indefinitely — the database rows at least were sealed.
+    */
+    if (!reachable) skip()
+
+    await handler()(job({ projectId }), context())
+
+    expect(
+      removedCollections.some((entry) => entry.includes(`sproutos.dev/project=${projectId}`)),
+    ).toBe(true)
+    // The collection path, not one object's: an empty name is what `secretPath` turns into it.
+    expect(removedCollections.some((entry) => entry.includes("/secrets?"))).toBe(true)
   })
 })
