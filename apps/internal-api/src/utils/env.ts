@@ -1,29 +1,20 @@
-/** Hostname of the origin the browser apps are served from, e.g. `example.com`.
+import { apexDomain as sharedApexDomain, cookieDomain as sharedCookieDomain } from "@utils/cookies"
+
+/** Registrable domain the browser apps are served from, used to build the CORS allowlist.
  *
  *  Read lazily rather than as a module-level constant: `packages/db` loads the repo-root `.env`
  *  via dotenv when it is first imported, which happens *after* this module is evaluated. A
  *  constant here would capture `undefined` on any deploy that relies on a `.env` file. */
-function hostname(): string | undefined {
-  const hostUrl = process.env.NEXT_PUBLIC_HOST_URL
-  return hostUrl === undefined || hostUrl === "" ? undefined : new URL(hostUrl).hostname
-}
-
-/** Registrable domain the browser apps are served from, used to build the CORS allowlist. */
 export function apexDomain(): string | undefined {
-  return hostname()
+  return sharedApexDomain(process.env)
 }
 
-/** Cookie `Domain` for the session cookie, derived from NEXT_PUBLIC_HOST_URL as `.example.com`.
+/** Cookie `Domain` for the session cookie.
  *
- *  Deliberately undefined for local hosts: the website (:3000) and this API (:3001) share the
- *  `localhost` host, and cookies ignore ports, so a host-only cookie already reaches both.
- *  In production the two live on different hosts (`example.com` and `api.example.com`), so the
- *  cookie needs the parent domain — with the leading dot — to be sent to the API.
- *
- *  Note this assumes the website is on the apex domain. If it were served from `www.example.com`
- *  this would yield `.www.example.com`, which `api.example.com` would not receive. */
+ *  The body lives in `@utils/cookies` because the website sets this cookie and this API clears it;
+ *  a copy in each would let the two drift, and a cookie cleared with the wrong `Domain` is a cookie
+ *  that is not cleared. See that package for why a subdomain deployment must set
+ *  `SESSION_COOKIE_DOMAIN` rather than rely on the derivation. */
 export function cookieDomain(): string | undefined {
-  const host = hostname()
-  if (host === undefined || host === "localhost" || host === "127.0.0.1") return undefined
-  return `.${host}`
+  return sharedCookieDomain(process.env)
 }

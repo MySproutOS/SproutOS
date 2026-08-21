@@ -35,12 +35,13 @@ this platform's constraints, and none announces itself.
 
 ## The records
 
-| #                                         | Title                                      | Found by                     |
-| ----------------------------------------- | ------------------------------------------ | ---------------------------- |
-| [0001](0001-checks-that-do-not-check.md)  | Checks that could not fail                 | Breaking things deliberately |
-| [0002](0002-images-that-had-never-run.md) | Every image was broken                     | Building and running them    |
-| [0003](0003-manifests-never-applied.md)   | Manifests that had never met an API server | `kubectl apply`              |
-| [0004](0004-defaults-that-do-not-fit.md)  | Upstream defaults that do not survive here | Running Knative and GKE      |
+| #                                                  | Title                                      | Found by                     |
+| -------------------------------------------------- | ------------------------------------------ | ---------------------------- |
+| [0001](0001-checks-that-do-not-check.md)           | Checks that could not fail                 | Breaking things deliberately |
+| [0002](0002-images-that-had-never-run.md)          | Every image was broken                     | Building and running them    |
+| [0003](0003-manifests-never-applied.md)            | Manifests that had never met an API server | `kubectl apply`              |
+| [0004](0004-defaults-that-do-not-fit.md)           | Upstream defaults that do not survive here | Running Knative and GKE      |
+| [0005](0005-the-product-was-never-in-the-image.md) | The product was never in the image         | Pointing a real domain at it |
 
 ## Running it on more than one cloud
 

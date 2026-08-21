@@ -32,6 +32,21 @@ export const PLACEHOLDERS = [
   "TENANT_VALKEY_HOST",
   "TENANT_OPENSEARCH_HOST",
   "BUILD_REGISTRY_CIDR",
+  /*
+    The public hostnames, and the cookie scope that follows from them.
+
+    `CONTROL_PLANE_HOST` and `API_HOST` are separate values rather than one apex with prefixes
+    appended, because nothing guarantees the two share a parent — a deployment may put the API on a
+    different registrable domain entirely, and a renderer that assumes otherwise silently produces
+    a CORS allowlist that excludes the site's own browser.
+
+    `SESSION_COOKIE_DOMAIN` is a third value for the same reason, spelled out in `@utils/cookies`:
+    it cannot be derived from either host without the Public Suffix List, and deriving it wrongly
+    produces an app that looks signed out rather than an error.
+  */
+  "CONTROL_PLANE_HOST",
+  "API_HOST",
+  "SESSION_COOKIE_DOMAIN",
 ] as const
 
 export type Placeholder = (typeof PLACEHOLDERS)[number]

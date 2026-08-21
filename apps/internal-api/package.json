@@ -39,6 +39,7 @@
     "@lib/workflows": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
+    "@utils/cookies": "workspace:*",
     "@utils/crypto": "workspace:*",
     "@utils/numbers": "workspace:*",
     "bullmq": "^6.1.2",

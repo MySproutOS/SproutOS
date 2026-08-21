@@ -390,6 +390,9 @@ importers:
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@utils/cookies':
+        specifier: workspace:*
+        version: link:../../lib/typescript/utils/cookies
       '@utils/crypto':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/crypto
@@ -484,6 +487,9 @@ importers:
       '@ui/spa-shared':
         specifier: workspace:*
         version: link:../../lib/typescript/ui/spa-shared
+      '@utils/cookies':
+        specifier: workspace:*
+        version: link:../../lib/typescript/utils/cookies
       '@utils/crypto':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/crypto
@@ -967,6 +973,8 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.8(react@19.2.8)
+
+  lib/typescript/utils/cookies: {}
 
   lib/typescript/utils/crypto:
     devDependencies:

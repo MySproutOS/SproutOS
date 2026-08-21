@@ -11,7 +11,7 @@
   survives into the bundle. Narrowing it to the single field we use is what keeps that true — a
   wider shim would invite a second reference that really does need node.
 */
-declare const process: { env: { NODE_ENV?: string } }
+declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_API_URL?: string } }
 
 import { client } from "./generated/client.gen"
 import { client as adminClient } from "./admin-generated/client.gen"
@@ -25,18 +25,26 @@ export * from "./generated/sdk.gen"
  *
  * This module is consumed by both Next.js and the Vite SPAs, and neither bundler can see the
  * other's convention: `NEXT_PUBLIC_*` inlining does not reach a Vite build, and `import.meta.env`
- * is not something Next.js will resolve. `NODE_ENV` is the one variable both statically replace,
- * which is why the shape is a branch rather than a lookup.
+ * is not something Next.js will resolve. `NODE_ENV` is the one variable both statically replace
+ * without help, which is why the development branch is a comparison rather than a lookup.
  *
- * The production host used to be `api.nextjs-spa-split.andrewcwang.com` — the upstream template
- * author's domain, inherited when this repo was copied from `nextjs-spa-split` and never swept.
- * Every production build of all three apps would have sent authenticated requests, with cookies,
- * to somebody else's server. It never surfaced because nothing outside development exercises it.
+ * `NEXT_PUBLIC_API_URL` is the production host, and it is **inlined at build time in all three
+ * apps** — Next.js does it natively, and each SPA's `vite.config.ts` carries a matching `define`.
+ * One environment variable, three bundlers, no second name to keep in step.
  *
- * `API_HOST` is left as one named constant rather than an env read, so the next person changing
- * the domain changes it in one place and the grep that finds it is obvious.
+ * It used to be a hard-coded constant. First `https://api.nextjs-spa-split.andrewcwang.com` — the
+ * upstream template author's domain, inherited when this repo was copied and never swept — and then
+ * `https://api.sproutos.dev`, which is ours in intent and does not resolve. Either way every
+ * production build of all three apps sent authenticated requests, with cookies, to a host nobody
+ * had checked. A constant cannot be right for two deployments, and this platform is deliberately
+ * deployed to more than one.
+ *
+ * Unset, it is the empty string rather than a guess. An empty base URL makes every request relative
+ * to the page's own origin: wrong, immediately visible in the network panel, and — the part that
+ * matters — incapable of sending a session cookie to a stranger. The SPA builds refuse outright
+ * (see `vite.config.ts`), so reaching this fallback in production means someone bypassed the build.
  */
-const API_HOST = "https://api.sproutos.dev"
+const API_HOST = process.env.NEXT_PUBLIC_API_URL ?? ""
 
 export const baseUrl = process.env.NODE_ENV === "development" ? "http://localhost:3001" : API_HOST
 

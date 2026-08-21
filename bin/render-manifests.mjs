@@ -66,6 +66,12 @@ for (const name of [
   "TENANT_OPENSEARCH_HOST",
   "BUILD_REGISTRY_CIDR",
   "IMAGE_REGISTRY",
+  // The public hostnames. From the environment rather than the OpenTofu outputs because a cluster
+  // may be brought up before its DNS exists, and because the same cluster is rendered for a staging
+  // host and a production one from the same state.
+  "CONTROL_PLANE_HOST",
+  "API_HOST",
+  "SESSION_COOKIE_DOMAIN",
 ]) {
   if (process.env[name] !== undefined) values[name] = process.env[name]
 }

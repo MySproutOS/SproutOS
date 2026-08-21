@@ -12,18 +12,63 @@ WORKDIR /src
 # monorepo of this size is the difference between a thirty-second build and a five-minute one.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY apps/website/package.json ./apps/website/
+COPY apps/frontends/dashboard/package.json ./apps/frontends/dashboard/
+COPY apps/frontends/admin/package.json ./apps/frontends/admin/
 COPY packages/db/package.json ./packages/db/
 COPY lib/typescript ./lib/typescript
 RUN find lib/typescript -mindepth 2 -maxdepth 3 -type d -name src -exec rm -rf {} + || true
 
+# Three apps, not one. The two SPAs *are* the authenticated product, and this image is what serves
+# them — see the build stage below.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter website...
+    pnpm install --frozen-lockfile --filter website... --filter dashboard... --filter admin...
 
 FROM node:24-alpine AS build
 RUN corepack enable
 WORKDIR /src
 COPY --from=deps /src ./
 COPY . .
+
+# The API's public origin, compiled into all three bundles.
+#
+# `NEXT_PUBLIC_*` is a build-time substitution in every one of these bundlers, so this cannot be a
+# pod env var: by the time a container starts, the string is already in the JavaScript. An image is
+# therefore specific to the domain it was built for, which is worth knowing before wondering why
+# staging talks to production.
+#
+# No default. `lib/typescript/api-client/vite-define.mjs` throws when it is empty, so a build that
+# forgets this fails here rather than shipping an app whose every request goes to its own origin
+# and comes back 404.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# The two SPAs, into this app's `public/`.
+#
+# **This is how the authenticated product reaches a browser, and it was missing.** `proxy.ts`
+# rewrites every authenticated request to `/dashboard/index.html` or `/admin/index.html` on this
+# same origin — its own comment says "the SPAs are served by this deployment" — and nothing built
+# them or put them there. `apps/website/public/` was empty, so the deployed image answered every
+# one of those rewrites with a 404. The marketing site rendered perfectly, which is exactly what a
+# smoke test that fetches `/` would have reported.
+#
+# The two layouts differ because the two `base` settings differ, and each is right for where it is
+# mounted:
+#
+#   * dashboard — `base: "/"`, so its `index.html` points at `/assets/…`. The assets go to
+#     `public/assets/` at the root and the entry document to `public/dashboard/index.html`.
+#   * admin — `base: "/admin/"`, so the whole `dist` drops into `public/admin/` unchanged.
+#
+# Getting this wrong does not fail the build: the document loads, the script 404s, and the user
+# sees a blank page with no error but one in the network panel.
+RUN pnpm --filter dashboard --filter admin run build \
+ && mkdir -p apps/website/public/dashboard apps/website/public/admin apps/website/public/assets \
+ && cp apps/frontends/dashboard/dist/index.html apps/website/public/dashboard/index.html \
+ && cp -R apps/frontends/dashboard/dist/assets/. apps/website/public/assets/ \
+ && cp -R apps/frontends/admin/dist/. apps/website/public/admin/ \
+ && test -f apps/website/public/dashboard/index.html \
+ && test -f apps/website/public/admin/index.html \
+ && test "$(ls apps/website/public/assets | wc -l)" -gt 0
+
 RUN pnpm --filter website run build
 
 # Repair what the output tracer got wrong.

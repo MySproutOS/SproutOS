@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    // `dom` for `URL`, which this module parses `NEXT_PUBLIC_HOST_URL` with. It is a WHATWG global in
+    // every runtime this package is loaded in — Node since v10 and every browser — but `esnext`
+    // alone does not declare it, and the failure is `Cannot find name 'URL'` followed by five
+    // cascading `no-unsafe-*` errors that read as though the code were wrong.
+    "lib": ["esnext", "dom"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "allowImportingTsExtensions": false,
+    "paths": {},
+    "rootDir": "./src",
+    "outDir": "./build"
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

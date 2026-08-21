@@ -23,6 +23,7 @@
     "@ui/base": "workspace:*",
     "@ui/seo-shared": "workspace:*",
     "@ui/spa-shared": "workspace:*",
+    "@utils/cookies": "workspace:*",
     "@utils/crypto": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",

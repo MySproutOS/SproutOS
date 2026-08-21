@@ -1,0 +1,21 @@
+{
+  "name": "@utils/cookies",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Where the session cookie is scoped, resolved identically by every app that sets or clears it",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {},
+  "dependencies": {},
+  "devDependencies": {},
+  "config": {}
+}

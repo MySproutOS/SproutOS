@@ -20,6 +20,7 @@ const nextConfig: NextConfig = {
     "@ui/base",
     "@ui/seo-shared",
     "@ui/spa-shared",
+    "@utils/cookies",
     "@utils/crypto",
   ],
   turbopack: {

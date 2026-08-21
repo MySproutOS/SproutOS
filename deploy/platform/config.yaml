@@ -53,3 +53,39 @@ metadata:
     app.kubernetes.io/part-of: sproutos
 data:
   url: https://TENANT_OPENSEARCH_HOST:9200
+---
+# The control plane's own Valkey. Not a tenant's.
+#
+# `jobs/src/handlers.ts` publishes to this one and `workflows.ts` reads tenant queue depth from the
+# other, and the two have deliberately different names because putting a customer's job queue in the
+# same instance as the platform's session cache means one tenant's backlog evicts everyone's
+# sessions.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: control-plane-valkey
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  # No credential in the URL: the control-plane instance is reachable only from inside the VPC and
+  # authenticates by network position. The *tenant* instance is not, which is why its admin URL is
+  # a Secret and this one is not.
+  url: redis://control-plane-valkey.sproutos-system.svc.cluster.local:6379
+---
+# ClickHouse, for the observability service.
+#
+# The password is separate, in Secrets Manager — `observability/src/client.ts` reads
+# `CLICKHOUSE_PASSWORD` on its own and omits authentication entirely when it is unset, so putting
+# the password here would be the difference between an authenticated client and one that quietly
+# is not.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observability-clickhouse
+  namespace: sproutos-system
+  labels:
+    app.kubernetes.io/part-of: sproutos
+data:
+  url: http://clickhouse.sproutos-system.svc.cluster.local:8123
+  user: sproutos

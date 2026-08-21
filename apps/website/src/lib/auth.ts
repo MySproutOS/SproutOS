@@ -5,25 +5,21 @@ import {
   generateSessionToken as randomSessionToken,
   sha256Utf8,
 } from "@utils/crypto"
+import { cookieDomain as sharedCookieDomain } from "@utils/cookies"
 import type { Selectable } from "kysely"
 import { cookies } from "next/headers"
 import { cache } from "react"
 
-/** Cookie `Domain` for the session cookie, derived from NEXT_PUBLIC_HOST_URL as `.example.com`.
+/** Cookie `Domain` for the session cookie.
  *
- *  Deliberately undefined for local hosts: the website (:3000) and the API (:3001) share the
- *  `localhost` host, and cookies ignore ports, so a host-only cookie already reaches both.
- *  In production they live on different hosts (`example.com` and `api.example.com`), so the
- *  cookie needs the parent domain — with the leading dot — to be sent to the API.
+ *  The body lives in `@utils/cookies` because this app sets the cookie and `apps/internal-api`
+ *  clears it, and two copies of that decision drift. See that package for why a website served from
+ *  a subdomain must set `SESSION_COOKIE_DOMAIN`.
  *
- *  A function rather than a constant, mirroring apps/internal-api/src/utils/env.ts, which must
- *  read lazily because dotenv has not run when that module is evaluated. */
+ *  A function rather than a constant: `packages/db` loads the repo-root `.env` through dotenv on
+ *  first import, which happens after this module is evaluated. */
 export function cookieDomain(): string | undefined {
-  const hostUrl = process.env.NEXT_PUBLIC_HOST_URL
-  if (hostUrl === undefined || hostUrl === "") return undefined
-  const { hostname } = new URL(hostUrl)
-  if (hostname === "localhost" || hostname === "127.0.0.1") return undefined
-  return `.${hostname}`
+  return sharedCookieDomain(process.env)
 }
 
 export function generateSessionToken(): string {
