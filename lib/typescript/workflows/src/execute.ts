@@ -50,6 +50,18 @@ export type PlannedStep = {
   name: string
   runtime: Runtime
   isTrigger: boolean
+  /**
+   * The node's configuration, carried onto the step.
+   *
+   * The graph is versioned and a run points at a version, so this could be read back through the
+   * join every time — and it was, by not being carried at all: `stepRowsFor` wrote `{}` and the
+   * runner found no `url` on an `action.http` node it had just been asked to fetch.
+   *
+   * Copied onto the step instead, because a step's `input` is the record of what it was actually
+   * asked to do. Reading it back through the version would show what the graph says *now*, and a
+   * graph edited after a failed run would rewrite the history of why it failed.
+   */
+  config: Record<string, unknown>
 }
 
 /**
@@ -76,6 +88,7 @@ export function plannedSteps(graph: WorkflowGraph): PlannedStep[] {
         name: node.name,
         runtime: NODE_RUNTIME[node.type],
         isTrigger: isTriggerType(node.type),
+        config: node.config,
       },
     ]
   })

@@ -278,7 +278,10 @@ export function stepRowsFor(
     workflowRunId,
     nodeId: step.nodeId,
     nodeType: step.nodeType,
-    input: JSON.stringify({}),
+    // The node's own configuration — the url an `action.http` fetches, the source an `action.code`
+    // runs. It was `{}`, so every sandboxed node was handed nothing and `action.http` failed with
+    // "needs a url" for a node that had one.
+    input: JSON.stringify(step.config),
   }))
 }
 

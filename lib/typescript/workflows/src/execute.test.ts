@@ -67,6 +67,28 @@ describe("plannedSteps", () => {
     expect(steps[0]?.isTrigger).toBe(true)
   })
 
+  /*
+    The step has to carry what the node was configured with.
+
+    It did not: `stepRowsFor` wrote `{}` and a sandboxed `action.http` was handed no url — for a
+    node whose graph had one. Copied onto the step rather than read back through the version, so a
+    graph edited after a failed run cannot rewrite why it failed.
+  */
+  it("carries each node's config, which is what the sandbox runs on", () => {
+    const steps = plannedSteps(
+      graph(
+        [
+          node("t", "trigger.manual"),
+          { ...node("h", "action.http"), config: { url: "https://example.com/" } },
+        ],
+        [{ from: "t", to: "h" }],
+      ),
+    )
+    expect(steps.find((step) => step.nodeId === "h")?.config).toEqual({
+      url: "https://example.com/",
+    })
+  })
+
   it("carries each node's runtime, which is what the executor refuses on", () => {
     const steps = plannedSteps(
       graph([node("t", "trigger.manual"), node("h", "action.http")], [{ from: "t", to: "h" }]),
