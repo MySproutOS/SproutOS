@@ -5,6 +5,18 @@ import { v7 } from "uuid"
 import { claim, enqueue, fail, heartbeat, reclaimExpired } from "./queue"
 import { runOne } from "./worker"
 
+/*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
+
 /**
  * Against the compose Postgres, because every invariant here is one: SKIP LOCKED, the atomic
  * claim, and lease expiry are database behaviours. A fake queue would test the fake.
@@ -21,7 +33,7 @@ const reachable = await (async () => {
   }
 })()
 
-const KIND = `test_kind_${v7().slice(0, 8)}`
+const KIND = `test_kind_${v7().slice(-12)}`
 
 afterAll(async () => {
   if (!reachable) return
@@ -46,7 +58,7 @@ describe.skipIf(!reachable)("enqueue", () => {
     if (!reachable) skip()
     // Its own kind: sharing one with the test above would let that test's still-queued job be
     // claimed here and pass for the wrong reason.
-    const kind = `test_kind_future_${v7().slice(0, 8)}`
+    const kind = `test_kind_future_${v7().slice(-12)}`
     await enqueue(db, { kind, runAt: new Date(Date.now() + 60_000) })
 
     expect(await claim(db, "w1", { kinds: [kind] })).toEqual([])
@@ -56,7 +68,7 @@ describe.skipIf(!reachable)("enqueue", () => {
 describe.skipIf(!reachable)("claim", () => {
   it("never hands the same job to two workers", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_race_${v7().slice(0, 8)}`
+    const kind = `test_kind_race_${v7().slice(-12)}`
     for (let i = 0; i < 8; i++) await enqueue(db, { kind })
 
     // Four workers going for the same eight jobs at once. Without SKIP LOCKED they either
@@ -72,7 +84,7 @@ describe.skipIf(!reachable)("claim", () => {
 
   it("takes the highest priority first, then the oldest", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_prio_${v7().slice(0, 8)}`
+    const kind = `test_kind_prio_${v7().slice(-12)}`
     const old = await enqueue(db, { kind, runAt: new Date(Date.now() - 60_000) })
     await enqueue(db, { kind })
     const urgent = await enqueue(db, { kind, priority: 10 })
@@ -92,7 +104,7 @@ describe.skipIf(!reachable)("claim", () => {
 
   it("claims exactly the number of jobs asked for", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_limit_${v7().slice(0, 8)}`
+    const kind = `test_kind_limit_${v7().slice(-12)}`
     for (let i = 0; i < 5; i++) await enqueue(db, { kind })
 
     // The contract this pins: a worker gets exactly what it asked for and no more. Written with
@@ -110,7 +122,7 @@ describe.skipIf(!reachable)("claim", () => {
 
   it("counts the attempt when the job is claimed, not when it fails", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_attempt_${v7().slice(0, 8)}`
+    const kind = `test_kind_attempt_${v7().slice(-12)}`
     await enqueue(db, { kind })
 
     const [job] = await claim(db, "w1", { kinds: [kind] })
@@ -123,7 +135,7 @@ describe.skipIf(!reachable)("claim", () => {
 describe.skipIf(!reachable)("fail", () => {
   it("reschedules with backoff until the attempts run out", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_retry_${v7().slice(0, 8)}`
+    const kind = `test_kind_retry_${v7().slice(-12)}`
     await enqueue(db, { kind, maxAttempts: 2 })
 
     const [first] = await claim(db, "w1", { kinds: [kind] })
@@ -156,7 +168,7 @@ describe.skipIf(!reachable)("fail", () => {
 describe.skipIf(!reachable)("leases", () => {
   it("returns an abandoned job to the queue without resetting its attempts", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_lease_${v7().slice(0, 8)}`
+    const kind = `test_kind_lease_${v7().slice(-12)}`
     await enqueue(db, { kind })
 
     const [job] = await claim(db, "doomed-worker", { kinds: [kind], leaseSeconds: 300 })
@@ -178,7 +190,7 @@ describe.skipIf(!reachable)("leases", () => {
 
   it("refuses a heartbeat from a worker that no longer holds the lease", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_hb_${v7().slice(0, 8)}`
+    const kind = `test_kind_hb_${v7().slice(-12)}`
     await enqueue(db, { kind })
 
     const [job] = await claim(db, "worker-one", { kinds: [kind] })
@@ -191,7 +203,7 @@ describe.skipIf(!reachable)("leases", () => {
 describe.skipIf(!reachable)("runOne", () => {
   it("runs a handler and marks the job done", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_run_${v7().slice(0, 8)}`
+    const kind = `test_kind_run_${v7().slice(-12)}`
     const id = await enqueue(db, { kind, payload: { greeting: "hello" } })
 
     let seen: unknown = null
@@ -212,7 +224,7 @@ describe.skipIf(!reachable)("runOne", () => {
 
   it("fails the job rather than the worker when a handler throws", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_throw_${v7().slice(0, 8)}`
+    const kind = `test_kind_throw_${v7().slice(-12)}`
     const id = await enqueue(db, { kind, maxAttempts: 1 })
 
     await runOne(db, {
@@ -229,7 +241,7 @@ describe.skipIf(!reachable)("runOne", () => {
 
   it("reports idle rather than blocking when there is nothing to do", async ({ skip }) => {
     if (!reachable) skip()
-    const kind = `test_kind_empty_${v7().slice(0, 8)}`
+    const kind = `test_kind_empty_${v7().slice(-12)}`
     expect(
       await runOne(db, { workerId: "w1", handlers: { [kind]: () => Promise.resolve() } }),
     ).toBe("idle")
@@ -237,8 +249,8 @@ describe.skipIf(!reachable)("runOne", () => {
 
   it("only claims kinds it can handle", async ({ skip }) => {
     if (!reachable) skip()
-    const mine = `test_kind_mine_${v7().slice(0, 8)}`
-    const theirs = `test_kind_theirs_${v7().slice(0, 8)}`
+    const mine = `test_kind_mine_${v7().slice(-12)}`
+    const theirs = `test_kind_theirs_${v7().slice(-12)}`
     await enqueue(db, { kind: theirs })
     const id = await enqueue(db, { kind: mine })
 

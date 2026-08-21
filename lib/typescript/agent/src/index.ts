@@ -32,3 +32,8 @@ export {
 } from "./run"
 export { type AgentEvent, type AgentRunInput, type AgentRunOutcome, runAgentTurn } from "./runner"
 export { checkout, cloneUrl, gitAuthEnv, type Workspace } from "./workspace"
+export {
+  CONTROL_PLANE_ALLOWED_NOTE,
+  CONTROL_PLANE_DISALLOWED_TOOLS,
+  disallowedTools,
+} from "./tools"

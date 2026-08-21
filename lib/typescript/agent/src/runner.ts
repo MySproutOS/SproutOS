@@ -2,6 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { agentSubprocessEnv, toSdkPermissionMode } from "./env"
+import { disallowedTools } from "./tools"
 import type { TokenUsage } from "./pricing"
 import { withMeteredRun } from "./run"
 
@@ -104,6 +105,16 @@ export async function runAgentTurn(
           // it would pick up whatever ~/.claude on the pod happens to contain, which on a shared
           // runner is another tenant's settings.
           settingSources: ["project"],
+          /*
+            No shell, no fetch, no subagents — see `tools.ts`.
+
+            `env` above keeps the API's secrets out of the subprocess's environment, and that is
+            not enough on its own: the subprocess runs as the same uid, so `/proc/1/environ` reads
+            the parent's environment in full and the pod's service-account token is a file on disk.
+            The tool list is the control that closes it, until an agent turn runs in the Kata
+            sandbox ADR 0012 describes.
+          */
+          disallowedTools: disallowedTools(),
         },
       })
 

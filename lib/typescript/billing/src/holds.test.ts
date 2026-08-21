@@ -5,6 +5,18 @@ import { v7 } from "uuid"
 import { expireHolds, HoldNotActiveError, placeHold, releaseHold, settleHold } from "./holds"
 import { availableBalance, InsufficientBalanceError, post } from "./ledger"
 
+/*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
+
 /**
  * Against the docker-compose Postgres, like ledger.test.ts, and for the same reason: the row lock
  * that makes concurrent holds safe is a database behaviour, not a TypeScript one.
@@ -35,7 +47,7 @@ beforeAll(async () => {
     .values({
       id: organizationId,
       name: "Holds Test Org",
-      slug: `holds-test-${organizationId.slice(0, 8)}`,
+      slug: `holds-test-${organizationId.slice(-12)}`,
       kind: "personal",
       ownerUserId,
     })

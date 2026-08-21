@@ -4,6 +4,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { LATE_ARRIVAL_GRACE_MS, rollUpUsage } from "./rollup"
 
+/*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
+
 /**
  * Against the docker-compose Postgres, not a mock.
  *
@@ -63,7 +75,7 @@ beforeAll(async () => {
     .values({
       id: organizationId,
       name: "Rollup Test Org",
-      slug: `rollup-test-${organizationId.slice(0, 8)}`,
+      slug: `rollup-test-${organizationId.slice(-12)}`,
       kind: "personal",
       ownerUserId,
     })
@@ -78,7 +90,7 @@ beforeAll(async () => {
       organizationId,
       githubRepoId: Date.now() % 1_000_000_000,
       ownerLogin: "rollup-test",
-      name: `repo-${repositoryId.slice(0, 8)}`,
+      name: `repo-${repositoryId.slice(-12)}`,
       provenance: "new",
     })
     .execute()

@@ -4,6 +4,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { crudAgentSession } from "./crud"
 
+/*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
+
 /**
  * Against the docker-compose Postgres.
  *
@@ -40,7 +52,7 @@ beforeAll(async () => {
     .values({
       id: organizationId,
       name: "Turns Test Org",
-      slug: `turns-test-${organizationId.slice(0, 8)}`,
+      slug: `turns-test-${organizationId.slice(-12)}`,
       kind: "personal",
       ownerUserId,
     })
@@ -52,7 +64,7 @@ beforeAll(async () => {
       organizationId,
       githubRepoId: Number(BigInt(Date.now()) % 1_000_000_000n),
       ownerLogin: "turns-test",
-      name: `repo-${repositoryId.slice(0, 8)}`,
+      name: `repo-${repositoryId.slice(-12)}`,
       provenance: "new",
     })
     .execute()

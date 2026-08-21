@@ -7,6 +7,18 @@ import { purgeTenantIndices, type SearchAdminConfig } from "./search"
 import { reapDeletedOrganizations, reapDeletedServices } from "./reap"
 import { purgeTenantKeys, tenantKeyPrefix } from "./valkey"
 
+/*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
+
 /**
  * Runs against the compose Valkey and OpenSearch.
  *
@@ -153,7 +165,7 @@ describe.skipIf(!valkeyUp || !searchUp)("the reaper pass", () => {
       .values({
         id: organizationId,
         name: "Reaper",
-        slug: `reaper-${organizationId.slice(0, 8)}`,
+        slug: `reaper-${organizationId.slice(-12)}`,
         kind: "team",
         ownerUserId: userId,
       })

@@ -3,6 +3,18 @@ import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import {
+
+  /*
+  The *tail* of a UUIDv7, not the head.
+
+  A v7 is 48 bits of millisecond timestamp followed by random bits, so `slice(0, 8)` is pure clock:
+  two ids minted in the same millisecond share it exactly. That is not hypothetical — it made this
+  suite fail roughly one run in three with
+  `duplicate key value violates unique constraint "organization_slug_live_key"`, from a value chosen
+  precisely because it was supposed to be unique.
+
+  The last twelve characters are the random half.
+*/
   availableBalance,
   InsufficientBalanceError,
   post,
@@ -41,7 +53,7 @@ beforeAll(async () => {
     .values({
       id: organizationId,
       name: "Ledger Test Org",
-      slug: `ledger-test-${organizationId.slice(0, 8)}`,
+      slug: `ledger-test-${organizationId.slice(-12)}`,
       kind: "personal",
       ownerUserId,
     })
