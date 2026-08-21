@@ -363,6 +363,9 @@ importers:
       '@lib/dao':
         specifier: workspace:*
         version: link:../../lib/typescript/dao
+      '@lib/deploy':
+        specifier: workspace:*
+        version: link:../../lib/typescript/deploy
       '@lib/envelope':
         specifier: workspace:*
         version: link:../../lib/typescript/envelope
@@ -384,6 +387,9 @@ importers:
       '@lib/queue':
         specifier: workspace:*
         version: link:../../lib/typescript/queue
+      '@lib/sandbox':
+        specifier: workspace:*
+        version: link:../../lib/typescript/sandbox
       '@lib/services':
         specifier: workspace:*
         version: link:../../lib/typescript/services

@@ -13,6 +13,7 @@ import oauth from "./oauth"
 import organizations from "./organizations"
 import projects from "./projects"
 import roles from "./roles"
+import sandboxes from "./sandboxes"
 import services from "./services"
 import store, { storeModeration } from "./store"
 import apiKeys from "./api-keys"
@@ -52,6 +53,7 @@ orgs.route("/", agentChat)
 orgs.route("/", services)
 orgs.route("/", analysis)
 orgs.route("/", deployments)
+orgs.route("/", sandboxes)
 orgs.route("/", workflows)
 // The store catalogue itself is public (TASK 4); only moderation is org-scoped, and it lives here
 // so the organization whose grants apply is named in the path rather than inferred from

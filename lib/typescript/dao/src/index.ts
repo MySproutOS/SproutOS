@@ -102,6 +102,8 @@ import {
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
+import { crudSandbox, type SandboxState } from "./sandbox/crud"
+import { fetchSandbox } from "./sandbox/fetch"
 import { fetchUser } from "./user/fetch"
 import { exportUser, type UserExport } from "./user/export"
 import { IMPERSONATION_MINUTES, impersonation, type StartImpersonation } from "./user/impersonation"
@@ -142,6 +144,9 @@ export {
   crudStoreListingEvent,
   crudUpstreamSyncRun,
   recordUpkeepRun,
+  crudSandbox,
+  fetchSandbox,
+  SandboxState,
   crudUser,
   fetchUser,
   crudUserPreference,
