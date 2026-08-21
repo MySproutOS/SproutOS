@@ -4,6 +4,8 @@ import { type Kysely, sql } from "kysely"
 import { Client } from "pg"
 import { v7 } from "uuid"
 import { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
+import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
+import { SecretNotRecoverableError } from "./valkey"
 import {
   type ConnectionDetails,
   type ProvisionInput,
@@ -116,7 +118,12 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
       .selectFrom("databaseInstance")
       .innerJoin("databaseBranch", "databaseBranch.databaseInstanceId", "databaseInstance.id")
       .innerJoin("databaseRole", "databaseRole.databaseBranchId", "databaseBranch.id")
+      // The owning organization, because the tenant username encodes it and every read that
+      // rebuilds a connection string needs it. Joined rather than passed in: a caller holding a
+      // service id should not have to also know whose it is.
+      .innerJoin("backendService", "backendService.id", "databaseInstance.backendServiceId")
       .select([
+        "backendService.organizationId as organizationId",
         "databaseInstance.id as instanceId",
         "databaseBranch.id as branchId",
         "databaseRole.id as roleId",
@@ -134,12 +141,33 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
     return row
   }
 
-  function detailsFor(backendServiceId: string, roleName: string): ConnectionDetails {
+  /**
+   * What a customer connects with.
+   *
+   * The **tenant username**, not the Postgres role name. `pg-proxy` parses the username to learn
+   * which tenant and which resource a connection is for — that is the only routing information a
+   * startup packet has room for — and then authenticates it against `service_credential` before
+   * dropping to the backend role with `SET ROLE`.
+   *
+   * It used to be the role name and the role's own password, which is a credential for the backend
+   * cluster and works only by connecting to it directly. Together with `publicHost` defaulting to
+   * the backend, the whole Postgres path was built for direct connection and the proxy was never
+   * joined to it: three `database_role` rows existed and `service_credential` was empty, so every
+   * connection the proxy saw failed authentication.
+   */
+  function detailsFor(input: {
+    organizationId: string
+    backendServiceId: string
+  }): ConnectionDetails {
     return {
       host: config.publicHost,
       port: config.publicPort,
-      database: databaseNameFor(backendServiceId),
-      username: roleName,
+      database: databaseNameFor(input.backendServiceId),
+      username: tenantUsername({
+        organizationId: input.organizationId,
+        kind: "database",
+        resourceId: input.backendServiceId,
+      }),
     }
   }
 
@@ -148,6 +176,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
     const role = roleNameFor(input.backendServiceId)
     assertSafeIdentifier(database)
     assertSafeIdentifier(role)
+    const details = detailsFor(input)
 
     const password = generatePassword()
 
@@ -210,43 +239,67 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
         .execute()
     })
 
+    /*
+      The tenant's own secret, separate from the role's password.
+
+      Two credentials, deliberately. The role password is how the *proxy* reaches the backend on
+      this tenant's behalf and is sealed under KMS. The secret below is what the *customer* sends,
+      is stored as a one-way hash, and is the only thing `pg-proxy` verifies. A customer holding the
+      role password would be holding a credential that works against the backend directly.
+    */
+    const secret = generateSecret()
+    await db
+      .insertInto("serviceCredential")
+      .values({
+        id: v7(),
+        backendServiceId: input.backendServiceId,
+        username: details.username,
+        secretHash: await hashGeneratedSecret(secret),
+        lastFour: lastFour(secret),
+      })
+      .execute()
+
     return {
-      ...detailsFor(input.backendServiceId, role),
+      ...details,
       connectionUri: postgresUri({
-        ...detailsFor(input.backendServiceId, role),
-        password,
+        ...details,
+        password: secret,
         ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
       }),
     }
   }
 
   async function connectionUri(backendServiceId: string): Promise<string> {
-    const row = await locate(backendServiceId)
-    const password = await open(
-      { ciphertext: row.ciphertext, wrappedDek: row.wrappedDek, kmsKeyId: row.kmsKeyId },
-      rolePasswordContext(row.roleId),
-    )
+    /*
+      Not recoverable, and that is the correct answer rather than a gap.
 
-    // Stamped so "when was this last revealed" is answerable. The audit row is written by the
-    // route; this is the cheap denormalized answer a list page can show.
-    await db
-      .updateTable("databaseRole")
-      .set({ revealedAt: new Date() })
-      .where("id", "=", row.roleId)
-      .execute()
+      What a customer connects with is the tenant secret, and it is stored as a one-way hash — by
+      us and by anyone who steals the table. This used to return a URI built from the *role's*
+      password, which is recoverable because it is sealed rather than hashed, and which is a
+      credential for the backend cluster rather than for the proxy.
 
-    return postgresUri({
-      ...detailsFor(backendServiceId, row.roleName),
-      password,
-      ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
-    })
+      `rotateCredentials` is the answer, and it is a different answer — the old URI stops working —
+      which is why this is an error the caller handles rather than a silent rotation. Same
+      reasoning, same shape, as the Valkey and OpenSearch drivers.
+    */
+    await locate(backendServiceId)
+    throw new SecretNotRecoverableError(backendServiceId)
   }
 
   async function details(backendServiceId: string): Promise<ConnectionDetails> {
     const row = await locate(backendServiceId)
-    return detailsFor(backendServiceId, row.roleName)
+    return detailsFor({ organizationId: row.organizationId, backendServiceId })
   }
 
+  /**
+   * New credentials, both of them.
+   *
+   * The tenant secret is what a customer sends and the only thing the proxy verifies; the role
+   * password is how the proxy reaches the backend on their behalf. Rotating only the first would
+   * leave a backend credential that has been in a connection string, and rotating only the second
+   * would not change anything the customer holds — so both move, and the old URI stops working,
+   * which is what rotation means.
+   */
   async function rotateCredentials(backendServiceId: string): Promise<string> {
     const row = await locate(backendServiceId)
     assertSafeIdentifier(row.roleName)
@@ -257,20 +310,43 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
     })
 
     const sealed = await seal(password, rolePasswordContext(row.roleId))
-    await db
-      .updateTable("databaseRole")
-      .set({
-        passwordCiphertext: sealed.ciphertext,
-        passwordWrappedDek: sealed.wrappedDek,
-        passwordKmsKeyId: sealed.kmsKeyId,
-        rotatedAt: new Date(),
-      })
-      .where("id", "=", row.roleId)
-      .execute()
+    const details = detailsFor({ organizationId: row.organizationId, backendServiceId })
+    const secret = generateSecret()
+
+    await db.transaction().execute(async (tx) => {
+      await tx
+        .updateTable("databaseRole")
+        .set({
+          passwordCiphertext: sealed.ciphertext,
+          passwordWrappedDek: sealed.wrappedDek,
+          passwordKmsKeyId: sealed.kmsKeyId,
+          rotatedAt: new Date(),
+        })
+        .where("id", "=", row.roleId)
+        .execute()
+
+      // Replaced rather than added to: two live credentials for one service would mean a rotation
+      // that does not revoke, which is the half of rotation that matters.
+      await tx
+        .deleteFrom("serviceCredential")
+        .where("backendServiceId", "=", backendServiceId)
+        .execute()
+
+      await tx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId,
+          username: details.username,
+          secretHash: await hashGeneratedSecret(secret),
+          lastFour: lastFour(secret),
+        })
+        .execute()
+    })
 
     return postgresUri({
-      ...detailsFor(backendServiceId, row.roleName),
-      password,
+      ...details,
+      password: secret,
       ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
     })
   }
