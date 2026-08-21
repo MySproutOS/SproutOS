@@ -47,6 +47,10 @@ export const PLACEHOLDERS = [
   "CONTROL_PLANE_HOST",
   "API_HOST",
   "SESSION_COOKIE_DOMAIN",
+  // The suffix Knative Routes are served under. Distinct from `CONTROL_PLANE_HOST` on purpose:
+  // tenant applications are other people's code, and the value here decides whether they answer
+  // inside or outside the session cookie's scope.
+  "TENANT_DOMAIN",
 ] as const
 
 export type Placeholder = (typeof PLACEHOLDERS)[number]

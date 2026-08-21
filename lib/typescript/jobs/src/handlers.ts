@@ -1,4 +1,4 @@
-import { expireHolds } from "@lib/billing"
+import { BATCH_SIZE, expireHolds, rollUpUsage } from "@lib/billing"
 import { observabilityConfigured } from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import type { DB } from "@sproutos/db"
@@ -13,6 +13,27 @@ import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
 
 /**
+ * How many rollup batches one job run works through.
+ *
+ * Ten thirty-second samples per pod per node adds up: an hour of downtime on a hundred-pod cluster
+ * is on the order of a million events. Draining that in one job would hold a transaction open long
+ * enough to matter and would starve every other job of a worker. Twenty batches is 100,000 events
+ * per run, and the ten-minute schedule catches up on the rest.
+ */
+const MAX_ROLLUP_BATCHES = 20
+
+/**
+ * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
+ *
+ * `2026-08-21T02:5` — the hour, plus the tens digit of the minute. Crude on purpose: the recurring
+ * scheduler's whole design is that a key collision is how "already scheduled" is expressed, so this
+ * needs to be a pure function of the clock and nothing else.
+ */
+function tenMinuteWindow(now: Date): string {
+  return now.toISOString().slice(0, 15)
+}
+
+/**
  * The job kinds the platform ships with.
  *
  * Every one of them exists because something earlier promised a thing and left nothing to do it:
@@ -23,6 +44,7 @@ import type { JobHandler } from "./worker"
  */
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
+  rollUpUsage: "billing.roll_up_usage",
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   sweepExpired: "platform.retention_sweep",
@@ -42,6 +64,24 @@ export const JOB_KINDS = {
 const expireCreditHolds: JobHandler = async (_job, { db }) => {
   const expired = await expireHolds(db)
   if (expired > 0) console.info(`[jobs] expired ${expired} credit holds`)
+}
+
+/**
+ * Fold metered events into the rollups every cost figure is computed from.
+ *
+ * Runs in a loop until a batch comes back short, because one poll interval of arrears is a cost
+ * figure that lags by a poll interval — and after any outage there is a backlog whose size is the
+ * outage's length times the whole fleet's sampling rate. Bounded by `MAX_ROLLUP_BATCHES` so a very
+ * long backlog is worked down over several runs rather than in one job that never returns.
+ */
+const rollUpUsageJob: JobHandler = async (_job, { db }) => {
+  let events = 0
+  for (let batch = 0; batch < MAX_ROLLUP_BATCHES; batch += 1) {
+    const result = await rollUpUsage(db)
+    events += result.events
+    if (result.events < BATCH_SIZE) break
+  }
+  if (events > 0) console.info(`[jobs] rolled up ${events} usage events`)
 }
 
 /**
@@ -120,6 +160,7 @@ const retentionSweep: JobHandler = async (_job, { db }) => {
 
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
+  [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.sweepExpired]: retentionSweep,
@@ -145,6 +186,19 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Every ten minutes, not hourly.
+
+      This is the only thing standing between a metered event and a number a customer can see, so
+      the interval is how stale the dashboard's cost figure is allowed to be. Hourly would mean a
+      project that has been running all afternoon shows an hour-old total, which reads as the
+      metering being broken.
+    */
+    kind: JOB_KINDS.rollUpUsage,
+    idempotencyKey: `${JOB_KINDS.rollUpUsage}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

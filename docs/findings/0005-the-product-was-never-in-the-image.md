@@ -56,33 +56,54 @@ back into an empty directory.
 
 ---
 
-## 3. Every production SPA bundle was React's development build
+## 3. Every production SPA bundle was a development build, because `.env` said so
 
-Measured, on the dashboard, same commit, one line of `define` differing:
+`.env` contained `NODE_ENV=development`. Both SPA configs set `envDir: REPO_ROOT` — deliberately,
+so `VITE_*` variables live in one file — and **Vite takes a `NODE_ENV` supplied that way over its
+own `--mode`**. Measured directly from `configResolved`:
 
-| bundle                                                | bytes     |
-| ----------------------------------------------------- | --------- |
-| as it shipped                                         | 1,252,403 |
-| with `process.env.NODE_ENV` defined as `"production"` | 1,030,710 |
+```
+[probe] isProduction= false  mode= production  NODE_ENV= "development"
+        oxc.jsx= {"development":true,"runtime":"automatic","refresh":false}
+```
 
-222 KB, and the size is the least of it: the shipped bundle contained React's `act(...)` warning,
-the duplicate-key check, and the full invariant message table. A development React is materially
-slower and logs to a user's console.
+`mode` is `production`; `isProduction` is `false`. Two consequences, both invisible:
 
-**Cause:** Vite 8 did not replace `process.env.NODE_ENV` in these client bundles, and React's entry
-picks its build by reading exactly that expression.
+1. `@vitejs/plugin-react` reads `isProduction` to choose the JSX transform, so every one of the
+   dashboard's 830 JSX call sites compiled to `jsxDEV` — the development runtime.
+2. React's entry picks its build by reading `process.env.NODE_ENV`, so the development React shipped
+   with it: `act(...)`, the duplicate-key check, the full invariant table.
 
-**How it looked:** `vite build` printed a normal production summary. The app rendered correctly.
-Nothing warned. This had been true for every build the repo has ever produced.
+| dashboard bundle           | bytes     |
+| -------------------------- | --------- |
+| as it shipped              | 1,252,403 |
+| a genuine production build | 910,492   |
 
-**Why nothing caught it:** there is no check anywhere that asserts a bundle is a production bundle.
-The only way to find it is to grep the output for strings that should not be there — which is what
-finally did.
+**342 KB, 27%.** Every build the repo has ever produced was affected.
 
-**Fixed by** `lib/typescript/api-client/vite-define.mjs`, which sets it explicitly and carries the
-measurement above so the next person to remove it knows the cost.
+### The half-fix that was worse
 
----
+The first attempt defined `process.env.NODE_ENV` as `"production"` in the bundle. That corrected
+what the _runtime_ believed and could not correct what the _transform_ had already done — so the app
+called `jsxDEV`, `react/jsx-dev-runtime` resolved to its production entry, which does not export it,
+and the dashboard rendered a blank page with one console line:
+
+```
+TypeError: (0 , X.jsxDEV) is not a function
+```
+
+A silently oversized bundle turned into a white screen. That is a strictly worse failure, and it is
+the reason the guard below exists rather than just the define.
+
+**Fixed by** removing `NODE_ENV` from `.env` and `.template.env` — nothing needed it there;
+`apps/internal-api` sets it in its own `dev` script, Next.js sets it, vitest sets `test`, and a value
+in that file only ever overrides a tool that already knew better — and by
+`assertProductionBuild()`, a plugin that throws in `configResolved` when a deployed-mode build is not
+`isProduction`. If the variable comes back, the build stops and names the cause.
+
+**Why nothing caught it:** `vite build` printed a normal production summary and the app worked. There
+is no check anywhere that asserts a bundle is a production bundle, and the only symptom — size — is
+the number people skim past.
 
 ## 4. The API host was a compile-time constant, and it was somebody else's
 
@@ -129,11 +150,16 @@ Three of the five were **build-time** facts wearing runtime clothing: `NODE_ENV`
 the SPA bundles are all decided when an image is built and cannot be changed by a pod's environment.
 Every check the repo had ran against source or against a cluster. Nothing looked inside an image.
 
-The two checks now in place that would have caught these:
+The three checks now in place that would have caught these:
 
 - The website Dockerfile `test`s for the SPA files it copied. A build that produces no dashboard
   fails at build.
 - `viteDefine` throws when `NEXT_PUBLIC_API_URL` is missing from a deployed-mode build.
+- `assertProductionBuild()` throws when a deployed-mode build is not `isProduction`.
+
+One further note on #3, because it generalises. The half-fix was applied, the bundle got 222 KB
+smaller, and every existing check still passed — the app was _more_ broken than before and every
+signal available said it had improved. The only thing that caught it was loading the page.
 
 And the check that found them, which no script can replace: point a real domain at it and try to
 use it.

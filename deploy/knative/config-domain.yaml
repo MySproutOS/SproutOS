@@ -1,0 +1,29 @@
+# The domain tenant applications are served under.
+#
+# **This ConfigMap was not in `deploy/` until the platform ran on a real domain.** Knative's default
+# is `example.com`, and a Route under it resolves nowhere — so a revision reports Ready, the URL in
+# `kubectl get ksvc` looks plausible, and nothing serves it. The value that was actually in the
+# cluster had been typed by hand, which is the same as not being configured: nothing reproduces it.
+#
+# A **separate registrable domain from the control plane** by preference, and at minimum a separate
+# subtree. Tenant applications are other people's code answering on a hostname; sharing an origin
+# with the dashboard would put that code inside the session cookie's scope. `.selloutjobs.com` is
+# what the session cookie is scoped to, so `tenant.selloutjobs.com` is *not* far enough apart for
+# production — it is used here because this is a trial on a domain that already exists, and ADR 0018
+# names `sprout.run` as the real answer.
+#
+# One label, not two. `config-network`'s `domain-template` is `{{.Name}}.{{.Domain}}` for exactly
+# this reason: a wildcard certificate covers `*.tenant.selloutjobs.com` and nothing deeper, so a
+# two-label template produces hostnames no certificate can be issued for.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-domain
+  namespace: knative-serving
+  labels:
+    app.kubernetes.io/part-of: sproutos
+    # Knative's own label. Without it a `knative-operator` install reconciles this ConfigMap back to
+    # its default, and the domain silently reverts to `example.com` at the next operator sync.
+    serving.knative.dev/release: devel
+data:
+  TENANT_DOMAIN: ""

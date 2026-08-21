@@ -72,6 +72,7 @@ for (const name of [
   "CONTROL_PLANE_HOST",
   "API_HOST",
   "SESSION_COOKIE_DOMAIN",
+  "TENANT_DOMAIN",
 ]) {
   if (process.env[name] !== undefined) values[name] = process.env[name]
 }

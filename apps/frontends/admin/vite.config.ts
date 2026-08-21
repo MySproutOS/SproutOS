@@ -4,7 +4,10 @@ import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react, { reactCompilerPreset } from "@vitejs/plugin-react"
 import { defineConfig, loadEnv } from "vite"
-import { viteDefine } from "../../../lib/typescript/api-client/vite-define.mjs"
+import {
+  assertProductionBuild,
+  viteDefine,
+} from "../../../lib/typescript/api-client/vite-define.mjs"
 import { viteStaticCopy } from "vite-plugin-static-copy"
 
 const REPO_ROOT = path.resolve(__dirname, "../../..")
@@ -58,6 +61,8 @@ export default defineConfig(({ mode }) => {
     */
     define: viteDefine(mode, env),
     plugins: [
+      // First, so a build that is not really a production build stops before anything is emitted.
+      assertProductionBuild(),
       tanstackRouter({ quoteStyle: "double" }),
       react(),
       tailwindcss(),
