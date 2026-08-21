@@ -5,7 +5,7 @@
 // findings about.
 import "@sproutos/db"
 import { afterAll, describe, expect, it } from "vitest"
-import { isNeonId, neonConfigFromEnv, neonId, neonStorage } from "./neon"
+import { computeSpec, isNeonId, neonConfigFromEnv, neonId, neonStorage } from "./neon"
 
 /**
  * Self-hosted Neon's storage layer, against the real thing.
@@ -135,4 +135,63 @@ describe.runIf(reachable)("the storage layer", () => {
     )
     expect(response.ok).toBe(true)
   }, 180_000)
+})
+
+describe("the compute spec", () => {
+  /*
+    `compute_ctl` discovers nothing. It is handed a tenant, a timeline, the pageserver to read from,
+    the safekeepers to write to, and the settings to run with — building that document is the compute
+    half of a control plane.
+  */
+  const spec = computeSpec({
+    tenantId: "eb66354daf7dcd4d6ad525129667c9db",
+    timelineId: "a22c5976dc030a6c3478d8a68dbb7030",
+    pageserverConnstring: "postgresql://no_user@neon-pageserver:6400",
+    safekeeperConnstrings: ["neon-safekeeper:5454"],
+  })
+
+  function setting(name: string): string | undefined {
+    const inner = (spec.spec as { cluster: { settings: { name: string; value: string }[] } })
+      .cluster
+    return inner.settings.find((entry) => entry.name === name)?.value
+  }
+
+  it("preloads the neon extension", () => {
+    // What makes this Postgres read pages from a pageserver rather than a local data directory.
+    // Without it the process starts and is an ordinary, empty Postgres — which looks like success.
+    expect(setting("shared_preload_libraries")).toBe("neon")
+  })
+
+  it("commits against a safekeeper quorum rather than a local disk", () => {
+    // `walproposer` is the compute's own WAL sender. Naming it here is what makes a commit wait for
+    // the safekeepers; `fsync` is off because this disk is a cache thrown away when the compute
+    // stops, and durability is the safekeepers'.
+    expect(setting("synchronous_standby_names")).toBe("walproposer")
+    expect(setting("fsync")).toBe("off")
+  })
+
+  it("wraps the spec, because compute_ctl reads a two-part document", () => {
+    // A bare spec is rejected with `missing field \`compute_ctl_config\``, which does not say that
+    // the whole file needs re-nesting.
+    expect(Object.keys(spec).sort()).toEqual(["compute_ctl_config", "spec"])
+  })
+
+  it("never suspends itself", () => {
+    // Scale-to-zero is the proxy's decision. A compute that suspended out from under a live
+    // connection would be a worse bug than paying for an idle one.
+    expect((spec.spec as { suspend_timeout_seconds: number }).suspend_timeout_seconds).toBe(-1)
+  })
+
+  it("is stable for the same input", () => {
+    // No timestamp of the moment, no random operation id: two calls for one endpoint must produce
+    // the same document, or every reconcile looks like a change.
+    expect(
+      computeSpec({
+        tenantId: "eb66354daf7dcd4d6ad525129667c9db",
+        timelineId: "a22c5976dc030a6c3478d8a68dbb7030",
+        pageserverConnstring: "postgresql://no_user@neon-pageserver:6400",
+        safekeeperConnstrings: ["neon-safekeeper:5454"],
+      }),
+    ).toEqual(spec)
+  })
 })

@@ -154,3 +154,86 @@ export function neonStorage(config: NeonConfig) {
 
   return { branchTimeline, createTenant, createTimeline, deleteTenant, deleteTimeline }
 }
+
+/**
+ * The spec a compute is started from.
+ *
+ * `compute_ctl` does not discover anything: it is handed a tenant, a timeline, the pageserver to
+ * read pages from, the safekeepers to send WAL to, and the Postgres settings to run with. Building
+ * that document *is* the compute half of a control plane, which is why it lives here rather than in
+ * a shell script beside the compose file.
+ *
+ * The shape was arrived at against the real binary, one rejection at a time — `compute_ctl` parses
+ * strictly and reports one missing field per attempt, so the fields below are the minimum it
+ * accepts and not a superset copied from somewhere.
+ */
+export type ComputeSpecInput = {
+  tenantId: string
+  timelineId: string
+  /** `postgresql://no_user@<pageserver-host>:6400`. */
+  pageserverConnstring: string
+  /** `<host>:<port>`, no scheme. */
+  safekeeperConnstrings: string[]
+  /** The port Postgres listens on inside the compute. */
+  port?: number
+  /** Names a customer's database and role, when the caller has them. */
+  clusterId?: string
+}
+
+/**
+ * `neon` in `shared_preload_libraries` is what makes this Postgres read pages from a pageserver
+ * instead of a local data directory. Without it the process starts and is an ordinary, empty
+ * Postgres — which looks like success.
+ */
+export function computeSpec(input: ComputeSpecInput): Record<string, unknown> {
+  const port = input.port ?? 55433
+
+  const settings = [
+    { name: "listen_addresses", value: "0.0.0.0", vartype: "string" },
+    { name: "port", value: String(port), vartype: "integer" },
+    { name: "shared_preload_libraries", value: "neon", vartype: "string" },
+    // `walproposer` is the compute's own WAL sender to the safekeepers. Naming it here is what makes
+    // a commit wait for a safekeeper quorum rather than for a local disk.
+    { name: "synchronous_standby_names", value: "walproposer", vartype: "string" },
+    { name: "wal_level", value: "logical", vartype: "enum" },
+    { name: "wal_log_hints", value: "on", vartype: "bool" },
+    { name: "hot_standby", value: "on", vartype: "bool" },
+    { name: "max_wal_senders", value: "10", vartype: "integer" },
+    { name: "max_replication_slots", value: "10", vartype: "integer" },
+    { name: "max_connections", value: "100", vartype: "integer" },
+    { name: "shared_buffers", value: "1MB", vartype: "string" },
+    // Durability is the safekeepers', not this disk's — the local data directory is a cache that is
+    // thrown away when the compute stops.
+    { name: "fsync", value: "off", vartype: "bool" },
+    { name: "restart_after_crash", value: "off", vartype: "bool" },
+    { name: "neon.max_cluster_size", value: "1GB", vartype: "string" },
+  ]
+
+  return {
+    spec: {
+      format_version: 1.0,
+      timestamp: new Date(0).toISOString(),
+      operation_uuid: null,
+      cluster: {
+        cluster_id: input.clusterId ?? "sproutos",
+        name: input.clusterId ?? "sproutos",
+        state: "restarted",
+        roles: [{ name: "cloud_admin", encrypted_password: null, options: null }],
+        databases: [],
+        settings,
+      },
+      delta_operations: [],
+      tenant_id: input.tenantId,
+      timeline_id: input.timelineId,
+      mode: "Primary",
+      pageserver_connstring: input.pageserverConnstring,
+      safekeeper_connstrings: input.safekeeperConnstrings,
+      skip_pg_catalog_updates: false,
+      // -1 is "never suspend". Scale-to-zero is the proxy's decision, not the compute's, and a
+      // compute that suspended itself out from under a live connection would be a worse bug than
+      // paying for an idle one.
+      suspend_timeout_seconds: -1,
+    },
+    compute_ctl_config: { jwks: { keys: [] } },
+  }
+}

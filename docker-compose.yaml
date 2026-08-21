@@ -122,6 +122,14 @@ services:
       - "--id=1"
       - "--listen-pg=0.0.0.0:5454"
       - "--listen-http=0.0.0.0:7676"
+      # What the safekeeper tells the broker to reach it on, as opposed to what it binds.
+      #
+      # Without these it advertises its *listen* address, so the pageserver reads `0.0.0.0:5454`
+      # out of the broker and connects to itself. Nothing says so: the safekeeper is healthy, the
+      # pageserver logs one "Connection refused" per retry, and the symptom appears three
+      # components away as a compute hanging forever on `wait_lsn` for a page request — because the
+      # WAL never reaches the pageserver, so the LSN it is waiting for never arrives.
+      - "--advertise-pg=neon-safekeeper:5454"
       - "--broker-endpoint=http://neon-broker:50051"
       - "-D"
       - "/data"

@@ -1,6 +1,6 @@
 # 0025 — Self-hosted Neon, and the control plane it requires
 
-**Status:** accepted. Storage layer running and verified locally; compute is not yet built.
+**Status:** accepted. Storage and compute both running and verified locally.
 
 ## Context
 
@@ -85,3 +85,22 @@ They predate the storage controller, and each fails in a way that does not name 
   belongs to that table in TOML, so appending it to the file produces
   `remote_storage.control_plane_api` and the identical `must be set` error with the key plainly
   visible in the file.
+
+## And the one that cost the most
+
+The safekeeper advertises its **listen** address to the broker unless given `--advertise-pg`. Bind it
+to `0.0.0.0:5454` — which every example does, because it must accept connections from other
+containers — and the pageserver reads `0.0.0.0:5454` out of the broker and connects to itself.
+
+Nothing says so. The safekeeper is healthy and says nothing. The pageserver logs one
+`Connection refused` per retry, buried in normal reconnection chatter. The symptom appears three
+components away, as a compute hanging forever on a page request:
+
+```
+[NEON_SMGR] no response received from pageserver for 140.098 s, still waiting
+handle_get_page_at_lsn_request_batched: slow wait_lsn still running for 151.003s
+```
+
+— because the WAL never reaches the pageserver, so the LSN the compute is waiting for never arrives.
+Every layer reports the layer below it as slow, and the actual fault is a listen address being used
+as a connect address two hops away.

@@ -54,6 +54,8 @@ export {
   type ServiceStatus,
 } from "./types"
 export {
+  computeSpec,
+  type ComputeSpecInput,
   isNeonId,
   neonConfigFromEnv,
   NeonError,
