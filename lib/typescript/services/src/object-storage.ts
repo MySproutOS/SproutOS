@@ -209,12 +209,27 @@ export function versionOf(accessKeyId: string): number {
 }
 
 /**
- * The connection details a vault client needs.
+ * The connection string for a vault.
  *
- * Not a URI. `livesync` takes an endpoint, a region, a bucket and a key pair as separate fields, and
- * an `s3://key:secret@host/bucket` string would be a shape this platform invented for one screen to
- * immediately take apart again. `connectionUri` still exists because `ServiceDriver` has it, and it
- * returns the one form that is unambiguous.
+ * `sls+s3://<key>:<secret>@<host>?endpoint=&bucket=&region=&pathStyle=` — **not a shape this
+ * platform invented.** It is `obsidian-livesync`'s own `ConnectionStringParser` grammar, which its
+ * settings dialog and its CLI's `remote-add` both accept, so a customer copies one string out of the
+ * dashboard and pastes it into one field.
+ *
+ * The first version of this emitted an ad-hoc `https://host?accessKeyId=…&secretAccessKey=…`. It
+ * carried the same information and no client could read it, so setting a vault up meant taking the
+ * URI apart by hand into five settings — for a product whose premise is that people should not have
+ * to know how any of this works. That was found by driving the real CLI: assembling the string it
+ * wanted, by hand, was the step that should not have existed.
+ *
+ * Verified against the real client, not against a reading of its source: `livesync-vault.test.ts`
+ * builds this string, hands it to the CLI's `remote-add`, and syncs a note between two vaults.
+ *
+ * Every field is still named and legible, so somebody pointing `rclone` at it can read the endpoint,
+ * bucket and keys straight out — the scheme prefix is the only part specific to one client.
+ *
+ * `pathStyle` is written only when *false*, because the parser defaults it to true
+ * (`get("pathStyle") !== "false"`), and a redundant parameter is one more thing to get wrong.
  */
 export function objectStorageUri(input: {
   publicEndpoint: string
@@ -224,13 +239,45 @@ export function objectStorageUri(input: {
   secretAccessKey: string
   forcePathStyle: boolean
 }): string {
-  const url = new URL(input.publicEndpoint)
+  const endpoint = new URL(input.publicEndpoint)
+  // Built on the endpoint's own host so the credentials land in the userinfo the parser reads them
+  // from, then the endpoint is repeated as a parameter — which is the grammar, not a redundancy:
+  // the parser falls back to `https://<host>` when `endpoint` is absent, and would turn a plain
+  // `http` endpoint into an `https` one nothing is listening on.
+  const url = new URL(`sls+s3://${endpoint.host}`)
+  url.username = encodeURIComponent(input.accessKeyId)
+  url.password = encodeURIComponent(input.secretAccessKey)
+  url.searchParams.set("endpoint", input.publicEndpoint)
   url.searchParams.set("bucket", input.bucket)
   url.searchParams.set("region", input.region)
-  url.searchParams.set("accessKeyId", input.accessKeyId)
-  url.searchParams.set("secretAccessKey", input.secretAccessKey)
-  url.searchParams.set("forcePathStyle", String(input.forcePathStyle))
+  if (!input.forcePathStyle) url.searchParams.set("pathStyle", "false")
   return url.toString()
+}
+
+/**
+ * The fields inside an {@link objectStorageUri}, for a caller that needs them apart.
+ *
+ * `new URL()` handles `sls+s3:` — it is a valid scheme — but treats it as opaque, so the host and
+ * userinfo are not parsed out. This does what the plugin's parser does: swap in a hierarchical
+ * scheme, read the parts, and put nothing back.
+ */
+export function parseObjectStorageUri(uri: string): {
+  endpoint: string
+  bucket: string
+  region: string
+  accessKeyId: string
+  secretAccessKey: string
+  forcePathStyle: boolean
+} {
+  const url = new URL(uri.replace(/^sls\+s3:/, "https:"))
+  return {
+    endpoint: url.searchParams.get("endpoint") ?? `https://${url.host}`,
+    bucket: url.searchParams.get("bucket") ?? "",
+    region: url.searchParams.get("region") ?? "auto",
+    accessKeyId: decodeURIComponent(url.username),
+    secretAccessKey: decodeURIComponent(url.password),
+    forcePathStyle: url.searchParams.get("pathStyle") !== "false",
+  }
 }
 
 export function objectStorageDriver(

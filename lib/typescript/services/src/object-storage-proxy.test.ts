@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from "node:child_process"
 import {
   GetObjectCommand,
   ListObjectsV2Command,
@@ -9,7 +8,14 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { bucketNameFor, objectStorageConfigFromEnv, objectStorageDriver } from "./object-storage"
+import {
+  bucketNameFor,
+  type ObjectStorageConfig,
+  objectStorageConfigFromEnv,
+  objectStorageDriver,
+  parseObjectStorageUri,
+} from "./object-storage"
+import { proxyIsBuilt, startStorageProxy, type RunningProxy } from "./testing/storage-proxy"
 
 /**
  * The tenant boundary, exercised end to end against the real proxy.
@@ -31,24 +37,31 @@ const config = (() => {
   }
 })()
 
-const binary = new URL("../../../../target/debug/storage-proxy", import.meta.url).pathname
-
 const reachable = await (async () => {
   if (config?.endpoint === undefined) return false
   try {
     await sql`select 1`.execute(db)
     const response = await fetch(`${config.endpoint}/_localstack/health`)
     if (!response.ok) return false
-    const { existsSync } = await import("node:fs")
     // Built by `cargo build -p storage-proxy`. Absent means this suite cannot run, and saying so is
     // better than a suite that silently checks nothing.
-    return existsSync(binary)
+    return proxyIsBuilt()
   } catch {
     return false
   }
 })()
 
-let proxy: ChildProcess | undefined
+/**
+ * This suite's own port, distinct from `livesync-vault.test.ts`'s.
+ *
+ * Vitest runs test files in parallel; two suites on one port means the second proxy exits while the
+ * first still answers, and the second suite asserts against a process it did not configure.
+ */
+const PROXY_PORT = 9002
+
+let proxy: RunningProxy | undefined
+/** The config with `publicEndpoint` pointing at *this* suite's proxy. */
+let active: ObjectStorageConfig | undefined
 
 const fixtures: { organizations: string[]; users: string[]; services: string[] } = {
   organizations: [],
@@ -98,14 +111,14 @@ async function service() {
 
 /** An S3 client configured exactly as the plugin would be from a connection URI. */
 function asCustomer(connectionUri: string) {
-  const uri = new URL(connectionUri)
+  const parsed = parseObjectStorageUri(connectionUri)
   return new S3Client({
-    region: uri.searchParams.get("region")!,
-    endpoint: uri.origin,
-    forcePathStyle: uri.searchParams.get("forcePathStyle") === "true",
+    region: parsed.region,
+    endpoint: parsed.endpoint,
+    forcePathStyle: parsed.forcePathStyle,
     credentials: {
-      accessKeyId: uri.searchParams.get("accessKeyId")!,
-      secretAccessKey: uri.searchParams.get("secretAccessKey")!,
+      accessKeyId: parsed.accessKeyId,
+      secretAccessKey: parsed.secretAccessKey,
     },
   })
 }
@@ -113,36 +126,12 @@ function asCustomer(connectionUri: string) {
 beforeAll(async () => {
   if (!reachable) return
 
-  const listen = new URL(config!.publicEndpoint)
-  proxy = spawn(binary, [], {
-    env: {
-      ...process.env,
-      STORAGE_PROXY_LISTEN: `127.0.0.1:${listen.port}`,
-      STORAGE_PROXY_UPSTREAM: config!.endpoint!,
-      STORAGE_PROXY_REGION: config!.region,
-      // LocalStack accepts any credential; on AWS these are the platform's own.
-      AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID ?? "test",
-      AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY ?? "test",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-
-  // Wait for the port rather than sleeping: a fixed delay is either slow or flaky, and this suite
-  // fails in a way that looks like a proxy bug if it starts talking too early.
-  const deadline = Date.now() + 15_000
-  for (;;) {
-    if (Date.now() > deadline) throw new Error("storage-proxy did not start")
-    try {
-      await fetch(config!.publicEndpoint, { method: "OPTIONS" })
-      break
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
+  proxy = await startStorageProxy(config!, PROXY_PORT)
+  active = proxy.config
 }, 30_000)
 
 afterAll(async () => {
-  proxy?.kill("SIGTERM")
+  proxy?.stop()
   if (!reachable) return
 
   const s3 = new S3Client({
@@ -150,7 +139,7 @@ afterAll(async () => {
     endpoint: config!.endpoint,
     forcePathStyle: true,
   })
-  const driver = objectStorageDriver(db, config!, s3)
+  const driver = objectStorageDriver(db, active ?? config!, s3)
   for (const id of fixtures.services) await driver.destroy(id).catch(() => undefined)
   if (fixtures.services.length > 0) {
     await db.deleteFrom("backendService").where("id", "in", fixtures.services).execute()
@@ -168,7 +157,7 @@ describe.runIf(reachable)("through the storage proxy", () => {
   function driver() {
     return objectStorageDriver(
       db,
-      config!,
+      active!,
       new S3Client({ region: config!.region, endpoint: config!.endpoint, forcePathStyle: true }),
     )
   }
@@ -243,7 +232,7 @@ describe.runIf(reachable)("through the storage proxy", () => {
     const unknownKey = await refusal(
       new S3Client({
         region: config!.region,
-        endpoint: config!.publicEndpoint,
+        endpoint: active!.publicEndpoint,
         forcePathStyle: true,
         credentials: { accessKeyId: "SPROUTNOTAREALKEY01", secretAccessKey: "nope" },
       }),
@@ -251,10 +240,10 @@ describe.runIf(reachable)("through the storage proxy", () => {
     const wrongSecret = await refusal(
       new S3Client({
         region: config!.region,
-        endpoint: config!.publicEndpoint,
+        endpoint: active!.publicEndpoint,
         forcePathStyle: true,
         credentials: {
-          accessKeyId: new URL(mine.uri).searchParams.get("accessKeyId")!,
+          accessKeyId: parseObjectStorageUri(mine.uri).accessKeyId,
           secretAccessKey: "not-the-derived-secret",
         },
       }),
@@ -300,7 +289,7 @@ describe.runIf(reachable)("through the storage proxy", () => {
   it("answers Obsidian's preflight, which carries no credential at all", async () => {
     // A browser sends OPTIONS with no Authorization — that is what a preflight is — so it cannot be
     // authenticated and must be answered here rather than forwarded.
-    const response = await fetch(`${config!.publicEndpoint}/v-anything/notes/one.md`, {
+    const response = await fetch(`${active!.publicEndpoint}/v-anything/notes/one.md`, {
       method: "OPTIONS",
       headers: {
         Origin: "app://obsidian.md",
@@ -316,7 +305,7 @@ describe.runIf(reachable)("through the storage proxy", () => {
 
   it("does not reflect an origin it does not serve", async () => {
     // Echoing whatever arrives would let any site the customer visits read their vault.
-    const response = await fetch(`${config!.publicEndpoint}/v-anything/notes/one.md`, {
+    const response = await fetch(`${active!.publicEndpoint}/v-anything/notes/one.md`, {
       method: "OPTIONS",
       headers: { Origin: "https://evil.example.com" },
     })

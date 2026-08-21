@@ -80,7 +80,7 @@ paying for a GC and an event-loop hop.
 - `services/search-proxy` — OpenSearch tenant-split proxy. Document- and field-level security
   is not in the OSS tier, so this proxy _is_ the security boundary.
 - `services/storage-proxy` — S3 tenant-split proxy. Verifies a tenant's SigV4 signature against a
-  secret *derived* from one root key, checks the bucket in the path is theirs, and re-signs with the
+  secret _derived_ from one root key, checks the bucket in the path is theirs, and re-signs with the
   platform's credential. A customer never holds a cloud credential. Replaced a per-tenant IAM user,
   which capped the platform at 5,000 buckets and put the boundary in a policy document nothing here
   could test.
@@ -94,7 +94,7 @@ paying for a GC and an event-loop hop.
 - `lib/typescript/utils/crypto` — **Vendored** encoding/hash/random (`@utils/crypto`). No oslo.
 - `lib/typescript/ui/{base,seo-shared,spa-shared}` — shared components and theme.
 - `lib/rust/{srn,metering-proto,tenant-auth,s3-sigv4,service-credentials}` — shared crates.
-  `s3-sigv4` is SigV4 from the *verifying* end, which no published crate exposes.
+  `s3-sigv4` is SigV4 from the _verifying_ end, which no published crate exposes.
 
 ### The SPA split
 

@@ -9,6 +9,7 @@ import {
   objectStorageConfigFromEnv,
   objectStorageDriver,
   objectStorageUri,
+  parseObjectStorageUri,
   tenantCredential,
   VAULT_ORIGINS,
   versionOf,
@@ -147,10 +148,54 @@ describe("naming and policy", () => {
     expect(policy.Statement.flatMap((s) => s.Action)).not.toContain("s3:DeleteBucket")
   })
 
-  it("carries every field the plugin asks for", () => {
-    // `livesync` takes endpoint, region, bucket, keys and `force_path_style` as separate settings.
-    // A URI missing one is a URI the customer has to guess the rest of.
-    const uri = new URL(
+  it("speaks the plugin's own connection-string grammar", () => {
+    /*
+      `sls+s3://<key>:<secret>@<host>?endpoint=&bucket=&region=` — `ConnectionStringParser.parseS3`
+      in `@vrtmrz/livesync-commonlib`, which the plugin's settings dialog and the CLI's `remote-add`
+      both accept.
+
+      This used to be an ad-hoc `https://host?accessKeyId=…`, which carried the same information and
+      no client could read, so setting up a vault meant taking it apart by hand into five settings.
+    */
+    const uri = objectStorageUri({
+      publicEndpoint: "https://storage.example.com",
+      bucket: "v-abc",
+      region: "us-east-1",
+      accessKeyId: "SPROUT01",
+      secretAccessKey: "shh",
+      forcePathStyle: true,
+    })
+
+    expect(uri.startsWith("sls+s3://SPROUT01:shh@storage.example.com")).toBe(true)
+    expect(parseObjectStorageUri(uri)).toEqual({
+      endpoint: "https://storage.example.com",
+      bucket: "v-abc",
+      region: "us-east-1",
+      accessKeyId: "SPROUT01",
+      secretAccessKey: "shh",
+      forcePathStyle: true,
+    })
+  })
+
+  it("repeats the endpoint rather than letting the parser reconstruct it", () => {
+    // The parser falls back to `https://<host>` when `endpoint` is absent. A development vault on
+    // `http://localhost:9002` would become `https://localhost:9002`, where nothing is listening.
+    const uri = objectStorageUri({
+      publicEndpoint: "http://localhost:9002",
+      bucket: "v-abc",
+      region: "us-east-1",
+      accessKeyId: "SPROUT01",
+      secretAccessKey: "shh",
+      forcePathStyle: true,
+    })
+
+    expect(parseObjectStorageUri(uri).endpoint).toBe("http://localhost:9002")
+  })
+
+  it("omits pathStyle when it is on, because the parser already defaults it on", () => {
+    // `get("pathStyle") !== "false"`. Writing `pathStyle=true` would be a second place for the two
+    // defaults to disagree.
+    expect(
       objectStorageUri({
         publicEndpoint: "https://storage.example.com",
         bucket: "v-abc",
@@ -159,15 +204,23 @@ describe("naming and policy", () => {
         secretAccessKey: "shh",
         forcePathStyle: true,
       }),
-    )
+    ).not.toContain("pathStyle")
+  })
 
-    expect(Object.fromEntries(uri.searchParams)).toEqual({
+  it("survives a secret with characters that mean something in a URI", () => {
+    // The derived alphabet has none, but a credential a human chose might, and a secret that
+    // silently truncates at a `#` is a customer who cannot connect and cannot see why.
+    const uri = objectStorageUri({
+      publicEndpoint: "https://storage.example.com",
       bucket: "v-abc",
       region: "us-east-1",
-      accessKeyId: "SPROUT01",
-      secretAccessKey: "shh",
-      forcePathStyle: "true",
+      accessKeyId: "a/b",
+      secretAccessKey: "p@ss:word#1?x",
+      forcePathStyle: true,
     })
+
+    expect(parseObjectStorageUri(uri).secretAccessKey).toBe("p@ss:word#1?x")
+    expect(parseObjectStorageUri(uri).accessKeyId).toBe("a/b")
   })
 })
 
@@ -261,11 +314,11 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       projectId: null,
       name: "Vault",
     })
-    const uri = new URL(provisioned.connectionUri)
+    const parsed = parseObjectStorageUri(provisioned.connectionUri)
 
-    expect(uri.origin).toBe(new URL(config!.publicEndpoint).origin)
-    expect(uri.origin).not.toBe(new URL(config!.endpoint!).origin)
-    expect(uri.searchParams.get("accessKeyId")).toMatch(/^SPROUT/)
+    expect(parsed.endpoint).toBe(config!.publicEndpoint)
+    expect(parsed.endpoint).not.toBe(config!.endpoint)
+    expect(parsed.accessKeyId).toMatch(/^SPROUT/)
   }, 90_000)
 
   it("stores a hash of a secret it never has to store", async () => {
@@ -278,7 +331,7 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       projectId: null,
       name: "Vault",
     })
-    const secret = new URL(provisioned.connectionUri).searchParams.get("secretAccessKey")!
+    const secret = parseObjectStorageUri(provisioned.connectionUri).secretAccessKey
 
     const stored = await db
       .selectFrom("serviceCredential")
@@ -288,7 +341,7 @@ describe.runIf(reachable)("a provisioned bucket", () => {
       .executeTakeFirstOrThrow()
 
     expect(stored.secretHash).not.toContain(secret)
-    expect(stored.username).toBe(new URL(provisioned.connectionUri).searchParams.get("accessKeyId"))
+    expect(stored.username).toBe(parseObjectStorageUri(provisioned.connectionUri).accessKeyId)
   }, 90_000)
 
   it("shows the customer their key again without rotating it", async () => {
@@ -327,8 +380,8 @@ describe.runIf(reachable)("a provisioned bucket", () => {
     })
     const second = await driver.rotateCredentials(backendServiceId)
 
-    const before = new URL(first.connectionUri).searchParams.get("accessKeyId")!
-    const after = new URL(second).searchParams.get("accessKeyId")!
+    const before = parseObjectStorageUri(first.connectionUri).accessKeyId
+    const after = parseObjectStorageUri(second).accessKeyId
 
     expect(versionOf(after)).toBe(versionOf(before) + 1)
 

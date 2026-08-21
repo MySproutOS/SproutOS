@@ -19,7 +19,7 @@ use storage_proxy::{
     Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredential, authorize,
     upstream_headers,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// The origins a vault client sends. Mirrors `VAULT_ORIGINS` in `lib/typescript/services`.
 ///
@@ -245,6 +245,17 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
             return s3_error(&denied, origin.as_deref());
         }
     };
+
+    // At debug, not info: this is per-request on a data path. It exists because the question
+    // "which S3 operations does this client actually use" has no other answer, and the IAM policy
+    // the proxy runs under is built from that answer.
+    debug!(
+        %method,
+        %path,
+        service = %resolved.backend_service_id,
+        bytes = body.len(),
+        "forwarding"
+    );
 
     match forward(&proxy, &method, &path, &query, &incoming, &body).await {
         Ok(mut response) => {

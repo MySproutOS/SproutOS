@@ -5,6 +5,7 @@ export {
   objectStorageDriver,
   objectStorageDriverFromEnv,
   objectStorageUri,
+  parseObjectStorageUri,
   VAULT_ORIGINS,
   type BucketCredential,
   tenantCredential,
