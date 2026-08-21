@@ -45,6 +45,7 @@ this platform's constraints, and none announces itself.
 | [0006](0006-features-with-no-executor.md)          | Features with no executor                  | Clicking the buttons         |
 | [0007](0007-the-last-mile.md)                      | The last mile                              | Using the features in order  |
 | [0008](0008-the-tenant-data-plane.md)              | The tenant data plane                      | Connecting through the proxy |
+| [0009](0009-somewhere-to-run-untrusted-code.md)    | Somewhere to run untrusted code            | Running a customer's node    |
 
 ## Running it on more than one cloud
 
