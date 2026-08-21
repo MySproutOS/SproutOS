@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { Agent, request as httpsRequest } from "node:https"
 
 /**
  * Just enough Kubernetes API to create and read a Knative Service.
@@ -61,22 +62,39 @@ export function inClusterConfig(): KubeConfig {
 }
 
 export function createKubeClient(config: KubeConfig) {
+  /*
+    The cluster's CA, actually used.
+
+    `inClusterConfig` has always read `ca.crt` into `certificateAuthority` and this client has
+    always ignored it, so every request from inside a pod failed with
+    `unable to verify the first certificate` — the API server presents a certificate signed by the
+    cluster's own CA, which is not in Node's default trust store and never will be. Nothing had
+    noticed because nothing had ever called this from a pod: the deploy and build handlers had no
+    RBAC to succeed with either, so the first failure they would have hit was a different one.
+
+    `node:https` rather than `fetch`, because Node exposes no supported way to give `fetch` a CA:
+    its `undici` is bundled and not exported, and the alternatives are a new dependency or
+    `NODE_EXTRA_CA_CERTS`, which is process-global — the cluster's CA has no business being able to
+    vouch for github.com.
+  */
+  const agent =
+    config.certificateAuthority === undefined
+      ? undefined
+      : new Agent({ ca: config.certificateAuthority, keepAlive: true })
+
   async function request<T>(method: string, path: string, body?: unknown, contentType?: string) {
     const headers: Record<string, string> = { Accept: "application/json" }
     if (config.token !== undefined) headers.Authorization = `Bearer ${config.token()}`
     if (body !== undefined) headers["Content-Type"] = contentType ?? "application/json"
 
-    const response = await fetch(`${config.server}${path}`, {
+    const { status, text } = await send(
+      `${config.server}${path}`,
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
-
-    const text = await response.text()
-
-    if (!response.ok) {
-      throw new KubeError(response.status, path, text.slice(0, 500))
-    }
+      body === undefined ? undefined : JSON.stringify(body),
+      agent,
+    )
+    if (status < 200 || status >= 300) throw new KubeError(status, path, text.slice(0, 500))
 
     return JSON.parse(text) as T
   }
@@ -150,6 +168,41 @@ export function createKubeClient(config: KubeConfig) {
   }
 
   return { apply, get, remove, logs }
+}
+
+/**
+ * One HTTPS request, with a CA the caller chose.
+ *
+ * Deliberately small: this is not a general HTTP client, it is the four verbs the Kubernetes API
+ * needs plus the ability to trust a certificate authority `fetch` cannot be told about.
+ */
+async function send(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | undefined,
+  agent: Agent | undefined,
+): Promise<{ status: number; text: string }> {
+  return await new Promise((resolve, reject) => {
+    const request = httpsRequest(
+      url,
+      { method, headers, ...(agent === undefined ? {} : { agent }) },
+      (response) => {
+        const chunks: Buffer[] = []
+        response.on("data", (chunk: Buffer) => chunks.push(chunk))
+        response.on("end", () => {
+          resolve({
+            status: response.statusCode ?? 0,
+            text: Buffer.concat(chunks).toString("utf8"),
+          })
+        })
+      },
+    )
+
+    request.on("error", reject)
+    if (body !== undefined) request.write(body)
+    request.end()
+  })
 }
 
 /** Where a Knative Service lives in the API. */
