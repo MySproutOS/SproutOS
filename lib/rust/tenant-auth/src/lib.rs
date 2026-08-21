@@ -872,3 +872,65 @@ mod tests {
         assert!(!verify_secret(b"other secret", &stored).unwrap());
     }
 }
+
+#[cfg(test)]
+mod naming_vectors {
+    //! The cross-language naming contract.
+    //!
+    //! `lib/typescript/services` creates the database and the role; this crate derives the same
+    //! names so a proxy can connect a tenant to them. `AGENTS.md` says all three cross-language
+    //! contracts have one set of vectors both sides assert against. This one had none, and the two
+    //! sides had drifted: TypeScript built names from the raw UUID hex and this crate from the
+    //! Crockford short id. Both suites were green.
+    //!
+    //! `include_str!` rather than a copy, for the same reason `metering-proto` does it: a copy is a
+    //! second place for the contract to live, and two copies are how it drifts again.
+
+    use super::*;
+
+    const FIXTURE: &str = include_str!("../fixtures/naming-vectors.json");
+
+    fn kind_of(name: &str) -> ResourceKind {
+        match name {
+            "database" => ResourceKind::Database,
+            "queue" => ResourceKind::Queue,
+            "searchIndex" => ResourceKind::SearchIndex,
+            other => panic!("unknown kind in the vectors: {other}"),
+        }
+    }
+
+    #[test]
+    fn every_vector_round_trips() {
+        let parsed: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture parses");
+        let cases = parsed["cases"].as_array().expect("cases is an array");
+
+        // An empty file would make every assertion below vacuously true, which is the shape of the
+        // problem this file exists to fix.
+        assert!(cases.len() > 2, "expected vectors, found {}", cases.len());
+
+        for case in cases {
+            let organization_id = case["organizationId"].as_str().unwrap();
+            let resource_id = case["resourceId"].as_str().unwrap();
+            let kind = kind_of(case["kind"].as_str().unwrap());
+
+            let identity = TenantIdentity::new(
+                uuid::Uuid::parse_str(organization_id).unwrap(),
+                kind,
+                uuid::Uuid::parse_str(resource_id).unwrap(),
+            );
+
+            assert_eq!(
+                identity.username(),
+                case["username"].as_str().unwrap(),
+                "username for {resource_id}"
+            );
+
+            // Parsing the username back is what a proxy actually does with it.
+            assert_eq!(
+                identity.username().parse::<TenantIdentity>().unwrap(),
+                identity,
+                "round trip for {resource_id}"
+            );
+        }
+    }
+}

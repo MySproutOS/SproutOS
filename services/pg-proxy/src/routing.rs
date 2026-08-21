@@ -63,9 +63,11 @@ mod tests {
 
     /// The same fixture `naming.test.ts` asserts against `databaseNameFor` and `roleNameFor`.
     ///
-    /// The TypeScript creates the database and the role; this connects to them. Nothing is shared
-    /// but the algorithm, so a change on one side that is not made on the other has to turn a test
-    /// red on both — otherwise the failure is a tenant connected to a database that is not theirs.
+    /// The TypeScript creates the database and the role; this connects to them. It used to be true
+    /// only in intent: this test asserted the short-id form while `databaseNameFor` produced the
+    /// UUID's hex, both suites passed, and a tenant would have been routed to a database that did
+    /// not exist. `lib/rust/tenant-auth/fixtures/naming-vectors.json` is now the single set of
+    /// vectors both languages read, so a change on one side turns a test red on both.
     #[test]
     fn the_names_match_the_control_plane() {
         let identity = identity("01912d40-0000-7000-8000-0000000000a1");

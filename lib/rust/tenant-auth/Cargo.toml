@@ -15,3 +15,8 @@ sproutos-srn = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+# Only for the shared naming vectors — `fixtures/naming-vectors.json` is the contract this crate
+# and `lib/typescript/services` both have to satisfy, and reading it beats copying it.
+serde_json = { workspace = true }

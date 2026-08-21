@@ -1,0 +1,49 @@
+{
+  "$comment": "Cross-language contract for tenant resource naming. `lib/rust/tenant-auth` — which the three proxies route with — and `lib/typescript/services`, which creates the databases and roles, MUST both produce these exact strings. A divergence is a security bug: the control plane creates one database and the proxy connects a tenant to another, or to nothing. AGENTS.md names this as one of three contracts with shared vectors; it was the one with none, and the two sides had drifted. TypeScript built names from the raw UUID hex, Rust from the Crockford short id, and each language asserted its own answer in its own test.",
+  "cases": [
+    {
+      "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "resourceId": "01912d40-0000-7000-8000-0000000000a1",
+      "kind": "database",
+      "note": "the vector the Rust crate already asserted, and the one TypeScript did not produce",
+      "shortId": "01j4pm0000e008000000000051",
+      "organizationShortId": "01j4pkz2hbfh6sw7sa7d65tvkz",
+      "username": "db_01j4pm0000e008000000000051.01j4pkz2hbfh6sw7sa7d65tvkz",
+      "database": "sprout_db_01j4pm0000e008000000000051",
+      "role": "sprout_r_01j4pm0000e008000000000051"
+    },
+    {
+      "organizationId": "01a022cb-93bf-74f9-9697-91423c4b0b72",
+      "resourceId": "01a022cb-93bf-74f9-9697-91423c4b0b72",
+      "kind": "database",
+      "note": "the service provisioned on the live cluster, whose database TypeScript named sprout_db_01a022cb93bf74f9969791423c4b0b72 — 32 hex characters the proxy would never look for",
+      "shortId": "01m0hcq4xzekwsd5wh88y4p2vj",
+      "organizationShortId": "01m0hcq4xzekwsd5wh88y4p2vj",
+      "username": "db_01m0hcq4xzekwsd5wh88y4p2vj.01m0hcq4xzekwsd5wh88y4p2vj",
+      "database": "sprout_db_01m0hcq4xzekwsd5wh88y4p2vj",
+      "role": "sprout_r_01m0hcq4xzekwsd5wh88y4p2vj"
+    },
+    {
+      "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "resourceId": "01912d40-0000-7000-8000-0000000000a1",
+      "kind": "queue",
+      "note": "a second kind: the username prefix changes, the short id does not",
+      "shortId": "01j4pm0000e008000000000051",
+      "organizationShortId": "01j4pkz2hbfh6sw7sa7d65tvkz",
+      "username": "kv_01j4pm0000e008000000000051.01j4pkz2hbfh6sw7sa7d65tvkz",
+      "database": "sprout_db_01j4pm0000e008000000000051",
+      "role": "sprout_r_01j4pm0000e008000000000051"
+    },
+    {
+      "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      "resourceId": "01912d40-0000-7000-8000-0000000000a1",
+      "kind": "searchIndex",
+      "note": "the third kind",
+      "shortId": "01j4pm0000e008000000000051",
+      "organizationShortId": "01j4pkz2hbfh6sw7sa7d65tvkz",
+      "username": "ix_01j4pm0000e008000000000051.01j4pkz2hbfh6sw7sa7d65tvkz",
+      "database": "sprout_db_01j4pm0000e008000000000051",
+      "role": "sprout_r_01j4pm0000e008000000000051"
+    }
+  ]
+}

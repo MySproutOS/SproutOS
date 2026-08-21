@@ -1,3 +1,5 @@
+import { encodeShortId } from "./tenant-auth"
+
 /**
  * Real Postgres identifiers, derived from ids rather than from anything a customer typed.
  *
@@ -5,26 +7,34 @@
  * ROLE` statement is derived from the service's UUID, so the identifier is bounded, unique, and
  * contains nothing that has to be escaped. Interpolating a customer string into DDL — which cannot
  * be parameterized — is how this goes wrong.
+ *
+ * **The short id, not the UUID's hex.** These names are half of a cross-language contract: this side
+ * creates the database and the role, and `lib/rust/tenant-auth` — which all three proxies route
+ * with — derives the same names to connect a tenant to them. The proxy only ever sees the short id,
+ * because that is what a username carries; a name built from the full UUID is one the proxy cannot
+ * reconstruct.
+ *
+ * It was built from the full UUID. Both sides had tests, both passed, and each asserted its own
+ * answer: `sprout_db_01a022cb93bf74f9969791423c4b0b72` here against
+ * `sprout_db_01j4pm0000e008000000000051` there. `fixtures/naming-vectors.json` is now the single
+ * set of vectors both assert, which is what `AGENTS.md` says all three contracts have and this one
+ * did not.
  */
 const PREFIX = "sprout"
 
-/** Postgres truncates identifiers at 63 bytes; both of these are 39, well inside it. */
+/** Postgres truncates identifiers at 63 bytes; both of these are 36, well inside it. */
 export function databaseNameFor(backendServiceId: string): string {
-  return `${PREFIX}_db_${compact(backendServiceId)}`
+  return `${PREFIX}_db_${encodeShortId(backendServiceId)}`
 }
 
 export function roleNameFor(backendServiceId: string): string {
-  return `${PREFIX}_r_${compact(backendServiceId)}`
-}
-
-function compact(uuid: string): string {
-  return uuid.replaceAll("-", "").toLowerCase()
+  return `${PREFIX}_r_${encodeShortId(backendServiceId)}`
 }
 
 /**
- * A UUID with the dashes stripped is 32 hex characters and nothing else, so an identifier built
- * from one cannot carry a quote, a semicolon, or a newline. Asserted rather than assumed, because
- * the value ends up in DDL.
+ * Crockford base32 has no quote, semicolon, newline or space in its alphabet, so an identifier
+ * built from one cannot carry anything that changes the meaning of a statement. Asserted rather
+ * than assumed, because the value ends up in DDL.
  */
 export function assertSafeIdentifier(identifier: string): void {
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(identifier)) {
