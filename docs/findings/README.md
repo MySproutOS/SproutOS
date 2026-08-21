@@ -44,6 +44,7 @@ this platform's constraints, and none announces itself.
 | [0005](0005-the-product-was-never-in-the-image.md) | The product was never in the image         | Pointing a real domain at it |
 | [0006](0006-features-with-no-executor.md)          | Features with no executor                  | Clicking the buttons         |
 | [0007](0007-the-last-mile.md)                      | The last mile                              | Using the features in order  |
+| [0008](0008-the-tenant-data-plane.md)              | The tenant data plane                      | Connecting through the proxy |
 
 ## Running it on more than one cloud
 
