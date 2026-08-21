@@ -1,10 +1,20 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  getV1OrgsByOrgSlugProjectsQueryKey,
   getV1StoreListingsBySlugOptions,
   getV1StoreListingsOptions,
+  getV1StoreListingsQueryKey,
+  postV1OrgsByOrgSlugProjectsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type StoreListing = {
+  /**
+   * The listing's UUID, not its slug.
+   *
+   * Carried because forking takes `source.storeListingId` — the slug is what a URL is keyed on and
+   * what a curator may rename, and the fork has to name the row.
+   */
+  id: string
   slug: string
   name: string
   glyph: string
@@ -52,6 +62,7 @@ export function useStoreListings() {
   return {
     ...query,
     data: query.data?.data.map((listing): StoreListing => ({
+      id: listing.id,
       slug: listing.slug,
       name: listing.name,
       glyph: glyphFor(listing.name),
@@ -74,6 +85,7 @@ export function useStoreListing(slug: string) {
       listing === undefined
         ? undefined
         : ({
+            id: listing.id,
             slug: listing.slug,
             name: listing.name,
             glyph: glyphFor(listing.name),
@@ -104,4 +116,34 @@ export function useStoreListing(slug: string) {
             ),
           } satisfies StoreListingDetail),
   }
+}
+
+/**
+ * Fork a store listing into a project.
+ *
+ * **This was the missing half of the store.** `POST /v1/orgs/:orgSlug/projects` has accepted
+ * `source: { type: "store", … }` since the routes were written — it creates the repository, the
+ * project and the provisioning job in one transaction. Nothing called it. The store's "Fork this
+ * app" button was `<Button size="sm">Fork this app</Button>`: no handler, no request, no error. It
+ * is the single action the product exists to perform, and clicking it did nothing at all, silently,
+ * which is why no screenshot and no smoke test ever noticed.
+ *
+ * The idempotency key is generated per attempt rather than per click. A retry of the *same* attempt
+ * must not create a second repository; a deliberate second fork of the same listing is a thing a
+ * customer is allowed to do.
+ */
+export function useForkListing(orgSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    ...postV1OrgsByOrgSlugProjectsMutation(),
+    onSuccess: () => {
+      // The project list and the listing's install count both change. Invalidated rather than
+      // written into the cache: the response carries the project, not the recomputed count.
+      void queryClient.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugProjectsQueryKey({ path: { orgSlug } }),
+      })
+      void queryClient.invalidateQueries({ queryKey: getV1StoreListingsQueryKey() })
+    },
+  })
 }

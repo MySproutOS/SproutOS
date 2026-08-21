@@ -1,6 +1,7 @@
 import { formatMicroUsd } from "@lib/billing/money"
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon } from "lucide-react"
+import { useState } from "react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/base/ui/card"
@@ -9,7 +10,9 @@ import { Separator } from "@ui/base/ui/separator"
 import { SkeletonText } from "@ui/base/ui/skeleton"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
-import { useStoreListing } from "@frontends/dashboard/data/store"
+import { useLastOrganizationSlug } from "@frontends/dashboard/data/organizations"
+import { useForkListing, useStoreListing } from "@frontends/dashboard/data/store"
+import { Spinner } from "@ui/base/ui/spinner"
 
 export const Route = createFileRoute("/store/$slug")({
   component: StoreListingDetail,
@@ -18,6 +21,44 @@ export const Route = createFileRoute("/store/$slug")({
 function StoreListingDetail() {
   const { slug } = Route.useParams()
   const { data, isPending, isError, refetch } = useStoreListing(slug)
+  const { data: orgSlug } = useLastOrganizationSlug()
+  const navigate = useNavigate()
+  const fork = useForkListing(orgSlug ?? "")
+
+  /*
+    Generated once per mounted page, not per click.
+
+    The API takes an idempotency key so a retried request cannot create a second repository. Minting
+    it inside the handler would defeat that — each retry would carry a new key and look like a new
+    fork — and minting it once for the app's lifetime would make a *deliberate* second fork of the
+    same listing impossible. Per visit to this page is the granularity a customer means by "fork
+    this".
+  */
+  const [idempotencyKey] = useState(() => crypto.randomUUID())
+
+  const canFork = data !== undefined && orgSlug !== null && orgSlug !== undefined
+
+  function onFork() {
+    if (!canFork) return
+    fork.mutate(
+      {
+        path: { orgSlug },
+        body: {
+          name: data.name,
+          source: { type: "store", storeListingId: data.id },
+          idempotencyKey,
+        },
+      },
+      {
+        onSuccess: (created) => {
+          void navigate({
+            to: "/orgs/$orgSlug/projects/$projectId",
+            params: { orgSlug, projectId: created.project.id },
+          })
+        },
+      },
+    )
+  }
 
   return (
     <>
@@ -26,10 +67,27 @@ function StoreListingDetail() {
           <ArrowLeftIcon />
           Store
         </Button>
-        <Button size="sm">Fork this app</Button>
+        <Button size="sm" disabled={!canFork || fork.isPending} onClick={onFork}>
+          {fork.isPending && <Spinner className="size-3.5" />}
+          {fork.isPending ? "Forking…" : "Fork this app"}
+        </Button>
       </PageHeader>
 
       <PageBody>
+        {/*
+          The failure has to be visible. A fork can be refused for reasons a customer can act on —
+          no GitHub App installation, a name already taken, no `project:create` — and the button
+          previously had no handler at all, so "nothing happened" was indistinguishable from
+          "it worked". An error that only reaches the console is the same bug in a new place.
+        */}
+        {fork.isError && (
+          <ListError
+            title="Could not fork this app"
+            detail={fork.error.error?.message ?? "The server did not say why."}
+            onRetry={onFork}
+          />
+        )}
+
         {isError && (
           <ListError
             title="Could not load this listing"
