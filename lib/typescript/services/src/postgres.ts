@@ -44,9 +44,36 @@ export function sproutPostgresConfigFromEnv(
   }
 
   const parsed = new URL(adminUrl)
+
+  /*
+    The host a customer is handed, and it must not default to the backend.
+
+    `services/pg-proxy/README.md` is explicit that the proxy is the security boundary: it identifies
+    the tenant from the connection credentials, routes into their database, and drops its own
+    privilege with `SET ROLE` before the session is spliced. A URI naming the backend directly skips
+    all of that and hands out a route to the cluster every tenant's data lives on.
+
+    It used to fall back to `adminUrl`'s hostname. That is the most dangerous possible default — a
+    forgotten environment variable does not produce an error, it produces a working connection
+    string that bypasses the thing standing between one customer and everyone else's rows. Observed
+    on the first real provisioning: the returned URI pointed straight at
+    `postgres.platform-db.svc.cluster.local`.
+
+    Refusing costs a local developer one variable in `.env` and is the only default that cannot
+    silently be wrong.
+  */
+  const publicHost = env.SERVICE_POSTGRES_PUBLIC_HOST
+  if (publicHost === undefined || publicHost === "") {
+    throw new Error(
+      "SERVICE_POSTGRES_PUBLIC_HOST is not set. It is the address of pg-proxy — the host a " +
+        "customer connects to. Defaulting it to the backend would issue connection strings that " +
+        "bypass the tenant boundary.",
+    )
+  }
+
   return {
     adminUrl,
-    publicHost: env.SERVICE_POSTGRES_PUBLIC_HOST ?? parsed.hostname,
+    publicHost,
     publicPort: Number(env.SERVICE_POSTGRES_PUBLIC_PORT ?? parsed.port ?? 5432),
     ...(env.SERVICE_POSTGRES_SSLMODE === undefined
       ? {}

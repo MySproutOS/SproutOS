@@ -102,6 +102,23 @@ spec:
             # password inside it. Both are assembled by an `ExternalSecret` template from the host
             # in the matching ConfigMap and the password in Secrets Manager, so the credential is
             # never in a manifest and never in a ConfigMap that anyone with `get configmaps` reads.
+            # Where a customer's Postgres URI points, and where the platform connects itself. Two
+            # values on purpose: the second is the proxy, the first is the cluster behind it.
+            - name: SERVICE_POSTGRES_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres
+                  key: admin-url
+            - name: SERVICE_POSTGRES_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-postgres
+                  key: public-host
+            - name: SERVICE_POSTGRES_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-postgres
+                  key: public-port
             - name: SERVICE_VALKEY_ADMIN_URL
               valueFrom:
                 secretKeyRef:
@@ -472,6 +489,23 @@ spec:
             # throws are correct — a reaper that silently skips leaves a deleted tenant's data in
             # place — but a worker missing them fails every reap job on a configuration error the
             # job runner then retries as though it were transient.
+            # Where a customer's Postgres URI points, and where the platform connects itself. Two
+            # values on purpose: the second is the proxy, the first is the cluster behind it.
+            - name: SERVICE_POSTGRES_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: tenant-postgres
+                  key: admin-url
+            - name: SERVICE_POSTGRES_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-postgres
+                  key: public-host
+            - name: SERVICE_POSTGRES_PUBLIC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: tenant-postgres
+                  key: public-port
             - name: SERVICE_VALKEY_ADMIN_URL
               valueFrom:
                 secretKeyRef:

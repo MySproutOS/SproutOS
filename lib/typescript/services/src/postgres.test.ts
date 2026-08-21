@@ -235,3 +235,41 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
     await expect(driver.connectionUri(v7())).rejects.toBeInstanceOf(ServiceNotProvisionedError)
   })
 })
+
+/*
+  The default that would hand a customer a route around the security boundary.
+
+  `pg-proxy` is what identifies a tenant from their credentials, routes into their database, and
+  drops its own privilege before splicing the session. A connection URI naming the backend skips all
+  of it. The config used to fall back to the admin URL's hostname when `SERVICE_POSTGRES_PUBLIC_HOST`
+  was unset, so a forgotten variable produced a *working* connection string straight to the cluster
+  every tenant's data is on — observed on the first real provisioning.
+*/
+describe("sproutPostgresConfigFromEnv", () => {
+  const adminUrl = "postgresql://postgres:secret@backend.internal:5432/main"
+
+  it("refuses rather than defaulting the public host to the backend", () => {
+    expect(() => sproutPostgresConfigFromEnv({ SERVICE_POSTGRES_ADMIN_URL: adminUrl })).toThrow(
+      /SERVICE_POSTGRES_PUBLIC_HOST/,
+    )
+  })
+
+  it("refuses an empty value too, which is what an unset ConfigMap key produces", () => {
+    expect(() =>
+      sproutPostgresConfigFromEnv({
+        SERVICE_POSTGRES_ADMIN_URL: adminUrl,
+        SERVICE_POSTGRES_PUBLIC_HOST: "",
+      }),
+    ).toThrow(/SERVICE_POSTGRES_PUBLIC_HOST/)
+  })
+
+  it("uses the proxy for the customer's host and the backend for its own connection", () => {
+    const config = sproutPostgresConfigFromEnv({
+      SERVICE_POSTGRES_ADMIN_URL: adminUrl,
+      SERVICE_POSTGRES_PUBLIC_HOST: "pg-proxy.sproutos-system.svc.cluster.local",
+    })
+    expect(config.publicHost).toBe("pg-proxy.sproutos-system.svc.cluster.local")
+    // The admin URL is the proxy's own route to the cluster and is never handed out.
+    expect(config.adminUrl).toBe(adminUrl)
+  })
+})
