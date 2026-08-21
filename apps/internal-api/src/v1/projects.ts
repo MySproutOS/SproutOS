@@ -1,3 +1,4 @@
+import { JOB_KINDS, enqueue } from "@lib/jobs"
 import {
   allocateProjectSlug,
   autoUpdateDefaultFor,
@@ -607,6 +608,26 @@ const app = new Hono()
         rootDir,
         slug,
         storeListingId,
+      })
+
+      /*
+        Hand the job to the worker.
+
+        The `project_job` row is the customer-visible progress record; this is what makes something
+        happen. Until this line existed, `POST /projects` wrote a project, a repository with no
+        `github_repo_id`, and four `pending` steps that nothing would ever move — a fork that
+        returned 201 and created nothing on GitHub, forever.
+
+        Keyed on the `project_job` id, so a duplicate enqueue collides rather than forking twice.
+      */
+      await enqueue(db, {
+        kind: JOB_KINDS.provisionProject,
+        idempotencyKey: `${JOB_KINDS.provisionProject}:${provisioned.job.id}`,
+        payload: { projectJobId: provisioned.job.id, userId: user.id },
+        // Three, not the default. The failures here are GitHub's 5xx and secondary rate limits,
+        // which pass; a missing scope fails on the first attempt and would fail identically on the
+        // tenth, so a larger number would only delay the error a customer needs to see.
+        maxAttempts: 3,
       })
 
       if (storeListingId !== null) {

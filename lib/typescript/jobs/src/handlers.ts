@@ -6,6 +6,7 @@ import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { BUILD_KINDS, buildImage } from "./build"
 import { deployRevision, DEPLOY_KINDS } from "./deploy"
+import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import { enqueue } from "./queue"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
@@ -53,6 +54,7 @@ export const JOB_KINDS = {
   deployRevision: DEPLOY_KINDS.revision,
   buildImage: BUILD_KINDS.image,
   analyzeRepository: ANALYSIS_KIND,
+  provisionProject: PROVISION_KIND,
 } as const
 
 /**
@@ -171,6 +173,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.deployRevision]: deployRevision(),
   [JOB_KINDS.buildImage]: buildImage(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
+  [JOB_KINDS.provisionProject]: provisionProjectJob,
 }
 
 /**

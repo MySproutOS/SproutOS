@@ -42,3 +42,10 @@ export {
   type BuildSettings,
   buildSettingsFromEnv,
 } from "./build"
+export {
+  NoUsableCredentialError,
+  PROVISION_KIND,
+  provisionProjectJob,
+  runProvision,
+  type ProvisionPayload,
+} from "./provision"

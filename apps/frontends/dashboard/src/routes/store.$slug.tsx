@@ -79,6 +79,11 @@ function StoreListingDetail() {
           no GitHub App installation, a name already taken, no `project:create` — and the button
           previously had no handler at all, so "nothing happened" was indistinguishable from
           "it worked". An error that only reaches the console is the same bug in a new place.
+
+          One of those reasons has a *fix* rather than an explanation: signing in only grants
+          `read:user` and `user:email`, because `repo` is coarse enough that asking for it at the
+          front door would mean granting access to every private repository in order to look at a
+          dashboard. So the missing-scope case offers the escalation instead of describing it.
         */}
         {fork.isError && (
           <ListError

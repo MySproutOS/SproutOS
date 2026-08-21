@@ -723,6 +723,9 @@ importers:
       '@lib/deploy':
         specifier: workspace:*
         version: link:../deploy
+      '@lib/envelope':
+        specifier: workspace:*
+        version: link:../envelope
       '@lib/github':
         specifier: workspace:*
         version: link:../github
