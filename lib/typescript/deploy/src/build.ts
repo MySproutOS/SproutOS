@@ -165,8 +165,23 @@ export function buildJob(spec: BuildSpec, namespace: string): BuildJob {
                   ? []
                   : [{ name: "DOCKER_CONFIG", value: "/home/user/.docker" }]),
               ],
+              /*
+                Burstable, and deliberately so.
+
+                The request is what the scheduler reserves and the limit is what the build may
+                actually use. A build is I/O-bound while it fetches the git context and pulls base
+                layers, and CPU-bound only while it compiles — so reserving the compile-time figure
+                keeps a build off a cluster that could have run it perfectly well.
+
+                Observed: `0/3 nodes are available: 2 Insufficient cpu`, on a three-node cluster
+                whose real CPU usage was under 10%. The build was retried five times against a
+                condition that does not change in seconds and dead-lettered under a message that
+                implied it had run.
+
+                The limit is unchanged, so a build on a cluster with headroom is exactly as fast.
+              */
               resources: {
-                requests: { cpu: "500m", memory: "1Gi" },
+                requests: { cpu: "250m", memory: "1Gi" },
                 limits: { cpu: "2", memory: "4Gi" },
               },
               volumeMounts:
