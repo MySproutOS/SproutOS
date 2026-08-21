@@ -104,7 +104,8 @@ import { type AuthSession, authUser, type SessionUser } from "./user/auth"
 import { crudUser } from "./user/crud"
 import {
   crudSandbox,
-  SANDBOX_RUNTIME_CLASSES,
+  NO_RUNTIME_CLASS,
+  RUNTIME_CLASS_PATTERN,
   SANDBOX_STATES,
   type SandboxRuntimeClass,
   type SandboxState,
@@ -152,7 +153,8 @@ export {
   recordUpkeepRun,
   crudSandbox,
   fetchSandbox,
-  SANDBOX_RUNTIME_CLASSES,
+  NO_RUNTIME_CLASS,
+  RUNTIME_CLASS_PATTERN,
   SANDBOX_STATES,
   SandboxRuntimeClass,
   SandboxState,

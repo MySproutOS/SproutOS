@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { crudSandbox, SANDBOX_RUNTIME_CLASSES, SANDBOX_STATES } from "./crud"
+import { crudSandbox, NO_RUNTIME_CLASS, RUNTIME_CLASS_PATTERN, SANDBOX_STATES } from "./crud"
 import { fetchSandbox } from "./fetch"
 
 /**
@@ -228,14 +228,40 @@ describe("the sandbox vocabulary", () => {
     expect([...SANDBOX_STATES].sort()).toEqual([...allowed.state].sort())
   })
 
-  it("declares exactly the runtime classes the check constraint allows", ({ skip }) => {
+  /*
+    The runtime class is not enumerated, and that is the fix rather than an omission.
+
+    The constraint listed `kata-fc` and `kata-clh`, then gained `none`, and then a GKE Sandbox node
+    pool made `gvisor` the honest answer and it was rejected too. A RuntimeClass is created on the
+    cluster; there is no set this schema can know, and each attempt to name one ended with the truth
+    being refused while a stale default stayed legal. What is checked now is the shape.
+  */
+  it("accepts any Kubernetes object name as a runtime class", async ({ skip }) => {
     if (!reachable) skip()
-    expect([...SANDBOX_RUNTIME_CLASSES].sort()).toEqual([...allowed.runtimeClass].sort())
+
+    for (const name of ["gvisor", "kata-fc", "runsc", NO_RUNTIME_CLASS]) {
+      expect(name).toMatch(RUNTIME_CLASS_PATTERN)
+      const row = await crudSandbox(db).create({
+        projectId,
+        userId: ownerUserId,
+        state: "stopped",
+        runtimeClass: name,
+      })
+      expect(row.runtimeClass).toBe(name)
+    }
   })
 
-  it("permits a sandbox that got no runtime class, because most of them do not", ({ skip }) => {
+  it("still refuses something a RuntimeClass could not be called", async ({ skip }) => {
     if (!reachable) skip()
-    expect(allowed.runtimeClass).toContain("none")
+
+    await expect(
+      crudSandbox(db).create({
+        projectId,
+        userId: ownerUserId,
+        state: "stopped",
+        runtimeClass: "Not A Runtime Class",
+      }),
+    ).rejects.toThrow(/sandbox_runtime_class_check/)
   })
 
   /*

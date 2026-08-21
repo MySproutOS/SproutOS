@@ -23,6 +23,9 @@ export {
 export {
   devSandboxPod,
   exec,
+  FileTooLargeError,
+  MAX_WRITE_ARGUMENT,
+  writeCommand,
   listFiles,
   PathEscapesWorkspaceError,
   podPath,

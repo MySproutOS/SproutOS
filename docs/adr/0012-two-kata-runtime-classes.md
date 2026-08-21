@@ -59,3 +59,52 @@ without baking every file edit into a new image, which is not an editor.
 **`kata-clh` only.** One runtime class, simpler operations, virtio-fs everywhere. Rejected: Firecracker
 is the tighter boundary for the untrusted production workloads that run unattended at the highest
 density, and it is the isolation story the product sells.
+
+---
+
+## Amendment, 2026-08-21: gVisor where there is no metal
+
+This ADR chose two Kata runtime classes and said nothing about clusters that cannot have either.
+Kata needs a bare-metal node pool — nested virtualization, `kata-deploy`, a devmapper thin pool —
+and a managed Kubernetes offering does not give you one. GKE, AKS and EKS all decline in the same
+way: `kata-fc` and `kata-clh` are RuntimeClass objects you can create, and no node will ever
+implement the handler.
+
+The consequence was not "no VM boundary". It was worse, and it took a while to see: the code named
+`kata-clh`, no node provided it, and `sandboxRuntimeClass()` returned `undefined` — so customer code
+ran in an ordinary container while `sandbox.runtime_class` said `kata-clh`, because that was the
+column default. The isolation was a namespace, a NetworkPolicy and a pod with no service-account
+token. All real, none of it a kernel boundary, and the database claimed otherwise.
+
+**GKE Sandbox (gVisor) is the boundary that is actually available on managed Kubernetes.** It is a
+user-space kernel: the workload's syscalls are served by `runsc` rather than by the host kernel, so a
+kernel exploit reaches gVisor's reimplementation instead of the node's. That is weaker than a VM —
+gVisor's own documentation says so — and enormously stronger than a shared kernel with seccomp.
+
+It is also verifiable from inside, which matters more than the argument:
+
+```
+sandbox: Linux 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016
+node:    6.12.85+
+```
+
+gVisor reports that exact fixed uname. A sandbox seeing a decade-old kernel on a node running 6.12
+is not configuration one can misread.
+
+### What this changes
+
+- `SANDBOX_RUNTIME_CLASS` is set to `gvisor` on a cluster with a GKE Sandbox node pool, `kata-fc` or
+  `kata-clh` on metal, and left unset where there is neither. All three are supported and the row
+  records which one a pod actually got.
+- The sandbox pod specs carry a toleration for `sandbox.gke.io/runtime=gvisor:NoSchedule`, the taint
+  GKE puts on a sandbox node. Without it a pod naming `runtimeClassName: gvisor` is Pending forever
+  and the reason appears only in its events.
+- `sandbox.runtime_class` no longer enumerates. It checked `kata-fc`/`kata-clh`, then gained `none`,
+  then rejected `gvisor` — three times the *truth* was refused while a stale default stayed legal. A
+  RuntimeClass is created on the cluster; the schema cannot know the set, so it checks the shape.
+
+### What this does not change
+
+Kata remains the choice on metal, and the two-class distinction stands for the reason it always did:
+Firecracker has no virtio-fs, so anything needing a live filesystem is Cloud Hypervisor. gVisor is
+what a cluster gets when it has no metal, not a replacement for having any.

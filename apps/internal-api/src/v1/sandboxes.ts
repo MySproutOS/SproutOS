@@ -1,15 +1,10 @@
-import {
-  crudAuditLog,
-  crudSandbox,
-  fetchProject,
-  fetchSandbox,
-  type SandboxRuntimeClass,
-} from "@lib/dao"
+import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, NO_RUNTIME_CLASS } from "@lib/dao"
 import { createKubeClient, inClusterConfig } from "@lib/deploy"
 import { tenantNamespace } from "@lib/jobs"
 import {
   devSandboxPod,
   ensureTenantNamespace,
+  FileTooLargeError,
   exec,
   listFiles,
   PathEscapesWorkspaceError,
@@ -65,16 +60,6 @@ const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE ?? "node:24-alpine"
 
 /** Fifteen minutes, matching the column default. */
 const IDLE_TIMEOUT_S = 900
-
-/**
- * What `runtime_class` says when the pod was given no RuntimeClass at all.
- *
- * The column is `not null`, so the honest value has to be a word rather than a null. `none` states
- * the isolation the workload has: a namespace, its NetworkPolicies, and a pod with no
- * service-account token — not a VM. Taken from `SANDBOX_RUNTIME_CLASSES`, which the DAO tests
- * assert against the check constraint, so this cannot be a word the database will refuse.
- */
-const NO_RUNTIME_CLASS: SandboxRuntimeClass = "none"
 
 function serialize(row: {
   id: string
@@ -567,7 +552,15 @@ const app = new Hono()
       if (target === undefined) return throwConflict(c, "The sandbox is not running")
 
       try {
-        const result = await writeFile(target, path, contents)
+        let result
+        try {
+          result = await writeFile(target, path, contents)
+        } catch (error) {
+          // A file too large for one command argument. Named, because the alternative is `E2BIG` from
+          // a shell several layers down.
+          if (error instanceof FileTooLargeError) return throwBadRequest(c, error.message)
+          throw error
+        }
         if (result.exitCode !== 0) {
           return throwBadRequest(c, result.stderr.trim() || "Could not write the file")
         }

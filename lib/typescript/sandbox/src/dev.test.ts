@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest"
 import {
+  FileTooLargeError,
+  MAX_WRITE_ARGUMENT,
   PathEscapesWorkspaceError,
   WORKSPACE,
   devSandboxPod,
   resolveWorkspacePath,
   shellQuote,
+  writeCommand,
 } from "./dev"
 import { CHANNEL, exitCodeFrom, execPath, OPCODE_BINARY, readFrame, writeFrame } from "./exec"
 
@@ -245,5 +248,66 @@ describe("the exec channel", () => {
     // decodes on the other side. The argument arrives as one string either way, which is the
     // property that matters.
     expect(path).toContain("command=%2Fworkspace%2Ftwo+words.txt")
+  })
+})
+
+/*
+  The write path carries its content as an argument, not on stdin.
+
+  `v4.channel.k8s.io` has no way to close stdin — frames carry a channel byte and data, and the only
+  EOF a server ever sees is the WebSocket closing, which cannot happen while output is still wanted.
+  So `cat > file` waits forever for an EOF that never arrives. On the default runtime that was
+  survivable by accident: `cat` writes as it reads, so the file was already correct when the exec hit
+  its timeout — the write *worked* while reporting failure. Under gVisor it presented the same way
+  and was finally noticed.
+*/
+describe("the write command", () => {
+  it("passes the content as an argument and never on stdin", () => {
+    const argv = writeCommand("/workspace/src/a.js", "/workspace/src", "hello")
+    expect(argv[0]).toBe("sh")
+    expect(argv[2]).toContain("base64 -d")
+    // The content, base64'd, is in the command itself.
+    expect(argv[2]).toContain(Buffer.from("hello", "utf8").toString("base64"))
+  })
+
+  it("creates the parent directory in the same invocation", () => {
+    expect(writeCommand("/workspace/a/b/c.js", "/workspace/a/b", "x")[2]).toContain(
+      "mkdir -p '/workspace/a/b'",
+    )
+  })
+
+  /*
+    Base64's alphabet is `A-Za-z0-9+/=`, so no content can escape its argument — which makes this
+    safer than the shape it replaces, where only the *path* was ever quoted and the bytes went to a
+    channel nobody could inspect.
+  */
+  it("cannot be escaped by the file's contents", () => {
+    const hostile = "'; rm -rf / #"
+    const argv = writeCommand("/workspace/a.txt", "/workspace", hostile)
+    expect(argv[2]).not.toContain("rm -rf")
+  })
+
+  /*
+    Compared against `shellQuote` itself rather than a hand-written escape.
+
+    A literal `'\\''` in a test is a second implementation of the quoting rule, and the copy is
+    always the one that is wrong — writing this assertion by hand took two attempts and both
+    failed against code that was already correct.
+  */
+  it("quotes a path containing a single quote", () => {
+    const path = "/workspace/it's.txt"
+    expect(writeCommand(path, "/workspace", "x")[2]).toContain(shellQuote(path))
+  })
+
+  it("refuses a file too large for one argument, rather than failing as E2BIG", () => {
+    // `ARG_MAX` caps one argument at 128 KiB, and an oversized one fails inside the shell — several
+    // layers from the file that caused it.
+    expect(() =>
+      writeCommand("/workspace/big", "/workspace", "x".repeat(MAX_WRITE_ARGUMENT)),
+    ).toThrow(FileTooLargeError)
+  })
+
+  it("accepts a file that fits", () => {
+    expect(() => writeCommand("/workspace/small", "/workspace", "x".repeat(1024))).not.toThrow()
   })
 })

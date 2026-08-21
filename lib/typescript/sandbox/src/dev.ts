@@ -207,17 +207,65 @@ export async function writeFile(
     ...target,
     container: "dev",
     /*
-      A shell here, deliberately and carefully.
+      The content travels as an argument, not on stdin. That is the whole point of this shape.
 
-      Redirecting stdin to a file needs one, and `mkdir -p` of the parent needs the same invocation
-      to be useful. The path is interpolated into that shell string, which is exactly the thing
-      `readFile` avoids — so it is single-quoted, and `resolveWorkspacePath` has already rejected
-      NUL bytes. A single quote in a filename would still be a problem, which is why it is escaped
-      by the standard `'\''` dance rather than assumed absent.
+      It used to be `cat > file` with the bytes written to the stdin channel, which worked — until a
+      sandbox ran under gVisor and it did not. **The Kubernetes exec protocol has no way to close
+      stdin.** `v4.channel.k8s.io` frames carry a channel byte and data; there is no half-close, and
+      the only signal a server gets is the WebSocket closing, which cannot happen while output is
+      still wanted. `cat` therefore waits for an EOF that never comes, the exec runs to its timeout,
+      and no status frame arrives.
+
+      What made that survivable on the default runtime is that `cat` writes as it reads, so the file
+      was already correct when the timeout fired. The write *worked* and reported failure — one more
+      thing that looked broken and was not, and one more thing that looked fine and was not.
+
+      Base64 removes stdin from the path entirely. The alphabet is `A-Za-z0-9+/=`, so nothing in it
+      needs quoting and no content can escape the argument — which also makes this safer than the
+      shape it replaces, where only the *path* was ever quoted.
     */
-    command: ["sh", "-c", `mkdir -p ${shellQuote(directory)} && cat > ${shellQuote(resolved)}`],
-    stdin: contents,
+    command: writeCommand(resolved, directory, contents),
   })
+}
+
+/**
+ * The argv that writes one file, with the content base64'd into an argument.
+ *
+ * Separate from `writeFile` so it can be asserted without a cluster: the shape is the part that has
+ * to be right, and a test that needs a running pod to check it is a test nobody runs.
+ */
+export function writeCommand(resolved: string, directory: string, contents: string): string[] {
+  const encoded = Buffer.from(contents, "utf8").toString("base64")
+  if (encoded.length > MAX_WRITE_ARGUMENT) throw new FileTooLargeError(contents.length)
+
+  return [
+    "sh",
+    "-c",
+    `mkdir -p ${shellQuote(directory)} && printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(resolved)}`,
+  ]
+}
+
+/**
+ * The largest base64 payload that goes in one argument.
+ *
+ * `ARG_MAX` is 2 MiB on Linux for the whole argument list and 128 KiB for any single argument, and
+ * an oversized one fails with `E2BIG` — which surfaces as an exec that could not start, several
+ * layers from the file that was too big. Refused here with a sentence instead.
+ *
+ * 96 KiB of base64 is 72 KiB of file, comfortably inside the single-argument limit. A dev sandbox
+ * edits source; something larger belongs in the repository, not in a text field.
+ */
+export const MAX_WRITE_ARGUMENT = 96 * 1024
+
+export class FileTooLargeError extends Error {
+  override readonly name = "FileTooLargeError"
+
+  constructor(readonly bytes: number) {
+    super(
+      `That file is ${bytes} bytes. A sandbox write is limited to what fits in one command ` +
+        `argument — about ${Math.floor((MAX_WRITE_ARGUMENT * 3) / 4 / 1024)} KiB.`,
+    )
+  }
 }
 
 /** List the workspace, one path per line, directories marked with a trailing slash. */

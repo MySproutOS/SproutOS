@@ -29,15 +29,24 @@ export const SANDBOX_STATES = ["starting", "running", "idle", "stopped", "failed
 export type SandboxState = (typeof SANDBOX_STATES)[number]
 
 /**
- * `sandbox.runtime_class`. Two Kata classes and the honest absence of either.
+ * `sandbox.runtime_class` — any Kubernetes object name, because the cluster owns the set.
  *
- * `none` is not a placeholder. It is what a sandbox on a cluster with no bare-metal node pool
- * actually has, and the column existed for a year of commits unable to say it — see the
- * `sandbox_runtime_class_none` migration.
+ * Not a union. This was `"kata-fc" | "kata-clh"`, then `| "none"`, and then a GKE Sandbox node pool
+ * made `gvisor` the honest answer and the check constraint rejected it. A RuntimeClass is created on
+ * the cluster and named by `SANDBOX_RUNTIME_CLASS`; there is no set of values this repository can
+ * know, and every attempt to enumerate one ends with the *truth* being refused while a stale default
+ * stays legal. The database now checks the shape — a DNS-1123 label — and nothing more.
+ *
+ * `none` is the one value with a meaning assigned here: not a runtime class, said as a word because
+ * the column is `not null` and a null would be indistinguishable from "not recorded yet".
  */
-export const SANDBOX_RUNTIME_CLASSES = ["kata-fc", "kata-clh", "none"] as const
+export const NO_RUNTIME_CLASS = "none"
 
-export type SandboxRuntimeClass = (typeof SANDBOX_RUNTIME_CLASSES)[number]
+/** A RuntimeClass name, or {@link NO_RUNTIME_CLASS}. */
+export type SandboxRuntimeClass = string
+
+/** What `sandbox_runtime_class_check` enforces: a Kubernetes object name. */
+export const RUNTIME_CLASS_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
 export function crudSandbox(db: Kysely<DB>) {
   async function create(
