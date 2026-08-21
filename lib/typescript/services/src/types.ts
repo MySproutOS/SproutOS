@@ -44,6 +44,21 @@ export type ServiceDriver = {
   /** A new password, invalidating the old URI. The only recovery from a leaked one. */
   rotateCredentials: (backendServiceId: string) => Promise<string>
   suspend: (backendServiceId: string) => Promise<void>
+  /**
+   * Undo a suspension, where the driver can.
+   *
+   * Optional, and the reason is not laziness. Postgres suspends by taking `login` off the role, so
+   * resuming is the same statement backwards and the customer's URI keeps working. Valkey and
+   * search suspend by **revoking the credential**, and `service_credential` stores a one-way hash —
+   * there is nothing left to restore, so resuming those means issuing a new one, which is
+   * `rotateCredentials` and hands the customer a different URI.
+   *
+   * Stating that in the type is better than a `resume` on all three that silently means two
+   * different things. A caller that wants "make this usable again" for any kind calls `resume` when
+   * it exists and `rotateCredentials` when it does not, and the difference is the customer getting
+   * a new connection string — which they need to be told about either way.
+   */
+  resume?: (backendServiceId: string) => Promise<void>
   destroy: (backendServiceId: string) => Promise<void>
 }
 

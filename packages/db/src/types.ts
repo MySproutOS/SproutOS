@@ -407,6 +407,7 @@ export interface DeploymentBuild {
   createdAt: Generated<Timestamp>
   deploymentId: string
   exitCode: number | null
+  failureReason: string | null
   finishedAt: Timestamp | null
   id: string
   logObjectKey: string | null

@@ -1,6 +1,7 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { Client } from "pg"
+import { tenantUsername } from "./tenant-auth"
 import { afterAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { databaseNameFor, roleNameFor } from "./naming"
@@ -50,7 +51,7 @@ afterAll(async () => {
   await db.destroy()
 })
 
-async function service(): Promise<string> {
+async function service(): Promise<{ backendServiceId: string; organizationId: string }> {
   const userId = v7()
   const organizationId = v7()
   const backendServiceId = v7()
@@ -89,24 +90,49 @@ async function service(): Promise<string> {
     .execute()
 
   provisioned.push(backendServiceId)
-  return backendServiceId
+  /*
+    The organization id as well as the service id.
+
+    Every call site passed `organizationId: "unused"`, which was true when the driver ignored it and
+    stopped being true the moment anything did — the envelope's encryption context binds a
+    ciphertext to the organization it belongs to, so a placeholder there is a `RangeError` at best
+    and a credential sealed under the wrong tenant at worst. The helper already creates a real
+    organization; there was never a reason to invent a second, fake one.
+  */
+  return { backendServiceId, organizationId }
 }
 
 describe.skipIf(!reachable)("sprout postgres driver", () => {
   it("hands back a URI that actually connects", async ({ skip }) => {
     if (!reachable) skip()
     const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-    const id = await service()
+    const { backendServiceId: id, organizationId } = await service()
 
     const result = await driver.provision({
       backendServiceId: id,
-      organizationId: "unused",
+      organizationId,
       projectId: null,
       name: "My Database",
     })
 
     expect(result.database).toBe(databaseNameFor(id))
-    expect(result.username).toBe(roleNameFor(id))
+    /*
+      The **tenant** username, not the backend role name.
+
+      This asserted `roleNameFor(id)` — the Postgres role — which is what the driver used to hand
+      out, and the whole reason the proxy was never actually joined to the Postgres path: a URI
+      carrying the backend role and its password works only by connecting to the cluster directly.
+      `pg-proxy` parses the username to learn which tenant and which resource a connection is for,
+      because a startup packet has room for nothing else, and then drops to the backend role with
+      `SET ROLE`.
+
+      So the test now asserts the contract the proxy actually implements, and proves it by logging
+      in *through the proxy* and asking who the session ended up as.
+    */
+    expect(result.username).toBe(
+      tenantUsername({ organizationId, kind: "database", resourceId: id }),
+    )
+    expect(result.username).not.toBe(roleNameFor(id))
 
     // The whole point. Anything less than logging in with it is checking my own string building.
     const client = new Client({ connectionString: result.connectionUri })
@@ -116,6 +142,8 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
         "select current_database() as db, current_user as who",
       )
       expect(rows[0]?.db).toBe(databaseNameFor(id))
+      // `SET ROLE` has happened by the time the session is spliced: the proxy's own privilege is
+      // dropped before the customer sees the connection.
       expect(rows[0]?.who).toBe(roleNameFor(id))
     } finally {
       await client.end()
@@ -125,20 +153,29 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
   it("round-trips the password through KMS", async ({ skip }) => {
     if (!reachable) skip()
     const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-    const id = await service()
+    const { backendServiceId: id, organizationId } = await service()
 
     const provisioned = await driver.provision({
       backendServiceId: id,
-      organizationId: "unused",
+      organizationId,
       projectId: null,
       name: "Reveal Me",
     })
 
-    // Read back later, from the sealed column, and still usable.
-    const revealed = await driver.connectionUri(id)
-    expect(revealed).toBe(provisioned.connectionUri)
+    /*
+      The secret is not recoverable, and that is the design.
 
-    const client = new Client({ connectionString: revealed })
+      This asserted that `connectionUri` returned the same URI a second time. `service_credential`
+      stores a one-way hash — the change that made a leak of the control-plane database yield
+      nothing a customer's database would accept — so there is nothing left to reveal. The driver
+      says so in the error rather than returning a URI with an empty password, which is what a
+      caller would otherwise take away and spend an afternoon on.
+
+      What is still true, and worth asserting, is that the URI handed out at provision time works.
+    */
+    await expect(driver.connectionUri(id)).rejects.toThrow(/one-way hash|Rotate/)
+
+    const client = new Client({ connectionString: provisioned.connectionUri })
     await client.connect()
     await client.end()
   }, 60_000)
@@ -146,10 +183,10 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
   it("stores no plaintext password anywhere", async ({ skip }) => {
     if (!reachable) skip()
     const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-    const id = await service()
+    const { backendServiceId: id, organizationId } = await service()
     const result = await driver.provision({
       backendServiceId: id,
-      organizationId: "unused",
+      organizationId,
       projectId: null,
       name: "Secret",
     })
@@ -172,10 +209,10 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
   it("rotation invalidates the old URI", async ({ skip }) => {
     if (!reachable) skip()
     const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-    const id = await service()
+    const { backendServiceId: id, organizationId } = await service()
     const original = await driver.provision({
       backendServiceId: id,
-      organizationId: "unused",
+      organizationId,
       projectId: null,
       name: "Rotate",
     })
@@ -195,10 +232,10 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
   it("suspending stops logins without destroying data", async ({ skip }) => {
     if (!reachable) skip()
     const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-    const id = await service()
+    const { backendServiceId: id, organizationId } = await service()
     const result = await driver.provision({
       backendServiceId: id,
-      organizationId: "unused",
+      organizationId,
       projectId: null,
       name: "Suspend",
     })
@@ -210,10 +247,30 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
 
     await driver.suspend(id)
 
+    /*
+      Refused **through the proxy**, which is the only path a customer has.
+
+      This passed for a long time by accident: it connected directly to the backend, where `alter
+      role … nologin` is the whole suspension. Through `pg-proxy` it is not — the proxy
+      authenticates as itself and reaches the tenant's role with `SET ROLE`, and `SET ROLE` to a
+      `NOLOGIN` role succeeds, because `NOLOGIN` governs authentication and not role assumption.
+
+      What refuses is the credential lookup, which requires `backend_service.status` to be
+      `provisioning` or `active`. The Valkey and search drivers set that column; this one set
+      `database_instance.status` instead, so a suspended Postgres service — including one suspended
+      for non-payment — went on accepting connections.
+    */
     const after = new Client({ connectionString: result.connectionUri })
     await expect(after.connect()).rejects.toThrow(
-      /is not permitted to log in|password authentication failed/,
+      /is not permitted to log in|password authentication failed|authentication failed/,
     )
+
+    const suspended = await db
+      .selectFrom("backendService")
+      .select(["status"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow()
+    expect(suspended.status).toBe("suspended")
 
     // The database is still there — a suspension that lost data would not be a suspension.
     const admin = new Client({ connectionString: sproutPostgresConfigFromEnv().adminUrl })
@@ -226,6 +283,40 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
       expect(rows[0]?.n).toBe("1")
     } finally {
       await admin.end()
+    }
+  }, 60_000)
+
+  it("resuming lets the same URI back in", async ({ skip }) => {
+    if (!reachable) skip()
+    /*
+      `suspend` had no counterpart anywhere — not in the driver, not in the interface, not in the
+      API. A service could be stopped and never started, which makes suspension for non-payment
+      useless: paying has to undo it.
+
+      The *same* URI, not a new one, is the assertion that matters. Postgres suspends by taking
+      `login` off the role, so resuming is that statement backwards and the customer's connection
+      string keeps working. The other two drivers revoke the credential and cannot do this — see the
+      note on `ServiceDriver.resume`.
+    */
+    const driver = sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
+    const { backendServiceId: id, organizationId } = await service()
+    const result = await driver.provision({
+      backendServiceId: id,
+      organizationId,
+      projectId: null,
+      name: "Resume",
+    })
+
+    await driver.suspend(id)
+    await driver.resume?.(id)
+
+    const client = new Client({ connectionString: result.connectionUri })
+    await client.connect()
+    try {
+      const { rows } = await client.query<{ db: string }>("select current_database() as db")
+      expect(rows[0]?.db).toBe(databaseNameFor(id))
+    } finally {
+      await client.end()
     }
   }, 60_000)
 

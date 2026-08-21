@@ -199,9 +199,14 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       }
 
       if ((current?.status?.failed ?? 0) > 0) {
-        await crudDeploymentBuild(db).update(build.id, { finishedAt: new Date(), exitCode: 1 })
+        const reason = await buildFailureReason(kube, deploymentId)
+        await crudDeploymentBuild(db).update(build.id, {
+          finishedAt: new Date(),
+          exitCode: 1,
+          failureReason: reason,
+        })
         await crudDeployment(db).update(deploymentId, { status: "error" })
-        throw new Error(`Build failed for deployment ${deploymentId}`)
+        throw new Error(`Build failed for deployment ${deploymentId}: ${reason}`)
       }
 
       await sleep(POLL_INTERVAL_MS, signal)
@@ -215,4 +220,97 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       idempotencyKey: `${BUILD_KINDS.image}:${deploymentId}:${job.attempt}:recheck`,
     })
   }
+}
+
+/** How much of a build log to keep. Enough for the error and the lines around it. */
+const FAILURE_REASON_LIMIT = 4000
+
+type PodList = {
+  items?: {
+    status?: {
+      phase?: string
+      conditions?: { type?: string; status?: string; reason?: string; message?: string }[]
+      containerStatuses?: {
+        state?: {
+          terminated?: { reason?: string; message?: string; exitCode?: number }
+          waiting?: { reason?: string; message?: string }
+        }
+      }[]
+    }
+    metadata?: { name?: string }
+  }[]
+}
+
+/**
+ * Why the build failed, in the words of whatever refused it.
+ *
+ * The handler used to throw `Build failed for deployment <uuid>` and that string was the whole
+ * record. Every real failure needed a `kubectl logs` to explain, and the explanation was sitting
+ * right there at the moment the platform discarded it: a missing Dockerfile, a registry that
+ * refused the push, a pod that could not be scheduled.
+ *
+ * The pod's *status* is consulted before its logs, and that ordering is the point. A build that was
+ * never scheduled has no logs at all — `0/3 nodes are available: 2 Insufficient cpu` lives in a
+ * scheduling condition — and reading logs first would report an empty string for the one failure
+ * mode whose cause is least guessable from the outside.
+ *
+ * Never throws. This runs on the failure path, and a build whose *explanation* fails to load must
+ * still report the failure it was explaining.
+ */
+export async function buildFailureReason(
+  kube: Pick<ReturnType<typeof createKubeClient>, "get" | "logs">,
+  deploymentId: string,
+): Promise<string> {
+  try {
+    const selector = encodeURIComponent(`sproutos.dev/deployment=${deploymentId}`)
+    const pods = await kube.get<PodList>(
+      `/api/v1/namespaces/${BUILD_NAMESPACE}/pods?labelSelector=${selector}`,
+    )
+
+    const pod = pods?.items?.[0]
+    if (pod === undefined) return "the build pod is gone; nothing recorded why it failed"
+
+    const container = pod.status?.containerStatuses?.[0]?.state
+
+    if (container?.waiting?.reason !== undefined) {
+      return trim(`${container.waiting.reason}: ${container.waiting.message ?? ""}`)
+    }
+
+    // Pending with an `Unschedulable` condition: the pod never ran, so there is nothing to tail.
+    if (pod.status?.phase === "Pending") {
+      const blocked = pod.status.conditions?.find((condition) => condition.status === "False")
+      return trim(
+        blocked === undefined
+          ? "the build pod never started, and the cluster gave no reason"
+          : `${blocked.reason ?? "Pending"}: ${blocked.message ?? ""}`,
+      )
+    }
+
+    const name = pod.metadata?.name
+    const log =
+      name === undefined
+        ? ""
+        : await kube.logs(
+            `/api/v1/namespaces/${BUILD_NAMESPACE}/pods/${name}/log?container=buildkit`,
+          )
+
+    const tail = log.trim()
+    if (tail !== "") return trim(tail.slice(-FAILURE_REASON_LIMIT))
+
+    const terminated = container?.terminated
+    return trim(
+      terminated === undefined
+        ? "the build container produced no output and no status"
+        : `exit ${terminated.exitCode ?? "?"} ${terminated.reason ?? ""} ${terminated.message ?? ""}`,
+    )
+  } catch (cause) {
+    // The explanation failed to load. Say that, rather than letting it replace the failure it was
+    // explaining — which is how a constraint violation inside a catch has hidden a real error here
+    // before (see docs/findings/0010).
+    return `could not read why the build failed: ${String(cause)}`
+  }
+}
+
+function trim(value: string): string {
+  return value.trim().slice(0, FAILURE_REASON_LIMIT)
 }

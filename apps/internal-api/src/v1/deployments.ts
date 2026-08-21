@@ -38,7 +38,7 @@ type DeploymentRow = {
   updatedAt: Date
 }
 
-function present(row: DeploymentRow) {
+function present(row: DeploymentRow, buildFailureReason: string | null = null) {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -51,9 +51,41 @@ function present(row: DeploymentRow) {
     imageUri: row.imageUri,
     knativeRevision: row.knativeRevision,
     runtimeClass: row.runtimeClass,
+    buildFailureReason,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
+}
+
+/**
+ * The failure reason of each deployment's most recent build.
+ *
+ * `distinct on` is Postgres's "one row per group", and the order clause is what picks *which* row —
+ * the leading key must match the distinct key or the result is arbitrary. A deployment retried
+ * three times has three builds and only the last one's reason is the current answer.
+ *
+ * One query for the whole list rather than one per row, the same reason `enrich` in `projects.ts`
+ * batches: a project with fifty deployments would otherwise make fifty round trips to render one
+ * screen.
+ */
+async function buildFailureReasons(deploymentIds: readonly string[]): Promise<Map<string, string>> {
+  if (deploymentIds.length === 0) return new Map()
+
+  const rows = await db
+    .selectFrom("deploymentBuild")
+    .distinctOn("deploymentId")
+    .select(["deploymentId", "failureReason"])
+    .where("deploymentId", "in", [...deploymentIds])
+    .where("failureReason", "is not", null)
+    .orderBy("deploymentId")
+    .orderBy("createdAt", "desc")
+    .execute()
+
+  return new Map(
+    rows.flatMap((row) =>
+      row.failureReason === null ? [] : [[row.deploymentId, row.failureReason]],
+    ),
+  )
 }
 
 /**
@@ -104,7 +136,9 @@ const app = new Hono()
         .limit(50)
         .execute()
 
-      return c.json({ data: rows.map(present) })
+      const reasons = await buildFailureReasons(rows.map((row) => row.id))
+
+      return c.json({ data: rows.map((row) => present(row, reasons.get(row.id) ?? null)) })
     },
   )
   .get(
@@ -144,7 +178,9 @@ const app = new Hono()
 
       if (row === undefined) return throwNotFound(c, "Deployment not found")
 
-      return c.json(present(row))
+      const reasons = await buildFailureReasons([row.id])
+
+      return c.json(present(row, reasons.get(row.id) ?? null))
     },
   )
   .post(

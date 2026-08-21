@@ -26,6 +26,15 @@ export const deploymentSchemaResponse = Type.Object({
   imageUri: Nullable(Type.String()),
   knativeRevision: Nullable(Type.String()),
   runtimeClass: Type.String(),
+  /**
+   * Why the most recent build failed, in the words of whatever refused it.
+   *
+   * Null when the build succeeded or has not finished. Present because the alternative was
+   * `Build failed for deployment <uuid>` in a job's `last_error`, which no customer can read and
+   * which does not say whether the Dockerfile was missing, the registry refused the push, or the
+   * pod was never scheduled at all — the three failures this platform has actually had.
+   */
+  buildFailureReason: Nullable(Type.String()),
   createdAt: Type.String(),
   updatedAt: Type.String(),
 })

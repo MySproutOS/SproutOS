@@ -19,16 +19,28 @@ import { readFileSync } from "node:fs"
 const KNOWN = [
   {
     suite: "@lib/envelope",
-    count: 8,
-    // LocalStack is gone. These now need real KMS, and a customer-managed key is $1/month —
-    // outside the free tier the account is on, so this is a spending decision rather than a
-    // configuration one.
-    waiting: "a real KMS key (AWS CMK, ~$1/month) — envelope encryption",
+    count: 0,
+    /*
+      Zero, because they run.
+
+      This said 8 and "LocalStack is gone. These now need real KMS", and LocalStack was not gone —
+      it is in `docker-compose.yaml`, `bin/bootstrap-localstack.sh` creates the CMK, and its KMS was
+      answering the whole time. What had gone was `AWS_ENDPOINT_URL` from `.env`, so every call
+      reached the real AWS account named by the credentials beside it and found no
+      `alias/sproutos-dev`.
+
+      The suite that protects OAuth tokens and tenant database credentials was therefore skipping,
+      and this file recorded the skip as a spending decision. A ceiling is only honest if the reason
+      under it is; a wrong reason turns a temporary gap into a permanent one nobody revisits.
+    */
+    waiting: "nothing — LocalStack KMS, via AWS_ENDPOINT_URL in .env",
   },
   {
     suite: "@lib/services postgres",
-    count: 6,
-    waiting: "a real KMS key (AWS CMK, ~$1/month) — tenant database provisioning",
+    // Also zero. Same cause, plus `SERVICE_POSTGRES_*`, which was missing from `.template.env`
+    // entirely while the Valkey and search equivalents beside it were present.
+    count: 0,
+    waiting: "nothing — LocalStack KMS and SERVICE_POSTGRES_* in .env, plus pg-proxy on :5433",
   },
   {
     suite: "@api/internal projects",

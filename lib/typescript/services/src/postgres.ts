@@ -361,10 +361,66 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
       await client.query(`alter role ${row.roleName} nologin`)
     })
 
+    /*
+      `backend_service.status` as well, and this is the half that actually suspends anything.
+
+      `nologin` stops a *direct* login as the backend role, which is how a customer used to
+      connect. They connect through `pg-proxy` now: the proxy authenticates as itself and reaches
+      the tenant's role with `SET ROLE`, and `SET ROLE` to a `NOLOGIN` role succeeds — `NOLOGIN`
+      governs authentication, not role assumption. So suspension was a no-op on the only path a
+      customer uses, including a suspension for non-payment.
+
+      What the boundary reads is `backend_service.status`: the credential lookup in
+      `lib/rust/service-credentials` requires `s.status in ('provisioning', 'active')`. The Valkey
+      and search drivers set it and this one set `database_instance.status` instead — two status
+      columns, one written by the operation and the other checked by the authorization path.
+
+      Both are set. The instance status is the driver's own bookkeeping — `resume` below reverses
+      exactly what this wrote — and the service status is what stops the next connection.
+    */
     await db
       .updateTable("databaseInstance")
       .set({ status: "suspended", updatedAt: new Date() })
       .where("id", "=", row.instanceId)
+      .execute()
+
+    await db
+      .updateTable("backendService")
+      .set({ status: "suspended", updatedAt: new Date() })
+      .where("id", "=", backendServiceId)
+      .execute()
+  }
+
+  /**
+   * The other half of `suspend`, which did not exist.
+   *
+   * A service could be suspended and never brought back: `suspend` had no counterpart anywhere in
+   * the driver, the interface, or the API. Suspension for non-payment is only useful if paying
+   * undoes it, and a customer whose service can be stopped and not started is worse served than
+   * one whose service cannot be stopped at all.
+   *
+   * Reverses precisely what `suspend` wrote, in the opposite order: the credential boundary opens
+   * last, so there is no window where the proxy will accept a connection to a role that still
+   * cannot be assumed.
+   */
+  async function resume(backendServiceId: string): Promise<void> {
+    const row = await locate(backendServiceId)
+    assertSafeIdentifier(row.roleName)
+
+    await withAdmin(config, async (client) => {
+      await client.query(`alter role ${row.roleName} login`)
+    })
+
+    await db
+      .updateTable("databaseInstance")
+      .set({ status: "active", updatedAt: new Date() })
+      .where("id", "=", row.instanceId)
+      .execute()
+
+    await db
+      .updateTable("backendService")
+      .set({ status: "active", updatedAt: new Date() })
+      .where("id", "=", backendServiceId)
       .execute()
   }
 
@@ -394,6 +450,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
     destroy,
     details,
     provision,
+    resume,
     rotateCredentials,
     suspend,
   }
