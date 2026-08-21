@@ -121,6 +121,28 @@ const app = new Hono()
               : new Date(body.expiresAt),
         })
 
+        /*
+          Select it, when nothing else is selected.
+
+          `resolveAgentCredential` reads `agent_config.agent_credential_id`; adding a credential
+          used to leave that null, so a customer could store their key, see it listed, and have
+          agent chat still answer `No model credential configured (no_config)`. Adding a credential
+          and choosing one were two separate actions and only one of them had a UI.
+
+          Only when there is no config yet. An organization that has deliberately pointed at
+          another credential must not be switched by someone adding a second one — that would
+          silently move their agent runs onto a different key and, for a metered kind, a different
+          bill.
+        */
+        const existingConfig = await fetchAgentConfig(db).getForOrganization(organization.id, [
+          "id",
+        ])
+        if (existingConfig === undefined) {
+          await crudAgentConfig(db).upsertForOrganization(organization.id, {
+            agentCredentialId: created.id,
+          })
+        }
+
         await crudAuditLog(db).record({
           organizationId: organization.id,
           actorUserId: c.var.user.id,
