@@ -848,6 +848,7 @@ export interface ServiceCredential {
   id: string
   lastFour: string
   lastUsedAt: Timestamp | null
+  purpose: Generated<string>
   revokedAt: Timestamp | null
   secretHash: string
   username: string

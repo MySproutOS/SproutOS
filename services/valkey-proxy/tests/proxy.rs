@@ -563,3 +563,103 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
     raw.send(&["DEL", "sproutos:master:wake"]).await;
     cleanup(&url, &fixtures).await;
 }
+
+/*
+  Two live credentials for one username, both accepted.
+
+  A worker the platform starts on a customer's behalf needs its own secret: the platform cannot reuse
+  the customer's, which is stored as a hash, and until `service_credential.purpose` existed it could
+  not issue a second either — one live credential per username was the constraint, and the username
+  is derived from the resource so every credential for one service collides.
+
+  This is the property the proxy has to hold up for that to work. There was a `limit 1` in the
+  lookup, which meant whichever row came back first was the only secret that could ever authenticate
+  — and *which* row that was depended on the plan. A worker would have worked, intermittently.
+*/
+#[tokio::test]
+async fn a_service_may_have_a_tenant_and_a_worker_credential() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, tenant_secret, service_id, fixtures) = provision(&url).await;
+
+    let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+        .await
+        .expect("postgres");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    // A second credential, same username, different purpose — exactly what `issueWorkerCredential`
+    // writes.
+    let worker_secret = sproutos_tenant_auth::generate_secret();
+    client
+        .execute(
+            "insert into service_credential
+               (id, backend_service_id, username, purpose, secret_hash, last_four)
+             values ($1, $2, $3, 'worker', $4, $5)",
+            &[
+                &Uuid::now_v7(),
+                &service_id,
+                &username,
+                &sproutos_tenant_auth::hash_generated_secret(&worker_secret),
+                &&worker_secret[worker_secret.len() - 4..],
+            ],
+        )
+        .await
+        .expect("insert worker credential");
+
+    // Both authenticate.
+    let mut tenant = Client::connect(address).await;
+    assert_eq!(
+        tenant.send(&["AUTH", &username, &tenant_secret]).await,
+        "+OK\r\n"
+    );
+
+    let mut worker = Client::connect(address).await;
+    assert_eq!(
+        worker.send(&["AUTH", &username, &worker_secret]).await,
+        "+OK\r\n"
+    );
+
+    // And they land in the same keyspace, which is the point: a worker consumes the queue its
+    // tenant fills.
+    assert_eq!(
+        tenant.send(&["SET", "shared", "from-tenant"]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(
+        worker.send(&["GET", "shared"]).await,
+        "$11\r\nfrom-tenant\r\n"
+    );
+
+    // Revoking the worker's leaves the customer's working. That separation is the whole reason for
+    // two credentials rather than one shared secret.
+    client
+        .execute(
+            "update service_credential set revoked_at = now()
+             where username = $1 and purpose = 'worker'",
+            &[&username],
+        )
+        .await
+        .expect("revoke worker");
+
+    let mut after_worker = Client::connect(address).await;
+    let refused = after_worker
+        .send(&["AUTH", &username, &worker_secret])
+        .await;
+    assert!(refused.starts_with("-ERR WRONGPASS"), "{refused}");
+
+    let mut after_tenant = Client::connect(address).await;
+    assert_eq!(
+        after_tenant
+            .send(&["AUTH", &username, &tenant_secret])
+            .await,
+        "+OK\r\n"
+    );
+
+    cleanup(&url, &fixtures).await;
+}

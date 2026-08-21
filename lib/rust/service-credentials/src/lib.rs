@@ -137,7 +137,6 @@ impl CredentialStore {
                and s.deleted_at is null
                and s.status in ('provisioning', 'active')
                and o.deleted_at is null
-             limit 1
         ";
 
         let rows = tokio::time::timeout(LOOKUP_TIMEOUT, client.query(statement, &[&username]))
@@ -145,24 +144,52 @@ impl CredentialStore {
             .map_err(|_| StoreError::Unavailable("the credential lookup timed out".into()))?
             .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
 
-        let Some(row) = rows.first() else {
+        if rows.is_empty() {
             return Ok(Authentication::Denied);
-        };
-        let credential_id: uuid::Uuid = row.get(0);
-        let stored: &str = row.get(1);
+        }
 
-        match verify_secret(secret, stored) {
-            Ok(true) => {
+        /*
+          Every live credential for the username, not the first.
+
+          One service can now hold two: the `tenant` credential a customer connects with, and a
+          `worker` credential the platform issues to a workload it runs on their behalf. They share a
+          username — it is derived from the resource, and the wire protocol gives a proxy nothing
+          else to route on — and are told apart by which secret is presented.
+
+          There was a `limit 1` here, which is why a second credential was impossible and why a
+          platform-started worker had no way to authenticate. See the
+          `service_credential_purpose` migration.
+
+          Every row is examined even after a match. Returning early would make the time this takes
+          depend on which credential was presented, which over enough attempts says which of a
+          service's credentials a secret is closest to — a small leak, and the cost of not having it
+          is one hash comparison against a list that is two long.
+        */
+        let mut matched: Option<uuid::Uuid> = None;
+        for row in &rows {
+            let credential_id: uuid::Uuid = row.get(0);
+            let stored: &str = row.get(1);
+
+            match verify_secret(secret, stored) {
+                Ok(true) => matched = matched.or(Some(credential_id)),
+                Ok(false) => {}
+                // A hash we cannot read is our fault, not the client's. Reporting it as a wrong
+                // password would send an operator chasing the tenant instead of the row.
+                Err(cause) => {
+                    return Err(StoreError::BrokenCredential {
+                        username: username.to_owned(),
+                        cause,
+                    });
+                }
+            }
+        }
+
+        match matched {
+            Some(credential_id) => {
                 self.stamp_used(credential_id).await;
                 Ok(Authentication::Ok(Box::new(identity)))
             }
-            Ok(false) => Ok(Authentication::Denied),
-            // A hash we cannot read is our fault, not the client's. Reporting it as a wrong
-            // password would send an operator chasing the tenant instead of the row.
-            Err(cause) => Err(StoreError::BrokenCredential {
-                username: username.to_owned(),
-                cause,
-            }),
+            None => Ok(Authentication::Denied),
         }
     }
 

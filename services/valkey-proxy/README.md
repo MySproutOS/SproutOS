@@ -176,7 +176,7 @@ ZADD sproutos:master:wake GT <epoch_ms> "<resource-short-id>/<queue>"
 
 Not the job — a job belongs to the tenant, and copying one into a shared structure would put a
 customer's payload somewhere another customer's dispatcher could read. Only the smallest fact that
-lets the control plane act: *this queue was written to, at this time*.
+lets the control plane act: _this queue was written to, at this time_.
 
 A sorted set rather than a list, and that is the whole design. The member is the queue, so a
 thousand enqueues in a second collapse to one entry; the score is when work last arrived, which is

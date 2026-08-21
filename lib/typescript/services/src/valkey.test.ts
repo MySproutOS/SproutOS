@@ -187,7 +187,7 @@ describe.skipIf(!reachable)("valkey driver", () => {
     expect(rows[1]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second)))
   })
 
-  it("refuses two live credentials for one username", async ({ skip }) => {
+  it("refuses two live credentials for one username and purpose", async ({ skip }) => {
     if (!reachable) skip()
     const driver = valkeyDriver(db, config)
     const { backendServiceId, organizationId } = await service()
@@ -200,8 +200,13 @@ describe.skipIf(!reachable)("valkey driver", () => {
 
     /*
       The guard that matters most, asserted by trying to violate it directly rather than through the
-      driver. Two live rows for one username would let a revoked secret keep working — silently, for
-      as long as nobody looked at the table.
+      driver. Two live rows for one username *and purpose* would let a revoked secret keep working —
+      silently, for as long as nobody looked at the table.
+
+      This used to be "one live credential per username", full stop. That is why a worker the
+      platform runs could not have a credential of its own, and had to borrow the customer's URI
+      captured in passing during provisioning — which left every queue provisioned earlier unable to
+      have a worker at all. `purpose` is what makes both possible; see the migration.
     */
     const username = tenantUsername({
       organizationId,
@@ -219,7 +224,76 @@ describe.skipIf(!reachable)("valkey driver", () => {
           lastFour: "cond",
         })
         .execute(),
-    ).rejects.toThrow(/service_credential_live_username_key/)
+    ).rejects.toThrow(/service_credential_live_username_purpose_key/)
+  })
+
+  /*
+    A worker credential lives alongside the customer's, not instead of it.
+
+    The point of the whole `purpose` change: a worker the platform starts gets its own secret, so
+    revoking it stops the worker and leaves the customer's application connected — and issuing one
+    never touches what the customer holds.
+  */
+  it("issues a worker credential without disturbing the customer's", async ({ skip }) => {
+    if (!reachable) skip()
+    const driver = valkeyDriver(db, config)
+    const { backendServiceId, organizationId } = await service()
+    const provisioned = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "My Queue",
+    })
+
+    const uri = await driver.issueWorkerCredential(backendServiceId)
+
+    const rows = await db
+      .selectFrom("serviceCredential")
+      .select(["purpose", "revokedAt", "secretHash"])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .execute()
+
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.purpose).sort()).toEqual(["tenant", "worker"])
+
+    // The customer's secret is untouched, which is the assertion this exists for.
+    const tenant = rows.find((row) => row.purpose === "tenant")
+    expect(tenant?.secretHash).toBe(
+      await hashGeneratedSecret(secretFrom(provisioned.connectionUri)),
+    )
+
+    // And the worker's URI carries a different secret, through the proxy.
+    expect(secretFrom(uri)).not.toBe(secretFrom(provisioned.connectionUri))
+    expect(uri).toContain(config.publicHost)
+  })
+
+  it("revokes the previous worker credential when it issues a new one", async ({ skip }) => {
+    if (!reachable) skip()
+    const driver = valkeyDriver(db, config)
+    const { backendServiceId, organizationId } = await service()
+    await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "My Queue",
+    })
+
+    await driver.issueWorkerCredential(backendServiceId)
+    const second = await driver.issueWorkerCredential(backendServiceId)
+
+    const live = await db
+      .selectFrom("serviceCredential")
+      .select(["purpose", "secretHash"])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("purpose", "=", "worker")
+      .where("revokedAt", "is", null)
+      .execute()
+
+    // One live worker credential, and it is the newest. Two would mean the unique index above is
+    // not doing what it says, and a revoked secret would go on working.
+    expect(live).toHaveLength(1)
+    expect(live[0]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second)))
   })
 
   it("suspending revokes the credential and leaves the keys alone", async ({ skip }) => {

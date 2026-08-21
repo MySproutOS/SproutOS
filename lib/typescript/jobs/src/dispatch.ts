@@ -2,13 +2,15 @@ import {
   createKubeClient,
   inClusterConfig,
   type KubeConfig,
+  queueSecret,
   queueSecretName,
+  secretPath,
   workerDeployment,
   workerName,
   workerPath,
 } from "@lib/deploy"
 import { ensureTenantNamespace, sandboxRuntimeClass } from "@lib/sandbox"
-import { decodeShortId } from "@lib/services"
+import { decodeShortId, valkeyDriver, valkeyServiceConfigFromEnv } from "@lib/services"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { tenantNamespace } from "./deploy"
@@ -267,6 +269,57 @@ export async function dispatchQueues(
   return result
 }
 
+/**
+ * Give a queue a worker credential and put it where the worker will read it.
+ *
+ * Returns whether it worked. A failure is not fatal to the run: one queue that could not be set up
+ * must not cost every other tenant their worker, and the reason is logged with enough to act on.
+ *
+ * The order is deliberate — the Secret is written before the row records it. A row claiming a Secret
+ * that does not exist would make every later run skip straight to starting a worker that cannot
+ * start; the other way round costs one wasted credential and self-corrects on the next run.
+ */
+async function issueWorkerSecret(
+  db: Kysely<DB>,
+  serviceId: string,
+  organizationId: string,
+  shortId: string,
+): Promise<boolean> {
+  try {
+    const uri = await valkeyDriver(db, valkeyServiceConfigFromEnv()).issueWorkerCredential(
+      serviceId,
+    )
+
+    const namespace = tenantNamespace(organizationId)
+    const kube = createKubeClient(inClusterConfig())
+    // The namespace and its policies before the Secret: this is a credential, and it is about to
+    // live somewhere a tenant's pods can reach.
+    await ensureTenantNamespace(kube, namespace)
+    await kube.apply(
+      secretPath(namespace, queueSecretName(shortId)),
+      queueSecret(namespace, shortId, uri),
+    )
+
+    await db
+      .updateTable("backendService")
+      .set({ workerSecretAt: new Date(), updatedAt: new Date() })
+      .where("id", "=", serviceId)
+      .execute()
+
+    return true
+  } catch (cause) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "could not issue a worker credential for this queue",
+        backendServiceId: serviceId,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      }),
+    )
+    return false
+  }
+}
+
 /** What a worker needs, resolved from the backend service the wake named. */
 type WorkerTarget = {
   organizationId: string
@@ -330,21 +383,28 @@ async function workerTarget(
   if (imageUri == null) return "no-image"
 
   /*
-    The broker Secret, which only exists for a service provisioned since workers did.
-
-    The platform cannot rebuild this URI: `service_credential` stores a hash, deliberately. So the
-    Secret was written at provision time from the plaintext on its way to the customer, and a
-    service older than that has none. Reported rather than repaired — the repair is a credential
-    rotation, and rotating a running application's credential without being asked is not something
-    to do quietly.
+    The broker Secret the worker reads its URI from.
 
     Read from the row rather than from Kubernetes, and that is a security decision rather than a
     convenience: asking whether a Secret exists needs `get` on secrets, and granting the control
     plane that would let a compromised API pod read every credential in every tenant namespace. The
-    grant is write-only, so the platform records what it wrote. See the
+    grant is write-only, so the platform records what it wrote — see the
     `backend_service_worker_secret` migration.
+
+    Missing is not a dead end. The platform issues the worker its **own** credential — a `worker`
+    credential, distinct from the customer's, revocable without touching their application — writes
+    it into the Secret, and records that. Nothing the customer has to do, and nothing of theirs that
+    changes.
+
+    An earlier version could not do this: one live credential per username was the constraint, so a
+    worker's only possible URI was the customer's own, captured in passing during provisioning. Any
+    queue older than that feature was stuck until its owner rotated. See the
+    `service_credential_purpose` migration.
   */
-  if (service.workerSecretAt === null) return "no-secret"
+  if (service.workerSecretAt === null) {
+    const issued = await issueWorkerSecret(db, serviceId, service.organizationId, shortId)
+    if (!issued) return "no-secret"
+  }
 
   return {
     organizationId: service.organizationId,

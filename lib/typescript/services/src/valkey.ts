@@ -87,7 +87,17 @@ export function valkeyUri(parts: {
   return `${parts.scheme}://${auth}@${parts.host}:${parts.port}`
 }
 
-export function valkeyDriver(db: Kysely<DB>, config: ValkeyServiceConfig): ServiceDriver {
+/**
+ * The Valkey driver, and one capability beyond `ServiceDriver`.
+ *
+ * Returned as an intersection rather than as `ServiceDriver` so `issueWorkerCredential` survives to
+ * callers. Widening the interface instead would mean the Postgres and search drivers implementing a
+ * method for workers they do not have.
+ */
+export function valkeyDriver(
+  db: Kysely<DB>,
+  config: ValkeyServiceConfig,
+): ServiceDriver & { issueWorkerCredential: (backendServiceId: string) => Promise<string> } {
   const scheme = config.scheme ?? "rediss"
 
   async function locate(backendServiceId: string) {
@@ -113,7 +123,11 @@ export function valkeyDriver(db: Kysely<DB>, config: ValkeyServiceConfig): Servi
     }
   }
 
-  async function issue(backendServiceId: string, username: string): Promise<string> {
+  async function issue(
+    backendServiceId: string,
+    username: string,
+    purpose: "tenant" | "worker" = "tenant",
+  ): Promise<string> {
     const secret = generateSecret()
 
     await db
@@ -122,12 +136,70 @@ export function valkeyDriver(db: Kysely<DB>, config: ValkeyServiceConfig): Servi
         id: v7(),
         backendServiceId,
         username,
+        purpose,
         secretHash: await hashGeneratedSecret(secret),
         lastFour: lastFour(secret),
       })
       .execute()
 
     return secret
+  }
+
+  /**
+   * A credential for a worker the platform runs on the customer's behalf.
+   *
+   * Distinct from the customer's, and the distinction is the whole point. The platform cannot reuse
+   * the customer's — `service_credential` stores a hash, so there is nothing to reuse — and until
+   * `purpose` existed it could not issue a second one either, because one live credential per
+   * username was the constraint.
+   *
+   * So a worker gets its own: revocable without touching the customer's application, attributable in
+   * `last_used_at`, and issued at the moment a worker is needed rather than captured in passing.
+   *
+   * Returns the URI once, like `provision` does, because the secret is hashed on the way in and this
+   * is the only moment it exists. The caller writes it where the worker will read it.
+   */
+  async function issueWorkerCredential(backendServiceId: string): Promise<string> {
+    const service = await db
+      .selectFrom("backendService")
+      .select(["organizationId"])
+      .where("id", "=", backendServiceId)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+
+    if (service === undefined) throw new ServiceNotProvisionedError(backendServiceId)
+
+    const username = tenantUsername({
+      organizationId: service.organizationId,
+      kind: "queue",
+      resourceId: backendServiceId,
+    })
+
+    /*
+      Revoke the previous worker credential first.
+
+      `service_credential_live_username_purpose_key` permits one live row per purpose, so leaving the
+      old one would fail the insert. Revoking rather than deleting keeps the audit trail, and the
+      order matters: a worker whose pod is still running loses its connection the moment this
+      commits, which is why the caller restarts it with the new URI.
+    */
+    await db
+      .updateTable("serviceCredential")
+      .set({ revokedAt: new Date() })
+      .where("backendServiceId", "=", backendServiceId)
+      .where("purpose", "=", "worker")
+      .where("revokedAt", "is", null)
+      .execute()
+
+    const secret = await issue(backendServiceId, username, "worker")
+
+    return valkeyUri({
+      scheme,
+      host: config.publicHost,
+      port: config.publicPort,
+      username,
+      secret,
+    })
   }
 
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {
@@ -251,6 +323,15 @@ export function valkeyDriver(db: Kysely<DB>, config: ValkeyServiceConfig): Servi
     connectionUri,
     destroy,
     details,
+    /*
+      Not part of `ServiceDriver`.
+
+      Only a queue has workers the platform runs, so this is on the Valkey driver rather than in the
+      interface every kind implements. Putting it in the interface would mean two drivers throwing
+      "not supported" for a capability their kind does not have — the shape that makes an interface
+      describe nothing.
+    */
+    issueWorkerCredential,
     provision,
     rotateCredentials,
     suspend,
