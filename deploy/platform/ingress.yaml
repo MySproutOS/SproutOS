@@ -42,13 +42,13 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - CONTROL_PLANE_HOST
+        - ${CONTROL_PLANE_HOST}
       # Issued by cert-manager from the ClusterIssuer the bootstrap script installs. Named even
       # when TLS is not yet wired: an Ingress without a `tls` block serves the app over plaintext
       # and nothing warns, and a session cookie marked `Secure` is simply never sent.
       secretName: website-tls
   rules:
-    - host: CONTROL_PLANE_HOST
+    - host: ${CONTROL_PLANE_HOST}
       http:
         paths:
           # Everything. `proxy.ts` inside the website does the real routing — SSR, the dashboard
@@ -86,10 +86,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - API_HOST
+        - ${API_HOST}
       secretName: internal-api-tls
   rules:
-    - host: API_HOST
+    - host: ${API_HOST}
       http:
         paths:
           - path: /

@@ -26,4 +26,4 @@ metadata:
     # its default, and the domain silently reverts to `example.com` at the next operator sync.
     serving.knative.dev/release: devel
 data:
-  TENANT_DOMAIN: ""
+  ${TENANT_DOMAIN}: ""

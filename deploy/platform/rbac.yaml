@@ -16,7 +16,7 @@ metadata:
     app.kubernetes.io/name: pg-proxy
     app.kubernetes.io/part-of: sproutos
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-pg-proxy
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-pg-proxy
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -27,7 +27,7 @@ metadata:
     app.kubernetes.io/name: valkey-proxy
     app.kubernetes.io/part-of: sproutos
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-valkey-proxy
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-valkey-proxy
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -38,7 +38,7 @@ metadata:
     app.kubernetes.io/name: search-proxy
     app.kubernetes.io/part-of: sproutos
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-search-proxy
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-search-proxy
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -51,7 +51,7 @@ metadata:
   annotations:
     # The API is the only platform workload that needs KMS: `@lib/envelope` unwraps data keys
     # through it to read OAuth tokens and tenant credentials.
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-internal-api
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-internal-api
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -71,4 +71,4 @@ metadata:
     app.kubernetes.io/name: worker
     app.kubernetes.io/part-of: sproutos
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sproutos-worker
+    eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-worker

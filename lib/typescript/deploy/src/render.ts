@@ -5,12 +5,29 @@
  * manifest that hard-codes an account id is a manifest that only works in one account, and one that
  * carries a templating language needs a templating engine to read.
  *
- * The substitution itself is three lines. Everything else here exists because of the failure mode:
- * **an unsubstituted placeholder is valid YAML.** `image: IMAGE_REGISTRY/internal-api:TAG`
- * passes every schema check, applies cleanly, and fails at image pull — by which point it is a
- * production incident rather than a build error.
+ * The substitution itself is three lines. Everything else here exists because of two failure modes.
  *
- * So rendering refuses to produce output with a placeholder left in it.
+ * **An unsubstituted placeholder is valid YAML.** `image: ${IMAGE_REGISTRY}/internal-api:${TAG}`
+ * passes every schema check, applies cleanly, and fails at image pull — by which point it is a
+ * production incident rather than a build error. So rendering refuses to produce output with a
+ * placeholder left in it.
+ *
+ * **A placeholder spelled as a bare word substitutes itself into things that are not holes.** This
+ * used to replace the bare token, on the theory that the names were distinctive enough. They were
+ * not, and both ways of failing showed up in one render:
+ *
+ *   * `REGION` is a substring of `AWS_REGION`, so the *name* of an environment variable became
+ *     `AWS_us-central1`. Sorting longest-first — which this does, and which the comment below still
+ *     explains — cannot help: `AWS_REGION` is not a placeholder, so nothing longer ever matched it.
+ *   * `SESSION_COOKIE_DOMAIN` is both a placeholder and a real environment variable that the
+ *     application reads, so `- name: SESSION_COOKIE_DOMAIN` became `- name: .example.com`. No
+ *     amount of word-boundary care distinguishes those two: they are the same characters.
+ *
+ * Both produced valid YAML that applied cleanly and started pods missing the variables. The website
+ * could not scope a session cookie and every sign-in silently failed at the last step.
+ *
+ * So a placeholder is `${NAME}`. A delimiter is the only thing that separates a hole from content
+ * that looks like one, and `${…}` cannot occur by accident in a Kubernetes manifest.
  */
 
 /**
@@ -79,11 +96,11 @@ export class UnknownValueError extends Error {
 }
 
 /**
- * Substitute every placeholder, and refuse to return anything that still has one.
+ * Substitute every `${PLACEHOLDER}`, and refuse to return anything that still has one.
  *
- * Ordered longest-first. `REGION` is a substring of nothing here, but `ACCOUNT` would be a substring
- * of `ACCOUNT_ID` if one were ever added — and a naive replace in declaration order would turn
- * `ACCOUNT_ID` into `123456789012_ID`, which is valid YAML and wrong.
+ * Ordered longest-first, which the delimiters make redundant and which is kept anyway: `${REGION}`
+ * and `${IMAGE_REGISTRY}` cannot now collide, but the ordering costs nothing and the test that
+ * asserts it is the one place the hazard is written down.
  */
 export function render(
   manifest: string,
@@ -106,10 +123,10 @@ export function render(
   for (const placeholder of ordered) {
     const value = (values as Record<string, string | undefined>)[placeholder]
     if (value === undefined) continue
-    rendered = rendered.replaceAll(placeholder, value)
+    rendered = rendered.replaceAll(`\${${placeholder}}`, value)
   }
 
-  const remaining = known.filter((placeholder) => rendered.includes(placeholder))
+  const remaining = known.filter((placeholder) => rendered.includes(`\${${placeholder}}`))
   if (remaining.length > 0) throw new UnsubstitutedPlaceholderError(remaining)
 
   return rendered
@@ -121,7 +138,11 @@ export function render(
  * Used by `render` to refuse, and separately by CI to assert that the checked-in manifests still
  * carry the placeholders this list knows about — so adding a new one to a manifest without adding it
  * here fails rather than silently shipping unrendered.
+ *
+ * Matches the delimited form only. A manifest that mentions `TAG` in a comment is not a manifest
+ * with an unsubstituted placeholder in it, and treating it as one is how a real refusal gets
+ * disabled by whoever is tired of the false one.
  */
 export function findPlaceholders(manifest: string): string[] {
-  return PLACEHOLDERS.filter((placeholder) => manifest.includes(placeholder))
+  return PLACEHOLDERS.filter((placeholder) => manifest.includes(`\${${placeholder}}`))
 }

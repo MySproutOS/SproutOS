@@ -41,7 +41,7 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: TENANT_NAMESPACE
+  name: ${TENANT_NAMESPACE}
   labels:
     app.kubernetes.io/part-of: sproutos
     sproutos.dev/tenant: "true"

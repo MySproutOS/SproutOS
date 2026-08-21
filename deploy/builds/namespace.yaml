@@ -59,7 +59,7 @@ spec:
     # nothing and costs nothing — and the endpoint's subnet when pushing through a VPC endpoint.
     - to:
         - ipBlock:
-            cidr: BUILD_REGISTRY_CIDR
+            cidr: ${BUILD_REGISTRY_CIDR}
     - to:
         - namespaceSelector:
             matchLabels:

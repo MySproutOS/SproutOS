@@ -25,7 +25,7 @@ spec:
       serviceAccountName: internal-api
       containers:
         - name: api
-          image: IMAGE_REGISTRY/internal-api:TAG
+          image: ${IMAGE_REGISTRY}/internal-api:${TAG}
           ports:
             - name: http
               containerPort: 3001
@@ -81,15 +81,15 @@ spec:
             # Unset, CORS rejects the browser's own website and the OAuth callback goes to
             # `http://localhost:3000` — in production, where it is not listening.
             - name: NEXT_PUBLIC_HOST_URL
-              value: https://CONTROL_PLANE_HOST
+              value: https://${CONTROL_PLANE_HOST}
             - name: PUBLIC_API_URL
-              value: https://API_HOST
+              value: https://${API_HOST}
             # The session cookie is set by the website on CONTROL_PLANE_HOST and cleared here on
             # API_HOST. See `@utils/cookies`: derived from the host above it would be
             # `.CONTROL_PLANE_HOST`, which this host is not under, and every signed-in request would
             # arrive anonymous.
             - name: SESSION_COOKIE_DOMAIN
-              value: SESSION_COOKIE_DOMAIN
+              value: ${SESSION_COOKIE_DOMAIN}
             - name: VALKEY_URL
               valueFrom:
                 configMapKeyRef:
@@ -131,7 +131,7 @@ spec:
             # somewhere the cluster cannot pull from produces a Job that succeeds and a revision
             # that never starts.
             - name: BUILD_REGISTRY
-              value: IMAGE_REGISTRY
+              value: ${IMAGE_REGISTRY}
             - name: GITHUB_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -239,7 +239,7 @@ spec:
       serviceAccountName: website
       containers:
         - name: website
-          image: IMAGE_REGISTRY/website:TAG
+          image: ${IMAGE_REGISTRY}/website:${TAG}
           ports:
             - name: http
               containerPort: 3000
@@ -264,9 +264,9 @@ spec:
             # at build time and cannot be set here. That asymmetry is the trap: setting only this
             # one produces a server that knows its own origin and a client that calls the wrong API.
             - name: NEXT_PUBLIC_HOST_URL
-              value: https://CONTROL_PLANE_HOST
+              value: https://${CONTROL_PLANE_HOST}
             - name: SESSION_COOKIE_DOMAIN
-              value: SESSION_COOKIE_DOMAIN
+              value: ${SESSION_COOKIE_DOMAIN}
             # The website is not a thin shell. Its OAuth callback runs `@lib/envelope` to encrypt the
             # GitHub access token before it touches the database, so it needs the same key the API
             # does. Without it the callback throws `MissingKeyError` *after* GitHub has redirected
@@ -386,7 +386,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: worker
-          image: IMAGE_REGISTRY/worker:TAG
+          image: ${IMAGE_REGISTRY}/worker:${TAG}
           env:
             - name: NODE_ENV
               value: production
@@ -433,7 +433,7 @@ spec:
                   key: secret-access-key
                   optional: true
             - name: BUILD_REGISTRY
-              value: IMAGE_REGISTRY
+              value: ${IMAGE_REGISTRY}
             - name: VALKEY_URL
               valueFrom:
                 configMapKeyRef:
@@ -455,7 +455,7 @@ spec:
                   name: tenant-opensearch
                   key: admin-url
             - name: NEXT_PUBLIC_HOST_URL
-              value: https://CONTROL_PLANE_HOST
+              value: https://${CONTROL_PLANE_HOST}
             - name: GITHUB_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
