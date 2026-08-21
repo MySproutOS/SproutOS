@@ -108,3 +108,29 @@ The two cases need different remedies, and the difference is the interesting par
 
 Both are counted in the response, because a node steadily submitting usage for something that does
 not exist is a stale label and nothing else would say so.
+
+## An AWS free-plan account restricts EC2 instance types, and EKS says so late
+
+A `t3.medium` managed node group is accepted by the EKS API, spends fifteen minutes in `CREATING`,
+and then fails:
+
+```
+Could not launch Spot Instances. InvalidParameterCombination - The specified instance type is
+not eligible for Free Tier.
+```
+
+The restriction is on the _account_, not the cluster. Nothing rejects the request up front — the node
+group is created, the ASG is created, and the failure surfaces only when EC2 declines to launch.
+
+**Where it does not appear** is the interesting part. Not in CloudFormation, whose stack sits at
+`CREATE_IN_PROGRESS` throughout. Not in `eksctl`, which had already given up waiting and reported a
+generic "cluster hasn't been created properly". Not in `describe-nodegroup`'s status, which says
+`CREATING` for the whole quarter of an hour. It is in `nodegroup.health.issues`, and only once the
+status finally flips to `CREATE_FAILED`.
+
+`aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true` is the list that
+matters. Of those, `m7i-flex.large` has 2 vCPU and 8 GiB; `t3.small` and `t4g.small` have 2 GiB,
+which does not fit Knative, Kourier and the platform's pods alongside the kubelet.
+
+The general shape, which is the same as the rest of this file: **the control plane accepted a
+configuration its own account policy forbids, and told nobody for fifteen minutes.**

@@ -26,14 +26,19 @@ addons:
 
 managedNodeGroups:
   - name: trial
-    # 2 vCPU / 4 GiB. Knative, Kourier and the platform's own pods do not fit in a `t3.small`'s 2 GiB
-    # alongside the kubelet, and a node that cannot schedule the gateway fails the test for a reason
-    # that has nothing to do with the code.
-    instanceType: t3.medium
+    # `m7i-flex.large`, and the constraint that picks it is not performance.
+    #
+    # This account is on the AWS free plan, which **restricts EC2 to free-tier-eligible instance
+    # types at the account level**. A `t3.medium` node group is accepted by the API, spends fifteen
+    # minutes in CREATING, and then fails with `The specified instance type is not eligible for Free
+    # Tier` — an error that appears only in the node group's health issues, not in CloudFormation and
+    # not in eksctl's output, which had already timed out waiting by then.
+    #
+    # Of the eligible types, this one has 2 vCPU and 8 GiB: Knative, Kourier and the platform's own
+    # pods do not fit alongside the kubelet in a `t3.small`'s 2 GiB, and a node that cannot schedule
+    # the gateway fails the test for a reason that has nothing to do with the code.
+    instanceType: m7i-flex.large
     desiredCapacity: 2
-    # Spot, because this cluster lives for under an hour and an interrupted node during a smoke test
-    # is a re-run rather than an outage.
-    spot: true
     volumeSize: 20
     volumeType: gp3
     privateNetworking: false
