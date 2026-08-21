@@ -8,6 +8,7 @@ import { BUILD_KINDS, buildImage } from "./build"
 import { deployRevision, DEPLOY_KINDS } from "./deploy"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import { enqueue } from "./queue"
+import { WORKFLOW_RUN_KIND, workflowRunJob } from "./workflow-run"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
@@ -55,6 +56,7 @@ export const JOB_KINDS = {
   buildImage: BUILD_KINDS.image,
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
+  workflowRun: WORKFLOW_RUN_KIND,
 } as const
 
 /**
@@ -174,6 +176,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.buildImage]: buildImage(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
+  [JOB_KINDS.workflowRun]: workflowRunJob,
 }
 
 /**

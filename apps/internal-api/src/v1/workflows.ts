@@ -14,6 +14,7 @@ import {
   validateGraph,
   type WorkflowGraph,
 } from "@lib/workflows"
+import { JOB_KINDS, enqueue, stepRowsFor } from "@lib/jobs"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -36,6 +37,7 @@ import {
   workflowsSchemaOverviewResponse,
   workflowsSchemaRecentRunsResponse,
   workflowsSchemaRunDetailResponse,
+  workflowsSchemaRun,
   workflowsSchemaRunListResponse,
   workflowsSchemaRunParam,
   workflowsSchemaVersionRequest,
@@ -605,6 +607,95 @@ app
       return c.json({ id: saved.id, version: saved.version, graphSha256, unchanged: false })
     },
   )
+  /**
+   * Start a run.
+   *
+   * **There was no way to.** The runs endpoints listed runs, read one, and read and edited the
+   * BullMQ job behind it — and `workflow_run` was written by nothing in either language, so all
+   * four read a table that was always empty. The design has runs originating from a tenant's own
+   * BullMQ client through `valkey-proxy`, which is right for production traffic and leaves a
+   * customer no way to try the workflow they just drew.
+   *
+   * `trigger_type: "manual"` distinguishes these from queue-originated runs, so billing and the
+   * run list can tell "someone pressed run" from "a customer's job arrived".
+   *
+   * The steps are written here rather than by the worker, in the same transaction as the run: an
+   * empty step list between "queued" and the worker picking it up reads as a stuck run, which is
+   * the mistake `project_job` already made once.
+   */
+  .post(
+    "/:orgSlug/projects/:projectId/workflows/:workflowId/runs",
+    describeRoute({
+      description: "Starts a run of the workflow's current version",
+      responses: {
+        201: {
+          description: "The queued run",
+          content: { "application/json": { schema: resolver(workflowsSchemaRun) } },
+        },
+        403: { description: "Caller lacks workflow:run", ...errorResponse },
+        404: { description: "No such workflow", ...errorResponse },
+        409: { description: "The workflow has no saved version, or is disabled", ...errorResponse },
+      },
+    }),
+    requirePermission("workflow:run", paramResource("project", "project", "projectId")),
+    validator("param", workflowsSchemaIdParam),
+    async (c) => {
+      const { workflowId } = c.req.valid("param")
+      const workflow = await ownedWorkflow(c.var.organization.id, workflowId)
+      if (workflow === undefined) return throwNotFound(c, "Workflow not found")
+
+      if (!workflow.enabled) {
+        return throwConflict(c, "This workflow is disabled")
+      }
+      if (workflow.currentVersionId === null) {
+        // A workflow with no saved version has no graph, so there is nothing to order into steps.
+        // 409 rather than 400: the request is well-formed, the resource is not ready.
+        return throwConflict(c, "Save a version of this workflow before running it")
+      }
+
+      const version = await db
+        .selectFrom("workflowVersion")
+        .select(["id", "graph"])
+        .where("id", "=", workflow.currentVersionId)
+        .executeTakeFirst()
+      if (version === undefined) return throwNotFound(c, "Workflow version not found")
+
+      const runId = v7()
+      const steps = stepRowsFor(runId, version.graph as WorkflowGraph)
+
+      await db.transaction().execute(async (tx) => {
+        await tx
+          .insertInto("workflowRun")
+          .values({
+            id: runId,
+            workflowId,
+            workflowVersionId: version.id,
+            triggerType: "manual",
+            status: "queued",
+          })
+          .execute()
+
+        if (steps.length > 0) await tx.insertInto("workflowRunStep").values(steps).execute()
+      })
+
+      // Outside the transaction on purpose: the worker polls `background_job`, and a job visible
+      // before its run row committed would be claimed and find nothing.
+      await enqueue(db, {
+        kind: JOB_KINDS.workflowRun,
+        idempotencyKey: `${JOB_KINDS.workflowRun}:${runId}`,
+        payload: { workflowRunId: runId },
+        maxAttempts: 3,
+      })
+
+      const run = await db
+        .selectFrom("workflowRun")
+        .selectAll()
+        .where("id", "=", runId)
+        .executeTakeFirstOrThrow()
+
+      return c.json(presentRun(run), 201)
+    },
+  )
   .get(
     "/:orgSlug/projects/:projectId/workflows/:workflowId/runs",
     describeRoute({
@@ -927,7 +1018,14 @@ async function ownedWorkflow(organizationId: string, workflowId: string) {
   return await db
     .selectFrom("workflow")
     .innerJoin("project", "project.id", "workflow.projectId")
-    .select(["workflow.id as id", "workflow.currentVersionId as currentVersionId"])
+    // `enabled` joined here rather than re-queried by the one caller that needs it: every caller
+    // of this helper is about to act on the workflow, and a disabled one is a thing none of them
+    // should act on.
+    .select([
+      "workflow.id as id",
+      "workflow.currentVersionId as currentVersionId",
+      "workflow.enabled as enabled",
+    ])
     .where("workflow.id", "=", workflowId)
     .where("project.organizationId", "=", organizationId)
     .where("workflow.deletedAt", "is", null)

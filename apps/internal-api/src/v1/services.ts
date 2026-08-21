@@ -1,9 +1,13 @@
 import { crudAuditLog } from "@lib/dao"
 import {
+  searchDriver,
+  searchServiceConfigFromEnv,
   ServiceKindUnavailableError,
   ServiceNotProvisionedError,
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
+  valkeyDriver,
+  valkeyServiceConfigFromEnv,
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -35,7 +39,25 @@ const errorResponse = {
  * than a second set of endpoints with their own shapes.
  */
 function driverFor(kind: string) {
+  /*
+    All three kinds, because all three drivers exist.
+
+    `valkeyDriver` and `searchDriver` were written, exported from `@lib/services`, and covered by
+    `valkey.test.ts` and `search.test.ts` — and this function dispatched only `postgres`, so asking
+    for either answered "valkey services are not available yet". The drivers were complete; the
+    two-line dispatch was not.
+
+    `ServiceKindUnavailableError` still stands, and still means what it says. It now fires for a
+    kind whose driver genuinely does not exist, rather than for one sitting unreferenced in the
+    package next door.
+
+    Each `…ConfigFromEnv` throws when its own variables are missing, which is the right failure: a
+    deployment that has no OpenSearch should say so when someone asks for a search service, not
+    when the process starts.
+  */
   if (kind === "postgres") return sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
+  if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
+  if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
   // Named rather than 500ing, because "not yet" is a different answer from "something broke" and
   // the customer can act on one of them.
   throw new ServiceKindUnavailableError(kind)

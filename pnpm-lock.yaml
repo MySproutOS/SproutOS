@@ -735,6 +735,9 @@ importers:
       '@lib/reaper':
         specifier: workspace:*
         version: link:../reaper
+      '@lib/workflows':
+        specifier: workspace:*
+        version: link:../workflows
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db
