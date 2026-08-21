@@ -806,7 +806,7 @@ export interface Sandbox {
   podName: string | null
   projectId: string
   pvcName: string | null
-  runtimeClass: Generated<string>
+  runtimeClass: string
   state: Generated<string>
   updatedAt: Generated<Timestamp>
   userId: string

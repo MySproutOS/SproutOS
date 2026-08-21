@@ -7,6 +7,7 @@ import {
   knativeServicePath,
   type KubeConfig,
 } from "@lib/deploy"
+import { ensureTenantNamespace } from "@lib/sandbox"
 import { enqueue } from "./queue"
 import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
@@ -114,6 +115,10 @@ export function deployRevision(config?: KubeConfig): JobHandler {
 
     const kube = createKubeClient(config ?? inClusterConfig())
     const path = knativeServicePath(namespace, service.metadata.name)
+
+    // The namespace and its NetworkPolicies first — a deployed revision is customer code too, and
+    // it reaches the network far more than a workflow node does.
+    await ensureTenantNamespace(kube, namespace)
 
     await kube.apply<KnativeService>(path, service)
     await crudDeployment(db).update(deploymentId, { status: "deploying" })

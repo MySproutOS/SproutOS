@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { crudSandbox } from "./crud"
+import { crudSandbox, SANDBOX_RUNTIME_CLASSES, SANDBOX_STATES } from "./crud"
 import { fetchSandbox } from "./fetch"
 
 /**
@@ -100,6 +100,7 @@ describe("fetchSandbox", () => {
       projectId,
       userId: ownerUserId,
       state: "running",
+      runtimeClass: "none",
     })
 
     expect((await fetchSandbox(db).forUser(organizationId, projectId, ownerUserId))?.id).toBe(
@@ -117,6 +118,7 @@ describe("fetchSandbox", () => {
       projectId,
       userId: ownerUserId,
       state: "running",
+      runtimeClass: "none",
       idleTimeoutS: 60,
       lastActivityAt: new Date(Date.now() - 120_000),
     })
@@ -124,6 +126,7 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
+      runtimeClass: "none",
       idleTimeoutS: 3600,
       lastActivityAt: new Date(),
     })
@@ -141,6 +144,7 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
+      runtimeClass: "none",
       idleTimeoutS: 1,
       alwaysOn: true,
       lastActivityAt: new Date(Date.now() - 86_400_000),
@@ -154,6 +158,7 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
+      runtimeClass: "none",
       idleTimeoutS: 60,
       lastActivityAt: new Date(Date.now() - 120_000),
     })
@@ -161,5 +166,97 @@ describe("fetchSandbox", () => {
 
     await crudSandbox(db).touch(sandbox.id)
     expect((await fetchSandbox(db).idle()).map((row) => row.id)).not.toContain(sandbox.id)
+  })
+})
+
+/*
+  The words this code writes into `sandbox` have to be words the database permits.
+
+  Three separate times a value was invented that a check constraint forbade, and each time the
+  constraint violation *replaced* the error that was actually being handled:
+
+  - `state: "error"` in the pod-create failure path. `sandbox_state_check` permits `starting`,
+    `running`, `idle`, `stopped`, `failed` — so the recording of the failure threw, and Postgres
+    complaining about a column value was the only thing in the log. Whatever had gone wrong creating
+    the pod was gone.
+  - `runtime_class: "none"`, writing down the truth that the pod got no RuntimeClass.
+    `sandbox_runtime_class_check` permitted only `kata-fc` and `kata-clh`, so the schema could not
+    represent a sandbox without a VM boundary — and every row claimed one, from the column default.
+    That is fixed by migration rather than by choosing a different word.
+  - and `blocked` on `workflow_run_step`, before either of these, which is why
+    `workflow-run.test.ts` carries the same test for the same reason.
+
+  Read out of `pg_constraint` rather than copied here: a copy of a constraint is a second place for
+  the vocabulary to drift, and drift is the whole failure.
+*/
+describe("the sandbox vocabulary", () => {
+  let reachable = false
+  let allowed: { state: string[]; runtimeClass: string[] } = { state: [], runtimeClass: [] }
+
+  beforeAll(async () => {
+    try {
+      const rows = await sql<{ conname: string; def: string }>`
+        select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+        where conrelid = 'sandbox'::regclass and contype = 'c'
+      `.execute(db)
+      reachable = true
+
+      const values = (name: string) =>
+        [
+          ...(rows.rows.find((row) => row.conname === name)?.def.matchAll(/'([a-z_-]+)'/g) ?? []),
+        ].map((match) => match[1])
+
+      allowed = {
+        state: values("sandbox_state_check"),
+        runtimeClass: values("sandbox_runtime_class_check"),
+      }
+    } catch {
+      /* not reachable */
+    }
+  })
+
+  /*
+    Both directions, not a subset.
+
+    A subset check would pass on the union that started this — it omitted `idle` and `failed`, and
+    omissions are how a state the database can hold becomes a state no code handles. Equality is
+    what makes `SANDBOX_STATES` the constraint rather than a guess about it.
+  */
+  it("declares exactly the states the check constraint allows", ({ skip }) => {
+    if (!reachable) skip()
+    expect([...SANDBOX_STATES].sort()).toEqual([...allowed.state].sort())
+  })
+
+  it("declares exactly the runtime classes the check constraint allows", ({ skip }) => {
+    if (!reachable) skip()
+    expect([...SANDBOX_RUNTIME_CLASSES].sort()).toEqual([...allowed.runtimeClass].sort())
+  })
+
+  it("permits a sandbox that got no runtime class, because most of them do not", ({ skip }) => {
+    if (!reachable) skip()
+    expect(allowed.runtimeClass).toContain("none")
+  })
+
+  /*
+    No default on `runtime_class`.
+
+    The column defaulted to `kata-clh`, so a row asserted a hardware-virtualized boundary purely by
+    existing. A default is exactly the wrong mechanism for a fact about a pod that has not been
+    created yet — see the migration.
+  */
+  it("has no default runtime class for a row to inherit a lie from", async ({ skip }) => {
+    if (!reachable) skip()
+    const row = await sql<{ default: string | null }>`
+      select column_default as "default"
+      from information_schema.columns
+      where table_name = 'sandbox' and column_name = 'runtime_class'
+    `.execute(db)
+    expect(row.rows[0]?.default).toBeNull()
+  })
+
+  it("does not allow the word the failure path first used", ({ skip }) => {
+    if (!reachable) skip()
+    expect(allowed.state).not.toContain("error")
   })
 })

@@ -78,6 +78,16 @@ for (const name of [
 }
 
 /**
+ * Directories under `deploy/` that the render deliberately skips.
+ *
+ * `standalone-db` holds an in-cluster control-plane Postgres for environments that have no managed
+ * one. Rendering it into the same file as the platform manifests would apply a second database onto
+ * a cluster already pointed at RDS — two databases, no error, and whichever one `DATABASE_URL`
+ * names wins. It is applied by hand; `deploy/standalone-db/README.md` says how and why.
+ */
+const NOT_RENDERED = new Set(["standalone-db"])
+
+/**
  * Every `.yaml` under a directory, recursively.
  *
  * An array rather than a generator: a generator's yield type does not survive JSDoc inference here,
@@ -92,8 +102,10 @@ function manifests(directory) {
   const found = []
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) found.push(...manifests(path))
-    else if (entry.name.endsWith(".yaml")) found.push(path)
+    if (entry.isDirectory()) {
+      if (NOT_RENDERED.has(entry.name)) continue
+      found.push(...manifests(path))
+    } else if (entry.name.endsWith(".yaml")) found.push(path)
   }
   return found
 }

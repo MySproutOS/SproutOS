@@ -1,4 +1,5 @@
 import { createKubeClient, inClusterConfig } from "@lib/deploy/kube"
+import { ensureTenantNamespace } from "./tenant-namespace"
 import {
   DEFAULT_TIMEOUT_S,
   jobPath,
@@ -75,6 +76,16 @@ export async function runInSandbox(
 ): Promise<SandboxResult> {
   const seconds = spec.timeoutSeconds ?? DEFAULT_TIMEOUT_S
   const path = jobPath(spec.namespace, spec.name)
+
+  /*
+    The namespace and its NetworkPolicies, before the Job that runs customer code in them.
+
+    Here rather than at each call site, because "run this in the tenant's namespace" and "the
+    tenant's namespace is fenced" are the same requirement — a caller that could get one without the
+    other is a caller that can run untrusted code with unrestricted egress. It was possible until
+    now: nothing in the repository created a tenant namespace at all.
+  */
+  await ensureTenantNamespace(client, spec.namespace)
 
   await client.apply(path, sandboxJob(spec))
 

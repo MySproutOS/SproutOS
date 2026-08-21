@@ -167,6 +167,20 @@ export async function execInPod(input: ExecInput): Promise<ExecResult> {
           const frame = readFrame(buffer)
           if (frame === undefined) break
           buffer = frame.rest
+
+          /*
+            Binary frames only.
+
+            A WebSocket close frame carries a two-byte status code, and the normal one is 1000 —
+            `0x03 0xE8`. Read as a data frame that is channel **3**, the error stream, with a
+            payload of `0xE8` and whatever reason text follows: unparseable as JSON, so
+            `exitCodeFrom` reported a failure for every command that had just succeeded. Observed
+            exactly that way — `node src/hello.js` printed its output and came back exit 1.
+
+            Ping and pong have the same problem in principle and neither is likely from this
+            server; checking the opcode covers all three and costs one comparison.
+          */
+          if (frame.opcode !== OPCODE_BINARY) continue
           if (frame.payload.length === 0) continue
 
           const channel = frame.payload[0]
@@ -213,9 +227,12 @@ export async function execInPod(input: ExecInput): Promise<ExecResult> {
  * Server-to-client frames are never masked, which is why there is no unmasking here — a masked
  * frame from a server is a protocol violation and would be a different bug entirely.
  */
-export function readFrame(buffer: Buffer): { payload: Buffer; rest: Buffer } | undefined {
+export function readFrame(
+  buffer: Buffer,
+): { opcode: number; payload: Buffer; rest: Buffer } | undefined {
   if (buffer.length < 2) return undefined
 
+  const opcode = (buffer[0] ?? 0) & 0x0f
   const first = buffer[1] ?? 0
   const short = first & 0x7f
   let offset = 2
@@ -235,10 +252,14 @@ export function readFrame(buffer: Buffer): { payload: Buffer; rest: Buffer } | u
 
   if (buffer.length < offset + length) return undefined
   return {
+    opcode,
     payload: buffer.subarray(offset, offset + length),
     rest: buffer.subarray(offset + length),
   }
 }
+
+/** Binary: the only opcode whose payload carries a channel byte. */
+export const OPCODE_BINARY = 0x2
 
 /** One masked binary frame. Client-to-server frames must be masked; the RFC is not optional here. */
 export function writeFrame(payload: Buffer): Buffer {

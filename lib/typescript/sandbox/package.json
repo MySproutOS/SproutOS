@@ -21,7 +21,8 @@
     "@lib/deploy": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "yaml": "catalog:"
   },
   "config": {}
 }

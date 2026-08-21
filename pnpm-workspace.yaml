@@ -49,3 +49,6 @@ catalog:
   uuid: ^14.0.2
   vite: ^8.2.1
   vite-plugin-static-copy: ^4.1.1
+  # Test-only. `tenant-namespace.test.ts` parses `deploy/tenant/network-policy.yaml` and asserts the
+  # applied objects match it, so the manifest and the code cannot drift apart silently.
+  yaml: ^2.8.1

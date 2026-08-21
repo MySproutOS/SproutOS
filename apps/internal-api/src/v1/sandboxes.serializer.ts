@@ -52,6 +52,17 @@ export const sandboxSchemaExecRequest = Type.Object({
    *
    * There is no shell between this and `execve`, so nothing in an argument can become a second
    * command. A string would have to be split by something, and every splitter is a quoting bug.
+   *
+   * **This schema alone does not enforce that.** The validator runs `Value.Convert` before
+   * `Check`, and Convert wraps a scalar into a one-element array: `"ls -la"` arrives here as
+   * `["ls -la"]` and passes, then `execve` looks for a binary whose name contains a space, fails,
+   * and reports an exit code with nothing on stderr — because the "not found" goes to the exec
+   * protocol's status channel rather than the process's. `42` arrives as `["42"]`. Only `[]` is
+   * refused, by `minItems`, which is what made the validation look like it was working.
+   *
+   * `requireArgv` on the route rejects the scalar before it becomes an argv. The guard is there and
+   * not here because the coercion happens inside the validator, so by the time a handler sees the
+   * value the evidence is gone.
    */
   command: Type.Array(Type.String({ maxLength: 4096 }), { minItems: 1, maxItems: 64 }),
   timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 300_000 })),

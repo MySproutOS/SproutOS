@@ -113,9 +113,29 @@ rules:
   # Reading what a Job did. `pods/log` is a subresource and has to be named separately — without it
   # a sandbox runs, exits, and reports an exit code with no output, which for a failed HTTP call is
   # the entire diagnosis missing.
+  # Pods: read for Job output, and create/delete for dev sandboxes, which are pods rather than Jobs
+  # because they outlive a single operation.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # `pods/exec` — the terminal, and every file read and write in a dev sandbox.
+  #
+  # The most powerful verb in this file by a distance: it runs a process inside a container. It is
+  # granted because a dev sandbox is nothing without it, and it is bounded by what the sandbox pod
+  # already is — no service-account token, no root, no capabilities, inside the tenant's namespace
+  # under its NetworkPolicy. The grant does not make the platform able to exec into anything
+  # interesting; it makes it able to exec into a box that was built to be uninteresting.
+  #
+  # Worth saying plainly rather than leaving in a verb list: if the sandbox pod spec ever loses
+  # those properties, this line is what turns that into a cluster-wide problem.
+  #
+  # `get` as well as `create`. `kubectl exec` opens a SPDY stream with a POST and needs only
+  # `create`; the WebSocket upgrade this client uses is a **GET**, and the API server authorizes it
+  # as one — `cannot get resource "pods/exec"`. A grant of `create` alone looks right, matches every
+  # example, and refuses every request this code makes.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

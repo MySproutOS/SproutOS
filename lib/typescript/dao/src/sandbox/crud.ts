@@ -11,8 +11,33 @@ import type { PartialBy } from "../utils/types"
  * `sandbox:read` and `sandbox:write` were in the action catalogue guarding nothing.
  */
 
-/** `sandbox.state`, matching the CHECK constraint. */
-export type SandboxState = "starting" | "running" | "stopping" | "stopped" | "error"
+/**
+ * `sandbox.state`. The values `sandbox_state_check` permits, and only those.
+ *
+ * The first version of this line read `"starting" | "running" | "stopping" | "stopped" | "error"`
+ * under a comment saying it matched the CHECK constraint. It did not: the constraint permits
+ * `idle` and `failed`, which the union omitted, and does not permit `stopping` or `error`, which
+ * the union invented. So the compiler accepted `state: "error"` in the pod-create failure path,
+ * agreed it was valid, and the database rejected it at runtime — inside a `catch`, where the
+ * constraint violation then replaced the error being handled.
+ *
+ * A comment claiming two things match is not a check that they do. Declared as an array so it can
+ * be one: `fetch.test.ts` compares this to `pg_constraint` in both directions.
+ */
+export const SANDBOX_STATES = ["starting", "running", "idle", "stopped", "failed"] as const
+
+export type SandboxState = (typeof SANDBOX_STATES)[number]
+
+/**
+ * `sandbox.runtime_class`. Two Kata classes and the honest absence of either.
+ *
+ * `none` is not a placeholder. It is what a sandbox on a cluster with no bare-metal node pool
+ * actually has, and the column existed for a year of commits unable to say it — see the
+ * `sandbox_runtime_class_none` migration.
+ */
+export const SANDBOX_RUNTIME_CLASSES = ["kata-fc", "kata-clh", "none"] as const
+
+export type SandboxRuntimeClass = (typeof SANDBOX_RUNTIME_CLASSES)[number]
 
 export function crudSandbox(db: Kysely<DB>) {
   async function create(

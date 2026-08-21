@@ -13,6 +13,7 @@ export {
   DEFAULT_EXEC_TIMEOUT_MS,
   execInPod,
   execPath,
+  OPCODE_BINARY,
   exitCodeFrom,
   readFrame,
   writeFrame,
@@ -33,3 +34,10 @@ export {
   type DevSandboxSpec,
   type SandboxTarget,
 } from "./dev"
+export {
+  ensureTenantNamespace,
+  namespacePath,
+  networkPolicyPath,
+  tenantNamespaceObject,
+  tenantNetworkPolicies,
+} from "./tenant-namespace"

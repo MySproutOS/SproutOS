@@ -6,7 +6,7 @@ import {
   resolveWorkspacePath,
   shellQuote,
 } from "./dev"
-import { exitCodeFrom, execPath, readFrame, writeFrame } from "./exec"
+import { CHANNEL, exitCodeFrom, execPath, OPCODE_BINARY, readFrame, writeFrame } from "./exec"
 
 /*
   The file API takes a path a customer typed. Everything else about the pod — no root, no
@@ -151,6 +151,27 @@ describe("the exec channel", () => {
     const first = readFrame(both)
     expect(first?.payload).toEqual(Buffer.from([1, 65]))
     expect(readFrame(first?.rest ?? Buffer.alloc(0))?.payload).toEqual(Buffer.from([1, 66]))
+  })
+
+  /*
+    The close frame that looked like an error.
+
+    A normal WebSocket close carries status 1000 — `0x03 0xE8`. Read as a data frame that is
+    channel 3, the error stream, with an unparseable payload, so every successful command came back
+    exit 1 while its stdout sat right there. Opcode is the only thing that distinguishes them.
+  */
+  it("reports the opcode, so a close frame is not read as channel 3", () => {
+    const close = Buffer.from([0x88, 0x02, 0x03, 0xe8])
+    const read = readFrame(close)
+    expect(read?.opcode).toBe(0x8)
+    expect(read?.payload).toEqual(Buffer.from([0x03, 0xe8]))
+    // The payload really does begin with the error channel's number, which is why the opcode has
+    // to be the thing that is checked.
+    expect(read?.payload[0]).toBe(CHANNEL.error)
+  })
+
+  it("reports binary for a data frame", () => {
+    expect(readFrame(serverFrame(Buffer.from([1, 65])))?.opcode).toBe(OPCODE_BINARY)
   })
 
   it("masks what it writes, which the server requires of a client", () => {

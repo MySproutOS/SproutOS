@@ -1,8 +1,15 @@
-import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox } from "@lib/dao"
+import {
+  crudAuditLog,
+  crudSandbox,
+  fetchProject,
+  fetchSandbox,
+  type SandboxRuntimeClass,
+} from "@lib/dao"
 import { createKubeClient, inClusterConfig } from "@lib/deploy"
 import { tenantNamespace } from "@lib/jobs"
 import {
   devSandboxPod,
+  ensureTenantNamespace,
   exec,
   listFiles,
   PathEscapesWorkspaceError,
@@ -21,6 +28,7 @@ import { authMiddleware } from "../middleware"
 import { paramResource, requirePermission } from "../rbac"
 import { auditContext } from "../utils/request-context"
 import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
+import { requireArray } from "../utils/require-array"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
 import {
   sandboxSchemaExecRequest,
@@ -57,6 +65,16 @@ const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE ?? "node:24-alpine"
 /** Fifteen minutes, matching the column default. */
 const IDLE_TIMEOUT_S = 900
 
+/**
+ * What `runtime_class` says when the pod was given no RuntimeClass at all.
+ *
+ * The column is `not null`, so the honest value has to be a word rather than a null. `none` states
+ * the isolation the workload has: a namespace, its NetworkPolicies, and a pod with no
+ * service-account token — not a VM. Taken from `SANDBOX_RUNTIME_CLASSES`, which the DAO tests
+ * assert against the check constraint, so this cannot be a word the database will refuse.
+ */
+const NO_RUNTIME_CLASS: SandboxRuntimeClass = "none"
+
 function serialize(row: {
   id: string
   state: string
@@ -73,10 +91,21 @@ function serialize(row: {
     state: row.state,
     podName: row.podName,
     namespace: row.namespace,
-    // The column is NOT NULL with a `kata-clh` default, and a cluster without that runtime class
-    // does not have one. Reported as null rather than as the name of a class the pod is not using —
-    // claiming a VM boundary that is not there is worse than saying there is none.
-    runtimeClass: sandboxRuntimeClass() ?? null,
+    /*
+      What *this* pod got, from the row — not what a pod created right now would get.
+
+      This read `sandboxRuntimeClass()`, the serving process's own environment variable, and
+      reported that for every sandbox regardless of which one was being described. It gave the right
+      answer only because the row was guaranteed wrong: the column defaulted to `kata-clh` and
+      nothing ever wrote it, so reading the row would have claimed a VM boundary that did not exist,
+      and reading the environment was the less wrong of two bad options.
+
+      Both halves are fixed now — the row is written at creation and `none` is a value it can hold —
+      so this reports the sandbox rather than the server. The difference shows up the moment
+      `SANDBOX_RUNTIME_CLASS` is set on a cluster that already has running sandboxes: those pods
+      have no VM around them, and this used to say they did.
+    */
+    runtimeClass: row.runtimeClass === NO_RUNTIME_CLASS ? null : row.runtimeClass,
     idleTimeoutSeconds: row.idleTimeoutS,
     alwaysOn: row.alwaysOn,
     lastActivityAt: row.lastActivityAt.toISOString(),
@@ -176,12 +205,20 @@ const app = new Hono()
           userId: c.var.user.id,
           state: "starting",
           idleTimeoutS: IDLE_TIMEOUT_S,
+          // Stated at creation because the column no longer has a default to inherit. That default
+          // was `kata-clh`, and it is why every row claimed a VM boundary no pod here ever had.
+          runtimeClass: sandboxRuntimeClass() ?? NO_RUNTIME_CLASS,
         }))
 
       const podName = `sbx-${row.id.replaceAll("-", "").slice(-16)}`
 
+      const runtimeClass = sandboxRuntimeClass()
+
       try {
         const client = createKubeClient(inClusterConfig())
+        // Before the pod, every time. The namespace existing is not evidence that its
+        // NetworkPolicies are in force — see `ensureTenantNamespace`.
+        await ensureTenantNamespace(client, namespace)
         await client.apply(
           podPath(namespace, podName),
           devSandboxPod({
@@ -189,21 +226,48 @@ const app = new Hono()
             name: podName,
             image: SANDBOX_IMAGE,
             idleTimeoutSeconds: IDLE_TIMEOUT_S,
-            ...(sandboxRuntimeClass() === undefined
-              ? {}
-              : { runtimeClassName: sandboxRuntimeClass() }),
+            ...(runtimeClass === undefined ? {} : { runtimeClassName: runtimeClass }),
           }),
         )
       } catch (error) {
-        // Recorded on the row rather than only thrown: a sandbox stuck in `starting` with no reason
-        // is the state a customer opens a ticket about.
-        await crudSandbox(db).update(row.id, { state: "error" })
+        /*
+          Log first, then record, then rethrow — in that order, and the order is the point.
+
+          This wrote `state: "error"`, which `sandbox_state_check` does not permit. So the update
+          threw a constraint violation, that violation propagated instead of `error`, and the only
+          thing anywhere in the logs was Postgres complaining about a column value. Whatever had
+          actually gone wrong creating the pod — the reason a customer's sandbox would not start —
+          was gone. Two failures, and the second one ate the first.
+
+          Logging before touching the database is what makes the cause survive a failure in the
+          recording of it.
+        */
+        console.error(
+          JSON.stringify({
+            level: "error",
+            message: "sandbox pod create failed",
+            sandboxId: row.id,
+            namespace,
+            podName,
+            cause: error instanceof Error ? error.message : String(error),
+          }),
+        )
+        await crudSandbox(db).update(row.id, { state: "failed" })
         throw error
       }
 
       const started = await crudSandbox(db).update(row.id, {
         podName,
         namespace,
+        /*
+          What the pod was actually given, which is usually nothing.
+
+          The column defaults to `kata-clh` and every row said so, including on a cluster with no
+          `kata-clh` RuntimeClass and a pod spec that names none. A row asserting an isolation
+          boundary the workload does not have is worse than a null: `runtime_class` is exactly the
+          field someone would read to answer whether a customer's code ran in a VM.
+        */
+        runtimeClass: runtimeClass ?? NO_RUNTIME_CLASS,
         // `running` when the pod has been accepted, not when it is Ready: the file and exec routes
         // fail with the API server's own message if it is not, which is more use than this route
         // blocking for a minute to say the same thing.
@@ -392,6 +456,7 @@ const app = new Hono()
     // permission has to be the one that says so — a reader who can also run `rm` is not a reader.
     requirePermission("sandbox:write", paramResource("compute", "sandbox", "projectId")),
     validator("param", sandboxSchemaProjectParam),
+    requireArray("command", "There is no shell to split a command line."),
     validator("json", sandboxSchemaExecRequest),
     async (c) => {
       const { projectId } = c.req.valid("param")

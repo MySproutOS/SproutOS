@@ -34,8 +34,24 @@ export async function getSession<E extends Env>(
   let session: Awaited<ReturnType<ReturnType<typeof authUser>["validateSessionToken"]>>
   try {
     session = await authUser(db).validateSessionToken(sessionId)
-  } catch {
-    // Typically this means we're unable to connect to the database
+  } catch (cause) {
+    /*
+      Log the cause. The 503 body deliberately says nothing — an unauthenticated caller learns
+      whether a session exists from a 401 and nothing else from this — but discarding the error
+      entirely is how a real failure becomes invisible.
+
+      It already did. The control-plane database was rebuilt empty when its pod moved, and the only
+      symptom anywhere in the system was this status code with the word "unavailable" and no
+      further detail; `/health` was `ok`, and an unauthenticated store query returned an honest
+      empty list. Finding out that the `session` table no longer existed took a psql prompt.
+    */
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "session lookup failed",
+        cause: cause instanceof Error ? cause.message : String(cause),
+      }),
+    )
     return throwHTTPException(503, ErrorCode.ServiceUnavailable, "Service unavailable")
   }
 
