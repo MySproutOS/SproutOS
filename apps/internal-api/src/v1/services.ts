@@ -7,6 +7,7 @@ import {
   sproutPostgresConfigFromEnv,
   couchDbDriver,
   couchDbServiceConfigFromEnv,
+  objectStorageDriverFromEnv,
   sproutPostgresDriver,
   valkeyDriver,
   valkeyServiceConfigFromEnv,
@@ -81,6 +82,14 @@ function driverFor(kind: string) {
     already making correctly. See `@lib/services`'s `couchdb.ts`.
   */
   if (kind === "couchdb") return couchDbDriver(db, couchDbServiceConfigFromEnv())
+  /*
+    Object storage: the other way to run a vault.
+
+    `obsidian-livesync` replicates against either a CouchDB or an S3-compatible bucket, and a bucket
+    is nobody's server to run. The driver speaks S3 to whatever endpoint it is given — AWS, GCS's XML
+    API, MinIO, LocalStack — and the cloud-specific half is issuing a bucket-scoped credential.
+  */
+  if (kind === "object_storage") return objectStorageDriverFromEnv(db)
   // Named rather than 500ing, because "not yet" is a different answer from "something broke" and
   // the customer can act on one of them.
   throw new ServiceKindUnavailableError(kind)

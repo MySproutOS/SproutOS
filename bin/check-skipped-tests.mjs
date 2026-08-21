@@ -36,6 +36,23 @@ const KNOWN = [
     waiting: "nothing — LocalStack KMS, via AWS_ENDPOINT_URL in .env",
   },
   {
+    suite: "@lib/services object-storage",
+    count: 2,
+    /*
+      IAM policy *enforcement* is a LocalStack Pro feature.
+
+      The free image accepts every IAM call and evaluates no policy, so every credential behaves as
+      root. These two are the assertions that would prove tenant isolation rather than describe it —
+      a cross-tenant read being refused, and a suspended credential being refused. The rest of the
+      suite asserts the mechanism: that the policy document names one bucket ARN and no other, and
+      that suspension removes the policy while leaving the key.
+
+      Listed here so a green suite is never read as evidence that a tenant cannot reach another
+      tenant's bucket. That is AWS's to enforce and this environment cannot see it.
+    */
+    waiting: "a policy engine that enforces — real AWS IAM, or LocalStack Pro",
+  },
+  {
     suite: "@lib/services couchdb",
     count: 0,
     // `docker compose up -d couchdb`. Skips without one, and the suite is the only place the

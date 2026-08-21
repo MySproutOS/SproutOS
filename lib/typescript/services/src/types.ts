@@ -6,7 +6,7 @@
  * nullable for exactly that reason. Postgres, Valkey, and Elasticsearch differ in almost every
  * detail and in none of the five things a control plane needs to do to them.
  */
-export type ServiceKind = "postgres" | "valkey" | "elasticsearch" | "couchdb"
+export type ServiceKind = "postgres" | "valkey" | "elasticsearch" | "couchdb" | "object_storage"
 
 export type ServiceStatus = "provisioning" | "active" | "suspended" | "deleting" | "error"
 

@@ -14,6 +14,8 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-iam": "catalog:",
+    "@aws-sdk/client-s3": "catalog:",
     "@lib/envelope": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@utils/crypto": "workspace:*",

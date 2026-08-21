@@ -396,6 +396,7 @@ export interface Deployment {
   prNumber: number | null
   projectId: string
   runtimeClass: string | null
+  scaleMode: Generated<string>
   status: Generated<string>
   updatedAt: Generated<Timestamp>
   url: string | null
@@ -666,6 +667,7 @@ export interface Project {
   regionId: string | null
   repositoryId: string
   rootDir: Generated<string>
+  scaleMode: Generated<string>
   slug: string
   state: Generated<string>
   stateReason: string | null

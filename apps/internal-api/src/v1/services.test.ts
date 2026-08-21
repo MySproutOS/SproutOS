@@ -40,10 +40,24 @@ describe.runIf(reachable)("the backend service kinds", () => {
     expect(await allowedKinds()).toEqual([...SERVICE_KINDS].sort())
   })
 
-  it("includes couchdb, which has a driver", async () => {
-    // Named specifically because the previous three were all added at once and this is the first
-    // one added later — the case where a list and a constraint drift apart.
-    expect(await allowedKinds()).toContain("couchdb")
-    expect(SERVICE_KINDS).toContain("couchdb")
+  it("includes the kinds added after the first three", async () => {
+    // Named specifically because the original three were added at once and these came later, which
+    // is the case where a list and a constraint drift apart.
+    // As a map so a failure names the kind that is missing and from which side. `expect(x, label)`
+    // would be the obvious way to say that and vitest's matcher takes one argument.
+    const allowed = new Set(await allowedKinds())
+    const declared = new Set<string>(SERVICE_KINDS)
+
+    expect(
+      Object.fromEntries(
+        ["couchdb", "object_storage"].map((kind) => [
+          kind,
+          { constraint: allowed.has(kind), api: declared.has(kind) },
+        ]),
+      ),
+    ).toEqual({
+      couchdb: { constraint: true, api: true },
+      object_storage: { constraint: true, api: true },
+    })
   })
 })

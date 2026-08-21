@@ -1,4 +1,18 @@
 export {
+  bucketNameFor,
+  bucketPolicy,
+  iamCredentialIssuer,
+  objectStorageConfigFromEnv,
+  objectStorageDriver,
+  objectStorageDriverFromEnv,
+  objectStorageUri,
+  principalNameFor,
+  VAULT_ORIGINS,
+  type BucketCredential,
+  type CredentialIssuer,
+  type ObjectStorageConfig,
+} from "./object-storage"
+export {
   couchDbDriver,
   couchDbServiceConfigFromEnv,
   type CouchDbServiceConfig,

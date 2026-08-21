@@ -8,7 +8,13 @@ import { Nullable, UUID7String } from "../utils/common.serializer"
  * accepts and the constraint is what the database accepts, and a kind in one and not the other is
  * either a 400 for something that would have worked or a constraint violation surfacing as a 500.
  */
-export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch", "couchdb"] as const
+export const SERVICE_KINDS = [
+  "postgres",
+  "valkey",
+  "elasticsearch",
+  "couchdb",
+  "object_storage",
+] as const
 
 /**
  * Never carries a connection URI.
