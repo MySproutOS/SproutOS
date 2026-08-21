@@ -36,6 +36,8 @@ function jobPath(namespace: string, name: string): string {
 export type BuildSettings = {
   registry: string
   insecureRegistry?: boolean
+  /** The Secret holding the push credential. See `BuildSpec.registryAuthSecret`. */
+  registryAuthSecret?: string
 }
 
 /**
@@ -51,7 +53,23 @@ export function buildSettingsFromEnv(): BuildSettings {
     throw new Error("BUILD_REGISTRY is not set; there is nowhere to push a built image")
   }
 
-  return { registry, insecureRegistry: process.env.BUILD_REGISTRY_INSECURE === "true" }
+  /*
+    No default for the credential, and no throw either.
+
+    A local registry needs none and production cannot work without one, so neither "" nor a fixed
+    name is right. The build's own failure is specific — a 403 fetching an anonymous token, naming
+    the repository it could not push to — which is a better place to find out than a startup check
+    that would have to guess whether this deployment's registry is one that authenticates.
+  */
+  const registryAuthSecret = process.env.BUILD_REGISTRY_AUTH_SECRET
+
+  return {
+    registry,
+    insecureRegistry: process.env.BUILD_REGISTRY_INSECURE === "true",
+    ...(registryAuthSecret === undefined || registryAuthSecret === ""
+      ? {}
+      : { registryAuthSecret }),
+  }
 }
 
 /**
@@ -119,7 +137,11 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
     const fallback = settings ?? buildSettingsFromEnv()
     const resolved =
       placement?.registry != null
-        ? { registry: placement.registry, insecureRegistry: fallback.insecureRegistry }
+        ? {
+            registry: placement.registry,
+            insecureRegistry: fallback.insecureRegistry,
+            registryAuthSecret: fallback.registryAuthSecret,
+          }
         : fallback
     const spec: BuildSpec = {
       deploymentId,
@@ -132,6 +154,9 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
       insecureRegistry: resolved.insecureRegistry,
       contextSubdir: source.rootDir,
       dockerfilePath: source.dockerfilePath,
+      ...(resolved.registryAuthSecret === undefined
+        ? {}
+        : { registryAuthSecret: resolved.registryAuthSecret }),
     }
 
     const kube = createKubeClient(config ?? inClusterConfig())

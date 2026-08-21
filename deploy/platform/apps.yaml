@@ -187,6 +187,19 @@ spec:
             # that never starts.
             - name: BUILD_REGISTRY
               value: ${IMAGE_REGISTRY}
+            # The Secret a build mounts to push what it built.
+            #
+            # It did not exist. `deploy/builds/namespace.yaml` opens by explaining that a build
+            # needs a credential that can push to the registry and why it cannot live in a tenant
+            # namespace — and nothing created one, nothing mounted one, and the build Job had no
+            # volumes. Every build compiled the application, exported an image, and died fetching an
+            # anonymous token.
+            #
+            # The worker rewrites it every ten minutes, because on both clouds it expires: about an
+            # hour on Google, twelve on AWS. Naming it here rather than defaulting in code keeps a
+            # local registry — which authenticates nobody — a supported configuration.
+            - name: BUILD_REGISTRY_AUTH_SECRET
+              value: ${BUILD_REGISTRY_AUTH_SECRET}
             # The runtime class a workflow sandbox gets, when the cluster has one.
             #
             # `kata-fc` on a cluster with a bare-metal node pool and `kata-deploy` installed; unset
@@ -550,6 +563,19 @@ spec:
                   optional: true
             - name: BUILD_REGISTRY
               value: ${IMAGE_REGISTRY}
+            # The Secret a build mounts to push what it built.
+            #
+            # It did not exist. `deploy/builds/namespace.yaml` opens by explaining that a build
+            # needs a credential that can push to the registry and why it cannot live in a tenant
+            # namespace — and nothing created one, nothing mounted one, and the build Job had no
+            # volumes. Every build compiled the application, exported an image, and died fetching an
+            # anonymous token.
+            #
+            # The worker rewrites it every ten minutes, because on both clouds it expires: about an
+            # hour on Google, twelve on AWS. Naming it here rather than defaulting in code keeps a
+            # local registry — which authenticates nobody — a supported configuration.
+            - name: BUILD_REGISTRY_AUTH_SECRET
+              value: ${BUILD_REGISTRY_AUTH_SECRET}
             # The runtime class a workflow sandbox gets, when the cluster has one.
             #
             # `kata-fc` on a cluster with a bare-metal node pool and `kata-deploy` installed; unset

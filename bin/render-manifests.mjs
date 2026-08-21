@@ -74,6 +74,12 @@ for (const name of [
   "API_HOST",
   "SESSION_COOKIE_DOMAIN",
   "TENANT_DOMAIN",
+  // The GCP project, for the worker's Workload Identity annotation. Empty on an EKS deployment,
+  // where the annotation is inert and the EKS role ARN beside it is the one that matters.
+  "GCP_PROJECT",
+  // The Secret the build mounts to push what it built. Absent for a local registry that
+  // authenticates nobody, which is what the tests run against.
+  "BUILD_REGISTRY_AUTH_SECRET",
 ]) {
   if (process.env[name] !== undefined) values[name] = process.env[name]
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type BuildSpec, buildJob, buildJobName, imageUri } from "./build"
+import { type BuildSpec, buildContext, buildJob, buildJobName, imageUri } from "./build"
 
 const spec: BuildSpec = {
   deploymentId: "01a01e12-1700-76ac-9713-dd208babdf5a",
@@ -62,6 +62,75 @@ describe("buildJob", () => {
     ).toContain("registry.insecure=true")
   })
 
+  it("builds the directory the project names, not always the repository root", () => {
+    /*
+      `project.root_dir` existed from the first migration and had no reader.
+
+      It is settable on create, settable on update, part of the uniqueness key that decides whether
+      two projects are the same build target, and shown in the UI — and the builder always built the
+      repository root. A customer pointing a project at `apps/web` got a build of the root, whose
+      only symptom was a Dockerfile-not-found for a Dockerfile in the directory they had named.
+    */
+    expect(buildContext(spec)).toBe(`${spec.repositoryUrl}#${spec.gitSha}`)
+    expect(buildContext({ ...spec, contextSubdir: "." })).toBe(
+      `${spec.repositoryUrl}#${spec.gitSha}`,
+    )
+    expect(buildContext({ ...spec, contextSubdir: "apps/web" })).toBe(
+      `${spec.repositoryUrl}#${spec.gitSha}:apps/web`,
+    )
+  })
+
+  it("looks for the Dockerfile where the project says it is", () => {
+    // BuildKit's dockerfile frontend looks for `Dockerfile` and nothing else. Of the six
+    // applications originally in the store, two kept one at the repository root; the other four
+    // forked, built, and failed with `failed to read dockerfile` after the customer already had a
+    // repository.
+    expect(argsOf(buildJob(spec, "sproutos-builds"))).toContain("--opt=filename=Dockerfile")
+    expect(
+      argsOf(buildJob({ ...spec, dockerfilePath: "docker/default.Dockerfile" }, "sproutos-builds")),
+    ).toContain("--opt=filename=docker/default.Dockerfile")
+  })
+
+  it("mounts a push credential where the client will look for it", () => {
+    /*
+      The build ran to completion and could not push.
+
+      `deploy/builds/namespace.yaml` opens by explaining that a build needs a credential that can
+      push to the registry and why it cannot live in a tenant namespace. No Secret was created,
+      nothing mounted one, and the Job spec had no volumes at all — so every build exported an
+      image and then died fetching an anonymous token. The tests could not have caught it: they
+      describe a spec with no credential, which is the correct configuration for the insecure local
+      registry, so "no volumes" looked right.
+
+      Asserted as the mount path *and* `DOCKER_CONFIG`, because a mount the client does not read is
+      the same failure with a longer explanation.
+    */
+    const withAuth = buildJob({ ...spec, registryAuthSecret: "build-registry-auth" }, "b")
+    const container = containerOf(withAuth)
+    const volumes = (withAuth.spec as { template: { spec: { volumes: unknown[] } } }).template.spec
+      .volumes
+
+    expect(container.volumeMounts).toEqual([
+      { name: "registry-auth", mountPath: "/home/user/.docker", readOnly: true },
+    ])
+    expect(container.env).toContainEqual({
+      name: "DOCKER_CONFIG",
+      value: "/home/user/.docker",
+    })
+    expect(volumes).toEqual([
+      {
+        name: "registry-auth",
+        secret: {
+          secretName: "build-registry-auth",
+          items: [{ key: ".dockerconfigjson", path: "config.json" }],
+        },
+      },
+    ])
+
+    // And nothing mounted when there is none, so a local registry still builds.
+    expect(containerOf(buildJob(spec, "b")).volumeMounts).toEqual([])
+  })
+
   it("runs as a non-root user", () => {
     const context = containerOf(buildJob(spec, "sproutos-builds")).securityContext
 
@@ -81,6 +150,8 @@ describe("buildJob", () => {
 
 type Container = {
   args: string[]
+  env: { name: string; value: string }[]
+  volumeMounts: { name: string; mountPath: string; readOnly: boolean }[]
   securityContext: { runAsUser: number }
 }
 

@@ -67,5 +67,11 @@ export {
   type MasterQueueClient,
   type Unstartable,
 } from "./dispatch"
+export {
+  REGISTRY_AUTH_SECRET,
+  REGISTRY_CREDENTIAL_KIND,
+  refreshRegistryCredential,
+  registryAuthSecret,
+} from "./registry-credential"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"

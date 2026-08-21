@@ -72,6 +72,23 @@ metadata:
     app.kubernetes.io/part-of: sproutos
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-worker
+    # The same identity, on the other cloud.
+    #
+    # The worker mints the registry push credential every ten minutes
+    # (`platform.registry_credential`), which needs `artifactregistry.writer` on GCP and
+    # `ecr:GetAuthorizationToken` on AWS. Both are attached here rather than in code, so the
+    # credential the job asks for is the one the platform granted and neither is a constant in a
+    # TypeScript file.
+    #
+    # On GKE this needs three things and only one of them is this annotation: the cluster needs
+    # `--workload-pool`, the node pool needs `--workload-metadata=GKE_METADATA`, and the Google
+    # service account needs a `roles/iam.workloadIdentityUser` binding naming
+    # `<project>.svc.id.goog[sproutos-system/worker]`. Without all three the metadata server answers
+    # 403 and the build fails at the push, hours of debugging away from the annotation.
+    #
+    # Ignored on the cloud it does not belong to. An EKS cluster does not read the GKE annotation
+    # and a GKE cluster does not read the EKS one, which is why both can sit here.
+    iam.gke.io/gcp-service-account: sproutos-builder@${GCP_PROJECT}.iam.gserviceaccount.com
 ---
 # What the worker is allowed to do to the cluster.
 #

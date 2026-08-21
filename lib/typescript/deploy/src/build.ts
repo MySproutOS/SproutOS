@@ -20,6 +20,22 @@ export type BuildSpec = {
   /** Set when the registry speaks plain HTTP — a local test registry, never production. */
   insecureRegistry?: boolean
   /**
+   * A `kubernetes.io/dockerconfigjson` Secret in the build namespace, mounted as the build's
+   * Docker config so BuildKit can push what it built.
+   *
+   * **The build had no credential at all.** `deploy/builds/namespace.yaml` opens by explaining that
+   * a build "needs a credential that can *push* to the registry" and why that credential cannot
+   * live in a tenant namespace — and no Secret was ever created, nothing mounted one, and the Job
+   * spec had no volumes. Every build ran to completion, exported an image, and died asking the
+   * registry for an anonymous token:
+   *
+   *     failed to authorize: failed to fetch anonymous token: … 403 Forbidden
+   *
+   * Optional because a local registry with `insecureRegistry` needs none, which is exactly the
+   * configuration the tests run in — so the tests could not have caught this.
+   */
+  registryAuthSecret?: string
+  /**
    * The directory within the repository to build, from `project.root_dir`.
    *
    * That column has existed since the first migration. It is settable on create, settable on
@@ -135,13 +151,47 @@ export function buildJob(spec: BuildSpec, namespace: string): BuildJob {
                 `--opt=filename=${spec.dockerfilePath ?? "Dockerfile"}`,
                 `--output=${output}`,
               ],
-              env: [{ name: "BUILDKITD_FLAGS", value: "--oci-worker-no-process-sandbox" }],
+              env: [
+                { name: "BUILDKITD_FLAGS", value: "--oci-worker-no-process-sandbox" },
+                /*
+                  Where BuildKit looks for the config.
+
+                  The image runs as uid 1000 with `HOME=/home/user`, and `buildctl` reads
+                  `$DOCKER_CONFIG/config.json` before `$HOME/.docker/config.json`. Naming it
+                  explicitly means the mount path and the lookup path cannot drift apart, and a
+                  future base image that changes `HOME` does not silently un-authenticate the build.
+                */
+                ...(spec.registryAuthSecret === undefined
+                  ? []
+                  : [{ name: "DOCKER_CONFIG", value: "/home/user/.docker" }]),
+              ],
               resources: {
                 requests: { cpu: "500m", memory: "1Gi" },
                 limits: { cpu: "2", memory: "4Gi" },
               },
+              volumeMounts:
+                spec.registryAuthSecret === undefined
+                  ? []
+                  : [{ name: "registry-auth", mountPath: "/home/user/.docker", readOnly: true }],
             },
           ],
+          volumes:
+            spec.registryAuthSecret === undefined
+              ? []
+              : [
+                  {
+                    name: "registry-auth",
+                    secret: {
+                      secretName: spec.registryAuthSecret,
+                      // `.dockerconfigjson` is the key a `kubernetes.io/dockerconfigjson` Secret
+                      // uses; `config.json` is the name the client looks for. The rename happens
+                      // here rather than by storing the same bytes under a second key, so the
+                      // Secret stays the standard type that `kubectl create secret docker-registry`
+                      // produces and every registry's documentation describes.
+                      items: [{ key: ".dockerconfigjson", path: "config.json" }],
+                    },
+                  },
+                ],
         },
       },
     },

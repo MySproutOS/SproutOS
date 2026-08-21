@@ -12,6 +12,7 @@ import { BUILD_KINDS, buildImage } from "./build"
 import { deployRevision, DEPLOY_KINDS } from "./deploy"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import { enqueue } from "./queue"
+import { REGISTRY_CREDENTIAL_KIND, refreshRegistryCredential } from "./registry-credential"
 import { WORKFLOW_RUN_KIND, workflowRunJob } from "./workflow-run"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
@@ -63,6 +64,7 @@ export const JOB_KINDS = {
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
   dispatchQueues: "queue.dispatch",
+  refreshRegistryCredential: REGISTRY_CREDENTIAL_KIND,
   tearDownProject: TEARDOWN_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
@@ -267,6 +269,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     kinds were being queued with no handler at all.
   */
   ...GITHUB_EVENT_HANDLERS,
+  [JOB_KINDS.refreshRegistryCredential]: refreshRegistryCredential(),
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
@@ -296,6 +299,19 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  await enqueue(db, {
+    /*
+      Every ten minutes, which is far more often than either cloud's credential expires.
+
+      Chosen for the failure it prevents rather than the expiry it tracks. A build that starts
+      thirty seconds before the credential lapses compiles the whole application and then fails at
+      the push with a 403 that reads like a permissions problem — minutes of billed compute thrown
+      away for a Secret that costs one API call to rewrite.
+    */
+    kind: JOB_KINDS.refreshRegistryCredential,
+    idempotencyKey: `${JOB_KINDS.refreshRegistryCredential}:${tenMinuteWindow(now)}`,
+    maxAttempts: 3,
+  })
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,

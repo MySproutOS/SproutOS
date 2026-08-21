@@ -14,6 +14,7 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-ecr": "catalog:",
     "@lib/metering": "workspace:*"
   },
   "devDependencies": {

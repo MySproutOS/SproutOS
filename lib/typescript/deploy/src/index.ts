@@ -32,3 +32,13 @@ export {
   type WorkerDeployment,
   type WorkerSpec,
 } from "./worker"
+export {
+  type DockerConfig,
+  dockerConfig,
+  mintRegistryCredential,
+  type MintOptions,
+  type RegistryCredential,
+  type RegistryKind,
+  registryKind,
+  UnsupportedRegistryError,
+} from "./registry-auth"
