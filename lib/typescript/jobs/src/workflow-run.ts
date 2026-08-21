@@ -20,10 +20,18 @@ import type { JobHandler } from "./worker"
  * not under `deploy/tenant/network-policy.yaml`. Fetching a URL a customer typed, from here,
  * reaches the API server, every tenant's database, and `169.254.169.254`.
  *
- * So those steps are recorded as `blocked`, with the reason, and the run finishes `blocked` rather
- * than `succeeded`. That is an honest state: the platform knows what the workflow wanted to do and
- * says why it did not. Marking them succeeded would be the `project_job` bug again — a run that
- * reports success for work nobody did — and executing them here would be worse than either.
+ * So those steps are recorded as `skipped`, with the reason in `output`, and the run finishes
+ * `failed` rather than `succeeded`. That is an honest state: the platform knows what the workflow
+ * wanted to do and says why it did not. Marking them succeeded would be the `project_job` bug again
+ * — a run that reports success for work nobody did — and executing them here would be worse.
+ *
+ * `skipped` and `failed` because those are the words the schema permits.
+ * `workflow_run_step_status_check` allows queued/running/succeeded/failed/skipped and
+ * `workflow_run_status_check` allows queued/running/succeeded/failed/dead_lettered/cancelled. The
+ * first version of this wrote `blocked`, which is a better word and is not one of them: every
+ * update threw, the job failed, and the run was stranded in `running` with two finished steps and
+ * a third that never moved. Postgres was right and the code was wrong, and the way it presented
+ * was a workflow that hung.
  */
 export const WORKFLOW_RUN_KIND = "workflow.run"
 
@@ -74,69 +82,108 @@ export async function runWorkflow(
     .orderBy("id")
     .execute()
 
-  let blocked = 0
+  let skipped = 0
 
-  for (const step of steps) {
-    const runtime = NODE_RUNTIME[step.nodeType as keyof typeof NODE_RUNTIME]
+  try {
+    for (const step of steps) {
+      const runtime = NODE_RUNTIME[step.nodeType as keyof typeof NODE_RUNTIME]
 
-    if (runtime === "sandbox") {
-      blocked += 1
+      if (runtime === "sandbox") {
+        skipped += 1
+        await db
+          .updateTable("workflowRunStep")
+          .set({
+            status: "skipped",
+            finishedAt: new Date(),
+            output: JSON.stringify({
+              reason: `${step.nodeType} needs an isolated runtime`,
+              detail:
+                "This node carries a customer-supplied destination or customer-supplied code, " +
+                "and the job worker holds the control plane's credentials and is not under the " +
+                "tenant NetworkPolicy. It runs in a Kata sandbox, which is not wired to this " +
+                "queue yet.",
+            }),
+          })
+          .where("id", "=", step.id)
+          .execute()
+        continue
+      }
+
       await db
         .updateTable("workflowRunStep")
-        .set({
-          status: "blocked",
-          finishedAt: new Date(),
-          output: JSON.stringify({
-            reason: `${step.nodeType} needs an isolated runtime`,
-            detail:
-              "This node carries a customer-supplied destination or customer-supplied code, and " +
-              "the job worker holds the control plane's credentials and is not under the tenant " +
-              "NetworkPolicy. It runs in a Kata sandbox, which is not yet wired to this queue.",
-          }),
-        })
+        .set({ status: "running", startedAt: new Date() })
         .where("id", "=", step.id)
         .execute()
-      continue
+
+      if (step.nodeType === "control.delay") {
+        await sleep(delayMs((step.input as Record<string, unknown> | null) ?? {}), signal)
+      }
+
+      await db
+        .updateTable("workflowRunStep")
+        .set({ status: "succeeded", finishedAt: new Date() })
+        .where("id", "=", step.id)
+        .execute()
     }
+  } catch (cause) {
+    /*
+      Any throw ends the run, here, rather than leaving it `running`.
 
-    await db
-      .updateTable("workflowRunStep")
-      .set({ status: "running", startedAt: new Date() })
-      .where("id", "=", step.id)
-      .execute()
-
-    if (step.nodeType === "control.delay") {
-      await sleep(delayMs((step.input as Record<string, unknown> | null) ?? {}), signal)
-    }
-
-    await db
-      .updateTable("workflowRunStep")
-      .set({ status: "succeeded", finishedAt: new Date() })
-      .where("id", "=", step.id)
-      .execute()
+      Without this the first version of this function stranded a run permanently: an update was
+      rejected by a CHECK constraint, the job failed, and the run sat at `running` with two
+      finished steps and a third that never moved. The job runner retried, the conditional claim at
+      the top found `status <> 'queued'`, and every retry returned immediately having done nothing.
+      A run that cannot finish and cannot be retried is worse than one that failed.
+    */
+    await failRun(db, claimed.id, {
+      code: cause instanceof Error ? cause.name : "Error",
+      message: cause instanceof Error ? cause.message : String(cause),
+    })
+    throw cause
   }
 
   /*
-    `blocked`, not `succeeded`, when anything was.
+    `failed`, not `succeeded`, when anything was skipped.
 
     A run whose only executed steps were the trigger and a delay did not do what the workflow says
     it does, and a green run list would be the most misleading thing this feature could show.
   */
+  if (skipped > 0) {
+    await failRun(db, claimed.id, {
+      code: "SandboxUnavailable",
+      message: `${skipped} of ${steps.length} steps need an isolated runtime that is not wired yet`,
+    })
+    return
+  }
+
+  await db
+    .updateTable("workflowRun")
+    .set({ status: "succeeded", finishedAt: new Date(), updatedAt: new Date(), error: null })
+    .where("id", "=", claimed.id)
+    .execute()
+}
+
+/**
+ * End a run as failed, with a reason on the row.
+ *
+ * `failed` because it is one of the six words `workflow_run_status_check` permits — queued,
+ * running, succeeded, failed, dead_lettered, cancelled. The reason goes in `error`, which is what
+ * the run detail renders.
+ */
+async function failRun(
+  db: Kysely<DB>,
+  runId: string,
+  error: { code: string; message: string },
+): Promise<void> {
   await db
     .updateTable("workflowRun")
     .set({
-      status: blocked > 0 ? "blocked" : "succeeded",
+      status: "failed",
       finishedAt: new Date(),
       updatedAt: new Date(),
-      error:
-        blocked > 0
-          ? JSON.stringify({
-              code: "SandboxUnavailable",
-              message: `${blocked} of ${steps.length} steps need an isolated runtime that is not wired yet`,
-            })
-          : null,
+      error: JSON.stringify(error),
     })
-    .where("id", "=", claimed.id)
+    .where("id", "=", runId)
     .execute()
 }
 
