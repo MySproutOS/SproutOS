@@ -274,6 +274,62 @@ describe("chargeUsage", () => {
   })
 
   /*
+    Agent usage: visible on a statement, charged exactly once.
+
+    An agent run settles its own hold, so the tokens are paid for before they are ever rolled up.
+    That used to be expressed by stamping `rated_at` at write time — which meant "already charged"
+    to the agent and "already folded into `usage_rollup`" to the rollup, so those events were
+    skipped entirely. Both the statement and the dashboard's project cost are built from
+    `usage_rollup`, so **AI tokens, the largest line in this product, appeared on no statement at
+    all** while the customer was charged for them.
+
+    The two facts are two columns now. This asserts both halves: the usage reaches the rollup, and
+    the charge job does not bill it a second time.
+  */
+  it("rolls up agent usage without charging for it again", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const before = await availableBalance(db, organizationId)
+
+    const id = v7()
+    seq += 1
+    await db
+      .insertInto("usageEvent")
+      .values({
+        id,
+        organizationId,
+        projectId,
+        resourceType: "agent",
+        dimension: "ai_input_token",
+        quantity: "1000",
+        occurredAt: CLOSED,
+        source: "agent",
+        externalId: `charge-test-agent-${id}-${seq}`,
+        // What the agent sets: the hold already took the money.
+        chargedExternally: true,
+      })
+      .execute()
+
+    await rollUpUsage(db)
+
+    const grain = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "ai_input_token")
+      .where("bucket", "=", "day")
+      .executeTakeFirst()
+
+    // Visible — this is what a statement itemizes.
+    expect(Number(grain?.quantity)).toBe(1000)
+    // And already paid for, so `chargeUsage` has nothing to claim.
+    expect(Number(grain?.chargedQuantity)).toBe(1000)
+
+    await chargeUsage(db)
+    expect(await availableBalance(db, organizationId)).toBe(before)
+  })
+
+  /*
     The charge is posted, not spent.
 
     The compute has already been consumed. Refusing to record it does not un-run the pods; it loses

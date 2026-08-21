@@ -100,7 +100,7 @@ is not configuration one can misread.
   GKE puts on a sandbox node. Without it a pod naming `runtimeClassName: gvisor` is Pending forever
   and the reason appears only in its events.
 - `sandbox.runtime_class` no longer enumerates. It checked `kata-fc`/`kata-clh`, then gained `none`,
-  then rejected `gvisor` — three times the *truth* was refused while a stale default stayed legal. A
+  then rejected `gvisor` — three times the _truth_ was refused while a stale default stayed legal. A
   RuntimeClass is created on the cluster; the schema cannot know the set, so it checks the shape.
 
 ### What this does not change

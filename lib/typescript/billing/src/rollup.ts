@@ -121,6 +121,7 @@ export async function rollUpUsage(
         dimension: string
         bucketStart: Date
         quantity: string
+        chargedQuantity: string | null
       }>`
         select
           organization_id as "organizationId",
@@ -130,7 +131,11 @@ export async function rollUpUsage(
           -- As text: numeric(38,9) does not fit a JavaScript number and pg hands back a string
           -- anyway, so naming it here stops anything downstream treating it as one. (No backticks
           -- in these comments: this is a tagged template literal, and one would end it.)
-          sum(quantity)::text as quantity
+          sum(quantity)::text as quantity,
+          -- The part of this grain somebody has already been charged for: an agent run settles its
+          -- own hold, so the tokens are paid for before they are ever rolled up. Credited into
+          -- charged_quantity below so the usage is visible on a statement and never billed twice.
+          sum(quantity) filter (where charged_externally)::text as "chargedQuantity"
         from usage_event
         where id = any(${ids}::uuid[])
         group by organization_id, project_id, dimension, ${truncated}
@@ -149,6 +154,8 @@ export async function rollUpUsage(
             bucket,
             bucketStart: group.bucketStart,
             quantity: group.quantity,
+            // `null` when nothing in this grain was pre-charged, which is the ordinary case.
+            chargedQuantity: group.chargedQuantity ?? "0",
           })),
         )
         /*
@@ -163,6 +170,9 @@ export async function rollUpUsage(
             .columns(["organizationId", "projectId", "dimension", "bucket", "bucketStart"])
             .doUpdateSet({
               quantity: sql`usage_rollup.quantity + excluded.quantity`,
+              // Both accumulate. A grain can gather ordinary usage and agent usage in the same
+              // hour, and only the agent's part is already paid for.
+              chargedQuantity: sql`usage_rollup.charged_quantity + excluded.charged_quantity`,
               updatedAt: now,
             }),
         )

@@ -179,7 +179,18 @@ async function recordTokenUsage(
       // The hold is the run's identity here, which makes the whole write idempotent: a retried
       // settlement collides on (source, external_id, occurred_at) rather than double-counting.
       externalId: `${holdId}:${row.dimension}`,
-      ratedAt: occurredAt,
+      /*
+        Charged by the hold settlement, not by `chargeUsage`.
+
+        This used to set `rated_at` instead, which meant "already charged" to whoever wrote it and
+        "already folded into `usage_rollup`" to `rollUpUsage` — so the rollup skipped these events,
+        they never reached `usage_rollup`, and the statement and dashboard, which are both built
+        from `usage_rollup`, showed no AI line at all. The customer was charged and could not see
+        what for, which is the thing the comment above this function exists to prevent.
+
+        Now they roll up like anything else and the grain they land in is credited as already paid.
+      */
+      chargedExternally: true,
     }))
 
   if (rows.length === 0) return

@@ -1032,6 +1032,7 @@ export interface UpstreamSyncRun {
 }
 
 export interface UsageEvent {
+  chargedExternally: Generated<boolean>
   dimension: string
   externalId: string
   id: string
