@@ -18,19 +18,21 @@
 
 pub mod commands;
 pub mod keyspace;
+pub mod master;
 pub mod reply;
 pub mod resp;
 
 use std::collections::VecDeque;
 
 use bytes::BytesMut;
-use sproutos_tenant_auth::TenantIdentity;
+use sproutos_tenant_auth::{TenantIdentity, encode_short_id};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
-use crate::commands::namespace_command;
+use crate::commands::{adds_work, namespace_command, queue_of};
 use crate::keyspace::{prefix_for, strip};
+use crate::master::{MasterQueue, Wake};
 use crate::reply::{echoes_key, frame};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
 pub use sproutos_service_credentials::CredentialStore;
@@ -45,6 +47,14 @@ pub async fn serve(
     mut client: TcpStream,
     backend: &str,
     store: &CredentialStore,
+    /*
+      Where enqueues are reported, so a dispatcher can start a worker — TASK 20's second half.
+
+      Passed in rather than reached for, because the alternative is a global and because a test
+      wants `MasterQueue::disabled()`. Reporting never blocks this loop and never fails it: see the
+      note on failing open in `master.rs`.
+    */
+    master: &MasterQueue,
 ) -> anyhow::Result<()> {
     let mut buffer = BytesMut::with_capacity(READ_BUFFER);
 
@@ -92,10 +102,35 @@ pub async fn serve(
                                 return Ok(())
                             }
                             let verb = command.verb();
+
+                            /*
+                              The queue name, read before namespacing.
+
+                              After `namespace_command` the key carries `{kv:…}:`, and recovering
+                              the tenant's own name from it would mean stripping a prefix this
+                              function was not given. Taken here, from the argument as the tenant
+                              wrote it, there is nothing to strip.
+                            */
+                            let queue = if adds_work(&verb) {
+                                command.args.get(1).and_then(|key| queue_of(key))
+                            } else {
+                                None
+                            };
+
                             match namespace_command(&mut command.args, &prefix) {
                                 Ok(_) => {
                                     upstream_write.write_all(&command.encode()).await?;
                                     pending.push_back(verb);
+
+                                    // After the forward, not before. A wake for a command the
+                                    // backend never received would start a worker for a job that
+                                    // does not exist.
+                                    if let Some(queue) = queue {
+                                        master.wake(Wake {
+                                            resource: encode_short_id(identity.resource_id),
+                                            queue,
+                                        });
+                                    }
                                 }
                                 Err(reason) => {
                                     // Refused, not dropped: the tenant gets an error they can act

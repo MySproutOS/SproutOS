@@ -220,6 +220,7 @@ export interface BackendService {
   regionId: string
   status: Generated<string>
   updatedAt: Generated<Timestamp>
+  workerSecretAt: Timestamp | null
 }
 
 export interface BackgroundJob {

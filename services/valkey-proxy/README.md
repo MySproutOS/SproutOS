@@ -165,11 +165,38 @@ read its own value back.
 
 The integration tests skip rather than fail when the services are not running.
 
+## The master queue
+
+TASK 20's second half, and the reason this proxy is the only place it can live: it sees every
+enqueue, so it can report one without polling a keyspace that holds every tenant's keys.
+
+```
+ZADD sproutos:master:wake GT <epoch_ms> "<resource-short-id>/<queue>"
+```
+
+Not the job — a job belongs to the tenant, and copying one into a shared structure would put a
+customer's payload somewhere another customer's dispatcher could read. Only the smallest fact that
+lets the control plane act: *this queue was written to, at this time*.
+
+A sorted set rather than a list, and that is the whole design. The member is the queue, so a
+thousand enqueues in a second collapse to one entry; the score is when work last arrived, which is
+exactly what a scale-to-zero decision needs; `GT` keeps the newest so two replicas cannot make a
+queue look staler than it is.
+
+**On its own connection.** RESP has no request ids, so this proxy tracks replies by position in a
+FIFO. An extra command on a client's backend connection would put a reply in that stream nothing is
+waiting for, and every reply after it would be attributed to the wrong request. The master queue
+therefore owns one connection, fed by a channel, and every failure in it — a full channel, an
+unreachable backend, a failed write — is logged and dropped. A tenant's command must never fail
+because the platform's bookkeeping did.
+
+Off unless `VALKEY_PROXY_MASTER_QUEUE` is set: reporting into a set nothing consumes is write
+amplification on the tenant instance.
+
+`dispatchQueues` in `@lib/jobs` is the consumer.
+
 ## Not built yet
 
-- **The master-queue dispatcher.** TASK 20's second half: feeding a master queue that a consumer
-  reads to spin services up from zero. The proxy is where those events originate — it sees every
-  enqueue — but the dispatcher and the scale-from-zero path are not written.
 - **Metering.** TASK 25's queue-dwell dimension has `workflow_run.bytes_enqueued` and
   `valkey_dwell_ms` as columns with no writer. This proxy is the only place that can honestly fill
   them, via `metering-proto`.

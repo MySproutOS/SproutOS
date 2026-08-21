@@ -149,6 +149,24 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "create", "patch"]
+  # Queue workers, scaled between zero and one by `dispatchQueues` — TASK 20's dispatcher.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Secrets: **write only**, and the omission is the point.
+  #
+  # A worker the platform starts has to authenticate to the tenant's queue, and the platform cannot
+  # rebuild that URI — `service_credential` stores a hash. So the plaintext is captured at the one
+  # moment it exists and written into a Secret in the tenant's namespace.
+  #
+  # `get` and `list` are deliberately absent. With them, a compromised control-plane pod could read
+  # every credential in every tenant namespace; without them it can write one Secret and cannot read
+  # any, including the ones it wrote. That is why `backend_service.worker_secret_at` exists: the
+  # dispatcher has to know whether a Secret is there, and asking Kubernetes would require exactly
+  # the grant being withheld.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

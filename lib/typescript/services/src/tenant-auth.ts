@@ -67,6 +67,51 @@ export function encodeShortId(uuid: string): string {
 }
 
 /**
+ * The inverse of {@link encodeShortId}.
+ *
+ * The master queue (`services/valkey-proxy/src/master.rs`) reports activity as
+ * `<resource-short-id>/<queue>`, because a short id is what the key prefix carries and the proxy has
+ * no reason to hold the UUID as text. The dispatcher has to get back to a `backend_service` row, and
+ * scanning every service to find one whose encoding matches would be a table scan per wake.
+ *
+ * Refuses anything that is not a short id rather than returning a wrong UUID. The leading digit
+ * carries only the top three bits, so a valid short id always begins `0`-`7` — a value outside that
+ * range would silently decode to a *different tenant's* id, which is the one failure mode worth
+ * spending a check on. The Rust decoder enforces the same rule.
+ */
+export function decodeShortId(shortId: string): string {
+  if (shortId.length !== SHORT_ID_LEN) {
+    throw new RangeError(`${JSON.stringify(shortId)} is not a short id`)
+  }
+
+  let value = 0n
+  for (const character of shortId) {
+    const digit = ALPHABET.indexOf(character)
+    // `indexOf` on the alphabet, not a regex: Crockford base32 deliberately omits `i`, `l`, `o` and
+    // `u`, so a character-class check would accept letters this encoding cannot produce.
+    if (digit < 0) {
+      throw new RangeError(`${JSON.stringify(shortId)} is not a short id`)
+    }
+    value = (value << 5n) | BigInt(digit)
+  }
+
+  // 26 characters carry 130 bits; a UUID is 128. Anything in the top two is a short id that was
+  // never produced by `encodeShortId`, and truncating it would name a real, wrong tenant.
+  if (value >= 1n << 128n) {
+    throw new RangeError(`${JSON.stringify(shortId)} is out of range for a UUID`)
+  }
+
+  const hex = value.toString(16).padStart(32, "0")
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-")
+}
+
+/**
  * The connection username for one tenant resource: `<kind>_<resource>.<organization>`.
  *
  * The wire protocols give a proxy a username and a secret and nothing else — no header, no token,

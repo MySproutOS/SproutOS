@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tokio::net::TcpListener;
 use tracing::info;
+use valkey_proxy::master::MasterQueue;
 use valkey_proxy::{CredentialStore, serve};
 
 #[tokio::main]
@@ -51,6 +52,21 @@ async fn main() -> anyhow::Result<()> {
     // silently turn every authentication into an operational error.
     store.check().await?;
 
+    /*
+      The master queue — TASK 20's second half — is opt-in.
+
+      `VALKEY_PROXY_MASTER_QUEUE=1` turns it on. Off by default because reporting into a shared
+      sorted set that nothing consumes is pure write amplification on the tenant instance: a cluster
+      with no dispatcher deployed should not pay for one. `MasterQueue::disabled()` accepts and
+      discards, so the serve loop is the same code either way.
+    */
+    let master = if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
+        info!("master queue enabled; enqueues will be reported for dispatch");
+        Arc::new(MasterQueue::spawn(backend.as_ref().clone()))
+    } else {
+        Arc::new(MasterQueue::disabled())
+    };
+
     let listener = TcpListener::bind(listen).await?;
     info!(%listen, %backend, "valkey-proxy listening");
 
@@ -58,8 +74,9 @@ async fn main() -> anyhow::Result<()> {
         let (client, peer) = listener.accept().await?;
         let store = Arc::clone(&store);
         let backend = Arc::clone(&backend);
+        let master = Arc::clone(&master);
         tokio::spawn(async move {
-            if let Err(cause) = serve(client, &backend, &store).await {
+            if let Err(cause) = serve(client, &backend, &store, &master).await {
                 // Debug rather than warn: a client hanging up mid-command is ordinary, and a log
                 // line per disconnect is how a proxy drowns its own useful output.
                 tracing::debug!(%peer, %cause, "connection ended");

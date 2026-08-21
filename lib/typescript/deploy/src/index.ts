@@ -21,3 +21,14 @@ export {
   knativeServicePath,
 } from "./kube"
 export { type BuildJob, buildJob, buildJobName, type BuildSpec, imageUri } from "./build"
+export {
+  QUEUE_LABEL,
+  queueSecret,
+  queueSecretName,
+  secretPath,
+  workerDeployment,
+  workerName,
+  workerPath,
+  type WorkerDeployment,
+  type WorkerSpec,
+} from "./worker"

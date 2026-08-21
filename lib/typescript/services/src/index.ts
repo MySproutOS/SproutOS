@@ -8,6 +8,7 @@ export {
 export {
   SECRET_BYTES,
   SHORT_ID_LEN,
+  decodeShortId,
   encodeShortId,
   generateSecret,
   hashGeneratedSecret,

@@ -18,6 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 use valkey_proxy::CredentialStore;
+use valkey_proxy::master::MasterQueue;
 
 /// The shared Valkey these tests proxy to.
 ///
@@ -202,14 +203,24 @@ async fn cleanup(url: &str, ids: &[Uuid]) {
     }
 }
 
+/// Starts the proxy with the master queue enabled, so enqueues are reported for dispatch.
+async fn start_proxy_with_master(url: &str) -> SocketAddr {
+    start(url, MasterQueue::spawn(backend())).await
+}
+
 /// Starts the proxy on an ephemeral port and returns its address.
 async fn start_proxy(url: &str) -> SocketAddr {
+    start(url, MasterQueue::disabled()).await
+}
+
+async fn start(url: &str, master: MasterQueue) -> SocketAddr {
     let store = std::sync::Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let address = listener.local_addr().expect("local_addr");
     // A `String`, matching what `serve` now takes. The proxy resolves it per connection, so a
     // DNS name works here exactly as it does in production — which a `SocketAddr` never did.
     let backend = std::sync::Arc::new(backend());
+    let master = std::sync::Arc::new(master);
 
     tokio::spawn(async move {
         loop {
@@ -218,8 +229,9 @@ async fn start_proxy(url: &str) -> SocketAddr {
             };
             let store = std::sync::Arc::clone(&store);
             let backend = std::sync::Arc::clone(&backend);
+            let master = std::sync::Arc::clone(&master);
             tokio::spawn(async move {
-                let _ = valkey_proxy::serve(client, &backend, &store).await;
+                let _ = valkey_proxy::serve(client, &backend, &store, &master).await;
             });
         }
     });
@@ -475,5 +487,79 @@ async fn two_queues_in_one_organization_are_separate() {
 
     a.send(&["DEL", "bull:jobs:wait"]).await;
     b.send(&["DEL", "bull:jobs:wait"]).await;
+    cleanup(&url, &fixtures).await;
+}
+
+/*
+  TASK 20's second half, end to end against a real Valkey.
+
+  > We use a proxy that receives valkey commands and adds it to a master valkey queue such that this
+  > proxy consumer continuously receives jobs from all projects and spins up services as needed.
+
+  The unit tests cover which verbs count as an enqueue and how a queue name is read out of a key.
+  What they cannot cover is the part that was actually hard: the report reaches the backend on a
+  connection of its own, because putting an extra command on the client's connection would leave a
+  reply in the stream that nothing is waiting for, and every reply after it would be attributed to
+  the wrong request. That is only observable against a server, which is why the last two assertions
+  here are about the *client's* replies rather than about the master queue at all.
+*/
+#[tokio::test]
+async fn an_enqueue_is_reported_to_the_master_queue() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    // A clean slate, so what is asserted below is what this test put there.
+    let mut raw = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    raw.send(&["DEL", "sproutos:master:wake"]).await;
+
+    let address = start_proxy_with_master(&url).await;
+    let (username, secret, service_id, fixtures) = provision(&url).await;
+
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    // An enqueue, and a read that must not be mistaken for one.
+    assert_eq!(
+        client.send(&["LPUSH", "bull:emails:wait", "job-1"]).await,
+        ":1\r\n"
+    );
+    client
+        .send(&["LRANGE", "bull:reports:wait", "0", "-1"])
+        .await;
+
+    // The writer batches for a second before it writes.
+    tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+
+    let members = raw
+        .send(&["ZRANGE", "sproutos:master:wake", "0", "-1"])
+        .await;
+
+    let expected = format!(
+        "{}/emails",
+        sproutos_tenant_auth::encode_short_id(service_id)
+    );
+    assert!(
+        members.contains(&expected),
+        "expected the enqueued queue in the master set, got {members}"
+    );
+    assert!(
+        !members.contains("reports"),
+        "a read must not wake a queue, got {members}"
+    );
+
+    /*
+      And the client's own replies are still correctly ordered.
+
+      This is the assertion the separate connection exists for. If the master queue's `ZADD` went
+      out on this connection, its reply would arrive here and `PING` would return the `ZADD` result.
+    */
+    assert_eq!(client.send(&["PING"]).await, "+PONG\r\n");
+    assert_eq!(client.send(&["LLEN", "bull:emails:wait"]).await, ":1\r\n");
+
+    raw.send(&["DEL", "sproutos:master:wake"]).await;
     cleanup(&url, &fixtures).await;
 }

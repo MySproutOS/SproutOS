@@ -286,3 +286,124 @@ mod tests {
         assert_eq!(namespaced(&["MULTI"]).unwrap(), vec!["MULTI"]);
     }
 }
+
+/// Does this verb *add work* to a queue?
+///
+/// The master queue (`master.rs`) reports "this queue has jobs" so a dispatcher can start a worker.
+/// The question is not whether a command writes — a worker acknowledging a job writes constantly and
+/// waking on that would mean a queue never looks idle. It is whether a command can put something in
+/// for a worker to pick up.
+///
+/// `EVAL`/`EVALSHA` are here because **BullMQ is almost entirely Lua**: `Queue.add` is a script, and
+/// a rule that only knew about `LPUSH` would see approximately none of BullMQ's real traffic. The
+/// cost of that breadth is that a script which only reads also wakes a queue, which starts a worker
+/// that finds nothing and scales back down. The opposite mistake — a queue with jobs and no worker
+/// — is a customer's job that never runs.
+///
+/// `EVAL_RO`, `EVALSHA_RO` and `FCALL_RO` are excluded: the server itself refuses writes from them,
+/// so they cannot enqueue anything.
+pub fn adds_work(verb: &str) -> bool {
+    matches!(
+        verb,
+        "LPUSH"
+            | "RPUSH"
+            | "LPUSHX"
+            | "RPUSHX"
+            | "LMOVE"
+            | "RPOPLPUSH"
+            | "ZADD"
+            | "XADD"
+            | "SADD"
+            | "EVAL"
+            | "EVALSHA"
+            | "FCALL"
+    )
+}
+
+/// The queue a key belongs to, from the key as the *tenant* wrote it.
+///
+/// BullMQ lays its keys out as `bull:<queue>:<what>` — `bull:emails:wait`, `bull:emails:id`,
+/// `bull:emails:1`. Celery's default broker is a plain list named for the queue. Both are covered by
+/// the same rule: strip a known broker prefix if there is one, then take the segment before the next
+/// colon.
+///
+/// Reads the pre-namespace key deliberately. After namespacing, the key carries `{kv:…}:` and this
+/// would have to strip a prefix it was not given — and getting that wrong means a dispatcher looking
+/// for a queue whose name contains a hash tag.
+pub fn queue_of(key: &[u8]) -> Option<String> {
+    let key = std::str::from_utf8(key).ok()?;
+
+    // BullMQ's own prefix. SproutOS generates the worker code, so `bull` is not a customer choice —
+    // see `tenantQueuePrefix` in `@lib/queue`.
+    let rest = key.strip_prefix("bull:").unwrap_or(key);
+
+    let name = match rest.split_once(':') {
+        Some((name, _)) => name,
+        // A key with no colon is the whole queue: Celery's `celery`, or a plain list.
+        None => rest,
+    };
+
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+#[cfg(test)]
+mod master_queue_tests {
+    use super::*;
+
+    #[test]
+    fn bullmq_key_layouts_name_their_queue() {
+        assert_eq!(queue_of(b"bull:emails:wait").as_deref(), Some("emails"));
+        assert_eq!(queue_of(b"bull:emails:id").as_deref(), Some("emails"));
+        assert_eq!(queue_of(b"bull:emails:1").as_deref(), Some("emails"));
+        assert_eq!(
+            queue_of(b"bull:media-transcode:delayed").as_deref(),
+            Some("media-transcode")
+        );
+    }
+
+    #[test]
+    fn a_plain_list_is_its_own_queue() {
+        // Celery's default.
+        assert_eq!(queue_of(b"celery").as_deref(), Some("celery"));
+    }
+
+    #[test]
+    fn a_key_that_names_nothing_is_not_a_queue() {
+        assert_eq!(queue_of(b""), None);
+        assert_eq!(queue_of(b"bull:"), None);
+    }
+
+    /// Invalid UTF-8 is a legal Valkey key. It is not a queue name a dispatcher can use, and it must
+    /// not panic on the way to finding that out.
+    #[test]
+    fn a_binary_key_is_not_a_queue() {
+        assert_eq!(queue_of(&[0xff, 0x00, 0xfe]), None);
+    }
+
+    #[test]
+    fn only_verbs_that_can_enqueue_wake_a_queue() {
+        for verb in ["LPUSH", "RPUSH", "ZADD", "XADD", "EVALSHA", "EVAL", "FCALL"] {
+            assert!(adds_work(verb), "{verb} should wake a queue");
+        }
+        // Reads, and the acknowledgement traffic a running worker produces.
+        for verb in [
+            "GET",
+            "LRANGE",
+            "BRPOPLPUSH",
+            "BZPOPMIN",
+            "LPOP",
+            "ZREM",
+            "HGET",
+            "XACK",
+            "DEL",
+            "EVALSHA_RO",
+            "EVAL_RO",
+            "FCALL_RO",
+        ] {
+            assert!(!adds_work(verb), "{verb} should not wake a queue");
+        }
+    }
+}

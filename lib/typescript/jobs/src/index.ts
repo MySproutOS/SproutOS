@@ -58,3 +58,12 @@ export {
   workflowRunJob,
   type WorkflowRunPayload,
 } from "./workflow-run"
+export {
+  dispatchQueues,
+  IDLE_MS,
+  MASTER_WAKE_KEY,
+  parseMember,
+  type DispatchResult,
+  type MasterQueueClient,
+  type Unstartable,
+} from "./dispatch"

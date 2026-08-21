@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { encodeShortId, tenantUsername } from "./tenant-auth"
+import { decodeShortId, encodeShortId, tenantUsername } from "./tenant-auth"
 import { describe, expect, it } from "vitest"
 import { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 
@@ -121,5 +121,71 @@ describe("the cross-language naming vectors", () => {
         resourceId: vector.resourceId,
       }),
     ).toBe(vector.username)
+  })
+})
+
+/*
+  The short id has to be reversible, and it has to refuse rather than guess.
+
+  The master queue reports activity as `<resource-short-id>/<queue>` — a short id is what the key
+  prefix carries, and the proxy has no reason to hold the UUID as text. The dispatcher has to get
+  back to a `backend_service` row, and a decoder that quietly produced a *different valid UUID* for
+  a malformed input would start a worker for the wrong tenant with the right-looking id.
+*/
+describe("decodeShortId", () => {
+  const cases = (
+    JSON.parse(
+      readFileSync(
+        new URL("../../../rust/tenant-auth/fixtures/naming-vectors.json", import.meta.url),
+        "utf8",
+      ),
+    ) as {
+      cases: {
+        organizationId: string
+        resourceId: string
+        shortId: string
+        organizationShortId: string
+      }[]
+    }
+  ).cases
+
+  it("round-trips every vector", () => {
+    expect(cases.length).toBeGreaterThan(2)
+    for (const vector of cases) {
+      expect(decodeShortId(vector.shortId)).toBe(vector.resourceId)
+      expect(decodeShortId(vector.organizationShortId)).toBe(vector.organizationId)
+    }
+  })
+
+  it("round-trips an arbitrary UUID", () => {
+    const id = "01912d40-0000-7000-8000-0000000000a1"
+    expect(decodeShortId(encodeShortId(id))).toBe(id)
+  })
+
+  it("refuses the wrong length", () => {
+    expect(() => decodeShortId("01j4pm")).toThrow(RangeError)
+    expect(() =>
+      decodeShortId(`${encodeShortId("01912d40-0000-7000-8000-0000000000a1")}x`),
+    ).toThrow(RangeError)
+  })
+
+  /*
+    Crockford base32 omits `i`, `l`, `o` and `u` — deliberately, because they are the characters
+    people mistranscribe. A character-class check would accept them; the alphabet lookup does not.
+  */
+  it("refuses a letter the alphabet does not contain", () => {
+    const valid = encodeShortId("01912d40-0000-7000-8000-0000000000a1")
+    for (const wrong of ["i", "l", "o", "u"]) {
+      expect(() => decodeShortId(valid.slice(0, 25) + wrong)).toThrow(RangeError)
+    }
+  })
+
+  /*
+    26 characters carry 130 bits and a UUID is 128. A short id beginning above `7` is one this
+    encoder never produced, and truncating it would name a real, wrong tenant.
+  */
+  it("refuses a value that cannot be a UUID", () => {
+    expect(() => decodeShortId("z".repeat(26))).toThrow(RangeError)
+    expect(() => decodeShortId(`8${"0".repeat(25)}`)).toThrow(RangeError)
   })
 })

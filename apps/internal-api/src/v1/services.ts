@@ -9,6 +9,16 @@ import {
   valkeyDriver,
   valkeyServiceConfigFromEnv,
 } from "@lib/services"
+import {
+  createKubeClient,
+  inClusterConfig,
+  queueSecret,
+  queueSecretName,
+  secretPath,
+} from "@lib/deploy"
+import { tenantNamespace } from "@lib/jobs"
+import { ensureTenantNamespace } from "@lib/sandbox"
+import { encodeShortId } from "@lib/services"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -195,6 +205,23 @@ const app = new Hono()
           .where("id", "=", backendServiceId)
           .execute()
 
+        /*
+          Capture the queue's URI now, because this is the only moment it exists.
+
+          `service_credential` stores a hash — deliberately, so a stolen credential table is
+          worthless — which means `connectionUri` can never rebuild this and does not pretend to.
+          A worker the platform starts on the customer's behalf (`dispatchQueues`, TASK 20) still
+          has to authenticate, so the plaintext on its way out of here is written into a Secret in
+          the tenant's own namespace and nowhere else.
+
+          Failing to write it must not fail the provision: the customer has their URI, the service
+          works, and the only thing lost is the platform's ability to start a worker — which it
+          reports rather than pretending about. Rotating the credential writes it again.
+        */
+        if (body.kind === "valkey") {
+          await captureQueueSecret(organization.id, backendServiceId, result.connectionUri)
+        }
+
         await crudAuditLog(db).record({
           organizationId: organization.id,
           actorUserId: c.var.user.id,
@@ -290,6 +317,18 @@ const app = new Hono()
       try {
         const connectionUri = await driverFor(service.kind).rotateCredentials(serviceId)
 
+        /*
+          Rotation is also how a queue provisioned before workers existed gets a Secret.
+
+          There is no way to make one from a hash, so the platform cannot repair it silently — and
+          rotating a running application's credential without being asked is not something to do
+          quietly. A customer who wants a worker rotates, which they already understand as "the old
+          URI stops working".
+        */
+        if (service.kind === "valkey") {
+          await captureQueueSecret(c.var.organization.id, serviceId, connectionUri)
+        }
+
         await crudAuditLog(db).record({
           organizationId: c.var.organization.id,
           actorUserId: c.var.user.id,
@@ -375,3 +414,55 @@ function databaseNameOf(backendServiceId: string): string {
 }
 
 export default app
+
+/**
+ * Write one queue's broker URI into a Secret in the tenant's namespace.
+ *
+ * Never throws. A provision that succeeded must not be reported as a failure because the platform
+ * could not set itself up to start a worker later — the customer has a working queue and a URI, and
+ * the consequence of this failing is that `dispatchQueues` reports the queue as unstartable, which
+ * is visible and recoverable.
+ */
+async function captureQueueSecret(
+  organizationId: string,
+  backendServiceId: string,
+  connectionUri: string,
+): Promise<void> {
+  try {
+    const namespace = tenantNamespace(organizationId)
+    const client = createKubeClient(inClusterConfig())
+    // The namespace may not exist yet: a queue can be provisioned before anything has been
+    // deployed. `ensureTenantNamespace` also puts the NetworkPolicies in force, which matters here
+    // because this is where a secret is about to live.
+    await ensureTenantNamespace(client, namespace)
+
+    const shortId = encodeShortId(backendServiceId)
+    await client.apply(
+      secretPath(namespace, queueSecretName(shortId)),
+      queueSecret(namespace, shortId, connectionUri),
+    )
+
+    /*
+      Recorded after the write, not before.
+
+      `dispatchQueues` reads this instead of asking Kubernetes, because reading a Secret needs `get`
+      on secrets and the control plane's grant is deliberately write-only — see the migration. A
+      row claiming a Secret that was never written would make the dispatcher start a worker that
+      cannot start, so the order matters.
+    */
+    await db
+      .updateTable("backendService")
+      .set({ workerSecretAt: new Date(), updatedAt: new Date() })
+      .where("id", "=", backendServiceId)
+      .execute()
+  } catch (cause) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "could not capture the queue secret; workers cannot be started for this service",
+        backendServiceId,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      }),
+    )
+  }
+}
