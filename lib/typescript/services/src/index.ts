@@ -53,3 +53,12 @@ export {
   ServiceNotProvisionedError,
   type ServiceStatus,
 } from "./types"
+export {
+  isNeonId,
+  neonConfigFromEnv,
+  NeonError,
+  neonId,
+  neonStorage,
+  type NeonConfig,
+  type TimelineInfo,
+} from "./neon"
