@@ -87,6 +87,23 @@ describe("the dev sandbox pod", () => {
     A dev sandbox holds a pod for fifteen minutes past the last keystroke, on a real node. It
     carried no attribution label, so all of that was free.
   */
+  /*
+    The taint a GKE Sandbox node carries.
+
+    Without this toleration a pod naming `runtimeClassName: gvisor` stays Pending forever, and the
+    reason — a taint, not capacity — is only in the pod's events. Asserted here because the failure
+    is silent and the fix is one line nobody would think to look for.
+  */
+  it("tolerates the sandbox node's taint", () => {
+    const pod = devSandboxPod(base) as { spec: { tolerations: Record<string, string>[] } }
+    expect(pod.spec.tolerations).toContainEqual({
+      key: "sandbox.gke.io/runtime",
+      operator: "Equal",
+      value: "gvisor",
+      effect: "NoSchedule",
+    })
+  })
+
   it("labels the pod with who pays for it", () => {
     const pod = devSandboxPod(base) as { metadata: { labels: Record<string, string> } }
     expect(pod.metadata.labels).toMatchObject({

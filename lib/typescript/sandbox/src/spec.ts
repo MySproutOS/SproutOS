@@ -100,6 +100,27 @@ export function sandboxJob(spec: SandboxSpec): SandboxJob {
         },
         spec: {
           restartPolicy: "Never",
+          /*
+            The taint a sandbox node carries.
+
+            GKE taints a GKE Sandbox node `sandbox.gke.io/runtime=gvisor:NoSchedule` so ordinary
+            workloads do not land on it — the node runs a user-space kernel and everything on it
+            pays for that. A pod naming `runtimeClassName: gvisor` without this toleration stays
+            Pending forever with no indication that the reason is a taint rather than capacity,
+            which is a bad afternoon.
+
+            Unconditional rather than added only when the runtime class is gVisor: a toleration for
+            a taint no node carries does nothing at all, and a conditional here would be a second
+            place for the two to disagree.
+          */
+          tolerations: [
+            {
+              key: "sandbox.gke.io/runtime",
+              operator: "Equal",
+              value: "gvisor",
+              effect: "NoSchedule",
+            },
+          ],
           ...(spec.runtimeClassName === undefined
             ? {}
             : { runtimeClassName: spec.runtimeClassName }),

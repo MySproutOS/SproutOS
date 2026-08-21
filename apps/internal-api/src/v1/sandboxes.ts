@@ -114,6 +114,42 @@ function serialize(row: {
   }
 }
 
+/** How long to wait for a terminating pod to actually go. */
+const POD_GONE_TIMEOUT_MS = 60_000
+
+/**
+ * Delete a pod if it exists, and wait until the API server stops returning it.
+ *
+ * The wait is the part that matters. `remove` returns when the deletion is *accepted*, and a pod
+ * with a grace period lingers after that — creating one of the same name in that window is the
+ * error this exists to prevent, not a race worth retrying past.
+ */
+async function removePod(
+  client: ReturnType<typeof createKubeClient>,
+  namespace: string,
+  podName: string,
+): Promise<void> {
+  const path = podPath(namespace, podName)
+  if ((await client.get(path)) === undefined) return
+
+  await client.remove(path)
+
+  const deadline = Date.now() + POD_GONE_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    if ((await client.get(path)) === undefined) return
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+
+  /*
+    Thrown, not ignored.
+
+    Carrying on would apply over the pod that would not die and produce the 422 this function is
+    here to avoid — with a message about immutable fields rather than about the pod that is stuck,
+    which is the wrong thing to hand whoever is debugging it.
+  */
+  throw new Error(`Pod ${podName} did not terminate within ${POD_GONE_TIMEOUT_MS}ms`)
+}
+
 /** The sandbox for this caller and project, or a 404. Also stamps it as used. */
 async function activeSandbox(
   organizationId: string,
@@ -292,6 +328,34 @@ const app = new Hono()
         // Before the pod, every time. The namespace existing is not evidence that its
         // NetworkPolicies are in force — see `ensureTenantNamespace`.
         await ensureTenantNamespace(client, namespace)
+
+        /*
+          Clear any pod of this name before creating one. **A Pod is nearly immutable.**
+
+          Server-side apply is how everything else here is written, and for a Deployment or a
+          Knative Service it is exactly right: apply the desired state, let the API server work out
+          the difference. A Pod is not that. Kubernetes permits updating `image`,
+          `activeDeadlineSeconds`, tolerations and little else, so applying a pod spec that differs
+          in any other field fails with:
+
+              Pod "sbx-…" is invalid: spec: Forbidden: pod updates may not change fields other
+              than `spec.containers[*].image`, …
+
+          — a 422 that reads like a platform bug and reaches the customer as a 500.
+
+          Two ways in, and both happened. A `DELETE` returns as soon as the API server accepts it,
+          so a pod is still terminating when the next `POST` arrives and the apply lands on the
+          dying object. And changing `SANDBOX_RUNTIME_CLASS` — which is the entire point of having
+          it — changes `runtimeClassName`, which no existing pod will accept: every sandbox created
+          before the change would have gone on running without a sandbox runtime, and the only sign
+          was a 500 on restart.
+
+          Deleting first and waiting for it to be gone makes both cases a new pod. The workspace
+          goes with it, which is correct: the route only reaches here when there was no usable pod
+          to keep.
+        */
+        await removePod(client, namespace, podName)
+
         await client.apply(
           podPath(namespace, podName),
           devSandboxPod({

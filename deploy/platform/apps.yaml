@@ -216,6 +216,25 @@ spec:
                 secretKeyRef:
                   name: github-app
                   key: webhook-secret
+            # The GitHub App itself. Only the webhook secret was wired, so `githubAppConfigFromEnv`
+            # threw `GITHUB_APP_ID is missing` on every deployment — and the paths that can fall back
+            # to a user's OAuth token caught it and did, which is why nothing looked broken.
+            #
+            # The App is what gives headless upkeep its own identity and rate limit. Without it,
+            # every fork-maintenance run spends a customer's personal token budget.
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: app-id
+            # A PEM, multi-line. `githubAppConfigFromEnv` also accepts the `\n`-escaped form,
+            # because a PEM does not survive a single-line `.env` — a Secret has no such problem and
+            # the raw bytes go in as they came out of GitHub.
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: private-key
             - name: STRIPE_SECRET_KEY
               valueFrom:
                 secretKeyRef:
@@ -632,6 +651,25 @@ spec:
                 secretKeyRef:
                   name: github-oauth
                   key: client-secret
+            # The GitHub App. The worker is where fork upkeep (TASK 27) runs, and upkeep is the
+            # workload the App exists for: its own identity, its own rate limit, and a token that is
+            # not a customer's. Without these `githubAppConfigFromEnv` throws and the run falls back
+            # to the user's OAuth token — which works, and spends their budget.
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: app-id
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: private-key
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: webhook-secret
             # Same reason as the API: fork upkeep (TASK 27) runs an agent turn, which clones the
             # repository first.
             - name: HOME

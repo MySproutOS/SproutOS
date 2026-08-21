@@ -63,6 +63,18 @@ describe("the sandbox pod", () => {
     expect(spec.template.metadata.labels).not.toHaveProperty("sproutos.dev/project-id")
   })
 
+  it("tolerates the sandbox node's taint", () => {
+    // See the note in `dev.test.ts`: without this the pod is Pending forever and the reason is only
+    // in its events.
+    const { pod } = container(sandboxJob(base))
+    expect(pod.tolerations).toContainEqual({
+      key: "sandbox.gke.io/runtime",
+      operator: "Equal",
+      value: "gvisor",
+      effect: "NoSchedule",
+    })
+  })
+
   it("carries no service-account token", () => {
     // The default projects one into every pod. A token is a credential for the API server, which is
     // the most valuable thing in the cluster to hand to code a customer wrote.
