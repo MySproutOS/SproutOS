@@ -157,7 +157,18 @@ export function createKubeClient(config: KubeConfig) {
    * say, and the exit code is what decides.
    */
   async function logs(path: string): Promise<string> {
-    const headers: Record<string, string> = { Accept: "text/plain" }
+    // Accept anything, not `text/plain`.
+    //
+    // The `/log` subresource *returns* plain text and refuses to be *asked* for it: the API server
+    // negotiates content against the standard resource list and answers `only the following media
+    // types are accepted: application/json, application/yaml, application/vnd.kubernetes.protobuf`
+    // — a 406 for the one endpoint whose response is none of them. Asking for anything is how to
+    // ask for what it actually sends.
+    //
+    // Line comments rather than a block, because the header's value contains the two characters
+    // that end one. Written as a block it closed on the header itself and silently commented out
+    // the rest of the function; the lint went from 0 errors to 107.
+    const headers: Record<string, string> = { Accept: "*/*" }
     if (config.token !== undefined) headers.Authorization = `Bearer ${config.token()}`
 
     const { status, text } = await send(`${config.server}${path}`, "GET", headers, undefined, agent)
