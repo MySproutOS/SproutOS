@@ -1,4 +1,4 @@
-import { open, seal } from "@lib/envelope"
+import { seal } from "@lib/envelope"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { Client } from "pg"
