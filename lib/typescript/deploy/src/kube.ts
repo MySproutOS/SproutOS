@@ -160,11 +160,10 @@ export function createKubeClient(config: KubeConfig) {
     const headers: Record<string, string> = { Accept: "text/plain" }
     if (config.token !== undefined) headers.Authorization = `Bearer ${config.token()}`
 
-    const response = await fetch(`${config.server}${path}`, { method: "GET", headers })
-    if (response.status === 404 || response.status === 400) return ""
-    if (!response.ok)
-      throw new KubeError(response.status, path, (await response.text()).slice(0, 500))
-    return await response.text()
+    const { status, text } = await send(`${config.server}${path}`, "GET", headers, undefined, agent)
+    if (status === 404 || status === 400) return ""
+    if (status < 200 || status >= 300) throw new KubeError(status, path, text.slice(0, 500))
+    return text
   }
 
   return { apply, get, remove, logs }

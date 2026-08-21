@@ -100,11 +100,16 @@ rules:
   # belongs to the reaper with a project id in front of it, not to a job handler.
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get", "create"]
+    verbs: ["get", "create", "patch"]
   # Jobs: builds, and workflow sandboxes.
+  #
+  # `patch` as well as `create`, because this client uses server-side apply — a PATCH with
+  # `application/apply-patch+yaml`, which the API server authorizes as `patch` and not as `create`.
+  # Without it the grant looks complete and every apply is refused:
+  # `cannot patch resource "jobs" in API group "batch"`.
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "patch", "delete"]
   # Reading what a Job did. `pods/log` is a subresource and has to be named separately — without it
   # a sandbox runs, exits, and reports an exit code with no output, which for a failed HTTP call is
   # the entire diagnosis missing.
