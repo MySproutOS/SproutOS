@@ -43,6 +43,42 @@ const PERIOD_FORMAT = new Intl.DateTimeFormat("en-US", {
  * With no burn there is nothing to run out of, so the meter is full and the label says so rather
  * than dividing by zero and claiming infinity days.
  */
+/**
+ * How much runway a balance buys at a burn rate, and what to call it.
+ *
+ * Pulled out of the hook so the three cases can be asserted. They are not symmetrical:
+ *
+ * - **Overdrawn** is the one a real customer reaches, and the one the original missed. It divided a
+ *   negative balance by the burn and rendered `~-24 days at current burn`. Nobody has minus
+ *   twenty-four days of runway; they have none, and they have already been billed for the
+ *   difference. Checked before the division rather than clamped after it — `Math.max(0, …)` on the
+ *   label would say "~0 days", which reads as "about to run out" rather than "already did".
+ * - **No burn** has nothing to run out of, so the meter is full and the label says so rather than
+ *   dividing by zero and claiming infinity days.
+ * - **Burning** is the ordinary case: whole days, floored, because "3.7 days" is a precision
+ *   nobody has.
+ */
+export function creditRunway(
+  availableMicroUsd: bigint,
+  burnPerDayMicroUsd: bigint,
+): { percentRemaining: number; label: string } {
+  if (availableMicroUsd <= 0n) {
+    return { percentRemaining: 0, label: "Out of credit — top up to keep running" }
+  }
+
+  if (burnPerDayMicroUsd <= 0n) {
+    return { percentRemaining: 100, label: "No usage recorded yet" }
+  }
+
+  const days = Number(availableMicroUsd / burnPerDayMicroUsd)
+
+  return {
+    // Full means a month of runway, which is a thing a person can act on.
+    percentRemaining: Math.max(0, Math.min(100, Math.round((days / 30) * 100))),
+    label: `~${days} ${days === 1 ? "day" : "days"} at current burn`,
+  }
+}
+
 export function useCreditBalance(orgSlug: string) {
   const balance = useQuery(getV1OrgsByOrgSlugBillingBalanceOptions({ path: { orgSlug } }))
   const usage = useQuery(getV1OrgsByOrgSlugBillingUsageOptions({ path: { orgSlug } }))
@@ -50,8 +86,7 @@ export function useCreditBalance(orgSlug: string) {
   const available = balance.data === undefined ? 0n : BigInt(balance.data.availableMicroUsd)
   const burnPerDay = usage.data === undefined ? 0n : BigInt(usage.data.burnPerDayMicroUsd)
 
-  const days = burnPerDay > 0n ? Number(available / burnPerDay) : null
-  const percent = days === null ? 100 : Math.max(0, Math.min(100, Math.round((days / 30) * 100)))
+  const runway = creditRunway(available, burnPerDay)
 
   return {
     isPending: balance.isPending || usage.isPending,
@@ -65,11 +100,8 @@ export function useCreditBalance(orgSlug: string) {
         ? undefined
         : ({
             balanceMicros: available,
-            percentRemaining: percent,
-            runwayLabel:
-              days === null
-                ? "No usage recorded yet"
-                : `~${days} ${days === 1 ? "day" : "days"} at current burn`,
+            percentRemaining: runway.percentRemaining,
+            runwayLabel: runway.label,
           } satisfies CreditBalance),
   }
 }

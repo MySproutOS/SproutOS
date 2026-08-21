@@ -16,9 +16,32 @@
 # It is off by default and nothing in the repository turned it on, because nothing in the repository
 # had ever created a Knative Service.
 #
-# Enabled rather than `allowed`: `allowed` lets a Service omit the field, and a tenant deployment
-# that quietly runs without a hypervisor is exactly the outcome worth making impossible. The
-# renderer always sets it (`lib/typescript/deploy/src/knative.ts`).
+# ## `kubernetes.podspec-tolerations`
+#
+# The same gate, for `spec.template.spec.tolerations`, and it was not obvious that it was needed
+# because until this cluster the tolerations never appeared in the Service at all. A RuntimeClass
+# carries its own `scheduling.tolerations`, which Kubernetes merges into the pod *after* Knative has
+# validated the Service — so on a Kata cluster the toleration arrives without Knative ever seeing
+# it. Where there is no runtime class to carry it, the renderer has to set it directly, and Knative
+# refuses: `must not set the field(s): spec.template.spec.tolerations`.
+#
+# GKE Sandbox taints its nodes `sandbox.gke.io/runtime=gvisor:NoSchedule`. Without this flag a
+# tenant revision on such a node stays Pending forever.
+#
+# ## A correction
+#
+# This file used to claim that `enabled` was chosen over `allowed` because "`allowed` lets a Service
+# omit the field, and a tenant deployment that quietly runs without a hypervisor is exactly the
+# outcome worth making impossible."
+#
+# That is not what the values mean. Knative's extended-PodSpec flags take `enabled`, `allowed` or
+# `disabled`, and the first two both mean *permitted*; neither makes a field mandatory. Nothing here
+# has ever prevented a Service from omitting `runtimeClassName`, and as of the GKE Sandbox work the
+# renderer omits it deliberately when the cluster has no runtime class to name.
+#
+# What actually keeps customer code off the shared host kernel is the node pool: gVisor here, Kata
+# where `kata-deploy` is installed, and where neither exists the isolation is the tenant namespace
+# and its NetworkPolicies — stated plainly rather than implied by a flag that does not enforce it.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -28,3 +51,4 @@ metadata:
     app.kubernetes.io/part-of: sproutos
 data:
   kubernetes.podspec-runtimeclassname: "enabled"
+  kubernetes.podspec-tolerations: "enabled"
