@@ -51,6 +51,29 @@ spec:
                 configMapKeyRef:
                   name: platform-config
                   key: aws-region
+            # AWS credentials, and only where there is no better way to get them.
+            #
+            # `@lib/envelope` talks to AWS KMS, and on EKS the right answer is IRSA: the pod's
+            # projected token is exchanged for a role and no key material exists anywhere. That is
+            # why both of these are `optional: true` — on EKS the Secret is absent, these resolve to
+            # nothing, and the SDK's credential chain finds the projected token on its own.
+            #
+            # On GKE and AKS there is no IRSA, and the control plane's envelope encryption is
+            # AWS-only. A cluster on another cloud therefore needs a real key pair to reach KMS, or
+            # the OAuth callback fails at the last step of sign-in with `MissingKeyError` — after the
+            # user has already authorized. Named here rather than left to whoever debugs it.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+                  optional: true
             # The two public origins.
             #
             # `NEXT_PUBLIC_HOST_URL` is not decoration on a server process: `utils/env.ts` derives
@@ -244,6 +267,44 @@ spec:
               value: https://CONTROL_PLANE_HOST
             - name: SESSION_COOKIE_DOMAIN
               value: SESSION_COOKIE_DOMAIN
+            # The website is not a thin shell. Its OAuth callback runs `@lib/envelope` to encrypt the
+            # GitHub access token before it touches the database, so it needs the same key the API
+            # does. Without it the callback throws `MissingKeyError` *after* GitHub has redirected
+            # back with a valid code — the user has authorized, and the last step of sign-in is the
+            # one that fails.
+            - name: KMS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: kms-key-id
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: aws-region
+            # AWS credentials, and only where there is no better way to get them.
+            #
+            # `@lib/envelope` talks to AWS KMS, and on EKS the right answer is IRSA: the pod's
+            # projected token is exchanged for a role and no key material exists anywhere. That is
+            # why both of these are `optional: true` — on EKS the Secret is absent, these resolve to
+            # nothing, and the SDK's credential chain finds the projected token on its own.
+            #
+            # On GKE and AKS there is no IRSA, and the control plane's envelope encryption is
+            # AWS-only. A cluster on another cloud therefore needs a real key pair to reach KMS, or
+            # the OAuth callback fails at the last step of sign-in with `MissingKeyError` — after the
+            # user has already authorized. Named here rather than left to whoever debugs it.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+                  optional: true
             - name: GITHUB_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -348,6 +409,29 @@ spec:
                 configMapKeyRef:
                   name: platform-config
                   key: aws-region
+            # AWS credentials, and only where there is no better way to get them.
+            #
+            # `@lib/envelope` talks to AWS KMS, and on EKS the right answer is IRSA: the pod's
+            # projected token is exchanged for a role and no key material exists anywhere. That is
+            # why both of these are `optional: true` — on EKS the Secret is absent, these resolve to
+            # nothing, and the SDK's credential chain finds the projected token on its own.
+            #
+            # On GKE and AKS there is no IRSA, and the control plane's envelope encryption is
+            # AWS-only. A cluster on another cloud therefore needs a real key pair to reach KMS, or
+            # the OAuth callback fails at the last step of sign-in with `MissingKeyError` — after the
+            # user has already authorized. Named here rather than left to whoever debugs it.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+                  optional: true
             - name: BUILD_REGISTRY
               value: IMAGE_REGISTRY
             - name: VALKEY_URL

@@ -42,6 +42,18 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# The control plane's own origin, inlined into both SPAs.
+#
+# It is where a signed-out visitor is sent — `${VITE_NEXTJS_URL}/login?next=…` — and the repo-root
+# `.env` holds `http://localhost:3000` for development. Without this the deployed dashboard bounced
+# every visitor to their own machine, after a sign-in that had otherwise completely succeeded.
+#
+# `NEXT_PUBLIC_HOST_URL` is the same fact under the name the server side already uses; the two are
+# derived from one build argument so they cannot disagree about where this deployment lives.
+ARG NEXT_PUBLIC_HOST_URL
+ENV NEXT_PUBLIC_HOST_URL=$NEXT_PUBLIC_HOST_URL
+ENV VITE_NEXTJS_URL=$NEXT_PUBLIC_HOST_URL
+
 # The two SPAs, into this app's `public/`.
 #
 # **This is how the authenticated product reaches a browser, and it was missing.** `proxy.ts`
