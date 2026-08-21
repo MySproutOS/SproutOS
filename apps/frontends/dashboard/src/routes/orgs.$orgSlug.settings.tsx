@@ -31,6 +31,9 @@ function SettingsLayout() {
         <Link to="/orgs/$orgSlug/settings/members" params={{ orgSlug }} className={tabClassName}>
           Members
         </Link>
+        <Link to="/orgs/$orgSlug/settings/agent" params={{ orgSlug }} className={tabClassName}>
+          Agent
+        </Link>
         <Link to="/orgs/$orgSlug/settings/api-keys" params={{ orgSlug }} className={tabClassName}>
           API keys
         </Link>
