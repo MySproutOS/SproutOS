@@ -41,3 +41,15 @@ this platform's constraints, and none announces itself.
 | [0002](0002-images-that-had-never-run.md) | Every image was broken                     | Building and running them    |
 | [0003](0003-manifests-never-applied.md)   | Manifests that had never met an API server | `kubectl apply`              |
 | [0004](0004-defaults-that-do-not-fit.md)  | Upstream defaults that do not survive here | Running Knative and GKE      |
+
+## Running it on more than one cloud
+
+`bin/cloud-smoke.sh` runs the whole of this against any cluster, so "it works on AWS" and "it works
+on GCP" mean the same thing. It was written after doing the same sequence by hand on GKE and AKS,
+and the reason it exists is in the table above: **the differences between clouds are never where
+anyone expects.**
+
+Not one of them was a manifest problem. A Pod Security Standard on one, a ResourceQuota forbidding a
+priority class on another, a CNI that accepts NetworkPolicy and ignores it on a third, a node service
+account that cannot pull from the registry in the same project. Each was found by applying the same
+files somewhere new and watching a different thing break.
