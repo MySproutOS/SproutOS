@@ -22,6 +22,9 @@
     "worker": "tsx watch src/worker.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "catalog:",
+    "@aws-sdk/client-kms": "catalog:",
+    "@clickhouse/client": "^1.23.1",
     "@hono/node-server": "^2.1.1",
     "@lib/agent": "workspace:*",
     "@lib/analyzer": "workspace:*",
@@ -44,10 +47,13 @@
     "@utils/crypto": "workspace:*",
     "@utils/numbers": "workspace:*",
     "bullmq": "^6.1.2",
+    "dotenv": "^17.4.2",
     "hono": "catalog:",
     "hono-typebox-openapi": "^0.2.1",
     "ioredis": "^6.0.0",
     "kysely": "catalog:",
+    "openai": "catalog:",
+    "pg": "^8.23.0",
     "stripe": "catalog:",
     "typebox": "catalog:",
     "uuid": "catalog:"

@@ -36,6 +36,29 @@ RUN pnpm --filter @api/internal run build
 # file. That is pulled onto every node, on every deploy.
 RUN pnpm deploy --filter=@api/internal --prod --legacy /out
 
+# Every externalised dependency must resolve from where the bundle will run.
+#
+# `build.mjs` leaves real npm packages out of the bundle so they keep their own directories — a
+# package that resolves files relative to itself breaks when inlined. That is only safe if the
+# package is actually *there* at runtime, and `pnpm deploy` hoists this app's declared dependencies
+# and nothing else. A dependency reached only through a workspace library was therefore externalised
+# and then missing, which fails on the first request that touches it rather than at startup.
+#
+# `@anthropic-ai/claude-agent-sdk` is how this was found: bundled, it could not locate the sibling
+# package holding its native binary, and the error named the wrong libc. Externalised but
+# undeclared, it would have been `ERR_MODULE_NOT_FOUND` mid-agent-turn instead. Checked here, it is
+# a failed build with the package's name in it.
+RUN node --input-type=module -e " \
+  import { createRequire } from 'node:module'; \
+  import { readFileSync } from 'node:fs'; \
+  const require = createRequire('/out/package.json'); \
+  const deps = Object.keys(JSON.parse(readFileSync('/out/package.json','utf8')).dependencies ?? {}); \
+  const missing = deps.filter((name) => { try { require.resolve(name + '/package.json'); return false } catch { \
+    try { require.resolve(name); return false } catch { return true } } }); \
+  if (missing.length > 0) { console.error('unresolvable from /out:', missing.join(', ')); process.exit(1) } \
+  console.log(deps.length + ' dependencies resolve from /out'); \
+"
+
 FROM node:24-alpine AS runtime
 # `tini` as PID 1. Node does not reap zombies and does not forward SIGTERM to children, so without
 # it a rolling deploy waits out the full termination grace period on every pod.

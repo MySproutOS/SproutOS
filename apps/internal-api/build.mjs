@@ -24,20 +24,90 @@
  * directory, and they break when moved.
  *
  * So the external list is computed: every dependency whose version is not `workspace:*`.
+ *
+ * **Transitively**, which it was not. The list came from this app's own `dependencies`, and a
+ * workspace package is bundled *in* — so `@lib/agent`'s dependency on
+ * `@anthropic-ai/claude-agent-sdk` was neither declared here nor externalised, and esbuild inlined
+ * it. The SDK then could not find the sibling package holding its native binary, because after
+ * bundling there is no sibling and no package directory to be relative to. The failure was
+ * `Native CLI binary for linux-x64 not found` inside an agent turn — a message about the wrong
+ * libc, from a bundler problem, three layers from its cause.
+ *
+ * The rule was already written down one paragraph up: "Real npm dependencies must stay external …
+ * they break when moved." It is just as true of a dependency reached through a workspace package,
+ * and the first version only applied it to the direct ones.
  */
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 
 import { build } from "esbuild"
+
+/** The workspace root, two directories up from `apps/internal-api`. */
+const ROOT = resolve(process.cwd(), "..", "..")
 
 const entry = process.argv[2] ?? "src/index.ts"
 const outfile = process.argv[3] ?? "build/index.js"
 
-const manifest = /** @type {{ dependencies?: Record<string, string> }} */ (
-  JSON.parse(readFileSync("package.json", "utf8"))
-)
-const external = Object.entries(manifest.dependencies ?? {})
-  .filter(([, version]) => !version.startsWith("workspace:"))
-  .map(([name]) => name)
+/**
+ * Every third-party dependency reachable from this app, following workspace packages through.
+ *
+ * A workspace package is bundled, so its own third-party dependencies end up in this bundle too and
+ * must be externalised exactly as this app's are. Walked rather than listed, because the alternative
+ * is copying every library's dependencies into every app that uses it and keeping them in step.
+ *
+ * @param {string} manifestPath
+ * @returns {string[]}
+ */
+function externalDependencies(manifestPath) {
+  /** @type {Set<string>} */
+  const external = new Set()
+  /** @type {Set<string>} */
+  const visited = new Set()
+
+  /** @param {string} path */
+  function walk(path) {
+    if (visited.has(path)) return
+    visited.add(path)
+
+    const manifest = /** @type {{ dependencies?: Record<string, string> }} */ (
+      JSON.parse(readFileSync(path, "utf8"))
+    )
+
+    for (const [name, version] of Object.entries(manifest.dependencies ?? {})) {
+      if (!version.startsWith("workspace:")) {
+        external.add(name)
+        continue
+      }
+      /*
+        Followed through pnpm's symlink, not `require.resolve`.
+
+        `require.resolve("@lib/agent/package.json")` throws: these packages publish an `exports` map
+        that lists `.` and `./*` and not `./package.json`, and Node honours that — a manifest is not
+        an export unless it says so. Reading the file through the symlink sidesteps the map entirely
+        and is what pnpm's layout guarantees is there.
+
+        The path cannot be guessed from the name either. `@ui/base` lives at
+        `lib/typescript/ui/base` and `@utils/crypto` at `lib/typescript/utils/crypto`; a guess that
+        missed would silently skip that package's dependencies, which is exactly the bug this
+        function exists to fix.
+      */
+      const nested = join(dirname(path), "node_modules", name, "package.json")
+      if (existsSync(nested)) {
+        walk(nested)
+        continue
+      }
+      // Hoisted to the workspace root instead, which is where pnpm puts a package that nothing
+      // else shadows.
+      const hoisted = join(ROOT, "node_modules", name, "package.json")
+      if (existsSync(hoisted)) walk(hoisted)
+    }
+  }
+
+  walk(manifestPath)
+  return [...external]
+}
+
+const external = externalDependencies("package.json")
 
 await build({
   entryPoints: [entry],
