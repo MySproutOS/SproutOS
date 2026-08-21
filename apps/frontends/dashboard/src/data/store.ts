@@ -22,14 +22,18 @@ export type StoreListing = {
   author: string
   installs: string
   /**
-   * Null when nobody has estimated it.
+   * Null when there is no honest estimate yet.
    *
-   * Not `0n`: zero renders as `$0.00`, which tells a customer this is free to run. Estimating it
-   * would mean guessing how much compute a project a stranger wrote will use, and a number someone
-   * plans around has to come from a curator's declared figure or the metered cost of existing
-   * forks. Neither exists yet, and a plausible invented one is worse than an honest absence.
+   * Not `0n`: zero renders as `$0.00`, which tells a customer this is free to run. This used to be
+   * hardcoded null with a note saying an estimate "has to come from a curator's declared figure or
+   * the metered cost of existing forks. Neither exists yet." The second one exists now — forks
+   * carry `store_listing_id` and their usage is rolled up like anything else — so the API returns
+   * the median monthly cost of live forks, and null below a floor of three, where a "typical cost"
+   * would be one project's bill with a misleading label.
    */
   estimatedMonthlyCostMicros: bigint | null
+  /** How many forks the estimate came from. Zero when there is none. */
+  estimateSampleSize: number
   tags: string[]
 }
 
@@ -53,8 +57,15 @@ function glyphFor(name: string): string {
   return (name.trim()[0] ?? "·").toUpperCase()
 }
 
-/** See `StoreListing.estimatedMonthlyCostMicros`. */
-const UNKNOWN_MONTHLY_COST = null
+/**
+ * The API's string, as the bigint the renderer wants.
+ *
+ * A string on the wire because JSON has no integer wide enough to be trusted with money, and null
+ * when there is no estimate — which is a different thing from `"0"` and renders differently.
+ */
+function monthlyCost(value: string | null): bigint | null {
+  return value === null ? null : BigInt(value)
+}
 
 export function useStoreListings() {
   const query = useQuery(getV1StoreListingsOptions())
@@ -69,7 +80,8 @@ export function useStoreListings() {
       tagline: listing.tagline,
       author: listing.upstreamOwner,
       installs: INSTALLS.format(listing.installCount),
-      estimatedMonthlyCostMicros: UNKNOWN_MONTHLY_COST,
+      estimatedMonthlyCostMicros: monthlyCost(listing.estimatedMonthlyCostMicroUsd),
+      estimateSampleSize: listing.estimateSampleSize,
       tags: listing.tags,
     })),
   }
@@ -92,7 +104,8 @@ export function useStoreListing(slug: string) {
             tagline: listing.tagline,
             author: listing.upstreamOwner,
             installs: INSTALLS.format(listing.installCount),
-            estimatedMonthlyCostMicros: UNKNOWN_MONTHLY_COST,
+            estimatedMonthlyCostMicros: monthlyCost(listing.estimatedMonthlyCostMicroUsd),
+            estimateSampleSize: listing.estimateSampleSize,
             tags: listing.tags,
             description: listing.descriptionMd,
             repo: `${listing.upstreamOwner}/${listing.upstreamRepo}`,

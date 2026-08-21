@@ -183,14 +183,23 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(BigInt(row.githubRepoId)).toBeLessThan(0n)
     })
 
-    it("counts the fork against the listing and records the event", async () => {
+    it("records the attempt, and does not count it as an install", async () => {
+      /*
+        `install_count` used to move here, three lines after the job was queued and long before
+        anything had been forked. It is the number every store card shows as "INSTALLS", and it was
+        counting attempts: two failed forks of the same listing on the live deployment — both ending
+        in `NoUsableCredentialError`, neither leaving a repository anywhere — read as two installs.
+
+        It now moves in `runProvision`, behind a repository that exists. The event stays here,
+        because `fork_started` is exactly what this is.
+      */
       const listing = await db
         .selectFrom("storeListing")
         .select(["installCount"])
         .where("id", "=", listingId)
         .executeTakeFirstOrThrow()
 
-      expect(listing.installCount).toBe(1)
+      expect(listing.installCount).toBe(0)
 
       const event = await db
         .selectFrom("storeListingEvent")

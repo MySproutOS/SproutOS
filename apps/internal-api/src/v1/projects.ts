@@ -7,7 +7,6 @@ import {
   crudProjectEnvVar,
   crudProjectJob,
   crudProjectUpdateSuggestion,
-  crudStoreListing,
   crudStoreListingEvent,
   fetchAgentCredential,
   fetchGithubInstallation,
@@ -669,8 +668,20 @@ const app = new Hono()
         maxAttempts: 3,
       })
 
+      /*
+        The attempt, not the install.
+
+        `install_count` was incremented here, three lines after the job was queued and long before
+        anything had been forked. It is the number on every store card labelled "INSTALLS", and it
+        counted attempts: two failed forks of the same listing — both of which ended in
+        `NoUsableCredentialError` and left no repository anywhere — read as two installs. The
+        counter is now moved by `runProvision` when the fork actually succeeds.
+
+        The event stays here, because `fork_started` is exactly what this is, and its counterpart
+        `fork_completed` has been in the table's check constraint since the first migration with
+        nothing ever writing it.
+      */
       if (storeListingId !== null) {
-        await crudStoreListing(db).incrementInstallCount(storeListingId)
         await crudStoreListingEvent(db).record({
           kind: "fork_started",
           storeListingId,

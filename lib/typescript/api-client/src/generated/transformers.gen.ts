@@ -16,6 +16,7 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdResponse,
@@ -45,8 +46,10 @@ import type {
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
@@ -356,6 +359,22 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   return data
 }
 
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
+  data.lastActivityAt = new Date(data.lastActivityAt)
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
+  data.lastActivityAt = new Date(data.lastActivityAt)
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse> => {
@@ -421,6 +440,20 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespo
       item.createdAt = new Date(item.createdAt)
       return item
     })
+    return data
+  }
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse> => {
+    if (data.startedAt) {
+      data.startedAt = new Date(data.startedAt)
+    }
+    if (data.finishedAt) {
+      data.finishedAt = new Date(data.finishedAt)
+    }
+    data.createdAt = new Date(data.createdAt)
     return data
   }
 

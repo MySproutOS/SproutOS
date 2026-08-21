@@ -80,7 +80,7 @@ describe("mintRegistryCredential", () => {
   it("says what to fix when the metadata server refuses", async () => {
     await expect(
       mintRegistryCredential(AR, {
-        fetchImpl: (() => Promise.resolve(new Response("", { status: 403 }))),
+        fetchImpl: () => Promise.resolve(new Response("", { status: 403 })),
       }),
     ).rejects.toThrow(/Workload Identity/)
   })

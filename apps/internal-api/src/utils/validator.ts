@@ -111,5 +111,32 @@ export const validator = ((...args: Parameters<typeof base>) => {
     validator stops being checked at all, in a file whose whole subject is validation not being
     checked. `every` is Hono's own composer and keeps the types.
   */
-  return every(strict, inner as MiddlewareHandler)
+  return carryOpenApiMetadata(every(strict, inner as MiddlewareHandler), inner)
 }) as typeof base
+
+/**
+ * Move the library's OpenAPI metadata onto the composed handler.
+ *
+ * `hono-typebox-openapi`'s `validator` returns
+ * `Object.assign(middleware, { [uniqueSymbol]: { resolver } })`, and the spec generator walks the
+ * registered middlewares looking for that symbol. `every(strict, inner)` is a *new* function, so
+ * the symbol was left behind on `inner` and every route wrapped here vanished from the document's
+ * `requestBody`.
+ *
+ * The effect was invisible for as long as nobody regenerated: the committed client was produced
+ * before this wrapper existed and kept working. The served document did not. **25 of 28 bodied
+ * operations had no `requestBody` at all** — the three that survived were the routes still calling
+ * the library's validator directly — so anything generating a client from the live API got
+ * `body?: never` on almost every POST, PATCH and PUT the platform has.
+ *
+ * Copied by symbol rather than by name. `uniqueSymbol` is not exported, and reaching for it by
+ * description would break the moment the library renamed it; copying *every* own symbol is both
+ * correct now and correct if the library adds a second one.
+ */
+function carryOpenApiMetadata<T extends object>(composed: T, source: object): T {
+  for (const key of Object.getOwnPropertySymbols(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor !== undefined) Object.defineProperty(composed, key, descriptor)
+  }
+  return composed
+}

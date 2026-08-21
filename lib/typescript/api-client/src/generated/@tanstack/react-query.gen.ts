@@ -18,6 +18,7 @@ import {
   deleteV1OrgsByOrgSlugMembersByMemberId,
   deleteV1OrgsByOrgSlugProjectsByProjectId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   deleteV1OrgsByOrgSlugRolesByRoleId,
   deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
@@ -48,6 +49,9 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
   getV1OrgsByOrgSlugProjectsByProjectIdLogs,
   getV1OrgsByOrgSlugProjectsByProjectIdObservability,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandboxTree,
   getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId,
@@ -78,6 +82,7 @@ import {
   patchV1UserMePreferences,
   patchV1UserMeProfile,
   postV1AuthLogout,
+  postV1InternalMeteringEvents,
   postV1InvitesAccept,
   postV1OauthConsent,
   postV1OauthIntrospect,
@@ -94,9 +99,12 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflows,
+  postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
   postV1OrgsByOrgSlugRoles,
   postV1OrgsByOrgSlugServices,
   postV1OrgsByOrgSlugServicesByServiceIdConnection,
@@ -111,6 +119,7 @@ import {
   putV1OrgsByOrgSlugBillingAutoReload,
   putV1OrgsByOrgSlugMembersByMemberIdRoles,
   putV1OrgsByOrgSlugProjectsByProjectIdEnv,
+  putV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles,
   putV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraph,
 } from "../sdk.gen"
 import type {
@@ -137,6 +146,9 @@ import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdError,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   DeleteV1OrgsByOrgSlugResponse,
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdError,
@@ -220,6 +232,15 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityError,
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
@@ -307,6 +328,9 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
+  PostV1InternalMeteringEventsData,
+  PostV1InternalMeteringEventsError,
+  PostV1InternalMeteringEventsResponse,
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptError,
   PostV1InvitesAcceptResponse,
@@ -346,12 +370,21 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptData,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptError,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissData,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissError,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
@@ -403,6 +436,9 @@ import type {
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvError,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphError,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
@@ -2275,6 +2311,198 @@ export const getV1OrgsByOrgSlugDeploymentsByDeploymentIdOptions = (
     queryKey: getV1OrgsByOrgSlugDeploymentsByDeploymentIdQueryKey(options),
   })
 
+/**
+ * Stops the caller's dev sandbox
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+  Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdSandbox", options)
+
+/**
+ * The caller's dev sandbox for this project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdSandboxQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdSandboxQueryKey(options),
+  })
+
+/**
+ * Starts the caller's dev sandbox, or returns the running one
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles", options)
+
+/**
+ * Reads one file out of the workspace
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesQueryKey(options),
+  })
+
+/**
+ * Writes one file, creating its directories
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesMutation = (
+  options?: Partial<Options<PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData>>,
+): UseMutationOptions<
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError,
+  Options<PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse,
+    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError,
+    Options<PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdSandboxTree", options)
+
+/**
+ * Lists a directory in the workspace
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdSandboxTree({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeQueryKey(options),
+  })
+
+/**
+ * Runs a command in the sandbox. This is the terminal
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxExecMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
 ) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId", options)
@@ -2468,6 +2696,33 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsOptio
     },
     queryKey: getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsQueryKey(options),
   })
+
+/**
+ * Starts a run of the workflow's current version
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdData>,
@@ -3711,6 +3966,33 @@ export const postV1OauthRevokeMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OauthRevoke({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Accepts a signed batch of usage events from a metering agent
+ */
+export const postV1InternalMeteringEventsMutation = (
+  options?: Partial<Options<PostV1InternalMeteringEventsData>>,
+): UseMutationOptions<
+  PostV1InternalMeteringEventsResponse,
+  PostV1InternalMeteringEventsError,
+  Options<PostV1InternalMeteringEventsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1InternalMeteringEventsResponse,
+    PostV1InternalMeteringEventsError,
+    Options<PostV1InternalMeteringEventsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1InternalMeteringEvents({
         ...options,
         ...fnOptions,
         throwOnError: true,

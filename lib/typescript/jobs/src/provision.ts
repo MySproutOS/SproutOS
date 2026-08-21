@@ -10,7 +10,7 @@ import {
   type GitHubRepository,
   userGitHubCredential,
 } from "@lib/github"
-import { crudDeployment } from "@lib/dao"
+import { crudDeployment, crudStoreListing, crudStoreListingEvent } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 import { v7 } from "uuid"
@@ -231,6 +231,31 @@ export async function runProvision(
         .set({ state: "ready", updatedAt: new Date() })
         .where("id", "=", job.projectId)
         .execute()
+
+      /*
+        The install, counted where an install actually happened.
+
+        `POST /projects` used to increment `store_listing.install_count` immediately after queueing
+        this job — so a fork that failed at GitHub still moved the number every store card shows.
+        Here it is behind a repository that exists.
+
+        `fork_completed` has been a permitted `store_listing_event.kind` since the first migration
+        and nothing has ever written one; this is its writer.
+      */
+      const listing = await db
+        .selectFrom("project")
+        .select(["storeListingId"])
+        .where("id", "=", job.projectId)
+        .executeTakeFirst()
+
+      if (listing?.storeListingId != null) {
+        await crudStoreListing(db).incrementInstallCount(listing.storeListingId)
+        await crudStoreListingEvent(db).record({
+          kind: "fork_completed",
+          storeListingId: listing.storeListingId,
+          userId: payload.userId,
+        })
+      }
     }
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)

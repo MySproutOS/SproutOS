@@ -54,6 +54,17 @@ const storeListingCard = Type.Object({
   starsCount: Type.Number(),
   forksCount: Type.Number(),
   installCount: Type.Number(),
+  /**
+   * Micro-USD per month, as a string, or null when there is no honest estimate.
+   *
+   * A string because it is `bigint` on the way out and JSON has no integer wide enough to be
+   * trusted with money. Null rather than `"0"` when too few forks exist to say anything — the
+   * dashboard renders an em dash for null and `$0.00` for zero, and those mean opposite things to
+   * somebody deciding whether they can afford to run this.
+   */
+  estimatedMonthlyCostMicroUsd: Nullable(Type.String()),
+  /** How many live forks the estimate was computed from. Zero when there is no estimate. */
+  estimateSampleSize: Type.Number(),
   featuredRank: Nullable(Type.Number()),
   createdAt: Type.String({ format: "date-time" }),
   tags: Type.Array(Type.String()),
@@ -95,6 +106,17 @@ export const storeSchemaDetailResponse = Type.Object({
   starsCount: Type.Number(),
   forksCount: Type.Number(),
   installCount: Type.Number(),
+  /**
+   * Micro-USD per month, as a string, or null when there is no honest estimate.
+   *
+   * A string because it is `bigint` on the way out and JSON has no integer wide enough to be
+   * trusted with money. Null rather than `"0"` when too few forks exist to say anything — the
+   * dashboard renders an em dash for null and `$0.00` for zero, and those mean opposite things to
+   * somebody deciding whether they can afford to run this.
+   */
+  estimatedMonthlyCostMicroUsd: Nullable(Type.String()),
+  /** How many live forks the estimate was computed from. Zero when there is no estimate. */
+  estimateSampleSize: Type.Number(),
   featuredRank: Nullable(Type.Number()),
   upstreamPushedAt: Nullable(Type.String({ format: "date-time" })),
   lastSyncedAt: Nullable(Type.String({ format: "date-time" })),

@@ -28,7 +28,14 @@ const reachable = await (async () => {
 })()
 
 const created: {
-  table: "projectJob" | "deployment" | "project" | "repository" | "organization" | "user"
+  table:
+    | "projectJob"
+    | "deployment"
+    | "project"
+    | "repository"
+    | "organization"
+    | "user"
+    | "storeListing"
   id: string
 }[] = []
 
@@ -184,4 +191,68 @@ describe.runIf(reachable)("provisioning a fork", () => {
     // The sha came from a real lookup against the fork, not from the fork response.
     expect(github.seen.some((path) => path.includes("/commits/main"))).toBe(true)
   })
+
+  it("counts the install only once the repository exists", async () => {
+    /*
+      `install_count` is the number on every store card labelled "INSTALLS", and it was incremented
+      by the API three lines after queueing this job — before anything had been forked. Two failed
+      forks of the same listing, both ending in `NoUsableCredentialError` with no repository
+      anywhere, read as two installs on the live catalogue.
+    */
+    const listingId = v7()
+    await db
+      .insertInto("storeListing")
+      .values({
+        id: listingId,
+        slug: `prov-${listingId.slice(-10)}`,
+        name: "Fixture",
+        tagline: "A listing to count against",
+        descriptionMd: "",
+        upstreamHost: "github.com",
+        upstreamOwner: "acme",
+        upstreamRepo: "fixture",
+        upstreamRepoUrl: "https://github.com/acme/fixture",
+      })
+      .execute()
+    created.push({ table: "storeListing", id: listingId })
+
+    const seeded = await seed()
+    await db
+      .updateTable("project")
+      .set({ storeListingId: listingId })
+      .where("id", "=", seeded.projectId)
+      .execute()
+
+    const before = await installCount(listingId)
+    await runProvision(
+      db,
+      { projectJobId: seeded.projectJobId, userId: seeded.userId },
+      fakeGitHub("b".repeat(40)),
+    )
+
+    const deployment = await db
+      .selectFrom("deployment")
+      .select(["id"])
+      .where("projectId", "=", seeded.projectId)
+      .executeTakeFirstOrThrow()
+    created.push({ table: "deployment", id: deployment.id })
+
+    expect(await installCount(listingId)).toBe(before + 1)
+
+    const events = await db
+      .selectFrom("storeListingEvent")
+      .select(["kind"])
+      .where("storeListingId", "=", listingId)
+      .execute()
+    expect(events.map((row) => row.kind)).toEqual(["fork_completed"])
+  })
 })
+
+async function installCount(listingId: string): Promise<number> {
+  const row = await db
+    .selectFrom("storeListing")
+    .select(["installCount"])
+    .where("id", "=", listingId)
+    .executeTakeFirstOrThrow()
+  return row.installCount
+}

@@ -15,6 +15,7 @@ import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
 import { authMiddleware, authNoThrowMiddleware } from "../middleware"
 import { collectionResource, paramResource, requirePermission } from "../rbac"
+import { estimateListingCosts } from "@lib/billing"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwNotFound } from "../utils/http-exception"
 import { cursorPaginate, decodeCursor } from "../utils/pagination"
@@ -36,6 +37,34 @@ import {
 
 const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
+}
+
+/**
+ * The estimate a card shows, in the shape the schema wants.
+ *
+ * One query for the whole page rather than one per card — the same reason `enrich` in `projects.ts`
+ * batches. A listing with too few forks is absent from the map, and absent becomes `null`, which is
+ * the em dash the dashboard already renders correctly.
+ *
+ * `NoActivePriceBookError` is deliberately not caught. A deployment with no price book seeded shows
+ * every customer a free product, and the store is exactly where that lie would be most convincing.
+ */
+async function estimatesFor(
+  listingIds: readonly string[],
+): Promise<
+  (id: string) => { estimatedMonthlyCostMicroUsd: string | null; estimateSampleSize: number }
+> {
+  const estimates = await estimateListingCosts(db, listingIds)
+
+  return (id) => {
+    const estimate = estimates.get(id)
+    return estimate === undefined
+      ? { estimatedMonthlyCostMicroUsd: null, estimateSampleSize: 0 }
+      : {
+          estimatedMonthlyCostMicroUsd: estimate.monthlyMicroUsd.toString(),
+          estimateSampleSize: estimate.sampleSize,
+        }
+  }
 }
 
 /**
@@ -98,13 +127,18 @@ const app = new Hono()
     }),
     async (c) => {
       const results = await fetchStoreListing(db).featuredQuery(12).execute()
-      const tags = await fetchStoreListingTag(db).listForListings(results.map((row) => row.id))
+      const ids = results.map((row) => row.id)
+      const [tags, estimate] = await Promise.all([
+        fetchStoreListingTag(db).listForListings(ids),
+        estimatesFor(ids),
+      ])
 
       return c.json({
         data: results.map((row) => ({
           ...row,
           createdAt: row.createdAt.toISOString(),
           tags: tags.get(row.id) ?? [],
+          ...estimate(row.id),
         })),
       })
     },
@@ -156,13 +190,18 @@ const app = new Hono()
         pageSize: limit,
       })
 
-      const tags = await fetchStoreListingTag(db).listForListings(results.map((row) => row.id))
+      const ids = results.map((row) => row.id)
+      const [tags, estimate] = await Promise.all([
+        fetchStoreListingTag(db).listForListings(ids),
+        estimatesFor(ids),
+      ])
 
       return c.json({
         data: results.map((row) => ({
           ...row,
           createdAt: row.createdAt.toISOString(),
           tags: tags.get(row.id) ?? [],
+          ...estimate(row.id),
         })),
         nextCursor,
       })
@@ -187,7 +226,7 @@ const app = new Hono()
       const listing = await fetchStoreListing(db).getPublishedDetail(slug)
       if (!listing) return throwNotFound(c, "Listing not found")
 
-      const [tags, screenshots] = await Promise.all([
+      const [tags, screenshots, estimate] = await Promise.all([
         fetchStoreListingTag(db).listForListing(listing.id),
         fetchStoreListingScreenshot(db).listForListing(listing.id, [
           "id",
@@ -197,10 +236,12 @@ const app = new Hono()
           "height",
           "sortOrder",
         ]),
+        estimatesFor([listing.id]),
       ])
 
       return c.json({
         ...listing,
+        ...estimate(listing.id),
         category:
           listing.categoryId === null ||
           listing.categorySlug === null ||
@@ -295,13 +336,18 @@ export const storeModeration = new Hono()
         pageSize: limit,
       })
 
-      const tags = await fetchStoreListingTag(db).listForListings(results.map((row) => row.id))
+      const ids = results.map((row) => row.id)
+      const [tags, estimate] = await Promise.all([
+        fetchStoreListingTag(db).listForListings(ids),
+        estimatesFor(ids),
+      ])
 
       return c.json({
         data: results.map((row) => ({
           ...row,
           createdAt: row.createdAt.toISOString(),
           tags: tags.get(row.id) ?? [],
+          ...estimate(row.id),
         })),
         nextCursor,
       })
