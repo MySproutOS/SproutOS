@@ -66,3 +66,26 @@ the test passes just as happily on a cluster that ignores NetworkPolicy entirely
 The failure mode is not "the check was missing". In every case a check existed, ran, and was
 reported. The question worth asking of any check is not whether it passes but **what would have to
 be true for it to fail** — and then making that true, once, to watch it happen.
+
+## `drop constraint if exists` is a silent no-op against an index
+
+A migration replaced `region`'s unique index on `code` with one on `(provider, code)`, so that the
+same region code can exist on two clouds. It used `alter table region drop constraint if exists
+region_code_key`.
+
+On that database `region_code_key` was an **index**, not a constraint. `drop constraint` does not
+touch an index, and `if exists` turns the mismatch into silence. The migration applied cleanly,
+reported success, left the old index in place, and went on rejecting the second cloud's `us-east-1` —
+which is the entire thing it exists to permit.
+
+It was caught by trying the insert the migration was written to allow. It would not have been caught
+by reading the migration, by the migration succeeding, or by the schema having the new index —
+because it does have the new index. It has both.
+
+The related trap sits one step away: `ON CONFLICT (code)` in the region seed kept working for exactly
+as long as the stale index survived, and `ON CONFLICT` with no matching unique index is a _planning_
+error, so it fails on every row rather than on a duplicate.
+
+**Guard:** the down migration recreates `region_code_key` as an index, so `up` now drops both forms.
+A down-and-up cycle is what proves it — after one cycle the thing being dropped is no longer the
+thing the schema started with.

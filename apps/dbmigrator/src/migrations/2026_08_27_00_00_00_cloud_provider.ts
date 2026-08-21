@@ -40,9 +40,18 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       check (provider in ('aws', 'gcp', 'azure'))
   `.execute(db)
 
-  // The pair, not the code alone. `us-east-1` on two providers is two regions; `us-east-1` twice on
-  // AWS is a mistake.
+  /*
+    The pair, not the code alone. `us-east-1` on two providers is two regions; `us-east-1` twice on
+    AWS is a mistake.
+
+    Both statements, and both are needed. Kysely's `.unique()` on `createIndex` produces a unique
+    *index*, while a `UNIQUE` column in `createTable` produces a *constraint* — and `drop constraint`
+    is a silent no-op against an index. Written with only the constraint drop, this migration applied
+    cleanly, reported success, left `region_code_key` in place, and went on rejecting the second
+    cloud's `us-east-1` — which is the entire thing it exists to permit.
+  */
   await sql`alter table region drop constraint if exists region_code_key`.execute(db)
+  await sql`drop index if exists region_code_key`.execute(db)
   await db.schema
     .createIndex("region_provider_code_key")
     .on("region")
@@ -76,5 +85,7 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema.dropIndex("region_provider_code_key").execute()
   await sql`alter table region drop constraint if exists region_provider_check`.execute(db)
   await db.schema.alterTable("region").dropColumn("provider").execute()
+  // Recreated as an index rather than a constraint, which is why `up` has to drop both forms: after
+  // one down-and-up cycle the thing it is dropping is no longer the thing the schema started with.
   await db.schema.createIndex("region_code_key").on("region").column("code").unique().execute()
 }
