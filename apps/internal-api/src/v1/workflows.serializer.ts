@@ -54,6 +54,16 @@ export const workflowsSchemaVersionResponse = Type.Object({
 export const workflowsSchemaRun = Type.Object({
   id: UUID7String,
   status: Type.String(),
+  /**
+   * Why a failed run failed.
+   *
+   * `workflow_run.error` was written by the runner and dropped by this serializer, so a run showed
+   * `failed` and nothing else — the reason existed, in the row, and no API consumer could reach it.
+   * A status with no explanation is the thing a customer opens a support ticket about.
+   *
+   * `code` is for the UI to branch on, `message` for a person to read.
+   */
+  error: Nullable(Type.Object({ code: Type.String(), message: Type.String() })),
   triggerType: Type.String(),
   queueJobId: Nullable(Type.String()),
   bytesEnqueued: Type.String(),

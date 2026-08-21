@@ -1036,6 +1036,8 @@ async function ownedWorkflow(organizationId: string, workflowId: string) {
 type RunRow = {
   id: string
   status: string
+  // `jsonb`, so `unknown`. Narrowed by `presentRunError` rather than trusted.
+  error: unknown
   triggerType: string
   queueJobId: string | null
   bytesEnqueued: unknown
@@ -1049,6 +1051,10 @@ function presentRun(run: RunRow) {
   return {
     id: run.id,
     status: run.status,
+    // Narrowed rather than passed through: `error` is `jsonb`, so anything could be in it, and the
+    // schema promises `{code, message}`. A row written by an older runner keeps its status and
+    // loses only the explanation, which beats failing the whole response.
+    error: presentRunError(run.error),
     triggerType: run.triggerType,
     queueJobId: run.queueJobId,
     // bigint columns arrive as strings and leave as strings — a run that queued four gigabytes is
@@ -1059,6 +1065,14 @@ function presentRun(run: RunRow) {
     finishedAt: run.finishedAt?.toISOString() ?? null,
     createdAt: run.createdAt.toISOString(),
   }
+}
+
+/** `workflow_run.error` as the schema promises it, or null for anything that is not that shape. */
+function presentRunError(raw: unknown): { code: string; message: string } | null {
+  if (raw === null || typeof raw !== "object") return null
+  const value = raw as Record<string, unknown>
+  if (typeof value.code !== "string" || typeof value.message !== "string") return null
+  return { code: value.code, message: value.message }
 }
 
 function elapsedSeconds(from: Date | null, to: Date | null): number {
