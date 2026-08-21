@@ -72,3 +72,91 @@ metadata:
     app.kubernetes.io/part-of: sproutos
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::${ACCOUNT}:role/sproutos-worker
+---
+# What the worker is allowed to do to the cluster.
+#
+# **There were no Roles in this file** — only ServiceAccounts. A ServiceAccount with no binding can
+# do nothing at all, so every Job the worker exists to create would have been refused with a 403:
+# the image builds, the Knative deploys, and now the workflow sandboxes. The pods started, the
+# handlers ran, and the first thing any of them asked the API server for would have been denied.
+#
+# A ClusterRole rather than a Role per namespace, because tenant namespaces are created at runtime
+# — one per organization — and a Role has to exist before the namespace it is in. The grant is
+# therefore cluster-wide in scope and narrow in verbs, which is the trade this shape forces.
+#
+# What it deliberately does **not** include: secrets, configmaps, serviceaccounts, roles, or
+# anything in `rbac.authorization.k8s.io`. A worker that could read Secrets cluster-wide would be a
+# worker that could read every tenant's database password, and it never needs to — the credentials
+# it uses arrive in its own environment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sproutos-worker
+  labels:
+    app.kubernetes.io/part-of: sproutos
+rules:
+  # Namespaces, so provisioning a project can create the one its workloads live in. `create` and
+  # `get`; never `delete` — tearing down a namespace deletes everything in it, and that decision
+  # belongs to the reaper with a project id in front of it, not to a job handler.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create"]
+  # Jobs: builds, and workflow sandboxes.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  # Reading what a Job did. `pods/log` is a subresource and has to be named separately — without it
+  # a sandbox runs, exits, and reports an exit code with no output, which for a failed HTTP call is
+  # the entire diagnosis missing.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Knative Services, which is how a deployment becomes a URL.
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # The tenant NetworkPolicy, applied to a namespace as it is created. This is the grant that
+  # matters most: a sandbox in a namespace with no policy is a sandbox with no isolation, so the
+  # thing that creates the namespace must also be able to create the policy that protects it.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sproutos-worker
+  labels:
+    app.kubernetes.io/part-of: sproutos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sproutos-worker
+subjects:
+  - kind: ServiceAccount
+    name: worker
+    namespace: sproutos-system
+---
+# The API gets the same grant.
+#
+# It creates a project's namespace and its NetworkPolicy inside the request that creates the
+# project, so the customer sees the failure immediately rather than as a job that quietly did not
+# run. Same ClusterRole rather than a second copy: two lists of verbs for one set of operations is
+# two places for one of them to be forgotten.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sproutos-internal-api
+  labels:
+    app.kubernetes.io/part-of: sproutos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sproutos-worker
+subjects:
+  - kind: ServiceAccount
+    name: internal-api
+    namespace: sproutos-system

@@ -149,6 +149,20 @@ spec:
             # that never starts.
             - name: BUILD_REGISTRY
               value: ${IMAGE_REGISTRY}
+            # The runtime class a workflow sandbox gets, when the cluster has one.
+            #
+            # `kata-fc` on a cluster with a bare-metal node pool and `kata-deploy` installed; unset
+            # everywhere else, which is a supported configuration rather than a mistake. Unset, a
+            # sandbox is a tenant namespace, its NetworkPolicy, and a pod with no service-account
+            # token — real isolation, and not a VM. See `@lib/sandbox`.
+            - name: SANDBOX_RUNTIME_CLASS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: sandbox-runtime-class
+                  # Optional, because most clusters do not have one and a missing key must not put
+                  # the workload in CreateContainerConfigError.
+                  optional: true
             - name: GITHUB_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -479,6 +493,20 @@ spec:
                   optional: true
             - name: BUILD_REGISTRY
               value: ${IMAGE_REGISTRY}
+            # The runtime class a workflow sandbox gets, when the cluster has one.
+            #
+            # `kata-fc` on a cluster with a bare-metal node pool and `kata-deploy` installed; unset
+            # everywhere else, which is a supported configuration rather than a mistake. Unset, a
+            # sandbox is a tenant namespace, its NetworkPolicy, and a pod with no service-account
+            # token — real isolation, and not a VM. See `@lib/sandbox`.
+            - name: SANDBOX_RUNTIME_CLASS
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-config
+                  key: sandbox-runtime-class
+                  # Optional, because most clusters do not have one and a missing key must not put
+                  # the workload in CreateContainerConfigError.
+                  optional: true
             - name: VALKEY_URL
               valueFrom:
                 configMapKeyRef:

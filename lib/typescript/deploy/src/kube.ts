@@ -111,7 +111,45 @@ export function createKubeClient(config: KubeConfig) {
     }
   }
 
-  return { apply, get }
+  /**
+   * Delete, treating "already gone" as success.
+   *
+   * A caller deleting a Job it just watched finish is racing the API server's own garbage
+   * collection and whatever else touched the namespace. Turning that race into a thrown error
+   * would make cleanup the thing that fails a run that succeeded.
+   */
+  async function remove(path: string): Promise<void> {
+    try {
+      // `propagationPolicy=Background` so deleting a Job takes its pods with it. The default
+      // orphans them, which on a sandbox means a customer's container keeps running after the run
+      // that created it is over.
+      await request("DELETE", `${path}?propagationPolicy=Background`)
+    } catch (error) {
+      if (error instanceof KubeError && error.status === 404) return
+      throw error
+    }
+  }
+
+  /**
+   * A pod's logs, which are `text/plain` rather than JSON.
+   *
+   * Separate from `request` because that one parses every response as JSON, and log output is the
+   * one endpoint in this client that is not. Returns "" for a pod that has not started or has
+   * already been collected, because an absent log is not an error — it is a run with nothing to
+   * say, and the exit code is what decides.
+   */
+  async function logs(path: string): Promise<string> {
+    const headers: Record<string, string> = { Accept: "text/plain" }
+    if (config.token !== undefined) headers.Authorization = `Bearer ${config.token()}`
+
+    const response = await fetch(`${config.server}${path}`, { method: "GET", headers })
+    if (response.status === 404 || response.status === 400) return ""
+    if (!response.ok)
+      throw new KubeError(response.status, path, (await response.text()).slice(0, 500))
+    return await response.text()
+  }
+
+  return { apply, get, remove, logs }
 }
 
 /** Where a Knative Service lives in the API. */

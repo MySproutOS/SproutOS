@@ -2,6 +2,8 @@ import type { DB } from "@sproutos/db"
 import { NODE_RUNTIME, plannedSteps, type WorkflowGraph } from "@lib/workflows"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
+import { tenantNamespace } from "./deploy"
+import { runNodeInSandbox } from "./sandbox-node"
 import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
 
@@ -20,8 +22,14 @@ import type { JobHandler } from "./worker"
  * not under `deploy/tenant/network-policy.yaml`. Fetching a URL a customer typed, from here,
  * reaches the API server, every tenant's database, and `169.254.169.254`.
  *
- * So those steps are recorded as `skipped`, with the reason in `output`, and the run finishes
- * `failed` rather than `succeeded`. That is an honest state: the platform knows what the workflow
+ * They run in a **sandbox**: a Job in the tenant's own namespace, where
+ * `deploy/tenant/network-policy.yaml` denies by default and excludes every private range from
+ * egress, with no service-account token, no root, no capabilities and a deadline Kubernetes
+ * enforces. See `@lib/sandbox`.
+ *
+ * When there is no tenant namespace to run in — a workflow whose project was never provisioned —
+ * they are recorded as `skipped`, with the reason in `output`, and the run finishes `failed`
+ * rather than `succeeded`. That is an honest state: the platform knows what the workflow
  * wanted to do and says why it did not. Marking them succeeded would be the `project_job` bug again
  * — a run that reports success for work nobody did — and executing them here would be worse.
  *
@@ -83,25 +91,82 @@ export async function runWorkflow(
     .execute()
 
   let skipped = 0
+  let failedStep = false
+
+  /*
+    Where a sandboxed node runs.
+
+    Derived from the workflow's project, because the namespace *is* the boundary — see
+    `tenantNamespace`. `undefined` when the project has never been provisioned, which is the one
+    case those nodes still cannot run in.
+  */
+  const namespace = await tenantNamespaceFor(db, claimed.workflowId)
 
   try {
     for (const step of steps) {
       const runtime = NODE_RUNTIME[step.nodeType as keyof typeof NODE_RUNTIME]
 
       if (runtime === "sandbox") {
-        skipped += 1
+        if (namespace === undefined) {
+          /*
+            Nowhere safe to run it.
+
+            The tenant namespace is the boundary — without it there is no NetworkPolicy and the only
+            remaining option is this process, which is the one place this node must never run. A
+            workflow on a project that was never provisioned lands here.
+          */
+          skipped += 1
+          await db
+            .updateTable("workflowRunStep")
+            .set({
+              status: "skipped",
+              finishedAt: new Date(),
+              output: JSON.stringify({
+                reason: `${step.nodeType} needs a tenant namespace to run in`,
+                detail:
+                  "This node carries a customer-supplied destination or customer-supplied code, " +
+                  "and runs in a sandbox inside the project's own namespace. This project has no " +
+                  "namespace yet, so there is nowhere to run it that is not the control plane.",
+              }),
+            })
+            .where("id", "=", step.id)
+            .execute()
+          continue
+        }
+
+        await db
+          .updateTable("workflowRunStep")
+          .set({ status: "running", startedAt: new Date() })
+          .where("id", "=", step.id)
+          .execute()
+
+        const result = await runNodeInSandbox({
+          namespace,
+          runId: claimed.id,
+          nodeId: step.nodeId,
+          nodeType: step.nodeType,
+          config: (step.input as Record<string, unknown> | null) ?? {},
+        })
+
+        /*
+          A non-zero exit fails the step and the run. The output is recorded either way — the body
+          of a failed HTTP call is usually the only thing that says what went wrong, and discarding
+          it because the exit code was non-zero throws away the answer with the error.
+        */
+        const ok = result.exitCode === 0
+        if (!ok) failedStep = true
+
         await db
           .updateTable("workflowRunStep")
           .set({
-            status: "skipped",
+            status: ok ? "succeeded" : "failed",
             finishedAt: new Date(),
             output: JSON.stringify({
-              reason: `${step.nodeType} needs an isolated runtime`,
-              detail:
-                "This node carries a customer-supplied destination or customer-supplied code, " +
-                "and the job worker holds the control plane's credentials and is not under the " +
-                "tenant NetworkPolicy. It runs in a Kata sandbox, which is not wired to this " +
-                "queue yet.",
+              exitCode: result.exitCode,
+              timedOut: result.timedOut,
+              // Bounded: a step's output is read by a UI, and a customer's script can print
+              // megabytes. The pod's logs are the full record while the pod exists.
+              output: result.output.slice(0, 8000),
             }),
           })
           .where("id", "=", step.id)
@@ -151,7 +216,22 @@ export async function runWorkflow(
   if (skipped > 0) {
     await failRun(db, claimed.id, {
       code: "SandboxUnavailable",
-      message: `${skipped} of ${steps.length} steps need an isolated runtime that is not wired yet`,
+      message: `${skipped} of ${steps.length} steps need a tenant namespace this project does not have`,
+    })
+    return
+  }
+
+  /*
+    A step that exited non-zero fails the run.
+
+    Without this the run reported `succeeded` while carrying a step marked `failed` — a green run
+    list over a workflow that did not do what it says. The step's own output holds the reason; this
+    is only what makes the run agree with it.
+  */
+  if (failedStep) {
+    await failRun(db, claimed.id, {
+      code: "StepFailed",
+      message: "A step exited non-zero. Its output is recorded on the step.",
     })
     return
   }
@@ -204,4 +284,25 @@ export function stepRowsFor(
 
 export const workflowRunJob: JobHandler = async (job, { db, signal }) => {
   await runWorkflow(db, job.payload as WorkflowRunPayload, signal)
+}
+
+/**
+ * The namespace a workflow's sandboxed steps run in.
+ *
+ * `tenantNamespace` and the **organization** id, which is what `deployRevision` uses. The two have
+ * to agree exactly: `deploy/tenant/network-policy.yaml` is applied to the namespace the deploy
+ * created, and a sandbox in any other namespace is a sandbox with no policy on it — which is the
+ * whole isolation, silently absent. Keying this on the project id instead would have produced a
+ * namespace that does not exist, and the Job would have been rejected rather than unprotected,
+ * which is the lucky version of that mistake.
+ */
+async function tenantNamespaceFor(db: Kysely<DB>, workflowId: string): Promise<string | undefined> {
+  const row = await db
+    .selectFrom("workflow")
+    .innerJoin("project", "project.id", "workflow.projectId")
+    .select(["project.organizationId as organizationId"])
+    .where("workflow.id", "=", workflowId)
+    .executeTakeFirst()
+
+  return row === undefined ? undefined : tenantNamespace(row.organizationId)
 }

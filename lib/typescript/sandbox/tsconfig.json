@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    // `node` types and `dom` for `fetch`: this package talks to the Kubernetes API over HTTP and
+    // reads `process.env` for the runtime class. Copied from `@lib/deploy`, whose client it uses.
+    "lib": ["esnext", "dom"],
+    "types": ["node"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "allowImportingTsExtensions": false,
+    "paths": {},
+    "rootDir": "./src",
+    "outDir": "./build"
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

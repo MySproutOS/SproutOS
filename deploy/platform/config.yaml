@@ -20,6 +20,15 @@ data:
   # Secret.
   kms-key-id: ${KMS_KEY_ARN}
   aws-region: ${REGION}
+  # Deliberately absent rather than empty.
+  #
+  # A workflow sandbox names a runtime class only where one exists — `kata-fc` on a cluster with a
+  # bare-metal node pool and `kata-deploy` installed. Set it there. Everywhere else the key is
+  # missing, the env var reference is `optional: true`, and a sandbox is a tenant namespace, its
+  # NetworkPolicy and a pod with no service-account token. That is less isolation than a VM and it
+  # is stated rather than implied.
+  #
+  # sandbox-runtime-class: kata-fc
 ---
 apiVersion: v1
 kind: ConfigMap

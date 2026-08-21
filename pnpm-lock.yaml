@@ -763,6 +763,9 @@ importers:
       '@lib/reaper':
         specifier: workspace:*
         version: link:../reaper
+      '@lib/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@lib/workflows':
         specifier: workspace:*
         version: link:../workflows
@@ -892,6 +895,16 @@ importers:
       uuid:
         specifier: 'catalog:'
         version: 14.0.2
+
+  lib/typescript/sandbox:
+    dependencies:
+      '@lib/deploy':
+        specifier: workspace:*
+        version: link:../deploy
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
 
   lib/typescript/services:
     dependencies:

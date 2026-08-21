@@ -1,0 +1,27 @@
+{
+  "name": "@lib/sandbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Running untrusted code somewhere it cannot reach the control plane",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@lib/deploy": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "config": {}
+}
