@@ -47,6 +47,7 @@ this platform's constraints, and none announces itself.
 | [0008](0008-the-tenant-data-plane.md)              | The tenant data plane                      | Connecting through the proxy |
 | [0009](0009-somewhere-to-run-untrusted-code.md)    | Somewhere to run untrusted code            | Running a customer's node    |
 | [0010](0010-the-day-the-database-went-away.md)     | The day the database went away             | Rebuilding from empty        |
+| [0011](0011-the-platform-was-free.md)              | The platform was free                      | Asking what anything cost    |
 
 ## Running it on more than one cloud
 
