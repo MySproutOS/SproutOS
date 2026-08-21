@@ -64,3 +64,15 @@ export {
   type NeonConfig,
   type TimelineInfo,
 } from "./neon"
+export {
+  type ComputeAddress,
+  type ComputeLauncher,
+  createEndpoint,
+  dockerComputeLauncher,
+  neonComputeConfigFromEnv,
+  suspendEndpoint,
+  wakeEndpoint,
+  WAKE_TIMEOUT_MS,
+  WakeTimeoutError,
+  type NeonComputeConfig,
+} from "./neon-compute"

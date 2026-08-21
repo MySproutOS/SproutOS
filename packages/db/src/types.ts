@@ -462,6 +462,23 @@ export interface MemberRole {
   roleId: string
 }
 
+export interface NeonEndpoint {
+  backendServiceId: string
+  createdAt: Generated<Timestamp>
+  databaseBranchId: string | null
+  host: string | null
+  id: string
+  lastActiveAt: Timestamp | null
+  port: number | null
+  runtimeRef: string | null
+  startedAt: Timestamp | null
+  state: Generated<string>
+  suspendedAt: Timestamp | null
+  tenantId: string
+  timelineId: string
+  updatedAt: Generated<Timestamp>
+}
+
 export interface NeonShardPlacement {
   nodeId: number
   preferredAz: string | null
@@ -1234,6 +1251,7 @@ export interface DB {
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission
   memberRole: MemberRole
+  neonEndpoint: NeonEndpoint
   neonShardPlacement: NeonShardPlacement
   node: Node
   oauthAccessToken: OauthAccessToken

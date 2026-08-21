@@ -922,6 +922,8 @@ dependencies = [
  "md5",
  "pbkdf2",
  "rand 0.8.7",
+ "reqwest",
+ "serde",
  "sha2 0.10.9",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",

@@ -1,6 +1,6 @@
 # 0025 — Self-hosted Neon, and the control plane it requires
 
-**Status:** accepted. Storage and compute both running and verified locally.
+**Status:** accepted. Storage, compute and wake-on-connect all running and verified locally.
 
 ## Context
 

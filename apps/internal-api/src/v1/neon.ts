@@ -3,6 +3,12 @@ import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { Type } from "typebox"
+import {
+  dockerComputeLauncher,
+  neonComputeConfigFromEnv,
+  wakeEndpoint,
+  WakeTimeoutError,
+} from "@lib/services"
 import { validator } from "../utils/validator"
 
 /**
@@ -45,6 +51,13 @@ const notifyAttachRequest = Type.Object({
     minItems: 1,
   }),
 })
+
+const wakeRequest = Type.Object({
+  /** The `backend_service` this connection is for. The proxy parses it out of the username. */
+  backend_service_id: Type.String({ format: "uuid" }),
+})
+
+const wakeResponse = Type.Object({ host: Type.String(), port: Type.Integer() })
 
 const neon: Hono = new Hono().put(
   "/neon/notify-attach",
@@ -92,6 +105,62 @@ const neon: Hono = new Hono().put(
 
     // The controller only checks the status. Anything but 200 and it retries this reconcile forever.
     return c.json({})
+  },
+)
+
+/**
+ * Wake the compute for a backend service, and say where it answers.
+ *
+ * **Called by `services/pg-proxy` on every connection**, which is why the warm path has to be one
+ * indexed read — see `wakeEndpoint`. The proxy holds no Docker or Kubernetes credential; that is
+ * the point of it being a data-plane component, and a proxy that could create workloads would be a
+ * proxy whose compromise creates workloads. So it asks, and this answers.
+ */
+neon.post(
+  "/neon/wake",
+  describeRoute({
+    description:
+      "Start the compute for a backend service if it is suspended, and return where it answers. Called by pg-proxy, not by users.",
+    responses: {
+      200: {
+        description: "Where the compute is listening",
+        content: { "application/json": { schema: resolver(wakeResponse) } },
+      },
+      404: { description: "No Neon endpoint for that service" },
+      503: { description: "The compute did not become ready in time" },
+    },
+  }),
+  validator("json", wakeRequest),
+  async (c) => {
+    const { backend_service_id } = c.req.valid("json")
+
+    const endpoint = await db
+      .selectFrom("neonEndpoint")
+      .select("id")
+      .where("backendServiceId", "=", backend_service_id)
+      // The primary branch's endpoint. A preview branch has its own row and its own connection.
+      .orderBy("createdAt", "asc")
+      .executeTakeFirst()
+
+    if (endpoint === undefined) return c.json({ message: "No Neon endpoint" }, 404)
+
+    try {
+      const address = await wakeEndpoint(
+        db,
+        dockerComputeLauncher(neonComputeConfigFromEnv()),
+        endpoint.id,
+      )
+      return c.json(address)
+    } catch (cause) {
+      /*
+        503, not 500. A wake that timed out is a request worth retrying, and the proxy's client is
+        a Postgres driver that will reconnect — telling it the platform is broken would make it stop.
+      */
+      if (cause instanceof WakeTimeoutError) {
+        return c.json({ message: cause.message }, 503)
+      }
+      throw cause
+    }
   },
 )
 

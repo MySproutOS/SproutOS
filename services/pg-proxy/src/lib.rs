@@ -28,6 +28,23 @@ pub mod cancel;
 pub mod protocol;
 pub mod routing;
 pub mod scram;
+pub mod wake;
+
+/// The control-plane client that starts a suspended compute. See [`wake`].
+#[derive(Clone)]
+pub struct Waker {
+    pub client: reqwest::Client,
+    pub config: wake::WakeConfig,
+}
+
+impl Waker {
+    pub async fn wake_for(
+        &self,
+        backend_service_id: &str,
+    ) -> Result<Option<wake::ComputeAddress>, SessionError> {
+        wake::wake(&self.client, &self.config, backend_service_id).await
+    }
+}
 
 use std::sync::Arc;
 
@@ -105,6 +122,7 @@ pub async fn serve_connection(
     store: Arc<CredentialStore>,
     backend: BackendConfig,
     cancels: cancel::Registry,
+    waker: Option<Waker>,
 ) -> Result<(), SessionError> {
     let parameters = loop {
         match protocol::read_startup(&mut client).await? {
@@ -184,6 +202,28 @@ pub async fn serve_connection(
     }
 
     tracing::info!(user = %parameters.user, %database, "authenticated");
+
+    /*
+        Wake the compute, if this is a service that has one.
+
+        After authentication and never before: starting a compute costs real resources, and doing it
+        for an unauthenticated connection would let anyone who can reach the port spend the
+        platform's money by opening sockets.
+
+        `None` means the control plane has no Neon endpoint for this service, which is the normal
+        answer for every `sprout` database — the shared cluster below is where it belongs.
+    */
+    let backend = match &waker {
+        Some(waker) => match waker.wake_for(&identity.resource_id.to_string()).await? {
+            Some(address) => BackendConfig {
+                host: address.host,
+                port: address.port,
+                ..backend.clone()
+            },
+            None => backend,
+        },
+        None => backend,
+    };
 
     // Everything past here is the backend half: connect, drop privileges, splice. It is separated so
     // the authentication path above can be read on its own.
