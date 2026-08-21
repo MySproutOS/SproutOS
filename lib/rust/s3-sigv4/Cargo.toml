@@ -1,0 +1,14 @@
+[package]
+name = "sproutos-s3-sigv4"
+description = "AWS Signature Version 4: computing, verifying, and re-signing S3 requests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hex = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }

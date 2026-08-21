@@ -1455,6 +1455,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sproutos-s3-sigv4"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hmac 0.12.1",
+ "sha2 0.10.9",
+ "subtle",
+ "thiserror",
+]
+
+[[package]]
 name = "sproutos-service-credentials"
 version = "0.1.0"
 dependencies = [
