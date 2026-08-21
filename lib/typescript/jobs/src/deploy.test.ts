@@ -2,6 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
+import { BUILD_KINDS } from "./build"
 import { deployRevision, revisionOutcome, tenantNamespace } from "./deploy"
 import type { Job } from "./queue"
 
@@ -276,4 +277,63 @@ describe.skipIf(!reachable || !cluster)("deployRevision against a real cluster",
     expect(after.url).toMatch(/^http:\/\/[^.]+\.sprout\.run$/)
     expect(after.knativeRevision).not.toBeNull()
   }, 240_000)
+})
+
+/*
+  The link the pipeline was missing.
+
+  `buildImage` was written, registered in `PLATFORM_HANDLERS`, and only ever enqueued *by itself* as
+  a recheck of a build already running — the first one had no origin. `POST /deployments` created a
+  row, enqueued `deployRevision`, and this handler marked it `building` and returned. It stayed
+  `building` forever, so no project this platform forked could ever deploy.
+
+  Asserted on the enqueue rather than on the status: `building` was always written correctly, and
+  the status was the half that worked.
+*/
+describe("a deployment with no image yet", () => {
+  it("starts the build instead of waiting for one nobody asked for", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const { deploymentId } = await seed({ imageUri: null })
+    await deployRevision()({ payload: { deploymentId }, attempt: 1 } as never, context)
+
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select(["id"])
+      .where("kind", "=", BUILD_KINDS.image)
+      .where(sql`payload ->> 'deploymentId'`, "=", deploymentId)
+      .execute()
+    expect(queued).toHaveLength(1)
+
+    // And it is still marked building, which was always correct.
+    const row = await db
+      .selectFrom("deployment")
+      .select(["status"])
+      .where("id", "=", deploymentId)
+      .executeTakeFirst()
+    expect(row?.status).toBe("building")
+  })
+
+  /*
+    Keyed on the deployment, so redeploying something already building joins the build in flight
+    rather than paying for a second one.
+  */
+  it("does not start a second build for the same deployment", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const { deploymentId } = await seed({ imageUri: null })
+    const run = () =>
+      deployRevision()({ payload: { deploymentId }, attempt: 1 } as never, context)
+
+    await run()
+    await run()
+
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select(["id"])
+      .where("kind", "=", BUILD_KINDS.image)
+      .where(sql`payload ->> 'deploymentId'`, "=", deploymentId)
+      .execute()
+    expect(queued).toHaveLength(1)
+  })
 })

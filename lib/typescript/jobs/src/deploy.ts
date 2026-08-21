@@ -8,6 +8,7 @@ import {
   type KubeConfig,
 } from "@lib/deploy"
 import { ensureTenantNamespace } from "@lib/sandbox"
+import { BUILD_KINDS } from "./build"
 import { enqueue } from "./queue"
 import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
@@ -89,10 +90,32 @@ export function deployRevision(config?: KubeConfig): JobHandler {
 
     const { deployment, project } = found
 
-    // Nothing to deploy without an image. This is the build half's output, and its absence means
-    // the build has not finished rather than that anything is wrong.
+    /*
+      No image yet, so start the build. This is the link the pipeline was missing.
+
+      The comment that used to be here said the absence of an image "means the build has not
+      finished rather than that anything is wrong" — and it was right about the meaning and wrong
+      about the fact. **Nothing ever enqueued a build.** `buildImage` was written, registered in
+      `PLATFORM_HANDLERS`, and only ever enqueued *by itself*, as a recheck of a build already
+      running. The first one had no origin.
+
+      So `POST /deployments` created a row, enqueued `deployRevision`, and this branch marked it
+      `building` and returned. It stayed `building` forever. No project this platform has ever
+      forked could deploy — which is the product.
+
+      The other half of the loop was already here: when a build finishes it enqueues
+      `DEPLOY_KINDS.revision` for the same deployment, and this handler runs again with an image.
+      Keyed on the deployment so a redeploy of something already building joins the build in flight
+      rather than starting a second one.
+    */
     if (deployment.imageUri === null) {
       await crudDeployment(db).update(deploymentId, { status: "building" })
+      await enqueue(db, {
+        kind: BUILD_KINDS.image,
+        organizationId: project.organizationId,
+        payload: { deploymentId },
+        idempotencyKey: `${BUILD_KINDS.image}:${deploymentId}`,
+      })
       return
     }
 
