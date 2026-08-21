@@ -49,6 +49,7 @@ this platform's constraints, and none announces itself.
 | [0010](0010-the-day-the-database-went-away.md)     | The day the database went away             | Rebuilding from empty        |
 | [0011](0011-the-platform-was-free.md)              | The platform was free                      | Asking what anything cost    |
 | [0012](0012-the-last-mile-of-the-last-mile.md)     | The last mile of the last mile             | Driving the live site        |
+| [0013](0013-the-boundary-you-cannot-test.md)       | The boundary you cannot test               | Running the real client      |
 
 ## Running it on more than one cloud
 
