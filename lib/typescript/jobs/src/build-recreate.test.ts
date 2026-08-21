@@ -59,3 +59,31 @@ describe("waitForAbsence", () => {
     ).resolves.toBeUndefined()
   }, 40_000)
 })
+
+describe("revisionKey", () => {
+  it("lets a rebuilt image deploy, where the deployment id alone would not", async () => {
+    const { revisionKey } = await import("./build")
+    const { DEPLOY_KINDS } = await import("./deploy")
+
+    /*
+      A deployment whose first build failed has already had a `deploy.revision` job — enqueued by
+      provisioning and completed against no image. Keyed on the deployment alone, the later
+      successful build's enqueue collides with it and does nothing: the image is built, pushed, and
+      never deployed, with every job in the chain reporting success. Observed exactly that way —
+      `deploy.build succeeded`, `image_uri` set, no revision, no URL.
+    */
+    const deploymentId = "01a024ca-37d9-748c-8f6e-cf384fc24151"
+    const firstDeploy = `${DEPLOY_KINDS.revision}:${deploymentId}`
+
+    expect(revisionKey(deploymentId, "registry/app:abc")).not.toBe(firstDeploy)
+
+    // And a retry of the same build still collides, which is the property the key exists for: the
+    // image is named for the commit, so retrying produces the same tag.
+    expect(revisionKey(deploymentId, "registry/app:abc")).toBe(
+      revisionKey(deploymentId, "registry/app:abc"),
+    )
+    expect(revisionKey(deploymentId, "registry/app:def")).not.toBe(
+      revisionKey(deploymentId, "registry/app:abc"),
+    )
+  })
+})

@@ -33,7 +33,8 @@ type DeploymentRow = {
   url: string | null
   imageUri: string | null
   knativeRevision: string | null
-  runtimeClass: string
+  /** Null where the cluster has no runtime class to name; see `@lib/deploy`'s `DeploymentSpec`. */
+  runtimeClass: string | null
   createdAt: Date
   updatedAt: Date
 }

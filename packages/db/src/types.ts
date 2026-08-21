@@ -394,7 +394,7 @@ export interface Deployment {
   memoryMb: Generated<number>
   prNumber: number | null
   projectId: string
-  runtimeClass: Generated<string>
+  runtimeClass: string | null
   status: Generated<string>
   updatedAt: Generated<Timestamp>
   url: string | null
@@ -918,6 +918,7 @@ export interface StoreListing {
   id: string
   installCount: Generated<number>
   lastSyncedAt: Timestamp | null
+  lastVerifiedAt: Timestamp | null
   licenseSpdx: string | null
   name: string
   platform: Generated<string>
@@ -940,6 +941,7 @@ export interface StoreListing {
   upstreamPushedAt: Timestamp | null
   upstreamRepo: string
   upstreamRepoUrl: string
+  verificationError: string | null
 }
 
 export interface StoreListingEvent {

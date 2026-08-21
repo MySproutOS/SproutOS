@@ -19,8 +19,20 @@ export type DeploymentSpec = {
   /** Present on previews. */
   prNumber?: number | null
   imageUri: string
-  /** `kata-fc` or `kata-clh`. */
-  runtimeClass: string
+  /**
+   * The runtime class the pod names, or null for none.
+   *
+   * Optional, and this is the same correction `sandbox.runtime_class` needed twice. It defaulted to
+   * `kata-fc`, which is not a preference on a managed cluster — it is a claim. The `kata-fc`
+   * RuntimeClass carries `nodeSelector: katacontainers.io/kata-runtime=true` in its `scheduling`
+   * block, Kubernetes merges that into every pod naming the class, and no node in a GKE Sandbox
+   * cluster has that label. Every tenant revision was `didn't match Pod's node affinity/selector`
+   * — a scheduling message that mentions no runtime class, for a pod nobody asked to be a VM.
+   *
+   * Null means the pod is scheduled normally. What isolates a tenant then is the namespace, its
+   * NetworkPolicy, and — where the node pool provides it — gVisor.
+   */
+  runtimeClass: string | null
   containerConcurrency: number
   memoryMb: number
   maxDurationS: number
@@ -49,7 +61,8 @@ export type KnativeService = {
       */
       metadata: { labels: Record<string, string> }
       spec: {
-        runtimeClassName: string
+        runtimeClassName?: string
+        tolerations?: { key: string; operator: string; value: string; effect: string }[]
         containerConcurrency: number
         timeoutSeconds: number
         containers: {
@@ -152,10 +165,32 @@ export function knativeService(
           },
         },
         spec: {
+          /*
+            The taint a GKE Sandbox node carries.
+
+            `sandbox.gke.io/runtime=gvisor:NoSchedule` keeps ordinary workloads off a node running a
+            user-space kernel. A pod naming `runtimeClassName: gvisor` without this toleration stays
+            Pending with no indication that a taint rather than capacity is the reason.
+
+            Unconditional, matching `@lib/sandbox`'s spec for the same reason given there: a
+            toleration for a taint no node carries does nothing, and a conditional would be a second
+            place for the two to disagree.
+          */
+          tolerations: [
+            {
+              key: "sandbox.gke.io/runtime",
+              operator: "Equal",
+              value: "gvisor",
+              effect: "NoSchedule",
+            },
+          ],
           // The hypervisor, per ADR 0012: `kata-fc` for deploys, `kata-clh` for anything needing a
-          // live filesystem. Carried on the row rather than hardcoded because the choice differs
-          // per workload and is not something this renderer should be deciding.
-          runtimeClassName: deployment.runtimeClass,
+          // live filesystem, `gvisor` on a managed cluster. Carried on the row rather than
+          // hardcoded, and **omitted entirely when there is none** — `runtimeClassName: null` is
+          // not "no runtime class", it is a field the API server rejects.
+          ...(deployment.runtimeClass === null
+            ? {}
+            : { runtimeClassName: deployment.runtimeClass }),
           containerConcurrency: deployment.containerConcurrency,
           timeoutSeconds: deployment.maxDurationS,
           containers: [

@@ -113,3 +113,52 @@ describe("knativeService", () => {
     expect(service.metadata.name).toBe(hostLabel(project, production))
   })
 })
+
+describe("the runtime class", () => {
+  /*
+    `sandbox.runtime_class` needed this correction twice; `deployment.runtime_class` is the sibling
+    column and was left behind, defaulting to `kata-fc`.
+
+    On a managed cluster that is not a preference, it is a claim. The `kata-fc` RuntimeClass carries
+    `nodeSelector: katacontainers.io/kata-runtime=true` in its `scheduling` block, Kubernetes merges
+    that into every pod naming the class, and no GKE Sandbox node has that label — so every tenant
+    revision failed with `didn't match Pod's node affinity/selector`, a message that mentions no
+    runtime class at all, for a pod nobody asked to be a VM.
+  */
+  function specOf(runtimeClass: string | null) {
+    const service = knativeService(project, { ...production, runtimeClass }, "tenant-x")
+    return (
+      service.spec as {
+        template: {
+          spec: {
+            runtimeClassName?: string
+            tolerations?: { key: string; value: string }[]
+          }
+        }
+      }
+    ).template.spec
+  }
+
+  it("omits the field entirely when there is none, rather than sending null", () => {
+    // `runtimeClassName: null` is not "no runtime class" — it is a field the API server rejects.
+    expect(specOf(null)).not.toHaveProperty("runtimeClassName")
+  })
+
+  it("names the class when the cluster has one", () => {
+    expect(specOf("gvisor").runtimeClassName).toBe("gvisor")
+  })
+
+  it("tolerates the GKE Sandbox taint either way", () => {
+    // A pod naming `gvisor` without this stays Pending, with a taint rather than capacity as the
+    // reason and nothing saying so. Unconditional because a toleration for a taint no node carries
+    // does nothing, and a conditional would be a second place for the two to disagree.
+    for (const runtimeClass of [null, "gvisor"]) {
+      expect(specOf(runtimeClass).tolerations).toContainEqual({
+        key: "sandbox.gke.io/runtime",
+        operator: "Equal",
+        value: "gvisor",
+        effect: "NoSchedule",
+      })
+    }
+  })
+})

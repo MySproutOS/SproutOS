@@ -25,7 +25,14 @@ export const deploymentSchemaResponse = Type.Object({
   // they are the first thing anyone asks for when a deploy misbehaves.
   imageUri: Nullable(Type.String()),
   knativeRevision: Nullable(Type.String()),
-  runtimeClass: Type.String(),
+  /**
+   * The runtime class the pod names, or null.
+   *
+   * Nullable because a managed cluster without `kata-deploy` has none to name, and a deployment
+   * that claimed one was unschedulable — the RuntimeClass's own `scheduling.nodeSelector` is merged
+   * into the pod, so it was pinned to nodes that do not exist.
+   */
+  runtimeClass: Nullable(Type.String()),
   /**
    * Why the most recent build failed, in the words of whatever refused it.
    *

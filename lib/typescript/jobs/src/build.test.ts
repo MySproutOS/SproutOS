@@ -151,7 +151,10 @@ describe.skipIf(!reachable)("buildImage", () => {
     const queued = await db
       .selectFrom("backgroundJob")
       .select("id")
-      .where("idempotencyKey", "=", `deploy.revision:${deploymentId}`)
+      // Keyed on the image as well as the deployment. On the deployment alone the key is taken
+      // forever by the first attempt, so a deployment whose first build failed could never deploy
+      // the image a later build produced.
+      .where("idempotencyKey", "=", `deploy.revision:${deploymentId}:registry.test/acme/app:abc`)
       .execute()
 
     expect(queued).toHaveLength(1)

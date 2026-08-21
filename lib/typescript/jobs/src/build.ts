@@ -102,7 +102,7 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
         kind: DEPLOY_KINDS.revision,
         organizationId: project.organizationId,
         payload: { deploymentId },
-        idempotencyKey: `${DEPLOY_KINDS.revision}:${deploymentId}`,
+        idempotencyKey: revisionKey(deploymentId, deployment.imageUri),
       })
       return
     }
@@ -219,7 +219,7 @@ export function buildImage(config?: KubeConfig, settings?: BuildSettings): JobHa
           kind: DEPLOY_KINDS.revision,
           organizationId: project.organizationId,
           payload: { deploymentId },
-          idempotencyKey: `${DEPLOY_KINDS.revision}:${deploymentId}`,
+          idempotencyKey: revisionKey(deploymentId, imageUri(spec)),
         })
         return
       }
@@ -339,6 +339,25 @@ export async function buildFailureReason(
 
 function trim(value: string): string {
   return value.trim().slice(0, FAILURE_REASON_LIMIT)
+}
+
+/**
+ * The idempotency key for "deploy this image".
+ *
+ * Keyed on the deployment **and the image**, not the deployment alone.
+ *
+ * On the deployment alone, the key is taken forever by the first attempt. A deployment whose first
+ * build failed has already had a `deploy.revision` job — enqueued and completed against no image —
+ * so when a later build succeeds and pushes, the enqueue collides and does nothing. The image is
+ * built, pushed, and never deployed, with every job in the chain reporting success. Observed
+ * exactly that way: `deploy.build succeeded`, `image_uri` set, no revision, no URL.
+ *
+ * The image is the right discriminator because it is what actually changes. Retrying the same build
+ * produces the same tag — the image is named for the commit — so a retry still collides, which is
+ * the property the key was added for.
+ */
+export function revisionKey(deploymentId: string, image: string): string {
+  return `${DEPLOY_KINDS.revision}:${deploymentId}:${image}`
 }
 
 /**
