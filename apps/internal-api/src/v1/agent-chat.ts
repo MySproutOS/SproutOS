@@ -24,6 +24,7 @@ import {
 } from "@lib/github"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
+import { randomUUID } from "node:crypto"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver, validator } from "hono-typebox-openapi/typebox"
@@ -337,8 +338,21 @@ function describeFailure(error: unknown): string {
   if (error instanceof AgentNotConfiguredError) {
     return "No model credential is configured for this project."
   }
-  console.warn("agent turn failed", error)
-  return "The agent run failed."
+  /*
+    An incident id, logged beside the error and returned to the caller.
+
+    The message above stays deliberately opaque — an SDK error can carry a command line, a path on
+    the runner, or a fragment of a token — and that is the right call. What it cost was any way to
+    connect "the agent run failed" to the log line that says why: the first real failure here was
+    `spawn git ENOENT`, and finding it meant reading pod logs and guessing which request was the
+    user's.
+
+    A random id is not a secret and identifies nothing. It is the whole difference between a support
+    conversation that takes one grep and one that takes an afternoon.
+  */
+  const incidentId = randomUUID().slice(0, 8)
+  console.warn(`agent turn failed [${incidentId}]`, error)
+  return `The agent run failed. Reference ${incidentId} if you report this.`
 }
 
 /**

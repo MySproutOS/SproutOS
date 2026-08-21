@@ -39,7 +39,15 @@ RUN pnpm deploy --filter=@api/internal --prod --legacy /out
 FROM node:24-alpine AS runtime
 # `tini` as PID 1. Node does not reap zombies and does not forward SIGTERM to children, so without
 # it a rolling deploy waits out the full termination grace period on every pod.
-RUN apk add --no-cache tini
+# `git`, because the agent clones the customer's repository before a turn.
+#
+# `lib/typescript/agent/src/workspace.ts` shells out to `git clone --depth 1`, and the image had
+# only `tini`. The failure was `spawn git ENOENT` inside a handler, which surfaced to the browser as
+# `The agent run failed.` and to the operator as nothing at all until the pod's logs were read.
+#
+# `ca-certificates` alongside it: git over HTTPS to github.com needs a trust store, and the failure
+# without one is a TLS error that reads like a network problem.
+RUN apk add --no-cache tini git ca-certificates
 WORKDIR /app
 
 COPY --from=build /out/node_modules ./node_modules

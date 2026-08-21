@@ -164,6 +164,12 @@ spec:
                 secretKeyRef:
                   name: metering-ingest
                   key: hmac-key
+            # `HOME`, because the agent SDK and git both write under it — `~/.claude`,
+            # `~/.gitconfig`, `~/.cache`. The image's `node` user has `/home/node`, which the
+            # read-only root filesystem below makes unwritable, and neither tool degrades: git
+            # fails the clone and the SDK exits the process.
+            - name: HOME
+              value: /scratch
           resources:
             requests:
               cpu: 250m
@@ -201,6 +207,28 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 20
             failureThreshold: 3
+          volumeMounts:
+            # Writable space, because `readOnlyRootFilesystem: true` means there is none.
+            #
+            # `lib/typescript/agent/src/workspace.ts` clones a customer's repository into
+            # `mkdtemp(tmpdir())` before an agent turn. With the root read-only and nothing mounted,
+            # that `mkdtemp` fails and the process exits — the API pod died mid-request and nginx
+            # answered 502, which reads as an application bug rather than a missing volume.
+            #
+            # `emptyDir`, not a PVC: a checkout is per-turn, shallow and single-branch, and nothing
+            # here should survive a restart. `sizeLimit` so a large repository or a runaway agent
+            # cannot fill the node's disk and evict everything else on it.
+            - name: scratch
+              mountPath: /scratch
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 4Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -466,6 +494,10 @@ spec:
                 secretKeyRef:
                   name: github-oauth
                   key: client-secret
+            # Same reason as the API: fork upkeep (TASK 27) runs an agent turn, which clones the
+            # repository first.
+            - name: HOME
+              value: /scratch
           resources:
             requests:
               cpu: 250m
@@ -475,10 +507,22 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
-            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 4Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
