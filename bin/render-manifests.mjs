@@ -70,6 +70,7 @@ for (const name of [
   // may be brought up before its DNS exists, and because the same cluster is rendered for a staging
   // host and a production one from the same state.
   "CONTROL_PLANE_HOST",
+  "APEX_HOST",
   "API_HOST",
   "SESSION_COOKIE_DOMAIN",
   "TENANT_DOMAIN",

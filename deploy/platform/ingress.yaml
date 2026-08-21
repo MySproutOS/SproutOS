@@ -43,6 +43,14 @@ spec:
   tls:
     - hosts:
         - ${CONTROL_PLANE_HOST}
+        # The apex and `www`, on the same certificate.
+        #
+        # Three hosts on one `tls` entry means one certificate with three SANs, and cert-manager
+        # solves one HTTP-01 challenge per host. Splitting them into three entries would mean three
+        # certificates for one service and three separate chances to hit Let's Encrypt's rate limit
+        # on a cluster that gets rebuilt.
+        - ${APEX_HOST}
+        - www.${APEX_HOST}
       # Issued by cert-manager from the ClusterIssuer the bootstrap script installs. Named even
       # when TLS is not yet wired: an Ingress without a `tls` block serves the app over plaintext
       # and nothing warns, and a session cookie marked `Secure` is simply never sent.
@@ -55,6 +63,31 @@ spec:
           # SPA, the admin SPA and the shared routes are all decided there from the session cookie.
           # Splitting those prefixes across Ingress rules would put a second, dumber copy of that
           # routing table in a place that cannot see the cookie.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  name: http
+    # The apex, serving the same website.
+    #
+    # A separate rule rather than a wildcard host: `*.selloutjobs.com` would also match
+    # `api.selloutjobs.com` and every tenant preview, and an Ingress that claims hostnames belonging
+    # to other services is the kind of thing that works until the day it does not.
+    - host: ${APEX_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  name: http
+    - host: www.${APEX_HOST}
+      http:
+        paths:
           - path: /
             pathType: Prefix
             backend:

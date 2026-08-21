@@ -62,6 +62,15 @@ export const PLACEHOLDERS = [
     produces an app that looks signed out rather than an error.
   */
   "CONTROL_PLANE_HOST",
+  /**
+   * The registrable domain, without a subdomain: `selloutjobs.com`.
+   *
+   * Separate from `CONTROL_PLANE_HOST` rather than derived from it. Deriving would mean stripping a
+   * label, which is right for `app.example.com` and wrong for `app.example.co.uk` — the public
+   * suffix list exists because that problem has no shortcut. The `www` host is composed from this
+   * in the manifest, which is the one case where a prefix is unambiguous.
+   */
+  "APEX_HOST",
   "API_HOST",
   "SESSION_COOKIE_DOMAIN",
   // The suffix Knative Routes are served under. Distinct from `CONTROL_PLANE_HOST` on purpose:
