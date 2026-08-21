@@ -1,7 +1,7 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { hashGeneratedSecret, tenantUsername } from "./tenant-auth"
 import { ServiceNotProvisionedError } from "./types"
 import { SecretNotRecoverableError, valkeyDriver, type ValkeyServiceConfig } from "./valkey"
@@ -334,5 +334,46 @@ describe.skipIf(!reachable)("valkey driver", () => {
     const driver = valkeyDriver(db, config)
     const { backendServiceId } = await service()
     await expect(driver.details(backendServiceId)).rejects.toThrow(ServiceNotProvisionedError)
+  })
+})
+
+/*
+  The statuses this platform writes to `backend_service` have to be ones the database permits.
+
+  A fourth instance of the same mistake: `project.teardown` set `status: "deleted"`, which
+  `backend_service_status_check` does not allow, and the teardown failed on a redundant update after
+  having correctly destroyed the service. `sandbox_state_check`, `sandbox_runtime_class_check` and
+  `workflow_run_step_status_check` all got the same treatment for the same reason.
+
+  Read out of `pg_constraint` rather than copied here, because a copy is a second place for the
+  vocabulary to drift.
+*/
+describe("the backend service status vocabulary", () => {
+  let allowed: string[] = []
+  let readable = false
+
+  beforeAll(async () => {
+    try {
+      const row = await sql<{ def: string }>`
+        select pg_get_constraintdef(oid) as def
+        from pg_constraint where conname = 'backend_service_status_check'
+      `.execute(db)
+      allowed = [...(row.rows[0]?.def.matchAll(/'([a-z_]+)'/g) ?? [])].map((m) => m[1])
+      readable = allowed.length > 0
+    } catch {
+      /* not reachable */
+    }
+  })
+
+  it("writes only statuses the check constraint allows", ({ skip }) => {
+    if (!readable) skip()
+    // Every status the drivers and the teardown set.
+    const written = ["provisioning", "active", "suspended", "deleting"]
+    expect(written.filter((status) => !allowed.includes(status))).toEqual([])
+  })
+
+  it("does not allow the word the teardown first used", ({ skip }) => {
+    if (!readable) skip()
+    expect(allowed).not.toContain("deleted")
   })
 })

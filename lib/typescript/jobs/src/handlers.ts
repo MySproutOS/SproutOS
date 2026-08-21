@@ -3,6 +3,7 @@ import { observabilityConfigured } from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import { Redis } from "ioredis"
 import { type DispatchResult, dispatchQueues, type MasterQueueClient } from "./dispatch"
+import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
@@ -61,6 +62,7 @@ export const JOB_KINDS = {
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
   dispatchQueues: "queue.dispatch",
+  tearDownProject: TEARDOWN_KIND,
 } as const
 
 /**
@@ -262,6 +264,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
   [JOB_KINDS.dispatchQueues]: dispatchQueuesJob,
+  [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
 }
 

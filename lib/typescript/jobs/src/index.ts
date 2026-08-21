@@ -67,3 +67,4 @@ export {
   type MasterQueueClient,
   type Unstartable,
 } from "./dispatch"
+export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"

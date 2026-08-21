@@ -917,6 +917,26 @@ const app = new Hono()
 
       if (result === null) return throwNotFound(c, "Project not found")
 
+      /*
+        The teardown this route has always claimed to queue.
+
+        The description says "queues its teardown", the message below says "a teardown job is
+        queued", and `scheduledForTeardown` names nine kinds of resource. Nothing was enqueued:
+        `provisionProject.remove` wrote a `project_job` of kind `delete` that no handler knew, and
+        `JOB_KINDS` had no teardown at all. A deleted project's Knative service went on serving
+        traffic and billing, its sandbox went on holding a node, and its backend services stayed
+        provisioned with live credentials.
+
+        Keyed on the project, so a second delete of the same project collides rather than tearing
+        it down twice.
+      */
+      await enqueue(db, {
+        kind: JOB_KINDS.tearDownProject,
+        idempotencyKey: `${JOB_KINDS.tearDownProject}:${projectId}`,
+        payload: { projectId, projectJobId: result.job.id },
+        maxAttempts: 5,
+      })
+
       const repositoryNote = result.repositoryReleased
         ? "The repository was released with it."
         : `The repository is still used by ${result.remainingProjectsOnRepository} other project(s) and was kept.`
