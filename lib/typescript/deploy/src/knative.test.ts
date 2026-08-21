@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { fileMounts } from "./env"
 import { type DeploymentSpec, hostLabel, knativeService, type ProjectSpec } from "./knative"
 
 const project: ProjectSpec = {
@@ -226,5 +227,48 @@ describe("the environment", () => {
     const service = knativeService(project, production, "tenant-x")
 
     expect(service.spec.template.spec.containers[0]).not.toHaveProperty("envFrom")
+  })
+})
+
+describe("config files in the pod spec", () => {
+  /*
+    `glance`, a real store listing forked and built by this platform, exited with
+    `reading /app/config/glance.yml: no such file or directory`. The platform could deliver
+    variables and not files, and most self-hostable software is configured by a file.
+  */
+  const mounts = fileMounts([{ path: "/app/config/glance.yml", contents: "x" }])
+
+  function specOf(configFiles: typeof mounts, envSecretName: string | null) {
+    return knativeService(project, { ...production, configFiles, envSecretName }, "tenant-x").spec
+      .template.spec
+  }
+
+  it("mounts each file off the configuration Secret", () => {
+    const spec = specOf(mounts, "env-abcdef-0123456789ab")
+
+    expect(spec.volumes).toEqual([
+      { name: "sproutos-config", secret: { secretName: "env-abcdef-0123456789ab" } },
+    ])
+    expect(spec.containers[0]?.volumeMounts).toEqual(mounts)
+  })
+
+  it("omits volumes entirely when there are no files", () => {
+    // Not `[]`. Knative validates the field, and an empty array is one the webhook rejects rather
+    // than "no volumes" — the same correction `envFrom` needed.
+    const spec = specOf([], "env-abcdef-0123456789ab")
+
+    expect(spec).not.toHaveProperty("volumes")
+    expect(spec.containers[0]).not.toHaveProperty("volumeMounts")
+  })
+
+  it("does not declare a volume with no Secret behind it", () => {
+    /*
+      A `secretName` of `null` renders as a volume referencing an object that does not exist, and the
+      pod fails with `CreateContainerConfigError` — which reads like a broken image.
+
+      It should not be reachable: files and variables share one Secret, so files imply a name. It is
+      asserted because "should not be reachable" is how the `runtimeClassName: null` bug got in.
+    */
+    expect(specOf(mounts, null)).not.toHaveProperty("volumes")
   })
 })

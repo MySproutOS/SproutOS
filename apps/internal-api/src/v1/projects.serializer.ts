@@ -22,6 +22,12 @@ export const projectSchemaEnvVarParam = Type.Object({
   envVarId: UUID7String,
 })
 
+export const projectSchemaFileParam = Type.Object({
+  orgSlug: OrgSlug,
+  projectId: UUID7String,
+  fileId: UUID7String,
+})
+
 export const projectSchemaSuggestionParam = Type.Object({
   orgSlug: OrgSlug,
   projectId: UUID7String,
@@ -275,6 +281,55 @@ export const projectSchemaEnvVarRevealResponse = Type.Object({
   key: Type.String(),
   target: Type.String(),
   value: Type.String(),
+})
+
+export const projectSchemaFileListResponse = Type.Object({
+  data: Type.Array(
+    Type.Object({
+      id: UUID7String,
+      path: Type.String(),
+      target: Type.String(),
+      isSecret: Type.Boolean(),
+      createdAt: Type.String({ format: "date-time" }),
+      updatedAt: Type.String({ format: "date-time" }),
+    }),
+  ),
+})
+
+/**
+ * A config file's path inside the container, and its contents.
+ *
+ * The path is absolute because it is the container's, not ours — `/app/config/glance.yml` means
+ * whatever the image says it means, and a relative path has no anchor to resolve against. `..` is
+ * refused because a `subPath` mount containing it is rejected by the kubelet, which fails the pod
+ * with a message about the volume rather than about the file. The column carries the same check, so
+ * a row written by hand cannot get past it either.
+ *
+ * A megabyte, because a Secret is capped at 1 MiB *in total* and a config file that approaches that
+ * is not a config file. The limit is here rather than only at the cluster so the customer is told
+ * which file is too large, instead of watching the whole deployment fail to apply.
+ */
+export const projectSchemaFileRequest = Type.Object({
+  path: Type.String({ minLength: 2, maxLength: 4096, pattern: "^/(?!.*\\.\\.)[^\\0]*[^/]$" }),
+  contents: Type.String({ maxLength: 1_000_000 }),
+  target: Type.Optional(EnvTarget),
+  isSecret: Type.Optional(Type.Boolean()),
+})
+
+export const projectSchemaFileResponse = Type.Object({
+  id: UUID7String,
+  path: Type.String(),
+  target: Type.String(),
+  isSecret: Type.Boolean(),
+  createdAt: Type.String({ format: "date-time" }),
+  updatedAt: Type.String({ format: "date-time" }),
+})
+
+export const projectSchemaFileRevealResponse = Type.Object({
+  id: UUID7String,
+  path: Type.String(),
+  target: Type.String(),
+  contents: Type.String(),
 })
 
 export const projectSchemaSuggestionListQuery = Type.Object({

@@ -41,3 +41,31 @@ export async function openEnvVarValue(
 ): Promise<string> {
   return await open(sealed, envVarContext(projectId, key))
 }
+
+/**
+ * The encryption context every `project_file` value is bound to.
+ *
+ * The same shape as a variable's and deliberately a *different* `field`, so a ciphertext lifted from
+ * `project_env_var` and written into `project_file` fails to open rather than quietly yielding a
+ * value under a name nobody set. Both are authenticated — by KMS on the unwrap and as GCM additional
+ * data on the decrypt — so this is a real boundary, not a label.
+ */
+export function projectFileContext(projectId: string, path: string): Record<string, string> {
+  return { field: "project_file.contents", path, projectId }
+}
+
+export async function sealProjectFileContents(
+  projectId: string,
+  path: string,
+  contents: string,
+): Promise<SealedValue> {
+  return await seal(contents, projectFileContext(projectId, path))
+}
+
+export async function openProjectFileContents(
+  projectId: string,
+  path: string,
+  sealed: SealedValue,
+): Promise<string> {
+  return await open(sealed, projectFileContext(projectId, path))
+}

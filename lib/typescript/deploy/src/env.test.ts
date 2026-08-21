@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest"
 import {
+  configFileKey,
+  configSecret,
   environmentDigest,
   environmentSecret,
   environmentSecretName,
+  fileMounts,
   isDeliverableKey,
+  isMountablePath,
 } from "./env"
 
 const project = "01a01e12-1700-76ac-9713-dd208babdf5a"
@@ -96,5 +100,98 @@ describe("environmentSecret", () => {
     const secret = environmentSecret(project, "tenant-x", [{ key: "A", value: "1" }])
 
     expect(secret.metadata.labels["sproutos.dev/project"]).toBe(project)
+  })
+})
+
+describe("config files", () => {
+  /*
+    The half of configuration that did not exist. `glance` — forked, built and pushed by this
+    platform — exited with `reading /app/config/glance.yml: no such file or directory`. Most
+    self-hostable software is configured by a file and reads nothing from the environment.
+  */
+  it("does not use the path as the Secret key", () => {
+    // A Secret key must match `[-._a-zA-Z0-9]+`, so a path is not a legal key at all.
+    expect(configFileKey("/app/config/glance.yml")).toMatch(/^[-._a-zA-Z0-9]+$/)
+  })
+
+  it("gives two paths a flattening would have merged different keys", () => {
+    // Mapping `/` to any legal character makes `a/b` and `a.b` the same key, and the second file
+    // silently overwrites the first. A digest cannot collide by construction.
+    expect(configFileKey("/a/b")).not.toBe(configFileKey("/a.b"))
+  })
+
+  it("mounts each file with subPath, so the image's own directory survives", () => {
+    /*
+      Mounting a Secret at a directory *replaces* it — everything the image shipped in
+      `/app/config` disappears, which for most projects is the defaults the config was meant to sit
+      beside.
+    */
+    const mounts = fileMounts([{ path: "/app/config/glance.yml", contents: "x" }])
+
+    expect(mounts[0]).toEqual({
+      name: "sproutos-config",
+      mountPath: "/app/config/glance.yml",
+      subPath: configFileKey("/app/config/glance.yml"),
+      readOnly: true,
+    })
+  })
+
+  it("mounts read-only", () => {
+    // A writable mount would let an application persist changes that vanish on the next revision,
+    // which is worse than not being able to write because it looks like it worked.
+    expect(fileMounts([{ path: "/a/b.yml", contents: "x" }])[0]?.readOnly).toBe(true)
+  })
+
+  it("changes the Secret name when a file's contents change", () => {
+    // Same reason as a variable: otherwise the pod spec is unchanged, Knative cuts no revision, and
+    // the running container keeps the old config.
+    const before = configSecret("p", "ns", [], [{ path: "/a.yml", contents: "one" }])
+    const after = configSecret("p", "ns", [], [{ path: "/a.yml", contents: "two" }])
+
+    expect(after.metadata.name).not.toBe(before.metadata.name)
+  })
+
+  it("changes the name when the same contents move to a different path", () => {
+    // Two files with identical contents at different paths are different configurations.
+    const here = configSecret("p", "ns", [], [{ path: "/a.yml", contents: "x" }])
+    const there = configSecret("p", "ns", [], [{ path: "/b.yml", contents: "x" }])
+
+    expect(there.metadata.name).not.toBe(here.metadata.name)
+  })
+
+  it("carries variables and files in one Secret", () => {
+    // One thing — the configuration this revision ran with. Two objects would mean two names, two
+    // hashes, and a revision that could be pinned to half a configuration.
+    const secret = configSecret(
+      "p",
+      "ns",
+      [{ key: "PORT", value: "8080" }],
+      [{ path: "/a.yml", contents: "x" }],
+    )
+
+    expect(secret.stringData.PORT).toBe("8080")
+    expect(secret.stringData[configFileKey("/a.yml")]).toBe("x")
+  })
+
+  it("agrees with environmentSecret when there are no files", () => {
+    // `environmentSecret` calls through, so a revision's name does not change just because files
+    // became possible.
+    const entries = [{ key: "A", value: "1" }]
+
+    expect(environmentSecret("p", "ns", entries)).toEqual(configSecret("p", "ns", entries, []))
+  })
+})
+
+describe("isMountablePath", () => {
+  it("accepts an absolute path with a filename", () => {
+    expect(isMountablePath("/app/config/glance.yml")).toBe(true)
+  })
+
+  it("refuses what the kubelet would refuse at mount time", () => {
+    // A relative path has no anchor inside the container, and a `subPath` containing `..` fails the
+    // pod with a message about the volume rather than about the file.
+    for (const path of ["app/config.yml", "/app/../etc/passwd", "/app/", "/", ""]) {
+      expect(isMountablePath(path)).toBe(false)
+    }
   })
 })

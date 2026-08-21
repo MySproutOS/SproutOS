@@ -1,4 +1,9 @@
-import { openEnvVarValue, sealEnvVarValue } from "@lib/envelope"
+import {
+  openEnvVarValue,
+  openProjectFileContents,
+  sealEnvVarValue,
+  sealProjectFileContents,
+} from "@lib/envelope"
 import { JOB_KINDS, enqueue } from "@lib/jobs"
 import {
   allocateProjectSlug,
@@ -6,6 +11,7 @@ import {
   crudAuditLog,
   crudProject,
   crudProjectEnvVar,
+  crudProjectFile,
   crudProjectJob,
   crudProjectUpdateSuggestion,
   crudStoreListingEvent,
@@ -13,6 +19,7 @@ import {
   fetchGithubInstallation,
   fetchProject,
   fetchProjectEnvVar,
+  fetchProjectFile,
   fetchProjectJob,
   fetchProjectUpdateSuggestion,
   fetchRepository,
@@ -52,12 +59,17 @@ import {
   projectSchemaCreateRequest,
   projectSchemaCreateResponse,
   projectSchemaDeleteResponse,
+  projectSchemaEntryResponse,
   projectSchemaEnvVarListResponse,
   projectSchemaEnvVarParam,
   projectSchemaEnvVarRequest,
   projectSchemaEnvVarResponse,
-  projectSchemaEntryResponse,
   projectSchemaEnvVarRevealResponse,
+  projectSchemaFileListResponse,
+  projectSchemaFileParam,
+  projectSchemaFileRequest,
+  projectSchemaFileResponse,
+  projectSchemaFileRevealResponse,
   projectSchemaIdParam,
   projectSchemaJobListResponse,
   projectSchemaJobParam,
@@ -1236,6 +1248,210 @@ const app = new Hono()
         before: { key: row.key, target: row.target },
         organizationId: organization.id,
         resourceSrn: srnFor("project", organization.id, "env_var", row.id),
+        ...auditContext(c),
+      })
+
+      return c.json({})
+    },
+  )
+  /*
+    Config files.
+
+    Mirrors `/env` deliberately — same four verbs, same permissions, same audit shape, same `target`
+    semantics. They are the same idea delivered through a different mechanism, and a customer who
+    has understood one should not have to learn the other.
+
+    It exists because `glance`, a real store listing this platform forked and built, exited with
+    `reading /app/config/glance.yml: no such file or directory`. Most self-hostable software is
+    configured by a file and reads nothing from the environment.
+  */
+  .get(
+    "/:orgSlug/projects/:projectId/files",
+    describeRoute({
+      description: "Lists a project's config files. Contents are never included.",
+      responses: {
+        200: {
+          description: "File paths and metadata, without contents",
+          content: { "application/json": { schema: resolver(projectSchemaFileListResponse) } },
+        },
+        403: { description: "Caller lacks project:read", ...errorResponse },
+        404: { description: "No such project in this organization", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaIdParam),
+    requirePermission("project:read", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const organization = c.var.organization
+      const { projectId } = c.req.valid("param")
+
+      const project = await fetchProject(db).getInOrganization(organization.id, projectId, ["id"])
+      if (!project) return throwNotFound(c, "Project not found")
+
+      const rows = await fetchProjectFile(db).listForProject(project.id)
+
+      return c.json({
+        data: rows.map((row) => ({
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        })),
+      })
+    },
+  )
+  .put(
+    "/:orgSlug/projects/:projectId/files",
+    describeRoute({
+      description:
+        "Writes one config file, mounted at its path in the container. Contents are envelope-encrypted before storage.",
+      responses: {
+        200: {
+          description: "The stored file, without its contents",
+          content: { "application/json": { schema: resolver(projectSchemaFileResponse) } },
+        },
+        403: { description: "Caller lacks credential:write", ...errorResponse },
+        404: { description: "No such project in this organization", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaIdParam),
+    validator("json", projectSchemaFileRequest),
+    requirePermission("credential:write", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const user = c.var.user
+      const organization = c.var.organization
+      const { projectId } = c.req.valid("param")
+      const json = c.req.valid("json")
+
+      const project = await fetchProject(db).getInOrganization(organization.id, projectId, ["id"])
+      if (!project) return throwNotFound(c, "Project not found")
+
+      const sealed = await sealProjectFileContents(project.id, json.path, json.contents)
+
+      const row = await crudProjectFile(db).upsert({
+        contents: sealed,
+        // Sealed regardless; this records how to *display* it. A config file is a mixture by
+        // nature — layout next to API keys — and asking a customer to classify the whole file is
+        // asking them to get it wrong in the direction that costs something.
+        isSecret: json.isSecret ?? true,
+        path: json.path,
+        projectId: project.id,
+        target: json.target ?? "all",
+      })
+
+      // The audit row names the file and never its contents. `before`/`after` land in `jsonb` on an
+      // append-only table, so contents written here would be a plaintext secret that literally
+      // cannot be deleted.
+      await crudAuditLog(db).record({
+        action: "credential:write",
+        actorUserId: user.id,
+        after: { isSecret: row.isSecret, path: row.path, target: row.target },
+        before: null,
+        organizationId: organization.id,
+        resourceSrn: srnFor("project", organization.id, "file", row.id),
+        ...auditContext(c),
+      })
+
+      return c.json({
+        createdAt: row.createdAt.toISOString(),
+        id: row.id,
+        isSecret: row.isSecret,
+        path: row.path,
+        target: row.target,
+        updatedAt: row.updatedAt.toISOString(),
+      })
+    },
+  )
+  .post(
+    "/:orgSlug/projects/:projectId/files/:fileId/reveal",
+    describeRoute({
+      description: "Returns one config file's decrypted contents. Written to the audit log.",
+      responses: {
+        200: {
+          description: "The file's contents",
+          content: { "application/json": { schema: resolver(projectSchemaFileRevealResponse) } },
+        },
+        403: { description: "Caller lacks credential:read", ...errorResponse },
+        404: { description: "No such file on this project", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaFileParam),
+    requirePermission("credential:read", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const user = c.var.user
+      const organization = c.var.organization
+      const { fileId, projectId } = c.req.valid("param")
+
+      const project = await fetchProject(db).getInOrganization(organization.id, projectId, ["id"])
+      if (!project) return throwNotFound(c, "Project not found")
+
+      const row = await fetchProjectFile(db).getSealed(project.id, fileId)
+      if (!row) return throwNotFound(c, "File not found")
+
+      let contents: string
+      try {
+        contents = await openProjectFileContents(project.id, row.path, {
+          ciphertext: row.contentsCiphertext,
+          kmsKeyId: row.contentsKmsKeyId,
+          wrappedDek: row.contentsWrappedDek,
+        })
+      } catch {
+        return throwError(
+          c,
+          500,
+          ErrorCode.OperationFailed,
+          "These contents could not be decrypted. They may have been sealed under a key that is no longer available.",
+        )
+      }
+
+      // Written after the decrypt succeeds and before the response is built. A reveal that is not
+      // in `audit_log` is a secret read that nobody can account for later.
+      await crudAuditLog(db).record({
+        action: "credential:read",
+        actorUserId: user.id,
+        after: { path: row.path, revealed: true, target: row.target },
+        before: null,
+        organizationId: organization.id,
+        resourceSrn: srnFor("project", organization.id, "file", row.id),
+        ...auditContext(c),
+      })
+
+      return c.json({ contents, id: row.id, path: row.path, target: row.target })
+    },
+  )
+  .delete(
+    "/:orgSlug/projects/:projectId/files/:fileId",
+    describeRoute({
+      description: "Removes one config file",
+      responses: {
+        200: {
+          description: "File removed",
+          content: { "application/json": { schema: resolver(EmptyObject) } },
+        },
+        403: { description: "Caller lacks credential:write", ...errorResponse },
+        404: { description: "No such file on this project", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaFileParam),
+    requirePermission("credential:write", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const user = c.var.user
+      const organization = c.var.organization
+      const { fileId, projectId } = c.req.valid("param")
+
+      const project = await fetchProject(db).getInOrganization(organization.id, projectId, ["id"])
+      if (!project) return throwNotFound(c, "Project not found")
+
+      const row = await fetchProjectFile(db).getMetadata(project.id, fileId)
+      if (!row) return throwNotFound(c, "File not found")
+
+      await crudProjectFile(db).remove(project.id, fileId)
+
+      await crudAuditLog(db).record({
+        action: "credential:write",
+        actorUserId: user.id,
+        after: { deleted: true },
+        before: { path: row.path, target: row.target },
+        organizationId: organization.id,
+        resourceSrn: srnFor("project", organization.id, "file", row.id),
         ...auditContext(c),
       })
 

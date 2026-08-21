@@ -1,10 +1,14 @@
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
-import { crudDeployment, fetchDeployment, fetchProjectEnvVar } from "@lib/dao"
+import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import {
+  type ConfigFile,
+  configSecret,
   type EnvironmentEntry,
-  environmentSecret,
+  type FileMount,
+  fileMounts,
   isDeliverableKey,
+  isMountablePath,
   secretPath,
   createKubeClient,
   inClusterConfig,
@@ -13,7 +17,7 @@ import {
   knativeServicePath,
   type KubeConfig,
 } from "@lib/deploy"
-import { openEnvVarValue } from "@lib/envelope"
+import { openEnvVarValue, openProjectFileContents } from "@lib/envelope"
 import { ensureTenantNamespace } from "@lib/sandbox"
 import { BUILD_KINDS } from "./build"
 import { enqueue } from "./queue"
@@ -47,9 +51,10 @@ export async function materializeEnvironment(
   projectId: string,
   namespace: string,
   target: string,
-): Promise<string | null> {
+): Promise<{ secretName: string | null; mounts: FileMount[] }> {
   const sealed = await fetchProjectEnvVar(db).listSealedForProject(projectId, target)
-  if (sealed.length === 0) return null
+  const sealedFiles = await fetchProjectFile(db).listSealedForProject(projectId, target)
+  if (sealed.length === 0 && sealedFiles.length === 0) return { secretName: null, mounts: [] }
 
   const entries: EnvironmentEntry[] = []
   const undeliverable: string[] = []
@@ -78,20 +83,42 @@ export async function materializeEnvironment(
     })
   }
 
+  const files: ConfigFile[] = []
+
+  for (const row of sealedFiles) {
+    // Refused rather than corrected, for the reason a bad variable name is: a file mounted at a
+    // path the customer did not ask for is a file their application does not read, which looks the
+    // same as the platform ignoring it. The column has the same constraint, so this should be
+    // unreachable — it is here because "should be unreachable" is not a guarantee.
+    if (!isMountablePath(row.path)) {
+      undeliverable.push(row.path)
+      continue
+    }
+
+    files.push({
+      path: row.path,
+      contents: await openProjectFileContents(projectId, row.path, {
+        ciphertext: row.contentsCiphertext,
+        kmsKeyId: row.contentsKmsKeyId,
+        wrappedDek: row.contentsWrappedDek,
+      }),
+    })
+  }
+
   if (undeliverable.length > 0) {
-    // Not thrown. A deployment that fails outright because one variable has an unusable name is a
-    // worse outcome than one that runs without it and says so.
+    // Not thrown. A deployment that fails outright because one variable or file has an unusable
+    // name is a worse outcome than one that runs without it and says so.
     console.warn(
-      `project ${projectId}: ${undeliverable.length} variable(s) have names Kubernetes cannot ` +
-        `carry and were not delivered: ${undeliverable.join(", ")}`,
+      `project ${projectId}: ${undeliverable.length} item(s) could not be delivered — a variable ` +
+        `name Kubernetes cannot carry, or a path that cannot be mounted: ${undeliverable.join(", ")}`,
     )
   }
 
-  if (entries.length === 0) return null
+  if (entries.length === 0 && files.length === 0) return { secretName: null, mounts: [] }
 
-  const secret = environmentSecret(projectId, namespace, entries)
+  const secret = configSecret(projectId, namespace, entries, files)
   await kube.apply(secretPath(namespace, secret.metadata.name), secret)
-  return secret.metadata.name
+  return { secretName: secret.metadata.name, mounts: fileMounts(files) }
 }
 
 /** How long to wait for a revision before handing the wait back to the queue. */
@@ -211,7 +238,7 @@ export function deployRevision(config?: KubeConfig): JobHandler {
       object that does not exist fails the pod with `CreateContainerConfigError` — a message that
       reads like a broken image.
     */
-    const envSecretName = await materializeEnvironment(
+    const configuration = await materializeEnvironment(
       db,
       kube,
       project.id,
@@ -230,7 +257,8 @@ export function deployRevision(config?: KubeConfig): JobHandler {
         containerConcurrency: deployment.containerConcurrency,
         memoryMb: deployment.memoryMb,
         maxDurationS: deployment.maxDurationS,
-        envSecretName,
+        envSecretName: configuration.secretName,
+        configFiles: configuration.mounts,
       },
       namespace,
     )

@@ -84,16 +84,126 @@ export function isDeliverableKey(key: string): boolean {
   return /^[-._a-zA-Z0-9]+$/.test(key)
 }
 
+/**
+ * Variables only. A thin call through {@link configSecret}, so there is one implementation of the
+ * naming and one of the encoding — two would be two places for a hash to drift.
+ */
 export function environmentSecret(
   projectId: string,
   namespace: string,
   entries: EnvironmentEntry[],
 ): EnvironmentSecret {
+  return configSecret(projectId, namespace, entries, [])
+}
+
+/**
+ * A config file the container needs at an absolute path.
+ *
+ * The second half of "configuration", and the half that did not exist. `glance` — forked, built and
+ * pushed by this platform — exited with
+ * `parsing config: reading /app/config/glance.yml: no such file or directory`. Everything the
+ * platform claims had worked; the application wanted a *file*. Most self-hostable software is
+ * configured that way and reads nothing from the environment, and a platform whose premise is "fork
+ * this and deploy it without knowing how to code" cannot answer that with "add a Dockerfile stage".
+ */
+export type ConfigFile = { path: string; contents: string }
+
+/**
+ * The Secret key one file's contents are stored under.
+ *
+ * **Not the path.** A Secret key must match `[-._a-zA-Z0-9]+`, so `/app/config/glance.yml` is not a
+ * legal key and any flattening that maps `/` to a legal character collides: `a/b` and `a.b` become
+ * the same key, and the second file silently overwrites the first. A digest of the full path cannot
+ * collide by construction, and the mount carries the real path anyway.
+ */
+export function configFileKey(path: string): string {
+  return `f-${createHash("sha256").update(path).digest("hex").slice(0, 16)}`
+}
+
+/**
+ * Whether a path can be mounted into a container.
+ *
+ * Absolute, no traversal, and a filename after the last separator. `..` is refused not because a
+ * customer should not overwrite files in their own container — that is their business — but because
+ * a `subPath` containing it is rejected by the kubelet at mount time, which fails the pod with a
+ * message about the volume rather than about the file.
+ *
+ * The same rule is a check constraint on the column, so a row written by a migration or by hand
+ * cannot get past it either.
+ */
+export function isMountablePath(path: string): boolean {
+  return (
+    path.startsWith("/") &&
+    !path.endsWith("/") &&
+    !path.includes("..") &&
+    path.length > 1 &&
+    path.length <= 4096
+  )
+}
+
+export type FileVolume = { name: string; secret: { secretName: string } }
+export type FileMount = { name: string; mountPath: string; subPath: string; readOnly: boolean }
+
+/**
+ * The volume and mounts that put a project's files where the container expects them.
+ *
+ * ## `subPath`, one per file
+ *
+ * Mounting a Secret at a directory *replaces* that directory: everything the image shipped in
+ * `/app/config` disappears, which for most projects means the defaults their config was meant to
+ * sit beside. A `subPath` mount projects a single file into an existing directory and leaves its
+ * neighbours alone.
+ *
+ * The cost is that a `subPath` mount does not receive updates when the Secret changes. That costs
+ * nothing here: the Secret is named after its contents, so it never changes — a different
+ * configuration is a different Secret and therefore a different revision.
+ *
+ * ## `readOnly`
+ *
+ * The container may not write its own config back. That is not a restriction the platform imposes
+ * for its own sake: a writable mount would let an application persist changes that vanish on the
+ * next revision, which is worse than not being able to write at all because it looks like it worked.
+ */
+export function fileVolume(secretName: string): FileVolume {
+  return { name: "sproutos-config", secret: { secretName } }
+}
+
+export function fileMounts(files: ConfigFile[]): FileMount[] {
+  return files.map((file) => ({
+    name: "sproutos-config",
+    mountPath: file.path,
+    subPath: configFileKey(file.path),
+    readOnly: true,
+  }))
+}
+
+/**
+ * One Secret holding both a revision's environment and its files.
+ *
+ * Together rather than two objects, because they are one thing — the configuration this revision
+ * ran with — and splitting them would mean two names, two hashes, and the possibility of a revision
+ * pinned to one half of a configuration.
+ */
+export function configSecret(
+  projectId: string,
+  namespace: string,
+  entries: EnvironmentEntry[],
+  files: ConfigFile[] = [],
+): EnvironmentSecret {
+  // The key is a digest of the path, so the path is inside the name's digest too — two files with
+  // identical contents at different paths are different configurations, and produce different
+  // Secrets and therefore different revisions.
+  const fileEntries: EnvironmentEntry[] = files.map((file) => ({
+    key: configFileKey(file.path),
+    value: file.contents,
+  }))
+
+  const all = [...entries, ...fileEntries]
   return {
     apiVersion: "v1",
     kind: "Secret",
     metadata: {
-      name: environmentSecretName(projectId, entries),
+      name: environmentSecretName(projectId, all),
       namespace,
       labels: {
         "app.kubernetes.io/managed-by": "sproutos",
@@ -103,6 +213,6 @@ export function environmentSecret(
     type: "Opaque",
     // `stringData`, not `data`: the API server base64-encodes it, and doing that here would be a
     // second place to get an encoding wrong for no benefit.
-    stringData: Object.fromEntries(entries.map((entry) => [entry.key, entry.value])),
+    stringData: Object.fromEntries(all.map((entry) => [entry.key, entry.value])),
   }
 }

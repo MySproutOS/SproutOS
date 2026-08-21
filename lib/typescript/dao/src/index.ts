@@ -239,3 +239,14 @@ export { crudDeployment } from "./deployment/crud"
 export { fetchDeployment } from "./deployment/fetch"
 export { crudDeploymentBuild } from "./deploymentBuild/crud"
 export { fetchPlacement, type Placement } from "./cluster/placement"
+export {
+  crudProjectFile,
+  type ProjectFileTarget,
+  type SealedFileContents,
+} from "./projectFile/crud"
+export {
+  FILE_METADATA_FIELDS,
+  type FileMetadataRow,
+  fetchProjectFile,
+  type SealedFileRow,
+} from "./projectFile/fetch"

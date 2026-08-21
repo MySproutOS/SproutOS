@@ -1,3 +1,4 @@
+import { fileVolume, type FileMount, type FileVolume } from "./env"
 import { attributionLabels } from "@lib/metering"
 /**
  * A `deployment` row rendered as a Knative Service.
@@ -52,6 +53,14 @@ export type DeploymentSpec = {
    * to start with `CreateContainerConfigError`, which reads like a broken image.
    */
   envSecretName?: string | null
+  /**
+   * Config files to project into the container, as `subPath` mounts off the same Secret.
+   *
+   * Empty for a project that needs none, which is most of them — and the field is omitted from the
+   * pod spec entirely in that case, because Knative validates `volumes` and an empty array is not
+   * "no volumes".
+   */
+  configFiles?: FileMount[]
 }
 
 /**
@@ -81,9 +90,11 @@ export type KnativeService = {
         tolerations?: { key: string; operator: string; value: string; effect: string }[]
         containerConcurrency: number
         timeoutSeconds: number
+        volumes?: FileVolume[]
         containers: {
           image: string
           envFrom?: { secretRef: { name: string } }[]
+          volumeMounts?: FileMount[]
           resources: { limits: { memory: string }; requests: { memory: string } }
           securityContext: {
             allowPrivilegeEscalation: boolean
@@ -234,6 +245,17 @@ export function knativeService(
               effect: "NoSchedule",
             },
           ],
+          /*
+            The volume the config-file mounts project from — the same Secret that carries the
+            environment, because they are one configuration.
+
+            Omitted when there are no files. Knative validates `volumes`, and an empty array is a
+            field the webhook rejects rather than "no volumes"; the same correction `envFrom` needed
+            two lines down.
+          */
+          ...((deployment.configFiles?.length ?? 0) === 0 || deployment.envSecretName == null
+            ? {}
+            : { volumes: [fileVolume(deployment.envSecretName)] }),
           // The hypervisor, per ADR 0012: `kata-fc` for deploys, `kata-clh` for anything needing a
           // live filesystem, `gvisor` on a managed cluster. Carried on the row rather than
           // hardcoded, and **omitted entirely when there is none** — `runtimeClassName: null` is
@@ -257,6 +279,16 @@ export function knativeService(
               ...(deployment.envSecretName == null
                 ? {}
                 : { envFrom: [{ secretRef: { name: deployment.envSecretName } }] }),
+              /*
+                Config files, mounted one at a time off the same Secret.
+
+                `subPath` per file rather than one mount at the directory: mounting at a directory
+                replaces it, and everything the image shipped alongside — usually the defaults the
+                config was meant to sit beside — disappears.
+              */
+              ...((deployment.configFiles?.length ?? 0) === 0
+                ? {}
+                : { volumeMounts: deployment.configFiles }),
               resources: {
                 limits: { memory: `${deployment.memoryMb}Mi` },
                 // A request equal to the limit: tenant pods are billed on what they reserve, and a

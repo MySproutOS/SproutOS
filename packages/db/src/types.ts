@@ -688,6 +688,19 @@ export interface ProjectEnvVar {
   valueWrappedDek: string
 }
 
+export interface ProjectFile {
+  contentsCiphertext: string
+  contentsKmsKeyId: string
+  contentsWrappedDek: string
+  createdAt: Generated<Timestamp>
+  id: string
+  isSecret: Generated<boolean>
+  path: string
+  projectId: string
+  target: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
 export interface ProjectJob {
   attempt: Generated<number>
   createdAt: Generated<Timestamp>
@@ -1230,6 +1243,7 @@ export interface DB {
   priceBookItem: PriceBookItem
   project: Project
   projectEnvVar: ProjectEnvVar
+  projectFile: ProjectFile
   projectJob: ProjectJob
   projectUpdateSuggestion: ProjectUpdateSuggestion
   refund: Refund
