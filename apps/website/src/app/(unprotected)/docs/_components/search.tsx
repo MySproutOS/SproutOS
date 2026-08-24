@@ -22,7 +22,9 @@ export function DocSearch() {
         <input
           type="search"
           value={query}
-          onChange={(event) =>{  setQuery(event.target.value); }}
+          onChange={(event) => {
+            setQuery(event.target.value)
+          }}
           placeholder="Search the docs"
           className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />

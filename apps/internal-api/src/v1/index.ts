@@ -6,6 +6,7 @@ import analysis from "./analysis"
 import deployments from "./deployments"
 import metering from "./metering"
 import deploy from "./deploy"
+import android from "./android"
 import apkSigning from "./apk-signing"
 import pgResolve from "./pg-resolve"
 import auth from "./auth"
@@ -105,6 +106,12 @@ unauthenticated.route("/", deploy)
   out over the public internet. It carries its own bearer credential instead.
 */
 unauthenticated.route("/", apkSigning)
+/*
+  The Android client's catalogue. Optionally authenticated rather than unauthenticated: the public
+  tab must be readable by somebody deciding whether to install the client, and the personal tab is
+  built from whoever is asking.
+*/
+unauthenticated.route("/", android)
 /*
   There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 
