@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# Prepare the OVH host. Idempotent — safe to re-run, and re-running is how you fix drift.
+#
+# Run on the host, not from a laptop:
+#   ssh -i ~/.ssh/id_ovhcloud_... ubuntu@135.148.122.203 'bash -s' < ovh/bootstrap.sh
+set -euo pipefail
+
+DATA_MOUNT=/data
+ROOT_DATA=/srv/sproutos
+
+echo "==> checking mounts"
+for mount in / "$DATA_MOUNT"; do
+  findmnt -no TARGET "$mount" >/dev/null || { echo "missing mount: $mount" >&2; exit 1; }
+done
+
+echo "==> installing docker"
+if ! command -v docker >/dev/null; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq ca-certificates curl gnupg
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+  sudo chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  sudo usermod -aG docker "$USER"
+fi
+docker --version || sudo docker --version
+
+echo "==> kernel settings"
+# `vm.max_map_count` is what OpenSearch refuses to start without; this host already exceeds it, and
+# it is set anyway so a rebuilt host does not depend on a default.
+#
+# `vm.overcommit_memory=1` is Valkey's requirement: a background save forks, and with heuristic
+# overcommit the fork can be refused for memory that will never actually be touched.
+sudo tee /etc/sysctl.d/99-sproutos.conf >/dev/null <<'CONF'
+vm.max_map_count = 262144
+vm.overcommit_memory = 1
+vm.swappiness = 1
+CONF
+sudo sysctl -q --system
+
+echo "==> disabling swap"
+# A swapped JVM heap is pathological: the garbage collector touches the whole heap and every page it
+# reads back is a disk seek. OpenSearch's own guidance is to turn swap off outright. Valkey's
+# preference for swap is answered by the overcommit setting above, which is the thing it needs.
+if swapon --show | grep -q .; then
+  sudo swapoff -a
+  # And out of fstab, or the next reboot brings it back and nobody looks.
+  sudo sed -i.bak '/\bswap\b/s/^/#/' /etc/fstab
+fi
+
+echo "==> data directories"
+# OpenSearch and Valkey on the root NVMe; ClickHouse and Kafka on the second, because Kafka's own
+# hardware guide asks not to share its drive with other filesystem activity and ClickHouse merges
+# are the noisiest neighbour on offer.
+sudo mkdir -p "$ROOT_DATA"/{opensearch,valkey-queue,valkey-cache}
+sudo mkdir -p "$DATA_MOUNT"/sproutos/{clickhouse,clickhouse-logs,kafka}
+# OpenSearch runs as uid 1000 inside its image and will not start if it cannot write its data dir.
+sudo chown -R 1000:1000 "$ROOT_DATA/opensearch"
+# ClickHouse runs as 101; Kafka as 1000.
+sudo chown -R 101:101 "$DATA_MOUNT"/sproutos/clickhouse "$DATA_MOUNT"/sproutos/clickhouse-logs
+sudo chown -R 1000:1000 "$DATA_MOUNT"/sproutos/kafka
+sudo mkdir -p /opt/sproutos
+sudo chown "$USER":"$USER" /opt/sproutos
+
+echo
+echo "host prepared. Copy the compose file and start:"
+echo "  scp ovh/docker-compose.yaml ovh/.env ubuntu@<host>:/opt/sproutos/"
+echo "  ssh ubuntu@<host> 'cd /opt/sproutos && docker compose up -d'"

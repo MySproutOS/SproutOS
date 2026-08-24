@@ -1,0 +1,143 @@
+# The stateful services SproutOS runs on its own hardware.
+#
+# Postgres is not here — that is Neon's, in AWS (ADR 0025). What is here is tenant search, tenant
+# queues, and the log pipeline, on one machine with 125 GB of RAM and two NVMe drives.
+#
+# `bootstrap.sh` prepares the host; this file assumes it has run.
+
+name: sproutos
+
+services:
+  # --- Tenant search -----------------------------------------------------------
+  opensearch:
+    container_name: sproutos_opensearch
+    image: opensearchproject/opensearch:3.3.1
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - cluster.name=sproutos
+      - node.name=sproutos-1
+      # 30 GB, and not a byte more.
+      #
+      # Above roughly 32 GB the JVM stops using compressed ordinary object pointers, and a heap of
+      # 40–50 GB is then needed to hold what fits in just under 32. The remaining ~90 GB of this
+      # machine is not idle: Lucene reads its indexes through the page cache, which is where search
+      # speed actually comes from.
+      - OPENSEARCH_JAVA_OPTS=-Xms30g -Xmx30g
+      - bootstrap.memory_lock=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      # The proxy is the security boundary — document- and field-level security is not in the
+      # open-source distribution, so the plugin would give a false sense of one.
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    # **No `mem_limit`.** cgroup v2 counts page cache against a container's memory limit, so capping
+    # this container caps Lucene's cache and silently undoes the heap reasoning above.
+    volumes:
+      - /srv/sproutos/opensearch:/usr/share/opensearch/data
+    ports:
+      - "127.0.0.1:9200:9200"
+
+  # --- Tenant queues -----------------------------------------------------------
+  #
+  # Two processes, not one with two databases. `maxmemory-policy` is per-process and `SELECT n`
+  # gives no memory isolation, so a single instance cannot be both "never lose a job" and "evict
+  # the coldest key".
+  valkey-queue:
+    container_name: sproutos_valkey_queue
+    image: valkey/valkey:9.0-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --maxmemory
+      - 8gb
+      # `noeviction`: a pending job is a customer's work, and evicting one to make room is losing
+      # it silently. When this fills, writes are refused — which is loud, and correct.
+      - --maxmemory-policy
+      - noeviction
+      # Queues are durable state. `appendonly` costs write throughput and buys not losing the last
+      # second of enqueues to a crash.
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - /srv/sproutos/valkey-queue:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  valkey-cache:
+    container_name: sproutos_valkey_cache
+    image: valkey/valkey:9.0-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --maxmemory
+      - 8gb
+      # A cache may forget. That is the difference from the instance above, and it is why they are
+      # two processes.
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+    volumes:
+      - /srv/sproutos/valkey-cache:/data
+    ports:
+      - "127.0.0.1:6380:6379"
+
+  # --- The log pipeline, on the second NVMe ------------------------------------
+  #
+  # Kafka's hardware guide asks not to share its data drive with other filesystem activity, and
+  # ClickHouse merges are the noisiest neighbour available. Hence `/data` for both, and `/` for
+  # everything above.
+  kafka:
+    container_name: sproutos_kafka
+    image: apache/kafka:4.3.1
+    restart: unless-stopped
+    environment:
+      # KRaft combined mode. ZooKeeper was removed entirely in Kafka 4.0, so there is no decision
+      # left to make — but Kafka's own docs call combined mode unsuitable for critical deployments,
+      # and that is accepted here rather than hidden: a single-host Kafka is already a single point
+      # of failure, and this is a log buffer rather than a system of record.
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+      # Logs are consumed within seconds and kept for three days in ClickHouse. Kafka is the buffer,
+      # not the archive, so it holds a day and no more.
+      - KAFKA_LOG_RETENTION_HOURS=24
+      - KAFKA_HEAP_OPTS=-Xms4g -Xmx6g
+    volumes:
+      - /data/sproutos/kafka:/var/lib/kafka/data
+    ports:
+      - "127.0.0.1:9092:9092"
+
+  clickhouse:
+    container_name: sproutos_clickhouse
+    image: clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    environment:
+      - CLICKHOUSE_DB=sproutos
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-sproutos}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - /data/sproutos/clickhouse:/var/lib/clickhouse
+      - /data/sproutos/clickhouse-logs:/var/log/clickhouse-server
+      - ./clickhouse-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
