@@ -81,7 +81,16 @@ export type NeonComputeConfig = {
 
 export function neonComputeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): NeonComputeConfig {
   return {
-    image: env.NEON_COMPUTE_IMAGE ?? "neondatabase/compute-node-v16:latest",
+    /*
+      Pinned by digest, not `:latest`.
+
+      The compute image comes from an upstream that has taken eleven commits in twelve months, which
+      is why this project forked it. A moving tag on a repository nobody is watching is a change
+      nobody decided to make — and this image is the Postgres every customer's data goes through.
+    */
+    image:
+      env.NEON_COMPUTE_IMAGE ??
+      "neondatabase/compute-node-v16@sha256:b3e151661bd2ee11eb2843c8926001966cb23969227e9673c5f42fc3fbe14249",
     network: env.NEON_COMPUTE_NETWORK ?? "sproutos_default",
     pageserverConnstring:
       env.NEON_PAGESERVER_CONNSTRING ?? "postgresql://no_user@neon-pageserver:6400",

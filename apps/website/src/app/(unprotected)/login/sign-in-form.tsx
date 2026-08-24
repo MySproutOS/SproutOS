@@ -36,8 +36,12 @@ export function SignInForm() {
     [agreedToTerms],
   )
 
-  const handleGitHubClick = useCallback(() =>{  startSignIn("github"); }, [startSignIn])
-  const handleGoogleClick = useCallback(() =>{  startSignIn("google"); }, [startSignIn])
+  const handleGitHubClick = useCallback(() => {
+    startSignIn("github")
+  }, [startSignIn])
+  const handleGoogleClick = useCallback(() => {
+    startSignIn("google")
+  }, [startSignIn])
 
   return (
     <div className="grid gap-6">

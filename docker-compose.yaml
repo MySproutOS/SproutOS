@@ -99,12 +99,17 @@ services:
   # `provider = 'sprout'`. Branching and sub-second cold starts are Neon's *storage layer*, and
   # nothing here was pretending otherwise.
   #
+  # **Pinned by digest, not `:latest`.** These images come from an upstream this project has just
+  # forked precisely because it is not being maintained — `neondatabase/neon`'s last commit is
+  # 2026-05-25 — and `:latest` on such a repository is a tag that can move under us without anyone
+  # deciding it should. A digest is the version we tested. ADR 0025.
+  #
   # `storage_broker` is the rendezvous point: pageservers and safekeepers find each other through it
   # rather than being told about each other, which is why it starts first and why nothing else works
   # without it.
   neon-broker:
     container_name: sproutos_neon_broker
-    image: neondatabase/neon:latest
+    image: neondatabase/neon@sha256:7a4f124917bb929964b2d696d710f19584f80bb9bd51b2af4a6e2425434c761f
     entrypoint: ["/usr/local/bin/storage_broker"]
     command: ["--listen-addr=0.0.0.0:50051"]
     ports:
@@ -114,7 +119,7 @@ services:
   # is the quorum in production, and the difference is durability, not behaviour.
   neon-safekeeper:
     container_name: sproutos_neon_safekeeper
-    image: neondatabase/neon:latest
+    image: neondatabase/neon@sha256:7a4f124917bb929964b2d696d710f19584f80bb9bd51b2af4a6e2425434c761f
     depends_on:
       - neon-broker
     entrypoint: ["/usr/local/bin/safekeeper"]
@@ -156,7 +161,7 @@ services:
   # talk to each other on a private network, and in production each pair holds a token.
   neon-controller:
     container_name: sproutos_neon_controller
-    image: neondatabase/neon:latest
+    image: neondatabase/neon@sha256:7a4f124917bb929964b2d696d710f19584f80bb9bd51b2af4a6e2425434c761f
     depends_on:
       - neon-broker
     entrypoint: ["/usr/local/bin/storage_controller"]
@@ -178,7 +183,7 @@ services:
 
   neon-pageserver:
     container_name: sproutos_neon_pageserver
-    image: neondatabase/neon:latest
+    image: neondatabase/neon@sha256:7a4f124917bb929964b2d696d710f19584f80bb9bd51b2af4a6e2425434c761f
     depends_on:
       - neon-broker
       - neon-controller

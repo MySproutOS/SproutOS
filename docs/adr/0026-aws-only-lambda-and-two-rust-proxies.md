@@ -24,16 +24,17 @@ The decision taken now is to stop paying for idle capacity in every layer at onc
 
 **There are two Valkeys and they are not the same system.** Confusing them is easy and expensive:
 
-| | Where | Whose | What for |
-| --- | --- | --- | --- |
-| **Platform Valkey** | ElastiCache, in AWS | ours | hostname → Lambda resolution, billing counters, the router's own queue |
-| **Tenant Valkey** | OVH, self-hosted | customers' | the data customers store, and the queues their workflows run on |
+|                     | Where               | Whose      | What for                                                               |
+| ------------------- | ------------------- | ---------- | ---------------------------------------------------------------------- |
+| **Platform Valkey** | ElastiCache, in AWS | ours       | hostname → Lambda resolution, billing counters, the router's own queue |
+| **Tenant Valkey**   | OVH, self-hosted    | customers' | the data customers store, and the queues their workflows run on        |
 
 The platform one is a single small managed instance on the router's hot path, where a managed
 service is worth paying for. The tenant one is many small tenants multiplexed onto shared memory,
 which is exactly the shape ElastiCache prices worst — see below.
-  - `services/pg-proxy` — a Postgres bouncer in front of self-hosted Neon, and the Neon control
-    plane.
+
+- `services/pg-proxy` — a Postgres bouncer in front of self-hosted Neon, and the Neon control
+  plane.
 - **One ALB** in front of both, separated by host-based listener rules, with blue/green by switching
   target groups.
 - **Stateful services on one OVH host**: OpenSearch and Valkey **for tenant data**, ClickHouse and
