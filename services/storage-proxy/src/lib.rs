@@ -60,6 +60,15 @@ pub struct Proxy {
     pub region: String,
     pub credential: UpstreamCredential,
     pub client: reqwest::Client,
+    /*
+      The one real bucket every tenant lives in (§4.5).
+
+      `None` keeps the old shape — a real S3 bucket per tenant — which is what every existing
+      deployment has. The two cannot be mixed per request: a proxy that guessed would send half a
+      customer's objects to one layout and half to the other, and the half in the wrong place would
+      look like data loss.
+    */
+    pub shared_bucket: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -135,8 +144,199 @@ pub fn bucket_from_path(path: &str) -> Option<&str> {
 }
 
 /// The bucket name a service id produces. Mirrors `bucketNameFor` in `lib/typescript/services`.
+///
+/// Still what the *customer* addresses, and still what their signature covers, even though every
+/// tenant now lives in one real bucket (§4.5). Changing what they address would invalidate every
+/// stored connection URI and every signature computed against it.
 pub fn bucket_for(backend_service_id: uuid::Uuid) -> String {
     format!("v-{}", encode_short_id(backend_service_id))
+}
+
+/// Why a request could not be rewritten onto the shared bucket.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RewriteError {
+    /// A key that could address something outside the tenant's prefix.
+    Escapes,
+}
+
+/// The upstream path for a request the tenant addressed to their own bucket.
+///
+/// ## This function is the tenant boundary now
+///
+/// Every tenant used to have a real S3 bucket, and the boundary was S3's: a policy naming
+/// `arn:aws:s3:::v-abc*` could not reach `v-def` however the request was built. §4.5 puts every
+/// tenant in one bucket under a prefix, which moves that boundary into this code — the same trade
+/// the proxy already makes for Valkey and OpenSearch, and worth naming because it is a real loss of
+/// defence in depth.
+///
+/// **So a key that could escape the prefix is refused rather than sanitised.** `..` in an S3 key is
+/// a legal, opaque byte sequence and S3 itself does nothing with it — but this proxy builds a URL
+/// string, and between here and S3 there is a URL parser, an HTTP client, and possibly a proxy,
+/// any of which may normalise. Rewriting the key to something safe would silently store the
+/// customer's object somewhere they did not ask for; refusing tells them.
+pub fn upstream_path(
+    shared_bucket: &str,
+    tenant_bucket: &str,
+    request_path: &str,
+) -> Result<String, RewriteError> {
+    let trimmed = request_path.strip_prefix('/').unwrap_or(request_path);
+    let key = trimmed
+        .strip_prefix(tenant_bucket)
+        .map(|rest| rest.strip_prefix('/').unwrap_or(rest))
+        .unwrap_or("");
+
+    if escapes(key) {
+        return Err(RewriteError::Escapes);
+    }
+
+    if key.is_empty() {
+        // A bucket-level operation — a list, a bucket HEAD. Scoped to the tenant's prefix by the
+        // query rewrite, not by the path, which is why this is the prefix and not the bare bucket.
+        return Ok(format!("/{shared_bucket}/{tenant_bucket}/"));
+    }
+
+    Ok(format!("/{shared_bucket}/{tenant_bucket}/{key}"))
+}
+
+/// Whether a request is a list of the bucket rather than an operation on one object.
+///
+/// `GET /v-abc/?list-type=2`. The path carries no key, so the tenant scoping cannot come from the
+/// path — it has to come from `prefix`, which is the one query parameter this proxy is not allowed
+/// to take from the client unchanged.
+pub fn is_list(method: &str, tenant_bucket: &str, path: &str, query: &str) -> bool {
+    if method != "GET" && method != "HEAD" {
+        return false;
+    }
+    let trimmed = path.strip_prefix('/').unwrap_or(path);
+    let bucket_level = trimmed == tenant_bucket || trimmed == format!("{tenant_bucket}/");
+    bucket_level && (query.is_empty() || query.contains("list-type") || query.contains("prefix"))
+}
+
+/// The query for a list, with the tenant's prefix forced onto it.
+///
+/// The client's own `prefix` is kept — a vault listing one folder should list one folder — but it
+/// is placed *under* the tenant's, never instead of it. A client asking for `prefix=v-def/` gets
+/// `v-abc/v-def/`, which is empty, rather than another tenant's objects.
+///
+/// `delimiter`, `max-keys` and the continuation token pass through: none of them can widen what a
+/// prefix has narrowed.
+pub fn upstream_query(tenant_bucket: &str, query: &str) -> Result<String, RewriteError> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut client_prefix = String::new();
+
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (name, value) = match pair.split_once('=') {
+            Some((name, value)) => (name, value),
+            None => (pair, ""),
+        };
+        if name == "prefix" {
+            client_prefix = percent_decode(value).ok_or(RewriteError::Escapes)?;
+        } else {
+            parts.push(pair.to_owned());
+        }
+    }
+
+    if escapes(&client_prefix) {
+        return Err(RewriteError::Escapes);
+    }
+
+    parts.push(format!(
+        "prefix={}",
+        percent_encode(&format!("{tenant_bucket}/{client_prefix}"))
+    ));
+    parts.sort();
+    Ok(parts.join("&"))
+}
+
+/// Percent-encoding for a query value, escaping everything S3 does not treat as unreserved.
+fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            // `/` is *not* unreserved here. SigV4's canonical query string percent-encodes it in
+            // a value, and a URL carrying a raw slash that the signature covers as `%2F` is a
+            // mismatch S3 reports as SignatureDoesNotMatch — which reads like a wrong key.
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Whether a response body is a listing rather than an object.
+///
+/// Checked on the bytes, not on the request: a `GET` on a bucket-level path is a list, but so is a
+/// `GET` with a `versions` or `uploads` query, and a customer's own object could be XML. Looking at
+/// what came back is the one check that cannot mistake one for the other.
+pub fn is_listing_response(body: &[u8]) -> bool {
+    let head = &body[..body.len().min(512)];
+    let Ok(text) = std::str::from_utf8(head) else {
+        return false;
+    };
+    text.contains("<ListBucketResult") || text.contains("<ListVersionsResult")
+}
+
+/// Strip the tenant's prefix out of a list response.
+///
+/// S3 answers with the keys it stored, which now all begin `v-abc/`. A client that asked for
+/// `notes/one.md` and is told the object is called `v-abc/notes/one.md` will store the wrong name
+/// and ask for the wrong thing next time — for `livesync` that is a full resync of the vault, every
+/// time it opens.
+pub fn strip_prefix_from_listing(body: &str, tenant_bucket: &str) -> String {
+    let prefix = format!("{tenant_bucket}/");
+    body.replace(&format!("<Key>{prefix}"), "<Key>")
+        .replace(&format!("<Prefix>{prefix}"), "<Prefix>")
+        .replace(
+            &format!("<Prefix>{tenant_bucket}</Prefix>"),
+            "<Prefix></Prefix>",
+        )
+}
+
+/// Whether a key could address something outside the prefix it is placed under.
+///
+/// Checked on the raw and the percent-decoded form. A client that sends `%2e%2e%2f` has sent `../`
+/// to anything that decodes before resolving, and checking only the bytes on the wire is how a
+/// traversal check is passed by the thing it exists to stop.
+fn escapes(key: &str) -> bool {
+    fn dangerous(value: &str) -> bool {
+        value.split('/').any(|segment| segment == "..")
+            || value.starts_with('/')
+            || value.contains("//")
+            || value.contains('\\')
+    }
+
+    if dangerous(key) {
+        return true;
+    }
+
+    match percent_decode(key) {
+        Some(decoded) => dangerous(&decoded),
+        // Undecodable percent-escapes: refused rather than passed through, because what S3 does
+        // with them is not something this proxy should be guessing at.
+        None => true,
+    }
+}
+
+/// Percent-decoding, enough to see a traversal through one.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = value.get(index + 1..index + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(out).ok()
 }
 
 /// The canonical headers block for exactly the headers the client said it signed.
@@ -412,6 +612,138 @@ mod tests {
         let id = uuid::Uuid::parse_str("01a02486-be04-776f-a9e2-c655b19e16b7").unwrap();
 
         assert_eq!(bucket_for(id), "v-01m0j8dfg4exqtkrp6aprsw5nq");
+    }
+
+    #[test]
+    fn rewrites_a_tenant_request_onto_the_shared_bucket() {
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/notes/one.md"),
+            Ok("/sproutos-tenants/v-abc/notes/one.md".to_owned())
+        );
+
+        // A bucket-level operation lands on the prefix, not the bare bucket: a list scoped to the
+        // bucket would enumerate every tenant.
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc"),
+            Ok("/sproutos-tenants/v-abc/".to_owned())
+        );
+    }
+
+    #[test]
+    fn refuses_a_key_that_could_leave_the_prefix() {
+        /*
+          The whole of §4.5's risk in one test.
+
+          With a bucket per tenant this was S3's problem and a policy answered it. With one bucket
+          and a prefix it is ours, and every one of these is a way a customer reads or overwrites
+          another customer's object.
+        */
+        for key in [
+            "/v-abc/../v-def/secret",
+            "/v-abc/notes/../../v-def/secret",
+            "/v-abc//v-def/secret",
+            "/v-abc/..",
+            "/v-abc/nested/..",
+        ] {
+            assert_eq!(
+                upstream_path("sproutos-tenants", "v-abc", key),
+                Err(RewriteError::Escapes),
+                "{key} should have been refused"
+            );
+        }
+    }
+
+    #[test]
+    fn sees_a_traversal_through_percent_encoding() {
+        // `%2e%2e%2f` is `../` to anything that decodes before it resolves. Checking only the bytes
+        // on the wire is how a traversal check is passed by the thing it exists to stop.
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/%2e%2e/v-def/secret"),
+            Err(RewriteError::Escapes)
+        );
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/%2E%2E%2Fv-def/secret"),
+            Err(RewriteError::Escapes)
+        );
+        // Undecodable escapes are refused too: what S3 does with them is not ours to guess.
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/%zz"),
+            Err(RewriteError::Escapes)
+        );
+    }
+
+    #[test]
+    fn keeps_ordinary_keys_that_merely_look_alarming() {
+        // A dot-file, and a name containing dots, are both legal keys a customer may hold. Refusing
+        // them would be a proxy that broke a working vault to feel safe.
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/.obsidian/app.json"),
+            Ok("/sproutos-tenants/v-abc/.obsidian/app.json".to_owned())
+        );
+        assert_eq!(
+            upstream_path("sproutos-tenants", "v-abc", "/v-abc/notes/a..b.md"),
+            Ok("/sproutos-tenants/v-abc/notes/a..b.md".to_owned())
+        );
+    }
+
+    #[test]
+    fn forces_the_tenant_prefix_onto_a_list() {
+        // No prefix from the client: the tenant's own, so a bare list is their objects and not the
+        // whole bucket.
+        assert_eq!(
+            upstream_query("v-abc", "list-type=2"),
+            Ok("list-type=2&prefix=v-abc%2F".to_owned())
+        );
+
+        // The client's prefix is kept, and placed under the tenant's rather than instead of it.
+        assert_eq!(
+            upstream_query("v-abc", "list-type=2&prefix=notes/"),
+            Ok("list-type=2&prefix=v-abc%2Fnotes%2F".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_client_prefix_cannot_reach_another_tenant() {
+        // Asking for `v-def/` gets `v-abc/v-def/`, which is empty. This is the case a naive
+        // implementation gets wrong by letting the client's prefix replace the tenant's.
+        assert_eq!(
+            upstream_query("v-abc", "prefix=v-def/"),
+            Ok("prefix=v-abc%2Fv-def%2F".to_owned())
+        );
+
+        // And a traversal in the prefix is refused, the same as one in a key.
+        assert_eq!(
+            upstream_query("v-abc", "prefix=../v-def/"),
+            Err(RewriteError::Escapes)
+        );
+        assert_eq!(
+            upstream_query("v-abc", "prefix=%2e%2e%2fv-def/"),
+            Err(RewriteError::Escapes)
+        );
+    }
+
+    #[test]
+    fn a_listing_comes_back_named_the_way_the_client_asked() {
+        let body = "<ListBucketResult><Prefix>v-abc/notes/</Prefix>\
+<Contents><Key>v-abc/notes/one.md</Key></Contents>\
+<Contents><Key>v-abc/notes/two.md</Key></Contents></ListBucketResult>";
+
+        let stripped = strip_prefix_from_listing(body, "v-abc");
+
+        // A client told its object is called `v-abc/notes/one.md` stores that name and asks for the
+        // wrong thing next time. For `livesync` that is a full resync of the vault on every open.
+        assert!(stripped.contains("<Key>notes/one.md</Key>"));
+        assert!(stripped.contains("<Prefix>notes/</Prefix>"));
+        assert!(!stripped.contains("v-abc/"));
+    }
+
+    #[test]
+    fn knows_a_list_from_an_object_get() {
+        assert!(is_list("GET", "v-abc", "/v-abc", "list-type=2"));
+        assert!(is_list("GET", "v-abc", "/v-abc/", ""));
+        // An object GET is not a list, however much its key looks like one.
+        assert!(!is_list("GET", "v-abc", "/v-abc/list-type=2", ""));
+        assert!(!is_list("PUT", "v-abc", "/v-abc", "list-type=2"));
     }
 
     #[test]

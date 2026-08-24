@@ -17,7 +17,8 @@ use axum::routing::any;
 use sproutos_service_credentials::CredentialStore;
 use storage_proxy::{
     Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredential, authorize,
-    upstream_headers,
+    bucket_from_path, is_list, is_listing_response, strip_prefix_from_listing, upstream_headers,
+    upstream_path, upstream_query,
 };
 use tracing::{debug, info, warn};
 
@@ -102,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
         upstream: upstream.trim_end_matches('/').to_owned(),
         region,
         credential,
+        shared_bucket: std::env::var("STORAGE_PROXY_SHARED_BUCKET").ok(),
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()?,
@@ -281,6 +283,40 @@ async fn forward(
     incoming: &IncomingRequest<'_>,
     body: &Bytes,
 ) -> anyhow::Result<Response> {
+    /*
+      Where the request actually goes.
+
+      With a bucket per tenant this was the path the client sent, unchanged. With one shared bucket
+      it is that path rewritten under the tenant's prefix — and the rewrite is the tenant boundary,
+      so a key that could escape it is refused here rather than sanitised.
+    */
+    let (path, query) = match proxy.shared_bucket.as_deref() {
+        None => (path.to_owned(), query.to_owned()),
+        Some(shared) => {
+            let tenant_bucket = bucket_from_path(path).unwrap_or_default();
+            let listing = is_list(method.as_str(), tenant_bucket, path, query);
+
+            let rewritten_query = if listing {
+                upstream_query(tenant_bucket, query)
+                    .map_err(|_| anyhow::anyhow!("the request key leaves the tenant's prefix"))?
+            } else {
+                query.to_owned()
+            };
+
+            let rewritten_path = if listing {
+                // A list is on the bucket with a prefix, not on the prefix as a path: listing
+                // `/shared/v-abc/` returns nothing, because that is not how S3 lists.
+                format!("/{shared}")
+            } else {
+                upstream_path(shared, tenant_bucket, path)
+                    .map_err(|_| anyhow::anyhow!("the request key leaves the tenant's prefix"))?
+            };
+
+            (rewritten_path, rewritten_query)
+        }
+    };
+    let (path, query) = (path.as_str(), query.as_str());
+
     let target = if query.is_empty() {
         format!("{}{}", proxy.upstream, path)
     } else {
@@ -320,6 +356,24 @@ async fn forward(
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
     let bytes = upstream.bytes().await?;
+
+    /*
+      A listing comes back naming the keys S3 stored, which all begin with the tenant's prefix.
+
+      Told its object is `v-abc/notes/one.md`, a client stores that name and asks for the wrong
+      thing next time — for `livesync`, a full resync of the vault on every open. Only listings are
+      rewritten: an object body is the customer's bytes and must not be touched.
+    */
+    let bytes = match proxy.shared_bucket.as_deref() {
+        Some(_) if status.is_success() && is_listing_response(&bytes) => {
+            let tenant_bucket = bucket_from_path(incoming.path).unwrap_or_default();
+            match std::str::from_utf8(&bytes) {
+                Ok(text) => Bytes::from(strip_prefix_from_listing(text, tenant_bucket)),
+                Err(_) => bytes,
+            }
+        }
+        _ => bytes,
+    };
 
     let mut response = Response::builder().status(status);
     for (name, value) in &upstream_headers {

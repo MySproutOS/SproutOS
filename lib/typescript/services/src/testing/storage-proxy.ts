@@ -37,6 +37,14 @@ export type RunningProxy = {
 export async function startStorageProxy(
   config: ObjectStorageConfig,
   port: number,
+  /*
+    The one real bucket every tenant lives in (§4.5).
+
+    Omitted keeps the original shape — a bucket per tenant, where S3 enforces the boundary. A suite
+    exercising the shared layout has to say so, because the two cannot be mixed: half a customer's
+    objects in each is the shape that looks like data loss.
+  */
+  sharedBucket?: string,
 ): Promise<RunningProxy> {
   const publicEndpoint = `http://127.0.0.1:${port}`
   const log: string[] = []
@@ -53,6 +61,7 @@ export async function startStorageProxy(
       // whose assertion depends on a log level someone else set is a test that silently checks
       // nothing.
       RUST_LOG: "storage_proxy=debug",
+      ...(sharedBucket === undefined ? {} : { STORAGE_PROXY_SHARED_BUCKET: sharedBucket }),
     },
     stdio: ["ignore", "pipe", "pipe"],
   })
