@@ -12,8 +12,17 @@ export type MicroUsd = bigint
 export const MICRO_PER_USD = 1_000_000n
 export const MICRO_PER_CENT = 10_000n
 
-/** The smallest top-up the product accepts, per TASK 7. */
-export const MINIMUM_TOPUP: MicroUsd = 500_000n
+/**
+ * The smallest top-up the product accepts: **$1**.
+ *
+ * Raised from $0.50. At fifty cents Stripe took $0.3145 — 63% — and a customer
+ * who paid $0.50 and saw $0.185 credited would reasonably conclude they had
+ * been cheated, whatever the fee line said. At a dollar the same fixed 30 cents
+ * is 33%, which is still bad and is the honest floor for card payments: the
+ * fixed component does not get smaller, so any minimum low enough to feel
+ * generous is a minimum where the fee dominates.
+ */
+export const MINIMUM_TOPUP: MicroUsd = 1_000_000n
 
 /**
  * Stripe's published card rate: 2.9% plus 30 cents.
@@ -35,10 +44,10 @@ const MARKUP_BPS = 0n
 /**
  * The processing fee for a charge of `amount`.
  *
- * TASK 7 fixes the minimum top-up at $0.50, and Stripe takes $0.3145 of that —
- * 63% — so a top-up that credited the full amount would lose money on every
- * small payment. The fee is shown as its own line so the arithmetic is visible
- * rather than hidden in a smaller credit than the user expected.
+ * The minimum top-up is $1 and Stripe takes $0.329 of that — a third — so a
+ * top-up that credited the full amount would lose money on every small payment.
+ * The fee is shown as its own line so the arithmetic is visible rather than
+ * hidden in a smaller credit than the user expected.
  *
  * Rounded up, because rounding a fee down means eating the remainder on every
  * single transaction.

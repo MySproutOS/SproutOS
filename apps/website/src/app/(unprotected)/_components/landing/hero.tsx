@@ -36,8 +36,8 @@ export function Hero() {
             </div>
 
             <p className="mt-5 font-mono text-xs text-muted-foreground">
-              Sign in with GitHub · <span className="tnum text-primary">$0.50</span> minimum · No
-              card to look around
+              Sign in with GitHub · <span className="tnum text-primary">$1</span> minimum · No card
+              to look around
             </p>
 
             <p className="mt-3 font-mono text-xs text-muted-foreground">

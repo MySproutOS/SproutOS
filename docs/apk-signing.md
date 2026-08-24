@@ -81,7 +81,7 @@ overwriting the artifact its successor already produced.
 ## `signer_id`
 
 A label on a claim, not an authorization principal. One token covers the whole signing fleet, so any
-holder could assert any id — that is fine, because the token *is* the trust boundary: a machine
+holder could assert any id — that is fine, because the token _is_ the trust boundary: a machine
 holding it is already permitted to sign. What the id buys is correctness among cooperating signers,
 not defence against a hostile one.
 

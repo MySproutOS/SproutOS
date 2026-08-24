@@ -12,14 +12,14 @@ import {
 } from "./money"
 
 describe("processing fee", () => {
-  it("covers Stripe's cut on the $0.50 minimum", () => {
-    // 2.9% of $0.50 is $0.0145, plus $0.30 fixed.
+  it("covers Stripe's cut on the $1 minimum", () => {
+    // 2.9% of $1.00 is $0.029, plus $0.30 fixed.
     const fee = processingFee(MINIMUM_TOPUP)
-    expect(fee).toBe(314_500n)
-    // The whole point: a $0.50 top-up that credited $0.50 would lose $0.3145
+    expect(fee).toBe(329_000n)
+    // The whole point: a $1 top-up that credited $1 would lose $0.329
     // every time. Here the platform nets zero rather than negative.
     expect(fee).toBeLessThan(MINIMUM_TOPUP)
-    expect(creditedAmount(MINIMUM_TOPUP)).toBe(185_500n)
+    expect(creditedAmount(MINIMUM_TOPUP)).toBe(671_000n)
   })
 
   it("gets proportionally cheaper as the top-up grows", () => {
