@@ -1,0 +1,217 @@
+import { GetAliasCommand, InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda"
+import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import { deflateRawSync } from "node:zlib"
+import { afterAll, describe, expect, it } from "vitest"
+import { functionName, LIVE_ALIAS, pointAlias, publishFunction } from "./publish"
+
+/**
+ * Against LocalStack's Lambda, which really does create the function, publish versions and run the
+ * code. The property under test is that a second deployment produces a second version and moves the
+ * alias — and a fake client would only confirm we send the commands we think we send, not that
+ * Lambda accepts the order we send them in.
+ */
+const ENDPOINT = process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566"
+const BUCKET = "sproutos-test-lambda"
+/** LocalStack accepts any well-formed role ARN; it does not evaluate the policy. */
+const ROLE = "arn:aws:iam::000000000000:role/lambda-exec"
+
+const local = {
+  region: "us-east-1",
+  endpoint: ENDPOINT,
+  credentials: { accessKeyId: "test", secretAccessKey: "test" },
+}
+
+const reachable = await (async () => {
+  try {
+    const response = await fetch(`${ENDPOINT}/_localstack/health`)
+    if (!response.ok) return false
+    const health = (await response.json()) as { services?: Record<string, string> }
+    const lambda = health.services?.lambda
+    return lambda === "available" || lambda === "running"
+  } catch {
+    return false
+  }
+})()
+
+const lambda = new LambdaClient(local)
+const s3 = new S3Client({ ...local, forcePathStyle: true })
+
+/**
+ * A zip file, built by hand.
+ *
+ * Node has no zip writer and pulling a dependency in for four tests is worse than 30 lines of
+ * struct-packing. Stored uncompressed would be simpler still, but Lambda rejects a zip whose only
+ * entry is stored on some runtimes, so this deflates.
+ */
+function zip(files: { name: string; content: string }[]): Buffer {
+  const chunks: Buffer[] = []
+  const central: Buffer[] = []
+  let offset = 0
+
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8")
+    const content = Buffer.from(file.content, "utf8")
+    const deflated = deflateRawSync(content)
+    const crc = crc32(content)
+
+    const localHeader = Buffer.alloc(30)
+    localHeader.writeUInt32LE(0x0403_4b50, 0)
+    localHeader.writeUInt16LE(20, 4)
+    localHeader.writeUInt16LE(0, 6)
+    localHeader.writeUInt16LE(8, 8)
+    localHeader.writeUInt32LE(0, 10)
+    localHeader.writeUInt32LE(crc, 14)
+    localHeader.writeUInt32LE(deflated.length, 18)
+    localHeader.writeUInt32LE(content.length, 22)
+    localHeader.writeUInt16LE(name.length, 26)
+    localHeader.writeUInt16LE(0, 28)
+
+    const centralHeader = Buffer.alloc(46)
+    centralHeader.writeUInt32LE(0x0201_4b50, 0)
+    centralHeader.writeUInt16LE(20, 4)
+    centralHeader.writeUInt16LE(20, 6)
+    centralHeader.writeUInt16LE(0, 8)
+    centralHeader.writeUInt16LE(8, 10)
+    centralHeader.writeUInt32LE(0, 12)
+    centralHeader.writeUInt32LE(crc, 16)
+    centralHeader.writeUInt32LE(deflated.length, 20)
+    centralHeader.writeUInt32LE(content.length, 24)
+    centralHeader.writeUInt16LE(name.length, 28)
+    // `<< 16` on a value this size overflows into a negative int32 in JS; the shift has to be
+    // coerced back to unsigned before it can be written as one.
+    centralHeader.writeUInt32LE((0o100644 << 16) >>> 0, 38)
+    centralHeader.writeUInt32LE(offset, 42)
+
+    chunks.push(localHeader, name, deflated)
+    central.push(centralHeader, name)
+    offset += localHeader.length + name.length + deflated.length
+  }
+
+  const centralBuffer = Buffer.concat(central)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x0605_4b50, 0)
+  end.writeUInt16LE(files.length, 8)
+  end.writeUInt16LE(files.length, 10)
+  end.writeUInt32LE(centralBuffer.length, 12)
+  end.writeUInt32LE(offset, 16)
+
+  return Buffer.concat([...chunks, centralBuffer, end])
+}
+
+function crc32(data: Buffer): number {
+  let crc = 0xffff_ffff
+  for (const byte of data) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb8_8320 : crc >>> 1
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0
+}
+
+/** A handler that returns the string it was built with, so a version is identifiable at runtime. */
+function handlerFor(marker: string): Buffer {
+  return zip([
+    {
+      name: "index.mjs",
+      content: `export const handler = async () => ({ statusCode: 200, body: ${JSON.stringify(marker)} })\n`,
+    },
+  ])
+}
+
+async function upload(key: string, body: Buffer): Promise<void> {
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body }))
+}
+
+const projectId = "01a03600-0000-7000-8000-00000000d1ce"
+
+if (reachable) {
+  try {
+    await s3.send(new CreateBucketCommand({ Bucket: BUCKET }))
+  } catch {
+    // Already there from an earlier run. LocalStack's Hobby tier does not persist, but a second
+    // `pnpm test` inside one container session hits this.
+  }
+}
+
+async function invokeLive(): Promise<string> {
+  const response = await lambda.send(
+    new InvokeCommand({ FunctionName: `${functionName(projectId)}:${LIVE_ALIAS}`, Payload: "{}" }),
+  )
+  const payload = Buffer.from(response.Payload ?? new Uint8Array()).toString("utf8")
+  return (JSON.parse(payload) as { body: string }).body
+}
+
+afterAll(() => {
+  lambda.destroy()
+  s3.destroy()
+})
+
+/*
+  Carried between the tests rather than assumed to be "1" and "2".
+
+  Versions are per-function and monotonic, and LocalStack keeps them for the life of the container —
+  so a second `pnpm test` without a restart starts at 3, and a suite that hardcodes "1" asserts
+  against an artifact an earlier run uploaded. It passes on a fresh container and lies afterwards.
+*/
+let firstVersion = ""
+let secondVersion = ""
+
+describe.runIf(reachable)("publishing a build to Lambda", () => {
+  it("creates the function, publishes a version, and points live at it", async () => {
+    await upload("v1.zip", handlerFor("first"))
+
+    const result = await publishFunction(lambda, {
+      projectId,
+      bucket: BUCKET,
+      key: "v1.zip",
+      handler: "index.handler",
+      runtime: "nodejs22.x" as const,
+      memoryMb: 128,
+      timeoutS: 10,
+      roleArn: ROLE,
+    })
+
+    expect(result.functionName).toBe(functionName(projectId))
+    // Never `$LATEST`: the alias has to point at an immutable version or a rollback has nothing to
+    // roll back to.
+    expect(result.version).not.toBe("$LATEST")
+    expect(await invokeLive()).toBe("first")
+    firstVersion = result.version
+  }, 120_000)
+
+  it("moves the alias on the second deployment, leaving the first version invokable", async () => {
+    const alias = await lambda.send(
+      new GetAliasCommand({ FunctionName: functionName(projectId), Name: LIVE_ALIAS }),
+    )
+    expect(alias.FunctionVersion).toBe(firstVersion)
+
+    await upload("v2.zip", handlerFor("second"))
+    const result = await publishFunction(lambda, {
+      projectId,
+      bucket: BUCKET,
+      key: "v2.zip",
+      handler: "index.handler",
+      runtime: "nodejs22.x" as const,
+      memoryMb: 128,
+      timeoutS: 10,
+      roleArn: ROLE,
+    })
+
+    expect(result.version).not.toBe(firstVersion)
+    expect(await invokeLive()).toBe("second")
+    secondVersion = result.version
+  }, 120_000)
+
+  it("rolls back with one call and no rebuild", async () => {
+    // The whole reason releases are versions behind an alias. Nothing is uploaded here and no
+    // configuration changes — the previous version was never deleted, so pointing at it is enough.
+    const name = functionName(projectId)
+    await pointAlias(lambda, name, firstVersion)
+
+    expect(await invokeLive()).toBe("first")
+
+    await pointAlias(lambda, name, secondVersion)
+    expect(await invokeLive()).toBe("second")
+  }, 120_000)
+})
