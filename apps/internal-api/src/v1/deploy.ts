@@ -190,7 +190,7 @@ const deploy: Hono = new Hono()
         place. That makes a redeploy of an unchanged artifact idempotent rather than accumulating
         copies — the action already produces a reproducible archive for exactly this reason.
       */
-      const key = `builds/${authorized.projectId}/${digest}.tar.gz`
+      const key = `builds/${authorized.projectId}/${digest}.zip`
       const bucket = process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
 
       const client = new S3Client({
@@ -202,7 +202,7 @@ const deploy: Hono = new Hono()
 
       const url = await getSignedUrl(
         client,
-        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: "application/gzip" }),
+        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: "application/zip" }),
         // Long enough for a large upload on a slow runner, short enough that a URL in a log is
         // useless before anyone reads it.
         { expiresIn: 900 },
@@ -250,7 +250,7 @@ const deploy: Hono = new Hono()
         waits.
 
         The key recorded is the uploaded archive, not a bare APK: the action packages a directory,
-        which for the `android` preset contains the unsigned APK. The signer extracts it. Uploading
+        which for the `android` preset contains the unsigned APK. The signer unzips it. Uploading
         the APK on its own would be tidier and is worth doing when the action next changes; doing it
         now would mean a version skew where a customer on the old action silently queues a job no
         signer can read.

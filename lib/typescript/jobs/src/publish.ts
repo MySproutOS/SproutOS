@@ -4,7 +4,7 @@ import { hostLabel } from "@lib/deploy"
 import { openEnvVarValue } from "@lib/envelope"
 import { publishFunction, publishRoute, type Route } from "@lib/lambda"
 import type { DB } from "@sproutos/db"
-import type { Redis } from "ioredis"
+import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
 
@@ -42,6 +42,29 @@ export type PublishOptions = {
   valkey: Redis
   bucket?: string
   roleArn?: string
+}
+
+/*
+  Clients built on first use, never at import.
+
+  `PLATFORM_HANDLERS` is a module-scope object literal, so anything constructed inside it runs when
+  the module loads. A `new Redis(...)` there opens a connection as a side effect of importing the
+  handler registry — which kept the OpenAPI generator's process alive until it timed out at three
+  minutes, and would keep a CLI or a migration alive the same way.
+*/
+let shared: { lambda: LambdaClient; valkey: Redis } | undefined
+function sharedClients(): { lambda: LambdaClient; valkey: Redis } {
+  shared ??= {
+    lambda: new LambdaClient({
+      region: process.env.AWS_REGION ?? "us-east-1",
+      ...(process.env.AWS_ENDPOINT_URL === undefined
+        ? {}
+        : { endpoint: process.env.AWS_ENDPOINT_URL }),
+    }),
+    // The platform's own Valkey, where the route map lives — not the tenant instance.
+    valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
+  }
+  return shared
 }
 
 /**
@@ -89,8 +112,9 @@ export function hostnameFor(
   return `${hostLabel(project, { kind: deployment.kind, prNumber: deployment.prNumber })}.${tenantDomain()}`
 }
 
-export function publishRelease(options: PublishOptions): JobHandler {
+export function publishRelease(options?: PublishOptions): JobHandler {
   return async (job, { db }) => {
+    const clients = options ?? sharedClients()
     const { deploymentId } = job.payload as PublishPayload
 
     const found = await fetchDeployment(db).withProject(deploymentId)
@@ -138,15 +162,15 @@ export function publishRelease(options: PublishOptions): JobHandler {
     const environment = await environmentFor(db, project.id, deployment.kind)
     const hostname = hostnameFor(project, deployment)
 
-    const published = await publishFunction(options.lambda, {
+    const published = await publishFunction(clients.lambda, {
       projectId: project.id,
-      bucket: options.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
+      bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
       key: deployment.artifactKey,
       handler: "index.handler",
       runtime: "nodejs22.x",
       memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
       timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
-      roleArn: options.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+      roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
       environment,
     })
 
@@ -164,7 +188,7 @@ export function publishRelease(options: PublishOptions): JobHandler {
       organizationId: project.organizationId,
       deploymentId,
     }
-    await publishRoute(options.valkey, hostname, route)
+    await publishRoute(clients.valkey, hostname, route)
 
     await crudDeployment(db).update(deploymentId, {
       status: "ready",

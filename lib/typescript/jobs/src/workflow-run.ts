@@ -2,8 +2,8 @@ import type { DB } from "@sproutos/db"
 import { NODE_RUNTIME, plannedSteps, type WorkflowGraph } from "@lib/workflows"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { tenantNamespace } from "./deploy"
-import { runNodeInSandbox } from "./sandbox-node"
+import { LambdaClient } from "@aws-sdk/client-lambda"
+import { runNodeInLambda } from "./lambda-node"
 import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
 
@@ -140,9 +140,7 @@ export async function runWorkflow(
           .where("id", "=", step.id)
           .execute()
 
-        const result = await runNodeInSandbox({
-          namespace: tenant.namespace,
-          organizationId: tenant.organizationId,
+        const result = await runNodeInLambda(lambdaClient(), {
           projectId: tenant.projectId,
           runId: claimed.id,
           nodeId: step.nodeId,
@@ -151,11 +149,29 @@ export async function runWorkflow(
         })
 
         /*
-          A non-zero exit fails the step and the run. The output is recorded either way — the body
-          of a failed HTTP call is usually the only thing that says what went wrong, and discarding
-          it because the exit code was non-zero throws away the answer with the error.
+          A failure fails the step and the run. The output is recorded either way — the body of a
+          failed HTTP call is usually the only thing that says what went wrong, and discarding it
+          because the call failed throws away the answer with the error.
+
+          `unrunnable` is neither: the project has never been deployed, so there is no function to
+          run the node in. Retrying will not change that and the customer's fix is to deploy, so it
+          is skipped with the reason rather than recorded as their workflow failing.
         */
-        const ok = result.exitCode === 0
+        if (result.state === "unrunnable") {
+          skipped += 1
+          await db
+            .updateTable("workflowRunStep")
+            .set({
+              status: "skipped",
+              finishedAt: new Date(),
+              output: JSON.stringify({ reason: result.reason }),
+            })
+            .where("id", "=", step.id)
+            .execute()
+          continue
+        }
+
+        const ok = result.state === "ok"
         if (!ok) failedStep = true
 
         await db
@@ -164,11 +180,12 @@ export async function runWorkflow(
             status: ok ? "succeeded" : "failed",
             finishedAt: new Date(),
             output: JSON.stringify({
-              exitCode: result.exitCode,
-              timedOut: result.timedOut,
-              // Bounded: a step's output is read by a UI, and a customer's script can print
-              // megabytes. The pod's logs are the full record while the pod exists.
-              output: result.output.slice(0, 8000),
+              // Bounded: a step's output is read by a UI, and a customer's handler can return
+              // megabytes. The function's own logs are the full record.
+              output: JSON.stringify(result.state === "ok" ? result.output : result.reason).slice(
+                0,
+                8000,
+              ),
             }),
           })
           .where("id", "=", step.id)
@@ -287,24 +304,39 @@ export function stepRowsFor(
   }))
 }
 
+/*
+  One client for the process, built on first use.
+
+  Not at import time: constructing an SDK client when the module loads makes a worker fail to start
+  wherever the environment is incomplete, which is the same reason the Kubernetes client this
+  replaced was never built there either.
+*/
+let client: LambdaClient | undefined
+function lambdaClient(): LambdaClient {
+  client ??= new LambdaClient({
+    region: process.env.AWS_REGION ?? "us-east-1",
+    ...(process.env.AWS_ENDPOINT_URL === undefined
+      ? {}
+      : { endpoint: process.env.AWS_ENDPOINT_URL }),
+  })
+  return client
+}
+
 export const workflowRunJob: JobHandler = async (job, { db, signal }) => {
   await runWorkflow(db, job.payload as WorkflowRunPayload, signal)
 }
 
 /**
- * The namespace a workflow's sandboxed steps run in.
+ * Which project a workflow's isolated steps run in.
  *
- * `tenantNamespace` and the **organization** id, which is what `deployRevision` uses. The two have
- * to agree exactly: `deploy/tenant/network-policy.yaml` is applied to the namespace the deploy
- * created, and a sandbox in any other namespace is a sandbox with no policy on it — which is the
- * whole isolation, silently absent. Keying this on the project id instead would have produced a
- * namespace that does not exist, and the Job would have been rejected rather than unprotected,
- * which is the lucky version of that mistake.
+ * The namespace is gone with the cluster; the attribution is not. These ids are what a node's usage
+ * is billed against, and returning only the boundary and not the invoice is exactly what shipped
+ * once — which is why every workflow node ran for free.
  */
 async function tenantNamespaceFor(
   db: Kysely<DB>,
   workflowId: string,
-): Promise<{ namespace: string; organizationId: string; projectId: string } | undefined> {
+): Promise<{ organizationId: string; projectId: string } | undefined> {
   const row = await db
     .selectFrom("workflow")
     .innerJoin("project", "project.id", "workflow.projectId")
@@ -312,19 +344,7 @@ async function tenantNamespaceFor(
     .where("workflow.id", "=", workflowId)
     .executeTakeFirst()
 
-  /*
-    The ids come back with the namespace, rather than the namespace alone.
-
-    They are the same query and the same row, and the sandbox needs both: the namespace is the
-    isolation and the ids are the attribution. Returning only the namespace meant the caller had the
-    boundary and not the invoice — which is exactly what shipped, and why every workflow node ran
-    for free.
-  */
   return row === undefined
     ? undefined
-    : {
-        namespace: tenantNamespace(row.organizationId),
-        organizationId: row.organizationId,
-        projectId: row.projectId,
-      }
+    : { organizationId: row.organizationId, projectId: row.projectId }
 }

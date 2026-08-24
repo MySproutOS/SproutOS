@@ -7,3 +7,5 @@ export {
   type PublishResult,
 } from "./publish"
 export { publishRoute, readRoute, ROUTE_TTL_S, type Route, withdrawRoute } from "./routes"
+export { deleteFunction, tearDownDeployment } from "./teardown"
+export { publishQueue, type QueueBinding, readQueue, withdrawQueue } from "./queues"

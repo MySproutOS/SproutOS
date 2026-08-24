@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { TEARDOWN_KIND, tearDownProject, type TeardownKube } from "./teardown"
+import { TEARDOWN_KIND, tearDownProject, type TeardownClients } from "./teardown"
 
 /**
  * Against the docker-compose Postgres. What is asserted here is which rows change and which
@@ -17,34 +17,37 @@ let ownerUserId: string
 let projectId: string
 let repositoryId: string
 
-const removed: string[] = []
 /** Collection deletes, as `path` + the selector — see `removeCollection`. */
-const removedCollections: string[] = []
 
 /*
-  Typed as `TeardownKube` rather than cast to `never`.
+  What teardown did to the Lambda side.
 
-  The cast is how this stub came to be missing `removeCollection` entirely: the teardown handler
-  gained a call, the type gained a member, and `as never` waved both through — so the first sign was
-  a `TypeError` at runtime, in a test whose whole job is to prove teardown does not throw.
+  Injected rather than defaulted. Without this the handler builds a real `LambdaClient` and a real
+  `Redis` from the environment — so the suite would open a connection it never closes, reach
+  LocalStack from a unit test, and assert nothing about either. It passed like that once, which is
+  the whole reason the injection is here.
 */
-const kube: TeardownKube = {
-  // Generic, because `get` is: a non-generic stub only satisfies `Promise<{}>` and the real
-  // signature promises `T | undefined`.
-  get: <T>() => Promise.resolve({} as T),
-  remove: (path: string) => {
-    removed.push(path)
-    return Promise.resolve()
-  },
-  removeCollection: (path: string, labelSelector: string) => {
-    removedCollections.push(`${path}?${labelSelector}`)
-    return Promise.resolve()
-  },
-}
+const deletedFunctions: string[] = []
+const withdrawn: string[] = []
 
-/** The handler, with the Kubernetes client replaced by one that records what it deleted. */
+const lambdaClients = {
+  lambda: {
+    send: (command: { input?: { FunctionName?: string } }) => {
+      deletedFunctions.push(command.input?.FunctionName ?? "")
+      return Promise.resolve({})
+    },
+  },
+  valkey: {
+    del: (key: string) => {
+      withdrawn.push(key)
+      return Promise.resolve(1)
+    },
+  },
+} as unknown as TeardownClients
+
+/** The handler, with the Kubernetes and AWS clients replaced by ones that record what they did. */
 function handler() {
-  return tearDownProject(kube)
+  return tearDownProject(lambdaClients)
 }
 
 beforeAll(async () => {
@@ -209,6 +212,19 @@ describe("tearing down a deleted project", () => {
       .execute()
     expect(deployments.every((d) => d.status === "torn_down")).toBe(true)
 
+    /*
+      The compute is actually gone, not merely marked gone.
+
+      A row that says `torn_down` while the function still exists and the hostname still resolves is
+      the exact failure this job exists to prevent — a deleted project still serving, and still
+      costing money every minute nobody notices.
+    */
+    expect(deletedFunctions.length).toBeGreaterThan(0)
+    expect(deletedFunctions.every((name) => name.startsWith("sproutos-app-"))).toBe(true)
+    // Withdrawn by the hostname stored on the deployment, so a project renamed since it deployed
+    // does not leave its old host resolving.
+    expect(withdrawn.every((key) => key.startsWith("route:"))).toBe(true)
+
     // The customer's secrets are gone. Nothing references them and the request was to stop holding
     // the project's data.
     const envVars = await db
@@ -257,24 +273,29 @@ describe("tearing down a deleted project", () => {
   })
 })
 
-describe("the environment secrets in the cluster", () => {
-  it("collects them by label, because their names cannot be enumerated", async ({ skip }) => {
+describe("the customer's decrypted environment", () => {
+  it("leaves no second copy, because the function held the only one", async ({ skip }) => {
     /*
-      A revision's environment is a Secret named after its own contents, so a project accumulates
-      one per environment it has ever deployed with. There is no list of names to walk.
+      This used to sweep Kubernetes Secrets by label. A revision's environment was a Secret named
+      after its own contents, so a project accumulated one per environment it had ever deployed
+      with and there was no list of names to walk — leaving them behind meant a customer who was
+      told their data was gone while their *decrypted* values sat in a namespace indefinitely.
 
-      Deleting the `project_env_var` rows and leaving these would mean a customer who asked the
-      platform to stop holding their data, and was told it had, while their *decrypted* values sat
-      in a namespace indefinitely — the database rows at least were sealed.
+      A Lambda's environment lives on the function, and teardown deletes the function. So the check
+      that matters is now the one below: the rows are gone, and nothing else ever held a copy.
     */
     if (!reachable) skip()
 
     await handler()(job({ projectId }), context())
 
-    expect(
-      removedCollections.some((entry) => entry.includes(`sproutos.dev/project=${projectId}`)),
-    ).toBe(true)
-    // The collection path, not one object's: an empty name is what `secretPath` turns into it.
-    expect(removedCollections.some((entry) => entry.includes("/secrets?"))).toBe(true)
+    const remaining = await db
+      .selectFrom("projectEnvVar")
+      .select("id")
+      .where("projectId", "=", projectId)
+      .execute()
+    expect(remaining).toHaveLength(0)
+
+    // And the function that carried them is gone, not merely dereferenced.
+    expect(deletedFunctions).toContain(`sproutos-app-${projectId}`)
   })
 })

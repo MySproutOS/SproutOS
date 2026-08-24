@@ -2,7 +2,7 @@ import { crudDeployment } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { DEPLOY_KINDS } from "./deploy"
+import { PUBLISH_KINDS } from "./publish"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 
@@ -167,10 +167,10 @@ const push: JobHandler = async (job, { db }) => {
     })
 
     await enqueue(db, {
-      kind: DEPLOY_KINDS.revision,
+      kind: PUBLISH_KINDS.release,
       organizationId: project.organizationId,
       payload: { deploymentId: deployment.id },
-      idempotencyKey: `${DEPLOY_KINDS.revision}:${deployment.id}`,
+      idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
     })
 
     console.info(`[jobs] push ${after.slice(0, 7)} on ${branch}: deploying project ${project.id}`)
@@ -243,10 +243,10 @@ const pullRequest: JobHandler = async (job, { db }) => {
     })
 
     await enqueue(db, {
-      kind: DEPLOY_KINDS.revision,
+      kind: PUBLISH_KINDS.release,
       organizationId: project.organizationId,
       payload: { deploymentId: deployment.id },
-      idempotencyKey: `${DEPLOY_KINDS.revision}:${deployment.id}`,
+      idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
     })
 
     console.info(`[jobs] PR #${pr.number} ${action}: deploying preview for project ${project.id}`)

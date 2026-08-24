@@ -1,20 +1,14 @@
 import { BATCH_SIZE, chargeUsage, expireHolds, formatMicroUsd, rollUpUsage } from "@lib/billing"
 import { observabilityConfigured } from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
-import { Redis } from "ioredis"
-import { type DispatchResult, dispatchQueues, type MasterQueueClient } from "./dispatch"
 import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
-import { BUILD_KINDS, buildImage } from "./build"
-import { deployRevision, DEPLOY_KINDS } from "./deploy"
-import { LambdaClient } from "@aws-sdk/client-lambda"
 import { PUBLISH_KINDS, publishRelease } from "./publish"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import { enqueue } from "./queue"
-import { REGISTRY_CREDENTIAL_KIND, refreshRegistryCredential } from "./registry-credential"
 import { WORKFLOW_RUN_KIND, workflowRunJob } from "./workflow-run"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
@@ -60,14 +54,10 @@ export const JOB_KINDS = {
   sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
-  deployRevision: DEPLOY_KINDS.revision,
   publishRelease: PUBLISH_KINDS.release,
-  buildImage: BUILD_KINDS.image,
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
-  dispatchQueues: "queue.dispatch",
-  refreshRegistryCredential: REGISTRY_CREDENTIAL_KIND,
   tearDownProject: TEARDOWN_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
@@ -203,66 +193,6 @@ const chargeUsageJob: JobHandler = async (_job, { db }) => {
   }
 }
 
-/**
- * TASK 20's consumer: read the master queue and start or stop workers.
- *
- * The Valkey connection is opened per run and closed after. This runs every ten minutes and holding
- * a connection open between runs would mean one idle connection per worker process for the life of
- * the deployment, against a shared instance where connection slots are the scarce resource.
- */
-const dispatchQueuesJob: JobHandler = async (_job, { db }) => {
-  const url = process.env.SERVICE_VALKEY_ADMIN_URL ?? process.env.VALKEY_URL
-  if (url === undefined || url === "") {
-    // Refuses rather than skipping. A dispatcher that quietly does nothing is a queue with a
-    // backlog and no worker, which is indistinguishable from a customer's code being broken.
-    throw new Error("SERVICE_VALKEY_ADMIN_URL is not set; queue workers cannot be dispatched")
-  }
-
-  const redis = new Redis(url)
-  try {
-    /*
-      Adapted rather than passed straight through.
-
-      `ioredis`' `zrange` carries a dozen overloads — `BYSCORE`, `REV`, `LIMIT`, `Buffer` variants —
-      and a `Redis` is not assignable to a two-method interface because of them: `stop` is typed
-      `string | Buffer`, so a numeric `-1` matches nothing. Going through `call` costs one narrowing
-      and keeps `MasterQueueClient` the two commands it actually is, which is also what lets a test
-      hand in an object literal.
-    */
-    const client: MasterQueueClient = {
-      zrange: async (key, start, stop, withScores) => {
-        const reply = await redis.call("ZRANGE", key, String(start), String(stop), withScores)
-        // A `ZRANGE ... WITHSCORES` reply is a flat array of member, score, member, score. Anything
-        // else means the command did not do what this thinks it did.
-        return Array.isArray(reply) ? (reply as string[]) : []
-      },
-      zrem: async (key, member) => Number(await redis.call("ZREM", key, member)),
-    }
-
-    const result = await dispatchQueues(db, client)
-    if (result.seen > 0) {
-      console.info(
-        `[jobs] dispatch: ${result.seen} queue(s), ${result.started} started, ${result.stopped} stopped` +
-          describeUnstartable(result),
-      )
-    }
-  } finally {
-    redis.disconnect()
-  }
-}
-
-/**
- * The queues that could not get a worker, and why — only when there are any.
- *
- * Named rather than counted, because `no-secret` is the one a customer can act on and burying it in
- * a total is how it stops being acted on.
- */
-function describeUnstartable(result: DispatchResult): string {
-  const reasons = Object.entries(result.unstartable).filter(([, count]) => count > 0)
-  if (reasons.length === 0) return ""
-  return `, unstartable: ${reasons.map(([reason, count]) => `${count} ${reason}`).join(", ")}`
-}
-
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   /*
     The GitHub webhook handlers.
@@ -272,7 +202,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     kinds were being queued with no handler at all.
   */
   ...GITHUB_EVENT_HANDLERS,
-  [JOB_KINDS.refreshRegistryCredential]: refreshRegistryCredential(),
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
@@ -283,21 +212,9 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.upkeepScan]: (job, context) =>
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
-  [JOB_KINDS.deployRevision]: deployRevision(),
-  [JOB_KINDS.publishRelease]: publishRelease({
-    lambda: new LambdaClient({
-      region: process.env.AWS_REGION ?? "us-east-1",
-      ...(process.env.AWS_ENDPOINT_URL === undefined
-        ? {}
-        : { endpoint: process.env.AWS_ENDPOINT_URL }),
-    }),
-    // The platform's own Valkey, where the route map lives — not the tenant instance.
-    valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
-  }),
-  [JOB_KINDS.buildImage]: buildImage(),
+  [JOB_KINDS.publishRelease]: publishRelease(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
-  [JOB_KINDS.dispatchQueues]: dispatchQueuesJob,
   [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
 }
@@ -312,19 +229,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
-  await enqueue(db, {
-    /*
-      Every ten minutes, which is far more often than either cloud's credential expires.
-
-      Chosen for the failure it prevents rather than the expiry it tracks. A build that starts
-      thirty seconds before the credential lapses compiles the whole application and then fails at
-      the push with a 403 that reads like a permissions problem — minutes of billed compute thrown
-      away for a Secret that costs one API call to rewrite.
-    */
-    kind: JOB_KINDS.refreshRegistryCredential,
-    idempotencyKey: `${JOB_KINDS.refreshRegistryCredential}:${tenMinuteWindow(now)}`,
-    maxAttempts: 3,
-  })
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,
@@ -357,19 +261,6 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.chargeUsage,
     idempotencyKey: `${JOB_KINDS.chargeUsage}:${tenMinuteWindow(now)}`,
-    maxAttempts: 3,
-  })
-  await enqueue(db, {
-    /*
-      Every ten minutes, which is the resolution of the whole scale-from-zero decision.
-
-      Faster would not help: the proxy batches wakes for a second and `IDLE_MS` is ten minutes, so a
-      queue that goes active is served within one interval and one that goes quiet is stopped after
-      ten. The thing this trades against is a job's first-run latency after a lull, which is why
-      `IDLE_MS` is generous rather than this being frequent.
-    */
-    kind: JOB_KINDS.dispatchQueues,
-    idempotencyKey: `${JOB_KINDS.dispatchQueues}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

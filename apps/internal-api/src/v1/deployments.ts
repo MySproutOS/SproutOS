@@ -1,5 +1,5 @@
 import { crudAuditLog, crudDeployment, fetchDeployment } from "@lib/dao"
-import { DEPLOY_KINDS, enqueue } from "@lib/jobs"
+import { PUBLISH_KINDS, enqueue } from "@lib/jobs"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -253,12 +253,12 @@ const app = new Hono()
       })
 
       await enqueue(db, {
-        kind: DEPLOY_KINDS.revision,
+        kind: PUBLISH_KINDS.release,
         organizationId: c.var.organization.id,
         payload: { deploymentId: deployment.id },
         // Keyed on the deployment, so a retried request that already created a row does not queue
         // the same work twice.
-        idempotencyKey: `${DEPLOY_KINDS.revision}:${deployment.id}`,
+        idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
       })
 
       await crudAuditLog(db).record({

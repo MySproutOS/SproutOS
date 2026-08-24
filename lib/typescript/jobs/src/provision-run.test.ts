@@ -4,7 +4,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
-import { DEPLOY_KINDS } from "./deploy"
+import { PUBLISH_KINDS } from "./publish"
 import { runProvision, STALE_AFTER_MS } from "./provision"
 
 /**
@@ -163,10 +163,10 @@ describe.runIf(reachable)("provisioning a fork", () => {
     const queued = await db
       .selectFrom("backgroundJob")
       .select(["kind", "payload"])
-      .where("idempotencyKey", "=", `${DEPLOY_KINDS.revision}:${deployment!.id}`)
+      .where("idempotencyKey", "=", `${PUBLISH_KINDS.release}:${deployment!.id}`)
       .executeTakeFirst()
 
-    expect(queued?.kind).toBe(DEPLOY_KINDS.revision)
+    expect(queued?.kind).toBe(PUBLISH_KINDS.release)
     expect(queued?.payload).toMatchObject({ deploymentId: deployment!.id })
 
     // The step record has to agree with what happened, since it is the only thing the customer sees.

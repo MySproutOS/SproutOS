@@ -132,9 +132,6 @@ catalogs:
     vite-plugin-static-copy:
       specifier: ^4.1.1
       version: 4.1.1
-    yaml:
-      specifier: ^2.8.1
-      version: 2.9.0
 
 importers:
 
@@ -408,6 +405,9 @@ importers:
       '@lib/jobs':
         specifier: workspace:*
         version: link:../../lib/typescript/jobs
+      '@lib/lambda':
+        specifier: workspace:*
+        version: link:../../lib/typescript/lambda
       '@lib/metering':
         specifier: workspace:*
         version: link:../../lib/typescript/metering
@@ -423,9 +423,6 @@ importers:
       '@lib/queue':
         specifier: workspace:*
         version: link:../../lib/typescript/queue
-      '@lib/sandbox':
-        specifier: workspace:*
-        version: link:../../lib/typescript/sandbox
       '@lib/services':
         specifier: workspace:*
         version: link:../../lib/typescript/services
@@ -821,9 +818,6 @@ importers:
       '@lib/reaper':
         specifier: workspace:*
         version: link:../reaper
-      '@lib/sandbox':
-        specifier: workspace:*
-        version: link:../sandbox
       '@lib/services':
         specifier: workspace:*
         version: link:../services
@@ -978,22 +972,6 @@ importers:
       uuid:
         specifier: 'catalog:'
         version: 14.0.2
-
-  lib/typescript/sandbox:
-    dependencies:
-      '@lib/deploy':
-        specifier: workspace:*
-        version: link:../deploy
-      '@lib/metering':
-        specifier: workspace:*
-        version: link:../metering
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.2.0
-      yaml:
-        specifier: 'catalog:'
-        version: 2.9.0
 
   lib/typescript/services:
     dependencies:
@@ -8956,7 +8934,8 @@ snapshots:
 
   yallist@3.1.1: {}
 
-  yaml@2.9.0: {}
+  yaml@2.9.0:
+    optional: true
 
   zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:

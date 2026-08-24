@@ -15,7 +15,7 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 import { v7 } from "uuid"
 import type { ProjectJobStep } from "@lib/dao/projectJob/crud"
-import { DEPLOY_KINDS } from "./deploy"
+import { PUBLISH_KINDS } from "./publish"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 
@@ -198,7 +198,7 @@ export async function runProvision(
       customer clicked "Fork this app", got a repository on GitHub, and got a project marked `ready`
       that had never been built and was serving nothing. `deployment` held one row, from a seed.
 
-      Wiring it is two calls, because everything downstream already works — `DEPLOY_KINDS.revision`
+      Wiring it is two calls, because everything downstream already works — `PUBLISH_KINDS.release`
       finds no image, enqueues the build, and the build enqueues the deploy back. What was missing
       was only the first push.
 
@@ -231,10 +231,10 @@ export async function runProvision(
       })
 
       await enqueue(db, {
-        kind: DEPLOY_KINDS.revision,
+        kind: PUBLISH_KINDS.release,
         organizationId: job.organizationId,
         payload: { deploymentId: deployment.id },
-        idempotencyKey: `${DEPLOY_KINDS.revision}:${deployment.id}`,
+        idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
       })
 
       await mark("first_deploy", "succeeded")

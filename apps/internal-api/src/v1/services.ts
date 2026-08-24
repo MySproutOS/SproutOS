@@ -11,17 +11,9 @@ import {
   valkeyDriver,
   valkeyServiceConfigFromEnv,
 } from "@lib/services"
-import {
-  createKubeClient,
-  inClusterConfig,
-  queueSecret,
-  queueSecretName,
-  secretPath,
-} from "@lib/deploy"
-import { tenantNamespace } from "@lib/jobs"
-import { ensureTenantNamespace } from "@lib/sandbox"
-import { encodeShortId } from "@lib/services"
 import { srnFor } from "@lib/srn"
+import { publishQueue } from "@lib/lambda"
+import { Redis } from "ioredis"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
@@ -443,39 +435,36 @@ function databaseNameOf(backendServiceId: string): string {
 export default app
 
 /**
- * Write one queue's broker URI into a Secret in the tenant's namespace.
+ * Publish one queue for the router to watch.
  *
  * Never throws. A provision that succeeded must not be reported as a failure because the platform
- * could not set itself up to start a worker later — the customer has a working queue and a URI, and
- * the consequence of this failing is that `dispatchQueues` reports the queue as unstartable, which
- * is visible and recoverable.
+ * could not set itself up to run workers later — the customer has a working queue and a URI, and
+ * the consequence of this failing is that their workflows do not run, which is visible and
+ * recoverable.
+ *
+ * This used to write a Kubernetes Secret into the tenant's namespace for a worker Deployment to
+ * mount. There is no namespace and no Deployment: the router watches the queue and invokes a Lambda
+ * per batch, so what it needs is a key it can read.
  */
 async function captureQueueSecret(
   organizationId: string,
   backendServiceId: string,
   connectionUri: string,
 ): Promise<void> {
+  const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
   try {
-    const namespace = tenantNamespace(organizationId)
-    const client = createKubeClient(inClusterConfig())
-    // The namespace may not exist yet: a queue can be provisioned before anything has been
-    // deployed. `ensureTenantNamespace` also puts the NetworkPolicies in force, which matters here
-    // because this is where a secret is about to live.
-    await ensureTenantNamespace(client, namespace)
-
-    const shortId = encodeShortId(backendServiceId)
-    await client.apply(
-      secretPath(namespace, queueSecretName(shortId)),
-      queueSecret(namespace, shortId, connectionUri),
-    )
+    await publishQueue(valkey, {
+      uri: connectionUri,
+      backendServiceId,
+      projectId: null,
+      organizationId,
+    })
 
     /*
       Recorded after the write, not before.
 
-      `dispatchQueues` reads this instead of asking Kubernetes, because reading a Secret needs `get`
-      on secrets and the control plane's grant is deliberately write-only — see the migration. A
-      row claiming a Secret that was never written would make the dispatcher start a worker that
-      cannot start, so the order matters.
+      A row claiming a binding that was never published would have the router told to watch a queue
+      it cannot reach, so the order matters — the same reasoning as when this wrote a Secret.
     */
     await db
       .updateTable("backendService")
@@ -486,10 +475,12 @@ async function captureQueueSecret(
     console.error(
       JSON.stringify({
         level: "error",
-        message: "could not capture the queue secret; workers cannot be started for this service",
+        message: "could not publish the queue binding; workflows will not run for this service",
         backendServiceId,
         cause: cause instanceof Error ? cause.message : String(cause),
       }),
     )
+  } finally {
+    valkey.disconnect()
   }
 }

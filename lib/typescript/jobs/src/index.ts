@@ -29,20 +29,6 @@ export {
 } from "./worker"
 export { type UpkeepDeps, upkeepRepository } from "./upkeep-repository"
 export {
-  DEPLOY_KINDS,
-  deployRevision,
-  type RevisionOutcome,
-  revisionOutcome,
-  tenantNamespace,
-} from "./deploy"
-export {
-  BUILD_KINDS,
-  BUILD_NAMESPACE,
-  buildImage,
-  type BuildSettings,
-  buildSettingsFromEnv,
-} from "./build"
-export {
   NoUsableCredentialError,
   PROVISION_KIND,
   provisionProjectJob,
@@ -58,21 +44,6 @@ export {
   workflowRunJob,
   type WorkflowRunPayload,
 } from "./workflow-run"
-export {
-  dispatchQueues,
-  IDLE_MS,
-  MASTER_WAKE_KEY,
-  parseMember,
-  type DispatchResult,
-  type MasterQueueClient,
-  type Unstartable,
-} from "./dispatch"
-export {
-  REGISTRY_AUTH_SECRET,
-  REGISTRY_CREDENTIAL_KIND,
-  refreshRegistryCredential,
-  registryAuthSecret,
-} from "./registry-credential"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 export {
@@ -90,3 +61,4 @@ export {
   publishRelease,
   type PublishOptions,
 } from "./publish"
+export { runNodeInLambda, type NodeResult, type NodeRun } from "./lambda-node"

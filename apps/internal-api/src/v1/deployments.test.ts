@@ -122,8 +122,8 @@ describe.skipIf(!reachable)("deployment routes", () => {
     const jobs = await db
       .selectFrom("backgroundJob")
       .select("id")
-      .where("kind", "=", "deploy.revision")
-      .where("idempotencyKey", "=", `deploy.revision:${id}`)
+      .where("kind", "=", "deploy.release")
+      .where("idempotencyKey", "=", `deploy.release:${id}`)
       .execute()
 
     // The row exists and the work is queued. A route that created the row and forgot the job would

@@ -1,13 +1,7 @@
 import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
-import {
-  secretPath,
-  createKubeClient,
-  inClusterConfig,
-  knativeServicePath,
-  workerName,
-  workerPath,
-} from "@lib/deploy"
-import { podPath } from "@lib/sandbox"
+import { LambdaClient } from "@aws-sdk/client-lambda"
+import { tearDownDeployment } from "@lib/lambda"
+import { Redis } from "ioredis"
 import {
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
@@ -18,7 +12,6 @@ import {
 } from "@lib/services"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
-import { tenantNamespace } from "./deploy"
 import type { JobHandler } from "./worker"
 
 /**
@@ -65,18 +58,15 @@ export type TeardownResult = {
 }
 
 /**
- * The Kubernetes surface this needs: look something up, and delete it.
+ * What this needs to take a project's compute away: Lambda, and the platform Valkey holding routes.
  *
- * Injected rather than constructed from a config, matching `runInSandbox`. A config still builds a
- * client that makes real connections, so a test passing one reaches the network — which is how this
- * signature started and why it changed.
+ * Injected rather than built from the environment, because a default that constructs real clients
+ * means a unit test opens a Redis connection it never closes and reaches AWS without saying so.
+ * The Kubernetes client this replaced was injected for the same reason.
  */
-export type TeardownKube = Pick<
-  ReturnType<typeof createKubeClient>,
-  "get" | "remove" | "removeCollection"
->
+export type TeardownClients = { lambda: LambdaClient; valkey: Redis }
 
-export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
+export function tearDownProject(clients?: TeardownClients): JobHandler {
   return async (job, { db }) => {
     const { projectId, projectJobId } = job.payload as {
       projectId?: string
@@ -115,11 +105,17 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
       throw new Error(`Project ${projectId} is not deleted; refusing to tear it down`)
     }
 
-    const namespace = tenantNamespace(project.organizationId)
-    // Built here, not at registration: `inClusterConfig` reads a service-account token that only
-    // exists inside a pod, and evaluating it at import time would stop the worker starting anywhere
-    // else.
-    const kube = kubeClient ?? createKubeClient(inClusterConfig())
+    // Built here, not at registration: constructing clients at import time makes a worker fail to
+    // start wherever the environment is incomplete.
+    const aws: TeardownClients = clients ?? {
+      lambda: new LambdaClient({
+        region: process.env.AWS_REGION ?? "us-east-1",
+        ...(process.env.AWS_ENDPOINT_URL === undefined
+          ? {}
+          : { endpoint: process.env.AWS_ENDPOINT_URL }),
+      }),
+      valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
+    }
     const result: TeardownResult = {
       deployments: 0,
       services: 0,
@@ -134,16 +130,24 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
     */
     const deployments = await db
       .selectFrom("deployment")
-      .select(["id", "kind", "prNumber"])
+      .select(["id", "kind", "prNumber", "hostname"])
       .where("projectId", "=", projectId)
       .where("status", "!=", "torn_down")
       .execute()
 
     for (const deployment of deployments) {
-      await removeQuietly(
-        kube,
-        knativeServicePath(namespace, revisionName(project.slug, deployment)),
-      )
+      /*
+        The route first, then the function — the reverse of publishing.
+
+        A release publishes the function and then the route, so traffic never points at nothing.
+        Teardown reverses it so nothing points at the function when it goes; the other order leaves
+        a window where the router resolves a host to an ARN that has gone, and every request in it
+        is a 502 rather than the 404 the project has earned.
+
+        Withdrawn by the hostname stored on the row, not one recomputed from the project: a project
+        renamed since it deployed would otherwise keep its old host resolving.
+      */
+      await tearDownDeployment(aws, { projectId, hostname: deployment.hostname })
       await crudDeployment(db).update(deployment.id, { status: "torn_down" })
       result.deployments += 1
     }
@@ -180,10 +184,8 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
       await driverFor(db, service.kind).destroy(service.id)
       result.services += 1
 
-      // The worker the dispatcher may have started for this queue. Named from the project and the
-      // queue, and the queue is gone with the service — so every worker for this project goes.
-      if (service.kind === "valkey")
-        result.workers += await removeWorkers(kube, namespace, projectId, db)
+      // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
+      // dispatch now and starts a Lambda per batch, so there is nothing left running to remove.
     }
 
     // Dev sandboxes: a pod per user, each holding a node until its idle timeout.
@@ -194,9 +196,6 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
       .execute()
 
     for (const sandbox of sandboxes) {
-      if (sandbox.podName !== null) {
-        await removeQuietly(kube, podPath(sandbox.namespace ?? namespace, sandbox.podName))
-      }
       await crudSandbox(db).update(sandbox.id, { state: "stopped", podName: null })
       result.sandboxes += 1
     }
@@ -216,15 +215,13 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
     result.envVars = Number(envVars.numDeletedRows ?? 0)
 
     /*
-      And the same values in the cluster, which the database delete does not reach.
+      There is no second copy to chase, and that is worth recording rather than leaving as a gap.
 
-      A revision's environment is a Kubernetes Secret named after its own contents, so a project
-      accumulates one per environment it has ever deployed with — there is no list of names to walk,
-      which is why this goes by label. Deleting the rows and leaving these behind would mean a
-      customer who asked the platform to stop holding their data, and was told it had, while their
-      decrypted API keys sat in a namespace indefinitely.
+      A Knative revision's environment was a Kubernetes Secret named after its own contents, so a
+      project accumulated one per environment it had ever deployed with and teardown had to sweep
+      them by label. A Lambda's environment lives on the function — so deleting the function deletes
+      it, and the function went above, before this line runs.
     */
-    await kube.removeCollection(secretPath(namespace, ""), `sproutos.dev/project=${projectId}`)
 
     await db
       .updateTable("project")
@@ -253,49 +250,6 @@ export function tearDownProject(kubeClient?: TeardownKube): JobHandler {
         `${result.envVars} env var(s)`,
     )
   }
-}
-
-/**
- * Delete something, treating "it is not there" as success.
- *
- * A teardown is retried, and the second run finds most of its work already done. Distinguishing
- * "deleted it" from "it was already gone" would make a retry fail for having succeeded.
- */
-async function removeQuietly(kube: TeardownKube, path: string): Promise<void> {
-  if ((await kube.get(path)) === undefined) return
-  await kube.remove(path)
-}
-
-/** Every queue worker this project has. */
-async function removeWorkers(
-  kube: TeardownKube,
-  namespace: string,
-  projectId: string,
-  db: Kysely<DB>,
-): Promise<number> {
-  const queues = await db
-    .selectFrom("workflow")
-    .select(["name"])
-    .where("projectId", "=", projectId)
-    .execute()
-
-  let removed = 0
-  for (const queue of queues) {
-    const path = workerPath(namespace, workerName(projectId, queue.name))
-    if ((await kube.get(path)) === undefined) continue
-    await kube.remove(path)
-    removed += 1
-  }
-  return removed
-}
-
-/** The Knative service name for one deployment. Mirrors `hostLabel`. */
-function revisionName(slug: string, deployment: { kind: string; prNumber: number | null }): string {
-  const suffix =
-    deployment.kind === "preview" && deployment.prNumber !== null
-      ? `-pr-${deployment.prNumber}`
-      : ""
-  return `${slug}${suffix}`
 }
 
 function driverFor(db: Kysely<DB>, kind: string) {

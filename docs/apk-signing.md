@@ -35,8 +35,9 @@ the VPC", and this caller is not.
 ```
 
 Both URLs are pre-signed and valid for an hour. `download_url` is the build archive the customer's
-GitHub Action uploaded; for the `android` preset it is a `tar.gz` of the release output directory,
-containing the unsigned APK. **Verify `unsigned_digest` against what you downloaded before you sign
+GitHub Action uploaded — a **zip** of the release output directory, which for the `android` preset
+contains the unsigned APK. (Zip, not tar.gz: Lambda reads only zip, and one archive format across
+every preset is simpler than two.) **Verify `unsigned_digest` against what you downloaded before you sign
 anything** — that digest is the only thing tying the bytes to the release they claim to be.
 
 ### `POST /v1/apk-signing/complete`
@@ -99,7 +100,7 @@ while true; do
 
   [ -z "$job" ] && { sleep 30; continue; }   # 204: nothing to do
 
-  # download, verify unsigned_digest, extract the APK, zipalign, apksigner sign,
+  # download, verify unsigned_digest, unzip the APK, zipalign, apksigner sign,
   # upload to upload_url, then complete with the digest of what you uploaded.
   # On any failure: POST /fail with the error and go round again.
 done
