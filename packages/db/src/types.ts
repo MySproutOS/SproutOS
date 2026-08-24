@@ -536,8 +536,8 @@ export interface OauthClient {
   isVerified: Generated<boolean>
   logoUrl: string | null
   name: string
-  organizationId: string
-  ownerUserId: string
+  organizationId: string | null
+  ownerUserId: string | null
   status: Generated<string>
   updatedAt: Generated<Timestamp>
 }
