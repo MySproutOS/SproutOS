@@ -33,7 +33,7 @@ type DeploymentRow = {
   url: string | null
   imageUri: string | null
   knativeRevision: string | null
-  /** Null where the cluster has no runtime class to name; see `@lib/deploy`'s `DeploymentSpec`. */
+  /** Left over from the cluster, which chose a runtime class per workload. Lambda has none. */
   runtimeClass: string | null
   /** Why the deploy failed, when it failed after building. */
   failureReason: string | null

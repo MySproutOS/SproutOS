@@ -70,14 +70,13 @@ a wrong value that is present is worse than one that is absent, because the guar
 
 The deploy layer is a foundation, not a finished estate. Absent, and each is real work:
 
-- **The release tarballs themselves.** User data reads a pointer at
-  `s3://<artifacts>/releases/<service>/current` and unpacks the tarball it names, expecting an
-  executable `/opt/sproutos/start`. Nothing builds or uploads either yet — that is the CI job on the
-  other side of this.
-- **Autoscaling policies.** The groups have a min, a max and a desired count, and nothing moves the
-  desired count.
-- **The cutover script.** Blue/green is two target groups and a listener that ignores changes to
-  its action; the `modify-rule` call that actually flips them is not written.
+- **A rehearsal.** Every resource here is validated and none has been applied. `tofu plan` against
+  a real account is the first thing that will find what is wrong, and nobody has run one.
+- **Secrets Manager entries.** The instances read `/etc/sproutos/env` for non-secret configuration
+  and are expected to fetch the rest at start; nothing creates those entries or the policy to read
+  them.
+- **`requests_per_target`.** The scaling policies aim for 1000 requests per minute per instance,
+  which is a guess. The number to trust is one measured under real traffic.
 - **Secrets Manager entries**, so the instances can read what `kms.tf` protects.
 - **The metering agent.** `services/metering-agent` sampled cgroups on nodes we no longer run.
   Lambda reports its own duration, so the metering path is now CloudWatch rather than a sampler —

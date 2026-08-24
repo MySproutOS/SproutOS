@@ -18,7 +18,6 @@
     "@lib/analyzer": "workspace:*",
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
-    "@lib/deploy": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
     "@lib/lambda": "workspace:*",

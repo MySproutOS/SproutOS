@@ -532,3 +532,53 @@ resource "aws_elasticache_parameter_group" "platform" {
     value = "allkeys-lru"
   }
 }
+
+# ---------------------------------------------------------------------------
+# Scaling
+# ---------------------------------------------------------------------------
+
+/*
+  Target tracking on request count, not on CPU.
+
+  Both services are IO-bound — the router waits on Lambda, the website waits on the API — so CPU
+  stays low while latency climbs, and a CPU-based policy would scale after the users had already
+  noticed. Requests per target is the thing that actually correlates with being overloaded here.
+
+  Only on the colour that is live: the idle group is at zero between deploys, and a policy on it
+  would fight `fill-idle.sh` for the desired count.
+*/
+resource "aws_autoscaling_policy" "website" {
+  for_each = local.service_colours
+
+  name                   = "${var.name_prefix}-web-${each.key}-requests"
+  autoscaling_group_name = aws_autoscaling_group.website[each.key].name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${aws_lb.main.arn_suffix}/${aws_lb_target_group.website[each.key].arn_suffix}"
+    }
+    target_value = var.requests_per_target
+    # Scaling in on a group that is at zero between deploys would thrash. Out only; the deploy sets
+    # the floor and `fill-idle.sh` sets it back.
+    disable_scale_in = true
+  }
+}
+
+resource "aws_autoscaling_policy" "router" {
+  for_each = local.service_colours
+
+  name                   = "${var.name_prefix}-router-${each.key}-requests"
+  autoscaling_group_name = aws_autoscaling_group.router[each.key].name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${aws_lb.main.arn_suffix}/${aws_lb_target_group.router[each.key].arn_suffix}"
+    }
+    target_value     = var.requests_per_target
+    disable_scale_in = true
+  }
+}

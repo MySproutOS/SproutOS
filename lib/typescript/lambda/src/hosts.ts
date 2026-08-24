@@ -1,8 +1,11 @@
 /**
  * What a tenant's site is called.
  *
- * All that survives of the Knative renderer, and the only part of it that was ever about SproutOS
- * rather than about Kubernetes. Compute moved to Lambda (ADR 0026); hostnames did not change.
+ * All that survives of `@lib/deploy`, which held the Knative renderer, a Kubernetes client, and the
+ * placeholder substitution for a directory of manifests. None of those have a consumer any more, so
+ * the package is gone and its one durable idea lives here — next to the route map that uses it.
+ *
+ * Compute moved to Lambda (ADR 0026); hostnames did not change.
  */
 
 /** How much of a project's id goes into the host label. */

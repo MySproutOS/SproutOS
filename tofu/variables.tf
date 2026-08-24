@@ -137,3 +137,9 @@ variable "valkey_parameter_family" {
   type        = string
   default     = "valkey8"
 }
+
+variable "requests_per_target" {
+  description = "Requests per minute per instance the scaling policy aims for. A starting guess; the number to trust is the one measured under real traffic."
+  type        = number
+  default     = 1000
+}

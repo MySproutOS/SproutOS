@@ -84,3 +84,13 @@ output "lambda_execution_role_arn" {
   description = "LAMBDA_EXECUTION_ROLE_ARN for the control plane"
   value       = aws_iam_role.lambda_execution.arn
 }
+
+output "listener_arn" {
+  description = "LISTENER_ARN for the deploy workflow: the router's traffic is this listener's default action"
+  value       = aws_lb_listener.https.arn
+}
+
+output "website_rule_arn" {
+  description = "WEBSITE_RULE_ARN for the deploy workflow: the website is a host-matched rule, not the default"
+  value       = aws_lb_listener_rule.website.arn
+}
