@@ -5,7 +5,14 @@
 // findings about.
 import "@sproutos/db"
 import { afterAll, describe, expect, it } from "vitest"
-import { computeSpec, isNeonId, neonConfigFromEnv, neonId, neonStorage } from "./neon"
+import {
+  computeSpec,
+  isNeonId,
+  neonConfigFromEnv,
+  neonId,
+  neonStorage,
+  scramVerifier,
+} from "./neon"
 
 /**
  * Self-hosted Neon's storage layer, against the real thing.
@@ -193,5 +200,46 @@ describe("the compute spec", () => {
         safekeeperConnstrings: ["neon-safekeeper:5454"],
       }),
     ).toEqual(spec)
+  })
+})
+
+describe("the administrative password", () => {
+  /*
+    A compute's `pg_hba.conf` trusts `local` and `127.0.0.1/32` and nothing else, so `cloud_admin`
+    with no password works from inside the container and from nowhere else — and every real caller is
+    somewhere else. The failure is quiet: Postgres asks for a password, the client has none, the
+    connection closes, and a readiness probe reports "not ready" forever.
+  */
+  it("produces a verifier Postgres recognises", () => {
+    // `SCRAM-SHA-256$<iterations>:<base64 salt>$<base64 StoredKey>:<base64 ServerKey>`, RFC 5802.
+    expect(scramVerifier("hunter2")).toMatch(
+      /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/,
+    )
+  })
+
+  it("is stable, so a spec does not change every time it is built", () => {
+    // The salt is derived rather than random. Two calls that differ only in a salt are two
+    // different documents, and every reconcile would restart a compute that was fine.
+    expect(scramVerifier("hunter2")).toBe(scramVerifier("hunter2"))
+  })
+
+  it("still salts differently for different passwords", () => {
+    // What a salt actually buys: one precomputed table cannot attack many accounts at once.
+    const [a, b] = [scramVerifier("one"), scramVerifier("two")]
+
+    expect(a.split("$")[1]).not.toBe(b.split("$")[1])
+  })
+
+  it("leaves the role passwordless when none is given", () => {
+    // The spec-shape tests below build no compute, and a verifier there would assert nothing.
+    const bare = computeSpec({
+      tenantId: "eb66354daf7dcd4d6ad525129667c9db",
+      timelineId: "a22c5976dc030a6c3478d8a68dbb7030",
+      pageserverConnstring: "postgresql://no_user@neon-pageserver:6400",
+      safekeeperConnstrings: ["neon-safekeeper:5454"],
+    })
+    const cluster = (bare.spec as { cluster: { roles: { encrypted_password: unknown }[] } }).cluster
+
+    expect(cluster.roles[0]?.encrypted_password).toBeNull()
   })
 })

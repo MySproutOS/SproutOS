@@ -1,11 +1,12 @@
 import { crudAuditLog } from "@lib/dao"
 import {
-  searchDriver,
-  searchServiceConfigFromEnv,
   ServiceKindUnavailableError,
   ServiceNotProvisionedError,
-  sproutPostgresConfigFromEnv,
+  neonPostgresDriverFromEnv,
   objectStorageDriverFromEnv,
+  searchDriver,
+  searchServiceConfigFromEnv,
+  sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
   valkeyDriver,
   valkeyServiceConfigFromEnv,
@@ -67,7 +68,24 @@ function driverFor(kind: string) {
     deployment that has no OpenSearch should say so when someone asks for a search service, not
     when the process starts.
   */
-  if (kind === "postgres") return sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
+  /*
+    Postgres: `neon` where the storage layer is deployed, `sprout` everywhere else.
+
+    Chosen by configuration rather than per-service, because the difference is what a database *is* —
+    a role on a shared cluster, or a tenant and a timeline in a pageserver — and a platform running
+    both for the same customer would have two answers to "restore my database" and two meanings for
+    a branch.
+
+    `sprout` is still the default. Existing databases are `sprout` and moving them is a migration
+    rather than a flag; a deployment flips this when its Neon stack is up and its tenants have been
+    moved. `database_instance.provider` records which one each database actually was, so a mixed
+    estate during that migration is readable rather than ambiguous.
+  */
+  if (kind === "postgres") {
+    return process.env.SERVICE_POSTGRES_PROVIDER === "neon"
+      ? neonPostgresDriverFromEnv(db)
+      : sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
+  }
   if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
   if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
   /*

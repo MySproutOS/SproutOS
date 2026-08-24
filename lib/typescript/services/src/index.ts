@@ -76,3 +76,9 @@ export {
   WakeTimeoutError,
   type NeonComputeConfig,
 } from "./neon-compute"
+export {
+  neonPostgresConfigFromEnv,
+  neonPostgresDriver,
+  neonPostgresDriverFromEnv,
+  type NeonPostgresConfig,
+} from "./neon-postgres"

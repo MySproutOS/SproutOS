@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto"
+import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto"
 
 /**
  * Self-hosted Neon's storage layer, as a client.
@@ -167,6 +167,52 @@ export function neonStorage(config: NeonConfig) {
  * strictly and reports one missing field per attempt, so the fields below are the minimum it
  * accepts and not a superset copied from somewhere.
  */
+/**
+ * A SCRAM-SHA-256 verifier, in the form Postgres stores in `rolpassword`.
+ *
+ * **The administrative role needs a password, and finding out why took a diagnostic.** A compute's
+ * `pg_hba.conf` trusts `local` and `127.0.0.1/32` and nothing else, so `cloud_admin` with no password
+ * works from inside the container and from nowhere else. Every real caller is somewhere else: a
+ * proxy reaching a compute over the network, and in development a connection arriving through
+ * Docker's published port from the bridge gateway rather than from loopback.
+ *
+ * The failure is quiet and misleading. TCP connects, Postgres asks for a password, the client has
+ * none, and the connection closes — which `psql` reports as "server closed the connection
+ * unexpectedly" and a readiness probe reports as "not ready yet", forever. It cost a ninety-second
+ * timeout per wake and looked like a slow compute.
+ *
+ * Format: `SCRAM-SHA-256$<iterations>:<base64 salt>$<base64 StoredKey>:<base64 ServerKey>`, per
+ * RFC 5802. `services/pg-proxy/src/scram.rs` implements the verifying half against RFC 7677's
+ * vector; this is the half that produces what it verifies against.
+ */
+/*
+  The salt is derived from the password, not random, and that is a deliberate trade.
+
+  A random salt would make `computeSpec` non-deterministic, and the spec has to be stable for one
+  endpoint: two calls that differ only in a salt are two different documents, so every reconcile
+  would look like a configuration change and restart a compute that was fine.
+
+  What a salt buys is that one precomputed table cannot attack many accounts at once. Deriving it
+  from the password keeps that — two different passwords still get different salts — and gives up
+  only the case of two roles sharing a password, where the platform generates the password and does
+  not do that.
+*/
+export function scramVerifier(password: string, iterations = 4096): string {
+  const salt = createHash("sha256")
+    .update(`sproutos-scram-salt/${password}`)
+    .digest()
+    .subarray(0, 16)
+  const saltedPassword = pbkdf2Sync(password, salt, iterations, 32, "sha256")
+
+  const clientKey = createHmac("sha256", saltedPassword).update("Client Key").digest()
+  const storedKey = createHash("sha256").update(clientKey).digest()
+  const serverKey = createHmac("sha256", saltedPassword).update("Server Key").digest()
+
+  return `SCRAM-SHA-256$${iterations}:${salt.toString("base64")}$${storedKey.toString(
+    "base64",
+  )}:${serverKey.toString("base64")}`
+}
+
 export type ComputeSpecInput = {
   tenantId: string
   timelineId: string
@@ -178,6 +224,28 @@ export type ComputeSpecInput = {
   port?: number
   /** Names a customer's database and role, when the caller has them. */
   clusterId?: string
+  /**
+   * The tenant's own role and database, created by `compute_ctl` on every start.
+   *
+   * Declared in the spec rather than created by connecting once at provision time, and that is the
+   * difference between a database that can be provisioned in milliseconds and one that cannot: a
+   * suspended endpoint has no Postgres to run `create role` against, so anything that required one
+   * would mean waking a compute to provision it and waking it again on first use.
+   *
+   * The role has no password. `pg-proxy` reaches the compute as the administrative role and drops to
+   * this one with `SET ROLE` before the session is spliced — the customer's secret authenticates
+   * them *to the proxy*, and a password on this role would be a second credential that works
+   * against the compute directly.
+   */
+  role?: string
+  database?: string
+  /**
+   * The password for the administrative role.
+   *
+   * Required for any caller that is not inside the container — see {@link scramVerifier}. Omitted
+   * only in tests that reason about the spec rather than start a compute from it.
+   */
+  adminPassword?: string
 }
 
 /**
@@ -218,8 +286,21 @@ export function computeSpec(input: ComputeSpecInput): Record<string, unknown> {
         cluster_id: input.clusterId ?? "sproutos",
         name: input.clusterId ?? "sproutos",
         state: "restarted",
-        roles: [{ name: "cloud_admin", encrypted_password: null, options: null }],
-        databases: [],
+        roles: [
+          {
+            name: "cloud_admin",
+            encrypted_password:
+              input.adminPassword === undefined ? null : scramVerifier(input.adminPassword),
+            options: null,
+          },
+          ...(input.role === undefined
+            ? []
+            : [{ name: input.role, encrypted_password: null, options: null }]),
+        ],
+        databases:
+          input.database === undefined || input.role === undefined
+            ? []
+            : [{ name: input.database, owner: input.role, options: null }],
         settings,
       },
       delta_operations: [],

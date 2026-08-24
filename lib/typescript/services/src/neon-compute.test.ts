@@ -55,6 +55,8 @@ let organizationId = ""
 let userId = ""
 
 const launcher = reachable ? dockerComputeLauncher(neonComputeConfigFromEnv()) : undefined
+/** The same password every compute is started with — see `scramVerifier`. */
+const adminPassword = process.env.NEON_COMPUTE_ADMIN_PASSWORD ?? ""
 
 /** A backend_service row to hang the endpoint off, plus a real tenant and timeline. */
 async function endpoint(): Promise<{ endpointId: string; tenantId: string; timelineId: string }> {
@@ -146,11 +148,8 @@ describe.runIf(reachable)("wake on connect", () => {
 
     const address = await wakeEndpoint(db, launcher!, endpointId)
 
-    const query = await run("docker", [
-      "exec",
-      address.host,
-      "psql",
-      `postgresql://cloud_admin@localhost:${address.port}/postgres`,
+    const query = await run("psql", [
+      `postgresql://cloud_admin:${adminPassword}@${address.host}:${address.port}/postgres`,
       "-tAc",
       "select current_setting('neon.tenant_id')",
     ])
@@ -211,14 +210,16 @@ describe.runIf(reachable)("wake on connect", () => {
 
     expect(a).toEqual(b)
 
+    // Exactly one container is publishing this endpoint's port. The port is derived from the
+    // endpoint id, so a second compute for the same endpoint could not even bind it.
     const { stdout } = await run("docker", [
       "ps",
       "--filter",
-      `name=${a.host}`,
+      "name=neon-compute-",
       "--format",
-      "{{.Names}}",
+      "{{.Ports}}",
     ])
-    expect(stdout.trim().split("\n").filter(Boolean)).toHaveLength(1)
+    expect(stdout.split("\n").filter((line) => line.includes(`:${a.port}->`))).toHaveLength(1)
   }, 300_000)
 
   it("suspends without touching the timeline, and wakes again onto the same data", async () => {
@@ -230,11 +231,8 @@ describe.runIf(reachable)("wake on connect", () => {
     const { endpointId } = await endpoint()
 
     const first = await wakeEndpoint(db, launcher!, endpointId)
-    await run("docker", [
-      "exec",
-      first.host,
-      "psql",
-      `postgresql://cloud_admin@localhost:${first.port}/postgres`,
+    await run("psql", [
+      `postgresql://cloud_admin:${adminPassword}@${first.host}:${first.port}/postgres`,
       "-tAc",
       "create table kept(note text); insert into kept values ('survived the suspend')",
     ])
@@ -249,11 +247,8 @@ describe.runIf(reachable)("wake on connect", () => {
     expect(suspended.host).toBeNull()
 
     const again = await wakeEndpoint(db, launcher!, endpointId)
-    const read = await run("docker", [
-      "exec",
-      again.host,
-      "psql",
-      `postgresql://cloud_admin@localhost:${again.port}/postgres`,
+    const read = await run("psql", [
+      `postgresql://cloud_admin:${adminPassword}@${again.host}:${again.port}/postgres`,
       "-tAc",
       "select note from kept",
     ])

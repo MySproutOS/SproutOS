@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { promisify } from "node:util"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
@@ -45,10 +46,18 @@ export type ComputeLauncher = {
     endpointId: string
     tenantId: string
     timelineId: string
+    /** The tenant's role and database, declared in the spec so `compute_ctl` creates them. */
+    role?: string
+    database?: string
   }) => Promise<{ address: ComputeAddress; runtimeRef: string }>
   stop: (runtimeRef: string) => Promise<void>
-  /** Whether the compute is accepting connections yet. */
-  isReady: (address: ComputeAddress) => Promise<boolean>
+  /**
+   * Whether the compute is ready for *this tenant*, not merely accepting connections.
+   *
+   * `database` is the tenant's database when the endpoint declares one. Probing without it is a
+   * real bug rather than a shortcut — see the implementation.
+   */
+  isReady: (address: ComputeAddress, database?: string) => Promise<boolean>
 }
 
 export type NeonComputeConfig = {
@@ -60,6 +69,14 @@ export type NeonComputeConfig = {
   /** How the *proxy* reaches the compute. Containers are addressed by name on a shared network. */
   computeHostTemplate: string
   port: number
+  /**
+   * The administrative password every compute is started with.
+   *
+   * One password for the whole platform, shared with `pg-proxy`, which is the only thing that uses
+   * it. A per-compute password would have to be stored somewhere the proxy can read at connect
+   * time, which is a per-connection lookup for a credential that never leaves the platform.
+   */
+  adminPassword: string
 }
 
 export function neonComputeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): NeonComputeConfig {
@@ -71,6 +88,7 @@ export function neonComputeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): 
     safekeeperConnstrings: (env.NEON_SAFEKEEPER_CONNSTRINGS ?? "neon-safekeeper:5454").split(","),
     computeHostTemplate: env.NEON_COMPUTE_HOST_TEMPLATE ?? "neon-compute-{id}",
     port: Number(env.NEON_COMPUTE_PORT ?? 55433),
+    adminPassword: env.NEON_COMPUTE_ADMIN_PASSWORD ?? "",
   }
 }
 
@@ -85,8 +103,38 @@ export function dockerComputeLauncher(config: NeonComputeConfig): ComputeLaunche
     return config.computeHostTemplate.replace("{id}", endpointId.replaceAll("-", "").slice(-12))
   }
 
+  /**
+   * A host port derived from the endpoint, not an ephemeral one.
+   *
+   * **Ephemeral ports are recycled, and that is a correctness bug rather than an inconvenience.**
+   * `neon_endpoint` stores the address of a running compute and the warm path trusts it without
+   * probing — deliberately, so a connection to a warm database costs one indexed read. If the port
+   * is ephemeral, a compute that stops frees its port, Docker hands the same number to the next
+   * container, and a stale `running` row now addresses **another tenant's Postgres**. It surfaced as
+   * `database "sprout_db_…" does not exist`: the proxy connected successfully, to the wrong compute.
+   *
+   * Deriving the port from the endpoint id means a recycled port always belongs to the same
+   * endpoint, so the worst case becomes "connect to my own restarted compute" instead of "connect to
+   * somebody else's". `launch` removes any container of this name first, so a collision with our own
+   * stale container resolves itself.
+   *
+   * Development only. In a cluster the address is the pod's IP and the pod dies with the row.
+   */
+  function hostPort(endpointId: string): number {
+    // The template is in the hash as well as the endpoint id, so two launchers configured with
+    // different container-name prefixes — two test files, or a developer running beside CI — cannot
+    // derive the same port for different endpoints.
+    const digest = createHash("sha256")
+      .update(`${config.computeHostTemplate}/${endpointId}`)
+      .digest()
+    // 20000 ports starting at 30000: above the ephemeral range on Linux (32768+ is common, but the
+    // published port is chosen by us here, so what matters is staying out of well-known ports and
+    // out of the ports this repository's compose file already uses).
+    return 30_000 + (digest.readUInt32BE(0) % 20_000)
+  }
+
   return {
-    launch: async ({ endpointId, tenantId, timelineId }) => {
+    launch: async ({ endpointId, tenantId, timelineId, role, database }) => {
       const name = containerName(endpointId)
       // Removed first, not "created if absent": a container left behind by a crashed wake is in an
       // unknown state, and reusing it would attach a second Postgres to a timeline.
@@ -99,6 +147,9 @@ export function dockerComputeLauncher(config: NeonComputeConfig): ComputeLaunche
         safekeeperConnstrings: config.safekeeperConnstrings,
         port: config.port,
         clusterId: endpointId,
+        ...(role === undefined ? {} : { role }),
+        ...(database === undefined ? {} : { database }),
+        ...(config.adminPassword === "" ? {} : { adminPassword: config.adminPassword }),
       })
 
       /*
@@ -122,6 +173,18 @@ export function dockerComputeLauncher(config: NeonComputeConfig): ComputeLaunche
         name,
         "--network",
         config.network,
+        /*
+          Published on an ephemeral loopback port, and this is the whole reason the launcher returns
+          an address rather than a name.
+
+          A container name resolves inside `config.network` and nowhere else. In development
+          `pg-proxy` runs on the host, so an address of `neon-compute-abc:55433` is a name it cannot
+          look up — the connection fails with "server closed the connection unexpectedly", which
+          says nothing about DNS. In a cluster the launcher is a pod and the address is its IP,
+          reachable from the proxy directly; that is the same shape, resolved differently.
+        */
+        "-p",
+        `127.0.0.1:${hostPort(endpointId)}:${config.port}`,
         "--entrypoint",
         "/bin/sh",
         config.image,
@@ -130,7 +193,7 @@ export function dockerComputeLauncher(config: NeonComputeConfig): ComputeLaunche
       ])
 
       return {
-        address: { host: name, port: config.port },
+        address: { host: "127.0.0.1", port: hostPort(endpointId) },
         runtimeRef: stdout.trim(),
       }
     },
@@ -140,21 +203,45 @@ export function dockerComputeLauncher(config: NeonComputeConfig): ComputeLaunche
     },
 
     /*
-      Readiness is a query, not a port check.
+      Readiness is a query **against the tenant's own database**, not a port check and not a query
+      against `postgres`.
 
-      `compute_ctl` binds before Postgres finishes applying the spec — creating roles, the neon
-      schema, the extension — so a port that accepts a connection is not a database that answers
-      one. A proxy handed an address at that moment splices a client into a connection that fails.
+      `compute_ctl` starts Postgres and *then* applies the spec — `CreateAndAlterRoles`,
+      `CreateAndAlterDatabases`, `CreateSchemaNeon`. So there is a window in which the port accepts
+      connections, `select 1` on `postgres` succeeds, and the tenant's database does not exist yet.
+
+      Probing `postgres` reports ready during that window. On an idle machine the window is a few
+      milliseconds and everything appears to work; under load it widens, the proxy is handed an
+      address, and the client gets `database "sprout_db_…" does not exist` — a failure that reads
+      like a provisioning bug and is really a readiness bug. It cost an afternoon.
     */
-    isReady: async (address) => {
-      const probe = await run("docker", [
-        "exec",
-        address.host,
+    isReady: async (address, database) => {
+      // Probed from outside, on the address the caller was given. Probing with `docker exec` inside
+      // the container would say the compute is ready while the published port is not yet
+      // forwarding, which is a difference the proxy would discover instead.
+      /*
+        Both timeouts are load-bearing, and their absence is why this hung rather than failed.
+
+        `connect_timeout` bounds the TCP connect: Docker publishes the port the instant the
+        container starts, so the port accepts a connection long before Postgres answers on it, and
+        `psql` with no timeout waits indefinitely on a socket nobody is reading.
+
+        The `timeout` on the process bounds everything else — a `psql` that connects and then blocks
+        on the startup packet is not covered by `connect_timeout` at all.
+      */
+      const probe = await run(
         "psql",
-        `postgresql://cloud_admin@localhost:${address.port}/postgres`,
-        "-tAc",
-        "select 1",
-      ]).catch(() => undefined)
+        [
+          // The password matters here as much as the timeouts. A compute's `pg_hba.conf` trusts
+          // `127.0.0.1/32` *inside the container*, and a connection through Docker's published port
+          // arrives from the bridge gateway — so without it Postgres asks for a password, the probe
+          // fails, and the wake reports "not ready" until it times out.
+          `postgresql://cloud_admin:${encodeURIComponent(config.adminPassword)}@${address.host}:${address.port}/${database ?? "postgres"}?connect_timeout=3`,
+          "-tAc",
+          "select 1",
+        ],
+        { timeout: 5_000 },
+      ).catch(() => undefined)
 
       return probe?.stdout.trim() === "1"
     },
@@ -191,7 +278,17 @@ export async function wakeEndpoint(
   for (;;) {
     const endpoint = await db
       .selectFrom("neonEndpoint")
-      .select(["id", "state", "host", "port", "tenantId", "timelineId", "runtimeRef"])
+      .select([
+        "id",
+        "state",
+        "host",
+        "port",
+        "tenantId",
+        "timelineId",
+        "runtimeRef",
+        "roleName",
+        "databaseName",
+      ])
       .where("id", "=", endpointId)
       .executeTakeFirst()
 
@@ -236,10 +333,13 @@ export async function wakeEndpoint(
         endpointId,
         tenantId: endpoint.tenantId,
         timelineId: endpoint.timelineId,
+        ...(endpoint.roleName === null ? {} : { role: endpoint.roleName }),
+        ...(endpoint.databaseName === null ? {} : { database: endpoint.databaseName }),
       })
 
       while (now() < deadline) {
-        if (await launcher.isReady(address)) {
+        // The tenant's database, when the endpoint has one. See `isReady`.
+        if (await launcher.isReady(address, endpoint.databaseName ?? undefined)) {
           await db
             .updateTable("neonEndpoint")
             .set({
@@ -315,6 +415,8 @@ export async function createEndpoint(
     databaseBranchId?: string | null
     tenantId: string
     timelineId: string
+    roleName?: string | null
+    databaseName?: string | null
   },
 ): Promise<string> {
   const id = v7()
@@ -326,6 +428,8 @@ export async function createEndpoint(
       databaseBranchId: input.databaseBranchId ?? null,
       tenantId: input.tenantId,
       timelineId: input.timelineId,
+      roleName: input.roleName ?? null,
+      databaseName: input.databaseName ?? null,
       state: "suspended",
     })
     .execute()
