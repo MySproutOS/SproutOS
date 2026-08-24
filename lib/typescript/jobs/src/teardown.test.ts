@@ -180,7 +180,7 @@ describe("tearing down a deleted project", () => {
         organizationId,
         projectId,
         resourceType: "site",
-        dimension: "site_vcpu_second",
+        dimension: "site_gib_second",
         quantity: "1",
         occurredAt: new Date(),
         source: "teardown-test",

@@ -10,9 +10,9 @@
 //!
 //! let org = Uuid::parse_str("01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f").unwrap();
 //! let event = UsageEvent::new(
-//!     "metering-agent:pod-7:site_vcpu_second:1723459200",
+//!     "metering-agent:pod-7:site_gib_second:1723459200",
 //!     org,
-//!     UsageDimension::SiteVcpuSecond,
+//!     UsageDimension::SiteGibSecond,
 //!     1.5,
 //!     1_723_459_200_000,
 //! );
@@ -57,8 +57,6 @@ pub const SIGNATURE_LEN: usize = 32;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum UsageDimension {
-    /// CPU time consumed by a tenant site, in vCPU-seconds.
-    SiteVcpuSecond,
     /// Memory held by a tenant site, in GiB-seconds.
     SiteGibSecond,
     /// One HTTP request served by a tenant site.
@@ -92,7 +90,6 @@ pub enum UsageDimension {
 impl UsageDimension {
     /// Every dimension, in declaration order.
     pub const ALL: &'static [Self] = &[
-        Self::SiteVcpuSecond,
         Self::SiteGibSecond,
         Self::SiteRequest,
         Self::SiteEgressByte,
@@ -112,7 +109,6 @@ impl UsageDimension {
     /// The wire name, identical to the serde representation.
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::SiteVcpuSecond => "site_vcpu_second",
             Self::SiteGibSecond => "site_gib_second",
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
@@ -586,7 +582,7 @@ mod tests {
 
     #[test]
     fn dimension_names_are_the_documented_ones() {
-        assert_eq!(UsageDimension::SiteVcpuSecond.as_str(), "site_vcpu_second");
+        assert_eq!(UsageDimension::SiteGibSecond.as_str(), "site_gib_second");
         assert_eq!(
             UsageDimension::ValkeyQueueByteSecond.as_str(),
             "valkey_queue_byte_second"

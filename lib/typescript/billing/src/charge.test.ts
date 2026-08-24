@@ -32,7 +32,7 @@ async function event(quantity: string, at: Date = CLOSED): Promise<void> {
       organizationId,
       projectId,
       resourceType: "site",
-      dimension: "site_vcpu_second",
+      dimension: "site_gib_second",
       quantity,
       occurredAt: at,
       source: "metering-agent",

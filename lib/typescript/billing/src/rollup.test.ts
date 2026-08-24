@@ -45,7 +45,7 @@ async function event(quantity: string, project: string | null, at: Date = CLOSED
       organizationId,
       projectId: project,
       resourceType: "site",
-      dimension: "site_vcpu_second",
+      dimension: "site_gib_second",
       quantity,
       occurredAt: at,
       source: "metering-agent",

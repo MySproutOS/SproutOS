@@ -72,8 +72,6 @@ paying for a GC and an event-loop hop.
   `valkey-proxy` and `search-proxy` used as libraries, unchanged — three deployments doing the same
   thing (identify a tenant, rewrite, forward) is three sets of scaling and health checks for one
   idea. Both splits are optional, so the router starts without a tenant Valkey or an OpenSearch.
-- `services/metering-agent` — cgroup v2 sampler, written for nodes that no longer exist. Lambda
-  reports its own duration, so the metering path is CloudWatch now. **Retained, not wired.**
 - `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
   `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM,
   checked against RFC 7677's vector. **Its future is undecided** — managed Neon disables an endpoint

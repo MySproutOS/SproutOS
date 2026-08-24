@@ -137,12 +137,12 @@ describe.skipIf(!up)("usage this period", () => {
     if (!up) skip()
     // 7200 vCPU-seconds is 2 vCPU-hours. Showing "7200" would have a customer reconciling against
     // a number in a unit nothing else on their bill uses.
-    await meter("site_vcpu_second", "7200")
+    await meter("site_gib_second", "7200")
 
     const response = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
-    const line = (response.json.lines as Json[]).find((row) => row.dimension === "site_vcpu_second")
+    const line = (response.json.lines as Json[]).find((row) => row.dimension === "site_gib_second")
     expect(line?.quantity).toBe("2")
-    expect(line?.unit).toBe("vCPU-hours")
+    expect(line?.unit).toBe("GB-hours")
     expect(line?.label).toBe("Compute")
   })
 

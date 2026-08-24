@@ -22,7 +22,7 @@ function batchOf(events: Partial<UsageBatch["events"][number]>[]): UsageBatch {
       externalId: `e-${v7()}-${index}`,
       organizationId,
       projectId: null,
-      dimension: "site_vcpu_second",
+      dimension: "site_gib_second",
       quantity: 0.25,
       occurredAt: Date.now(),
       attributes: { node: "node-under-test" },
@@ -102,7 +102,7 @@ describe.skipIf(!reachable)("metering ingest", () => {
 
     const [stored] = await storedFor(batch.events[0].externalId)
     expect(stored?.organizationId).toBe(organizationId)
-    expect(stored?.dimension).toBe("site_vcpu_second")
+    expect(stored?.dimension).toBe("site_gib_second")
     // `numeric(38,9)` comes back as a string; the value has to survive the round trip exactly.
     expect(Number(stored?.quantity)).toBeCloseTo(0.25, 9)
     expect(stored?.nodeId).toBe("node-under-test")

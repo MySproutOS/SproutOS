@@ -89,7 +89,7 @@ describe("verify", () => {
         externalId: "e1",
         organizationId: "01a01e12-1700-76ac-9713-dd208babdf5a",
         projectId: null,
-        dimension: "site_vcpu_second",
+        dimension: "site_gib_second",
         quantity: 0.2,
         occurredAt: 1_700_000_000_000,
         attributes: {},

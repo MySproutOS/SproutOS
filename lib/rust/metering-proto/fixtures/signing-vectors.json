@@ -21,16 +21,16 @@
         "source": "metering-agent",
         "events": [
           {
-            "external_id": "metering-agent:pod-7:site_vcpu_second:1723459200",
+            "external_id": "metering-agent:pod-7:site_gib_second:1723459200",
             "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
-            "dimension": "site_vcpu_second",
+            "dimension": "site_gib_second",
             "quantity": 1.5,
             "occurred_at": 1723459200000
           }
         ]
       },
-      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{},\"dimension\":\"site_vcpu_second\",\"external_id\":\"metering-agent:pod-7:site_vcpu_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3ff8000000000000\"}],\"source\":\"metering-agent\"}",
-      "signature": "76edaf6d80732fe6d15acf030c4fb2dda2d6c8e4b5353f78260af49933d808ad"
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{},\"dimension\":\"site_gib_second\",\"external_id\":\"metering-agent:pod-7:site_gib_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3ff8000000000000\"}],\"source\":\"metering-agent\"}",
+      "signature": "aa5d416d3eafb1c300735766ec6b48b8364553f90005796de2737fa0d2ebf500"
     },
     {
       "name": "unicode-attributes",

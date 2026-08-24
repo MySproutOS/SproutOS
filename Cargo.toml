@@ -5,7 +5,6 @@ members = [
   "lib/rust/metering-proto",
   "lib/rust/tenant-auth",
   "lib/rust/s3-sigv4",
-  "services/metering-agent",
   "services/pg-proxy",
   "services/router",
   "services/valkey-proxy",
