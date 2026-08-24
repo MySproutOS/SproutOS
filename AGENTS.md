@@ -115,6 +115,19 @@ Because the API is a separate origin, the session cookie is scoped with `cookieD
 API sets CORS `credentials: true`. **Sessions store a hash of the token, never the token**, so a
 database leak yields nothing replayable.
 
+### Submodules
+
+Two repositories are carried as submodules so a coding agent's context stays in one working tree:
+
+- `vendor/deploy-action` — `MySproutOS/sproutos-deploy-action`, the GitHub Action customers run to
+  upload a build. Composite shell, authenticated by GitHub OIDC so nothing is stored in a customer's
+  repository.
+- `vendor/android` — `MySproutOS/SproutOS-Android`, the Android client.
+
+`git clone --recurse-submodules`, or `git submodule update --init` after the fact. The cost is a
+second commit graph and a CI checkout that has to be recursive; the benefit is that a change
+spanning the platform and the action is one working tree rather than two.
+
 ## Toolchain
 
 `mise` pins **node** and **pnpm** only (`.config/mise.toml`). Rust is pinned by
