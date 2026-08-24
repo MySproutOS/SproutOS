@@ -256,4 +256,25 @@ describe("the store is reachable signed in or out", () => {
     expect(isRewrite(response)).toBe(false)
     expect(response.headers.get("location")).toContain("/login")
   })
+
+  describe("the docs", () => {
+    /*
+    Docs are for people deciding whether to use the platform, so they must render with no session —
+    and must *not* become an SPA route for somebody who has one. Without the prefix, a signed-in
+    customer following a link from the marketing site lands on the dashboard's 404.
+  */
+    it.each(["/docs", "/docs/background-workers"])("%s renders Next.js signed out", async (url) => {
+      mockValidate.mockResolvedValue(null)
+      const res = await proxy(makeRequest(url))
+
+      expect(isRewrite(res)).toBe(false)
+    })
+
+    it.each(["/docs", "/docs/background-workers"])("%s renders Next.js signed in", async (url) => {
+      mockValidate.mockResolvedValue(VALID_SESSION)
+      const res = await proxy(makeRequest(url, "a-session-token"))
+
+      expect(isRewrite(res)).toBe(false)
+    })
+  })
 })
