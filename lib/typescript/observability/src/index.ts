@@ -39,3 +39,4 @@ export {
   toRows,
   writeRuntimeLogs,
 } from "./runtime-logs"
+export { decode, ship, type ShipResult, type SubscriptionEvent } from "./shipper"

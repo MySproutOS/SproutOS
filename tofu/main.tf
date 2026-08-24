@@ -10,6 +10,11 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    # Builds the placeholder zip the log shipper is created with, before the deploy replaces it.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 

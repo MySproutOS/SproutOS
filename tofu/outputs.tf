@@ -94,3 +94,8 @@ output "website_rule_arn" {
   description = "WEBSITE_RULE_ARN for the deploy workflow: the website is a host-matched rule, not the default"
   value       = aws_lb_listener_rule.website.arn
 }
+
+output "deploy_role_arn" {
+  description = "The role the Deploy workflow assumes"
+  value       = aws_iam_role.deploy.arn
+}

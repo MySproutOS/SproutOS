@@ -1,7 +1,13 @@
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
-import { hostLabel, publishFunction, publishRoute, type Route } from "@lib/lambda"
+import {
+  hostLabel,
+  publishFunction,
+  publishLiveDeployment,
+  publishRoute,
+  type Route,
+} from "@lib/lambda"
 import type { DB } from "@sproutos/db"
 import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
@@ -188,6 +194,9 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       deploymentId,
     }
     await publishRoute(clients.valkey, hostname, route)
+    // And by project id, which is the only thing the log shipper has: a CloudWatch log group is
+    // named after the project, never after the hostname.
+    await publishLiveDeployment(clients.valkey, project.id, deploymentId)
 
     await crudDeployment(db).update(deploymentId, {
       status: "ready",

@@ -66,3 +66,29 @@ export async function readRoute(valkey: Redis, hostname: string): Promise<Route 
 export async function withdrawRoute(valkey: Redis, hostname: string): Promise<void> {
   await valkey.del(key(hostname))
 }
+
+/**
+ * Which deployment is live for a project, by project id rather than by hostname.
+ *
+ * The route map answers "what serves this host". This answers "what is this project running", which
+ * is a different question and has no hostname to start from — the log shipper has a CloudWatch log
+ * group named after the project and nothing else.
+ *
+ * A Postgres lookup would also answer it. This does not, because the shipper runs once per batch of
+ * log lines on every busy project, and a database round trip at that rate is a query per second per
+ * project for a fact that changes on deploy.
+ */
+export async function publishLiveDeployment(
+  valkey: Redis,
+  projectId: string,
+  deploymentId: string,
+): Promise<void> {
+  await valkey.set(`live:${projectId}`, deploymentId, "EX", ROUTE_TTL_S)
+}
+
+export async function readLiveDeployment(
+  valkey: Redis,
+  projectId: string,
+): Promise<string | undefined> {
+  return (await valkey.get(`live:${projectId}`)) ?? undefined
+}

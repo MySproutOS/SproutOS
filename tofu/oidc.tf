@@ -66,3 +66,104 @@ resource "aws_iam_role_policy" "spa_deploy" {
     ]
   })
 }
+
+/*
+  The role the Deploy workflow assumes.
+
+  Separate from `github-actions-spa-deploy`, which only ever pushed static assets to a bucket. This
+  one can replace what production runs, so the two are not one role with a wider policy — the SPA
+  deploy runs on every merge and this one does not.
+
+  Trusted for the `main` branch and the `production` environment. The environment condition is what
+  makes the protected-environment gate on the cutover job mean something: without it, any workflow
+  on `main` could assume this role and skip the approval by calling the API directly.
+*/
+resource "aws_iam_role" "deploy" {
+  name = "${var.name_prefix}-deploy"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:ref:refs/heads/main",
+            "repo:${var.github_repo}:environment:production",
+          ]
+        }
+      }
+    }]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "deploy" {
+  name = "release-and-cut-over"
+  role = aws_iam_role.deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Releases only. The artifacts bucket also holds customer build archives, and a deploy role
+        # that could read those could read every customer's source.
+        Sid      = "PublishReleases"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
+        Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
+      },
+      {
+        Sid      = "UpdateTheLogShipper"
+        Effect   = "Allow"
+        Action   = ["lambda:UpdateFunctionCode", "lambda:GetFunction"]
+        Resource = aws_lambda_function.log_shipper.arn
+      },
+      {
+        # Named groups only, so a compromised workflow cannot scale something else in the account.
+        Sid    = "FillTheIdleColour"
+        Effect = "Allow"
+        Action = ["autoscaling:SetDesiredCapacity", "autoscaling:DescribeAutoScalingGroups"]
+        Resource = [
+          for group in concat(
+            [for colour in local.service_colours : aws_autoscaling_group.website[colour].arn],
+            [for colour in local.service_colours : aws_autoscaling_group.router[colour].arn],
+          ) : group
+        ]
+      },
+      {
+        /*
+          The describes are unscoped and the modifies are not.
+
+          `elbv2` describe actions do not support resource-level permissions — AWS rejects a policy
+          that tries — so they are `*` with the modifies pinned to this listener and this rule. The
+          asymmetry is AWS's, and writing it down is better than quietly granting `*` to both.
+        */
+        Sid    = "ReadTheLoadBalancer"
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:DescribeTargetGroups",
+          "elasticloadbalancing:DescribeTargetHealth",
+          "elasticloadbalancing:DescribeListeners",
+          "elasticloadbalancing:DescribeRules",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "MoveTraffic"
+        Effect = "Allow"
+        Action = ["elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyRule"]
+        Resource = [
+          aws_lb_listener.https.arn,
+          aws_lb_listener_rule.website.arn,
+        ]
+      },
+    ]
+  })
+}

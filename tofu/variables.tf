@@ -143,3 +143,15 @@ variable "requests_per_target" {
   type        = number
   default     = 1000
 }
+
+variable "clickhouse_url" {
+  description = "Where the log store is. Self-hosted at OVH; reached over the public internet, so the URL is https and the credentials are in Secrets Manager rather than here."
+  type        = string
+  default     = ""
+}
+
+variable "clickhouse_database" {
+  description = "ClickHouse database holding runtime_log."
+  type        = string
+  default     = "sproutos"
+}

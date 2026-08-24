@@ -17,7 +17,7 @@ on:
         description: Which service to release
         required: true
         type: choice
-        options: [website, router, both]
+        options: [website, router, log-shipper, both]
         default: both
       cutover:
         description: Move traffic after the release is healthy
@@ -50,7 +50,7 @@ jobs:
       # no release: the cutover would move traffic to instances running one new service and one old.
       fail-fast: true
       matrix:
-        service: ${{ inputs.service == 'both' && fromJSON('["website","router"]') || fromJSON(format('["{0}"]', inputs.service)) }}
+        service: ${{ inputs.service == 'both' && fromJSON('["website","router","log-shipper"]') || fromJSON(format('["{0}"]', inputs.service)) }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -81,10 +81,27 @@ jobs:
         if: matrix.service == 'website'
         run: pnpm run build --filter=website --filter=@api/internal
 
+      # Bundled to one file rather than shipped with node_modules. A Lambda's cold start is
+      # dominated by how much it has to read off disk, and the dependency tree behind a ClickHouse
+      # and a Valkey client is thousands of files for a handler that is two hundred lines.
+      - name: Bundle the log shipper
+        if: matrix.service == 'log-shipper'
+        run: |
+          pnpm exec esbuild lib/typescript/observability/src/shipper-handler.ts \
+            --bundle --platform=node --target=node22 --format=esm \
+            --outfile="$RUNNER_TEMP/shipper/index.mjs" \
+            --banner:js="import{createRequire}from'module';const require=createRequire(import.meta.url);"
+
       - name: Package
         run: |
           staging="$RUNNER_TEMP/stage"
           mkdir -p "$staging"
+
+          if [ "${{ matrix.service }}" = "log-shipper" ]; then
+            # A Lambda, not an instance service: a zip AWS reads, with no `start` script.
+            (cd "$RUNNER_TEMP/shipper" && zip -X -q -r "$RUNNER_TEMP/log-shipper.zip" .)
+            exit 0
+          fi
 
           if [ "${{ matrix.service }}" = "router" ]; then
             cp target/aarch64-unknown-linux-musl/release/router "$staging/router"
@@ -102,7 +119,20 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Deploy the log shipper
+        if: matrix.service == 'log-shipper'
+        run: |
+          # Straight to the function. There is no blue/green here and there does not need to be:
+          # the shipper has no traffic to drain, and a bad version is redelivered by CloudWatch
+          # once the next one lands.
+          aws lambda update-function-code \
+            --function-name "${{ vars.NAME_PREFIX }}-log-shipper" \
+            --zip-file "fileb://$RUNNER_TEMP/log-shipper.zip" >/dev/null
+          aws lambda wait function-updated \
+            --function-name "${{ vars.NAME_PREFIX }}-log-shipper"
+
       - name: Upload
+        if: matrix.service != 'log-shipper'
         run: |
           bucket="${{ vars.NAME_PREFIX }}-artifacts"
           version="${{ steps.version.outputs.version }}"
@@ -117,6 +147,9 @@ jobs:
   fill:
     name: Start the idle colour
     needs: release
+    # The shipper is a Lambda and is already live by the time `release` finishes; there is no colour
+    # to fill for it.
+    if: inputs.service != 'log-shipper'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
