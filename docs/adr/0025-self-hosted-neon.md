@@ -141,7 +141,7 @@ yet. Paying Neon to run the thing Neon built is the cheaper answer to a problem 
 
 ### What survives, and it is most of the value
 
-- **`services/pg-proxy`.** The customer holds a *SproutOS* credential, never a Neon one — the same
+- **`services/pg-proxy`.** The customer holds a _SproutOS_ credential, never a Neon one — the same
   boundary object storage has. The proxy authenticates them against `service_credential`, resolves
   the tenant, and connects onward with the platform's Neon credential. Nothing about that changes;
   only what sits behind it does.
@@ -157,7 +157,7 @@ yet. Paying Neon to run the thing Neon built is the cheaper answer to a problem 
 - A client for Neon's control-plane API — projects, branches, endpoints, roles.
 - Their **Consumption API** for billing, whose metric names the metering schema was already told to
   mirror: `compute_unit_seconds`, `root_branch_bytes_month`, `child_branch_bytes_month`. That
-  guidance was written for a world where we had to *imitate* those metrics from our own pageserver.
+  guidance was written for a world where we had to _imitate_ those metrics from our own pageserver.
   Now they arrive from the source, and the six arithmetic corrections in `docs/research/0001` — the
   744-hour month, decimal GB, storage metrics already divided by 744 — stop being theoretical.
 
