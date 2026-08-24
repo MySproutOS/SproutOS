@@ -15,5 +15,7 @@ export default defineConfig({
   // design/ holds design-canvas source and generated artboards. Wrapping style
   // attributes across six lines each makes the design unreadable, and the .dc.html
   // output is generated anyway.
-  ignorePatterns: ["**/.next", "**/private_notes", "**/lib/typescript/ui/src", "design"],
+  // vendor/ holds git submodules — separate repositories with their own history. Formatting them
+  // from here leaves an unrelated repo dirty and commits style churn nobody asked for.
+  ignorePatterns: ["**/.next", "**/private_notes", "**/lib/typescript/ui/src", "design", "vendor"],
 })

@@ -75,3 +75,11 @@ export {
 } from "./registry-credential"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
+export {
+  CLAIM_TIMEOUT_MS,
+  claimSigningJob,
+  completeSigning,
+  enqueueSigning,
+  failSigning,
+  type SigningJob,
+} from "./apk-signing"

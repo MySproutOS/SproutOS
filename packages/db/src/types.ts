@@ -194,6 +194,24 @@ export interface ApiKey {
   userId: string
 }
 
+export interface ApkSigningJob {
+  attempts: Generated<number>
+  claimedAt: Timestamp | null
+  claimedBy: string | null
+  createdAt: Generated<Timestamp>
+  deploymentId: string
+  id: string
+  lastError: string | null
+  projectId: string
+  signedAt: Timestamp | null
+  signedDigest: string | null
+  signedKey: string | null
+  status: Generated<string>
+  unsignedDigest: string
+  unsignedKey: string
+  updatedAt: Generated<Timestamp>
+}
+
 export interface AuditLog {
   action: string
   actorUserId: string | null
@@ -1205,6 +1223,7 @@ export interface DB {
   agentTurn: AgentTurn
   agentUsage: AgentUsage
   apiKey: ApiKey
+  apkSigningJob: ApkSigningJob
   auditLog: AuditLog
   backendService: BackendService
   backgroundJob: BackgroundJob

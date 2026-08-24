@@ -5,6 +5,8 @@ import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import metering from "./metering"
+import deploy from "./deploy"
+import apkSigning from "./apk-signing"
 import pgResolve from "./pg-resolve"
 import auth from "./auth"
 import billing from "./billing"
@@ -93,6 +95,18 @@ unauthenticated.route("/internal", metering)
   and same reason as metering: the caller is a platform component, not a customer.
 */
 unauthenticated.route("/internal", pgResolve)
+/*
+  What the deploy action calls. Authenticated by a GitHub Actions OIDC token rather than a session:
+  the caller is a workflow, not a person, and the repository claim is what decides which project it
+  may deploy.
+*/
+unauthenticated.route("/", deploy)
+/*
+  What the on-premises APK signer polls. Deliberately *not* under `/internal`: that prefix means
+  "reachable only inside the VPC", and this caller is a machine behind somebody's firewall reaching
+  out over the public internet. It carries its own bearer credential instead.
+*/
+unauthenticated.route("/", apkSigning)
 /*
   There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 
