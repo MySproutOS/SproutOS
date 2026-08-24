@@ -59,15 +59,15 @@ export function SignInForm() {
         <Label htmlFor={termsId} className="text-sm font-normal text-muted-foreground">
           <p className="text-pretty">
             I agree to the{" "}
-            <Link href="/legal" className="text-primary hover:underline">
+            <Link href="/legal/terms" className="text-primary hover:underline">
               Terms of Service
             </Link>
             ,{" "}
-            <Link href="/legal" className="text-primary hover:underline">
+            <Link href="/legal/privacy" className="text-primary hover:underline">
               Privacy Policy
             </Link>
             , and{" "}
-            <Link href="/legal" className="text-primary hover:underline">
+            <Link href="/legal/conduct" className="text-primary hover:underline">
               Community Code of Conduct
             </Link>
           </p>
