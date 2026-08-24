@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# What turns a stock Amazon Linux instance into one of our services.
+#
+# The release is a tarball in the artifacts bucket under a pointer file, rather than an AMI built
+# per deploy. Two reasons: an AMI bake adds ten minutes to every deploy and a blue/green cutover is
+# supposed to be seconds, and a pointer file makes "what is this instance running" a question with a
+# readable answer instead of an AMI id.
+set -euo pipefail
+
+exec > >(tee /var/log/sproutos-bootstrap.log) 2>&1
+
+SERVICE="${service}"
+BUCKET="${artifacts_bucket}"
+REGION="${aws_region}"
+
+dnf install -y awscli tar gzip
+
+install -d -m 0755 /opt/sproutos
+install -d -m 0755 /etc/sproutos
+
+# The pointer, not a version baked into this script.
+#
+# User data is part of the launch template, so a release that edited it would make a new template
+# version on every deploy and leave the Auto Scaling group's $Latest racing the cutover. The
+# pointer is one small object the deploy writes; the template never changes.
+RELEASE=$(aws s3 cp "s3://$BUCKET/releases/$SERVICE/current" - --region "$REGION")
+
+if [ -z "$RELEASE" ]; then
+  echo "no release pointer at s3://$BUCKET/releases/$SERVICE/current" >&2
+  exit 1
+fi
+
+aws s3 cp "s3://$BUCKET/releases/$SERVICE/$RELEASE.tar.gz" /tmp/release.tar.gz --region "$REGION"
+tar -xzf /tmp/release.tar.gz -C /opt/sproutos
+rm -f /tmp/release.tar.gz
+
+# Recorded where an operator looking at a misbehaving instance will find it, and where the health
+# check can be made to report it later.
+echo "$RELEASE" > /etc/sproutos/release
+
+# The instance's own configuration, read by both services. Secrets are not here — they are fetched
+# at start from Secrets Manager under the instance role.
+cat > /etc/sproutos/env <<ENVFILE
+AWS_REGION=$REGION
+VALKEY_URL=${valkey_url}
+TENANT_DOMAIN=${tenant_domain}
+ROUTER_PORT=8080
+PORT=8080
+ENVFILE
+chmod 0640 /etc/sproutos/env
+
+cat > /etc/systemd/system/sproutos.service <<'UNIT'
+[Unit]
+Description=SproutOS service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/sproutos/env
+ExecStart=/opt/sproutos/start
+Restart=always
+RestartSec=2
+
+# The service is the only thing on the box that matters, and it is reachable from the internet
+# through the ALB. None of these cost anything and each removes a way a compromise becomes
+# persistence.
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now sproutos.service
+
+# Fail the instance rather than let it join the target group dead. The ALB would work this out from
+# its health checks in about forty-five seconds; exiting non-zero here means the Auto Scaling group
+# replaces it instead of leaving a permanently unhealthy instance in the rotation.
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; then
+    echo "$SERVICE is serving release $RELEASE"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "$SERVICE did not answer /healthz within 60s" >&2
+exit 1

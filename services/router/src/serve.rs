@@ -35,6 +35,9 @@ const HOP_BY_HOP: [&str; 8] = [
     "upgrade",
 ];
 
+/// The load balancer's probe. Answered before host resolution, because the probe has no tenant.
+pub const HEALTH_PATH: &str = "/healthz";
+
 pub async fn handle(
     State(state): State<Shared>,
     method: axum::http::Method,
@@ -42,7 +45,27 @@ pub async fn handle(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(host) = headers.get("host").and_then(|value| value.to_str().ok()) else {
+    let host = headers.get("host").and_then(|value| value.to_str().ok());
+
+    /*
+      Health first, and only for a request that is not for a tenant.
+
+      Reserving `/healthz` outright would take that path away from every customer application. The
+      load balancer probes by IP, so its `Host` is the instance address and never a hostname with a
+      route — which means `is_tenant_host` is what separates "the ALB is asking" from "a visitor
+      asked for a page the customer happens to have called /healthz".
+    */
+    if uri.path() == HEALTH_PATH {
+        let known = match host {
+            Some(name) => state.resolver.resolve(name).await.is_some(),
+            None => false,
+        };
+        if !known {
+            return (StatusCode::OK, "ok").into_response();
+        }
+    }
+
+    let Some(host) = host else {
         return (StatusCode::BAD_REQUEST, "no host").into_response();
     };
 

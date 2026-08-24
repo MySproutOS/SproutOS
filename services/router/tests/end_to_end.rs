@@ -221,6 +221,76 @@ async fn a_request_reaches_the_customers_function_and_the_reply_comes_back() {
 }
 
 #[tokio::test]
+async fn the_load_balancer_gets_a_health_answer_and_a_tenant_keeps_its_own_path() {
+    if !localstack_up().await {
+        refuse_to_skip_in_ci("LocalStack");
+        return;
+    }
+    let Ok(client) = redis::Client::open(VALKEY) else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+    let Ok(mut valkey) = ConnectionManager::new(client).await else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+
+    let config = aws_config().await;
+    let lambda = LambdaClient::new(&config);
+    let arn = ensure_function(&lambda).await;
+
+    let host = "health.sproutos.me";
+    let route =
+        format!(r#"{{"arn":"{arn}","projectId":"p","organizationId":"o","deploymentId":"d"}}"#);
+    let _: () = valkey
+        .set(format!("route:{host}"), &route)
+        .await
+        .expect("publish the route");
+
+    let state = Arc::new(Router {
+        resolver: Resolver::new(valkey.clone()),
+        lambda,
+    });
+    let app = AxumRouter::new()
+        .fallback(any(serve::handle))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+
+    // The load balancer probes by IP, so its Host is the instance address and resolves to nothing.
+    let probe = reqwest::Client::new()
+        .get(format!("http://{address}/healthz"))
+        .send()
+        .await
+        .expect("the router answers");
+    assert_eq!(probe.status().as_u16(), 200);
+
+    /*
+      A tenant that happens to serve /healthz keeps it.
+
+      Reserving the path outright would take it from every customer application — a real cost, since
+      an app deployed here is very likely to have a health endpoint of its own. The host is what
+      separates the two.
+    */
+    let tenant = reqwest::Client::new()
+        .get(format!("http://{address}/healthz"))
+        .header("host", host)
+        .send()
+        .await
+        .expect("the router answers");
+    assert_eq!(tenant.status().as_u16(), 201);
+    assert_eq!(
+        tenant.headers().get("x-from").and_then(|v| v.to_str().ok()),
+        Some("the-function")
+    );
+
+    let _: () = valkey.del(format!("route:{host}")).await.expect("withdraw");
+}
+
+#[tokio::test]
 async fn an_unknown_host_is_a_404_and_not_a_lookup_per_request() {
     if !localstack_up().await {
         refuse_to_skip_in_ci("LocalStack");

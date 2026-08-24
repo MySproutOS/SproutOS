@@ -32,8 +32,15 @@ async fn main() -> anyhow::Result<()> {
         lambda,
     });
 
-    // One catch-all: the path belongs to the customer's application, not to us. Anything we
-    // reserved here would be a path their framework could never serve.
+    /*
+      A catch-all, because the path belongs to the customer's application and not to us.
+
+      `/healthz` is the one exception, and it is registered against **our** host rather than as a
+      path: reserving the path outright would take `/healthz` away from every customer application,
+      and a customer whose framework serves a health endpoint would find ours instead of theirs.
+      The load balancer's probe sends no meaningful `Host`, so `serve::handle` answers it before
+      resolution — see `HEALTH_PATH` there.
+    */
     let app = AxumRouter::new()
         .fallback(any(serve::handle))
         .with_state(state);

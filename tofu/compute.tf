@@ -164,10 +164,9 @@ resource "aws_lb_target_group" "router" {
     unhealthy_threshold = 3
     interval            = 15
     timeout             = 5
-    # The router answers 404 for an unknown host, and `/healthz` on the load balancer's own probe
-    # has no host to resolve. Accepting either means the probe tests that the process is listening
-    # and parsing, which is what it is for.
-    matcher = "200,404"
+    # 200 only. The router answers `/healthz` itself when the request is not for a tenant, so a
+    # 404 here means the process is not the router — accepting it would let a wrong binary pass.
+    matcher = "200"
   }
 
   deregistration_delay = 30
@@ -293,6 +292,12 @@ resource "aws_iam_role_policy" "instance" {
         Resource = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*"
       },
       {
+        # The release the instance boots from, and the pointer that names it.
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
+      },
+      {
         # Tenant object storage. Scoped to the `v-*` prefix, which is what makes the bucket-name
         # check in the router a boundary rather than a formality — see `storage.tf`.
         Effect = "Allow"
@@ -335,6 +340,14 @@ resource "aws_launch_template" "service" {
   }
 
   vpc_security_group_ids = [aws_security_group.service.id]
+
+  user_data = base64encode(templatefile("${path.module}/user-data.sh.tftpl", {
+    service          = each.key
+    artifacts_bucket = aws_s3_bucket.artifacts.bucket
+    aws_region       = var.aws_region
+    valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
+    tenant_domain    = var.control_plane_domain
+  }))
 
   metadata_options {
     # IMDSv2 only. v1 is a plain GET, so any server-side request forgery in a tenant-facing process

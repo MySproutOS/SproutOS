@@ -70,13 +70,14 @@ a wrong value that is present is worse than one that is absent, because the guar
 
 The deploy layer is a foundation, not a finished estate. Absent, and each is real work:
 
-- **Route 53 records and ACM validation.** The certificate and the ALB exist; nothing points DNS at
-  them, so nothing is reachable from a browser yet.
-- **The AMI contents.** The launch templates start a stock Amazon Linux image with no user data, so
-  an instance boots and serves nothing. What puts the website and the router on it — an image build,
-  or user data pulling a release — is not written.
+- **The release tarballs themselves.** User data reads a pointer at
+  `s3://<artifacts>/releases/<service>/current` and unpacks the tarball it names, expecting an
+  executable `/opt/sproutos/start`. Nothing builds or uploads either yet — that is the CI job on the
+  other side of this.
 - **Autoscaling policies.** The groups have a min, a max and a desired count, and nothing moves the
   desired count.
+- **The cutover script.** Blue/green is two target groups and a listener that ignores changes to
+  its action; the `modify-rule` call that actually flips them is not written.
 - **Secrets Manager entries**, so the instances can read what `kms.tf` protects.
 - **The metering agent.** `services/metering-agent` sampled cgroups on nodes we no longer run.
   Lambda reports its own duration, so the metering path is now CloudWatch rather than a sampler —
