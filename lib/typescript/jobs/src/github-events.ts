@@ -2,6 +2,7 @@ import { crudDeployment } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
+import { type Committer, recordCommitters } from "@lib/billing"
 import { PUBLISH_KINDS } from "./publish"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
@@ -128,6 +129,47 @@ const installationSync: JobHandler = async (job, { db }) => {
  * One deployment per project, because several projects may share a repository — TASK 21 — and a
  * push to that repository is a new revision of each of them.
  */
+/**
+ * Every distinct author in a push, recorded against the repository.
+ *
+ * GitHub sends both `author` and `committer` on each commit, and they differ on a rebase or a
+ * co-authored merge — the person who wrote it and the person who applied it. Both are counted:
+ * "committing to the repository" is what the requirement says, and a reviewer who lands somebody
+ * else's work is using the platform too.
+ */
+async function recordPush(
+  db: Kysely<DB>,
+  githubRepoId: number,
+  body: Record<string, unknown> | undefined,
+): Promise<void> {
+  const commits = (body?.commits as CommitPayload[] | undefined) ?? []
+  if (commits.length === 0) return
+
+  const repositoryRow = await db
+    .selectFrom("repository")
+    .select("id")
+    .where("githubRepoId", "=", String(githubRepoId))
+    .where("deletedAt", "is", null)
+    .executeTakeFirst()
+
+  if (repositoryRow === undefined) return
+
+  const people: Committer[] = []
+  for (const commit of commits) {
+    for (const person of [commit.author, commit.committer]) {
+      if (person === undefined) continue
+      people.push({ login: person.username ?? null, email: person.email ?? null })
+    }
+  }
+
+  await recordCommitters(db, repositoryRow.id, people)
+}
+
+type CommitPayload = {
+  author?: { username?: string; email?: string }
+  committer?: { username?: string; email?: string }
+}
+
 const push: JobHandler = async (job, { db }) => {
   const { body } = job.payload as Delivery
   const repository = body?.repository as { id?: number } | undefined
@@ -141,6 +183,23 @@ const push: JobHandler = async (job, { db }) => {
 
   const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined
   if (branch === undefined) return
+
+  /*
+    Who committed, before anything about deploying.
+
+    §2's team fee is decided from this and nothing else — the platform receives every push and used
+    to throw the author away, so a fee that depends on "more than 2 users committing" had no
+    evidence to depend on. Recorded for every branch, not only the production one: a team of three
+    working on feature branches is still a team of three.
+
+    Failing here must not stop a deploy. A customer's push landing is more important than the
+    platform's own bookkeeping, and the next push records them again.
+  */
+  try {
+    await recordPush(db, repository.id, body)
+  } catch (cause) {
+    console.error(`[jobs] could not record committers: ${String(cause)}`)
+  }
 
   const projects = await db
     .selectFrom("project")

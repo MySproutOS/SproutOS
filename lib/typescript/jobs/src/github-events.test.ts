@@ -311,4 +311,38 @@ describe("every kind the receiver can produce", () => {
     if (!reachable) skip()
     await expect(run(GITHUB_EVENT_KINDS.unhandled, {})).resolves.toBeUndefined()
   })
+
+  it("records who committed, on any branch, not only production", async ({ skip }) => {
+    if (!reachable) skip()
+
+    /*
+      A feature branch, deliberately.
+
+      §2's fee turns on how many people are committing to the repository, and a team of three
+      working on feature branches is still a team of three. Recording only production pushes would
+      undercount every team that reviews before merging — which is every team.
+    */
+    await run("github.push", {
+      repository: { id: Number(githubRepoId) },
+      ref: "refs/heads/some-feature",
+      after: "a".repeat(40),
+      commits: [
+        { author: { username: "ada", email: "ada@example.com" } },
+        { author: { username: "grace", email: "grace@example.com" } },
+        // A rebase: the author and the committer differ, and both used the platform.
+        {
+          author: { username: "ada", email: "ada@example.com" },
+          committer: { username: "alan", email: "alan@example.com" },
+        },
+      ],
+    })
+
+    const recorded = await db
+      .selectFrom("repositoryCommitter")
+      .select("identity")
+      .where("repositoryId", "=", repositoryId)
+      .execute()
+
+    expect(recorded.map((row) => row.identity).sort()).toEqual(["ada", "alan", "grace"])
+  })
 })

@@ -815,6 +815,17 @@ export interface Repository {
   upstreamGithubRepoId: Int8 | null
 }
 
+export interface RepositoryCommitter {
+  email: string | null
+  firstSeenAt: Generated<Timestamp>
+  id: string
+  identity: string
+  isBot: Generated<boolean>
+  lastSeenAt: Generated<Timestamp>
+  login: string | null
+  repositoryId: string
+}
+
 export interface Role {
   createdAt: Generated<Timestamp>
   description: string | null
@@ -1272,6 +1283,7 @@ export interface DB {
   region: Region
   repoAnalysis: RepoAnalysis
   repository: Repository
+  repositoryCommitter: RepositoryCommitter
   role: Role
   roleStatement: RoleStatement
   sandbox: Sandbox
