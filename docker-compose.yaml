@@ -25,6 +25,33 @@ services:
   # low-cardinality columns, and retained for days rather than forever — which is the shape a
   # columnar store with a TTL is for. The same volume in Postgres would be a table nobody can
   # vacuum and an index that does not fit in memory.
+  # The log buffer, matching what OVH runs — same image, same KRaft combined mode, smaller heap.
+  #
+  # Here rather than only on the OVH box, because a transport that can only be exercised on the one
+  # machine somebody seeded by hand is a transport nobody tests. The runtime-log *table* had exactly
+  # that problem last week.
+  kafka:
+    container_name: sproutos_kafka
+    image: apache/kafka:4.3.1
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,HOST://0.0.0.0:29092
+      # Advertised as `kafka:9092` for containers on this network and `localhost:29092` for the
+      # host. One listener cannot be both: a broker that advertises `localhost` sends a container
+      # to itself, and one that advertises `kafka` sends the host to a name it cannot resolve.
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,HOST://localhost:29092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_LOG_RETENTION_HOURS=24
+    ports:
+      - "29092:29092"
+
   clickhouse:
     container_name: sproutos_clickhouse
     image: clickhouse/clickhouse-server:25.8

@@ -360,9 +360,9 @@ async function ensureStripeCustomer(organizationId: string, name: string): Promi
  * orders of magnitude.
  */
 const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: number }> = {
-  site_vcpu_second: { label: "Compute", unit: "vCPU-hours", divisor: 3600 },
-  site_gib_second: { label: "Memory", unit: "GiB-hours", divisor: 3600 },
-  site_active_cpu_second: { label: "Active CPU", unit: "vCPU-hours", divisor: 3600 },
+  // The compute line. GB-seconds is what Lambda bills and what appears on our own AWS invoice, so
+  // a customer comparing the two is comparing like with like.
+  site_gib_second: { label: "Compute", unit: "GB-hours", divisor: 3600 },
   site_provisioned_gib_second: { label: "Provisioned memory", unit: "GiB-hours", divisor: 3600 },
   site_request: { label: "Requests", unit: "requests", divisor: 1 },
   site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },

@@ -12,8 +12,15 @@ const EFFECTIVE_AT = new Date("2026-01-01T00:00:00.000Z")
  * product to whole micro-USD; every money *amount* in the schema stays `bigint`.
  */
 const ITEMS: [dimension: string, unitMicroUsd: string][] = [
-  ["site_vcpu_second", "36"],
-  ["site_active_cpu_second", "36"],
+  /*
+    Compute is GB-seconds and nothing else.
+
+    Lambda allocates CPU in proportion to configured memory — there is no vCPU knob and no vCPU
+    charge — and it bills wall-clock billed duration, not the time a request spent using CPU. Two
+    dimensions here described the other model (Vercel Fluid's, which discounts IO wait) and were
+    retired by `2026_09_20_00_00_00_lambda_billing`; a rate for them would have meant charging a
+    customer less than their invocation cost us on every database-bound request.
+  */
   ["site_gib_second", "3"],
   ["site_provisioned_gib_second", "3"],
   ["site_ws_connection_second", "0.5"],

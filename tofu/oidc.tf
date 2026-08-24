@@ -120,12 +120,6 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
       },
       {
-        Sid      = "UpdateTheLogShipper"
-        Effect   = "Allow"
-        Action   = ["lambda:UpdateFunctionCode", "lambda:GetFunction"]
-        Resource = aws_lambda_function.log_shipper.arn
-      },
-      {
         # Named groups only, so a compromised workflow cannot scale something else in the account.
         Sid    = "FillTheIdleColour"
         Effect = "Allow"
