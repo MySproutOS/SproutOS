@@ -172,6 +172,7 @@ async fn a_request_reaches_the_customers_function_and_the_reply_comes_back() {
     let state = Arc::new(Router {
         resolver: Resolver::new(valkey.clone()),
         lambda,
+        function_timeout: std::time::Duration::from_secs(60),
     });
     let app = AxumRouter::new()
         .fallback(any(serve::handle))
@@ -250,6 +251,7 @@ async fn the_load_balancer_gets_a_health_answer_and_a_tenant_keeps_its_own_path(
     let state = Arc::new(Router {
         resolver: Resolver::new(valkey.clone()),
         lambda,
+        function_timeout: std::time::Duration::from_secs(60),
     });
     let app = AxumRouter::new()
         .fallback(any(serve::handle))
@@ -291,6 +293,88 @@ async fn the_load_balancer_gets_a_health_answer_and_a_tenant_keeps_its_own_path(
 }
 
 #[tokio::test]
+async fn an_exhausted_balance_is_refused_before_lambda_is_invoked() {
+    if !localstack_up().await {
+        refuse_to_skip_in_ci("LocalStack");
+        return;
+    }
+    let Ok(client) = redis::Client::open(VALKEY) else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+    let Ok(mut valkey) = ConnectionManager::new(client).await else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+
+    let config = aws_config().await;
+    let lambda = LambdaClient::new(&config);
+    let arn = ensure_function(&lambda).await;
+
+    let host = "broke.sproutos.me";
+    let organization = "01a03900-0000-7000-8000-00000000br0k";
+    let route = format!(
+        r#"{{"arn":"{arn}","projectId":"p","organizationId":"{organization}","deploymentId":"d"}}"#
+    );
+    let _: () = valkey
+        .set(format!("route:{host}"), &route)
+        .await
+        .expect("route");
+    let _: () = valkey
+        .set(format!("credit:{organization}"), "exhausted")
+        .await
+        .expect("credit state");
+
+    let state = Arc::new(Router {
+        resolver: Resolver::new(valkey.clone()),
+        lambda,
+        function_timeout: std::time::Duration::from_secs(60),
+    });
+    let app = AxumRouter::new()
+        .fallback(any(serve::handle))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+
+    let response = reqwest::Client::new()
+        .get(format!("http://{address}/"))
+        .header("host", host)
+        .send()
+        .await
+        .expect("the router answers");
+
+    /*
+      402, and the function was never invoked.
+
+      Refusing before the invocation is the only thing that actually stops spend — AWS has no API
+      to abort a Lambda in flight, so anything that starts is paid for. And 402 rather than the 404
+      a suspended project gets: this customer can fix it, and telling them so is the difference
+      between a bill they can pay and an outage they cannot explain.
+    */
+    assert_eq!(response.status().as_u16(), 402);
+    assert!(response.text().await.unwrap_or_default().contains("credit"));
+
+    // Funded again, and it serves.
+    let _: () = valkey
+        .del(format!("credit:{organization}"))
+        .await
+        .expect("clear");
+    // The route cache holds the route, not the credit state, so this takes effect at once.
+    let served = reqwest::Client::new()
+        .get(format!("http://{address}/"))
+        .header("host", host)
+        .send()
+        .await
+        .expect("the router answers");
+    assert_eq!(served.status().as_u16(), 201);
+
+    let _: () = valkey.del(format!("route:{host}")).await.expect("withdraw");
+}
+
+#[tokio::test]
 async fn an_unknown_host_is_a_404_and_not_a_lookup_per_request() {
     if !localstack_up().await {
         refuse_to_skip_in_ci("LocalStack");
@@ -311,6 +395,7 @@ async fn an_unknown_host_is_a_404_and_not_a_lookup_per_request() {
     let state = Arc::new(Router {
         resolver: Resolver::new(valkey),
         lambda: LambdaClient::new(&config),
+        function_timeout: std::time::Duration::from_secs(60),
     });
     let app = AxumRouter::new()
         .fallback(any(serve::handle))

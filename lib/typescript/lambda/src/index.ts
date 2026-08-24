@@ -7,9 +7,13 @@ export {
   type PublishResult,
 } from "./publish"
 export {
+  clearCreditState,
+  type CreditState,
+  publishCreditState,
   publishLiveDeployment,
   publishRoute,
   readLiveDeployment,
+  readCreditState,
   readRoute,
   ROUTE_TTL_S,
   type Route,

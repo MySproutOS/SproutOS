@@ -92,3 +92,44 @@ export async function readLiveDeployment(
 ): Promise<string | undefined> {
   return (await valkey.get(`live:${projectId}`)) ?? undefined
 }
+
+/**
+ * What the router should do about an organization's balance.
+ *
+ * `ok` is the absence of a key, never a value: the router treats an unreadable or missing key as
+ * funded, because a Valkey blink must not become a platform-wide 402. Writing "ok" explicitly would
+ * be a second way to say the same thing and a second thing to keep in step.
+ */
+export type CreditState = "low" | "exhausted"
+
+/**
+ * Tell the router an organization is short.
+ *
+ * Written by the billing side when a balance crosses a threshold, and cleared when it is topped up.
+ * The router reads it per request, which is why it is here and not in Postgres.
+ *
+ * A TTL, so a control plane that stops writing fails *open*. A stale `exhausted` left behind by a
+ * crashed job would otherwise keep a paying customer's application refused indefinitely, and a
+ * customer who cannot serve traffic they have paid for is a worse outcome than a few minutes of
+ * usage nobody billed.
+ */
+export async function publishCreditState(
+  valkey: Redis,
+  organizationId: string,
+  state: CreditState,
+): Promise<void> {
+  await valkey.set(`credit:${organizationId}`, state, "EX", 15 * 60)
+}
+
+/** Funded again. */
+export async function clearCreditState(valkey: Redis, organizationId: string): Promise<void> {
+  await valkey.del(`credit:${organizationId}`)
+}
+
+export async function readCreditState(
+  valkey: Redis,
+  organizationId: string,
+): Promise<CreditState | undefined> {
+  const raw = await valkey.get(`credit:${organizationId}`)
+  return raw === "low" || raw === "exhausted" ? raw : undefined
+}

@@ -30,6 +30,19 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(Router {
         resolver: Resolver::new(manager),
         lambda,
+        /*
+          The ceiling on any single wait.
+
+          Lambda's own maximum is 15 minutes, and a customer configured for that is entitled to it —
+          this is the router refusing to hold a connection longer than the function could possibly
+          run, not a policy about how long a request may take.
+        */
+        function_timeout: std::time::Duration::from_secs(
+            std::env::var("ROUTER_MAX_INVOCATION_SECONDS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(900),
+        ),
     });
 
     /*

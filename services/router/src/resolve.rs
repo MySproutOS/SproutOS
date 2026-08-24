@@ -52,6 +52,11 @@ impl Resolver {
         }
     }
 
+    /// The Valkey behind this resolver, for callers that need to read another key.
+    pub fn valkey(&self) -> &ConnectionManager {
+        &self.valkey
+    }
+
     /// Drop a host from the local cache. Used when the control plane says a project is suspended,
     /// so enforcement does not wait out the positive TTL.
     pub fn invalidate(&self, hostname: &str) {

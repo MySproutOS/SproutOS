@@ -1,6 +1,15 @@
 import { Redis } from "ioredis"
 import { afterAll, describe, expect, it } from "vitest"
-import { publishRoute, readRoute, ROUTE_TTL_S, type Route, withdrawRoute } from "./routes"
+import {
+  clearCreditState,
+  publishCreditState,
+  publishRoute,
+  readCreditState,
+  readRoute,
+  ROUTE_TTL_S,
+  type Route,
+  withdrawRoute,
+} from "./routes"
 
 /**
  * Against the compose Valkey. What matters is the bytes actually in the key — the Rust router reads
@@ -27,6 +36,7 @@ const reachable = await (async () => {
   }
 })()
 
+const hostnames: string[] = []
 const HOST = "myapp.sproutos.me"
 const route: Route = {
   arn: "arn:aws:lambda:us-east-1:000000000000:function:sproutos-app-01a0:live",
@@ -38,6 +48,7 @@ const route: Route = {
 afterAll(async () => {
   if (reachable) {
     await valkey.del(`route:${HOST}`, "route:broken.sproutos.me")
+    for (const id of hostnames) await valkey.del(`credit:${id}`)
   }
   valkey.disconnect()
 })
@@ -80,6 +91,31 @@ describe.runIf(reachable)("the route map", () => {
     await valkey.set("route:broken.sproutos.me", "{not json")
 
     expect(await readRoute(valkey, "broken.sproutos.me")).toBeUndefined()
+  })
+
+  it("tells the router about a balance, and stops telling it when topped up", async () => {
+    const organizationId = "01a03900-0000-7000-8000-00000000cred"
+    hostnames.push(organizationId)
+
+    expect(await readCreditState(valkey, organizationId)).toBeUndefined()
+
+    await publishCreditState(valkey, organizationId, "exhausted")
+    expect(await readCreditState(valkey, organizationId)).toBe("exhausted")
+
+    /*
+      A TTL, so a control plane that stops writing fails open.
+
+      A stale `exhausted` left by a crashed job would keep a paying customer refused indefinitely.
+      A customer who cannot serve traffic they have paid for is a worse outcome than a few minutes
+      of usage nobody billed.
+    */
+    const ttl = await valkey.ttl(`credit:${organizationId}`)
+    expect(ttl).toBeGreaterThan(0)
+
+    await clearCreditState(valkey, organizationId)
+    // Absent, not "ok". The router reads a missing key as funded, so there is one way to say it.
+    expect(await readCreditState(valkey, organizationId)).toBeUndefined()
+    expect(await valkey.get(`credit:${organizationId}`)).toBeNull()
   })
 
   it("withdraws a route, which is what stops a suspended project serving", async () => {

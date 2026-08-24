@@ -16,6 +16,8 @@ use crate::resolve::Resolver;
 pub struct Router {
     pub resolver: Resolver,
     pub lambda: LambdaClient,
+    /// The longest any invocation may be waited on. A well-funded customer gets all of it.
+    pub function_timeout: std::time::Duration,
 }
 
 pub type Shared = Arc<Router>;
@@ -76,6 +78,25 @@ pub async fn handle(
         return (StatusCode::NOT_FOUND, "no application here").into_response();
     };
 
+    /*
+      Credit, before anything is spent.
+
+      Read after resolution because the answer is per organization and the route is what says which
+      one. Refusing here is the only thing that actually stops spend — once Lambda is running we are
+      paying for it, and there is no API to abort an invocation in flight.
+    */
+    let credit = crate::credit::read_credit(state.resolver.valkey(), &route.organization_id).await;
+    if credit == crate::credit::Credit::Exhausted {
+        // 402, not 404. A suspended project is indistinguishable from an unknown host by design,
+        // but an *exhausted* one belongs to a customer who can fix it, and telling them so is the
+        // difference between a bill they can pay and an outage they cannot explain.
+        return (
+            StatusCode::PAYMENT_REQUIRED,
+            "This application is out of credit. Add credit to bring it back.",
+        )
+            .into_response();
+    }
+
     let event = build_event(Incoming {
         method: method.as_str(),
         path: uri.path(),
@@ -95,19 +116,42 @@ pub async fn handle(
         }
     };
 
-    let invoked = state
+    let invocation = state
         .lambda
         .invoke()
         .function_name(&route.arn)
         .payload(Blob::new(payload))
-        .send()
-        .await;
+        .send();
 
-    let output = match invoked {
-        Ok(output) => output,
-        Err(error) => {
+    /*
+      Stop waiting, which is not the same as stopping the invocation.
+
+      AWS has no API to abort a Lambda in flight: the function keeps running and keeps billing us
+      until it finishes or hits its own configured timeout. What this does is cut the client off so
+      a customer who is nearly out of credit is not held on a request whose cost they cannot cover.
+      The controls that actually bound the spend are the function's timeout and its reserved
+      concurrency, both set at publish.
+    */
+    let ceiling = crate::credit::deadline(credit, state.function_timeout);
+    let output = match tokio::time::timeout(ceiling, invocation).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
             tracing::error!(%error, arn = route.arn, "invocation failed");
             return (StatusCode::BAD_GATEWAY, "the application did not respond").into_response();
+        }
+        Err(_) => {
+            // Recorded, so a customer can see why their request was cut short rather than guessing.
+            tracing::warn!(
+                arn = route.arn,
+                organization = route.organization_id,
+                seconds = ceiling.as_secs(),
+                "cut off a long invocation on a low balance"
+            );
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
+                "This request ran longer than the remaining credit allows.",
+            )
+                .into_response();
         }
     };
 
