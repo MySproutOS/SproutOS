@@ -462,34 +462,6 @@ export interface MemberRole {
   roleId: string
 }
 
-export interface NeonEndpoint {
-  backendServiceId: string
-  createdAt: Generated<Timestamp>
-  databaseBranchId: string | null
-  databaseName: string | null
-  host: string | null
-  id: string
-  lastActiveAt: Timestamp | null
-  port: number | null
-  roleName: string | null
-  runtimeRef: string | null
-  startedAt: Timestamp | null
-  state: Generated<string>
-  suspendedAt: Timestamp | null
-  tenantId: string
-  timelineId: string
-  updatedAt: Generated<Timestamp>
-}
-
-export interface NeonShardPlacement {
-  nodeId: number
-  preferredAz: string | null
-  shardNumber: number
-  stripeSize: number | null
-  tenantId: string
-  updatedAt: Generated<Timestamp>
-}
-
 export interface Node {
   allocatableCpuMillis: Generated<Int8>
   allocatableMemoryBytes: Generated<Int8>
@@ -1253,8 +1225,6 @@ export interface DB {
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission
   memberRole: MemberRole
-  neonEndpoint: NeonEndpoint
-  neonShardPlacement: NeonShardPlacement
   node: Node
   oauthAccessToken: OauthAccessToken
   oauthAuthorizationCode: OauthAuthorizationCode

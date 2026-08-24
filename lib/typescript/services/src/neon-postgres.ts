@@ -1,49 +1,40 @@
 import type { DB } from "@sproutos/db"
+import { seal } from "@lib/envelope"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
-import { neonConfigFromEnv, neonStorage, type NeonConfig } from "./neon"
-import {
-  createEndpoint,
-  dockerComputeLauncher,
-  neonComputeConfigFromEnv,
-  suspendEndpoint,
-  type ComputeLauncher,
-} from "./neon-compute"
+import { neonApi, neonApiConfigFromEnv, type NeonConfig } from "./neon-api"
+import { postgresUri } from "./naming"
+import { rolePasswordContext } from "./postgres"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
 import type { ConnectionDetails, ProvisionInput, ProvisionResult, ServiceDriver } from "./types"
 import { SecretNotRecoverableError } from "./valkey"
 
 /**
- * Postgres on self-hosted Neon: `database_instance.provider = 'neon'`.
+ * Postgres on Neon: `database_instance.provider = 'neon'`.
  *
- * The sibling of `sproutPostgresDriver`, and the difference is what a database *is*. `sprout`
- * creates a role and a database on a cluster that is always running, so provisioning costs a
- * connection and the database costs money from that moment whether or not anyone uses it. This
- * creates a tenant and a timeline in the pageserver and **starts nothing** — the customer receives a
- * working connection string for a database with no process behind it, and the first connection
- * through `pg-proxy` wakes one in about 200ms.
+ * One Neon project per customer database. Neon owns the storage, the compute, and the wake-on-
+ * connect that makes an idle database free — see ADR 0025 for why that beat running it ourselves.
  *
- * ## What that unlocks, and why it was descoped before
+ * ## What this driver is responsible for, and what it is not
  *
- * The OAuth provider's per-user database provisioning was descoped from v1 with the reason recorded
- * as "at 100k+ databases it needs capabilities the control plane won't have until phase 8 matures".
- * This is that capability: 100,000 suspended endpoints are 100,000 rows and 100,000 timelines, and
- * they cost storage and no compute. On `sprout` the same thing is 100,000 idle Postgres databases on
- * a cluster somebody is paying for.
+ * It is responsible for the mapping: a SproutOS `backend_service` to a Neon project, a
+ * `database_branch` to a Neon branch, and a customer-facing credential that is **not** Neon's.
  *
- * ## The customer's credential is still the proxy's
+ * It is not responsible for compute. There is no endpoint to start, no address to track, no admin
+ * password to hold. Provision creates a project and returns; the first connection wakes it, and
+ * Neon does that.
  *
- * Unchanged from `sprout`, deliberately. The username is `tenantUsername` and the secret is stored
- * as a one-way hash, `pg-proxy` is the only thing that verifies it, and the role inside the compute
- * has no password at all. A customer never holds anything that works against a compute directly —
- * which matters more here than on the shared cluster, because a compute is reachable on a network
- * the platform, not the customer, controls.
+ * ## The customer never holds a Neon credential
+ *
+ * Same boundary as object storage, and the same reason. The customer gets a `db_…` username and a
+ * secret this platform issued, stored as a one-way hash, verified by `pg-proxy`. Neon's own
+ * connection string — which is a real credential to a real database, outside our tenancy model —
+ * is sealed under KMS in `database_role` and only `pg-proxy` ever opens it.
  */
 
 export type NeonPostgresConfig = {
   neon: NeonConfig
-  /** What goes in a customer's URI: `pg-proxy`, never a compute. */
+  /** What goes in a customer's URI: `pg-proxy`, never a Neon host. */
   publicHost: string
   publicPort: number
   sslmode?: string
@@ -56,13 +47,13 @@ export function neonPostgresConfigFromEnv(
   if (publicHost === undefined || publicHost === "") {
     throw new Error(
       "SERVICE_POSTGRES_PUBLIC_HOST is not set. It is the address of pg-proxy, which is the only " +
-        "thing a customer is given — a URI naming a compute would name a process that is usually " +
-        "not running.",
+        "thing a customer is given — a URI naming a Neon host would hand out a credential that " +
+        "works against Neon directly and bypasses every check this platform makes.",
     )
   }
 
   return {
-    neon: neonConfigFromEnv(env),
+    neon: neonApiConfigFromEnv(env),
     publicHost,
     publicPort: Number(env.SERVICE_POSTGRES_PUBLIC_PORT ?? 5432),
     ...(env.SERVICE_POSTGRES_SSLMODE === undefined
@@ -71,12 +62,32 @@ export function neonPostgresConfigFromEnv(
   }
 }
 
-export function neonPostgresDriver(
-  db: Kysely<DB>,
-  config: NeonPostgresConfig,
-  launcher: ComputeLauncher,
-): ServiceDriver {
-  const storage = neonStorage(config.neon)
+/**
+ * The parts of a Neon connection string the control plane stores.
+ *
+ * Neon returns it once, at creation, and never again — losing it means resetting the role's
+ * password. It is taken apart rather than stored whole so that the password lands in the sealed
+ * column `database_role` already has, and the host in the column `database_branch` already has,
+ * which is what those columns were named for in the first migration.
+ */
+export function parseNeonUri(uri: string): {
+  host: string
+  database: string
+  role: string
+  password: string
+} {
+  const url = new URL(uri)
+  return {
+    host: url.host,
+    // `/dbname` — Neon's default is `neondb`.
+    database: decodeURIComponent(url.pathname.replace(/^\//, "")),
+    role: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+  }
+}
+
+export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): ServiceDriver {
+  const api = neonApi(config.neon)
 
   function detailsFor(input: {
     backendServiceId: string
@@ -85,7 +96,9 @@ export function neonPostgresDriver(
     return {
       host: config.publicHost,
       port: config.publicPort,
-      database: databaseNameFor(input.backendServiceId),
+      // The database name a customer sees is ours, not Neon's. `pg-proxy` maps it to whatever Neon
+      // called the database, so a Neon default of `neondb` never leaks into a customer's URI.
+      database: `sprout_db_${input.backendServiceId.replaceAll("-", "").slice(-26)}`,
       username: tenantUsername({
         organizationId: input.organizationId,
         kind: "database",
@@ -95,22 +108,27 @@ export function neonPostgresDriver(
   }
 
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {
-    const database = databaseNameFor(input.backendServiceId)
-    const role = roleNameFor(input.backendServiceId)
-    // Both are derived from a UUID and cannot contain anything that needs escaping. Checked anyway,
-    // because they reach `compute_ctl`'s spec and from there `create role` and `create database`.
-    assertSafeIdentifier(database)
-    assertSafeIdentifier(role)
-
     const details = detailsFor(input)
 
-    // Storage first. If anything below fails the tenant is orphaned, which `destroy` and the reaper
-    // both handle — whereas a `database_instance` row pointing at a tenant that was never created is
-    // a database the customer can see and nothing can serve.
-    const tenantId = await storage.createTenant()
-    const timeline = await storage.createTimeline(tenantId)
+    /*
+      Neon first, database second.
 
+      If the transaction below fails, a Neon project is orphaned — which `destroy` and a reaper can
+      both clean up. The other order leaves a `database_instance` row pointing at a project that was
+      never created: a database the customer can see and nothing can serve.
+    */
+    const { project, branch, connectionUri } = await api.createProject({
+      name: `sproutos-${input.backendServiceId.slice(0, 8)}`,
+      // Below 1 CU so an idle customer database costs storage and no compute. This is the entire
+      // economic argument for Neon over a Postgres that is always running.
+      minCu: 0.25,
+      maxCu: 2,
+    })
+
+    const neon = parseNeonUri(connectionUri)
     const secret = generateSecret()
+    const roleId = v7()
+    const sealed = await seal(neon.password, rolePasswordContext(roleId))
 
     await db.transaction().execute(async (tx) => {
       const instanceId = v7()
@@ -123,8 +141,8 @@ export function neonPostgresDriver(
           backendServiceId: input.backendServiceId,
           projectId: input.projectId,
           provider: "neon",
-          providerProjectId: tenantId,
-          region: null,
+          providerProjectId: project.id,
+          region: project.region_id,
           status: "active",
         })
         .execute()
@@ -136,21 +154,33 @@ export function neonPostgresDriver(
           databaseInstanceId: instanceId,
           name: "main",
           kind: "primary",
-          providerBranchId: timeline.timeline_id,
-          host: config.publicHost,
+          providerBranchId: branch.id,
+          // Neon's host, which is where `pg-proxy` connects — never what the customer is told.
+          host: neon.host,
           isProtected: true,
         })
         .execute()
 
-      await createEndpoint(tx, {
-        backendServiceId: input.backendServiceId,
-        databaseBranchId: branchId,
-        tenantId,
-        timelineId: timeline.timeline_id,
-        roleName: role,
-        databaseName: database,
-      })
+      await tx
+        .insertInto("databaseRole")
+        .values({
+          id: roleId,
+          databaseBranchId: branchId,
+          roleName: neon.role,
+          passwordCiphertext: sealed.ciphertext,
+          passwordWrappedDek: sealed.wrappedDek,
+          passwordKmsKeyId: sealed.kmsKeyId,
+        })
+        .execute()
 
+      /*
+        The customer's own secret, separate from Neon's password.
+
+        Two credentials, deliberately. Neon's is how `pg-proxy` reaches the database and is sealed
+        under KMS; the one below is what the customer sends, is stored as a one-way hash, and is the
+        only thing the proxy verifies. A customer holding Neon's password would hold a credential
+        that works against Neon directly and skips every check this platform makes.
+      */
       await tx
         .insertInto("serviceCredential")
         .values({
@@ -169,13 +199,6 @@ export function neonPostgresDriver(
       .where("id", "=", input.backendServiceId)
       .execute()
 
-    /*
-      Nothing is started.
-
-      The customer has a working connection string for a database with no process behind it. That is
-      not a half-provisioned state to be finished later — it is the finished state, and the first
-      connection wakes a compute in about 200ms.
-    */
     return {
       ...details,
       connectionUri: postgresUri({
@@ -186,7 +209,7 @@ export function neonPostgresDriver(
     }
   }
 
-  /** Not recoverable: `service_credential` holds a one-way hash, as it does for every kind but object storage. */
+  /** Not recoverable: `service_credential` holds a one-way hash, as for every kind but object storage. */
   function connectionUri(backendServiceId: string): Promise<string> {
     return Promise.reject(new SecretNotRecoverableError(backendServiceId))
   }
@@ -201,6 +224,9 @@ export function neonPostgresDriver(
     const details = detailsFor({ backendServiceId, organizationId: service.organizationId })
     const secret = generateSecret()
 
+    // Only the customer-facing credential. Neon's password is untouched, because rotating it would
+    // mean a Neon API call whose failure leaves the proxy unable to reach a database the customer
+    // can still authenticate to.
     await db.transaction().execute(async (tx) => {
       await tx
         .updateTable("serviceCredential")
@@ -228,29 +254,15 @@ export function neonPostgresDriver(
     })
   }
 
-  async function endpointsFor(backendServiceId: string): Promise<string[]> {
-    const rows = await db
-      .selectFrom("neonEndpoint")
-      .select("id")
-      .where("backendServiceId", "=", backendServiceId)
-      .execute()
-
-    return rows.map((row) => row.id)
-  }
-
   /**
-   * Stop the computes and refuse new connections.
+   * Suspension is a row.
    *
-   * Two things, because they answer different questions. Stopping the compute is what makes a
-   * suspended service stop costing anything; `backend_service.status` is what stops `pg-proxy`
-   * waking it again on the next connection. Doing only the first would suspend a service that
-   * un-suspends itself the moment anyone connects.
+   * Not a Neon API call: Neon suspends the compute on its own when nobody connects, which is the
+   * behaviour we want anyway. What this stops is `pg-proxy` opening a connection at all — and
+   * because Neon only wakes on connection, refusing the connection is exactly what makes a
+   * suspended service stop costing anything.
    */
   async function suspend(backendServiceId: string): Promise<void> {
-    for (const endpointId of await endpointsFor(backendServiceId)) {
-      await suspendEndpoint(db, launcher, endpointId)
-    }
-
     await db
       .updateTable("backendService")
       .set({ status: "suspended", updatedAt: new Date() })
@@ -259,8 +271,6 @@ export function neonPostgresDriver(
   }
 
   async function resume(backendServiceId: string): Promise<void> {
-    // Only the status. Starting a compute here would defeat the point — the next connection does
-    // it, and a resumed database nobody connects to should cost nothing.
     await db
       .updateTable("backendService")
       .set({ status: "active", updatedAt: new Date() })
@@ -269,20 +279,17 @@ export function neonPostgresDriver(
   }
 
   async function destroy(backendServiceId: string): Promise<void> {
-    const endpoints = await db
-      .selectFrom("neonEndpoint")
-      .select(["id", "tenantId"])
+    const instance = await db
+      .selectFrom("databaseInstance")
+      .select(["providerProjectId"])
       .where("backendServiceId", "=", backendServiceId)
-      .execute()
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
 
-    for (const endpoint of endpoints) {
-      await suspendEndpoint(db, launcher, endpoint.id).catch(() => undefined)
-    }
-
-    // The tenant, which is every branch of this database at once. Deleted after the computes, so
-    // nothing is still writing WAL for a tenant that is going away.
-    for (const tenantId of new Set(endpoints.map((endpoint) => endpoint.tenantId))) {
-      await storage.deleteTenant(tenantId).catch(() => undefined)
+    // Deleting the project takes every branch with it, which is the point: a customer asking to
+    // delete a database means all of it, not the primary branch and a scatter of previews.
+    if (instance?.providerProjectId != null) {
+      await api.deleteProject(instance.providerProjectId).catch(() => undefined)
     }
 
     await db
@@ -321,9 +328,5 @@ export function neonPostgresDriver(
 
 /** The driver, wired from the environment. */
 export function neonPostgresDriverFromEnv(db: Kysely<DB>): ServiceDriver {
-  return neonPostgresDriver(
-    db,
-    neonPostgresConfigFromEnv(),
-    dockerComputeLauncher(neonComputeConfigFromEnv()),
-  )
+  return neonPostgresDriver(db, neonPostgresConfigFromEnv())
 }

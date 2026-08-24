@@ -54,33 +54,11 @@ export {
   type ServiceStatus,
 } from "./types"
 export {
-  computeSpec,
-  type ComputeSpecInput,
-  isNeonId,
-  neonConfigFromEnv,
-  NeonError,
-  neonId,
-  neonStorage,
-  type NeonConfig,
-  type TimelineInfo,
-} from "./neon"
-export {
-  type ComputeAddress,
-  type ComputeLauncher,
-  createEndpoint,
-  dockerComputeLauncher,
-  neonComputeConfigFromEnv,
-  suspendEndpoint,
-  wakeEndpoint,
-  WAKE_TIMEOUT_MS,
-  WakeTimeoutError,
-  type NeonComputeConfig,
-} from "./neon-compute"
-export {
   neonPostgresConfigFromEnv,
   neonPostgresDriver,
   neonPostgresDriverFromEnv,
   type NeonPostgresConfig,
+  parseNeonUri,
 } from "./neon-postgres"
 export {
   neonApi,

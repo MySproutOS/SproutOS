@@ -13,13 +13,13 @@ The machine has two NVMe drives on separate mounts, and the split is deliberate:
 hardware guide asks not to share its data drive with other filesystem activity, and ClickHouse
 merges are the noisiest neighbour available.
 
-| Service | Mount | Why |
-| --- | --- | --- |
-| OpenSearch | `/` | tenant search indexes |
-| Valkey (queue) | `/` | tenant workflow queues — BullMQ, Celery |
-| Valkey (cache) | `/` | tenant cache |
-| ClickHouse | `/data` | runtime logs, 3-day retention |
-| Kafka | `/data` | log ingest buffer ahead of ClickHouse |
+| Service        | Mount   | Why                                     |
+| -------------- | ------- | --------------------------------------- |
+| OpenSearch     | `/`     | tenant search indexes                   |
+| Valkey (queue) | `/`     | tenant workflow queues — BullMQ, Celery |
+| Valkey (cache) | `/`     | tenant cache                            |
+| ClickHouse     | `/data` | runtime logs, 3-day retention           |
+| Kafka          | `/data` | log ingest buffer ahead of ClickHouse   |
 
 ## Memory, which is the part most easily got wrong
 

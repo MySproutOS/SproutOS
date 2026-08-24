@@ -5,7 +5,6 @@ import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import metering from "./metering"
-import neon from "./neon"
 import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
@@ -89,15 +88,13 @@ unauthenticated.route("/otlp", otlp)
 */
 unauthenticated.route("/internal", metering)
 /*
-  Neon's storage controller, calling in to say which pageserver holds a tenant.
+  There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 
-  Same `/internal` prefix and same reason: the caller is a platform component, not a customer.
-  Unauthenticated for now because the controller reaches this only over the cluster's private
-  network and its `--control-plane-jwt-token` is the mechanism for anything stronger — that token is
-  a deployment decision, and wiring it before there is a deployment would be configuring something
-  nothing can test.
+  It served two endpoints, and ADR 0025 records why neither survives: `notify-attach`, because a
+  self-hosted storage controller panics without a control plane to tell which pageserver holds a
+  tenant, and `wake`, because **Neon's own proxy does wake-on-connect** — the feature we had
+  reimplemented.
 */
-unauthenticated.route("/internal", neon)
 
 const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)

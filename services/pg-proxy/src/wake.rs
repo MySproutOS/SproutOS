@@ -1,9 +1,16 @@
-//! Wake-on-connect.
+//! Wake-on-connect — **retired, and kept only until the backend resolution that replaces it lands.**
 //!
-//! A Neon endpoint's compute can be absent while its timeline is not — that absence is the entire
-//! economic argument for separating compute from storage. This is what makes it invisible: a
-//! connection arrives, the compute is started if it is not running, and the client's first query
-//! answers. The customer sees a slow connection, not an error.
+//! This asked the control plane to start a compute for a suspended endpoint. It was written against
+//! a self-hosted Neon, and SproutOS is on Neon's managed service now: **Neon's own proxy does
+//! wake-on-connect**, so there is nothing here to start (ADR 0025).
+//!
+//! What this proxy actually needs instead is the opposite lookup — given a tenant, *which Neon
+//! endpoint and credential do I connect onward with* — and that is not built. Until it is,
+//! `PG_PROXY_WAKE_URL` is unset in every deployment and this module does nothing.
+//!
+//! It is left in place rather than deleted because the HTTP shape, the timeout reasoning and the
+//! "a failed lookup is a backend problem, not a bad password" handling below are all reusable by
+//! the resolution that replaces it. Deleting it would mean writing them again.
 //!
 //! ## Why the proxy asks rather than acts
 //!
