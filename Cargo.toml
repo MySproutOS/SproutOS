@@ -7,6 +7,7 @@ members = [
   "lib/rust/s3-sigv4",
   "services/metering-agent",
   "services/pg-proxy",
+  "services/router",
   "services/valkey-proxy",
   "services/search-proxy",
   "services/storage-proxy",
