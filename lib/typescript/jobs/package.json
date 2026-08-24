@@ -14,12 +14,14 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "catalog:",
     "@lib/analyzer": "workspace:*",
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
     "@lib/deploy": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
+    "@lib/lambda": "workspace:*",
     "@lib/observability": "workspace:*",
     "@lib/reaper": "workspace:*",
     "@lib/sandbox": "workspace:*",
@@ -31,6 +33,7 @@
     "uuid": "catalog:"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "catalog:",
     "@types/node": "catalog:"
   }
 }

@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
-import { crudDeployment } from "@lib/dao"
-import { enqueueSigning } from "@lib/jobs"
+import { crudDeployment, fetchDeployment } from "@lib/dao"
+import { enqueue, enqueueSigning, PUBLISH_KINDS } from "@lib/jobs"
 import { verifyGitHubOidcToken } from "@lib/oauth"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -238,6 +238,10 @@ const deploy: Hono = new Hono()
         gitSha: json.commit,
         gitRef: json.ref,
         status: "queued",
+        // Where the build is. Recorded on the row rather than recomputed later: the key is what the
+        // action actually uploaded, and deriving it from the digest again would be a second place
+        // for the two to disagree.
+        artifactKey: json.key,
       })
 
       /*
@@ -257,6 +261,26 @@ const deploy: Hono = new Hono()
           projectId: authorized.projectId,
           unsignedKey: json.key,
           unsignedDigest: json.digest,
+        })
+      } else {
+        /*
+          Everything else goes live now.
+
+          Enqueued rather than published inline: the publish talks to Lambda and to Valkey, and a
+          request handler that waits on both turns a customer's `deploy` step into a call that hangs
+          when either is slow. Keyed on the deployment so a retried release joins the publish
+          already in flight.
+        */
+        // The job queue is partitioned by organization, and the deploy token carries only the
+        // project — it is minted from a repository claim, which says nothing about who pays.
+        const owner = await fetchDeployment(db).withProject(deployment.id)
+        if (owner === undefined) return c.json({ message: "That project is gone" }, 404)
+
+        await enqueue(db, {
+          kind: PUBLISH_KINDS.release,
+          organizationId: owner.project.organizationId,
+          payload: { deploymentId: deployment.id },
+          idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
         })
       }
 

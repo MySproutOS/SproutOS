@@ -140,7 +140,12 @@ export type ProjectSpec = {
  * tag convention: a slug may itself contain single dashes, so `pr-42-my-app` is ambiguous about
  * where the tag ends.
  */
-export function hostLabel(project: ProjectSpec, deployment: DeploymentSpec): string {
+export function hostLabel(
+  project: ProjectSpec,
+  // Only the two fields it reads. The rest of `DeploymentSpec` describes a container — image,
+  // runtime class, concurrency — and the Lambda path has none of them to offer.
+  deployment: Pick<DeploymentSpec, "kind" | "prNumber">,
+): string {
   // The tail of a UUIDv7, which is the random part. The head is a millisecond timestamp, so two
   // projects created in the same tick would share it.
   const discriminator = project.id.replaceAll("-", "").slice(-DISCRIMINATOR_LENGTH)

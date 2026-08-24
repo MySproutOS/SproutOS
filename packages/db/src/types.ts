@@ -397,6 +397,7 @@ export interface DatabaseRole {
 }
 
 export interface Deployment {
+  artifactKey: string | null
   clusterId: string | null
   containerConcurrency: Generated<number>
   createdAt: Generated<Timestamp>
@@ -405,10 +406,12 @@ export interface Deployment {
   failureReason: string | null
   gitRef: string | null
   gitSha: string
+  hostname: string | null
   id: string
   imageUri: string | null
   kind: string
   knativeRevision: string | null
+  lambdaVersion: string | null
   maxDurationS: Generated<number>
   memoryMb: Generated<number>
   prNumber: number | null

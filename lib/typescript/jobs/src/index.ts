@@ -83,3 +83,10 @@ export {
   failSigning,
   type SigningJob,
 } from "./apk-signing"
+export {
+  environmentFor,
+  hostnameFor,
+  PUBLISH_KINDS,
+  publishRelease,
+  type PublishOptions,
+} from "./publish"

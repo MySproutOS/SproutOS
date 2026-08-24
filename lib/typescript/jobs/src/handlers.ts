@@ -10,6 +10,8 @@ import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { BUILD_KINDS, buildImage } from "./build"
 import { deployRevision, DEPLOY_KINDS } from "./deploy"
+import { LambdaClient } from "@aws-sdk/client-lambda"
+import { PUBLISH_KINDS, publishRelease } from "./publish"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import { enqueue } from "./queue"
 import { REGISTRY_CREDENTIAL_KIND, refreshRegistryCredential } from "./registry-credential"
@@ -59,6 +61,7 @@ export const JOB_KINDS = {
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   deployRevision: DEPLOY_KINDS.revision,
+  publishRelease: PUBLISH_KINDS.release,
   buildImage: BUILD_KINDS.image,
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
@@ -281,6 +284,16 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.deployRevision]: deployRevision(),
+  [JOB_KINDS.publishRelease]: publishRelease({
+    lambda: new LambdaClient({
+      region: process.env.AWS_REGION ?? "us-east-1",
+      ...(process.env.AWS_ENDPOINT_URL === undefined
+        ? {}
+        : { endpoint: process.env.AWS_ENDPOINT_URL }),
+    }),
+    // The platform's own Valkey, where the route map lives — not the tenant instance.
+    valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
+  }),
   [JOB_KINDS.buildImage]: buildImage(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
