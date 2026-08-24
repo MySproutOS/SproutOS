@@ -1,6 +1,7 @@
 export * from "./client"
 export * from "./errors"
 export * from "./github"
+export * from "./github-oidc"
 export * from "./google"
 export * from "./jwt"
 export * from "./tokens"

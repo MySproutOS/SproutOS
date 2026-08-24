@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest"
+import { mintDeployToken, readDeployToken } from "./deploy"
+
+/**
+ * The deploy token is what the upload and release calls carry, so forging one is deploying to
+ * somebody else's project.
+ */
+const SECRET = "test-secret"
+const NOW = 1_800_000_000_000
+const now = () => NOW
+const PROJECT = "01a01e12-1700-76ac-9713-dd208babdf5a"
+
+describe("deploy tokens", () => {
+  it("round-trips the project it was minted for", () => {
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, SECRET)
+
+    expect(readDeployToken(token, SECRET, now)).toEqual({ projectId: PROJECT })
+  })
+
+  it("refuses a token signed with a different secret", () => {
+    // The whole point: the project id is in plain sight, so what stops anyone claiming a project is
+    // that they cannot produce the MAC over it.
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, "some-other-secret")
+
+    expect(readDeployToken(token, SECRET, now)).toBeUndefined()
+  })
+
+  it("refuses a token whose project was edited", () => {
+    // Swapping the project id for somebody else's is the attack this exists to stop.
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, SECRET)
+    const [, expiry, mac] = token.split(".")
+
+    expect(readDeployToken(`01a0-victim.${expiry}.${mac}`, SECRET, now)).toBeUndefined()
+  })
+
+  it("refuses a token whose expiry was pushed out", () => {
+    // The expiry is inside the MAC, so extending it invalidates the signature rather than the
+    // token lasting longer.
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) - 1, SECRET)
+    const [projectId, , mac] = token.split(".")
+
+    expect(
+      readDeployToken(`${projectId}.${Math.floor(NOW / 1000) + 9999}.${mac}`, SECRET, now),
+    ).toBeUndefined()
+  })
+
+  it("refuses an expired token", () => {
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) - 1, SECRET)
+
+    expect(readDeployToken(token, SECRET, now)).toBeUndefined()
+  })
+
+  it("refuses anything that is not three parts", () => {
+    for (const malformed of ["", "a", "a.b", "a.b.c.d"]) {
+      expect(readDeployToken(malformed, SECRET, now)).toBeUndefined()
+    }
+  })
+})
