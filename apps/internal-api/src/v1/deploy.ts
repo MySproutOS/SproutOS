@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment } from "@lib/dao"
+import { enqueueSigning } from "@lib/jobs"
 import { verifyGitHubOidcToken } from "@lib/oauth"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -238,6 +239,26 @@ const deploy: Hono = new Hono()
         gitRef: json.ref,
         status: "queued",
       })
+
+      /*
+        An Android release cannot ship from here — it has to be signed first, and the key is on a
+        machine SproutOS does not operate. So the release queues a signing job and the deployment
+        waits.
+
+        The key recorded is the uploaded archive, not a bare APK: the action packages a directory,
+        which for the `android` preset contains the unsigned APK. The signer extracts it. Uploading
+        the APK on its own would be tidier and is worth doing when the action next changes; doing it
+        now would mean a version skew where a customer on the old action silently queues a job no
+        signer can read.
+      */
+      if (json.preset === "android") {
+        await enqueueSigning(db, {
+          deploymentId: deployment.id,
+          projectId: authorized.projectId,
+          unsignedKey: json.key,
+          unsignedDigest: json.digest,
+        })
+      }
 
       return c.json({ deployment_id: deployment.id })
     },
