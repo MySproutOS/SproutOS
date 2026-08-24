@@ -18,74 +18,23 @@
     the vault wholesale, which is not.
 */
 
-resource "aws_iam_role" "storage_proxy" {
-  name = "${var.name_prefix}-storage-proxy"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = aws_iam_openid_connect_provider.cluster.arn }
-      Condition = {
-        StringEquals = {
-          # Bound to the one service account. Without the `sub` condition any pod in the cluster
-          # could assume this role, which would make the tenant boundary a formality.
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:sproutos-system:storage-proxy"
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
-        }
-      }
-    }]
-  })
-
-  tags = local.tags
-}
-
-resource "aws_iam_role_policy" "storage_proxy" {
-  name = "tenant-buckets"
-  role = aws_iam_role.storage_proxy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ListTenantBuckets"
-        Effect   = "Allow"
-        Action   = ["s3:GetBucketLocation", "s3:ListBucket"]
-        Resource = ["arn:aws:s3:::${var.tenant_bucket_prefix}*"]
-      },
-      {
-        Sid      = "ReadWriteTenantObjects"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = ["arn:aws:s3:::${var.tenant_bucket_prefix}*/*"]
-      },
-    ]
-  })
-}
-
-/*
-  Bucket creation and teardown belong to the control plane, not the proxy.
-
-  The API provisions and destroys a service; the proxy only ever serves requests for one that
-  already exists. Splitting them means a compromise of the thing on the network edge cannot create a
-  bucket to exfiltrate into, and cannot delete one at all.
-*/
 resource "aws_iam_role" "object_storage_admin" {
   name = "${var.name_prefix}-object-storage-admin"
 
+  /*
+    Assumed by the service instances, not by a Kubernetes service account.
+
+    This was an IRSA role bound to one service account, and the `sub` condition was what stopped any
+    other pod assuming it. There is no cluster and no pods: the boundary is now the instance role,
+    which only the website and router instances carry, and which cannot itself create buckets — that
+    separation is the point of having two roles rather than one.
+  */
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = aws_iam_openid_connect_provider.cluster.arn }
-      Condition = {
-        StringEquals = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:sproutos-system:internal-api"
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
-        }
-      }
+      Action    = "sts:AssumeRole"
+      Principal = { AWS = aws_iam_role.instance.arn }
     }]
   })
 

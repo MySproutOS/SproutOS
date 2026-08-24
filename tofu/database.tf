@@ -32,9 +32,9 @@ resource "aws_security_group" "database" {
   reference says "anything running in the cluster", which stays true when the subnets are resized
   and false for anything that merely borrows an address.
 */
-resource "aws_vpc_security_group_ingress_rule" "database_from_cluster" {
+resource "aws_vpc_security_group_ingress_rule" "database_from_service" {
   security_group_id            = aws_security_group.database.id
-  referenced_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  referenced_security_group_id = aws_security_group.service.id
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"

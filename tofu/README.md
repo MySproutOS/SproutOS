@@ -29,15 +29,15 @@ verification starts.
 
 ## Layout
 
-| File                                |                                                             |
-| ----------------------------------- | ----------------------------------------------------------- |
-| `main.tf`                           | Providers, default tags, the account-identity guard         |
-| `network.tf`                        | Dual-stack VPC, three AZs, NAT per AZ, S3 gateway endpoint  |
-| `eks.tf`                            | Cluster, platform and tenant node groups, IRSA              |
-| `database.tf`                       | Aurora Serverless v2, PITR, AWS Backup                      |
-| `kms.tf`                            | One key per purpose                                         |
-| `registry.tf`                       | ECR per image, artifact bucket                              |
-| `s3.tf`, `cloudfront.tf`, `oidc.tf` | SPA assets and CI's deploy role, from the original scaffold |
+| File                                |                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `main.tf`                           | Providers, default tags, the account-identity guard               |
+| `network.tf`                        | Dual-stack VPC, three AZs, NAT per AZ, S3 gateway endpoint        |
+| `compute.tf`                        | ALB, blue/green target groups, two ASGs, ElastiCache, Lambda role |
+| `database.tf`                       | Aurora Serverless v2, PITR, AWS Backup                            |
+| `kms.tf`                            | One key per purpose                                               |
+| `registry.tf`                       | ECR per image, artifact bucket                                    |
+| `s3.tf`, `cloudfront.tf`, `oidc.tf` | SPA assets and CI's deploy role, from the original scaffold       |
 
 ## Decisions worth knowing before changing something
 
@@ -70,16 +70,23 @@ a wrong value that is present is worse than one that is absent, because the guar
 
 The deploy layer is a foundation, not a finished estate. Absent, and each is real work:
 
-- **Route53, ACM, the ALB controller** — nothing is reachable from a browser yet.
-- **Karpenter**, and the cluster autoscaler configuration the platform pool assumes.
-- **`kata-deploy`, the runtime classes, devmapper thin pools** — the tenant nodes are labelled for
-  it and nothing installs it. Phase 11.
-- **Knative**, and the build pipeline that fills the registry. Phase 10.
-- **The Neon OSS control plane** — pageserver, safekeepers, storage broker, `compute_ctl`. Phase 8,
-  and the largest single piece missing.
-- **The metering agent**, and the DaemonSet that would run it. `services/metering-agent` is a
-  three-line stub that prints its own name — the `lib/rust/metering-proto` schema and HMAC signing
-  it would use are real and tested, the sampler is not.
-- **Secrets Manager entries and External Secrets**, so the cluster can read what `kms.tf` protects.
+- **Route 53 records and ACM validation.** The certificate and the ALB exist; nothing points DNS at
+  them, so nothing is reachable from a browser yet.
+- **The AMI contents.** The launch templates start a stock Amazon Linux image with no user data, so
+  an instance boots and serves nothing. What puts the website and the router on it — an image build,
+  or user data pulling a release — is not written.
+- **Autoscaling policies.** The groups have a min, a max and a desired count, and nothing moves the
+  desired count.
+- **Secrets Manager entries**, so the instances can read what `kms.tf` protects.
+- **The metering agent.** `services/metering-agent` sampled cgroups on nodes we no longer run.
+  Lambda reports its own duration, so the metering path is now CloudWatch rather than a sampler —
+  which is not built.
 - **State backend.** `main.tf` has no `backend` block, so state is local. S3 with native locking is
   the intended target and is a prerequisite for anyone else running this.
+
+### Gone with Kubernetes
+
+`eks.tf` and the tenant node groups, Karpenter, `kata-deploy` and the devmapper thin pools, Knative,
+and the ECR-filling build pipeline. Customer code is a Lambda function; the isolation that Kata
+provided is Lambda's own execution environment, and the build that filled the registry happens in
+the customer's GitHub Actions. See ADR 0026.

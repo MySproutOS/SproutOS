@@ -55,26 +55,8 @@ variable "vpc_cidr" {
   }
 }
 
-variable "kubernetes_version" {
-  description = "EKS control plane version"
-  type        = string
-  default     = "1.34"
-}
-
 # arm64 everywhere. `m8g` is Graviton4 general purpose; the platform's own workloads are not
 # memory-bound, and one architecture means one build of every image.
-variable "platform_instance_types" {
-  description = "Instance types for the platform node group"
-  type        = list(string)
-  default     = ["m8g.large", "m8g.xlarge"]
-}
-
-variable "platform_node_count" {
-  description = "Desired platform nodes. Autoscaled after creation; this is only the starting point."
-  type        = number
-  default     = 3
-}
-
 /*
   Bare metal for tenant workloads.
 
@@ -82,18 +64,6 @@ variable "platform_node_count" {
   expose. `m8g.metal-24xl` is the smallest Graviton4 metal instance — and "smallest" is doing real
   work in that sentence, because this is where the money goes.
 */
-variable "tenant_instance_type" {
-  description = "Bare-metal instance type for tenant workloads under Kata"
-  type        = string
-  default     = "m8g.metal-24xl"
-}
-
-variable "tenant_node_count" {
-  description = "Fixed tenant metal nodes. Not autoscaled: metal takes 10-20 minutes to boot, which is unusable as a just-in-time scaling unit."
-  type        = number
-  default     = 2
-}
-
 variable "postgres_version" {
   description = "Aurora PostgreSQL engine version for the control plane"
   type        = string
@@ -114,12 +84,6 @@ variable "database_max_acu" {
   default     = 16
 }
 
-variable "cluster_public_access_cidrs" {
-  description = "Who may reach the public Kubernetes API endpoint. Narrow this; the default is everywhere."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
 variable "deletion_protection" {
   description = "Refuse to delete the control-plane database. Off only for a throwaway environment."
   type        = bool
@@ -136,4 +100,40 @@ variable "tenant_bucket_prefix" {
   EOT
   type        = string
   default     = "v-"
+}
+
+variable "service_instance_type" {
+  description = "EC2 type for the website and router instances. Graviton: the router is a static Rust binary and the website is Node, both of which build for arm64."
+  type        = string
+  default     = "t4g.small"
+}
+
+variable "service_desired_count" {
+  description = "Instances in the live colour of each service."
+  type        = number
+  default     = 2
+}
+
+variable "service_max_count" {
+  description = "Ceiling per Auto Scaling group."
+  type        = number
+  default     = 6
+}
+
+variable "cache_node_type" {
+  description = "ElastiCache node for the platform Valkey. The smallest: a route map and some counters."
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+variable "valkey_version" {
+  description = "ElastiCache Valkey engine version."
+  type        = string
+  default     = "8.0"
+}
+
+variable "valkey_parameter_family" {
+  description = "Parameter group family matching valkey_version."
+  type        = string
+  default     = "valkey8"
 }

@@ -1,0 +1,521 @@
+/*
+  The compute plane, per ADR 0026.
+
+  Two EC2 Auto Scaling groups behind one Application Load Balancer, and Lambda for customer code.
+  This replaces `eks.tf` — there is no Kubernetes, no Knative, and no node pool for tenant
+  workloads, because tenant workloads are Lambda functions now.
+
+  **One ALB, two target groups per service.** The website and the router share it, separated by
+  host-based listener rules: the control-plane domain goes to the website, everything else — every
+  tenant hostname under the wildcard — goes to the router. Two load balancers would mean two
+  certificates and two sets of DNS for one product.
+*/
+
+# ---------------------------------------------------------------------------
+# Security groups
+# ---------------------------------------------------------------------------
+
+resource "aws_security_group" "alb" {
+  name        = "${var.name_prefix}-alb"
+  description = "Public entry point"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.name_prefix}-alb" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_https" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTPS from anywhere"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_https_v6" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTPS from anywhere, IPv6"
+  cidr_ipv6         = "::/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+# Port 80 exists only to redirect. Not opening it would leave a customer who typed a bare hostname
+# with a connection refused rather than a redirect to the working URL.
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTP, redirected to HTTPS"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_out" {
+  security_group_id = aws_security_group.alb.id
+  description       = "To the instances"
+  cidr_ipv4         = var.vpc_cidr
+  ip_protocol       = "-1"
+}
+
+resource "aws_security_group" "service" {
+  name        = "${var.name_prefix}-service"
+  description = "The website and router instances"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.name_prefix}-service" }
+}
+
+/*
+  Only from the load balancer.
+
+  Referenced by security-group id rather than by CIDR: the private subnets hold other things, and a
+  CIDR rule would let anything in the VPC reach the application port directly — which is how a
+  compromised sidecar becomes a bypass of every rule on the ALB.
+*/
+resource "aws_vpc_security_group_ingress_rule" "service_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  description                  = "Application port, from the ALB only"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 8080
+  to_port                      = 8080
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "service_out" {
+  security_group_id = aws_security_group.service.id
+  description       = "Outbound, for AWS APIs and the OVH backends"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_vpc_security_group_egress_rule" "service_out_v6" {
+  security_group_id = aws_security_group.service.id
+  description       = "Outbound, IPv6"
+  cidr_ipv6         = "::/0"
+  ip_protocol       = "-1"
+}
+
+# ---------------------------------------------------------------------------
+# The load balancer
+# ---------------------------------------------------------------------------
+
+resource "aws_lb" "main" {
+  name               = "${var.name_prefix}-alb"
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = aws_subnet.public[*].id
+  ip_address_type    = "dualstack"
+
+  # A tenant application can legitimately hold a connection open — a server-sent event stream, a
+  # long poll. The default 60s would cut those at exactly one minute, which reads to the customer
+  # as their own bug.
+  idle_timeout = 300
+
+  enable_deletion_protection = var.deletion_protection
+  tags                       = { Name = "${var.name_prefix}-alb" }
+}
+
+/*
+  Two target groups per service, and the listener rule decides which is live.
+
+  This is the blue/green mechanism (§3.5): a deploy fills the idle group, the group's own health
+  checks decide whether it is serving, and the cutover is a `modify-rule` changing one ARN. Rollback
+  is the same call with the previous ARN, which is why both groups are declared here rather than one
+  being created at deploy time.
+*/
+locals {
+  service_colours = toset(["blue", "green"])
+}
+
+resource "aws_lb_target_group" "website" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-web-${each.key}"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/healthz"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "200"
+  }
+
+  # Long enough for an in-flight request to finish, short enough that a rollback is not held up by
+  # connections nobody is using.
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-web-${each.key}" }
+}
+
+resource "aws_lb_target_group" "router" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-router-${each.key}"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/healthz"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    # The router answers 404 for an unknown host, and `/healthz` on the load balancer's own probe
+    # has no host to resolve. Accepting either means the probe tests that the process is listening
+    # and parsing, which is what it is for.
+    matcher = "200,404"
+  }
+
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-router-${each.key}" }
+}
+
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = aws_acm_certificate.tenant.arn
+
+  /*
+    The router is the default, and the website is the exception.
+
+    Round that way because tenant hostnames are unbounded and the control plane's are three. A
+    default of "website" would need a rule matching every tenant host, which is not expressible.
+  */
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.router["blue"].arn
+  }
+
+  lifecycle {
+    # The deploy flips this between blue and green outside OpenTofu. Without this, the next `apply`
+    # would silently roll production back to whichever colour the state file remembers.
+    ignore_changes = [default_action]
+  }
+}
+
+resource "aws_lb_listener_rule" "website" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.website["blue"].arn
+  }
+
+  condition {
+    host_header {
+      values = [var.control_plane_domain, "api.${var.control_plane_domain}"]
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+resource "aws_lb_listener" "http_redirect" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+/*
+  One certificate covering the control plane and every tenant host.
+
+  `*.<domain>` covers exactly one label, which is why a preview hostname is `pr-42--myapp` and not
+  `pr-42.myapp` — the second form would need a certificate per project.
+*/
+resource "aws_acm_certificate" "tenant" {
+  domain_name               = var.control_plane_domain
+  subject_alternative_names = ["*.${var.control_plane_domain}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "${var.name_prefix}-cert" }
+}
+
+# ---------------------------------------------------------------------------
+# The instances
+# ---------------------------------------------------------------------------
+
+data "aws_ssm_parameter" "al2023_arm64" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+}
+
+resource "aws_iam_role" "instance" {
+  name = "${var.name_prefix}-instance"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+/*
+  What the router is allowed to do.
+
+  `lambda:InvokeFunction` on the tenant function prefix and nothing else. Not `*`: the router holds
+  the platform's credential on a public-facing box, and the blast radius of that box being taken is
+  bounded by this statement.
+*/
+resource "aws_iam_role_policy" "instance" {
+  name = "${var.name_prefix}-instance"
+  role = aws_iam_role.instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["lambda:InvokeFunction"]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*"
+      },
+      {
+        # Tenant object storage. Scoped to the `v-*` prefix, which is what makes the bucket-name
+        # check in the router a boundary rather than a formality — see `storage.tf`.
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${var.tenant_bucket_prefix}*",
+          "arn:aws:s3:::${var.tenant_bucket_prefix}*/*",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = aws_kms_key.envelope.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "instance_ssm" {
+  role = aws_iam_role.instance.name
+  # Session Manager instead of SSH. No key pairs to distribute, no port 22 open, and every session
+  # is logged against an IAM principal.
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "instance" {
+  name = "${var.name_prefix}-instance"
+  role = aws_iam_role.instance.name
+}
+
+resource "aws_launch_template" "service" {
+  for_each = toset(["website", "router"])
+
+  name_prefix   = "${var.name_prefix}-${each.key}-"
+  image_id      = data.aws_ssm_parameter.al2023_arm64.value
+  instance_type = var.service_instance_type
+
+  iam_instance_profile {
+    arn = aws_iam_instance_profile.instance.arn
+  }
+
+  vpc_security_group_ids = [aws_security_group.service.id]
+
+  metadata_options {
+    # IMDSv2 only. v1 is a plain GET, so any server-side request forgery in a tenant-facing process
+    # reads the instance's credentials; v2 needs a PUT to get a token, which forgery cannot do.
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  monitoring {
+    enabled = true
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags          = { Name = "${var.name_prefix}-${each.key}", Service = each.key }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_group" "website" {
+  for_each = local.service_colours
+
+  name                = "${var.name_prefix}-web-${each.key}"
+  vpc_zone_identifier = aws_subnet.private[*].id
+  target_group_arns   = [aws_lb_target_group.website[each.key].arn]
+
+  # Zero is a valid size: only one colour serves at a time, and the idle one should cost nothing.
+  min_size         = 0
+  max_size         = var.service_max_count
+  desired_capacity = each.key == "blue" ? var.service_desired_count : 0
+
+  health_check_type         = "ELB"
+  health_check_grace_period = 120
+
+  launch_template {
+    id      = aws_launch_template.service["website"].id
+    version = "$Latest"
+  }
+
+  lifecycle {
+    # Scaling and cutover both happen outside OpenTofu.
+    ignore_changes = [desired_capacity]
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "${var.name_prefix}-web-${each.key}"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_group" "router" {
+  for_each = local.service_colours
+
+  name                = "${var.name_prefix}-router-${each.key}"
+  vpc_zone_identifier = aws_subnet.private[*].id
+  target_group_arns   = [aws_lb_target_group.router[each.key].arn]
+
+  min_size         = 0
+  max_size         = var.service_max_count
+  desired_capacity = each.key == "blue" ? var.service_desired_count : 0
+
+  health_check_type         = "ELB"
+  health_check_grace_period = 120
+
+  launch_template {
+    id      = aws_launch_template.service["router"].id
+    version = "$Latest"
+  }
+
+  lifecycle {
+    ignore_changes = [desired_capacity]
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "${var.name_prefix}-router-${each.key}"
+    propagate_at_launch = true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# The execution role every tenant function assumes
+# ---------------------------------------------------------------------------
+
+/*
+  One role for every customer function, not one per tenant.
+
+  A role per tenant would be the instinct, and it is wrong here for the reason a per-tenant IAM user
+  was wrong for object storage: IAM roles are a hard account quota, so a role per project caps the
+  platform at a few thousand customers and puts the tenant boundary in a policy document nothing in
+  this repository can test. The boundary is the function itself — a Lambda cannot see another
+  function's environment or code — and the credentials a tenant's code gets are the ones the router
+  hands it, which is code we own and test.
+*/
+resource "aws_iam_role" "lambda_execution" {
+  name = "${var.name_prefix}-lambda-execution"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_logs" {
+  role = aws_iam_role.lambda_execution.name
+  # Logs only. Deliberately the whole of it: a customer's function has no reason to reach any AWS
+  # API, and anything it does need arrives as an environment variable the control plane sealed.
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# ---------------------------------------------------------------------------
+# The platform's own Valkey
+# ---------------------------------------------------------------------------
+
+resource "aws_security_group" "cache" {
+  name        = "${var.name_prefix}-cache"
+  description = "Platform Valkey"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.name_prefix}-cache" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "cache_from_service" {
+  security_group_id            = aws_security_group.cache.id
+  description                  = "Valkey, from the website and router only"
+  referenced_security_group_id = aws_security_group.service.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_elasticache_subnet_group" "main" {
+  name       = "${var.name_prefix}-cache"
+  subnet_ids = aws_subnet.private[*].id
+}
+
+/*
+  One small node, node-based rather than serverless.
+
+  ElastiCache Serverless is $0.084 per GB-hour — $61.32 per GB-month against $0.0102 per GiB-hour on
+  a node, 8.2x before ECPU charges. This holds a route map, some billing counters and the router's
+  own queue: a small keyspace of short strings and integers. If it outgrows the node the answer is
+  to measure and resize, not to have provisioned for an imagined future.
+*/
+resource "aws_elasticache_replication_group" "platform" {
+  replication_group_id = "${var.name_prefix}-platform"
+  description          = "Route map, billing counters, the router's queue"
+  engine               = "valkey"
+  engine_version       = var.valkey_version
+  node_type            = var.cache_node_type
+  num_cache_clusters   = 1
+  port                 = 6379
+
+  subnet_group_name  = aws_elasticache_subnet_group.main.name
+  security_group_ids = [aws_security_group.cache.id]
+
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+
+  # `allkeys-lru`, not `noeviction`. Everything in here is a cache of something Postgres holds — a
+  # route can be republished, a counter re-derived from the ledger — so shedding the coldest key
+  # under pressure is correct. The tenant queue Valkey is the opposite and is configured separately,
+  # on OVH: a dropped job is a job that never ran.
+  parameter_group_name = aws_elasticache_parameter_group.platform.name
+
+  tags = { Name = "${var.name_prefix}-platform-cache" }
+}
+
+resource "aws_elasticache_parameter_group" "platform" {
+  name   = "${var.name_prefix}-platform"
+  family = var.valkey_parameter_family
+
+  parameter {
+    name  = "maxmemory-policy"
+    value = "allkeys-lru"
+  }
+}

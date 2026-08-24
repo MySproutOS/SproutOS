@@ -18,21 +18,6 @@ output "role_arn" {
   value       = aws_iam_role.github_actions_spa_deploy.arn
 }
 
-output "cluster_name" {
-  description = "EKS cluster name, for `aws eks update-kubeconfig`"
-  value       = aws_eks_cluster.main.name
-}
-
-output "cluster_endpoint" {
-  description = "Kubernetes API endpoint"
-  value       = aws_eks_cluster.main.endpoint
-}
-
-output "cluster_oidc_issuer" {
-  description = "OIDC issuer URL, for IRSA trust policies"
-  value       = aws_eks_cluster.main.identity[0].oidc[0].issuer
-}
-
 output "database_endpoint" {
   description = "Control-plane Postgres writer endpoint"
   value       = aws_rds_cluster.control_plane.endpoint
@@ -78,4 +63,24 @@ output "aws_account_id" {
 output "aws_region" {
   description = "Region these resources live in"
   value       = var.aws_region
+}
+
+output "alb_dns_name" {
+  description = "Where Route 53 points both the control-plane domain and the tenant wildcard"
+  value       = aws_lb.main.dns_name
+}
+
+output "alb_zone_id" {
+  description = "Hosted zone of the ALB, for an alias record"
+  value       = aws_lb.main.zone_id
+}
+
+output "platform_cache_endpoint" {
+  description = "The platform Valkey the router reads routes from"
+  value       = aws_elasticache_replication_group.platform.primary_endpoint_address
+}
+
+output "lambda_execution_role_arn" {
+  description = "LAMBDA_EXECUTION_ROLE_ARN for the control plane"
+  value       = aws_iam_role.lambda_execution.arn
 }
