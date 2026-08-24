@@ -164,9 +164,14 @@ afterAll(async () => {
 
 describe.runIf(reachable)("one bucket, many tenants", () => {
   it("stores and reads back an object the customer named", async () => {
-    const { backendServiceId } = await service()
+    const { backendServiceId, organizationId } = await service()
     const driver = objectStorageDriver(db, active!, upstream())
-    const { connectionUri } = await driver.provision({ backendServiceId })
+    const { connectionUri } = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Vault",
+    })
     const customer = asCustomer(connectionUri)
     const bucket = bucketNameFor(backendServiceId)
 
@@ -190,8 +195,18 @@ describe.runIf(reachable)("one bucket, many tenants", () => {
     const second = await service()
     const driver = objectStorageDriver(db, active!, upstream())
 
-    const one = await driver.provision({ backendServiceId: first.backendServiceId })
-    const two = await driver.provision({ backendServiceId: second.backendServiceId })
+    const one = await driver.provision({
+      backendServiceId: first.backendServiceId,
+      organizationId: first.organizationId,
+      projectId: null,
+      name: "Vault",
+    })
+    const two = await driver.provision({
+      backendServiceId: second.backendServiceId,
+      organizationId: second.organizationId,
+      projectId: null,
+      name: "Vault",
+    })
 
     const a = asCustomer(one.connectionUri)
     const b = asCustomer(two.connectionUri)
@@ -218,7 +233,7 @@ describe.runIf(reachable)("one bucket, many tenants", () => {
           Key: "private.md",
         }),
       ),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/Access ?Denied|Forbidden|NoSuchKey|403|404/)
 
     // And a list from B does not see A's object, even though they share a bucket.
     const listed = await b.send(
@@ -231,9 +246,14 @@ describe.runIf(reachable)("one bucket, many tenants", () => {
   }, 60_000)
 
   it("refuses a key that would climb out of the tenant's prefix", async () => {
-    const { backendServiceId } = await service()
+    const { backendServiceId, organizationId } = await service()
     const driver = objectStorageDriver(db, active!, upstream())
-    const { connectionUri } = await driver.provision({ backendServiceId })
+    const { connectionUri } = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Vault",
+    })
     const parsed = parseObjectStorageUri(connectionUri)
 
     /*
