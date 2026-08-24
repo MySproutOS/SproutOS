@@ -50,6 +50,29 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("could not bind port {port}"))?;
 
+    /*
+      The tenant splits, in this process.
+
+      Both are optional and both are started before the HTTP server, so a misconfigured upstream
+      fails the boot rather than leaving the router serving requests while one split silently is
+      not there. A deployment with no tenant Valkey and no OpenSearch — a developer working on
+      request routing — starts with neither and says so in the log.
+    */
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+    let splits = if database_url.is_empty() {
+        tracing::info!("DATABASE_URL is not set; the tenant splits are off");
+        Vec::new()
+    } else {
+        [
+            router::listeners::valkey(&database_url).await?,
+            router::listeners::search(&database_url).await?,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+    };
+    tracing::info!(splits = splits.len(), "tenant splits running");
+
     tracing::info!(port, "router listening");
     axum::serve(listener, app).await.context("serving failed")?;
     Ok(())

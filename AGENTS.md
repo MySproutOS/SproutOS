@@ -66,19 +66,20 @@ paying for a GC and an event-loop hop.
 
 ### Services (Rust, deployed)
 
-- `services/metering-agent` — cgroup v2 sampler. One VM may host several projects, so samples carry
-  a `project_id` split key rather than assuming one pod is one tenant. The parsing, deltas,
-  idempotency keys and retry buffer are pure and tested on any platform; only the reads need Linux.
-  **Pod discovery is not wired** — it reads an empty label map, so it runs and bills nothing until
-  the DaemonSet gives it the kubelet's pod-resources socket.
+- `services/router` — **the front door** (ADR 0026). One process behind the ALB carrying three
+  listeners: HTTP, where a `Host` header resolves through the platform Valkey to a Lambda alias and
+  is invoked directly; the Valkey tenant split; and the OpenSearch tenant split. The last two are
+  `valkey-proxy` and `search-proxy` used as libraries, unchanged — three deployments doing the same
+  thing (identify a tenant, rewrite, forward) is three sets of scaling and health checks for one
+  idea. Both splits are optional, so the router starts without a tenant Valkey or an OpenSearch.
+- `services/metering-agent` — cgroup v2 sampler, written for nodes that no longer exist. Lambda
+  reports its own duration, so the metering path is CloudWatch now. **Retained, not wired.**
 - `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
-  `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM to the
-  cluster, checked against RFC 7677's vector. **Wake-on-connect is not built** — there is no Neon
-  control plane to wake.
-- `services/valkey-proxy` — RESP proxy and master-queue dispatcher. Tenants point BullMQ or
-  Celery at it as though it were Valkey.
-- `services/search-proxy` — OpenSearch tenant-split proxy. Document- and field-level security
-  is not in the OSS tier, so this proxy _is_ the security boundary.
+  `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM,
+  checked against RFC 7677's vector. **Its future is undecided** — managed Neon disables an endpoint
+  in 0.24s and pools connections itself, so the case for it is now tenant-credential mapping alone.
+- `services/valkey-proxy`, `services/search-proxy` — the libraries the router runs. Their binaries
+  still build and are useful for driving one split in isolation; nothing deploys them.
 - `services/storage-proxy` — S3 tenant-split proxy. Verifies a tenant's SigV4 signature against a
   secret _derived_ from one root key, checks the bucket in the path is theirs, and re-signs with the
   platform's credential. A customer never holds a cloud credential. Replaced a per-tenant IAM user,

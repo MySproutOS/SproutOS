@@ -2384,12 +2384,15 @@ dependencies = [
  "bytes",
  "redis",
  "reqwest",
+ "search-proxy",
  "serde",
  "serde_json",
+ "sproutos-service-credentials",
  "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "valkey-proxy",
  "zip",
 ]
 

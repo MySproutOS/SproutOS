@@ -8,6 +8,7 @@
 //! today — the tenant splits for Valkey, OpenSearch and S3. Those move in; this module is the piece
 //! that had no prior art in the repository.
 
+pub mod listeners;
 pub mod payload;
 pub mod resolve;
 pub mod route;
