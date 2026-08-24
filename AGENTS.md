@@ -77,6 +77,11 @@ paying for a GC and an event-loop hop.
   `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM,
   checked against RFC 7677's vector. **Its future is undecided** — managed Neon disables an endpoint
   in 0.24s and pools connections itself, so the case for it is now tenant-credential mapping alone.
+- `services/log-extension` — a Lambda extension, shipped as a layer and attached to every customer
+  function. Subscribes to the Telemetry API and produces to Kafka, which ClickHouse consumes. Not a
+  CloudWatch subscription filter: CloudWatch charges $0.50/GB before a line reaches us, and the
+  Telemetry API delivers the billing metrics as JSON fields rather than as text to be parsed out of
+  a `REPORT` line. The price is that this is our code inside the customer's execution environment.
 - `services/valkey-proxy`, `services/search-proxy` — the libraries the router runs. Their binaries
   still build and are useful for driving one split in isolation; nothing deploys them.
 - `services/storage-proxy` — S3 tenant-split proxy. Verifies a tenant's SigV4 signature against a

@@ -176,7 +176,12 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
       timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
       roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
-      environment,
+      environment: { ...environment, SPROUTOS_DEPLOYMENT_ID: deploymentId },
+      // Unset in development, where there is no layer to attach and no Kafka to ship to. A
+      // deployment without it runs and produces no logs, which is why it is set from one place.
+      ...(process.env.LOG_EXTENSION_LAYER_ARN === undefined
+        ? {}
+        : { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }),
     })
 
     /*

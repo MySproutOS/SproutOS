@@ -1,4 +1,4 @@
-import { LambdaClient } from "@aws-sdk/client-lambda"
+import { GetFunctionConfigurationCommand, LambdaClient } from "@aws-sdk/client-lambda"
 import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { readRoute } from "@lib/lambda"
 import { db } from "@sproutos/db"
@@ -232,6 +232,20 @@ describe.runIf(reachable)("publishing a release", () => {
     expect(route?.arn).toContain(":live")
 
     expect(row.url).toBe(`https://${row.hostname}`)
+
+    /*
+      The extension is told whose function it is in.
+
+      It runs inside the customer's execution environment and Lambda tells it nothing about the
+      project — without these two, every log line arrives unattributable and the viewer shows an
+      empty project. Asserted against the deployed function rather than the input, because the
+      value that matters is the one Lambda holds.
+    */
+    const deployed = await lambda.send(
+      new GetFunctionConfigurationCommand({ FunctionName: `sproutos-app-${projectId}` }),
+    )
+    expect(deployed.Environment?.Variables?.SPROUTOS_PROJECT_ID).toBe(projectId)
+    expect(deployed.Environment?.Variables?.SPROUTOS_DEPLOYMENT_ID).toBe(deploymentId)
   }, 180_000)
 
   it("fails the deployment rather than publishing nothing when the artifact never arrived", async () => {

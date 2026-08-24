@@ -54,6 +54,15 @@ export type PublishInput = {
   /** The execution role the function assumes. One per environment, not per tenant. */
   roleArn: string
   environment?: Record<string, string>
+  /**
+   * The log extension's layer ARN.
+   *
+   * Attached on every publish rather than once at creation. An extension only collects from
+   * functions it is attached to, so a project deployed before the layer existed — or one whose
+   * layer version moved — would have no logs at all, silently. Re-attaching on every release is
+   * how "must be attached" stops being an operational hazard.
+   */
+  logExtensionLayerArn?: string
 }
 
 export type PublishResult = {
@@ -101,7 +110,8 @@ export async function publishFunction(
         Runtime: input.runtime,
         MemorySize: input.memoryMb,
         Timeout: input.timeoutS,
-        Environment: { Variables: input.environment ?? {} },
+        Environment: { Variables: withTelemetryEnv(input) },
+        Layers: input.logExtensionLayerArn === undefined ? [] : [input.logExtensionLayerArn],
       }),
     )
     await waitUntilFunctionUpdatedV2({ client, maxWaitTime: 120 }, { FunctionName: name })
@@ -115,7 +125,10 @@ export async function publishFunction(
         MemorySize: input.memoryMb,
         Timeout: input.timeoutS,
         Code: { S3Bucket: input.bucket, S3Key: input.key },
-        Environment: { Variables: input.environment ?? {} },
+        Environment: { Variables: withTelemetryEnv(input) },
+        ...(input.logExtensionLayerArn === undefined
+          ? {}
+          : { Layers: [input.logExtensionLayerArn] }),
       }),
     )
     await waitUntilFunctionUpdatedV2({ client, maxWaitTime: 120 }, { FunctionName: name })
@@ -166,6 +179,23 @@ async function aliasExists(client: LambdaClient, name: string): Promise<boolean>
   } catch (cause) {
     if (cause instanceof ResourceNotFoundException) return false
     throw cause
+  }
+}
+
+/**
+ * The customer's own variables, plus what the extension needs to attribute their logs.
+ *
+ * The extension runs inside their environment and has no way to know whose function it is in —
+ * there is no project id in anything Lambda tells it. These two are how a log line gets a project.
+ *
+ * Set here rather than left to the extension to look up: a lookup would be a network call per cold
+ * start, inside the customer's billed duration, for a value that never changes for the life of the
+ * function version.
+ */
+function withTelemetryEnv(input: PublishInput): Record<string, string> {
+  return {
+    ...input.environment,
+    SPROUTOS_PROJECT_ID: input.projectId,
   }
 }
 

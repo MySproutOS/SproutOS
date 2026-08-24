@@ -1,0 +1,31 @@
+[package]
+name = "log-extension"
+description = "Lambda extension: Telemetry API to Kafka"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+# Pure Rust, no librdkafka. An extension ships as a layer inside the customer's execution
+# environment, so a C dependency is a build toolchain and several megabytes charged to their cold
+# start — for a producer that writes JSON to one topic.
+# lz4 because this crosses the public internet from AWS to OVH: log text compresses to a fraction of
+# itself, and egress is billed per byte at the AWS end.
+rskafka = { version = "0.6", default-features = false, features = [
+  "compression-lz4",
+  "transport-tls",
+] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio.workspace = true
