@@ -167,3 +167,26 @@ A week of self-hosted Neon work is retired by this. It was not wasted: it is wha
 research that found the eleven-commits figure and the Agent plan, and it is why the decision could be
 made on evidence rather than on a vendor page. But it is retired, and pretending otherwise by keeping
 the code alive "just in case" would cost more than it saved.
+
+### Plan status, 2026-08-24
+
+**The organization is on Neon's Free plan.** Confirmed from the API rather than the pricing page:
+`GET /organizations/{id}` returns `"plan": "free"`. The Agent-plan application has been submitted
+and is pending, so the economics this decision rests on — $0.106/CU-hour, unlimited projects, the
+free tier sponsored — are not in effect yet.
+
+Nothing in the client depends on the plan; the control-plane API is the same. What the plan changes
+is quota, so until it lands: **do not build anything that assumes many projects can exist at once**,
+and make every test that creates a project delete it. A leaked project on a Free org is a quota
+nobody can spend.
+
+### One behaviour of the API worth knowing
+
+**Neon serialises operations per project.** Creating a project starts asynchronous work, and a
+branch requested while that work is running is refused with `423 Locked` and
+`project already has running conflicting operations, scheduling of new ones is prohibited`.
+
+That is not an error, it means "not yet" — and every caller that creates a project and then does
+anything to it will hit it. `neonApi` polls `/projects/{id}/operations` until nothing is running
+rather than making each caller rediscover this. It surfaced immediately: the first integration test
+created a project and branched it, which is the obvious thing to write and the thing that fails.

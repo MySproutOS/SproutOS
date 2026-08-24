@@ -82,3 +82,10 @@ export {
   neonPostgresDriverFromEnv,
   type NeonPostgresConfig,
 } from "./neon-postgres"
+export {
+  neonApi,
+  neonApiConfigFromEnv,
+  NeonApiError,
+  type NeonBranch,
+  type NeonProject,
+} from "./neon-api"
