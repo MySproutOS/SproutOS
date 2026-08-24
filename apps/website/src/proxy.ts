@@ -4,7 +4,7 @@ import { cookieDomain, validateSessionToken } from "./lib/auth"
 
 /** Public paths handled by Next.js — everything else goes to the dashboard SPA.
  *  Note there is no "/api" here: the Hono API is a separate deployment on its own host. */
-const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs"]
+const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs", "/download"]
 
 /** Exact public paths */
 const NEXTJS_PUBLIC_EXACT = new Set(["/"])

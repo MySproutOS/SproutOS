@@ -270,6 +270,15 @@ describe("the store is reachable signed in or out", () => {
       expect(isRewrite(res)).toBe(false)
     })
 
+    it.each(["/download"])("%s renders Next.js signed out", async (url) => {
+      // The download page is for somebody who has not signed up yet. An SPA rewrite here would send
+      // them to a login screen to fetch an app they wanted to try first.
+      mockValidate.mockResolvedValue(null)
+      const res = await proxy(makeRequest(url))
+
+      expect(isRewrite(res)).toBe(false)
+    })
+
     it.each(["/docs", "/docs/background-workers"])("%s renders Next.js signed in", async (url) => {
       mockValidate.mockResolvedValue(VALID_SESSION)
       const res = await proxy(makeRequest(url, "a-session-token"))
