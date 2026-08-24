@@ -63,8 +63,56 @@ alter table log_record
  * Idempotent and safe to run on every boot: this is a store whose schema is small, versionless, and
  * owned entirely by this package, so a migration runner would be ceremony around two statements.
  */
+/**
+ * Runtime logs from customers' Lambda functions.
+ *
+ * A separate table from `log_record`, deliberately. `log_record` is the OpenTelemetry model a
+ * customer's own exporter writes into, with a per-row retention their plan sets. These are lines
+ * Lambda emitted whether the customer asked or not, they have Lambda's own billing fields on them,
+ * and they expire in three days for everyone. One table carrying both would need every OTel column
+ * nullable and a retention expression covering two unrelated policies.
+ *
+ * **Kept in step with `ovh/clickhouse-init/01-runtime-logs.sql` by being the same statement.** That
+ * file seeds a fresh box; this runs on every boot. A schema that existed in only one of the two is
+ * a schema that differs between the machine it was tested on and the one it runs on.
+ */
+const RUNTIME_LOG_DDL = `
+create table if not exists runtime_log (
+  ts DateTime64(3) CODEC(Delta, ZSTD(1)),
+  project_id UUID,
+  deployment_id UUID,
+  request_id String CODEC(ZSTD(1)),
+  level LowCardinality(String),
+  message String CODEC(ZSTD(3)),
+  duration_ms Nullable(Float32),
+  billed_ms Nullable(UInt32),
+  memory_mb Nullable(UInt16),
+  init_ms Nullable(Float32),
+  cold_start Nullable(Bool)
+)
+engine = MergeTree
+partition by toDate(ts)
+order by (project_id, ts, request_id)
+ttl toDateTime(ts) + interval 3 day delete
+settings index_granularity = 8192, ttl_only_drop_parts = 1
+`
+
+/*
+  A token bloom filter, not a full text index.
+
+  Searching message text is the point of a log viewer, and a full scan of three days of one
+  project's logs is not fast enough. ClickHouse's own benchmark measures a full text index at 215
+  GiB against 7 GiB for this on the same corpus.
+*/
+const RUNTIME_MESSAGE_INDEX_DDL = `
+alter table runtime_log
+  add index if not exists message_tokens message type tokenbf_v1(32768, 3, 0) granularity 4
+`
+
 export async function ensureSchema(): Promise<void> {
   const client = clickhouse()
   await client.command({ query: LOG_RECORD_DDL })
   await client.command({ query: BODY_INDEX_DDL })
+  await client.command({ query: RUNTIME_LOG_DDL })
+  await client.command({ query: RUNTIME_MESSAGE_INDEX_DDL })
 }

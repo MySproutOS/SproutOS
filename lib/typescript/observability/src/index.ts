@@ -27,3 +27,15 @@ export {
   type RetentionDays,
   type Stream,
 } from "./streams"
+export {
+  levelOf,
+  type LogEvent,
+  parseReport,
+  projectIdFromLogGroup,
+  queryRuntimeLogs,
+  requestIdOf,
+  type RuntimeLog,
+  type RuntimeLogQuery,
+  toRows,
+  writeRuntimeLogs,
+} from "./runtime-logs"
