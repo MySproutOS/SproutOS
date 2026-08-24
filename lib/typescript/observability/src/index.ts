@@ -40,3 +40,5 @@ export {
   writeRuntimeLogs,
 } from "./runtime-logs"
 export { gbSeconds, type UsageEvent, usageFrom, usageFromBatch } from "./lambda-usage"
+export { connectProducer, encode, type LogProducer, topic } from "./producer"
+export { kafkaConfigured } from "./schema"

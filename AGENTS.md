@@ -25,9 +25,10 @@ pnpm test
 pnpm run lint          # Oxlint with auto-fix, config at oxlint.config.mts
 pnpm run format        # Oxfmt, config at oxfmt.config.mts
 
-# Local services: Postgres 25281, Valkey 41023, LocalStack 4566
+# Local services: Postgres 25281, Valkey 41023, LocalStack 4566, Kafka 29092
 docker compose up -d
 bin/bootstrap-localstack.sh                        # create the dev KMS CMK, buckets, SES identity
+bin/bootstrap-kafka.sh                             # create the runtime-log topic
 
 # Database
 pnpm --filter=dbmigrator run migrate:latest

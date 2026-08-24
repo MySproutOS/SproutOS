@@ -20,6 +20,7 @@
     "@utils/crypto": "workspace:*",
     "dotenv": "^17.4.2",
     "ioredis": "^6.0.0",
+    "kafkajs": "^2.2.4",
     "kysely": "catalog:",
     "uuid": "catalog:"
   },

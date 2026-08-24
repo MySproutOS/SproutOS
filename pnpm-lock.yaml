@@ -896,6 +896,9 @@ importers:
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
+      kafkajs:
+        specifier: ^2.2.4
+        version: 2.2.4
       kysely:
         specifier: 'catalog:'
         version: 0.29.5
@@ -3785,6 +3788,10 @@ packages:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
     engines: {node: '>=6'}
     hasBin: true
+
+  kafkajs@2.2.4:
+    resolution: {integrity: sha512-j/YeapB1vfPT2iOIUn/vxdyKEuhuY2PxMBvf5JWux6iSaukAccrMtXEY/Lb7OvavDhOWME589bpLrEdnVHjfjA==}
+    engines: {node: '>=14.0.0'}
 
   kysely-codegen@0.20.0:
     resolution: {integrity: sha512-LSi2KBG7uDmNCZ+XurLSA9LH7XFyyoQ6xb5DLJSInPTSYLVApjOP2KwO8mSaREWTtoX+C2AG2GTlYR0DLjTbcA==}
@@ -7513,6 +7520,8 @@ snapshots:
       clone: 2.1.2
 
   json5@2.2.3: {}
+
+  kafkajs@2.2.4: {}
 
   kysely-codegen@0.20.0(kysely@0.29.5)(pg@8.23.0)(typescript@7.0.2):
     dependencies:
