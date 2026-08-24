@@ -420,3 +420,65 @@ async fn an_unknown_host_is_a_404_and_not_a_lookup_per_request() {
         assert_eq!(response.status().as_u16(), 404);
     }
 }
+
+/// A wake in the master queue starts a worker in the customer's own function.
+#[tokio::test]
+async fn a_woken_queue_invokes_the_projects_function() {
+    if !localstack_up().await {
+        refuse_to_skip_in_ci("LocalStack");
+        return;
+    }
+    let Ok(client) = redis::Client::open(VALKEY) else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+    let Ok(mut valkey) = ConnectionManager::new(client).await else {
+        refuse_to_skip_in_ci("the compose Valkey");
+        return;
+    };
+
+    let config = aws_config().await;
+    let lambda = LambdaClient::new(&config);
+    let arn = ensure_function(&lambda).await;
+
+    let resource = "01m0j8dfg4test";
+    let organization = "01a03a00-0000-7000-8000-00000000disp";
+
+    // What the control plane publishes when a queue is provisioned, keyed by the short id the
+    // proxy reports — this is the seam the dispatcher depends on.
+    let binding = format!(
+        r#"{{"uri":"redis://x","backendServiceId":"b","projectId":"p",
+             "organizationId":"{organization}","functionArn":"{arn}"}}"#
+    );
+    let _: () = valkey
+        .set(format!("queue:{resource}"), &binding)
+        .await
+        .expect("binding");
+
+    // What `valkey-proxy` writes when a tenant enqueues.
+    let _: () = valkey
+        .zadd(
+            router::dispatch::MASTER_WAKE_KEY,
+            format!("{resource}/emails"),
+            1_i64,
+        )
+        .await
+        .expect("wake");
+
+    let pending = router::dispatch::drain_master(&valkey).await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].queue, "emails");
+
+    // Draining removes what it read, so a second pass finds nothing — otherwise every poll would
+    // re-invoke a worker for a queue that was already handled.
+    assert!(router::dispatch::drain_master(&valkey).await.is_empty());
+
+    router::dispatch::invoke_worker(&lambda, &arn, &pending[0])
+        .await
+        .expect("the worker is invoked");
+
+    let _: () = valkey
+        .del(format!("queue:{resource}"))
+        .await
+        .expect("clean");
+}

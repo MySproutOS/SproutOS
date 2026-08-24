@@ -9,6 +9,7 @@
 //! that had no prior art in the repository.
 
 pub mod credit;
+pub mod dispatch;
 pub mod listeners;
 pub mod payload;
 pub mod resolve;

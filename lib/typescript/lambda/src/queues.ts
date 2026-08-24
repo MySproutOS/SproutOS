@@ -23,10 +23,25 @@ export type QueueBinding = {
   backendServiceId: string
   projectId: string | null
   organizationId: string
+  /**
+   * The function a worker invocation goes to, when the service belongs to a project.
+   *
+   * Here rather than looked up from the route map, because the dispatcher has a queue and not a
+   * hostname — and a project can have several hostnames but one function.
+   */
+  functionArn?: string
 }
 
-function key(backendServiceId: string): string {
-  return `${PREFIX}${backendServiceId}`
+/**
+ * Keyed by the resource's **short id**, not its UUID.
+ *
+ * That is what `valkey-proxy` reports into the master queue, because it is what the tenant's key
+ * prefix carries — the proxy sees `sproutos:v-01m0j8…:bull:emails:wait` and never sees a UUID.
+ * Keying this by UUID would mean the dispatcher had to reverse the encoding on every wake, or ask
+ * the database, for a mapping that never changes.
+ */
+function key(resourceShortId: string): string {
+  return `${PREFIX}${resourceShortId}`
 }
 
 /**
@@ -37,15 +52,19 @@ function key(backendServiceId: string): string {
  * error anywhere — the failure mode of forgetting is much worse here than the failure mode of
  * remembering, and teardown withdraws it explicitly.
  */
-export async function publishQueue(valkey: Redis, binding: QueueBinding): Promise<void> {
-  await valkey.set(key(binding.backendServiceId), JSON.stringify(binding))
+export async function publishQueue(
+  valkey: Redis,
+  resourceShortId: string,
+  binding: QueueBinding,
+): Promise<void> {
+  await valkey.set(key(resourceShortId), JSON.stringify(binding))
 }
 
 export async function readQueue(
   valkey: Redis,
-  backendServiceId: string,
+  resourceShortId: string,
 ): Promise<QueueBinding | undefined> {
-  const raw = await valkey.get(key(backendServiceId))
+  const raw = await valkey.get(key(resourceShortId))
   if (raw === null) return undefined
   try {
     return JSON.parse(raw) as QueueBinding
@@ -55,6 +74,6 @@ export async function readQueue(
 }
 
 /** Stop the router watching a queue. Called when the service is destroyed. */
-export async function withdrawQueue(valkey: Redis, backendServiceId: string): Promise<void> {
-  await valkey.del(key(backendServiceId))
+export async function withdrawQueue(valkey: Redis, resourceShortId: string): Promise<void> {
+  await valkey.del(key(resourceShortId))
 }

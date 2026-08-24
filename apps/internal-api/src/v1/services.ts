@@ -13,6 +13,7 @@ import {
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
 import { publishQueue } from "@lib/lambda"
+import { encodeShortId } from "@lib/services"
 import { Redis } from "ioredis"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -453,7 +454,8 @@ async function captureQueueSecret(
 ): Promise<void> {
   const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
   try {
-    await publishQueue(valkey, {
+    // Keyed by the short id the proxy reports, which is what the tenant's key prefix carries.
+    await publishQueue(valkey, encodeShortId(backendServiceId), {
       uri: connectionUri,
       backendServiceId,
       projectId: null,

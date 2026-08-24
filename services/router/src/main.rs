@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let config = aws_config::load_from_env().await;
     let lambda = LambdaClient::new(&config);
 
+    let dispatch_manager = manager.clone();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager),
         lambda,
@@ -56,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     */
     let app = AxumRouter::new()
         .fallback(any(serve::handle))
-        .with_state(state);
+        .with_state(Arc::clone(&state));
 
     let port = std::env::var("ROUTER_PORT").unwrap_or_else(|_| "8080".to_string());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
@@ -85,6 +86,22 @@ async fn main() -> anyhow::Result<()> {
         .collect::<Vec<_>>()
     };
     tracing::info!(splits = splits.len(), "tenant splits running");
+
+    /*
+      Workflow dispatch (§4.6).
+
+      Started only where the master queue is on: `valkey-proxy` reports into it when
+      `VALKEY_PROXY_MASTER_QUEUE` is set, and a dispatcher polling a set nothing writes to is a
+      Valkey round trip every two seconds, forever, to learn nothing.
+    */
+    if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
+        let dispatch_valkey = dispatch_manager.clone();
+        let dispatch_lambda = state.lambda.clone();
+        tokio::spawn(async move {
+            router::dispatch::run(dispatch_valkey, dispatch_lambda).await;
+        });
+        tracing::info!("workflow dispatch running");
+    }
 
     tracing::info!(port, "router listening");
     axum::serve(listener, app).await.context("serving failed")?;
