@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use pg_proxy::{BackendConfig, Waker, cancel, serve_connection, wake};
+use pg_proxy::{BackendConfig, cancel, resolve, serve_connection};
 use sproutos_service_credentials::CredentialStore;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -58,23 +58,20 @@ async fn main() -> anyhow::Result<()> {
     let cancels = cancel::Registry::new();
 
     /*
-        Wake-on-connect, when this deployment has Neon behind it.
+        Per-tenant backend resolution, when this deployment has Neon behind it.
 
-        `None` is the ordinary case today and the proxy behaves exactly as before: a `sprout`
-        database is a database and a role on a cluster that is always up, with nothing to wake.
-        Logged either way, because "why did my connection not start a compute" has a one-line
-        answer and it should be in the log rather than in someone's head.
+        `None` is the ordinary case during the rollout and the proxy behaves exactly as before: a
+        `sprout` database is a database and a role on a cluster that is always up. Logged either
+        way, because "why did my connection go to the wrong database" has a one-line answer and it
+        belongs in the log rather than in someone's head.
     */
-    let waker = match wake::wake_config_from_env() {
+    let resolver = match resolve::resolve_config_from_env() {
         Some(config) => {
-            info!(url = %config.url, "wake-on-connect enabled");
-            Some(Waker {
-                client: reqwest::Client::new(),
-                config,
-            })
+            info!(url = %config.url, "per-tenant backend resolution enabled");
+            Some(resolve::Resolver::new(reqwest::Client::new(), config))
         }
         None => {
-            info!("wake-on-connect not configured; routing every connection to the shared cluster");
+            info!("no resolver configured; routing every connection to the shared cluster");
             None
         }
     };
@@ -92,10 +89,10 @@ async fn main() -> anyhow::Result<()> {
         let backend = backend.clone();
         let cancels = cancels.clone();
         // Cloned per connection, like the others: the task outlives this iteration.
-        let waker = waker.clone();
+        let resolver = resolver.clone();
 
         tokio::spawn(async move {
-            if let Err(cause) = serve_connection(client, store, backend, cancels, waker).await {
+            if let Err(cause) = serve_connection(client, store, backend, cancels, resolver).await {
                 // Info, not error: a refused password is a normal event on a public endpoint, and
                 // logging it at error level trains people to ignore the level.
                 info!(%peer, %cause, "session ended");

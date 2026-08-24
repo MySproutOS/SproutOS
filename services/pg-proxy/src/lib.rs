@@ -26,25 +26,9 @@
 
 pub mod cancel;
 pub mod protocol;
+pub mod resolve;
 pub mod routing;
 pub mod scram;
-pub mod wake;
-
-/// The control-plane client that starts a suspended compute. See [`wake`].
-#[derive(Clone)]
-pub struct Waker {
-    pub client: reqwest::Client,
-    pub config: wake::WakeConfig,
-}
-
-impl Waker {
-    pub async fn wake_for(
-        &self,
-        backend_service_id: &str,
-    ) -> Result<Option<wake::ComputeAddress>, SessionError> {
-        wake::wake(&self.client, &self.config, backend_service_id).await
-    }
-}
 
 use std::sync::Arc;
 
@@ -122,7 +106,7 @@ pub async fn serve_connection(
     store: Arc<CredentialStore>,
     backend: BackendConfig,
     cancels: cancel::Registry,
-    waker: Option<Waker>,
+    resolver: Option<resolve::Resolver>,
 ) -> Result<(), SessionError> {
     let parameters = loop {
         match protocol::read_startup(&mut client).await? {
@@ -213,13 +197,21 @@ pub async fn serve_connection(
         `None` means the control plane has no Neon endpoint for this service, which is the normal
         answer for every `sprout` database — the shared cluster below is where it belongs.
     */
-    let backend = match &waker {
-        Some(waker) => match waker.wake_for(&identity.resource_id.to_string()).await? {
-            Some(address) => BackendConfig {
-                host: address.host,
-                port: address.port,
-                ..backend.clone()
-            },
+    /*
+        Which database to connect onward to.
+
+        After authentication and never before: resolving costs a control-plane round trip, and doing
+        it for an unauthenticated connection would let anyone who can reach the port generate load
+        on the control plane by opening sockets.
+
+        `None` means the control plane has no per-tenant backend for this service — either it is a
+        `sprout` database on the shared cluster, or it is suspended. Both fall through to the
+        configured backend below, and a suspended tenant then fails to find its database there,
+        which is the outcome suspension is for.
+    */
+    let backend = match &resolver {
+        Some(resolver) => match resolver.resolve(&identity.resource_id.to_string()).await? {
+            Some(resolved) => resolved.as_backend_config(),
             None => backend,
         },
         None => backend,

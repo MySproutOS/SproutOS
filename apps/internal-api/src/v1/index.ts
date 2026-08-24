@@ -5,6 +5,7 @@ import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import metering from "./metering"
+import pgResolve from "./pg-resolve"
 import auth from "./auth"
 import billing from "./billing"
 import githubRepos from "./github-repos"
@@ -87,6 +88,11 @@ unauthenticated.route("/otlp", otlp)
   reader does not have to infer it from the absence of `authMiddleware`.
 */
 unauthenticated.route("/internal", metering)
+/*
+  Where `pg-proxy` asks which database to connect onward to for a tenant. Same `/internal` prefix
+  and same reason as metering: the caller is a platform component, not a customer.
+*/
+unauthenticated.route("/internal", pgResolve)
 /*
   There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 
