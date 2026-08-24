@@ -190,6 +190,50 @@ describe.skipIf(!reachable)("organization, member, and role routes", () => {
     })
   })
 
+  describe("the cap on organizations one person owns", () => {
+    /*
+      Fifty is the limit, counted on ownership rather than membership.
+
+      Being invited to other people's organizations is not something a person controls, so capping
+      that would let anyone lock a user out of creating their own by inviting them fifty-one times.
+    */
+    it("counts what the caller owns, not what they belong to", async () => {
+      // The invitee is a member of the owner's organization and owns one of their own. If the cap
+      // counted membership, their count would already be wrong by one.
+      const created = await call("POST", "/v1/orgs", invitee, { name: "Invitee Own Org" })
+      expect(created.status).toBe(201)
+      trackOrganization(created.json.id as string)
+    })
+
+    it("refuses the fifty-first with a message that says what to do", async () => {
+      /*
+        Driven through the API rather than by inserting rows, because the check is in the route and
+        a fixture that wrote `organization` directly would pass whether or not the route enforced
+        anything.
+      */
+      const capped = await createTestUser("routecapped")
+      let lastStatus = 0
+
+      for (let index = 0; index < 51; index += 1) {
+        const response = await call("POST", "/v1/orgs", capped, { name: `Capped ${index}` })
+        lastStatus = response.status
+        if (response.status === 201) {
+          trackOrganization(response.json.id as string)
+          continue
+        }
+        // The first refusal should be the fifty-first request: the user starts with one
+        // organization from sign-up provisioning, so fifty is reached at index 49.
+        expect(response.status).toBe(409)
+        // The envelope is `{ error: { code, message } }`, which is what every other route returns.
+        const error = response.json.error as { message?: string } | undefined
+        expect(String(error?.message)).toContain("50")
+        break
+      }
+
+      expect(lastStatus).toBe(409)
+    }, 120_000)
+  })
+
   describe("invites", () => {
     let memberRoleId: string
     let token: string

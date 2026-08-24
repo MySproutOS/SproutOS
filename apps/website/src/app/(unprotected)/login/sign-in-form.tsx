@@ -3,7 +3,7 @@
 import { Button } from "@ui/base/ui/button"
 import { Checkbox } from "@ui/base/ui/checkbox"
 import { Label } from "@ui/base/ui/label"
-import { GitHubMark } from "@website/components/icons"
+import { GitHubMark, GoogleMark } from "@website/components/icons"
 import Link from "next/link"
 import { useCallback, useId, useState } from "react"
 
@@ -17,17 +17,27 @@ export function SignInForm() {
     setSignInError(null)
   }, [])
 
-  const handleGitHubClick = useCallback(() => {
-    if (!agreedToTerms) {
-      setSignInError("Please agree to the terms and conditions to continue")
-      return
-    }
-    // A full-page navigation, not a router push: /login/github is a Route Handler that 302s to
-    // GitHub, so there is no Next.js page for the client router to render. It must not go through
-    // a Server Action either — those are POSTed, and the redirect keeps the method, which lands
-    // on the GET-only handler as a 405.
-    window.location.href = "/login/github"
-  }, [agreedToTerms])
+  /*
+    One handler for both providers.
+
+    A full-page navigation, not a router push: these are Route Handlers that 302 to the provider, so
+    there is no Next.js page for the client router to render. It must not go through a Server Action
+    either — those are POSTed, and the redirect keeps the method, which lands on the GET-only
+    handler as a 405.
+  */
+  const startSignIn = useCallback(
+    (provider: "github" | "google") => {
+      if (!agreedToTerms) {
+        setSignInError("Please agree to the terms and conditions to continue")
+        return
+      }
+      window.location.href = `/login/${provider}`
+    },
+    [agreedToTerms],
+  )
+
+  const handleGitHubClick = useCallback(() =>{  startSignIn("github"); }, [startSignIn])
+  const handleGoogleClick = useCallback(() =>{  startSignIn("google"); }, [startSignIn])
 
   return (
     <div className="grid gap-6">
@@ -71,8 +81,21 @@ export function SignInForm() {
         Continue with GitHub
       </Button>
 
+      <Button
+        size="lg"
+        type="button"
+        variant="outline"
+        disabled={!agreedToTerms}
+        onClick={handleGoogleClick}
+        className="gap-2"
+      >
+        <GoogleMark className="size-4" />
+        Continue with Google
+      </Button>
+
       <p className="text-center font-mono text-xs text-muted-foreground">
-        We ask for the least access we can. You grant repository permissions later, per project.
+        We ask for the least access we can. You grant repository permissions later, per project —
+        and signing in with Google asks for no repository access at all.
       </p>
     </div>
   )

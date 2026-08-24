@@ -21,8 +21,17 @@ export const GOOGLE_SCOPES = [
  *  instead of a non-null assertion swallowing it. */
 export function googleOAuthClient(): OAuth2Client {
   return new OAuth2Client({
-    clientId: requireEnv("GOOGLE_CLIENT_ID"),
-    clientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
+    /*
+      `GOOGLE_OAUTH_CLIENT_ID`, not `GOOGLE_CLIENT_ID`.
+
+      The vendored client read the shorter names and nothing ever called it, so the mismatch with
+      the names actually configured survived until the first caller was written. It would have
+      failed at the point of use with "Missing required environment variable: GOOGLE_CLIENT_ID"
+      while the value sat in `.env` under a different name — a confusing five minutes for the sake
+      of two words.
+    */
+    clientId: requireEnv("GOOGLE_OAUTH_CLIENT_ID"),
+    clientSecret: requireEnv("GOOGLE_OAUTH_CLIENT_SECRET"),
     redirectUri: `${requireEnv("NEXT_PUBLIC_HOST_URL")}/login/google/callback`,
     endpoints: GOOGLE_ENDPOINTS,
   })

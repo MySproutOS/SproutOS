@@ -67,7 +67,8 @@ async function psql(uri: string, sql: string): Promise<string> {
       .execute()
     throw new Error(
       `${(cause as Error).message}\n--- pg-proxy said ---\n${explanation || "(nothing)"}` +
-        `\n--- endpoints ---\n${JSON.stringify(rows, null, 1)}`, { cause: cause },
+        `\n--- endpoints ---\n${JSON.stringify(rows, null, 1)}`,
+      { cause: cause },
     )
   }
 }

@@ -10,7 +10,7 @@ corrections in §3 are the point of the document.
 
 # SproutOS Architecture Pivot — Decision Brief
 
-*Basis: seven research packets (Neon pricing, AWS pricing, PG poolers, Lambda logging, ClickHouse/Kafka, OpenSearch+Valkey on OVH, F-Droid, GitHub Actions, Stripe, ALB blue/green). Dated 2026-08-24. Prices are list prices read from vendor offer files and docs within the last week.*
+_Basis: seven research packets (Neon pricing, AWS pricing, PG poolers, Lambda logging, ClickHouse/Kafka, OpenSearch+Valkey on OVH, F-Droid, GitHub Actions, Stripe, ALB blue/green). Dated 2026-08-24. Prices are list prices read from vendor offer files and docs within the last week._
 
 ---
 
@@ -24,10 +24,10 @@ ElastiCache Serverless for Valkey is $0.084/GB-hour = **$61.32 per GB-month** ([
 **One shared ALB, host-header split, weighted target groups, cutover by script.**
 `host-header = api.<domain>` → Rust router at rule priority 100; default action → Next.js. Four target groups (`website-blue/green`, `router-blue/green`) permanently attached to weighted `forward` actions; the deploy tool moves weights via `ModifyRule`. Weights are 0–999, up to 5 target groups per action, quota not adjustable ([ALB limits](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html)). ALB fixed cost is $0.0225/hour ≈ $16.43/month plus $0.008/LCU-hour.
 
-**Not CodeDeploy for the EC2 tier.** CodeDeploy's EC2/On-Premises blue/green registers replacement instances into the *same* target group and deregisters the originals ([docs](https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-steps-server.html)); canary and linear traffic-shifting configs **do not exist for EC2** — only Lambda and ECS ([deployment configs](https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-configurations.html)). You cannot express "5% to green." Scripting `ModifyRule` against `@aws-sdk/client-elastic-load-balancing-v2` is ~200–300 lines and strictly more capable.
+**Not CodeDeploy for the EC2 tier.** CodeDeploy's EC2/On-Premises blue/green registers replacement instances into the _same_ target group and deregisters the originals ([docs](https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-steps-server.html)); canary and linear traffic-shifting configs **do not exist for EC2** — only Lambda and ECS ([deployment configs](https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-configurations.html)). You cannot express "5% to green." Scripting `ModifyRule` against `@aws-sdk/client-elastic-load-balancing-v2` is ~200–300 lines and strictly more capable.
 
 **Lambda logs go through CloudWatch, not a Telemetry API extension.**
-Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{time, type, record}` envelope the Telemetry API emits, including `platform.report` with `billedDurationMs`/`initDurationMs`/`maxMemoryUsedMB` ([docs](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)). That removes the only real argument for an extension. An extension is billed as tenant function duration, and **an extension init failure restarts the whole execution environment** ([Extensions API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-extensions-api.html)) — a log shipper on every customer's availability path. v1: one account-level subscription filter per region → Kinesis Data Streams (on-demand, `Distribution: Random`) → Rust consumer → Kafka → ClickHouse. Latency contract is "usually less than three minutes."
+Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the _same_ `{time, type, record}` envelope the Telemetry API emits, including `platform.report` with `billedDurationMs`/`initDurationMs`/`maxMemoryUsedMB` ([docs](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)). That removes the only real argument for an extension. An extension is billed as tenant function duration, and **an extension init failure restarts the whole execution environment** ([Extensions API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-extensions-api.html)) — a log shipper on every customer's availability path. v1: one account-level subscription filter per region → Kinesis Data Streams (on-demand, `Distribution: Random`) → Rust consumer → Kafka → ClickHouse. Latency contract is "usually less than three minutes."
 
 **ClickHouse ingestion is the Kafka table engine.** ClickPipes is Cloud-only ([integration matrix](https://clickhouse.com/docs/integrations/kafka)); the Kafka engine is what ClickHouse recommends for self-hosted and does ~100k rows/sec/table. Kafka Connect's exactly-once costs a JVM plus a Keeper for KeeperMap state — not worth it for logs, where at-least-once duplicates are cosmetic and dedupe on CloudWatch `logEvents[].id` handles it.
 
@@ -51,11 +51,11 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **Billing ledger stays in SproutOS. Stripe is collection and tax documents only.** Stripe credit grants apply **only at invoice finalization**, only to subscription line items priced with a Meter, and Stripe states plainly that "customers can exceed their balance during the cycle" ([compare-metronome](https://docs.stripe.com/billing/subscriptions/usage-based/compare-metronome)). For a platform that must gate a running pg-proxy connection the moment a balance hits zero, that is the wrong primitive.
 
-**Top-up flow: Checkout Session, `mode=payment`, `invoice_creation[enabled]=true`, `setup_future_usage=off_session`.** This gets a PDF invoice *and* PDF receipt at 0.4% **capped at $2** — materially cheaper than the uncapped 0.4% of standalone Invoicing — and saves the card with SCA done at save time, which is what later qualifies it for MIT treatment.
+**Top-up flow: Checkout Session, `mode=payment`, `invoice_creation[enabled]=true`, `setup_future_usage=off_session`.** This gets a PDF invoice _and_ PDF receipt at 0.4% **capped at $2** — materially cheaper than the uncapped 0.4% of standalone Invoicing — and saves the card with SCA done at save time, which is what later qualifies it for MIT treatment.
 
 **GitHub Action is a JavaScript action, `runs.using: node24`, bundled to a committed `dist/index.js`.** Composite cannot read the `secrets` context and would push a multi-hundred-MB upload through curl; Docker actions are Linux-only, which would block customers on `macos-latest`/`windows-latest` ([about-custom-actions](https://docs.github.com/en/actions/sharing-automations/creating-actions/about-custom-actions)). Auth is GitHub OIDC trusted publishing — no long-lived secret.
 
-**F-Droid: adopt the repo *format*, ship your own Kotlin/Compose client.** The format is static-file-only (perfect for S3+CloudFront) and F-Droid publishes `org.fdroid:index` and `org.fdroid:download` as KMP libraries you can consume. Your own client is the only way to get per-user authorization and control the install UX. Private APKs get CloudFront OAC + signed URLs on a separate cache behavior with **one platform key group** — key-group quotas are 5 keys/group, 10 groups/account ([CloudFront limits](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html)), so per-tenant keys are structurally impossible.
+**F-Droid: adopt the repo _format_, ship your own Kotlin/Compose client.** The format is static-file-only (perfect for S3+CloudFront) and F-Droid publishes `org.fdroid:index` and `org.fdroid:download` as KMP libraries you can consume. Your own client is the only way to get per-user authorization and control the install UX. Private APKs get CloudFront OAC + signed URLs on a separate cache behavior with **one platform key group** — key-group quotas are 5 keys/group, 10 groups/account ([CloudFront limits](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html)), so per-tenant keys are structurally impossible.
 
 ---
 
@@ -63,7 +63,7 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **Neon self-hosted vs Neon Agent plan.** The Agent plan is aimed precisely at platforms provisioning Postgres for end users: Launch-rate compute ($0.106/CU-hour), unlimited projects, up to $25,000 in credits, and **Neon sponsoring the free tier at no cost to the platform** ([agent-plan](https://neon.com/docs/introduction/agent-plan)). Self-hosting means funding that free tier out of pocket and reproducing `child_branch_bytes_month` (billed as min of delta or logical size) from your own pageserver — the single hardest metric to reproduce outside Neon Cloud.
 
-**ClickHouse text index: on or off.** ClickHouse's own GitHub-dataset benchmark: the text index is 215.84 GiB compressed vs 7.04 GiB for a bloom filter, table compression drops ~9x→~6x, insert throughput drops ~50% — for 7–10x faster cold queries ([GA blog](https://clickhouse.com/blog/full-text-search-ga-release)). The deprecated bloom filters are not a fallback, so the real alternative is *no index* and brute-force scan of a 3-day partition-pruned window.
+**ClickHouse text index: on or off.** ClickHouse's own GitHub-dataset benchmark: the text index is 215.84 GiB compressed vs 7.04 GiB for a bloom filter, table compression drops ~9x→~6x, insert throughput drops ~50% — for 7–10x faster cold queries ([GA blog](https://clickhouse.com/blog/full-text-search-ga-release)). The deprecated bloom filters are not a fallback, so the real alternative is _no index_ and brute-force scan of a 3-day partition-pruned window.
 
 **Log partition granularity: `toDate(ts)` vs `toStartOfHour(ts)`.** Day partitions mean retention lands between 3 and 4 days; hour partitions narrow the overshoot to an hour at the cost of ~72–96 active partitions and more, smaller parts.
 
@@ -91,7 +91,7 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **The billing month is a fixed 744 hours, not the calendar month.** A 28-day February has 672 hours, so identical usage bills ~10% less if you divide by "hours in this month."
 
-**v2 storage metrics are already divided by 744.** Dividing again under-bills storage by a factor of 744 — a plausible-looking small number, not an obvious failure. The legacy `data_storage_bytes_hour` field *is* raw byte-hours. Mixing the conventions is the classic bug.
+**v2 storage metrics are already divided by 744.** Dividing again under-bills storage by a factor of 744 — a plausible-looking small number, not an obvious failure. The legacy `data_storage_bytes_hour` field _is_ raw byte-hours. Mixing the conventions is the classic bug.
 
 **Neon bills in decimal GB (10^9), not GiB.** That is a 7.4% revenue difference, and Postgres, Linux tooling and cgroup v2 all report bytes that developers instinctively convert with 1024s.
 
@@ -101,7 +101,7 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **The "PgCat has prepared-statement memory issues" claim is mostly refuted as stated.** No public issue links PgCat memory growth to prepared statements, and the pgconf.eu 2024 comparison says the opposite about PgCat while aiming the memory-leak criticism at **Odyssey**. What is real about PgCat is worse: an unbounded per-client `HashMap<String,(Arc<Parse>,u64)>` that `prepared_statements_cache_size` does not cap (clients hold independent `Arc` strong refs, so pool LRU eviction frees nothing), and a pool cache that matches on a bare `DefaultHasher` u64 **with no query-text verification on hit**.
 
-**The Odyssey claim is verified and understated.** `sources/pstmt.c` deduplicates by *content* — global map keyed on the full Parse descriptor, xxh64 + full `memcmp`, refcounted — so N clients running the same SQL share one server-side statement. Caveat: this was buggy until this year (issue #1345, April 2026: 32-bit murmur collision → `42P05 prepared statement "56703f72" already exists`).
+**The Odyssey claim is verified and understated.** `sources/pstmt.c` deduplicates by _content_ — global map keyed on the full Parse descriptor, xxh64 + full `memcmp`, refcounted — so N clients running the same SQL share one server-side statement. Caveat: this was buggy until this year (issue #1345, April 2026: 32-bit murmur collision → `42P05 prepared statement "56703f72" already exists`).
 
 **Neon's proxy is not a pooler.** It is SNI→project routing plus SCRAM/JWT auth plus WebSocket/HTTP protocol termination — the job `pg-proxy` already does. Neon's actual pooling is bundled PgBouncer. Also: the public `neondatabase/neon` repo has taken **11 commits in 12 months** post-Databricks-acquisition, last commit 2026-05-25. Do not treat it as a maintained upstream.
 
@@ -115,7 +115,7 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **ALB LCU billing takes the max across four dimensions, and connections — not bytes — will bind for a proxy architecture.** 3,000 active connections/minute per LCU, **halved to 1,500 with mutual TLS**. Long-lived Postgres and RESP sessions pin that dimension far above the 1 GB/hour processed-bytes dimension (0.4 GB/hour for Lambda targets).
 
-**The ALB does not fail over out of an empty or all-unhealthy weighted target group, and it fails *open* into an all-unhealthy one.** Verbatim: "the load balancer does not automatically fail over to a target group with healthy targets" ([rule-action-types](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/rule-action-types.html)) and "If a target group contains only unhealthy registered targets, the load balancer routes requests to all those targets, regardless of their health status." Every safety gate must be your deploy script polling `DescribeTargetHealth`.
+**The ALB does not fail over out of an empty or all-unhealthy weighted target group, and it fails _open_ into an all-unhealthy one.** Verbatim: "the load balancer does not automatically fail over to a target group with healthy targets" ([rule-action-types](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/rule-action-types.html)) and "If a target group contains only unhealthy registered targets, the load balancer routes requests to all those targets, regardless of their health status." Every safety gate must be your deploy script polling `DescribeTargetHealth`.
 
 **`HealthyThresholdCount` does not gate a newly registered target.** "The load balancer starts routing traffic to a newly registered target as soon as the registration process completes and the target passes the first initial health check, irrespective of the configured threshold." Bake by holding the weight at 0, not by tuning thresholds.
 
@@ -127,7 +127,7 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **Kafka's default `log.retention.hours` is 168** — four times the intended 24h replay buffer. Set it per-topic or it quietly fills the NVMe.
 
-**OpenSearch's own docker-compose sample comment is backwards.** It reads "Set min and max JVM heap sizes to **at least** 50% of system RAM"; Elastic's rule is **no more than** 50%. Copying it onto a 128 GB box yields a 64 GB+ heap with compressed oops lost and *less* usable memory than at 30 GB. Separately, percentage heap notation (`-XX:MaxRAMPercentage`) is silently overridden in OpenSearch — you must use `-Xms`/`-Xmx`.
+**OpenSearch's own docker-compose sample comment is backwards.** It reads "Set min and max JVM heap sizes to **at least** 50% of system RAM"; Elastic's rule is **no more than** 50%. Copying it onto a 128 GB box yields a 64 GB+ heap with compressed oops lost and _less_ usable memory than at 30 GB. Separately, percentage heap notation (`-XX:MaxRAMPercentage`) is silently overridden in OpenSearch — you must use `-Xms`/`-Xmx`.
 
 **`vm.max_map_count` cannot be set from docker-compose `sysctls:`** — `vm.*` is not a namespaced sysctl. Set it on the host. OpenSearch documents ≥262144; Elastic now requires **1048576**, which is the number to use for a many-small-index multi-tenant node.
 
@@ -145,13 +145,13 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 **Node20 is being removed from runners in fall 2026** (runners defaulted to Node24 on 2026-06-16). Shipping `runs.using: node20` gives the action a hard expiry.
 
-**Immutable releases conflict with the standard moving-`v1`-tag workflow.** Once a release is published, its tag is locked. Attach releases only to exact `v1.2.3` tags and keep `v1`/`v1.1` as plain tags — and verify this on a throwaway repo, because "tags tied to releases are locked" implying plain tags stay movable is *inference*, not documented.
+**Immutable releases conflict with the standard moving-`v1`-tag workflow.** Once a release is published, its tag is locked. Attach releases only to exact `v1.2.3` tags and keep `v1`/`v1.1` as plain tags — and verify this on a throwaway repo, because "tags tied to releases are locked" implying plain tags stay movable is _inference_, not documented.
 
 **Next.js `output: 'standalone'` deliberately excludes `.next/static` and `public`.** An uploader that ships only `.next/standalone` produces a site that boots and serves unstyled HTML with 404s on every chunk — a failure that passes any "did the deploy succeed" check.
 
-**Firehose cannot write to Kafka or MSK.** MSK is a Firehose *source*. The apparently cheaper direct-to-Firehose logging path ($0.25/GB vs $0.50/GB) reaches ClickHouse only via the generic HTTP endpoint, dropping the Kafka buffer. Firehose Direct PUT also bills in **5 KB increments** — a 400-byte log line bills as 5 KB, which can dominate the per-GB saving.
+**Firehose cannot write to Kafka or MSK.** MSK is a Firehose _source_. The apparently cheaper direct-to-Firehose logging path ($0.25/GB vs $0.50/GB) reaches ClickHouse only via the generic HTTP endpoint, dropping the Kafka buffer. Firehose Direct PUT also bills in **5 KB increments** — a 400-byte log line bills as 5 KB, which can dominate the per-GB saving.
 
-**CloudWatch Logs subscription non-retryable errors (AccessDenied, ResourceNotFound) disable the filter for up to 10 minutes and logs in that window are *skipped*, not buffered.** An IAM mistake during a deploy is silent, unrecoverable tenant log loss. There is exactly **one account-level subscription filter per account per Region** — a hard, unshareable limit.
+**CloudWatch Logs subscription non-retryable errors (AccessDenied, ResourceNotFound) disable the filter for up to 10 minutes and logs in that window are _skipped_, not buffered.** An IAM mistake during a deploy is silent, unrecoverable tenant log loss. There is exactly **one account-level subscription filter per account per Region** — a hard, unshareable limit.
 
 **Switching Python Lambdas to JSON log format changes the default application log level from WARN to INFO.** Rolling `LogFormat=JSON` without pinning `ApplicationLogLevel` multiplies log volume and the bill overnight.
 
@@ -165,163 +165,164 @@ Setting `LoggingConfig.LogFormat=JSON` makes CloudWatch Logs carry the *same* `{
 
 ### AWS compute
 
-| Service | Unit | Price (us-east-1) | Source |
-|---|---|---|---|
-| Lambda requests | per request | $0.0000002 ($0.20/1M) | [Lambda offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/us-east-1/index.json) |
-| Lambda duration x86 | GB-second (first 6B) | $0.0000166667 | same |
-| Lambda duration x86 | GB-second (6B–15B) | $0.0000150000 | same |
-| Lambda duration x86 | GB-second (>15B) | $0.0000133334 | same |
-| Lambda duration arm64 | GB-second (first 7.5B) | $0.0000133334 | same |
-| Lambda duration arm64 | GB-second (7.5B–18.75B) | $0.0000120001 | same |
-| Lambda duration arm64 | GB-second (>18.75B) | $0.0000106667 | same |
-| Lambda provisioned concurrency x86 | GB-second | $0.0000041667 | same |
-| Lambda provisioned concurrency arm64 | GB-second | $0.0000033334 | same |
-| Lambda duration under PC, x86 | GB-second | $0.0000097222 | same |
-| Lambda duration under PC, arm64 | GB-second | $0.0000077778 | same |
-| Lambda ephemeral storage >512 MB | GB-second | $0.0000000309 | same |
-| Lambda@Edge | GB-second / request | $0.0000500100 / $0.0000006 | same |
-| Lambda free tier (Always Free, excl. PC) | month | 1M requests + 400,000 GB-s | [Lambda pricing](https://aws.amazon.com/lambda/pricing/) |
-| EC2 t4g.small (2 vCPU, 2 GiB) | hour | $0.0168 (~$12.26/mo) | [EC2 offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/us-east-1/index.csv) |
-| EC2 c7g.large (2 vCPU, 4 GiB) | hour | $0.0725 (~$52.93/mo) | same |
-| EC2 m7g.large (2 vCPU, 8 GiB) | hour | $0.0816 (~$59.57/mo) | same |
-| **Derived cost basis** | vCPU-hour / GiB-hour | **$0.0408 / $0.0102** | m7g.large decomposition |
+| Service                                  | Unit                    | Price (us-east-1)          | Source                                                                                                              |
+| ---------------------------------------- | ----------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Lambda requests                          | per request             | $0.0000002 ($0.20/1M)      | [Lambda offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/us-east-1/index.json) |
+| Lambda duration x86                      | GB-second (first 6B)    | $0.0000166667              | same                                                                                                                |
+| Lambda duration x86                      | GB-second (6B–15B)      | $0.0000150000              | same                                                                                                                |
+| Lambda duration x86                      | GB-second (>15B)        | $0.0000133334              | same                                                                                                                |
+| Lambda duration arm64                    | GB-second (first 7.5B)  | $0.0000133334              | same                                                                                                                |
+| Lambda duration arm64                    | GB-second (7.5B–18.75B) | $0.0000120001              | same                                                                                                                |
+| Lambda duration arm64                    | GB-second (>18.75B)     | $0.0000106667              | same                                                                                                                |
+| Lambda provisioned concurrency x86       | GB-second               | $0.0000041667              | same                                                                                                                |
+| Lambda provisioned concurrency arm64     | GB-second               | $0.0000033334              | same                                                                                                                |
+| Lambda duration under PC, x86            | GB-second               | $0.0000097222              | same                                                                                                                |
+| Lambda duration under PC, arm64          | GB-second               | $0.0000077778              | same                                                                                                                |
+| Lambda ephemeral storage >512 MB         | GB-second               | $0.0000000309              | same                                                                                                                |
+| Lambda@Edge                              | GB-second / request     | $0.0000500100 / $0.0000006 | same                                                                                                                |
+| Lambda free tier (Always Free, excl. PC) | month                   | 1M requests + 400,000 GB-s | [Lambda pricing](https://aws.amazon.com/lambda/pricing/)                                                            |
+| EC2 t4g.small (2 vCPU, 2 GiB)            | hour                    | $0.0168 (~$12.26/mo)       | [EC2 offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/us-east-1/index.csv)     |
+| EC2 c7g.large (2 vCPU, 4 GiB)            | hour                    | $0.0725 (~$52.93/mo)       | same                                                                                                                |
+| EC2 m7g.large (2 vCPU, 8 GiB)            | hour                    | $0.0816 (~$59.57/mo)       | same                                                                                                                |
+| **Derived cost basis**                   | vCPU-hour / GiB-hour    | **$0.0408 / $0.0102**      | m7g.large decomposition                                                                                             |
 
 ### AWS networking and edge
 
-| Service | Unit | Price | Source |
-|---|---|---|---|
-| ALB | ALB-hour (or partial) | $0.0225 (~$16.43/mo) | [ELB offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/us-east-1/index.json) |
-| ALB | LCU-hour | $0.008 | same |
-| NLB | LCU-hour | $0.006 | same |
-| GWLB | LCU-hour | $0.004 | same |
-| ALB mTLS trust store | unit-hour | $0.005 | same |
-| Data transfer out to internet | first 100 GB/mo (all services, all regions) | $0 | [DataTransfer offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/current/index.json) |
-| Data transfer out | GB, up to 10 TB | $0.09 | same |
-| Data transfer out | GB, 10–50 TB | $0.085 | same |
-| Data transfer out | GB, 50–150 TB | $0.07 | same |
-| Data transfer out | GB, >150 TB | $0.05 | same |
-| Inter-region transfer out | GB | $0.02 | same |
-| CloudFront DTO (US/MX/CA) | GB, up to 10 TB | $0.085 | [CloudFront offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudFront/current/index.json) |
-| CloudFront DTO | GB, next 40 TB | $0.080 | same |
-| CloudFront DTO | GB, next 100 TB | $0.060 | same |
-| CloudFront DTO | GB, next 350 TB | $0.040 | same |
-| CloudFront DTO | GB, next 524 TB | $0.030 | same |
-| CloudFront DTO | GB, next 4 PB | $0.025 | same |
-| CloudFront DTO | GB, >5 PB | $0.020 | same |
-| CloudFront requests (US) | HTTP / HTTPS | $0.00000075 / $0.0000010 | same |
-| CloudFront Always Free | month | 1 TB DTO + 10M requests + 2M Functions invocations | [PAYG pricing](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/) |
-| CloudFront flat-rate Free | month | $0 (1M req, 100 GB) | [flat-rate docs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html) |
-| CloudFront flat-rate Pro | month | $15 (10M req, 50 TB) | same |
-| CloudFront flat-rate Business | month | $200 (125M req, 50 TB) | same |
-| CloudFront flat-rate Premium | month | $1,000 (500M req, 50 TB) | same |
-| CloudFront Premium 75TB/750M | month | $1,450 | same |
-| CloudFront Premium 125TB/1.25B | month | $2,250 | same |
-| CloudFront Premium 200TB/2B | month | $3,500 | same |
-| CloudFront Premium 350TB/3.5B | month | $6,000 | same |
-| CloudFront Premium 600TB/6B | month | $10,000 | same |
+| Service                        | Unit                                        | Price                                              | Source                                                                                                                |
+| ------------------------------ | ------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| ALB                            | ALB-hour (or partial)                       | $0.0225 (~$16.43/mo)                               | [ELB offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/us-east-1/index.json)         |
+| ALB                            | LCU-hour                                    | $0.008                                             | same                                                                                                                  |
+| NLB                            | LCU-hour                                    | $0.006                                             | same                                                                                                                  |
+| GWLB                           | LCU-hour                                    | $0.004                                             | same                                                                                                                  |
+| ALB mTLS trust store           | unit-hour                                   | $0.005                                             | same                                                                                                                  |
+| Data transfer out to internet  | first 100 GB/mo (all services, all regions) | $0                                                 | [DataTransfer offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/current/index.json) |
+| Data transfer out              | GB, up to 10 TB                             | $0.09                                              | same                                                                                                                  |
+| Data transfer out              | GB, 10–50 TB                                | $0.085                                             | same                                                                                                                  |
+| Data transfer out              | GB, 50–150 TB                               | $0.07                                              | same                                                                                                                  |
+| Data transfer out              | GB, >150 TB                                 | $0.05                                              | same                                                                                                                  |
+| Inter-region transfer out      | GB                                          | $0.02                                              | same                                                                                                                  |
+| CloudFront DTO (US/MX/CA)      | GB, up to 10 TB                             | $0.085                                             | [CloudFront offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudFront/current/index.json)  |
+| CloudFront DTO                 | GB, next 40 TB                              | $0.080                                             | same                                                                                                                  |
+| CloudFront DTO                 | GB, next 100 TB                             | $0.060                                             | same                                                                                                                  |
+| CloudFront DTO                 | GB, next 350 TB                             | $0.040                                             | same                                                                                                                  |
+| CloudFront DTO                 | GB, next 524 TB                             | $0.030                                             | same                                                                                                                  |
+| CloudFront DTO                 | GB, next 4 PB                               | $0.025                                             | same                                                                                                                  |
+| CloudFront DTO                 | GB, >5 PB                                   | $0.020                                             | same                                                                                                                  |
+| CloudFront requests (US)       | HTTP / HTTPS                                | $0.00000075 / $0.0000010                           | same                                                                                                                  |
+| CloudFront Always Free         | month                                       | 1 TB DTO + 10M requests + 2M Functions invocations | [PAYG pricing](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)                                              |
+| CloudFront flat-rate Free      | month                                       | $0 (1M req, 100 GB)                                | [flat-rate docs](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html)      |
+| CloudFront flat-rate Pro       | month                                       | $15 (10M req, 50 TB)                               | same                                                                                                                  |
+| CloudFront flat-rate Business  | month                                       | $200 (125M req, 50 TB)                             | same                                                                                                                  |
+| CloudFront flat-rate Premium   | month                                       | $1,000 (500M req, 50 TB)                           | same                                                                                                                  |
+| CloudFront Premium 75TB/750M   | month                                       | $1,450                                             | same                                                                                                                  |
+| CloudFront Premium 125TB/1.25B | month                                       | $2,250                                             | same                                                                                                                  |
+| CloudFront Premium 200TB/2B    | month                                       | $3,500                                             | same                                                                                                                  |
+| CloudFront Premium 350TB/3.5B  | month                                       | $6,000                                             | same                                                                                                                  |
+| CloudFront Premium 600TB/6B    | month                                       | $10,000                                            | same                                                                                                                  |
 
 ### AWS storage, data and managed services
 
-| Service | Unit | Price | Source |
-|---|---|---|---|
-| S3 Standard | GB-month, first 50 TB | $0.023 | [S3 offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/us-east-1/index.json) |
-| S3 Standard | GB-month, next 450 TB | $0.022 | same |
-| S3 Standard | GB-month, >500 TB | $0.021 | same |
-| S3 PUT/COPY/POST/LIST | request | $0.000005 ($0.005/1,000) | same |
-| S3 GET/SELECT/other | request | $0.0000004 ($0.004/10,000) | same |
-| ElastiCache Serverless Valkey | GB-hour | $0.084 (= $61.32/GB-mo) | [ElastiCache offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/us-east-1/index.json) |
-| ElastiCache Serverless Valkey | ECPU | $0.0000000023 ($0.0023/M) | same |
-| ElastiCache Serverless Redis OSS/Memcached | GB-hour / ECPU | $0.125 / $0.0000000034 | same |
-| ElastiCache Serverless min billed storage | per cache | Valkey 100 MB; Redis/Memcached 1 GB | [ElastiCache pricing](https://aws.amazon.com/elasticache/pricing/) |
-| ElastiCache cache.t4g.micro | hour | Valkey $0.0128; Redis/Memcached $0.016 | offer file |
-| ElastiCache cache.m7g.large | hour | Valkey $0.1264; Redis/Memcached $0.158 | offer file |
-| ElastiCache Valkey sync-durability (m7g.large) | hour | +$0.0228 | offer file |
-| RDS PostgreSQL db.t4g.micro | hour | $0.016 single-AZ / $0.032 multi-AZ | [RDS offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/us-east-1/index.json) |
-| RDS PostgreSQL db.t4g.small | hour | $0.032 single-AZ / $0.065 multi-AZ | same |
-| RDS gp3/gp2 storage | GB-month | $0.115 single-AZ / $0.23 multi-AZ | same |
-| RDS io1/io2 | GB-month + IOPS-month | $0.125 + $0.10 | same |
-| RDS backup beyond allocated | GB-month | $0.095 | same |
-| RDS gp3 provisioned IOPS above baseline | IOPS-month | $0.02 (multi-AZ 2x) | same |
-| RDS gp3 provisioned throughput | MBps-month | $0.08 (multi-AZ 2x) | same |
-| Kinesis Data Streams on-demand | GB ingested / GB retrieved / stream-hour | $0.08 / $0.040 / $0.040 | [Kinesis pricing](https://aws.amazon.com/kinesis/data-streams/pricing/) |
-| Kinesis Data Streams provisioned | shard-hour / M PUT units (25 KB) | $0.015 / $0.014 | same |
-| Firehose Direct PUT (5 KB billing increments) | GB, first 500 TB/mo | $0.029 | [Firehose pricing](https://aws.amazon.com/kinesis/data-firehose/pricing/) |
-| Lambda→CloudWatch Logs ingestion | GB, first 10 TB | $0.50 | [Compute blog](https://aws.amazon.com/blogs/compute/aws-lambda-introduces-tiered-pricing-for-amazon-cloudwatch-logs-and-additional-logging-destinations/) |
-| Lambda→CloudWatch Logs | GB, next 20 TB / next 20 TB / >50 TB | $0.25 / $0.10 / $0.05 | same |
-| Lambda→CloudWatch Logs, Infrequent Access | GB, four tiers | $0.25 / $0.15 / $0.075 / $0.05 | same |
-| Lambda→S3 or Firehose direct | GB, four tiers | $0.25 / $0.15 / $0.075 / $0.05 | same |
-| CodeDeploy, EC2 | deployment | $0 | [CodeDeploy pricing (CN)](https://www.amazonaws.cn/en/codedeploy/pricing/) |
+| Service                                        | Unit                                     | Price                                  | Source                                                                                                                                                    |
+| ---------------------------------------------- | ---------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S3 Standard                                    | GB-month, first 50 TB                    | $0.023                                 | [S3 offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/us-east-1/index.json)                                            |
+| S3 Standard                                    | GB-month, next 450 TB                    | $0.022                                 | same                                                                                                                                                      |
+| S3 Standard                                    | GB-month, >500 TB                        | $0.021                                 | same                                                                                                                                                      |
+| S3 PUT/COPY/POST/LIST                          | request                                  | $0.000005 ($0.005/1,000)               | same                                                                                                                                                      |
+| S3 GET/SELECT/other                            | request                                  | $0.0000004 ($0.004/10,000)             | same                                                                                                                                                      |
+| ElastiCache Serverless Valkey                  | GB-hour                                  | $0.084 (= $61.32/GB-mo)                | [ElastiCache offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/us-east-1/index.json)                          |
+| ElastiCache Serverless Valkey                  | ECPU                                     | $0.0000000023 ($0.0023/M)              | same                                                                                                                                                      |
+| ElastiCache Serverless Redis OSS/Memcached     | GB-hour / ECPU                           | $0.125 / $0.0000000034                 | same                                                                                                                                                      |
+| ElastiCache Serverless min billed storage      | per cache                                | Valkey 100 MB; Redis/Memcached 1 GB    | [ElastiCache pricing](https://aws.amazon.com/elasticache/pricing/)                                                                                        |
+| ElastiCache cache.t4g.micro                    | hour                                     | Valkey $0.0128; Redis/Memcached $0.016 | offer file                                                                                                                                                |
+| ElastiCache cache.m7g.large                    | hour                                     | Valkey $0.1264; Redis/Memcached $0.158 | offer file                                                                                                                                                |
+| ElastiCache Valkey sync-durability (m7g.large) | hour                                     | +$0.0228                               | offer file                                                                                                                                                |
+| RDS PostgreSQL db.t4g.micro                    | hour                                     | $0.016 single-AZ / $0.032 multi-AZ     | [RDS offer file](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/us-east-1/index.json)                                          |
+| RDS PostgreSQL db.t4g.small                    | hour                                     | $0.032 single-AZ / $0.065 multi-AZ     | same                                                                                                                                                      |
+| RDS gp3/gp2 storage                            | GB-month                                 | $0.115 single-AZ / $0.23 multi-AZ      | same                                                                                                                                                      |
+| RDS io1/io2                                    | GB-month + IOPS-month                    | $0.125 + $0.10                         | same                                                                                                                                                      |
+| RDS backup beyond allocated                    | GB-month                                 | $0.095                                 | same                                                                                                                                                      |
+| RDS gp3 provisioned IOPS above baseline        | IOPS-month                               | $0.02 (multi-AZ 2x)                    | same                                                                                                                                                      |
+| RDS gp3 provisioned throughput                 | MBps-month                               | $0.08 (multi-AZ 2x)                    | same                                                                                                                                                      |
+| Kinesis Data Streams on-demand                 | GB ingested / GB retrieved / stream-hour | $0.08 / $0.040 / $0.040                | [Kinesis pricing](https://aws.amazon.com/kinesis/data-streams/pricing/)                                                                                   |
+| Kinesis Data Streams provisioned               | shard-hour / M PUT units (25 KB)         | $0.015 / $0.014                        | same                                                                                                                                                      |
+| Firehose Direct PUT (5 KB billing increments)  | GB, first 500 TB/mo                      | $0.029                                 | [Firehose pricing](https://aws.amazon.com/kinesis/data-firehose/pricing/)                                                                                 |
+| Lambda→CloudWatch Logs ingestion               | GB, first 10 TB                          | $0.50                                  | [Compute blog](https://aws.amazon.com/blogs/compute/aws-lambda-introduces-tiered-pricing-for-amazon-cloudwatch-logs-and-additional-logging-destinations/) |
+| Lambda→CloudWatch Logs                         | GB, next 20 TB / next 20 TB / >50 TB     | $0.25 / $0.10 / $0.05                  | same                                                                                                                                                      |
+| Lambda→CloudWatch Logs, Infrequent Access      | GB, four tiers                           | $0.25 / $0.15 / $0.075 / $0.05         | same                                                                                                                                                      |
+| Lambda→S3 or Firehose direct                   | GB, four tiers                           | $0.25 / $0.15 / $0.075 / $0.05         | same                                                                                                                                                      |
+| CodeDeploy, EC2                                | deployment                               | $0                                     | [CodeDeploy pricing (CN)](https://www.amazonaws.cn/en/codedeploy/pricing/)                                                                                |
 
 ### Neon (market benchmark; SproutOS self-hosts)
 
-| Item | Unit | Price | Source |
-|---|---|---|---|
-| Launch compute | CU-hour | $0.106 | [plans](https://neon.com/docs/introduction/plans) |
-| Scale compute | CU-hour | $0.222 | same |
-| Agent plan compute | CU-hour | $0.106 | [agent-plan](https://neon.com/docs/introduction/agent-plan) |
-| Storage (all paid plans) | GB-month, measured hourly | $0.35 | plans |
-| Instant restore (PITR) | GB-month | $0.20 | plans |
-| Snapshot storage | GB-month | $0.09 | plans |
-| Public egress, Launch/Scale | per project/month | 500 GB free, then $0.10/GB | [network-transfer](https://neon.com/docs/introduction/network-transfer) |
-| Public egress, Agent plan | per project/month | 100 GB free, then $0.10/GB | agent-plan |
-| Private transfer (PrivateLink, Scale only, bidirectional) | GB | $0.01 | plans |
-| Extra branches | branch-month | $1.50 (~$0.002/hr, prorated hourly) | plans |
-| Per-project charge | — | **none** (count limits only) | plans |
-| Free tier | month | 100 CU-h/project, 0.5 GB storage/project, 100 projects, 5 GB egress | plans |
-| Invoice collection floor | invoice | not collected under $0.50 | plans |
+| Item                                                      | Unit                      | Price                                                               | Source                                                                  |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Launch compute                                            | CU-hour                   | $0.106                                                              | [plans](https://neon.com/docs/introduction/plans)                       |
+| Scale compute                                             | CU-hour                   | $0.222                                                              | same                                                                    |
+| Agent plan compute                                        | CU-hour                   | $0.106                                                              | [agent-plan](https://neon.com/docs/introduction/agent-plan)             |
+| Storage (all paid plans)                                  | GB-month, measured hourly | $0.35                                                               | plans                                                                   |
+| Instant restore (PITR)                                    | GB-month                  | $0.20                                                               | plans                                                                   |
+| Snapshot storage                                          | GB-month                  | $0.09                                                               | plans                                                                   |
+| Public egress, Launch/Scale                               | per project/month         | 500 GB free, then $0.10/GB                                          | [network-transfer](https://neon.com/docs/introduction/network-transfer) |
+| Public egress, Agent plan                                 | per project/month         | 100 GB free, then $0.10/GB                                          | agent-plan                                                              |
+| Private transfer (PrivateLink, Scale only, bidirectional) | GB                        | $0.01                                                               | plans                                                                   |
+| Extra branches                                            | branch-month              | $1.50 (~$0.002/hr, prorated hourly)                                 | plans                                                                   |
+| Per-project charge                                        | —                         | **none** (count limits only)                                        | plans                                                                   |
+| Free tier                                                 | month                     | 100 CU-h/project, 0.5 GB storage/project, 100 projects, 5 GB egress | plans                                                                   |
+| Invoice collection floor                                  | invoice                   | not collected under $0.50                                           | plans                                                                   |
 
 ### Stripe
 
-| Item | Unit | Price | Source |
-|---|---|---|---|
-| Card processing (US domestic) | transaction | 2.9% + $0.30 | [pricing](https://stripe.com/pricing) |
-| International card surcharge | transaction | +1.5% | same |
-| Currency conversion | transaction | +1% | same |
-| Manually entered card | transaction | +0.5% | same |
-| Dispute | each | $15.00 | same |
-| Instant Payouts | payout | 1.5% (min $0.50) | same |
-| ACH Direct Debit | transaction | 0.8%, capped $5.00 | [local payment methods](https://stripe.com/pricing/local-payment-methods) |
-| ACH failed payment | each | $4.00 | same |
-| SEPA Direct Debit | transaction | 0.8% + $0.30, capped $6.00; $5.00 failed | same |
-| Bacs Direct Debit | transaction | 1% + $0.30, capped $6.00; $4.00 failed; $0.50/refund | same |
-| Post-payment invoice (Checkout / Payment Links) | invoice | 0.4%, **capped $2.00** | [support](https://support.stripe.com/questions/pricing-for-post-payment-invoices-for-one-time-purchases-via-checkout-and-payment-links) |
-| Stripe Invoicing Starter | paid invoice | 0.4%, no cap stated | [invoicing pricing](https://stripe.com/invoicing/pricing) |
-| Stripe Invoicing Plus | paid invoice | 0.5%, no cap stated | same |
-| Stripe Billing pay-as-you-go | billing volume | 0.7% (incl. up to 100M meter events/mo) | [billing pricing](https://stripe.com/billing/pricing) |
-| Stripe Billing Starter/Scale/Pro/Enterprise | month (1-yr contract) | $620 / $1,500 / $2,950 / $5,750; overage 0.67% | same |
-| Stripe Tax Basic (no-code) | transaction | 0.5% where registered | [Tax pricing](https://support.stripe.com/questions/understanding-stripe-tax-pay-as-you-go-pricing) |
-| Stripe Tax Basic (API) | Transaction API call | $0.50 (incl. 10 calc calls); +$0.05/extra calc | same |
-| Stripe Tax Complete Starter/Growth/Scale/Enterprise | month | $90 / $430 / $1,000 / $1,500 | [Tax pricing](https://stripe.com/tax/pricing) |
-| Receipts (incl. PDF) | each | $0 | [receipts](https://docs.stripe.com/receipts) |
-| Surcharge caps (preview API) | transaction | US 3% credit only; CA 2.4% credit only; AU 4%; NZ 4% | [surcharge](https://docs.stripe.com/payments/cards/surcharge) |
+| Item                                                | Unit                  | Price                                                | Source                                                                                                                                  |
+| --------------------------------------------------- | --------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Card processing (US domestic)                       | transaction           | 2.9% + $0.30                                         | [pricing](https://stripe.com/pricing)                                                                                                   |
+| International card surcharge                        | transaction           | +1.5%                                                | same                                                                                                                                    |
+| Currency conversion                                 | transaction           | +1%                                                  | same                                                                                                                                    |
+| Manually entered card                               | transaction           | +0.5%                                                | same                                                                                                                                    |
+| Dispute                                             | each                  | $15.00                                               | same                                                                                                                                    |
+| Instant Payouts                                     | payout                | 1.5% (min $0.50)                                     | same                                                                                                                                    |
+| ACH Direct Debit                                    | transaction           | 0.8%, capped $5.00                                   | [local payment methods](https://stripe.com/pricing/local-payment-methods)                                                               |
+| ACH failed payment                                  | each                  | $4.00                                                | same                                                                                                                                    |
+| SEPA Direct Debit                                   | transaction           | 0.8% + $0.30, capped $6.00; $5.00 failed             | same                                                                                                                                    |
+| Bacs Direct Debit                                   | transaction           | 1% + $0.30, capped $6.00; $4.00 failed; $0.50/refund | same                                                                                                                                    |
+| Post-payment invoice (Checkout / Payment Links)     | invoice               | 0.4%, **capped $2.00**                               | [support](https://support.stripe.com/questions/pricing-for-post-payment-invoices-for-one-time-purchases-via-checkout-and-payment-links) |
+| Stripe Invoicing Starter                            | paid invoice          | 0.4%, no cap stated                                  | [invoicing pricing](https://stripe.com/invoicing/pricing)                                                                               |
+| Stripe Invoicing Plus                               | paid invoice          | 0.5%, no cap stated                                  | same                                                                                                                                    |
+| Stripe Billing pay-as-you-go                        | billing volume        | 0.7% (incl. up to 100M meter events/mo)              | [billing pricing](https://stripe.com/billing/pricing)                                                                                   |
+| Stripe Billing Starter/Scale/Pro/Enterprise         | month (1-yr contract) | $620 / $1,500 / $2,950 / $5,750; overage 0.67%       | same                                                                                                                                    |
+| Stripe Tax Basic (no-code)                          | transaction           | 0.5% where registered                                | [Tax pricing](https://support.stripe.com/questions/understanding-stripe-tax-pay-as-you-go-pricing)                                      |
+| Stripe Tax Basic (API)                              | Transaction API call  | $0.50 (incl. 10 calc calls); +$0.05/extra calc       | same                                                                                                                                    |
+| Stripe Tax Complete Starter/Growth/Scale/Enterprise | month                 | $90 / $430 / $1,000 / $1,500                         | [Tax pricing](https://stripe.com/tax/pricing)                                                                                           |
+| Receipts (incl. PDF)                                | each                  | $0                                                   | [receipts](https://docs.stripe.com/receipts)                                                                                            |
+| Surcharge caps (preview API)                        | transaction           | US 3% credit only; CA 2.4% credit only; AU 4%; NZ 4% | [surcharge](https://docs.stripe.com/payments/cards/surcharge)                                                                           |
 
 **Product tax codes:** `txcd_10102000` PaaS business use, `txcd_10102001` PaaS personal, `txcd_10103001` SaaS business, `txcd_10101000` IaaS business, `txcd_10701100` website hosting ([tax codes](https://docs.stripe.com/tax/tax-codes)).
 
 ### Worked example — $50 card top-up
+
 $1.75 processing + $0.20 post-payment invoice (capped path) + $0.25 Stripe Tax = **~$2.20 (4.4%)**. Same over ACH: $0.40 + $0.20 + $0.25 = **~$0.85 (1.7%)**. At $10 the card path costs 5.9%. Set the smallest pack at $25–50.
 
 ### Hard quotas that are cost/architecture inputs
 
-| Limit | Value | Adjustable? | Source |
-|---|---|---|---|
-| Lambda zip package | 50 MB zipped (API), **250 MB unzipped incl. layers** | No | [Lambda limits](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) |
-| Lambda container image | 10 GB uncompressed | No | same |
-| Lambda-managed code storage | 300 GB/region | **No** | same |
-| Lambda sync response / streamed | 6 MB / 200 MB | No | same |
-| Lambda layers per function | 5 | No | same |
-| Target groups per ALB | 100 | **No** | [ALB limits](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html) |
-| Target groups per forward action | 5 | **No** | same |
-| Load balancers per target group | 1 | **No** | same |
-| Rules per ALB | 100 (excl. default) | Yes | same |
-| SNI certificates per ALB | 25 (excl. default) | Yes | [https-listener-certificates](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/https-listener-certificates.html) |
-| CloudFront keys per key group / groups per account | 5 / 10 | Yes (ticket) | [CloudFront limits](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html) |
-| Account-level CW Logs subscription filters | 1 per account per Region | No | [Subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Subscriptions.html) |
-| Subscription filters per log group | 5 | No | same |
-| S3 single PUT / multipart parts | 5 GB / 10,000 (5 MiB–5 GiB each) | No | [S3 qfacts](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html) |
-| Stripe unused credit grants per customer | 100 | No | [billing credits](https://docs.stripe.com/billing/subscriptions/usage-based/billing-credits) |
-| Lambda extensions per function | 10 | No | [Extensions API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-extensions-api.html) |
-| Lambda shutdown budget (external extension) | 2,000 ms then SIGKILL | No | same |
-| Lambda init budget (on-demand) | 10 s total | No | [runtime environment](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html) |
+| Limit                                              | Value                                                | Adjustable?  | Source                                                                                                                              |
+| -------------------------------------------------- | ---------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Lambda zip package                                 | 50 MB zipped (API), **250 MB unzipped incl. layers** | No           | [Lambda limits](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)                                            |
+| Lambda container image                             | 10 GB uncompressed                                   | No           | same                                                                                                                                |
+| Lambda-managed code storage                        | 300 GB/region                                        | **No**       | same                                                                                                                                |
+| Lambda sync response / streamed                    | 6 MB / 200 MB                                        | No           | same                                                                                                                                |
+| Lambda layers per function                         | 5                                                    | No           | same                                                                                                                                |
+| Target groups per ALB                              | 100                                                  | **No**       | [ALB limits](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html)                         |
+| Target groups per forward action                   | 5                                                    | **No**       | same                                                                                                                                |
+| Load balancers per target group                    | 1                                                    | **No**       | same                                                                                                                                |
+| Rules per ALB                                      | 100 (excl. default)                                  | Yes          | same                                                                                                                                |
+| SNI certificates per ALB                           | 25 (excl. default)                                   | Yes          | [https-listener-certificates](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/https-listener-certificates.html) |
+| CloudFront keys per key group / groups per account | 5 / 10                                               | Yes (ticket) | [CloudFront limits](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html)                      |
+| Account-level CW Logs subscription filters         | 1 per account per Region                             | No           | [Subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Subscriptions.html)                                        |
+| Subscription filters per log group                 | 5                                                    | No           | same                                                                                                                                |
+| S3 single PUT / multipart parts                    | 5 GB / 10,000 (5 MiB–5 GiB each)                     | No           | [S3 qfacts](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html)                                                      |
+| Stripe unused credit grants per customer           | 100                                                  | No           | [billing credits](https://docs.stripe.com/billing/subscriptions/usage-based/billing-credits)                                        |
+| Lambda extensions per function                     | 10                                                   | No           | [Extensions API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-extensions-api.html)                                         |
+| Lambda shutdown budget (external extension)        | 2,000 ms then SIGKILL                                | No           | same                                                                                                                                |
+| Lambda init budget (on-demand)                     | 10 s total                                           | No           | [runtime environment](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html)                                 |
 
 ---
 
@@ -355,7 +356,7 @@ $1.75 processing + $0.20 post-payment invoice (capped path) + $0.25 Stripe Tax =
 
 **Whether the Stripe surcharge preview API supports Invoices or Subscriptions at all.** Absent from the interoperability list rather than explicitly excluded.
 
-**Android developer verification mechanics** — whether registration binds package name *and* signing certificate, and whether a platform can register on customers' behalf. Not stated on any Google page found. Whether the Android Developer Console API (global Aug 2026) can automate it is also unverified. **Cost of being wrong: existential for the app-store feature.** If it cannot be automated, package registration becomes a manual step in every customer's first deploy.
+**Android developer verification mechanics** — whether registration binds package name _and_ signing certificate, and whether a platform can register on customers' behalf. Not stated on any Google page found. Whether the Android Developer Console API (global Aug 2026) can automate it is also unverified. **Cost of being wrong: existential for the app-store feature.** If it cannot be automated, package registration becomes a manual step in every customer's first deploy.
 
 **Whether AWS KMS asymmetric keys can back `apksigner` directly.** CloudHSM's PKCS#11 path is verified; a KMS path exists only as third-party `aws-kms-pkcs11`. Treat CloudHSM as the verified route.
 
@@ -365,7 +366,7 @@ $1.75 processing + $0.20 post-payment invoice (capped path) + $0.25 Stripe Tax =
 
 **ALB Always Free hours under the post-July-2025 model, and whether ElastiCache Serverless enforces a minimum ECPU charge.** Both unresolved; both small.
 
-**Third-party pooler latency figures.** Supavisor's reported +80–160% vs PgBouncer/PgCat comes from vendor blogs whose methodology could not be retrieved. No measured RSS-vs-statement-count curves exist for *any* pooler under prepared-statement load — all memory sizing here reasons from data structures, not measurement.
+**Third-party pooler latency figures.** Supavisor's reported +80–160% vs PgBouncer/PgCat comes from vendor blogs whose methodology could not be retrieved. No measured RSS-vs-statement-count curves exist for _any_ pooler under prepared-statement load — all memory sizing here reasons from data structures, not measurement.
 
 ### Highest-consequence risks
 

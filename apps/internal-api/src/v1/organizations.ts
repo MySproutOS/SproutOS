@@ -18,7 +18,7 @@ import { requirePermission } from "../rbac"
 import { authMiddleware } from "../middleware"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { ErrorCode } from "../utils/errors.enum"
-import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
 import { cursorPaginate, decodeCursor } from "../utils/pagination"
 import { auditContext } from "../utils/request-context"
 import {
@@ -35,6 +35,15 @@ import {
 const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
 }
+
+/**
+ * How many organizations one person may own.
+ *
+ * Organizations are how billing and GitHub integration are split, so a person with many clients has
+ * a real reason to hold several — the cap is there to stop automated creation, not to ration a
+ * legitimate workflow, which is why it is fifty rather than five.
+ */
+export const MAX_ORGANIZATIONS_PER_USER = 50
 
 const app = new Hono()
   .use(authMiddleware)
@@ -109,6 +118,7 @@ const app = new Hono()
           content: { "application/json": { schema: resolver(organizationSchemaCreateResponse) } },
         },
         400: { description: "Invalid name or slug", ...errorResponse },
+        409: { description: "The caller already owns the maximum number of organizations" },
       },
     }),
     validator("json", organizationSchemaCreateRequest),
@@ -120,6 +130,32 @@ const app = new Hono()
         return throwBadRequest(c, "Slug is reserved or malformed", ErrorCode.ValidationFailed, {
           target: "slug",
         })
+      }
+
+      /*
+        The cap on organizations one person can own.
+
+        Counted on ownership, not membership: being invited to other people's organizations is not
+        something a person controls, and capping it would let anyone lock a user out of creating
+        their own by inviting them fifty-one times.
+
+        Soft-deleted organizations do not count. A user who creates and deletes fifty is not at a
+        limit they cannot see the cause of.
+      */
+      const owned = await db
+        .selectFrom("organization")
+        .select((eb) => eb.fn.countAll<string>().as("count"))
+        .where("ownerUserId", "=", user.id)
+        .where("deletedAt", "is", null)
+        .executeTakeFirst()
+
+      if (Number(owned?.count ?? 0) >= MAX_ORGANIZATIONS_PER_USER) {
+        return throwError(
+          c,
+          409,
+          ErrorCode.OperationFailed,
+          `You already own ${MAX_ORGANIZATIONS_PER_USER} organizations, which is the maximum. Delete one to create another.`,
+        )
       }
 
       const organization = await provisionOrganization(db).createOrganization({
