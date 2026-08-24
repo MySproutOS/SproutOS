@@ -21,12 +21,29 @@ The decision taken now is to stop paying for idle capacity in every layer at onc
   - `services/router` — the front door. Resolves a hostname to a Lambda through ElastiCache,
     invokes it, and does tenant-splitting for Valkey, OpenSearch and S3. It also owns customer
     workflow dispatch (BullMQ and Celery) and its own background queue.
+
+**There are two Valkeys and they are not the same system.** Confusing them is easy and expensive:
+
+| | Where | Whose | What for |
+| --- | --- | --- | --- |
+| **Platform Valkey** | ElastiCache, in AWS | ours | hostname → Lambda resolution, billing counters, the router's own queue |
+| **Tenant Valkey** | OVH, self-hosted | customers' | the data customers store, and the queues their workflows run on |
+
+The platform one is a single small managed instance on the router's hot path, where a managed
+service is worth paying for. The tenant one is many small tenants multiplexed onto shared memory,
+which is exactly the shape ElastiCache prices worst — see below.
   - `services/pg-proxy` — a Postgres bouncer in front of self-hosted Neon, and the Neon control
     plane.
 - **One ALB** in front of both, separated by host-based listener rules, with blue/green by switching
   target groups.
-- **Stateful services on one OVH host**: OpenSearch and Valkey for tenant data, ClickHouse and Kafka
-  for logs. Neon stays on AWS, beside the proxy that fronts it.
+- **Stateful services on one OVH host**: OpenSearch and Valkey **for tenant data**, ClickHouse and
+  Kafka for logs. Neon stays on AWS, beside the proxy that fronts it.
+
+  The pricing research validates this rather than merely permitting it. ElastiCache Serverless is
+  $0.084/GB-hour — **$61.32 per GB-month** — against $0.0102 per GiB-hour for memory on an
+  `m7g.large`, an 8.2× difference before the ECPU charge. Per-tenant serverless pricing is the worst
+  possible fit for multiplexing many small tenant keyspaces, so tenant Valkey belongs on hardware we
+  rent whole. The platform's own instance is one instance and does not have that shape.
 
 ## Why two binaries and not one
 
