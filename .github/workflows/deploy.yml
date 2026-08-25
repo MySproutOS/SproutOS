@@ -54,9 +54,14 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      # No submodules. `vendor/android` and `vendor/deploy-action` are separate private
+      # repositories, and the job's `GITHUB_TOKEN` is scoped to this one — checkout fails with
+      # "Repository not found", which reads like the repository is missing rather than unreadable.
+      #
+      # Fetching them would need a cross-repository token, and neither is in this build: one is the
+      # Android client, the other is the Action customers run in their own repositories. The website
+      # and the router are built from this tree alone.
       - uses: actions/checkout@v5
-        with:
-          submodules: recursive
 
       - id: version
         # The commit, not a timestamp or a run number: a release names the tree it was built from,
