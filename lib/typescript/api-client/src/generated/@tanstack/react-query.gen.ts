@@ -25,7 +25,6 @@ import {
   deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
-  getAdminUsers,
   getV1AndroidCatalogue,
   getV1AuthMe,
   getV1Orgs,
@@ -41,6 +40,7 @@ import {
   getV1OrgsByOrgSlugBillingTransactions,
   getV1OrgsByOrgSlugBillingUsage,
   getV1OrgsByOrgSlugDeploymentsByDeploymentId,
+  getV1OrgsByOrgSlugGithubOwners,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugGithubRepositoryName,
   getV1OrgsByOrgSlugInvites,
@@ -92,7 +92,6 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
-  postAdminUsersImpersonate,
   postV1ApkSigningClaim,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
@@ -191,8 +190,6 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
-  GetAdminUsersData,
-  GetAdminUsersResponse,
   GetV1AndroidCatalogueData,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
@@ -231,6 +228,9 @@ import type {
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdError,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse,
   GetV1OrgsByOrgSlugError,
+  GetV1OrgsByOrgSlugGithubOwnersData,
+  GetV1OrgsByOrgSlugGithubOwnersError,
+  GetV1OrgsByOrgSlugGithubOwnersResponse,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
   GetV1OrgsByOrgSlugGithubRepositoriesError,
   GetV1OrgsByOrgSlugGithubRepositoriesResponse,
@@ -376,9 +376,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateError,
-  PostAdminUsersImpersonateResponse,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimResponse,
   PostV1ApkSigningCompleteData,
@@ -2227,6 +2224,34 @@ export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteOptions = (
   )
   return opts as Omit<typeof opts, "initialData">
 }
+
+export const getV1OrgsByOrgSlugGithubOwnersQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugGithubOwnersData>,
+) => createQueryKey("getV1OrgsByOrgSlugGithubOwners", options)
+
+/**
+ * GitHub accounts a new repository could be created on
+ */
+export const getV1OrgsByOrgSlugGithubOwnersOptions = (
+  options: Options<GetV1OrgsByOrgSlugGithubOwnersData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugGithubOwnersResponse,
+    GetV1OrgsByOrgSlugGithubOwnersError,
+    GetV1OrgsByOrgSlugGithubOwnersResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugGithubOwnersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugGithubOwners({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugGithubOwnersQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugGithubRepositoryNameQueryKey = (
   options: Options<GetV1OrgsByOrgSlugGithubRepositoryNameData>,
@@ -4692,100 +4717,3 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
-
-export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
-  createQueryKey("getAdminUsers", options)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersOptions = (options?: Options<GetAdminUsersData>) =>
-  queryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    GetAdminUsersResponse,
-    ReturnType<typeof getAdminUsersQueryKey>
-  >({
-    queryFn: async ({ queryKey, signal }) => {
-      const { data } = await getAdminUsers({
-        ...options,
-        ...queryKey[0],
-        signal,
-        throwOnError: true,
-      })
-      return data
-    },
-    queryKey: getAdminUsersQueryKey(options),
-  })
-
-export const getAdminUsersInfiniteQueryKey = (
-  options?: Options<GetAdminUsersData>,
-): QueryKey<Options<GetAdminUsersData>> => createQueryKey("getAdminUsers", options, true)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersInfiniteOptions = (options?: Options<GetAdminUsersData>) => {
-  const opts = infiniteQueryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    InfiniteData<GetAdminUsersResponse>,
-    QueryKey<Options<GetAdminUsersData>>,
-    string | Pick<QueryKey<Options<GetAdminUsersData>>[0], "body" | "headers" | "path" | "query">
-  >(
-    // @ts-ignore
-    {
-      queryFn: async ({ pageParam, queryKey, signal }) => {
-        // @ts-ignore
-        const page: Pick<
-          QueryKey<Options<GetAdminUsersData>>[0],
-          "body" | "headers" | "path" | "query"
-        > =
-          typeof pageParam === "object"
-            ? pageParam
-            : {
-                query: {
-                  cursor: pageParam,
-                },
-              }
-        const params = createInfiniteParams(queryKey, page)
-        const { data } = await getAdminUsers({
-          ...options,
-          ...params,
-          signal,
-          throwOnError: true,
-        })
-        return data
-      },
-      queryKey: getAdminUsersInfiniteQueryKey(options),
-    },
-  )
-  return opts as Omit<typeof opts, "initialData">
-}
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonateMutation = (
-  options?: Partial<Options<PostAdminUsersImpersonateData>>,
-): UseMutationOptions<
-  PostAdminUsersImpersonateResponse,
-  PostAdminUsersImpersonateError,
-  Options<PostAdminUsersImpersonateData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostAdminUsersImpersonateResponse,
-    PostAdminUsersImpersonateError,
-    Options<PostAdminUsersImpersonateData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postAdminUsersImpersonate({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}

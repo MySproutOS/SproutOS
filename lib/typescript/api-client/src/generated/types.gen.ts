@@ -2339,6 +2339,41 @@ export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
 export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
   GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
 
+export type GetV1OrgsByOrgSlugGithubOwnersData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/github/owners"
+}
+
+export type GetV1OrgsByOrgSlugGithubOwnersErrors = {
+  /**
+   * Caller lacks github:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugGithubOwnersError =
+  GetV1OrgsByOrgSlugGithubOwnersErrors[keyof GetV1OrgsByOrgSlugGithubOwnersErrors]
+
+export type GetV1OrgsByOrgSlugGithubOwnersResponses = {
+  /**
+   * One entry per usable installation, oldest first
+   */
+  200: {
+    data: Array<{
+      login: string
+      accountType: string
+      isDefault: boolean
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugGithubOwnersResponse =
+  GetV1OrgsByOrgSlugGithubOwnersResponses[keyof GetV1OrgsByOrgSlugGithubOwnersResponses]
+
 export type GetV1OrgsByOrgSlugGithubRepositoryNameData = {
   body?: never
   path: {
@@ -2346,6 +2381,7 @@ export type GetV1OrgsByOrgSlugGithubRepositoryNameData = {
   }
   query: {
     name: string
+    owner?: string
   }
   url: "/v1/orgs/{orgSlug}/github/repository-name"
 }
@@ -5802,73 +5838,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

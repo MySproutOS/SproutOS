@@ -11,10 +11,21 @@ import {
 } from "@ui/base/ui/dialog"
 import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
-import { CheckIcon, GitForkIcon, FolderGitIcon, PlusIcon, SparklesIcon, XIcon } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/base/ui/select"
+import {
+  CheckIcon,
+  FolderGitIcon,
+  GitForkIcon,
+  GlobeIcon,
+  LockIcon,
+  PlusIcon,
+  SparklesIcon,
+  XIcon,
+} from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   useCreateProject,
+  useGithubOwners,
   useGithubRepositories,
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
@@ -56,6 +67,26 @@ const CARDS: { id: Source; icon: typeof GitForkIcon; title: string; detail: stri
   },
 ]
 
+const VISIBILITY: {
+  private: boolean
+  icon: typeof GlobeIcon
+  label: string
+  detail: string
+}[] = [
+  {
+    private: false,
+    icon: GlobeIcon,
+    label: "Public",
+    detail: "Anyone can read the code. You choose who can push.",
+  },
+  {
+    private: true,
+    icon: LockIcon,
+    label: "Private",
+    detail: "Only people you invite on GitHub can see it.",
+  },
+]
+
 export function NewProjectDialog({ orgSlug }: { orgSlug: string }) {
   const [open, setOpen] = useState(false)
 
@@ -94,10 +125,25 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const [listingId, setListingId] = useState<string | null>(null)
   const [repositoryId, setRepositoryId] = useState<string | null>(null)
   const [touchedRepoName, setTouchedRepoName] = useState(false)
+  const [owner, setOwner] = useState<string | null>(null)
+  /*
+    Public by default, and stated rather than assumed.
+
+    The API defaults a new repository to private, which is the right default for a caller who said
+    nothing. A person filling in this form did say something, and what they overwhelmingly want is
+    a repository they can show somebody — so the form makes the choice explicitly and sends it.
+  */
+  const [isPrivate, setIsPrivate] = useState(false)
 
   const navigate = useNavigate()
   const listings = useStoreListings()
   const repositories = useGithubRepositories(orgSlug, source === "repository")
+  const owners = useGithubOwners(orgSlug, source !== "repository")
+  const ownerOptions = owners.data?.data ?? []
+  // The picker is uncontrolled until the list arrives, so the effective owner is the chosen one or
+  // whichever the API marked default — the same one the server would have used on its own.
+  const effectiveOwner =
+    owner ?? ownerOptions.find((candidate) => candidate.isDefault)?.login ?? null
   const create = useCreateProject(orgSlug)
 
   /*
@@ -122,6 +168,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const nameCheck = useRepositoryNameCheck(
     orgSlug,
     debounced,
+    effectiveOwner,
     source !== "repository" && debounced.length > 0,
   )
 
@@ -144,10 +191,21 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
               name: name.trim(),
               source:
                 source === "store"
-                  ? { type: "store", storeListingId: listingId!, repositoryName }
+                  ? {
+                      type: "store",
+                      storeListingId: listingId!,
+                      repositoryName,
+                      private: isPrivate,
+                      ...(effectiveOwner === null ? {} : { ownerLogin: effectiveOwner }),
+                    }
                   : source === "repository"
                     ? { type: "repository", repositoryId: repositoryId! }
-                    : { type: "blank", repositoryName },
+                    : {
+                        type: "blank",
+                        repositoryName,
+                        private: isPrivate,
+                        ...(effectiveOwner === null ? {} : { ownerLogin: effectiveOwner }),
+                      },
             },
           },
           {
@@ -260,17 +318,59 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
 
       {needsRepoName && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="np-reponame">GitHub repository name</Label>
-          <Input
-            id="np-reponame"
-            value={repositoryName}
-            onChange={(event) => {
-              setTouchedRepoName(true)
-              setRepositoryName(event.target.value)
-            }}
-            placeholder="toyourcredit"
-            aria-describedby="np-reponame-status"
-          />
+          <Label htmlFor="np-reponame">GitHub repository</Label>
+          {/*
+            Owner and name together, in that order, because that is the repository's actual address.
+            Splitting them into separate rows hides the fact that "is this name free" is only ever a
+            question about one account — the same name can be free on the personal account and taken
+            on the organization.
+          */}
+          <div className="flex items-center gap-1.5">
+            {ownerOptions.length > 1 ? (
+              <Select
+                items={ownerOptions.map((candidate) => ({
+                  label: candidate.login,
+                  value: candidate.login,
+                }))}
+                value={effectiveOwner}
+                onValueChange={(next) => {
+                  setOwner(next)
+                }}
+              >
+                <SelectTrigger className="w-[11rem] shrink-0" aria-label="Repository owner">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownerOptions.map((candidate) => (
+                    <SelectItem key={candidate.login} value={candidate.login}>
+                      {candidate.login}
+                      {candidate.accountType === "Organization" ? "" : " (personal)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              /*
+                One account is not a choice, so it is shown rather than offered — a select with a
+                single option asks somebody to confirm something they cannot change. Nothing at all
+                would be worse: the full path is what makes the availability line below legible.
+              */
+              <span className="shrink-0 truncate text-[13px] text-muted-foreground">
+                {effectiveOwner ?? "—"}
+              </span>
+            )}
+            <span className="text-muted-foreground">/</span>
+            <Input
+              id="np-reponame"
+              value={repositoryName}
+              onChange={(event) => {
+                setTouchedRepoName(true)
+                setRepositoryName(event.target.value)
+              }}
+              placeholder="toyourcredit"
+              aria-describedby="np-reponame-status"
+            />
+          </div>
           <p id="np-reponame-status" className="flex items-center gap-1.5 text-[13px]">
             {repositoryName.length === 0 ? (
               <span className="text-muted-foreground">Where the code will live.</span>
@@ -288,6 +388,44 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
               </span>
             )}
           </p>
+        </div>
+      )}
+
+      {needsRepoName && (
+        <div className="flex flex-col gap-1.5">
+          <Label>Visibility</Label>
+          {/*
+            Two labelled choices rather than a switch. A switch shows one word and leaves the other
+            state to be inferred, and "private off" is not a sentence anybody wants to parse about
+            who can read their code.
+          */}
+          <div className="grid grid-cols-2 gap-2">
+            {VISIBILITY.map((option) => {
+              const Icon = option.icon
+              const selected = isPrivate === option.private
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setIsPrivate(option.private)
+                  }}
+                  className={`flex items-start gap-2 rounded-md border p-2.5 text-left transition-colors ${
+                    selected
+                      ? "border-leaf bg-leaf/10"
+                      : "border-border hover:border-muted-foreground"
+                  }`}
+                >
+                  <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-[13px] font-medium">{option.label}</span>
+                    <span className="text-[12px] text-muted-foreground">{option.detail}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 

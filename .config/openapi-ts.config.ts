@@ -1,7 +1,15 @@
 import { defineConfig } from "@hey-api/openapi-ts"
 
 export default defineConfig({
-  input: "http://localhost:3001/openapi",
+  /*
+    The running API, whose port is not always 3001.
+
+    It was hardcoded, which is fine until something else on the machine is already listening there —
+    and then the generator reads *that* service's document and rewrites this client against it. The
+    failure is not an error: it is a successful regeneration that silently drops every operation the
+    real API has, which is worth one environment variable to avoid.
+  */
+  input: process.env.OPENAPI_INPUT ?? `http://localhost:${process.env.API_PORT ?? "3001"}/openapi`,
   output: {
     indexFile: false,
     path: "lib/typescript/api-client/src/generated",

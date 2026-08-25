@@ -23,6 +23,7 @@ import { throwError, throwNotFound, throwTooManyRequests } from "../utils/http-e
 import {
   githubSchemaNameCheckQuery,
   githubSchemaNameCheckResponse,
+  githubSchemaOwnerListResponse,
   githubSchemaOrgParam,
   githubSchemaRepositoryListQuery,
   githubSchemaRepositoryListResponse,
@@ -161,6 +162,42 @@ const app = new Hono()
     },
   )
   .get(
+    "/:orgSlug/github/owners",
+    describeRoute({
+      description: "GitHub accounts a new repository could be created on",
+      responses: {
+        200: {
+          description: "One entry per usable installation, oldest first",
+          content: { "application/json": { schema: resolver(githubSchemaOwnerListResponse) } },
+        },
+        403: { description: "Caller lacks github:read", ...errorResponse },
+      },
+    }),
+    validator("param", githubSchemaOrgParam),
+    requirePermission("github:read", collectionResource("github", "installation")),
+    async (c) => {
+      const installations = await fetchGithubInstallation(db).listUsable(c.var.organization.id, [
+        "accountLogin",
+        "accountType",
+      ])
+
+      /*
+        An empty list, not a 404.
+
+        "Where should this live" with no answers is a legitimate state — the App is simply not
+        installed yet — and the dialog has something useful to say about it. A 404 here would make
+        the picker indistinguishable from a broken request.
+      */
+      return c.json({
+        data: installations.map((installation, index) => ({
+          login: installation.accountLogin,
+          accountType: installation.accountType,
+          isDefault: index === 0,
+        })),
+      })
+    },
+  )
+  .get(
     "/:orgSlug/github/repository-name",
     describeRoute({
       description: "Whether a repository name is free on the account a new project would use",
@@ -179,7 +216,7 @@ const app = new Hono()
     requirePermission("github:read", collectionResource("github", "installation")),
     async (c) => {
       const organization = c.var.organization
-      const { name } = c.req.valid("query")
+      const { name, owner } = c.req.valid("query")
 
       /*
         The shape rules first, because they are the ones a person can fix while typing and they
@@ -197,7 +234,22 @@ const app = new Hono()
         "installationId",
         "accountLogin",
       ])
-      const installation = installations[0]
+
+      /*
+        Check against the account the caller actually picked.
+
+        Before the owner picker this took `installations[0]` unconditionally. With a picker that is
+        a wrong answer rather than an approximate one: a name free on the personal account and taken
+        on the organization would be reported free, and the failure would surface as a failed
+        provision. An unrecognised owner falls through to `undefined`, which the branch below
+        already explains rather than guessing at.
+      */
+      const installation =
+        owner === undefined
+          ? installations[0]
+          : installations.find(
+              (candidate) => candidate.accountLogin.toLowerCase() === owner.toLowerCase(),
+            )
 
       /*
         No installation is not "unavailable".
@@ -212,7 +264,9 @@ const app = new Hono()
           ownerLogin: null,
           available: false,
           reason:
-            "No GitHub account is connected to this organization yet, so the name cannot be checked. Install the SproutOS GitHub App on the account that should own the repository.",
+            owner === undefined
+              ? "No GitHub account is connected to this organization yet, so the name cannot be checked. Install the SproutOS GitHub App on the account that should own the repository."
+              : `The SproutOS GitHub App is not installed on ${owner}, so the name cannot be checked there.`,
         })
       }
 

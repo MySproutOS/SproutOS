@@ -1,7 +1,11 @@
 import { defineConfig } from "@hey-api/openapi-ts"
 
 export default defineConfig({
-  input: "http://localhost:3001/admin-openapi",
+  // Same as the public config: the port is not always 3001, and reading another service's document
+  // rewrites this client against it without erroring.
+  input:
+    process.env.OPENAPI_ADMIN_INPUT ??
+    `http://localhost:${process.env.API_PORT ?? "3001"}/admin-openapi`,
   output: {
     indexFile: false,
     path: "lib/typescript/api-client/src/admin-generated",

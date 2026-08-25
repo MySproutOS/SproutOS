@@ -11,7 +11,6 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
-  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -53,7 +52,6 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
-  postAdminUsersImpersonateResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAnalysesResponseTransformer,
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
@@ -116,8 +114,6 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
-  GetAdminUsersData,
-  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
@@ -157,6 +153,9 @@ import type {
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses,
   GetV1OrgsByOrgSlugErrors,
+  GetV1OrgsByOrgSlugGithubOwnersData,
+  GetV1OrgsByOrgSlugGithubOwnersErrors,
+  GetV1OrgsByOrgSlugGithubOwnersResponses,
   GetV1OrgsByOrgSlugGithubRepositoriesData,
   GetV1OrgsByOrgSlugGithubRepositoriesErrors,
   GetV1OrgsByOrgSlugGithubRepositoriesResponses,
@@ -303,9 +302,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateErrors,
-  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimErrors,
   PostV1ApkSigningClaimResponses,
@@ -1425,6 +1421,22 @@ export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolea
     GetV1OrgsByOrgSlugGithubRepositoriesErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/github/repositories", ...options })
+
+/**
+ * GitHub accounts a new repository could be created on
+ */
+export const getV1OrgsByOrgSlugGithubOwners = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugGithubOwnersData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugGithubOwnersResponses,
+  GetV1OrgsByOrgSlugGithubOwnersErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugGithubOwnersResponses,
+    GetV1OrgsByOrgSlugGithubOwnersErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/github/owners", ...options })
 
 /**
  * Whether a repository name is free on the account a new project would use
@@ -3030,40 +3042,4 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
-  })
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsers = <ThrowOnError extends boolean = false>(
-  options?: Options<GetAdminUsersData, ThrowOnError>,
-): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
-    responseTransformer: getAdminUsersResponseTransformer,
-    url: "/admin/users",
-    ...options,
-  })
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
-  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
-): RequestResult<
-  PostAdminUsersImpersonateResponses,
-  PostAdminUsersImpersonateErrors,
-  ThrowOnError
-> =>
-  (options?.client ?? client).post<
-    PostAdminUsersImpersonateResponses,
-    PostAdminUsersImpersonateErrors,
-    ThrowOnError
-  >({
-    responseTransformer: postAdminUsersImpersonateResponseTransformer,
-    url: "/admin/users/impersonate",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
   })

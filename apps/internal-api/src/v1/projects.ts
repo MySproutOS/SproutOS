@@ -4,7 +4,7 @@ import {
   sealEnvVarValue,
   sealProjectFileContents,
 } from "@lib/envelope"
-import { JOB_KINDS, enqueue } from "@lib/jobs"
+import { GITHUB_EVENT_KINDS, JOB_KINDS, enqueue } from "@lib/jobs"
 import {
   allocateProjectSlug,
   autoUpdateDefaultFor,
@@ -682,6 +682,25 @@ const app = new Hono()
         // tenth, so a larger number would only delay the error a customer needs to see.
         maxAttempts: 3,
       })
+
+      /*
+        Ask GitHub whether the App is already installed on the account this repository will live on.
+
+        Nothing else would. `github.installation.sync` drops an installation on an account no
+        organization owns yet, and creating a project is not a GitHub event, so no delivery ever
+        arrives to reconsider it — installing the App before creating the first project left it
+        permanently invisible, and this route is the moment that stops being true.
+
+        Keyed on the login, so several projects under one account queue one discovery.
+      */
+      if (plan.mode === "create") {
+        await enqueue(db, {
+          kind: GITHUB_EVENT_KINDS.installationDiscover,
+          idempotencyKey: `${GITHUB_EVENT_KINDS.installationDiscover}:${organization.id}:${plan.ownerLogin.toLowerCase()}`,
+          payload: { login: plan.ownerLogin, organizationId: organization.id },
+          maxAttempts: 3,
+        })
+      }
 
       /*
         The attempt, not the install.

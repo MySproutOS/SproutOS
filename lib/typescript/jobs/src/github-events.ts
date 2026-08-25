@@ -1,6 +1,12 @@
 import { crudDeployment } from "@lib/dao"
+import {
+  appJwt,
+  createGitHubClient,
+  envAppJwtSigner,
+  MissingGitHubAppConfigError,
+} from "@lib/github"
 import type { DB } from "@sproutos/db"
-import type { Kysely } from "kysely"
+import { type Kysely, sql } from "kysely"
 import { v7 } from "uuid"
 import { type Committer, recordCommitters } from "@lib/billing"
 import { PUBLISH_KINDS } from "./publish"
@@ -26,6 +32,7 @@ import type { JobHandler } from "./worker"
 
 export const GITHUB_EVENT_KINDS = {
   installationSync: "github.installation.sync",
+  installationDiscover: "github.installation.discover",
   push: "github.push",
   pullRequest: "github.pull_request",
   ping: "github.ping",
@@ -92,16 +99,42 @@ const installationSync: JobHandler = async (job, { db }) => {
     return
   }
 
+  await linkInstallation(db, organizationId, {
+    id: installation.id,
+    login,
+    accountType: installation.account.type ?? "User",
+    repositorySelection: installation.repository_selection ?? "selected",
+    permissions: installation.permissions ?? {},
+    suspended: action === "suspend",
+  })
+}
+
+/** The facts about an installation this platform stores, from a webhook or from `/app/installations`. */
+type InstallationFacts = {
+  id: number
+  login: string
+  accountType: string
+  repositorySelection: string
+  permissions: Record<string, string>
+  suspended: boolean
+}
+
+/** Writes the row that makes the App usable for an organization. */
+async function linkInstallation(
+  db: Kysely<DB>,
+  organizationId: string,
+  facts: InstallationFacts,
+): Promise<void> {
   await db
     .insertInto("githubInstallation")
     .values({
       id: v7(),
       organizationId,
-      installationId: String(installation.id),
-      accountLogin: login,
-      accountType: installation.account.type ?? "User",
-      repositorySelection: installation.repository_selection ?? "selected",
-      permissions: (installation.permissions ?? {}) as never,
+      installationId: String(facts.id),
+      accountLogin: facts.login,
+      accountType: facts.accountType,
+      repositorySelection: facts.repositorySelection,
+      permissions: facts.permissions as never,
     })
     /*
       Keyed on the installation, because GitHub reuses the id across events — `created`,
@@ -111,16 +144,102 @@ const installationSync: JobHandler = async (job, { db }) => {
     .onConflict((oc) =>
       oc.column("installationId").doUpdateSet({
         organizationId,
-        accountLogin: login,
-        repositorySelection: installation.repository_selection ?? "selected",
-        permissions: (installation.permissions ?? {}) as never,
-        suspendedAt: action === "suspend" ? new Date() : null,
+        accountLogin: facts.login,
+        repositorySelection: facts.repositorySelection,
+        permissions: facts.permissions as never,
+        suspendedAt: facts.suspended ? new Date() : null,
         updatedAt: new Date(),
       }),
     )
     .execute()
 
-  console.info(`[jobs] installation ${installation.id} on ${login} linked to ${organizationId}`)
+  console.info(`[jobs] installation ${facts.id} on ${facts.login} linked to ${organizationId}`)
+}
+
+/** What `GET /app/installations` returns, narrowed to the fields stored. */
+type AppInstallation = {
+  id: number
+  account?: { login?: string; type?: string } | null
+  repository_selection?: string
+  permissions?: Record<string, string>
+  suspended_at?: string | null
+}
+
+/**
+ * Links an installation that arrived before there was anything to link it to.
+ *
+ * `installationSync` drops an installation on an account no organization owns yet — correctly, since
+ * guessing would hand one customer a token for another's repositories. Its comment promised that "a
+ * later `installation_repositories` event or a re-install links it once there is something to link
+ * it to", and that promise had no mechanism behind it: creating a project is not a GitHub event, so
+ * no delivery ever arrives. Installing the App *before* creating the first project — the order the
+ * onboarding copy actually suggests — left the App permanently invisible.
+ *
+ * Redelivering the original webhook does not fix it either. The receiver keys idempotency on
+ * `X-GitHub-Delivery`, and a manual redelivery reuses that id, so the redelivery is dropped as a
+ * duplicate of the delivery that ran too early. The 200 is honest; nothing runs.
+ *
+ * So the link is re-derived from GitHub rather than waited for. `GET /app/installations` is the
+ * authority on where the App is installed, and it is asked at the moment a `repository` row makes
+ * the answer meaningful. No guessing: the login must match one this organization already owns.
+ */
+const installationDiscover: JobHandler = async (job, { db }) => {
+  const payload = job.payload as { login?: string; organizationId?: string }
+  const login = payload.login
+  const organizationId = payload.organizationId
+  if (login === undefined || organizationId === undefined) {
+    console.warn("[jobs] installation discovery with no login; ignoring")
+    return
+  }
+
+  /*
+    The row must confirm the claim, not the payload.
+
+    The job's `organizationId` comes from whoever enqueued it. Re-reading `repository` means a
+    forged or stale payload can only re-link an account this organization genuinely owns.
+  */
+  const owner = await organizationForLogin(db, login)
+  if (owner !== organizationId) {
+    console.warn(`[jobs] installation discovery for ${login}: organization no longer owns it`)
+    return
+  }
+
+  let signJwt: () => string
+  try {
+    signJwt = envAppJwtSigner()
+  } catch (error) {
+    if (error instanceof MissingGitHubAppConfigError) {
+      // Development and any deployment without the App configured. Forking still works on the
+      // customer's own OAuth token, so this is a missing enhancement, not a failure.
+      console.info(`[jobs] installation discovery for ${login}: GitHub App is not configured`)
+      return
+    }
+    throw error
+  }
+
+  const response = await createGitHubClient().request<AppInstallation[]>({
+    method: "GET",
+    path: "/app/installations?per_page=100",
+    credential: appJwt(signJwt()),
+  })
+
+  // GitHub logins are case-insensitive, and `repository.owner_login` preserves whatever case the
+  // caller typed. Matching case-sensitively would miss an installation that is plainly there.
+  const target = login.toLowerCase()
+  const match = response.data.find((entry) => entry.account?.login?.toLowerCase() === target)
+  if (match === undefined) {
+    console.info(`[jobs] installation discovery for ${login}: the App is not installed there`)
+    return
+  }
+
+  await linkInstallation(db, organizationId, {
+    id: match.id,
+    login: match.account?.login ?? login,
+    accountType: match.account?.type ?? "User",
+    repositorySelection: match.repository_selection ?? "selected",
+    permissions: match.permissions ?? {},
+    suspended: match.suspended_at != null,
+  })
 }
 
 /**
@@ -325,12 +444,20 @@ const acknowledge: JobHandler = async (job) => {
   await Promise.resolve()
 }
 
-/** The organization owning repositories under a GitHub account login. */
+/**
+ * The organization owning repositories under a GitHub account login.
+ *
+ * Compared case-insensitively, because the two sides of the comparison come from different places:
+ * `repository.owner_login` keeps whatever case the customer typed into the new-project form, and
+ * GitHub answers with the account's canonical case. An exact match would report the App as not
+ * installed on an account it is plainly installed on, over a difference GitHub does not consider a
+ * difference at all.
+ */
 async function organizationForLogin(db: Kysely<DB>, login: string): Promise<string | undefined> {
   const row = await db
     .selectFrom("repository")
     .select(["organizationId"])
-    .where("ownerLogin", "=", login)
+    .where(sql<string>`lower(owner_login)`, "=", login.toLowerCase())
     .where("deletedAt", "is", null)
     .orderBy("createdAt", "asc")
     .executeTakeFirst()
@@ -340,6 +467,7 @@ async function organizationForLogin(db: Kysely<DB>, login: string): Promise<stri
 
 export const GITHUB_EVENT_HANDLERS: Record<string, JobHandler> = {
   [GITHUB_EVENT_KINDS.installationSync]: installationSync,
+  [GITHUB_EVENT_KINDS.installationDiscover]: installationDiscover,
   [GITHUB_EVENT_KINDS.push]: push,
   [GITHUB_EVENT_KINDS.pullRequest]: pullRequest,
   [GITHUB_EVENT_KINDS.ping]: acknowledge,

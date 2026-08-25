@@ -27,6 +27,25 @@ export const githubSchemaRepositoryListResponse = Type.Object({
 })
 
 /**
+ * Where a new repository could be created.
+ *
+ * One entry per installation the organization can use, which is the honest set: the App can only
+ * create a repository on an account it is installed on, so offering anything else in the picker
+ * would be offering a choice that fails in a background job minutes later.
+ */
+export const githubSchemaOwnerListResponse = Type.Object({
+  data: Type.Array(
+    Type.Object({
+      login: Type.String(),
+      /** `Organization` or `User`. The dialog labels the personal account differently. */
+      accountType: Type.String(),
+      /** The one used when the caller does not choose — the oldest installation. */
+      isDefault: Type.Boolean(),
+    }),
+  ),
+})
+
+/**
  * A repository name a person is part-way through typing.
  *
  * Deliberately not `pattern`-checked to GitHub's rules here. The point of this endpoint is to tell
@@ -36,6 +55,11 @@ export const githubSchemaRepositoryListResponse = Type.Object({
  */
 export const githubSchemaNameCheckQuery = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 100 }),
+  /**
+   * Which account to check against. Omitted falls back to the organization's first installation,
+   * which is what every caller did before the picker existed.
+   */
+  owner: Type.Optional(Type.String({ minLength: 1, maxLength: 39 })),
 })
 
 export const githubSchemaNameCheckResponse = Type.Object({
