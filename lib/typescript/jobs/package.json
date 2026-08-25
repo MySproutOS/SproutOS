@@ -23,6 +23,7 @@
     "@lib/lambda": "workspace:*",
     "@lib/observability": "workspace:*",
     "@lib/reaper": "workspace:*",
+    "@lib/sandbox": "workspace:*",
     "@lib/services": "workspace:*",
     "@lib/workflows": "workspace:*",
     "@sproutos/db": "workspace:*",

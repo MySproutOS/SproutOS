@@ -6,9 +6,16 @@ import type { PartialBy } from "../utils/types"
 /**
  * `sandbox` — one dev environment per (project, user).
  *
- * The table has existed since the init migration, with `pod_name`, `namespace`, `runtime_class`,
- * `idle_timeout_s` and `always_on` on it, and nothing in the repository read or wrote a single row.
- * `sandbox:read` and `sandbox:write` were in the action catalogue guarding nothing.
+ * The table has existed since the init migration and, for most of that time, nothing in the
+ * repository read or wrote a single row: `sandbox:read` and `sandbox:write` were in the action
+ * catalogue guarding nothing. It was written for Knative and Kata, and ADR 0026 deleted the cluster
+ * underneath it.
+ *
+ * `2026_09_23_00_00_00_sandbox_provider` repointed it at a rented provider. The row is now the
+ * control plane's half of a sandbox — who owns it, what it costs, when it was last used — while the
+ * provider holds the container. `external_id` is the join between the two, and it is null for the
+ * window between insert and create, deliberately: a create that dies mid-flight leaves a row that
+ * is still attributable and still reapable rather than an orphan nobody bills.
  */
 
 /**
@@ -27,26 +34,6 @@ import type { PartialBy } from "../utils/types"
 export const SANDBOX_STATES = ["starting", "running", "idle", "stopped", "failed"] as const
 
 export type SandboxState = (typeof SANDBOX_STATES)[number]
-
-/**
- * `sandbox.runtime_class` — any Kubernetes object name, because the cluster owns the set.
- *
- * Not a union. This was `"kata-fc" | "kata-clh"`, then `| "none"`, and then a GKE Sandbox node pool
- * made `gvisor` the honest answer and the check constraint rejected it. A RuntimeClass is created on
- * the cluster and named by `SANDBOX_RUNTIME_CLASS`; there is no set of values this repository can
- * know, and every attempt to enumerate one ends with the *truth* being refused while a stale default
- * stays legal. The database now checks the shape — a DNS-1123 label — and nothing more.
- *
- * `none` is the one value with a meaning assigned here: not a runtime class, said as a word because
- * the column is `not null` and a null would be indistinguishable from "not recorded yet".
- */
-export const NO_RUNTIME_CLASS = "none"
-
-/** A RuntimeClass name, or {@link NO_RUNTIME_CLASS}. */
-export type SandboxRuntimeClass = string
-
-/** What `sandbox_runtime_class_check` enforces: a Kubernetes object name. */
-export const RUNTIME_CLASS_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
 export function crudSandbox(db: Kysely<DB>) {
   async function create(

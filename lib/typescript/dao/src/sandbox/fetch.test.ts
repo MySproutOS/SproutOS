@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { crudSandbox, NO_RUNTIME_CLASS, RUNTIME_CLASS_PATTERN, SANDBOX_STATES } from "./crud"
+import { crudSandbox, SANDBOX_STATES } from "./crud"
 import { fetchSandbox } from "./fetch"
 
 /**
@@ -100,7 +100,6 @@ describe("fetchSandbox", () => {
       projectId,
       userId: ownerUserId,
       state: "running",
-      runtimeClass: "none",
     })
 
     expect((await fetchSandbox(db).forUser(organizationId, projectId, ownerUserId))?.id).toBe(
@@ -118,7 +117,6 @@ describe("fetchSandbox", () => {
       projectId,
       userId: ownerUserId,
       state: "running",
-      runtimeClass: "none",
       idleTimeoutS: 60,
       lastActivityAt: new Date(Date.now() - 120_000),
     })
@@ -126,7 +124,6 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
-      runtimeClass: "none",
       idleTimeoutS: 3600,
       lastActivityAt: new Date(),
     })
@@ -144,7 +141,6 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
-      runtimeClass: "none",
       idleTimeoutS: 1,
       alwaysOn: true,
       lastActivityAt: new Date(Date.now() - 86_400_000),
@@ -158,7 +154,6 @@ describe("fetchSandbox", () => {
       projectId,
       userId: await anotherUser(),
       state: "running",
-      runtimeClass: "none",
       idleTimeoutS: 60,
       lastActivityAt: new Date(Date.now() - 120_000),
     })
@@ -191,7 +186,7 @@ describe("fetchSandbox", () => {
 */
 describe("the sandbox vocabulary", () => {
   let reachable = false
-  let allowed: { state: string[]; runtimeClass: string[] } = { state: [], runtimeClass: [] }
+  let allowed: { state: string[] } = { state: [] }
 
   beforeAll(async () => {
     try {
@@ -207,10 +202,7 @@ describe("the sandbox vocabulary", () => {
           ...(rows.rows.find((row) => row.conname === name)?.def.matchAll(/'([a-z_-]+)'/g) ?? []),
         ].map((match) => match[1])
 
-      allowed = {
-        state: values("sandbox_state_check"),
-        runtimeClass: values("sandbox_runtime_class_check"),
-      }
+      allowed = { state: values("sandbox_state_check") }
     } catch {
       /* not reachable */
     }
@@ -229,56 +221,102 @@ describe("the sandbox vocabulary", () => {
   })
 
   /*
-    The runtime class is not enumerated, and that is the fix rather than an omission.
+    Neither the provider nor the sandbox class is enumerated, and that is the fix rather than an
+    omission.
 
-    The constraint listed `kata-fc` and `kata-clh`, then gained `none`, and then a GKE Sandbox node
-    pool made `gvisor` the honest answer and it was rejected too. A RuntimeClass is created on the
-    cluster; there is no set this schema can know, and each attempt to name one ended with the truth
-    being refused while a stale default stayed legal. What is checked now is the shape.
+    `sandbox_runtime_class_check` listed `kata-fc` and `kata-clh`, then gained `none`, and then a
+    GKE Sandbox node pool made `gvisor` the honest answer and it was rejected too. Each attempt to
+    name the set ended with the *truth* being refused while a stale default stayed legal. The
+    provider owns which classes exist — Daytona's own set is `linux-vm`, `container`, `android` and
+    `windows`, and it will grow — so what is checked is the shape, and `SANDBOX_CLASSES` in
+    `@lib/sandbox` owns which of them this platform actually supports.
   */
-  it("accepts any Kubernetes object name as a runtime class", async ({ skip }) => {
+  it("accepts any of the provider's classes, including ones we do not use yet", async ({
+    skip,
+  }) => {
     if (!reachable) skip()
 
-    for (const name of ["gvisor", "kata-fc", "runsc", NO_RUNTIME_CLASS]) {
-      expect(name).toMatch(RUNTIME_CLASS_PATTERN)
+    for (const sandboxClass of ["container", "android", "linux-vm", "windows"]) {
       const row = await crudSandbox(db).create({
         projectId,
         userId: ownerUserId,
         state: "stopped",
-        runtimeClass: name,
+        sandboxClass,
       })
-      expect(row.runtimeClass).toBe(name)
+      expect(row.sandboxClass).toBe(sandboxClass)
     }
   })
 
-  it("still refuses something a RuntimeClass could not be called", async ({ skip }) => {
+  it("refuses a sandbox class that could not be an identifier", async ({ skip }) => {
     if (!reachable) skip()
-
     await expect(
       crudSandbox(db).create({
         projectId,
         userId: ownerUserId,
         state: "stopped",
-        runtimeClass: "Not A Runtime Class",
+        sandboxClass: "Not A Class",
       }),
-    ).rejects.toThrow(/sandbox_runtime_class_check/)
+    ).rejects.toThrow(/sandbox_class_check/)
   })
 
   /*
-    No default on `runtime_class`.
-
-    The column defaulted to `kata-clh`, so a row asserted a hardware-virtualized boundary purely by
-    existing. A default is exactly the wrong mechanism for a fact about a pod that has not been
-    created yet — see the migration.
+    Resources are what `sandbox.meter` bills from, so a zero is not a validation error — it is a
+    free sandbox, and free compute has no error state (finding 0011). The constraint is the only
+    thing standing between a unit mix-up and a customer paying nothing for real usage.
   */
-  it("has no default runtime class for a row to inherit a lie from", async ({ skip }) => {
+  it("refuses a resource shape that would bill nothing", async ({ skip }) => {
     if (!reachable) skip()
-    const row = await sql<{ default: string | null }>`
-      select column_default as "default"
-      from information_schema.columns
-      where table_name = 'sandbox' and column_name = 'runtime_class'
-    `.execute(db)
-    expect(row.rows[0]?.default).toBeNull()
+
+    const impossible = [
+      { cpu: 0 },
+      { memoryGib: 0 },
+      { diskGib: 0 },
+      // A unit mix-up: MiB passed where GiB was meant.
+      { memoryGib: 4096 },
+    ]
+
+    for (const resources of impossible) {
+      await expect(
+        crudSandbox(db).create({
+          projectId,
+          userId: ownerUserId,
+          state: "stopped",
+          ...resources,
+        }),
+      ).rejects.toThrow(/sandbox_resources_check/)
+    }
+  })
+
+  /*
+    One row per remote sandbox.
+
+    A provision retried after losing its response can otherwise attach a second row to the same
+    rented container, and then both rows meter it. The customer pays twice for one sandbox and the
+    second charge is indistinguishable from a real one.
+  */
+  it("refuses a second row for the same provider sandbox", async ({ skip }) => {
+    if (!reachable) skip()
+    const externalId = `dup-${Date.now()}`
+    await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId })
+    await expect(
+      crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId }),
+    ).rejects.toThrow(/sandbox_provider_external_id_key/)
+  })
+
+  /*
+    Null `external_id` is the window between insert and create, and there are as many of those as
+    there are interrupted provisions — so the unique index has to be partial or the second one
+    fails on a collision that is not one.
+  */
+  it("allows many rows with no provider sandbox yet", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const rows = []
+    for (let i = 0; i < 2; i += 1) {
+      rows.push(await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" }))
+    }
+    expect(rows.map((row) => row.externalId)).toEqual([null, null])
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2)
   })
 
   it("does not allow the word the failure path first used", ({ skip }) => {

@@ -1,4 +1,5 @@
 import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
+import { daytonaConfigFromEnv, daytonaDriver, SandboxNotFoundError } from "@lib/sandbox"
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { tearDownDeployment } from "@lib/lambda"
 import { Redis } from "ioredis"
@@ -188,16 +189,40 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       // dispatch now and starts a Lambda per batch, so there is nothing left running to remove.
     }
 
-    // Dev sandboxes: a pod per user, each holding a node until its idle timeout.
+    /*
+      Dev sandboxes: one rented container per user, billed by the second for as long as it exists.
+
+      The earlier version of this marked the row `stopped` and cleared `pod_name`, which was the
+      whole teardown — for a pod, that was at least a lie the cluster would eventually correct. For
+      a rented sandbox it is worse than nothing: the row stops saying the sandbox is running while
+      the provider goes on charging for it, and the only record of what to cancel is the
+      `external_id` this used to leave behind.
+
+      So the provider is told first and the row goes second, in that order: a delete that succeeds
+      at the provider and then fails here leaves a row pointing at nothing, which the next run
+      treats as already-destroyed. The reverse leaves a paid container nothing references.
+    */
     const sandboxes = await db
       .selectFrom("sandbox")
-      .select(["id", "podName", "namespace"])
+      .select(["id", "externalId"])
       .where("projectId", "=", projectId)
       .execute()
 
-    for (const sandbox of sandboxes) {
-      await crudSandbox(db).update(sandbox.id, { state: "stopped", podName: null })
-      result.sandboxes += 1
+    if (sandboxes.length > 0) {
+      const driver = daytonaDriver(daytonaConfigFromEnv())
+      for (const sandbox of sandboxes) {
+        if (sandbox.externalId !== null) {
+          try {
+            await driver.destroy(sandbox.externalId)
+          } catch (error) {
+            // Already gone is done. Anything else has to stop the job, because the alternative is
+            // deleting our only record of a sandbox that is still running and still billing.
+            if (!(error instanceof SandboxNotFoundError)) throw error
+          }
+        }
+        await crudSandbox(db).remove(sandbox.id)
+        result.sandboxes += 1
+      }
     }
 
     /*
