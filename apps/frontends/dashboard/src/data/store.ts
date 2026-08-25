@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   getV1OrgsByOrgSlugProjectsQueryKey,
+  getV1StoreCategoriesOptions,
   getV1StoreListingsBySlugOptions,
   getV1StoreListingsOptions,
   getV1StoreListingsQueryKey,
@@ -67,8 +68,42 @@ function monthlyCost(value: string | null): bigint | null {
   return value === null ? null : BigInt(value)
 }
 
-export function useStoreListings() {
-  const query = useQuery(getV1StoreListingsOptions())
+/**
+ * The store's categories, for the filter pills.
+ *
+ * Seeded rows, not a fixed list in the client: `0003_store_category.ts` owns the set, and a copy
+ * here would be a second place for it to drift out of date the moment a category is added.
+ */
+export function useStoreCategories() {
+  const query = useQuery(getV1StoreCategoriesOptions())
+  return { ...query, data: query.data?.data }
+}
+
+export type StoreFilters = {
+  /** Free text. The API matches it against name, tagline and description. */
+  q?: string
+  /** A category slug, or undefined for all of them. */
+  category?: string
+}
+
+/**
+ * The listings, filtered by the server.
+ *
+ * `q` and `category` have been query parameters on `/v1/store/listings` all along and the dashboard
+ * called it with none of them, so the store was an unfiltered grid of everything. Filtering in the
+ * browser instead would have been fewer moving parts and wrong as soon as the list outgrows one
+ * page — the cursor pagination is over the *filtered* set, and a client filter applied after
+ * paging silently hides matches that live on page two.
+ */
+export function useStoreListings(filters: StoreFilters = {}) {
+  const query = useQuery(
+    getV1StoreListingsOptions({
+      query: {
+        ...(filters.q !== undefined && filters.q !== "" ? { q: filters.q } : {}),
+        ...(filters.category !== undefined ? { category: filters.category } : {}),
+      },
+    }),
+  )
 
   return {
     ...query,
