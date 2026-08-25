@@ -250,3 +250,8 @@ export {
   fetchProjectFile,
   type SealedFileRow,
 } from "./projectFile/fetch"
+
+export { crudOauthClient } from "./oauthClient/crud"
+export type { CreateOauthClient, CreateOauthClientSecret } from "./oauthClient/crud"
+export { fetchOauthClient, OAUTH_CLIENT_FIELDS } from "./oauthClient/fetch"
+export type { OauthClientType } from "./oauthClient/fetch"

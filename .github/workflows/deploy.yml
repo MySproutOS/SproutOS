@@ -11,6 +11,20 @@
 name: Deploy
 
 on:
+  # Every push to main deploys. A branch that is the deployed thing is the only version of this that
+  # stays true — a manual step turns "what is on main" into "what somebody remembered to run", and
+  # the two drift silently. The favicon sat built and undeployed for exactly that reason.
+  #
+  # The cutover still moves traffic only when the fill has passed its health checks, so a push that
+  # produces a broken release fills the idle colour, fails, and leaves production untouched.
+  push:
+    branches: [main]
+    paths-ignore:
+      # Nothing here changes what runs, and a docs commit should not replace every instance.
+      - "docs/**"
+      - "**/*.md"
+      - "private_notes/**"
+
   workflow_dispatch:
     inputs:
       service:
@@ -69,7 +83,7 @@ jobs:
       # no release: the cutover would move traffic to instances running one new service and one old.
       fail-fast: true
       matrix:
-        service: ${{ inputs.service == 'both' && fromJSON('["website","router"]') || fromJSON(format('["{0}"]', inputs.service)) }}
+        service: ${{ (inputs.service || 'both') == 'both' && fromJSON('["website","router"]') || fromJSON(format('["{0}"]', inputs.service)) }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -267,13 +281,15 @@ jobs:
         env:
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
-          SERVICES: ${{ inputs.service == 'both' && 'website router' || inputs.service }}
+          SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
   cutover:
     name: Move traffic
     needs: fill
-    if: inputs.cutover
+    # A push deploys all the way. A manual run keeps its opt-in, because the reason to dispatch by
+    # hand is usually to stage something without moving traffic.
+    if: ${{ github.event_name == 'push' || inputs.cutover }}
     runs-on: ubuntu-latest
     # A protected environment, so moving production traffic asks a person first. The release and
     # the fill do not: they change nothing that is serving.
@@ -288,7 +304,7 @@ jobs:
 
       - name: Cut over
         run: |
-          for service in ${{ inputs.service == 'both' && 'website router' || inputs.service }}; do
+          for service in ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}; do
             bin/cutover.sh "$service"
           done
         env:
