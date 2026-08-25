@@ -248,16 +248,24 @@ jobs:
       kafka:
         image: apache/kafka:4.3.1
         ports:
-          - 29092:9092
+          - 29092:29092
         env:
           KAFKA_NODE_ID: 1
           KAFKA_PROCESS_ROLES: broker,controller
           KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092
-          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          # Two listeners, because two different kinds of client reach this broker and they
+          # disagree about what its address is.
+          #
+          # `cargo test` runs on the *runner*, where Kafka is a published port on localhost:29092.
+          # ClickHouse runs in a *container* on the services network, where it is `kafka:9092`.
+          # A broker with one advertised listener hands both clients the same address, and whichever
+          # one it is not correct for connects, receives metadata pointing somewhere it cannot
+          # reach, and fails after the connection appeared to succeed.
+          KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
           KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1

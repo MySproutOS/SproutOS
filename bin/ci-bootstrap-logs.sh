@@ -10,6 +10,11 @@ set -euo pipefail
 
 BROKER="${KAFKA_BROKERS:-localhost:29092}"
 CLICKHOUSE="${CLICKHOUSE_URL:-http://localhost:28123}"
+
+# The address *ClickHouse* uses to reach Kafka, which is not the one this script uses. ClickHouse is
+# a container on the services network and sees `kafka:9092`; the runner sees `localhost:29092`. The
+# broker advertises both — see the two listeners in `ci.yml`.
+CLICKHOUSE_KAFKA_BROKER="${CLICKHOUSE_KAFKA_BROKER:-kafka:9092}"
 USER_NAME="${CLICKHOUSE_USER:-sproutos}"
 PASSWORD="${CLICKHOUSE_PASSWORD:-sproutos}"
 
@@ -43,7 +48,7 @@ create table if not exists observability.runtime_log_queue (
   duration_ms Nullable(Float32), billed_ms Nullable(UInt32), memory_mb Nullable(UInt16),
   init_ms Nullable(Float32), cold_start Nullable(Bool)
 ) engine = Kafka
-settings kafka_broker_list = 'localhost:9092', kafka_topic_list = 'runtime-logs',
+settings kafka_broker_list = '${CLICKHOUSE_KAFKA_BROKER:-kafka:9092}', kafka_topic_list = 'runtime-logs',
   kafka_group_name = 'clickhouse-runtime-log', kafka_format = 'JSONEachRow',
   kafka_skip_broken_messages = 100"
 
