@@ -45,6 +45,23 @@ function issuer(): string {
 }
 
 /**
+ * Where the machine-to-machine endpoints actually live, which is not where the issuer does.
+ *
+ * The discovery document is the only contract a third-party client has: it reads this and posts
+ * its token exchange wherever this says. It said `${issuer}/api/v1/oauth/token`, which is the
+ * shape of the upstream template — a Hono API mounted *inside* Next.js. This platform serves the
+ * API from its own host, so that URL is not the API at all. In production it answered **307**, a
+ * redirect to the login page, meaning any client following discovery correctly would have sent
+ * its client secret into an HTML redirect and failed with nothing that named the cause.
+ *
+ * `issuer` stays the website: it is the identity the tokens are minted under, and
+ * `authorization_endpoint` is a page a human visits. Only the endpoints a *client* calls move.
+ */
+function apiBase(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+}
+
+/**
  * Turn a failure into the shape RFC 6749 §5.2 requires.
  *
  * The code is part of the protocol — a client branches on `invalid_grant` to know its refresh
@@ -77,12 +94,13 @@ const app = new Hono()
     }),
     (c) => {
       const base = issuer()
+      const api = apiBase()
       return c.json({
         issuer: base,
         authorization_endpoint: `${base}/oauth/authorize`,
-        token_endpoint: `${base}/api/v1/oauth/token`,
-        introspection_endpoint: `${base}/api/v1/oauth/introspect`,
-        revocation_endpoint: `${base}/api/v1/oauth/revoke`,
+        token_endpoint: `${api}/v1/oauth/token`,
+        introspection_endpoint: `${api}/v1/oauth/introspect`,
+        revocation_endpoint: `${api}/v1/oauth/revoke`,
         scopes_supported: [...ACTIONS],
         // OAuth 2.1: the implicit grant is gone, so `token` is not a response type we offer.
         response_types_supported: ["code"],
