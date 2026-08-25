@@ -6,6 +6,22 @@ const nextConfig: NextConfig = {
   // The container runs `node apps/website/server.js`, which only exists under standalone output.
   // Without this the image builds cleanly and then exits instantly on a missing module.
   output: "standalone",
+
+  /*
+    Where the browser fetches `/_next/static` from.
+
+    Unset — locally, and in any deployment that has not published assets — Next serves them itself
+    and everything works, just from the Node process. Set, the HTML references the CDN instead and
+    the origin stops serving bytes a cache should be serving.
+
+    This is what Next's standalone output already assumes: it *excludes* `.next/static` from the
+    bundle precisely because a CDN is expected to have it. Shipping those files in the image is the
+    fallback that makes the unset case work, not the intended path.
+
+    It must be an absolute origin. A relative prefix produces URLs that resolve against whatever
+    page is current, which breaks the moment a nested route loads a chunk.
+  */
+  assetPrefix: process.env.NEXT_PUBLIC_ASSET_BASE || undefined,
   // In a workspace the traced tree must be rooted at the repo, not at this app, or the symlinked
   // `@lib/*` and `@sproutos/db` packages are traced as dangling links and left out of the bundle.
   outputFileTracingRoot: path.join(__dirname, "..", ".."),

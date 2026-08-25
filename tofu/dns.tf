@@ -174,3 +174,42 @@ resource "aws_route53_record" "kafka_ipv6" {
   ttl     = 300
   records = [var.ovh_host_ipv6]
 }
+
+/*
+  ClickHouse, which the API reads customers' runtime logs from.
+
+  `GET /:orgSlug/projects/:projectId/logs` is the log viewer, it runs in AWS, and ClickHouse is on
+  the OVH box — so this hostname is not a convenience, it is the only way that endpoint works. It
+  bound to `127.0.0.1` until now, which meant the viewer could not have worked in production at all.
+
+  Behind the box's Traefik rather than exposed directly: Traefik already owns 443 there and already
+  holds an ACME resolver, so this needs no second certificate story and no second thing to renew.
+  ClickHouse's own user and password still apply, and a Traefik middleware restricts the source to
+  the platform's egress address — see `ovh/docker-compose.yaml`.
+*/
+resource "aws_route53_record" "clickhouse_ipv4" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.clickhouse_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+  ttl     = 300
+  records = [var.ovh_host_ipv4]
+}
+
+/*
+  Deliberately no AAAA record, unlike `forum` and `kafka`.
+
+  Access to ClickHouse is restricted by source address — it holds every tenant's logs, so "who may
+  reach the door" is a real control and not decoration. That control only works if the proxy in
+  front can *see* the source, and over IPv6 on this host it cannot: Docker IPv6 is disabled on the
+  network Traefik runs in, so an IPv6 connection is forwarded by the userland proxy and arrives with
+  the bridge gateway's address (`172.19.0.1`) in place of the client's.
+
+  The failure is the dangerous shape rather than the loud one. Measured from one instance in one
+  second: `curl` defaulted to IPv6 and got **403**; `curl -4` got **200**. Every request the platform
+  actually makes was refused, while the configuration read as correct — and the only fix available
+  without the address would have been to allowlist the gateway, which is to say allowlist the entire
+  internet arriving over IPv6.
+
+  So this name is IPv4-only. Our AWS egress has IPv4 through the NAT, which is the path that
+  preserves the source. If Docker IPv6 is ever enabled on that host, this record can come back.
+*/

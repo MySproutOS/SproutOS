@@ -121,6 +121,13 @@ jobs:
       - name: Build the website and the API
         if: matrix.service == 'website'
         run: pnpm run build --filter=website --filter=@api/internal
+        env:
+          # Baked into the HTML at build time, so it cannot be changed by a later deploy step. Unset,
+          # the website serves its own assets and everything still works — which is what makes this
+          # safe to roll out before the bucket variable exists.
+          NEXT_PUBLIC_ASSET_BASE: ${{ vars.ASSET_BASE_URL }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+          NEXT_PUBLIC_HOST_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
 
       - name: Package
         run: |
@@ -207,6 +214,28 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
           aws-region: ${{ env.AWS_REGION }}
+
+      # Static assets to the CDN, before the release pointer moves.
+      #
+      # Ordering matters and is the same reason the tarball is uploaded before the pointer: the HTML
+      # a running instance serves references these by hashed filename, so a browser must never be
+      # able to ask for a chunk the CDN has not got yet. Publishing first makes the window empty
+      # rather than small.
+      #
+      # `--cache-control immutable` because the names are content hashes: a changed asset is a new
+      # key, never a new version of an old one, so nothing here can go stale.
+      - name: Publish static assets
+        if: matrix.service == 'website'
+        run: |
+          assets="${{ vars.ASSET_BUCKET }}"
+          if [ -z "$assets" ]; then
+            echo "::notice::ASSET_BUCKET is unset; the website will serve its own assets."
+            exit 0
+          fi
+
+          aws s3 sync apps/website/.next/static "s3://$assets/_next/static" \
+            --cache-control "public,max-age=31536000,immutable" \
+            --only-show-errors
 
       - name: Upload
         run: |

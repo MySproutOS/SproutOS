@@ -6,7 +6,21 @@ pre-commit:
   commands:
     oxlint:
       glob: "*.{js,ts,jsx,tsx}"
-      run: pnpm exec oxlint -c oxlint.config.mts --fix {staged_files}
+      # `|| [ $? -eq 1 ]` would swallow real failures, so the empty case is detected instead.
+      #
+      # oxlint exits non-zero with "No files found to lint" when every staged file matching the glob
+      # is in its own `ignorePatterns` — `apps/website/next.config.ts` is one. A commit touching only
+      # such a file was refused by the hook while the file itself was perfectly fine, which reads as
+      # a lint failure with no lint error in the output.
+      run: |
+        files=$(pnpm exec oxlint -c oxlint.config.mts --print-config >/dev/null 2>&1; echo "{staged_files}")
+        pnpm exec oxlint -c oxlint.config.mts --fix {staged_files} 2>&1 | tee /tmp/oxlint.out
+        status=${PIPESTATUS[0]}
+        if [ "$status" -ne 0 ] && grep -q "No files found to lint" /tmp/oxlint.out; then
+          echo "nothing to lint (all staged files are ignored by oxlint)"
+          exit 0
+        fi
+        exit "$status"
       stage_fixed: true
     oxfmt:
       glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"

@@ -227,6 +227,13 @@ resource "aws_ecs_task_definition" "web" {
         # database name are not secret; only the credentials are, and those arrive separately.
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
         { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
+        # Where the log viewer reads from. The OVH box behind its Traefik, restricted to this
+        # estate's egress address — see `ovh/docker-compose.yaml`. IPv4-only by design: the proxy
+        # cannot see a client's IPv6 source there, and an allowlist that cannot see the source is
+        # not an allowlist.
+        { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
+        { name = "CLICKHOUSE_DATABASE", value = "observability" },
+        { name = "CLICKHOUSE_USER", value = "sproutos" },
       ]
 
       secrets = [

@@ -183,3 +183,47 @@ services:
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"
+
+    # Reachable from AWS, because the API reads customers' runtime logs from here.
+    #
+    # This bound to 127.0.0.1 and nothing else, which meant `GET /:orgSlug/projects/:projectId/logs`
+    # — the log viewer — could not have worked in production. The port stays on loopback; what is
+    # published is a Traefik route on 443, which the box already runs for the forum.
+    #
+    # Traefik's docker provider discovers by label, so this needs no change to the forum's own
+    # repository: joining the network it watches is enough. `forum_default` is declared external
+    # below for that reason.
+    networks:
+      - default
+      - forum_default
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: forum_default
+      traefik.http.routers.clickhouse.entrypoints: websecure
+      traefik.http.routers.clickhouse.rule: Host(`clickhouse.sproutos.me`)
+      traefik.http.routers.clickhouse.tls.certresolver: le
+      traefik.http.services.clickhouse.loadbalancer.server.port: "8123"
+      # Two locks, not one. ClickHouse's own user and password still apply; this restricts *who may
+      # reach the door* to the AWS estate. A password is what stops a wrong caller; an allowlist is
+      # what stops the internet knocking at all — and it knocks: this host had scanners probing
+      # `/debug/default/view?panel=config` within a minute of the DNS record existing.
+      #
+      # **Both families, and the second is not optional.** The VPC is dual-stack, so an instance
+      # resolving this name gets the AAAA record and prefers IPv6 — which leaves through the
+      # egress-only gateway and *never touches the NAT*. Its source is therefore an address from the
+      # VPC's own /56, not the NAT's Elastic IP, and an IPv4-only allowlist rejects every request
+      # the platform actually makes while appearing to be configured correctly. Measured: 403 over
+      # IPv6, 200 over `curl -4`, from the same instance in the same second.
+      #
+      # 54.160.27.183  — the NAT's Elastic IP, which is all IPv4 egress from the private subnets.
+      # 2600:1f18:2936:ae00::/56 — the VPC's IPv6 block, which is all IPv6 egress from them.
+      traefik.http.routers.clickhouse.middlewares: clickhouse-allowlist
+      traefik.http.middlewares.clickhouse-allowlist.ipallowlist.sourcerange: "54.160.27.183/32,2600:1f18:2936:ae00::/56"
+
+networks:
+  default:
+  # Traefik's network, created by the forum's compose project. External because that stack owns it
+  # and this one only joins — declaring it here would have Docker try to create a second network
+  # with the same name and fail.
+  forum_default:
+    external: true

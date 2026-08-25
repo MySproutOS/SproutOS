@@ -274,3 +274,9 @@ variable "ecs_instance_count" {
   type        = number
   default     = 1
 }
+
+variable "clickhouse_subdomain" {
+  description = "Where the API reaches ClickHouse. Resolves to the OVH host, behind its Traefik."
+  type        = string
+  default     = "clickhouse"
+}

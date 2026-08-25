@@ -125,6 +125,26 @@ resource "aws_iam_role_policy" "deploy" {
       },
       {
         /*
+          The website's hashed assets, which the CDN serves instead of the origin.
+
+          Scoped to `_next/static/`, not the whole bucket: the same bucket holds the dashboard and
+          admin SPAs, and a deploy of the website has no business rewriting those. Content-hashed
+          names mean this only ever adds keys, so there is no delete permission here and none needed.
+        */
+        Sid      = "PublishWebsiteAssets"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${aws_s3_bucket.spa.arn}/_next/static/*"
+      },
+      {
+        # `aws s3 sync` compares against what is already there before uploading, so it needs List.
+        Sid      = "ListWebsiteAssets"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.spa.arn
+      },
+      {
+        /*
           Writing an encrypted object takes two permissions, the mirror of reading one.
 
           The bucket is SSE-KMS, so `s3:PutObject` alone fails — and fails as `AccessDenied` on
