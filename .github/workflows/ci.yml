@@ -93,6 +93,13 @@ jobs:
       SEARCH_ADMIN_URL: http://127.0.0.1:29200
       CLICKHOUSE_URL: http://127.0.0.1:28123
       CLICKHOUSE_DATABASE: observability
+      # The SDK-standard override, which `lib/typescript/utils/aws` keys on. Absent, every AWS call
+      # in a test reaches the real endpoint named by the credentials beside it and the suite skips;
+      # present, it reaches the LocalStack the step above started.
+      AWS_ENDPOINT_URL: http://localhost:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
       CLICKHOUSE_USER: sproutos
       CLICKHOUSE_PASSWORD: sproutos
     steps:
@@ -104,6 +111,28 @@ jobs:
         with:
           node-version: "24.14.0"
           cache: "pnpm"
+
+      # KMS, S3 and Secrets Manager for the suites that would otherwise skip — envelope encryption
+      # among them, which protects every OAuth token and tenant database credential this platform
+      # holds. Started as a step rather than a service container because the image needs its auth
+      # token at start and a service block cannot skip itself when the secret is absent.
+      #
+      # Without `LOCALSTACK_AUTH_TOKEN` this is a no-op and those suites skip, which
+      # `bin/check-skipped-tests.mjs` records against a ceiling rather than hiding.
+      - name: Start LocalStack
+        if: ${{ secrets.LOCALSTACK_AUTH_TOKEN != '' }}
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: |
+          docker run -d --name localstack -p 4566:4566 \
+            -e LOCALSTACK_AUTH_TOKEN="$LOCALSTACK_AUTH_TOKEN" \
+            -e SERVICES=kms,s3,secretsmanager,ses,ssm \
+            localstack/localstack:2026.07.5
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:4566/_localstack/health >/dev/null && break
+            sleep 2
+          done
+          bash bin/bootstrap-localstack.sh
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -239,6 +268,7 @@ jobs:
           CLICKHOUSE_PASSWORD: sproutos
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
         options: >-
+          --ulimit nofile=262144:262144
           --health-cmd "wget -qO- http://localhost:8123/ping || exit 1"
           --health-interval 10s
           --health-timeout 5s

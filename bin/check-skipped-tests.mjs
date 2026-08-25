@@ -67,15 +67,39 @@ const KNOWN = [
   { suite: "@api/internal agent", count: 6, waiting: "an Anthropic API key" },
   { suite: "@api/internal generate-openapi", count: 1, waiting: "a running API on :3001" },
   {
-    suite: "@lib/jobs deploy",
-    count: 1,
-    waiting:
-      "KUBE_SERVER — set in the `cluster` job, which runs this suite against a real kind cluster",
+    /*
+      Waiting on a repository secret, not on a decision.
+
+      These suites reach KMS, S3 and Secrets Manager through `AWS_ENDPOINT_URL`. On a developer's
+      machine that is the LocalStack in `docker-compose.yaml` and they all run — locally the total
+      skipped is three. In CI it is sixty-nine, because LocalStack has been token-gated since its
+      OSS image was archived and this repository has no `LOCALSTACK_AUTH_TOKEN`.
+
+      `.github/workflows/ci.yml` starts LocalStack when that secret exists. Adding it turns these
+      back on, and this entry should then go to zero — which is the one-line change this file was
+      written to make possible.
+
+      **What is not being tested meanwhile is worth naming rather than summing:** envelope
+      encryption, which protects every OAuth token and tenant database credential; the object-storage
+      tenant boundary; Postgres service provisioning; and Lambda publish. They run before every
+      commit on a machine that has LocalStack, and nowhere else.
+    */
+    suite: "LocalStack-dependent suites in CI",
+    count: 51,
+    waiting: "LOCALSTACK_AUTH_TOKEN as a repository secret",
   },
   {
-    suite: "@lib/jobs build",
-    count: 1,
-    waiting: "KUBE_SERVER and BUILD_REGISTRY — a cluster and a registry it can push to",
+    /*
+      There is no cluster job any more.
+
+      Two entries here waited on `KUBE_SERVER` and `BUILD_REGISTRY`, "set in the `cluster` job,
+      which runs this suite against a real kind cluster". ADR 0026 replaced Kubernetes with Lambda
+      and that job went with it, so the capability these were waiting for is one nothing will ever
+      provide. They are one entry now, waiting on the thing that actually gates them.
+    */
+    suite: "@lib/jobs publish",
+    count: 4,
+    waiting: "LOCALSTACK_AUTH_TOKEN — Lambda and S3, via AWS_ENDPOINT_URL",
   },
 ]
 
