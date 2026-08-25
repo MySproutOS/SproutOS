@@ -141,11 +141,30 @@ resource "aws_iam_instance_profile" "nat" {
 }
 
 /*
-  One address, kept across replacements.
+  Why there is an Elastic IP here at all.
 
-  An Elastic IP is free while attached and $3.60 a month while it is not. Attached to the instance
-  it costs nothing, and it is what makes a replacement invisible to anything that allowlisted this
-  platform's egress address — OVH's Valkey and OpenSearch, above all.
+  It is not for stability, and it is not free — that was true until 2024 and is not any more.
+
+  **A NAT instance cannot do its job without a public IPv4 address.** Translating a private
+  instance's traffic onto the internet means having somewhere for the replies to come back to.
+
+  **Since 1 February 2024 AWS bills every public IPv4 address at $0.005/hour**, whether it is an
+  Elastic IP or one auto-assigned at launch, and whether it is attached or idle. So there is no
+  cheaper form of "the NAT instance has a public address" — the $3.60 a month is the price of IPv4
+  egress, not the price of this resource.
+
+  Given that the cost is fixed, the question is only which form. An auto-assigned address would
+  require `map_public_ip_on_launch` on the public subnet and would land on the instance's *primary*
+  interface — and the private route tables point at the standalone interface below precisely so
+  that replacing the instance does not change the id they route to. A standalone interface cannot
+  take an auto-assigned address; an Elastic IP is the only way to give it one.
+
+  So: same cost, and the only form that keeps egress working when the instance is replaced.
+
+  **The way to actually remove this charge is IPv6.** The VPC is dual-stack and already has an
+  egress-only internet gateway, which costs nothing and needs no NAT. Everything reachable over
+  IPv6 could egress that way. That is a real piece of work — not every upstream this platform talks
+  to has an AAAA record — and it is the thing to do before optimising this line any further.
 */
 resource "aws_eip" "nat" {
   count = var.use_nat_instance ? 1 : 0
