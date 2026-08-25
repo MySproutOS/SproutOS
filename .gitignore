@@ -109,3 +109,6 @@ design/sproutos-dashboard-design-system.html
 
 # The JSON test report CI writes for the skip-ceiling check.
 vitest-report.json
+
+# pnpm writes this when a containerised build shares the working tree.
+.pnpm-store/

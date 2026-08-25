@@ -81,6 +81,18 @@ resource "aws_vpc_security_group_ingress_rule" "service_from_alb" {
   ip_protocol                  = "tcp"
 }
 
+# The API's port, from the ALB only, on the same instances. A separate rule rather than a widened
+# range: 8080 and 3001 are the two ports anything may reach, and naming them separately means adding
+# a third is a deliberate line rather than a bound nobody re-reads.
+resource "aws_vpc_security_group_ingress_rule" "service_api_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  description                  = "API port, from the ALB only"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 3001
+  to_port                      = 3001
+  ip_protocol                  = "tcp"
+}
+
 resource "aws_vpc_security_group_egress_rule" "service_out" {
   security_group_id = aws_security_group.service.id
   description       = "Outbound, for AWS APIs and the OVH backends"
@@ -163,6 +175,47 @@ resource "aws_lb_target_group" "website" {
   # connections nobody is using.
   deregistration_delay = 30
   tags                 = { Name = "${var.name_prefix}-web-${each.key}" }
+}
+
+/*
+  The API, on its own target group and its own port.
+
+  `api.sproutos.me` used to be a second `host_header` value on the website's rule, pointing at the
+  website's port-8080 group. That could never have worked: the API is a separate deployment on 3001
+  (see `AGENTS.md`), Next.js has no `/v1/*` routes, and every request to the API host would have
+  been answered by the website with a 404 — or, as it actually was, a 503, because nothing was
+  running there at all.
+
+  Same instances, different port. An Auto Scaling group can register with several target groups, so
+  this needs no second fleet: the website process listens on 8080 and the API process on 3001 on
+  the same box, and the load balancer picks by hostname.
+
+  **`/ready`, not `/health`.** `apps/internal-api/src/health.ts` splits them deliberately: `/health`
+  is liveness and must never touch a dependency, `/ready` checks the database. A target group is
+  exactly the readiness case — failing it removes the instance from rotation, which is reversible
+  the moment Postgres comes back, and is what should happen to an API that cannot reach its
+  database. Pointing this at `/health` would keep sending traffic to an instance that can only
+  return errors.
+*/
+resource "aws_lb_target_group" "api" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-api-${each.key}"
+  port     = 3001
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/ready"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-api-${each.key}" }
 }
 
 resource "aws_lb_target_group" "router" {
@@ -265,12 +318,52 @@ resource "aws_lb_listener_rule" "website" {
 
   condition {
     host_header {
-      values = [var.control_plane_domain, "api.${var.control_plane_domain}"]
+      # The apex only. `api.` has its own rule below, at a lower priority number so it is matched
+      # first — a rule listing both would send API requests to a process with no API routes.
+      values = [var.control_plane_domain]
     }
   }
 
   # Same reasoning, and the same trap, as the listener above: the cutover owns the weights, and a
   # change to the shape of this block is invisible to `plan` and needs `-replace`.
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+/*
+  `api.sproutos.me`, to the API's port on the same instances.
+
+  Priority 90, ahead of the website's 100. ALB rules are evaluated in ascending priority and the
+  first match wins, so this has to be the lower number — the website rule matches the apex only, but
+  ordering it first is what keeps that true if either condition is ever widened.
+*/
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 90
+
+  action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.api["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.api["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["api.${var.control_plane_domain}"]
+    }
+  }
+
+  # As above: the cutover owns these weights, and changing the shape of this block needs `-replace`.
   lifecycle {
     ignore_changes = [action]
   }
@@ -357,6 +450,18 @@ resource "aws_iam_role_policy" "instance" {
       },
       {
         /*
+          The database password, which exists only in Secrets Manager.
+
+          `manage_master_user_password` keeps it out of `terraform.tfstate`; the consequence is that
+          the instance has to fetch it at boot to compose `DATABASE_URL`. Scoped to the one secret
+          RDS manages for this instance, not to `*`.
+        */
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+      },
+      {
+        /*
           Reading an encrypted object takes two permissions, not one.
 
           The artifacts bucket is SSE-KMS under `aws_kms_key.secrets` (see `registry.tf`), and
@@ -373,8 +478,15 @@ resource "aws_iam_role_policy" "instance" {
         Action   = ["kms:Decrypt"]
         Resource = aws_kms_key.secrets.arn
         Condition = {
+          # Two services, because the same key protects the release in S3 and the database password
+          # in Secrets Manager. Still a `ViaService` list rather than an unconditional grant: this
+          # role cannot use the key directly, only through the two services that hold things it is
+          # entitled to read.
           StringEquals = {
-            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+            "kms:ViaService" = [
+              "s3.${var.aws_region}.amazonaws.com",
+              "secretsmanager.${var.aws_region}.amazonaws.com",
+            ]
           }
         }
       },
@@ -428,6 +540,12 @@ resource "aws_launch_template" "service" {
     aws_region       = var.aws_region
     valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
     tenant_domain    = var.control_plane_domain
+
+    # Read at boot by the website instances only, to compose `DATABASE_URL`. The ARN is not a
+    # secret; what it names is, and reading it needs the instance role.
+    database_secret_arn = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+    database_endpoint   = aws_db_instance.control_plane.endpoint
+    database_name       = aws_db_instance.control_plane.db_name
   }))
 
   metadata_options {
@@ -458,7 +576,12 @@ resource "aws_autoscaling_group" "website" {
   # The same zones the load balancer spans — see `local.serving_zone_count`. An instance outside
   # them boots, passes its own health check, and is never sent a request.
   vpc_zone_identifier = slice(aws_subnet.private[*].id, 0, local.serving_zone_count)
-  target_group_arns   = [aws_lb_target_group.website[each.key].arn]
+  # Both, because both processes run on these instances. A target group is a port on a set of
+  # instances, not a fleet of its own.
+  target_group_arns = [
+    aws_lb_target_group.website[each.key].arn,
+    aws_lb_target_group.api[each.key].arn,
+  ]
 
   # Zero is a valid size: only one colour serves at a time, and the idle one should cost nothing.
   min_size         = 0

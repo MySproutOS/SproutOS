@@ -47,7 +47,28 @@ VALKEY_URL=${valkey_url}
 TENANT_DOMAIN=${tenant_domain}
 ROUTER_PORT=8080
 PORT=8080
+API_PORT=3001
 ENVFILE
+
+# The database URL, composed here from the secret RDS manages rather than written into the launch
+# template.
+#
+# `manage_master_user_password` means no password is ever in `terraform.tfstate`, and the price of
+# that is this: the value only exists in Secrets Manager, so something has to fetch it at boot. The
+# router does not need it and does not get it — `${service}` is the whole condition.
+if [ "$SERVICE" = "website" ]; then
+  SECRET=$(aws secretsmanager get-secret-value \
+    --secret-id "${database_secret_arn}" --query SecretString --output text --region "$REGION")
+
+  DB_USER=$(echo "$SECRET" | python3 -c 'import json,sys; print(json.load(sys.stdin)["username"])')
+  DB_PASS=$(echo "$SECRET" | python3 -c 'import json,sys; import urllib.parse; print(urllib.parse.quote(json.load(sys.stdin)["password"], safe=""))')
+
+  # Percent-encoded above, because an RDS-generated password may contain characters that are
+  # delimiters in a URL. An unencoded `/` or `@` produces a connection string that parses into a
+  # different host entirely, and the error names the wrong thing.
+  echo "DATABASE_URL=postgresql://$DB_USER:$DB_PASS@${database_endpoint}/${database_name}?sslmode=require" >> /etc/sproutos/env
+fi
+
 chmod 0640 /etc/sproutos/env
 
 cat > /etc/systemd/system/sproutos.service <<'UNIT'

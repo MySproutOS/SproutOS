@@ -9,6 +9,11 @@
 #
 # Usage: cutover.sh <service> [--to blue|green] [--dry-run]
 #   service   website | router
+#
+# `website` moves two rules, not one. The apex and `api.<domain>` are different ports on the *same
+# instances* from the *same release tarball*, so they are one deployment with two target groups.
+# Moving them separately would be two commands that can disagree — and a disagreement means the API
+# is pointed at the colour the website just drained.
 set -euo pipefail
 
 SERVICE="${1:-}"
@@ -32,28 +37,42 @@ esac
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${LISTENER_ARN:?LISTENER_ARN is not set}"
 
-# The website is a listener *rule* matched on host; the router is the listener's *default* action.
-# The two take different API calls, which is the only place in this script the services differ.
+# The website and the API are listener *rules* matched on host; the router is the listener's
+# *default* action. That is the only place in this script the services differ, and it is why the
+# rule ARN is required for two of the three and meaningless for the last.
+# `RULE_ARN` decides the colour and is read back to confirm the move; `ALSO_MOVE` follows it
+# without a vote. For the website that second rule is the API's, which has its own target groups on
+# its own port but is never a different colour.
 if [ "$SERVICE" = "website" ]; then
   : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set}"
+  : "${API_RULE_ARN:?API_RULE_ARN is not set}"
+  RULE_ARN="$WEBSITE_RULE_ARN"
+  ALSO_MOVE="$API_RULE_ARN"
+  ALSO_SHORT=api
+  short=web
+else
+  RULE_ARN=""
+  ALSO_MOVE=""
+  ALSO_SHORT=""
+  short=router
 fi
 
-short=$([ "$SERVICE" = "website" ] && echo web || echo router)
-
-group_arn() {
+group_arn_of() {
   aws elbv2 describe-target-groups \
-    --names "$NAME_PREFIX-$short-$1" \
+    --names "$NAME_PREFIX-$1-$2" \
     --query 'TargetGroups[0].TargetGroupArn' \
     --output text
 }
+
+group_arn() { group_arn_of "$short" "$1"; }
 
 # The target group currently carrying traffic: the one with a non-zero weight.
 #
 # The listener forwards to both colours with weights rather than naming one — see `compute.tf`, and
 # the scaling policy that could not exist without it. So "which is live" is a weight, not an ARN.
 current_arn() {
-  if [ "$SERVICE" = "website" ]; then
-    aws elbv2 describe-rules --rule-arns "$WEBSITE_RULE_ARN" \
+  if [ -n "$RULE_ARN" ]; then
+    aws elbv2 describe-rules --rule-arns "$RULE_ARN" \
       --query 'Rules[0].Actions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
       --output text
   else
@@ -130,8 +149,18 @@ fi
 
 other_arn=$([ "$target_arn" = "$blue" ] && echo "$green" || echo "$blue")
 
-if [ "$SERVICE" = "website" ]; then
-  aws elbv2 modify-rule --rule-arn "$WEBSITE_RULE_ARN" \
+# The second rule first, so that if anything fails it is the one not yet serving that is wrong.
+# The website rule is what a browser hits; the API rule is what the website's own calls hit, and a
+# moment of the API on the new colour while the site is still on the old is the harmless order.
+if [ -n "$ALSO_MOVE" ]; then
+  also_target=$(group_arn_of "$ALSO_SHORT" "$TARGET")
+  also_other=$(group_arn_of "$ALSO_SHORT" "$([ "$TARGET" = blue ] && echo green || echo blue)")
+  aws elbv2 modify-rule --rule-arn "$ALSO_MOVE" \
+    --actions "$(forward_action "$also_target" "$also_other")" >/dev/null
+fi
+
+if [ -n "$RULE_ARN" ]; then
+  aws elbv2 modify-rule --rule-arn "$RULE_ARN" \
     --actions "$(forward_action "$target_arn" "$other_arn")" >/dev/null
 else
   aws elbv2 modify-listener --listener-arn "$LISTENER_ARN" \

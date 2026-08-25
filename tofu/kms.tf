@@ -57,19 +57,13 @@ resource "aws_kms_alias" "secrets" {
 }
 
 /*
-  A separate key for EKS secret envelope encryption.
+  There was a fourth key here, for EKS secret envelope encryption.
 
-  Kubernetes Secrets are base64, not encryption. Without a KMS key on the cluster they sit in etcd
-  in the clear, which means every backup of etcd is a copy of every credential the platform holds.
+  It is gone because the cluster is: ADR 0026 replaced Kubernetes with Lambda and EC2, and this key
+  outlived the thing it protected by several months, referenced by nothing but its own alias. A
+  customer-managed key is $1 a month whether or not anything ever calls it, so an unused CMK is a
+  standing charge for a decision that was already reversed.
+
+  Worth stating because it is the general case rather than a one-off: `tofu plan` reports a resource
+  nothing references as perfectly in order, since being unused is not drift.
 */
-resource "aws_kms_key" "eks" {
-  description             = "SproutOS EKS secret envelope encryption"
-  enable_key_rotation     = true
-  deletion_window_in_days = local.key_deletion_window
-  tags                    = merge(local.tags, { Name = "${var.name_prefix}-eks" })
-}
-
-resource "aws_kms_alias" "eks" {
-  name          = "alias/${var.name_prefix}-eks"
-  target_key_id = aws_kms_key.eks.key_id
-}

@@ -22,7 +22,11 @@ group_arn() {
 }
 
 for service in $SERVICES; do
+  # `api` is not a service here and must not be passed as one: it has no Auto Scaling group of its
+  # own. It is a second target group on the *website's* instances, which is why the health wait
+  # below covers both and why the cutover moves both rules together.
   short=$([ "$service" = "website" ] && echo web || echo router)
+  extra_short=$([ "$service" = "website" ] && echo api || echo "")
 
   if [ "$service" = "website" ]; then
     : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set}"
@@ -57,19 +61,37 @@ for service in $SERVICES; do
   aws autoscaling set-desired-capacity \
     --auto-scaling-group-name "$group" --desired-capacity "$DESIRED" --honor-cooldown >/dev/null
 
+  # Every target group the instances serve, not just the one the rule names.
+  #
+  # For the website that is the apex's group *and* the API's, because both processes run on these
+  # instances and the release is not up until both answer. Waiting on the website alone would
+  # report a healthy release while the API was still failing its readiness probe — and the cutover
+  # would then move both rules to it.
+  wait_arns="$idle_arn"
+  if [ -n "$extra_short" ]; then
+    wait_arns="$wait_arns $(group_arn "$NAME_PREFIX-$extra_short-$idle")"
+  fi
+
   deadline=$(( $(date +%s) + TIMEOUT_S ))
   while :; do
-    healthy=$(aws elbv2 describe-target-health --target-group-arn "$idle_arn" \
-      --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+    healthy=""
+    for arn in $wait_arns; do
+      count=$(aws elbv2 describe-target-health --target-group-arn "$arn" \
+        --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
 
-    # An unreadable count is not zero and not a pass — see the same guard in `cutover.sh`.
-    if ! [[ "$healthy" =~ ^[0-9]+$ ]]; then
-      echo "$service: could not read target health (got: '$healthy')" >&2
-      exit 1
-    fi
+      # An unreadable count is not zero and not a pass — see the same guard in `cutover.sh`.
+      if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+        echo "$service: could not read target health (got: '$count')" >&2
+        exit 1
+      fi
+
+      # The minimum across the groups: a release where one port is up and another is not is not a
+      # release that is up.
+      if [ -z "$healthy" ] || [ "$count" -lt "$healthy" ]; then healthy="$count"; fi
+    done
 
     if [ "$healthy" -ge "$DESIRED" ]; then
-      echo "$service: $idle has $healthy healthy target(s)"
+      echo "$service: $idle has $healthy healthy target(s) in every group"
       break
     fi
 

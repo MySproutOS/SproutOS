@@ -89,3 +89,9 @@ output "deploy_role_arn" {
   description = "The role the Deploy workflow assumes"
   value       = aws_iam_role.deploy.arn
 }
+
+# The API's rule, so the cutover can move it with the other two.
+output "api_rule_arn" {
+  description = "Listener rule for api.<domain>. Set as the API_RULE_ARN repository variable."
+  value       = aws_lb_listener_rule.api.arn
+}

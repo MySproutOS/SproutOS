@@ -156,6 +156,8 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = [
           aws_lb_listener.https.arn,
           aws_lb_listener_rule.website.arn,
+          # The API's rule moves with the website's — one release, two ports, see `bin/cutover.sh`.
+          aws_lb_listener_rule.api.arn,
         ]
       },
     ]

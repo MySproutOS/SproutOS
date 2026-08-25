@@ -39,6 +39,8 @@ case "$2" in
       if [ "${!i}" = "--names" ]; then
         j=$((i + 1))
         case "${!j}" in
+          *-api-blue) echo "arn:api-blue" ;;
+          *-api-green) echo "arn:api-green" ;;
           *-blue) echo "arn:blue" ;;
           *-green) echo "arn:green" ;;
         esac
@@ -64,6 +66,7 @@ export PATH="$STUB_DIR:$PATH"
 export NAME_PREFIX=sproutos
 export LISTENER_ARN=arn:listener
 export WEBSITE_RULE_ARN=arn:rule
+export API_RULE_ARN=arn:api-rule
 export STUB_CALLS="$STUB_DIR/calls"
 export STUB_STATE="$STUB_DIR/live"
 
@@ -94,9 +97,12 @@ check "sends the idle colour to zero, not off the listener" "1" \
 STUB_LIVE="arn:green" STUB_HEALTHY=2 out=$(run router)
 check "moves back the other way with the same command" "1" "$(grep -c 'router is on blue' <<<"$out")"
 
-# The website is a rule on the listener, not the listener's default.
+# The website is rules on the listener, not the listener's default — and one healthy target is
+# enough, since the guard is "any", not "all".
 STUB_LIVE="arn:blue" STUB_HEALTHY=1 out=$(run website)
-check "modifies the rule for the website" "1" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+check "modifies rules for the website, never the listener" "0" \
+  "$(grep -c 'modify-listener' "$STUB_CALLS")"
+check "one healthy target is enough to move" "2" "$(grep -c 'modify-rule' "$STUB_CALLS")"
 
 # The two refusals.
 #
@@ -126,6 +132,16 @@ check "reports success when the write sticks" "0" "$status"
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router --dry-run)
 check "dry run sends no mutation" "0" "$(wc -l < "$STUB_CALLS" | tr -d ' ')"
 check "dry run still says what it would do" "1" "$(grep -c 'dry run' <<<"$out")"
+
+# `website` is one deployment on two ports, so the cutover moves two rules. If it moved only the
+# apex, the API would be left pointing at the colour the website had just drained — and the site's
+# own calls to it would fail while the site itself looked fine.
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run website)
+check "moves both rules for one website release" "2" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+check "sends the api rule to the same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:api-green","Weight":100' "$STUB_CALLS")"
+check "and the apex with it" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:green","Weight":100' "$STUB_CALLS")"
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"
