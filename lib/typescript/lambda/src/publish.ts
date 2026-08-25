@@ -12,6 +12,7 @@ import {
   type Runtime,
   waitUntilFunctionUpdatedV2,
 } from "@aws-sdk/client-lambda"
+import { mintProjectToken } from "./project-token"
 
 /**
  * Putting a customer's build on Lambda.
@@ -205,47 +206,47 @@ function withTelemetryEnv(input: PublishInput): Record<string, string> {
     ...input.environment,
     SPROUTOS_PROJECT_ID: input.projectId,
     ...(input.deploymentId === undefined ? {} : { SPROUTOS_DEPLOYMENT_ID: input.deploymentId }),
-    ...kafkaEnv(),
+    ...logEnv(input.projectId),
   }
 }
 
 /**
- * Where the extension sends what it collects, and what it authenticates with.
+ * Where the extension sends what it collects, and what it proves about itself.
  *
- * These are the platform's settings rather than the project's, so they come from the control
- * plane's own environment and are written onto every function — a customer never sets them and
- * `input.environment` is spread *before* these, so a customer cannot override them either.
+ * **This used to be a Kafka credential.** The extension held a SASL username and password, opened a
+ * TLS connection to the broker and produced directly. Two things were wrong with that. The
+ * credential sat in the function's environment, which the customer's own code can read — `process.env`
+ * is not a boundary against the process it belongs to. And it was authorized to write the shared
+ * `runtime-logs` topic, which Kafka cannot restrict by message content, so anyone holding it could
+ * publish records carrying another tenant's `project_id`. Those records carry `billed_ms`. Forged
+ * logs were forged bills.
  *
- * **Every variable or none.** A partially configured extension is the worst of the three states: it
- * starts, subscribes, collects the customer's logs into their memory, and then fails to produce
- * them on every flush. Leaving them all unset is a well-defined mode — `kafka.ts` connects without
- * SASL and, with no `KAFKA_BROKERS` at all, `connect()` fails loudly at start rather than quietly
- * forever.
+ * What goes in now is a token that says one thing: *this is project X*. The router verifies it and
+ * stamps the project itself, discarding whatever the payload claimed. The customer can still read
+ * the token, and it is worth nothing beyond writing logs to their own project — which `console.log`
+ * already does.
  *
- * The password is a platform credential authorized to write one topic (see `ovh/docker-compose.yaml`).
- * It is on the function's configuration, which means anyone who can read the function's
- * configuration can read it — that is why it is scoped to `Write` on `runtime-logs` and nothing
- * else, and why the ACL is the boundary rather than the secrecy of this string.
+ * Long-lived on purpose. It is minted at publish time and lives with the function version, so
+ * rotation is a redeploy. A short expiry would mean a function that stops being able to log some
+ * time after it was last released, which is a failure nobody would connect to a token.
  */
-function kafkaEnv(): Record<string, string> {
-  const brokers = process.env.KAFKA_BROKERS ?? ""
-  const username = process.env.KAFKA_SASL_USERNAME ?? ""
-  const password = process.env.KAFKA_SASL_PASSWORD ?? ""
+const LOG_TOKEN_TTL_SECONDS = 400 * 24 * 60 * 60
 
-  if (brokers === "") return {}
+function logEnv(projectId: string): Record<string, string> {
+  const endpoint = process.env.SPROUTOS_LOG_ENDPOINT ?? ""
+  const secret = process.env.LOG_TOKEN_SECRET ?? ""
 
-  if (username !== "" && password === "") {
-    throw new Error("KAFKA_SASL_USERNAME is set but KAFKA_SASL_PASSWORD is not")
-  }
+  // Both or neither. An extension given an endpoint and no token posts batches that are refused on
+  // every invocation, which costs the customer time to deliver nothing.
+  if (endpoint === "" || secret === "") return {}
+
+  const expiresAt = Math.floor(Date.now() / 1000) + LOG_TOKEN_TTL_SECONDS
 
   return {
-    KAFKA_BROKERS: brokers,
-    KAFKA_RUNTIME_LOG_TOPIC: process.env.KAFKA_RUNTIME_LOG_TOPIC ?? "runtime-logs",
-    // Must match the topic's actual partition count. The extension hashes a project onto one of
-    // these and asks for it by number, so a value larger than the topic has is a project whose
-    // logs never arrive — and it is the topic that is authoritative, not this default.
-    KAFKA_RUNTIME_LOG_PARTITIONS: process.env.KAFKA_RUNTIME_LOG_PARTITIONS ?? "3",
-    ...(username === "" ? {} : { KAFKA_SASL_USERNAME: username, KAFKA_SASL_PASSWORD: password }),
+    SPROUTOS_LOG_ENDPOINT: endpoint,
+    // Deliberately the same format `mintDeployToken` produces and `services/router/src/log_token.rs`
+    // verifies, against one set of fixtures both languages read.
+    SPROUTOS_LOG_TOKEN: mintProjectToken(projectId, expiresAt, secret),
   }
 }
 

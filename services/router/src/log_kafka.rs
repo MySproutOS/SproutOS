@@ -21,9 +21,9 @@ use crate::logs::{ProduceBatch, StampedRecord};
 /// the `platform.start` of its own invocation. Cosmetic in a viewer, and not cosmetic at all when
 /// the report is what the customer is billed from.
 pub fn partition_for(project_id: &str, partitions: i32) -> i32 {
-    let hash = project_id
-        .bytes()
-        .fold(0u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
+    let hash = project_id.bytes().fold(0u32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(byte as u32)
+    });
     (hash % partitions.max(1) as u32) as i32
 }
 
@@ -45,7 +45,8 @@ impl KafkaProducer {
             .filter(|value| !value.is_empty())
             .collect();
 
-        let topic = std::env::var("KAFKA_RUNTIME_LOG_TOPIC").unwrap_or_else(|_| "runtime-logs".into());
+        let topic =
+            std::env::var("KAFKA_RUNTIME_LOG_TOPIC").unwrap_or_else(|_| "runtime-logs".into());
         let partition_count: i32 = std::env::var("KAFKA_RUNTIME_LOG_PARTITIONS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -76,7 +77,9 @@ impl KafkaProducer {
                         .with_root_certificates(roots)
                         .with_no_client_auth(),
                 ))
-                .sasl_config(SaslConfig::ScramSha512(Credentials::new(username, password)));
+                .sasl_config(SaslConfig::ScramSha512(Credentials::new(
+                    username, password,
+                )));
         }
 
         let client = builder.build().await.context("could not reach Kafka")?;

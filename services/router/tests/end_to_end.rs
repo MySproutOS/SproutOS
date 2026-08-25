@@ -170,6 +170,10 @@ async fn a_request_reaches_the_customers_function_and_the_reply_comes_back() {
         .expect("publish the route");
 
     let state = Arc::new(Router {
+        // Logging is not what these exercise: `None` is the shape a router with no broker
+        // configured takes, and it must serve traffic identically.
+        logs: None,
+        log_token_secret: Vec::new(),
         resolver: Resolver::new(valkey.clone()),
         lambda,
         function_timeout: std::time::Duration::from_secs(60),
@@ -249,6 +253,10 @@ async fn the_load_balancer_gets_a_health_answer_and_a_tenant_keeps_its_own_path(
         .expect("publish the route");
 
     let state = Arc::new(Router {
+        // Logging is not what these exercise: `None` is the shape a router with no broker
+        // configured takes, and it must serve traffic identically.
+        logs: None,
+        log_token_secret: Vec::new(),
         resolver: Resolver::new(valkey.clone()),
         lambda,
         function_timeout: std::time::Duration::from_secs(60),
@@ -326,6 +334,10 @@ async fn an_exhausted_balance_is_refused_before_lambda_is_invoked() {
         .expect("credit state");
 
     let state = Arc::new(Router {
+        // Logging is not what these exercise: `None` is the shape a router with no broker
+        // configured takes, and it must serve traffic identically.
+        logs: None,
+        log_token_secret: Vec::new(),
         resolver: Resolver::new(valkey.clone()),
         lambda,
         function_timeout: std::time::Duration::from_secs(60),
@@ -393,6 +405,10 @@ async fn an_unknown_host_is_a_404_and_not_a_lookup_per_request() {
 
     let config = aws_config().await;
     let state = Arc::new(Router {
+        // Logging is not what these exercise: `None` is the shape a router with no broker
+        // configured takes, and it must serve traffic identically.
+        logs: None,
+        log_token_secret: Vec::new(),
         resolver: Resolver::new(valkey),
         lambda: LambdaClient::new(&config),
         function_timeout: std::time::Duration::from_secs(60),

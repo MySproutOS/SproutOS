@@ -10,31 +10,12 @@ repository.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 reqwest.workspace = true
-# Pure Rust, no librdkafka. An extension ships as a layer inside the customer's execution
-# environment, so a C dependency is a build toolchain and several megabytes charged to their cold
-# start — for a producer that writes JSON to one topic.
-# lz4 because this crosses the public internet from AWS to OVH: log text compresses to a fraction of
-# itself, and egress is billed per byte at the AWS end.
-rskafka = { version = "0.6", default-features = false, features = [
-  "compression-lz4",
-  "transport-tls",
-] }
-# rustls only to hand rskafka a `ClientConfig`, and `webpki-roots` to put trust anchors in it.
+# No Kafka client here any more.
 #
-# The Mozilla root store compiled in, rather than the execution environment's. A Lambda runtime is
-# not obliged to ship a CA bundle and the extension has to work in every one of them, so reading
-# `/etc/ssl/certs` is a dependency on somebody else's base image. The cost is that a new root needs
-# a rebuild, which for a Let's Encrypt chain is years of notice.
-#
-# `ring` matches rskafka's own feature selection. Only one provider is in this graph, so unlike the
-# router there is no `CryptoProvider` to install.
-rustls = { version = "0.23", default-features = false, features = [
-  "logging",
-  "ring",
-  "std",
-  "tls12",
-] }
-webpki-roots = "1"
+# This used to hold `rskafka` and `rustls` and talk to a broker directly. It does not, because doing
+# so required a Kafka credential inside every customer's execution environment — readable by their
+# own code, and authorized to write a topic every tenant shares. `sink.rs` explains the rest. What
+# remains is an HTTP client posting to the router, which owns the one connection.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde.workspace = true
 serde_json.workspace = true

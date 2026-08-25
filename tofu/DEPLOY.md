@@ -11,22 +11,22 @@ This document exists so that decision is one command rather than an evening of w
 
 Measured against this account on 2026-08-25, not estimated. Month-to-date actual spend was **$0.535**
 — the Route 53 hosted zone plus a few cents of S3 — because the free tier covers the rest. The table
-below is what a *full* month looks like with everything running.
+below is what a _full_ month looks like with everything running.
 
 **There are no credits on this account.** Cost Explorer's record-type breakdown shows only `Usage`
 and `Tax`, and `get-account-plan-state` returns not-found — this is a legacy free tier account, so
 the subsidy is twelve months of allowances rather than a pot of dollars that runs out.
 
-| | While the free tier lasts | After it ends |
-| --- | --- | --- |
-| Application Load Balancer | $0 (730 h ≤ 750 free) | $16.20 |
-| RDS `db.t4g.micro` + 20 GB gp3 | $0 | $14.70 |
-| ElastiCache `cache.t4g.micro` | $0 | $12.41 |
-| EC2 — 2× `t4g.micro` + 1× `t4g.nano` | ~$9 | $15.50 |
-| **Public IPv4 × 3** | **$10.95** | **$10.95** |
-| Route 53 hosted zone | $0.50 | $0.50 |
-| S3 / CloudFront / KMS / CloudWatch | ~$1 | ~$1 |
-| **Total** | **≈ $21/month** | **≈ $70/month** |
+|                                      | While the free tier lasts | After it ends   |
+| ------------------------------------ | ------------------------- | --------------- |
+| Application Load Balancer            | $0 (730 h ≤ 750 free)     | $16.20          |
+| RDS `db.t4g.micro` + 20 GB gp3       | $0                        | $14.70          |
+| ElastiCache `cache.t4g.micro`        | $0                        | $12.41          |
+| EC2 — 2× `t4g.micro` + 1× `t4g.nano` | ~$9                       | $15.50          |
+| **Public IPv4 × 3**                  | **$10.95**                | **$10.95**      |
+| Route 53 hosted zone                 | $0.50                     | $0.50           |
+| S3 / CloudFront / KMS / CloudWatch   | ~$1                       | ~$1             |
+| **Total**                            | **≈ $21/month**           | **≈ $70/month** |
 
 An earlier version of this table said $20 and $43. The $43 was wrong in two ways: it assumed the
 website Auto Scaling group sat at zero, and it priced only the NAT's Elastic IP while the load
@@ -35,7 +35,7 @@ balancer quietly holds two more addresses.
 ### The two lines worth understanding
 
 **The free tier's 750 hours is per service and in aggregate, not per instance.** One instance running
-continuously is about 730 hours, so the allowance is effectively *one* instance — and this estate
+continuously is about 730 hours, so the allowance is effectively _one_ instance — and this estate
 runs three. That is the entire EC2 line. It is also the argument for `ecs.tf`: consolidating the
 website, the API and the worker onto one instance takes the count from three to two.
 
@@ -44,8 +44,8 @@ every public IPv4 address at $0.005/hour — Elastic or auto-assigned, attached 
 tier. Three addresses is not a choice:
 
 - **two belong to the load balancer**, one per availability zone, and AWS refuses to create an ALB
-  spanning fewer than two. They are the addresses `sproutos.me` resolves to. They are also *service
-  owned*: `release-address` on them answers `AuthFailure`, so the only way to hold fewer is to span
+  spanning fewer than two. They are the addresses `sproutos.me` resolves to. They are also _service
+  owned_: `release-address` on them answers `AuthFailure`, so the only way to hold fewer is to span
   fewer subnets, which `aws_lb.main` already does.
 - **one belongs to the NAT instance**, and is the address every private instance appears as when it
   reaches out. Nothing connects inbound to it.
@@ -54,7 +54,7 @@ Getting below three means removing the load balancer or removing IPv4 egress —
 CloudFront, or moving egress to the (free) egress-only gateway the VPC already has. Both are projects
 rather than settings.
 
-What is *not* in the table, because it is usage-priced and near zero when nothing runs: Lambda, data
+What is _not_ in the table, because it is usage-priced and near zero when nothing runs: Lambda, data
 transfer, and every tenant service on the OVH box.
 
 ## Before the first plan

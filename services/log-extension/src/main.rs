@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     runtime::subscribe(&client, &base, &extension_id).await?;
     tracing::info!("subscribed to telemetry");
 
-    let producer = log_extension::kafka::connect().await?;
+    let sink = log_extension::sink::Sink::connect()?;
 
     loop {
         /*
@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
             batch.push(message);
         }
         if !batch.is_empty()
-            && let Err(cause) = producer.send(&batch).await
+            && let Err(cause) = send_batch(&sink, &batch).await
         {
             // Not fatal. An extension that exits takes the customer's function down with it, and
             // losing a log line is not worth an outage of their application.
@@ -102,10 +102,30 @@ async fn main() -> anyhow::Result<()> {
                 final_batch.push(message);
             }
             if !final_batch.is_empty() {
-                let _ = producer.send(&final_batch).await;
+                let _ = send_batch(&sink, &final_batch).await;
             }
             tracing::info!("shutting down");
             return Ok(());
         }
     }
+}
+
+/// One HTTP post carrying a whole batch.
+///
+/// The channel holds individually encoded rows because that is what the Kafka producer wanted, one
+/// record per message. The router takes a JSON array, so they are joined here rather than posted
+/// one at a time: a request per log line would multiply the customer's invocation latency by the
+/// number of lines they wrote.
+async fn send_batch(sink: &log_extension::sink::Sink, batch: &[Vec<u8>]) -> anyhow::Result<()> {
+    let mut body = Vec::with_capacity(batch.iter().map(|row| row.len() + 1).sum::<usize>() + 2);
+    body.push(b'[');
+    for (index, row) in batch.iter().enumerate() {
+        if index > 0 {
+            body.push(b',');
+        }
+        body.extend_from_slice(row);
+    }
+    body.push(b']');
+
+    sink.send(&body).await
 }

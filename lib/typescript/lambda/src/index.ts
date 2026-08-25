@@ -22,3 +22,5 @@ export {
 export { deleteFunction, tearDownDeployment } from "./teardown"
 export { publishQueue, type QueueBinding, readQueue, withdrawQueue } from "./queues"
 export { type DeploymentSpec, hostLabel, type ProjectSpec } from "./hosts"
+
+export { mintProjectToken } from "./project-token"

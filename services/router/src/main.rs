@@ -152,7 +152,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-
 /// Connect to Kafka and start the task that drains the channel into it.
 ///
 /// Returns the sending half. The task owns the producer and lives as long as the process, which is

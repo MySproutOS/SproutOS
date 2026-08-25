@@ -310,7 +310,6 @@ mod tests {
     }
 }
 
-
 /// Accept a batch of runtime logs from a Lambda extension.
 ///
 /// The handler does three things and none of them is "talk to Kafka": verify the token, stamp the

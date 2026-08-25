@@ -133,7 +133,10 @@ mod tests {
         let rest: Vec<&str> = parts.collect();
         let forged = format!("01a03b00-0000-7000-8000-00000000dead.{}", rest.join("."));
 
-        assert_eq!(project_of(&forged, secret, 0), Err(TokenError::BadSignature));
+        assert_eq!(
+            project_of(&forged, secret, 0),
+            Err(TokenError::BadSignature)
+        );
     }
 
     #[test]
@@ -143,7 +146,10 @@ mod tests {
         let token = f["valid"]["token"].as_str().unwrap();
         let expires_at = f["valid"]["expiresAt"].as_u64().unwrap();
 
-        assert_eq!(project_of(token, secret, expires_at), Err(TokenError::Expired));
+        assert_eq!(
+            project_of(token, secret, expires_at),
+            Err(TokenError::Expired)
+        );
         assert!(project_of(token, secret, expires_at - 1).is_ok());
     }
 

@@ -77,7 +77,10 @@ impl Sink {
         let response = self
             .client
             .post(&self.endpoint)
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header("x-sproutos-deployment", &self.deployment_id)
             .body(body.to_vec())

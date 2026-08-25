@@ -232,9 +232,15 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let sink = LogSink::new(tx);
 
-        assert_eq!(sink.offer(vec![stamp(record(), "p", "d")]), Accepted::Queued(1));
+        assert_eq!(
+            sink.offer(vec![stamp(record(), "p", "d")]),
+            Accepted::Queued(1)
+        );
         // The receiver is never read, so the second offer finds the queue full.
-        assert_eq!(sink.offer(vec![stamp(record(), "p", "d")]), Accepted::Dropped(1));
+        assert_eq!(
+            sink.offer(vec![stamp(record(), "p", "d")]),
+            Accepted::Dropped(1)
+        );
     }
 
     #[test]

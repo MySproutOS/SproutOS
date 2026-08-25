@@ -10,6 +10,6 @@
 //! adds to their billed duration, and it must be attached to every function or that function has
 //! no logs.
 
-pub mod kafka;
 pub mod runtime;
+pub mod sink;
 pub mod telemetry;
