@@ -1,4 +1,5 @@
 import { Reveal, RevealItem } from "@ui/spa-shared/reveal"
+import { InfoTooltip } from "./info-tooltip"
 
 /*
   The three things people actually pay for, each priced both ways.
@@ -14,7 +15,18 @@ import { Reveal, RevealItem } from "@ui/spa-shared/reveal"
   the real number, and the honest floor is already the whole argument.
 */
 
-const CARDS = [
+type Card = {
+  eyebrow: string
+  title: string
+  body: string
+  ours: { amount: string; unit: string; note: string }
+  theirs: { label: string; detail: string; monthly: number }[]
+  footnote: string
+  /** An extra line with the precise version behind an info icon. Only where one is warranted. */
+  note?: { text: string; detail: string }
+}
+
+const CARDS: Card[] = [
   {
     eyebrow: "Server-based website",
     title: "A site that runs code, not just files",
@@ -60,9 +72,17 @@ const CARDS = [
     footnote:
       "None of these can be turned down when idle — a managed database is billed by the hour it " +
       "exists, not the hour it is queried. That is the same $51.94 whether a thousand people use " +
-      "your app this month or nobody does. Supabase's free tier stops at two active projects; a " +
-      "third means Pro at $25/mo, and each project past the first adds its own compute on top. " +
-      "Here a database is a thing you make, not a thing you get two of.",
+      "your app this month or nobody does.",
+    note: {
+      // The visible half is the consequence a reader cares about; the tooltip carries the pricing
+      // that makes it true, so the sentence can stay short without becoming an overstatement.
+      text: "On Supabase's free tier, two is the most databases you can have running at once.",
+      detail:
+        "The free tier allows two *active* projects — paused ones do not count against it. A " +
+        "third means Pro at $25/mo, and each project past the first adds its own compute on top, " +
+        "around $10/mo. So a handful of small automations, each with its own isolated database, " +
+        "leaves the free tier at the third one.",
+    },
   },
   {
     eyebrow: "Workflows & background jobs",
@@ -87,7 +107,7 @@ const CARDS = [
       "A per-minute schedule is not a bigger job than a daily one — it is the same second of work, " +
       "43,200 times. Paying by the run makes that cost what it weighs.",
   },
-] as const
+]
 
 function total(rows: readonly { monthly: number }[]) {
   return rows.reduce((sum, row) => sum + row.monthly, 0)
@@ -166,6 +186,14 @@ export function BackendOps() {
                       {card.ours.note}
                     </p>
                   </div>
+                  {card.note ? (
+                    <p className="mt-4 flex items-start gap-1.5 text-xs text-muted-foreground text-pretty">
+                      <span>{card.note.text}</span>
+                      <InfoTooltip label="How Supabase's project limit is priced">
+                        {card.note.detail}
+                      </InfoTooltip>
+                    </p>
+                  ) : null}
                   <p className="mt-4 text-xs text-muted-foreground text-pretty">{card.footnote}</p>
                 </div>
               </article>
