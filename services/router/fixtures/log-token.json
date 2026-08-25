@@ -1,0 +1,8 @@
+{
+  "secret": "log-token-fixture-secret",
+  "valid": {
+    "projectId": "01a03b00-0000-7000-8000-00000000beef",
+    "expiresAt": 4102444800,
+    "token": "01a03b00-0000-7000-8000-00000000beef.4102444800.jTDkl8aIbYWyGHES0nTYkS2kG20q7vtB0zkpCK1k8cc"
+  }
+}

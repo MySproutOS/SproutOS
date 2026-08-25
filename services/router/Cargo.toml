@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# For the one trait the log producer is behind, so the drain loop is testable without a broker.
+async-trait = "0.1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-lambda = "1"
 axum.workspace = true
@@ -30,6 +32,20 @@ redis = { version = "0.27", default-features = false, features = [
 # Direct, only so `main` can name a provider — see the `install_default` call there. Both providers
 # are already in the graph via the AWS SDK and redis; nothing here adds one.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+# The router now owns the only Kafka connection in the platform — it used to be one per Lambda
+# sandbox. lz4 because runtime log text compresses to a fraction of itself and this crosses the
+# public internet to OVH.
+rskafka = { version = "0.6", default-features = false, features = [
+  "compression-lz4",
+  "transport-tls",
+] }
+webpki-roots = "1"
+# The log token's HMAC, verifying what `apps/internal-api/src/v1/deploy.ts` mints. `base64` is
+# already a dependency above — the token's signature is base64url, the same encoding Node's
+# `digest("base64url")` produces.
+hmac = "0.12"
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 search-proxy = { path = "../search-proxy" }
 serde.workspace = true
 serde_json.workspace = true

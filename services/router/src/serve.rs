@@ -18,6 +18,12 @@ pub struct Router {
     pub lambda: LambdaClient,
     /// The longest any invocation may be waited on. A well-funded customer gets all of it.
     pub function_timeout: std::time::Duration,
+    /// Where runtime logs go. `None` where no broker is configured — a development router accepts
+    /// and discards rather than failing an extension that is only doing its job.
+    pub logs: Option<crate::logs::LogSink>,
+    /// Verifies the token an extension presents. Empty where logging is unconfigured, in which case
+    /// `logs` is `None` and it is never consulted.
+    pub log_token_secret: Vec<u8>,
 }
 
 pub type Shared = Arc<Router>;
@@ -65,6 +71,20 @@ pub async fn handle(
         if !known {
             return (StatusCode::OK, "ok").into_response();
         }
+    }
+
+    /*
+      Log ingest, also before host resolution and for the same reason: the extension posting a
+      customer's logs is not itself a customer request, and the `Host` it arrives with is whatever
+      the router was reached by.
+
+      Unlike `/healthz` this path is reserved outright, prefix and all. `/healthz` can be given back
+      to a tenant because the probe is distinguishable by its host; this cannot, because a tenant
+      hostname *is* how the extension reaches us. The `_sproutos/` prefix is the price, and it is
+      documented in the deploy action so nobody builds an application route there by accident.
+    */
+    if uri.path() == crate::logs::INGEST_PATH {
+        return ingest_logs(&state, &method, &headers, &body);
     }
 
     let Some(host) = host else {
@@ -287,5 +307,85 @@ mod tests {
             forwarded.get("host").map(String::as_str),
             Some("myapp.sproutos.me")
         );
+    }
+}
+
+
+/// Accept a batch of runtime logs from a Lambda extension.
+///
+/// The handler does three things and none of them is "talk to Kafka": verify the token, stamp the
+/// project it proves onto every record, and hand the batch to the producer task. The caller is an
+/// extension holding a customer's invocation open, so this returns in microseconds whether or not
+/// the broker is reachable.
+fn ingest_logs(
+    state: &Shared,
+    method: &axum::http::Method,
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Response {
+    if method != axum::http::Method::POST {
+        return (StatusCode::METHOD_NOT_ALLOWED, "post logs here").into_response();
+    }
+
+    let Some(sink) = state.logs.as_ref() else {
+        // No producer configured. Not an error: a development router with no Kafka should accept
+        // and discard rather than fail an extension that is only doing its job.
+        return (StatusCode::ACCEPTED, "logging is not configured").into_response();
+    };
+
+    let Some(token) = crate::logs::bearer(
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+    ) else {
+        return (StatusCode::UNAUTHORIZED, "no token").into_response();
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+
+    let Ok(project_id) = crate::log_token::project_of(token, &state.log_token_secret, now) else {
+        // One answer for malformed, mis-signed and expired alike. Which of the three it was is a
+        // hint to somebody working through guesses, and of no use to a correctly configured
+        // extension.
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    };
+
+    let Ok(records) = serde_json::from_slice::<Vec<crate::logs::IncomingRecord>>(body) else {
+        return (StatusCode::BAD_REQUEST, "expected an array of log records").into_response();
+    };
+
+    // The deployment is a header rather than part of the token: it changes on every release, and
+    // reminting a token per deployment would mean a token whose lifetime is a deployment's. It is
+    // not a security claim — it only labels which release a line came from, within a project the
+    // token already proved.
+    let deployment_id = headers
+        .get("x-sproutos-deployment")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+
+    let stamped: Vec<_> = records
+        .into_iter()
+        .map(|record| crate::logs::stamp(record, &project_id, deployment_id))
+        .collect();
+
+    match sink.offer(stamped) {
+        crate::logs::Accepted::Queued(count) => {
+            (StatusCode::ACCEPTED, format!("{count}")).into_response()
+        }
+        /*
+          Dropped, and still a 2xx.
+
+          The extension cannot do anything useful with a failure: it has already handed the lines
+          off, it is inside a customer's invocation, and retrying would spend their money to deliver
+          our telemetry. Telling it we are behind would only make it retry. The drop is counted
+          here, where somebody can act on it.
+        */
+        crate::logs::Accepted::Dropped(count) => {
+            tracing::warn!(count, project_id, "log queue full; dropped a batch");
+            (StatusCode::ACCEPTED, "dropped").into_response()
+        }
     }
 }

@@ -262,3 +262,15 @@ variable "forum_repo_ids" {
   type        = string
   default     = "SproutOS-Agent@320371408/SproutOS-Agent-Forum@1345557757"
 }
+
+variable "web_image" {
+  description = "The image the website, API and worker all run. Published to GHCR by the deploy workflow."
+  type        = string
+  default     = "ghcr.io/mysproutos/sproutos-web:main"
+}
+
+variable "ecs_instance_count" {
+  description = "Instances backing the ECS cluster. One, because the free tier is 750 instance-hours a month in total."
+  type        = number
+  default     = 1
+}

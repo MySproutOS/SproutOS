@@ -45,10 +45,36 @@ async fn main() -> anyhow::Result<()> {
     let config = aws_config::load_from_env().await;
     let lambda = LambdaClient::new(&config);
 
+    /*
+      The log pipeline, started before anything serves.
+
+      One producer for the whole instance rather than one per sandbox. It is optional: without
+      `KAFKA_BROKERS` the router serves traffic exactly as before and accepts log posts into a void,
+      which is what a developer running this on a laptop wants.
+
+      A failure to reach Kafka at start is logged and not fatal. The router's job is to serve
+      customers' applications; refusing to boot because a log broker is down would turn an
+      observability outage into a platform one.
+    */
+    let log_token_secret = std::env::var("LOG_TOKEN_SECRET").unwrap_or_default();
+    let logs = if std::env::var("KAFKA_BROKERS").is_ok_and(|value| !value.is_empty()) {
+        match log_extension_producer().await {
+            Ok(sink) => Some(sink),
+            Err(cause) => {
+                tracing::error!(%cause, "runtime logs are not being collected");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let dispatch_manager = manager.clone();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager),
         lambda,
+        logs,
+        log_token_secret: log_token_secret.into_bytes(),
         /*
           The ceiling on any single wait.
 
@@ -124,4 +150,20 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(port, "router listening");
     axum::serve(listener, app).await.context("serving failed")?;
     Ok(())
+}
+
+
+/// Connect to Kafka and start the task that drains the channel into it.
+///
+/// Returns the sending half. The task owns the producer and lives as long as the process, which is
+/// the entire point of moving this out of the Lambda extension: one handshake per instance instead
+/// of one per cold start, and a broker that sees a handful of connections rather than one per
+/// concurrent sandbox.
+async fn log_extension_producer() -> anyhow::Result<router::logs::LogSink> {
+    let producer = router::log_kafka::KafkaProducer::connect().await?;
+    let (tx, rx) = tokio::sync::mpsc::channel(router::logs::QUEUE_DEPTH);
+
+    tokio::spawn(router::logs::Producer::new(std::sync::Arc::new(producer)).run(rx));
+
+    Ok(router::logs::LogSink::new(tx))
 }

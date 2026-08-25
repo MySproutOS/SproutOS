@@ -36,6 +36,10 @@ permissions:
   # `tofu/oidc.tf` trusts this workflow by repository and branch, not a secret somebody could copy.
   id-token: write
   contents: read
+  # Publishing the image to GHCR, which authenticates with the job's own GITHUB_TOKEN. No registry
+  # credential is stored anywhere: the token exists for the life of the run and GHCR trusts it
+  # because it was issued for this repository.
+  packages: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -201,6 +205,50 @@ jobs:
             "s3://$bucket/releases/${{ matrix.service }}/$version.tar.gz"
           printf '%s' "$version" | aws s3 cp - \
             "s3://$bucket/releases/${{ matrix.service }}/current"
+
+  image:
+    name: Build and publish the image
+    # arm64, because the instances are Graviton and a multi-arch build would spend most of its time
+    # producing a variant nothing pulls.
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: meta
+        run: |
+          # Lowercased: image references are case-sensitive and the registry rejects an uppercase
+          # path, while ${{ github.repository }} carries the repository's own casing.
+          owner=$(echo "${{ github.repository_owner }}" | tr '"'"'[:upper:]'"'"' '"'"'[:lower:]'"'"')
+          echo "image=ghcr.io/$owner/sproutos-web" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/website/Dockerfile
+          platforms: linux/arm64
+          push: true
+          # Two tags: the commit, which is what a task definition should ever name, and `main`,
+          # which is what a human looking at the registry expects to find. Deployments use the
+          # commit — `main` moving under a running service is how you lose track of what is running.
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ needs.release.outputs.version }}
+            ${{ steps.meta.outputs.image }}:main
+          # The registry as the layer cache. A code-only change then reuses the dependency layer
+          # rather than rebuilding 500 MB of node_modules on a runner with a cold disk.
+          cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
+          cache-to: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache,mode=max
+    needs: release
 
   fill:
     name: Start the idle colour

@@ -11,6 +11,9 @@
 pub mod credit;
 pub mod dispatch;
 pub mod listeners;
+pub mod log_kafka;
+pub mod log_token;
+pub mod logs;
 pub mod payload;
 pub mod resolve;
 pub mod route;
