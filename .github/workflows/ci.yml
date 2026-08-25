@@ -126,6 +126,19 @@ jobs:
 
       - name: Build
         run: pnpm run build
+        env:
+          # The two SPAs refuse a `--mode production` build without these, on purpose: the value is
+          # inlined into the bundle, and an unset one sends every API call to the page's own origin,
+          # where the app is silently signed out. CI does not deploy what it builds, but it must
+          # build the same way the deploy does or the guard is never exercised.
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://api.sproutos.me' }}
+          NEXT_PUBLIC_HOST_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || 'https://sproutos.me' }}
+          # Where the SPA sends a visitor who needs the Next.js side — the login redirect among
+          # them. Left unset it becomes a same-origin path and the five redirects that use it go
+          # nowhere; left as the repo-root .env's localhost it is worse, because the bundle would
+          # ship pointing at a developer's machine. The vite config refuses both, which is why all
+          # three are named here rather than discovered one build failure at a time.
+          VITE_NEXTJS_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || 'https://sproutos.me' }}
 
       - name: Lint
         run: pnpm run lint
@@ -198,10 +211,46 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
+      # The router owns the platform's only Kafka connection now, so the test that proves its rows
+      # are rows ClickHouse accepts lives here. Both images are free — unlike LocalStack, which is
+      # token-gated and is why the end-to-end tests still cannot run in CI.
+      kafka:
+        image: apache/kafka:4.3.1
+        ports:
+          - 29092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8-alpine
+        ports:
+          - 28123:8123
+        env:
+          CLICKHOUSE_USER: sproutos
+          CLICKHOUSE_PASSWORD: sproutos
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       VALKEY_PROXY_BACKEND: 127.0.0.1:41023
       SEARCH_PROXY_UPSTREAM: http://127.0.0.1:29200
+      KAFKA_BROKERS: localhost:29092
+      CLICKHOUSE_URL: http://localhost:28123
+      # This job provides Kafka, so a skipped producer test here is a real silent skip and must fail.
+      REQUIRE_KAFKA: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Setup Rust
@@ -218,6 +267,12 @@ jobs:
       # that demands newer, which is exactly why nobody noticed.
       - name: Check the Rust toolchain pins agree
         run: node bin/check-rust-toolchain.mjs
+      # The topic and the consumer, without which the producer test cannot prove anything: an
+      # absent topic is refused by `UnknownTopicHandling::Error`, and an absent consumer means rows
+      # produced successfully and read back never.
+      - name: Bootstrap Kafka and ClickHouse
+        run: bash bin/ci-bootstrap-logs.sh
+
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy

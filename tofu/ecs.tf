@@ -173,7 +173,7 @@ resource "aws_ecs_task_definition" "web" {
   cpu    = 1024
 
   execution_role_arn = aws_iam_role.ecs_execution.arn
-  task_role_arn      = aws_iam_role.instance.arn
+  task_role_arn      = aws_iam_role.task.arn
 
   container_definitions = jsonencode([
     {

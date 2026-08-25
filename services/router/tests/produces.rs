@@ -25,8 +25,11 @@ async fn kafka_up() -> bool {
 #[tokio::test]
 async fn produces_rows_clickhouse_accepts() {
     if !kafka_up().await {
-        if std::env::var("CI").is_ok() {
-            panic!("Kafka is not reachable in CI; this test must not skip here");
+        // Keyed on "a job promised this service", not on "this is CI" — a different claim. Kafka
+        // needs no token, so the workflow provides it and sets the flag; a skip here is therefore a
+        // real silent skip and must fail.
+        if std::env::var("REQUIRE_KAFKA").is_ok() {
+            panic!("Kafka is not reachable, and REQUIRE_KAFKA says this job provides it");
         }
         eprintln!("skipping: no Kafka at {}", brokers());
         return;

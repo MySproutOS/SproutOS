@@ -410,6 +410,24 @@ data "aws_ssm_parameter" "al2023_arm64" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 }
 
+/*
+  Three roles, because three different things run here and they need different powers.
+
+  - **`instance`** — the EC2 machine. It runs the ECS agent, which registers the instance with the
+    cluster and polls for work.
+  - **`task`** — the application inside the containers. The website, the API and the worker.
+  - **`ecs_execution`** (in `ecs.tf`) — ECS itself, starting a task: pull the image, fetch the
+    secret, write the logs.
+
+  These were briefly one role, which was wrong in a way worth recording. Sharing `instance` with the
+  tasks looked like avoiding duplication — the permissions the application needs really are the ones
+  the old EC2 release needed. But the instance role also has to hold `ecs:RegisterContainerInstance`
+  and the agent's poll and submit calls, and a shared role hands all of that to the customer-facing
+  API process. The application does not register container instances.
+
+  The *application* permissions are a policy of their own, attached to both, so they are written
+  once and cannot drift while the EC2 path still exists.
+*/
 resource "aws_iam_role" "instance" {
   name = "${var.name_prefix}-instance"
 
@@ -423,6 +441,27 @@ resource "aws_iam_role" "instance" {
   })
 }
 
+# What the ECS agent needs to join the cluster and run work. Only the machine gets this.
+resource "aws_iam_role_policy_attachment" "instance_ecs_agent" {
+  role       = aws_iam_role.instance.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+}
+
+resource "aws_iam_role" "task" {
+  name = "${var.name_prefix}-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.tags
+}
+
 /*
   What the router is allowed to do.
 
@@ -430,9 +469,9 @@ resource "aws_iam_role" "instance" {
   the platform's credential on a public-facing box, and the blast radius of that box being taken is
   bounded by this statement.
 */
-resource "aws_iam_role_policy" "instance" {
-  name = "${var.name_prefix}-instance"
-  role = aws_iam_role.instance.id
+resource "aws_iam_policy" "application" {
+  name        = "${var.name_prefix}-application"
+  description = "What the website, API and worker may do. Attached to the instance role and the task role."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -507,6 +546,23 @@ resource "aws_iam_role_policy" "instance" {
       },
     ]
   })
+}
+
+/*
+  Attached to both, for as long as both exist.
+
+  The EC2 Auto Scaling groups still run the tarball release while ECS is brought up beside them, so
+  the same permissions are needed in two places. When the old groups are retired this attachment
+  goes with them and only the task role keeps it.
+*/
+resource "aws_iam_role_policy_attachment" "instance_application" {
+  role       = aws_iam_role.instance.name
+  policy_arn = aws_iam_policy.application.arn
+}
+
+resource "aws_iam_role_policy_attachment" "task_application" {
+  role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.application.arn
 }
 
 resource "aws_iam_role_policy_attachment" "instance_ssm" {
