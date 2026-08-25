@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 #
-# Load the application's secrets into Secrets Manager from a local `.env`.
+# Load the application's secrets into SSM Parameter Store from a local `.env`.
 #
 # Run by a person, not by CI and not by OpenTofu. A secret written through OpenTofu is a secret in
 # `terraform.tfstate` — which is a secret on whatever machine last ran a plan, and in whatever bucket
-# the state is kept in. `app-secrets.tf` therefore creates an empty container and ignores its
-# contents forever; this is what fills it.
+# the state is kept in. `app-secrets.tf` therefore declares only the path and the permission to read
+# it, and creates no parameter at all; this is what creates them.
+#
+# One `SecureString` parameter per variable, under one path. Parameter Store standard parameters are
+# free where a Secrets Manager secret is $0.40 a month, and nothing here uses managed rotation —
+# see `app-secrets.tf`.
 #
 # Usage:  bin/put-app-secrets.sh [path-to-env]
 set -euo pipefail
 
 ENV_FILE="${1:-.env}"
-SECRET_ID="${APPLICATION_SECRET_ID:-sproutos/application}"
+PARAMETER_PATH="${APPLICATION_PARAMETER_PATH:-/sproutos/application}"
+KMS_KEY_ALIAS="${APPLICATION_KMS_KEY_ALIAS:-alias/sproutos-secrets}"
 
 [ -f "$ENV_FILE" ] || { echo "no such file: $ENV_FILE" >&2; exit 1; }
 
@@ -74,12 +79,41 @@ print(json.dumps(found))
 PYTHON
 )
 
-count=$(python3 -c 'import json,sys; print(len(json.loads(sys.stdin.read())))' <<<"$payload")
+# One parameter at a time, because there is no batch write.
+#
+# `--overwrite` on every key rather than create-then-update: this script is meant to be safe to
+# re-run, and the failure it replaces — a `ParameterAlreadyExists` on the second run — would stop
+# the loop partway and leave the set half-updated.
+#
+# The request is written to a mode-600 file and passed by path rather than given to `--value` as an
+# argument. An argument is visible in the process list, so `ps` would show every other user on this
+# machine the secret being written.
+WORK_DIR=$(mktemp -d)
+chmod 700 "$WORK_DIR"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
-aws secretsmanager put-secret-value \
-  --secret-id "$SECRET_ID" \
-  --secret-string "$payload" \
-  --query 'VersionId' --output text >/dev/null
+count=0
+while IFS= read -r key; do
+  ENV_PAYLOAD="$payload" PARAM_KEY="$key" PARAM_PATH="$PARAMETER_PATH" KEY_ID="$KMS_KEY_ALIAS" \
+    OUT="$WORK_DIR/request.json" python3 <<'PYTHON'
+import json, os
 
-echo "wrote $count secret(s) to $SECRET_ID"
-echo "instances read this at boot; existing ones need replacing to pick it up."
+with open(os.environ["OUT"], "w", encoding="utf-8", opener=lambda p, f: os.open(p, f, 0o600)) as out:
+    json.dump({
+        "Name": os.environ["PARAM_PATH"].rstrip("/") + "/" + os.environ["PARAM_KEY"],
+        "Value": json.loads(os.environ["ENV_PAYLOAD"])[os.environ["PARAM_KEY"]],
+        "Type": "SecureString",
+        "KeyId": os.environ["KEY_ID"],
+        "Overwrite": True,
+        "Description": "Read at boot by the website, API and worker. Written by bin/put-app-secrets.sh.",
+    }, out)
+PYTHON
+
+  aws ssm put-parameter --cli-input-json "file://$WORK_DIR/request.json" \
+    --query 'Version' --output text >/dev/null
+  rm -f "$WORK_DIR/request.json"
+  count=$((count + 1))
+done < <(python3 -c 'import json,sys; [print(k) for k in sorted(json.loads(sys.stdin.read()))]' <<<"$payload")
+
+echo "wrote $count parameter(s) under $PARAMETER_PATH"
+echo "instances read these at boot; existing ones need replacing to pick them up."

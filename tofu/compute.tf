@@ -495,14 +495,21 @@ resource "aws_iam_policy" "application" {
           the instance has to fetch it at boot to compose `DATABASE_URL`. Scoped to the one secret
           RDS manages for this instance, not to `*`.
         */
-        Effect = "Allow"
-        Action = ["secretsmanager:GetSecretValue"]
-        Resource = [
-          aws_db_instance.control_plane.master_user_secret[0].secret_arn,
-          # The application's own secrets — GitHub OAuth, webhooks, Stripe. Read once at boot and
-          # written into the environment file the service unit sources.
-          aws_secretsmanager_secret.application.arn,
-        ]
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_db_instance.control_plane.master_user_secret[0].secret_arn]
+      },
+      {
+        /*
+          The application's own secrets — GitHub OAuth, webhooks, Stripe — read once at boot.
+
+          `GetParametersByPath` is authorized against the *path* rather than each parameter, so both
+          ARNs are needed: the path itself and everything under it. Scoped to this one path, which
+          is what stops the role reading any other parameter in the account.
+        */
+        Effect   = "Allow"
+        Action   = ["ssm:GetParametersByPath", "ssm:GetParameters", "ssm:GetParameter"]
+        Resource = local.application_parameter_arns
       },
       {
         /*
@@ -522,14 +529,15 @@ resource "aws_iam_policy" "application" {
         Action   = ["kms:Decrypt"]
         Resource = aws_kms_key.secrets.arn
         Condition = {
-          # Two services, because the same key protects the release in S3 and the database password
-          # in Secrets Manager. Still a `ViaService` list rather than an unconditional grant: this
-          # role cannot use the key directly, only through the two services that hold things it is
-          # entitled to read.
+          # Three services, because the same key protects the release in S3, the database password in
+          # Secrets Manager, and the application's secrets in Parameter Store. Still a `ViaService`
+          # list rather than an unconditional grant: this role cannot use the key directly, only
+          # through the three services that hold things it is entitled to read.
           StringEquals = {
             "kms:ViaService" = [
               "s3.${var.aws_region}.amazonaws.com",
               "secretsmanager.${var.aws_region}.amazonaws.com",
+              "ssm.${var.aws_region}.amazonaws.com",
             ]
           }
         }
@@ -609,10 +617,10 @@ resource "aws_launch_template" "service" {
 
     # Read at boot by the website instances only, to compose `DATABASE_URL`. The ARN is not a
     # secret; what it names is, and reading it needs the instance role.
-    database_secret_arn    = aws_db_instance.control_plane.master_user_secret[0].secret_arn
-    application_secret_arn = aws_secretsmanager_secret.application.arn
-    database_endpoint      = aws_db_instance.control_plane.endpoint
-    database_name          = aws_db_instance.control_plane.db_name
+    database_secret_arn        = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+    application_parameter_path = local.application_parameter_path
+    database_endpoint          = aws_db_instance.control_plane.endpoint
+    database_name              = aws_db_instance.control_plane.db_name
   }))
 
   metadata_options {

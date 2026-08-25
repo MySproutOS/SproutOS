@@ -125,18 +125,48 @@ if [ "$SERVICE" = "website" ]; then
   # needs one — "Missing required environment variable: GITHUB_OAUTH_CLIENT_ID" from the login
   # route, which is a failure a health check on `/healthz` cannot see because the process is fine.
   #
-  # Written as `KEY=value` one per line, with `\n` left as the two characters it is in the JSON.
-  # systemd's `EnvironmentFile` has no line-continuation, so a real newline in a value silently
-  # truncates it — and `GITHUB_APP_PRIVATE_KEY` is a PEM.
-  APP_SECRETS=$(aws secretsmanager get-secret-value \
-    --secret-id "${application_secret_arn}" --query SecretString --output text --region "$REGION")
+  # One `SecureString` parameter per variable, under one path — see `app-secrets.tf` for why this is
+  # Parameter Store and not Secrets Manager. `--recursive` is not needed for a flat path but costs
+  # nothing and keeps this working if the path ever gains a level; `--with-decryption` is the call
+  # that actually needs `kms:Decrypt`.
+  #
+  # `get-parameters-by-path` returns at most ten parameters per page, and there are more than ten.
+  # The AWS CLI follows `NextToken` by itself, so this one call really does return all of them —
+  # but that is the CLI's doing, not the API's: `--no-paginate` here, or the same call from an SDK
+  # without a paginator, would silently deliver the first ten and the rest would surface as a 500
+  # from whichever route happened to need the eleventh.
+  APP_PARAMS=$(aws ssm get-parameters-by-path \
+    --path "${application_parameter_path}" --recursive --with-decryption \
+    --query 'Parameters[].[Name,Value]' --output json --region "$REGION")
 
-  python3 - "$APP_SECRETS" >> /etc/sproutos/env <<'PYTHON'
+  python3 - "${application_parameter_path}" "$APP_PARAMS" >> /etc/sproutos/env <<'PYTHON'
 import json, sys
-for key, value in json.loads(sys.argv[1]).items():
-    if key == "placeholder":
-        continue
-    print(f"{key}={value}")
+
+prefix = sys.argv[1].rstrip("/") + "/"
+for name, value in json.loads(sys.argv[2]):
+    key = name[len(prefix):] if name.startswith(prefix) else name.rsplit("/", 1)[-1]
+    # Single-quoted, with newlines escaped rather than written through.
+    #
+    # systemd's `EnvironmentFile` has no line continuation: a real newline in a value ends the
+    # assignment, so a PEM would arrive as its first line and OpenSSL would report
+    # "DECODER routines::unsupported" from inside a signing call ten frames down.
+    # `githubAppConfigFromEnv` accepts the `\n`-escaped form and un-escapes it, which is the same
+    # shape a PEM takes in a single-line `.env` — so this is the format the application already
+    # expects rather than a workaround invented here.
+    #
+    # The quotes are what make that unambiguous. systemd parses unquoted and double-quoted values
+    # with shell-like rules and interprets backslash escapes in them, so a bare `\n` would be
+    # turned back into the newline this is trying to avoid. Inside single quotes nothing is
+    # interpreted, so the two characters arrive as two characters. Only the newline is escaped, and
+    # backslashes are left alone, because `replaceAll("\\n", "\n")` on the reading side is exactly
+    # that one substitution and nothing else — doubling backslashes here would leave doubled
+    # backslashes there.
+    #
+    # A value containing a single quote cannot be written this way and is refused rather than
+    # silently mangled. None of the credentials this carries has one.
+    if "'" in value:
+        raise SystemExit(f"{key} contains a single quote, which cannot be written to the env file")
+    print(f"{key}='" + value.replace("\n", "\\n") + "'")
 PYTHON
 fi
 

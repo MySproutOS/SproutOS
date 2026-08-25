@@ -26,6 +26,7 @@ the subsidy is twelve months of allowances rather than a pot of dollars that run
 | **Public IPv4 × 3**                  | **$10.95**                | **$10.95**      |
 | Route 53 hosted zone                 | $0.50                     | $0.50           |
 | S3 / CloudFront / KMS / CloudWatch   | ~$1                       | ~$1             |
+| Secrets Manager (RDS master password) | $0.40                    | $0.40           |
 | **Total**                            | **≈ $21/month**           | **≈ $70/month** |
 
 An earlier version of this table said $20 and $43. The $43 was wrong in two ways: it assumed the
@@ -105,8 +106,18 @@ takes three more things, in this order:
 1. **`tofu output`** → set `LAMBDA_EXECUTION_ROLE_ARN`, `VALKEY_URL` (from
    `platform_cache_endpoint`), `LISTENER_ARN`, `WEBSITE_RULE_ARN` and `AWS_ACCOUNT_ID` as repository
    variables for the Deploy workflow.
-2. **Secrets Manager.** The instances read non-secret configuration from `/etc/sproutos/env` and
-   expect the rest at start. Nothing creates those entries yet — see the README's "Not here yet".
+2. **Application secrets.** Run `bin/put-app-secrets.sh`, which reads an allowlist of keys out of
+   your local `.env` and writes one `SecureString` parameter each under `/sproutos/application`.
+   Instances read that path at boot and write it into `/etc/sproutos/env`.
+
+   It is a person's job rather than CI's or OpenTofu's, and `app-secrets.tf` creates no parameter at
+   all, so **no value ever enters `terraform.tfstate`**. Skipping this step does not fail a boot: the
+   site comes up, serves its landing page, and answers 500 on the first request that needs a
+   credential — which is exactly how the missing `GITHUB_OAUTH_CLIENT_ID` was found.
+
+   Parameter Store rather than Secrets Manager because standard parameters are free and a secret is
+   $0.40 a month, and nothing here uses managed rotation. The one secret still in Secrets Manager is
+   the database's master password, which `manage_master_user_password` puts there and RDS rotates.
 3. **Run the Deploy workflow.** It builds the website and router, uploads a release tarball, writes
    the pointer, fills the idle colour, and waits for health. The cutover is a separate job behind a
    protected environment.
