@@ -13,10 +13,13 @@ catalog:
   "@anthropic-ai/claude-agent-sdk": ^0.3.237
   "@aws-sdk/client-ecr": ^3.1114.0
   "@aws-sdk/client-iam": ^3.1114.0
-  "@aws-sdk/client-s3": ^3.1114.0
+  "@aws-sdk/client-s3": ^3.1117.0
   "@aws-sdk/client-kms": ^3.1114.0
   "@aws-sdk/client-lambda": ^3.1114.0
   "@base-ui/react": ^1.7.0
+  "@daytonaio/sdk": ^0.207.0
+  "@stripe/react-stripe-js": ^6.8.2
+  "@stripe/stripe-js": ^9.5.0
   "@fontsource-variable/bricolage-grotesque": ^5.3.0
   "@fontsource-variable/geist": ^5.3.0
   "@fontsource-variable/geist-mono": ^5.3.0

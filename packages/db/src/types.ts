@@ -848,16 +848,19 @@ export interface RoleStatement {
 
 export interface Sandbox {
   alwaysOn: Generated<boolean>
+  cpu: Generated<number>
   createdAt: Generated<Timestamp>
+  diskGib: Generated<number>
+  externalId: string | null
   hostname: string | null
   id: string
   idleTimeoutS: Generated<number>
   lastActivityAt: Generated<Timestamp>
-  namespace: string | null
-  podName: string | null
+  memoryGib: Generated<number>
+  previewPort: number | null
   projectId: string
-  pvcName: string | null
-  runtimeClass: string
+  provider: Generated<string>
+  sandboxClass: Generated<string>
   state: Generated<string>
   updatedAt: Generated<Timestamp>
   userId: string

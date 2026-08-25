@@ -1,0 +1,22 @@
+{
+  "name": "@lib/sandbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive sandboxes for the coding agent: one driver interface, one rented provider.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}
