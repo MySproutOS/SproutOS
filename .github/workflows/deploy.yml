@@ -313,6 +313,104 @@ jobs:
           cache-to: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache,mode=max
     needs: release
 
+  spa:
+    name: Publish the dashboard and admin
+    runs-on: ubuntu-latest
+    # Independent of the release: these are static bundles behind a CDN, not instances, so there is
+    # no colour to fill and nothing to cut over. A failure here leaves the previous bundle serving.
+    steps:
+      - uses: actions/checkout@v5
+
+      # Only when something that ends up *in* a bundle changed. Both SPAs import the shared UI and
+      # the generated API client, so a change to either rebuilds both — the filters are wider than
+      # the app directories on purpose.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            spa:
+              - 'apps/frontends/**'
+              - 'lib/typescript/ui/**'
+              - 'lib/typescript/api-client/**'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+
+      - uses: actions/setup-node@v5
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          node-version: "24.14.0"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+
+      # One at a time, because both configs read the same `VITE_ASSET_BASE` and each needs a
+      # different value — a single `--filter=dashboard --filter=admin` run would give them one.
+      #
+      # The base is an absolute CDN URL including the folder, which is what upstream hardcodes and
+      # this parameterises. It means a browser fetches the bundle straight from CloudFront; only
+      # `index.html` is ever proxied through the origin.
+      #
+      # `NEXT_PUBLIC_API_URL` is required rather than optional: `vite-define.mjs` refuses a
+      # production build without it, and refuses a localhost value, because either produces a bundle
+      # that sends authenticated requests to the wrong origin and reads as a silent sign-out.
+      - name: Build
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+          VITE_NEXTJS_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+        run: |
+          VITE_ASSET_BASE="${{ vars.ASSET_BASE_URL }}/dashboard/" pnpm run build --filter=dashboard
+          VITE_ASSET_BASE="${{ vars.ASSET_BASE_URL }}/admin/" pnpm run build --filter=admin
+
+      # The role built for this, not the release role. It can write these two prefixes and
+      # invalidate this distribution, and nothing else — a deploy of the website has no business
+      # rewriting the dashboard, and vice versa.
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-spa-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish
+        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          assets="${{ vars.ASSET_BUCKET }}"
+          if [ -z "$assets" ]; then
+            echo "::error::ASSET_BUCKET is unset, so /dashboard will 404 after a successful login."
+            exit 1
+          fi
+
+          # `index.html` is excluded from the immutable sync and written separately with
+          # `no-cache`. Its name never changes, so caching it the way the hashed chunks are cached
+          # would pin every visitor to whichever release was current when they first arrived.
+          for spa in dashboard admin; do
+            src="apps/frontends/$spa/dist"
+            [ -d "$src" ] || { echo "::error::$src does not exist"; exit 1; }
+
+            aws s3 sync "$src" "s3://$assets/$spa" \
+              --exclude "index.html" \
+              --cache-control "public,max-age=31536000,immutable" \
+              --delete --only-show-errors
+
+            aws s3 cp "$src/index.html" "s3://$assets/$spa/index.html" \
+              --cache-control "no-cache,must-revalidate" \
+              --content-type "text/html" --only-show-errors
+          done
+
+          # Only the two entry points: everything else is content-hashed, so a release is new keys
+          # rather than new versions of old ones. `/*` would be slower and, past the free thousand
+          # paths a month, billed.
+          if [ -n "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+              --paths "/dashboard/index.html" "/admin/index.html" \
+              --query 'Invalidation.Id' --output text
+          else
+            echo "::warning::CLOUDFRONT_DISTRIBUTION_ID is unset; the previous index.html serves until the cache expires."
+          fi
+
   fill:
     name: Start the idle colour
     needs: release

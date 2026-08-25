@@ -83,6 +83,29 @@ API_PORT=3001
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${tenant_domain}
 NEXT_PUBLIC_API_URL=https://api.${tenant_domain}
+
+# The key `@lib/envelope` wraps data keys with.
+#
+# An ARN identifies a key; it is not one, and holding it grants nothing — the instance can use this
+# key only because its role says so, which is why this sits in plain text beside the ports rather
+# than in Parameter Store.
+#
+# Absent, every route that stores an encrypted value throws `MissingKeyError: No KMS key configured`
+# at the moment it tries — which for the GitHub callback is *after* the OAuth round trip has
+# succeeded, so the failure looks like a broken login rather than missing configuration.
+KMS_KEY_ID=${envelope_kms_key_arn}
+
+# Where `proxy.ts` fetches a SPA's `index.html` from.
+#
+# Unset, `rewriteToSpa` falls back to the request's own origin and asks Next.js for
+# `/dashboard/index.html` — a file the website build does not contain and never will, because the
+# dashboard is a separate Vite app. That is a 404 immediately after a successful login, which reads
+# as broken authentication rather than a missing rewrite target.
+#
+# Only the HTML travels this path. The bundles are absolute CloudFront URLs baked in at build time
+# by `VITE_ASSET_BASE`, so a browser fetches them from the CDN directly instead of routing every
+# chunk back through the origin.
+SPA_ASSET_ORIGIN=https://${spa_asset_origin}
 ENVFILE
 
 # The database URL, composed here from the secret RDS manages rather than written into the launch

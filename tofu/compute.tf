@@ -619,6 +619,8 @@ resource "aws_launch_template" "service" {
     # secret; what it names is, and reading it needs the instance role.
     database_secret_arn        = aws_db_instance.control_plane.master_user_secret[0].secret_arn
     application_parameter_path = local.application_parameter_path
+    envelope_kms_key_arn       = aws_kms_key.envelope.arn
+    spa_asset_origin           = aws_cloudfront_distribution.spa.domain_name
     database_endpoint          = aws_db_instance.control_plane.endpoint
     database_name              = aws_db_instance.control_plane.db_name
   }))

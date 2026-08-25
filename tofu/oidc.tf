@@ -25,7 +25,17 @@ resource "aws_iam_role" "github_actions_spa_deploy" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
+            /*
+              Both spellings, for the same reason the deploy role below carries both: GitHub issues
+              an *id-qualified* subject for this organisation, and a trust policy naming only
+              `repo:owner/name:...` never matches it. This role was written with the plain form
+              only, which made it correct on paper and impossible to assume — the failure is an
+              `AssumeRoleWithWebIdentity` denial that says nothing about subjects.
+            */
+            "token.actions.githubusercontent.com:sub" = compact([
+              "repo:${var.github_repo}:ref:refs/heads/main",
+              var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:ref:refs/heads/main",
+            ])
           }
         }
       }
