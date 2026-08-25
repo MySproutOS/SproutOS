@@ -67,4 +67,39 @@ describe.skipIf(!up)("migrating on deploy", () => {
     )
     expect(held.rows[0]?.count).toBe("0")
   })
+
+  /*
+    The first deploy against a new environment, which is the case the other tests cannot reach.
+
+    Both tests above run against a development database that has been migrated many times, so
+    `kysely_migration` is always there and the read that happens *before* migrating always
+    succeeds. On a genuinely empty database it does not: Kysely creates that table lazily inside
+    `migrateToLatest()`, so the pre-flight count fails to plan with `42P01` and the deploy dies
+    without applying anything.
+
+    Simulated with an empty schema and a `search_path` rather than by dropping the table, which
+    would be a test that destroys the developer's database to make its point. The pinned connection
+    keeps the `search_path` change off every other connection in the pool.
+  */
+  it("reports nothing applied when the migration table does not exist yet", async () => {
+    await sql`create schema if not exists deploy_probe`.execute(db)
+
+    try {
+      // A transaction, because `set local` outside one is silently a no-op — the first version of
+      // this test set the path, never changed it, found the real table and failed. Scoping it to a
+      // transaction is also what stops the change outliving the test on a pooled connection.
+      const count = await db.transaction().execute(async (trx) => {
+        // `pg_catalog` stays on the path so `to_regclass` itself resolves; the point is only that
+        // `kysely_migration` does not.
+        await sql`set local search_path = deploy_probe, pg_catalog`.execute(trx)
+        return await sql<{
+          present: boolean
+        }>`select to_regclass('kysely_migration') is not null as present`.execute(trx)
+      })
+
+      expect(count.rows[0]?.present).toBe(false)
+    } finally {
+      await sql`drop schema if exists deploy_probe cascade`.execute(db)
+    }
+  })
 })

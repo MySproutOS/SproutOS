@@ -73,14 +73,14 @@ export async function deploy(options: DeployOptions = {}): Promise<DeployResult>
   return await db.connection().execute(async (pinned) => {
     await sql`set lock_timeout = ${sql.lit(options.lockTimeout ?? LOCK_TIMEOUT)}`.execute(pinned)
 
-    const before = await applied()
+    const before = await applied(pinned)
     await sql`select pg_advisory_lock(${sql.lit(LOCK_KEY.toString())}::bigint)`.execute(pinned)
 
     try {
       // Re-read after the lock. If another pod migrated while we waited, this is how we know — and
       // it is the difference between "we waited and did nothing" and "we ran and found nothing",
       // which are worth telling apart in a rollout log.
-      const waited = (await applied()) !== before
+      const waited = (await applied(pinned)) !== before
 
       const { error, results } = await migrator().migrateToLatest()
       if (error !== undefined) {
@@ -124,10 +124,36 @@ function migrator(): Migrator {
   })
 }
 
-/** How many migrations are recorded as applied. Cheap, and enough to detect that someone else ran. */
-async function applied(): Promise<number> {
+/**
+ * How many migrations are recorded as applied. Cheap, and enough to detect that someone else ran.
+ *
+ * The existence check is not defensive tidiness — without it this function throws on exactly one
+ * database, and it is the one that matters most. Kysely creates `kysely_migration` lazily, inside
+ * the first `migrateToLatest()`, so on a database nobody has ever migrated the table is absent and
+ * `select count(*) from kysely_migration` fails to plan with `42P01`. `deploy()` calls this
+ * *before* it migrates, to know whether another process got there first — so the very first deploy
+ * against a new environment died before applying anything, reporting a missing table as though the
+ * migrator itself were broken.
+ *
+ * That is precisely how production came to be running with an empty schema, answering 500 from
+ * `/login/github/callback` with `relation "account" does not exist`. The tests here exercise the
+ * lock against a development database that has been migrated many times, where this code path
+ * cannot fail.
+ *
+ * `to_regclass` rather than a `try`/`catch`: it answers in one round trip and returns null instead
+ * of raising, so nothing has to distinguish "table absent" from a connection that genuinely broke.
+ * The name is unqualified so it resolves through `search_path`, which is what the migrator itself
+ * uses to decide where to put the table.
+ */
+async function applied(executor: typeof db = db): Promise<number> {
+  const present = await sql<{
+    present: boolean
+  }>`select to_regclass('kysely_migration') is not null as present`.execute(executor)
+
+  if (!present.rows[0]?.present) return 0
+
   const result = await sql<{
     count: string
-  }>`select count(*)::text as count from kysely_migration`.execute(db)
+  }>`select count(*)::text as count from kysely_migration`.execute(executor)
   return Number(result.rows[0]?.count ?? "0")
 }
