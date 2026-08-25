@@ -4,7 +4,15 @@ import { createErrorObject, createErrorResponse } from "./errors/error.serialize
 import type { ErrorDetail } from "./errors/error.types"
 import { ErrorCode } from "./errors.enum"
 
-type HTTPStatusCode = 400 | 401 | 403 | 404 | 405 | 409 | 422 | 429 | 500 | 503
+/*
+  `502` is here because a route already documented it.
+
+  `POST /billing/topup` declares a 502 for "Stripe rejected the request" and could not return one,
+  so everything Stripe refused fell through to a bare 500 with the body "Internal Server Error" —
+  a documented response nothing could produce. 502 is the honest code for it: the request was fine
+  and an upstream we depend on refused it, which is not the same as this service being broken.
+*/
+type HTTPStatusCode = 400 | 401 | 403 | 404 | 405 | 409 | 422 | 429 | 500 | 502 | 503
 
 export function throwHTTPException(
   status: HTTPStatusCode,
