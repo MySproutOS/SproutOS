@@ -25,8 +25,8 @@ const CARDS = [
     theirs: [
       {
         label: "Vercel Pro",
-        detail: "$20 per seat — a team of five, before any usage",
-        monthly: 100,
+        detail: "$20/mo platform fee, plus $20 for each extra person who can deploy",
+        monthly: 20,
       },
       {
         label: "The cheapest EC2 that can serve it",
@@ -35,9 +35,10 @@ const CARDS = [
       },
     ],
     footnote:
-      "Vercel bills by seat, so the fifth person who only ever looks at the dashboard costs the " +
-      "same as the one who deploys. The EC2 box is cheaper and is yours to patch, monitor and " +
-      "put TLS on.",
+      "Vercel's fee covers one deploying seat and $20 of usage credit; read-only viewers are free, " +
+      "but every additional person who can ship is another $20, so the bill tracks the size of the " +
+      "team rather than the size of the app. The EC2 box is cheaper and is yours to patch, " +
+      "monitor and put TLS on.",
   },
   {
     eyebrow: "Databases",
@@ -71,7 +72,7 @@ const CARDS = [
     theirs: [
       {
         label: "Vercel Cron, once a minute",
-        detail: "Hobby caps cron at once a day, so this needs Pro — $20 per seat",
+        detail: "Hobby's minimum interval is once a day, so this needs Pro at $20/mo",
         monthly: 20,
       },
       {
