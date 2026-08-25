@@ -83,9 +83,33 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
   const startTopup = useStartTopup(orgSlug)
   const quote = useTopupQuote(orgSlug, amountMicroUsd, clientSecret === null)
 
+  /*
+    `night`, because ADR 0010 makes the product dark-only.
+
+    Stripe Elements renders in its own iframe with its own stylesheet, so none of the page's tokens
+    reach it and its default is light. The first version omitted this and put four white
+    payment-method rows inside a dark dialog — not broken, just obviously not part of the product.
+    The variables pin the surface to the card colour rather than Stripe's near-black, so the element
+    sits on the dialog instead of floating above it.
+  */
   if (clientSecret !== null) {
     return (
-      <Elements stripe={stripePromise()} options={{ clientSecret }}>
+      <Elements
+        stripe={stripePromise()}
+        options={{
+          clientSecret,
+          appearance: {
+            theme: "night",
+            variables: {
+              colorBackground: "#111813",
+              colorPrimary: "#8fce9b",
+              colorText: "#e6efe8",
+              borderRadius: "8px",
+              fontFamily: "inherit",
+            },
+          },
+        }}
+      >
         <PaymentStep onDone={onDone} />
       </Elements>
     )
@@ -153,12 +177,25 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
       {quote.data !== undefined && (
         <dl className="flex flex-col gap-1 text-[13px] text-muted-foreground">
           <div className="flex justify-between">
-            <dt>Processing fee</dt>
-            <dd>{formatMicroUsd(BigInt(quote.data.feeMicroUsd))}</dd>
-          </div>
-          <div className="flex justify-between font-medium text-foreground">
             <dt>Charged to your card</dt>
             <dd>{formatMicroUsd(BigInt(quote.data.chargeMicroUsd))}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt>Processing fee</dt>
+            <dd>−{formatMicroUsd(BigInt(quote.data.feeMicroUsd))}</dd>
+          </div>
+          {/*
+            The line the customer is actually buying, and the one the first version left out.
+
+            It showed the fee and the amount charged and stopped there, which reads as though $25
+            buys $25 of credit and the fee is somebody else's problem. It is deducted: $25 charged,
+            $1.025 fee, $23.975 credited. Leaving the third line off does not make the arithmetic
+            wrong, it makes it invisible — and the customer finds out by comparing their balance
+            against their card statement.
+          */}
+          <div className="flex justify-between border-t border-border pt-1 font-medium text-foreground">
+            <dt>Credit added</dt>
+            <dd>{formatMicroUsd(BigInt(quote.data.creditMicroUsd))}</dd>
           </div>
         </dl>
       )}
