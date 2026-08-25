@@ -8,8 +8,16 @@ import {
   postV1OrgsByOrgSlugServicesMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
-/** The kinds the API accepts. Only `postgres` is implemented; the others say so when chosen. */
-export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch"] as const
+/**
+ * The kinds the API accepts. Only `postgres` is implemented; the others say so when chosen.
+ *
+ * `object_storage` is here because the API returns it, not because the picker offers it. The list
+ * was three long while `ServiceKind` on the wire was four, so a row of that kind arriving from the
+ * API had a `kind` this file's type said was impossible — which the compiler only noticed once the
+ * generated client was regenerated. A UI type narrower than its API is a runtime `undefined` in a
+ * label lookup, not a caught error.
+ */
+export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch", "object_storage"] as const
 
 export type ServiceKind = (typeof SERVICE_KINDS)[number]
 
@@ -17,12 +25,22 @@ export const KIND_LABELS: Record<ServiceKind, string> = {
   postgres: "Postgres",
   valkey: "Valkey",
   elasticsearch: "Elasticsearch",
+  object_storage: "Object storage",
 }
 
+/*
+  Valkey and Elasticsearch are `false` and it is not a product decision.
+
+  Both, and OpenSearch, are bound to `127.0.0.1` on the OVH host — unreachable from AWS, where the
+  control plane runs. The tenant splits that would front them are the part ADR 0026 lists as not
+  yet built. Provisioning either would succeed at the control plane and hand a customer a
+  connection string to a port nothing can open.
+*/
 export const KIND_AVAILABLE: Record<ServiceKind, boolean> = {
   postgres: true,
   valkey: false,
   elasticsearch: false,
+  object_storage: false,
 }
 
 export type BackendService = {

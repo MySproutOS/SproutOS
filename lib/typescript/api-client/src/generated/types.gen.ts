@@ -183,6 +183,10 @@ export type PostV1OrgsErrors = {
    * Invalid name or slug
    */
   400: ErrorResponseT
+  /**
+   * The caller already owns the maximum number of organizations
+   */
+  409: unknown
 }
 
 export type PostV1OrgsError = PostV1OrgsErrors[keyof PostV1OrgsErrors]
@@ -932,6 +936,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       productionBranch: string
       autoUpdateEnabled: boolean
       autoUpdateMode: string
+      scaleMode: string
       repositoryId: string
       storeListingId: string | null
       agentCredentialId: string | null
@@ -961,6 +966,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
+    scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
     source:
@@ -1030,6 +1036,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       productionBranch: string
       autoUpdateEnabled: boolean
       autoUpdateMode: string
+      scaleMode: string
       repositoryId: string
       storeListingId: string | null
       agentCredentialId: string | null
@@ -1169,6 +1176,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     productionBranch: string
     autoUpdateEnabled: boolean
     autoUpdateMode: string
+    scaleMode: string
     repositoryId: string
     storeListingId: string | null
     agentCredentialId: string | null
@@ -1211,6 +1219,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
+    scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
   }
   path: {
@@ -1259,6 +1268,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     productionBranch: string
     autoUpdateEnabled: boolean
     autoUpdateMode: string
+    scaleMode: string
     repositoryId: string
     storeListingId: string | null
     agentCredentialId: string | null
@@ -1551,6 +1561,172 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses = {
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse =
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdFilesData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/files"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdFilesError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses = {
+  /**
+   * File paths and metadata, without contents
+   */
+  200: {
+    data: Array<{
+      id: string
+      path: string
+      target: string
+      isSecret: boolean
+      createdAt: Date
+      updatedAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdFilesData = {
+  body?: {
+    path: string
+    contents: string
+    target?: "production" | "preview" | "development" | "all"
+    isSecret?: boolean
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/files"
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors = {
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such project in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdFilesError =
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors[keyof PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses = {
+  /**
+   * The stored file, without its contents
+   */
+  200: {
+    id: string
+    path: string
+    target: string
+    isSecret: boolean
+    createdAt: Date
+    updatedAt: Date
+  }
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse =
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses[keyof PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    fileId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/files/{fileId}/reveal"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors = {
+  /**
+   * Caller lacks credential:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such file on this project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses = {
+  /**
+   * The file's contents
+   */
+  200: {
+    id: string
+    path: string
+    target: string
+    contents: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    fileId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/files/{fileId}"
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors = {
+  /**
+   * Caller lacks credential:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such file on this project
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses = {
+  /**
+   * File removed
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsData = {
   body?: never
   path: {
@@ -1768,6 +1944,345 @@ export type GetV1OrgsByOrgSlugRepositoriesResponses = {
 export type GetV1OrgsByOrgSlugRepositoriesResponse =
   GetV1OrgsByOrgSlugRepositoriesResponses[keyof GetV1OrgsByOrgSlugRepositoriesResponses]
 
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
+  /**
+   * Caller lacks sandbox:write
+   */
+  403: ErrorResponseT
+  /**
+   * No sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
+  /**
+   * Stop queued
+   */
+  202: unknown
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
+  /**
+   * The sandbox
+   */
+  200: {
+    id: string
+    state: string
+    provider: string
+    externalId: string | null
+    sandboxClass: string
+    cpu: number
+    memoryGib: number
+    diskGib: number
+    previewPort: number | null
+    idleTimeoutSeconds: number
+    alwaysOn: boolean
+    lastActivityAt: Date
+    createdAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
+  /**
+   * Caller lacks sandbox:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
+  /**
+   * The sandbox, starting or already running
+   */
+  201: {
+    id: string
+    state: string
+    provider: string
+    externalId: string | null
+    sandboxClass: string
+    cpu: number
+    memoryGib: number
+    diskGib: number
+    previewPort: number | null
+    idleTimeoutSeconds: number
+    alwaysOn: boolean
+    lastActivityAt: Date
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: {
+    port?: number
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/preview"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors = {
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses = {
+  /**
+   * The preview link
+   */
+  200: {
+    url: string
+    port: number
+    expiresAt: Date
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query: {
+    path: string
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/file"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors = {
+  /**
+   * Path escapes the workspace
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox, or no such file
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses = {
+  /**
+   * The file
+   */
+  200: {
+    path: string
+    contents: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData = {
+  body?: {
+    path: string
+    contents: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/file"
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors = {
+  /**
+   * Path escapes the workspace
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks sandbox:write
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileError =
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors[keyof PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors]
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses = {
+  /**
+   * Written
+   */
+  204: void
+}
+
+export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponse =
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses[keyof PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: {
+    path?: string
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/tree"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors = {
+  /**
+   * Path escapes the workspace
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses = {
+  /**
+   * The listing
+   */
+  200: {
+    path: string
+    entries: Array<string>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData = {
+  body?: {
+    command: Array<string>
+    timeoutMs?: number
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/exec"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors = {
+  /**
+   * Command is not an argument vector
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks sandbox:write
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses = {
+  /**
+   * The result
+   */
+  200: {
+    stdout: string
+    stderr: string
+    exitCode: number | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses]
+
 export type GetV1OrgsByOrgSlugGithubRepositoriesData = {
   body?: never
   path: {
@@ -1823,6 +2338,50 @@ export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
 
 export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
   GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
+
+export type GetV1OrgsByOrgSlugGithubRepositoryNameData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query: {
+    name: string
+  }
+  url: "/v1/orgs/{orgSlug}/github/repository-name"
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoryNameErrors = {
+  /**
+   * Caller lacks github:read
+   */
+  403: ErrorResponseT
+  /**
+   * GitHub rate limit reached
+   */
+  429: ErrorResponseT
+  /**
+   * GitHub is unreachable
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoryNameError =
+  GetV1OrgsByOrgSlugGithubRepositoryNameErrors[keyof GetV1OrgsByOrgSlugGithubRepositoryNameErrors]
+
+export type GetV1OrgsByOrgSlugGithubRepositoryNameResponses = {
+  /**
+   * The verdict, with a reason when it is not available
+   */
+  200: {
+    name: string
+    ownerLogin: string | null
+    available: boolean
+    reason: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugGithubRepositoryNameResponse =
+  GetV1OrgsByOrgSlugGithubRepositoryNameResponses[keyof GetV1OrgsByOrgSlugGithubRepositoryNameResponses]
 
 export type GetV1OrgsByOrgSlugAgentCredentialsData = {
   body?: never
@@ -2141,7 +2700,7 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
     data: Array<{
       id: string
       name: string
-      kind: "postgres" | "valkey" | "elasticsearch"
+      kind: "postgres" | "valkey" | "elasticsearch" | "object_storage"
       status: string
       projectId: string | null
       host: string | null
@@ -2159,7 +2718,7 @@ export type GetV1OrgsByOrgSlugServicesResponse =
 export type PostV1OrgsByOrgSlugServicesData = {
   body?: {
     name: string
-    kind: "postgres" | "valkey" | "elasticsearch"
+    kind: "postgres" | "valkey" | "elasticsearch" | "object_storage"
     projectId?: string | null
   }
   path: {
@@ -2542,8 +3101,9 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
       prNumber: number | null
       url: string | null
       imageUri: string | null
-      knativeRevision: string | null
-      runtimeClass: string
+      runtimeClass: string | null
+      buildFailureReason: string | null
+      failureReason: string | null
       createdAt: string
       updatedAt: string
     }>
@@ -2600,8 +3160,9 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
     prNumber: number | null
     url: string | null
     imageUri: string | null
-    knativeRevision: string | null
-    runtimeClass: string
+    runtimeClass: string | null
+    buildFailureReason: string | null
+    failureReason: string | null
     createdAt: string
     updatedAt: string
   }
@@ -2648,8 +3209,9 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
     prNumber: number | null
     url: string | null
     imageUri: string | null
-    knativeRevision: string | null
-    runtimeClass: string
+    runtimeClass: string | null
+    buildFailureReason: string | null
+    failureReason: string | null
     createdAt: string
     updatedAt: string
   }
@@ -2657,303 +3219,6 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
 
 export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse =
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses[keyof GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses]
-
-export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
-  body?: never
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
-}
-
-export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
-  /**
-   * Caller lacks sandbox:write
-   */
-  403: ErrorResponseT
-  /**
-   * No sandbox for this caller and project
-   */
-  404: ErrorResponseT
-}
-
-export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
-  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
-
-export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
-  /**
-   * Stopped
-   */
-  204: void
-}
-
-export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
-  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
-  body?: never
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
-  /**
-   * Caller lacks sandbox:read
-   */
-  403: ErrorResponseT
-  /**
-   * No sandbox for this caller and project
-   */
-  404: ErrorResponseT
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
-  /**
-   * The sandbox
-   */
-  200: {
-    id: string
-    state: string
-    podName: string | null
-    namespace: string | null
-    runtimeClass: string | null
-    idleTimeoutSeconds: number
-    alwaysOn: boolean
-    lastActivityAt: Date
-    createdAt: Date
-  }
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
-  body?: never
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox"
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
-  /**
-   * Caller lacks sandbox:write
-   */
-  403: ErrorResponseT
-  /**
-   * No such project
-   */
-  404: ErrorResponseT
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors]
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
-  /**
-   * The sandbox
-   */
-  201: {
-    id: string
-    state: string
-    podName: string | null
-    namespace: string | null
-    runtimeClass: string | null
-    idleTimeoutSeconds: number
-    alwaysOn: boolean
-    lastActivityAt: Date
-    createdAt: Date
-  }
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData = {
-  body?: never
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query: {
-    path: string
-  }
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/files"
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors = {
-  /**
-   * The path leaves the workspace
-   */
-  400: ErrorResponseT
-  /**
-   * Caller lacks sandbox:read
-   */
-  403: ErrorResponseT
-  /**
-   * No such file
-   */
-  404: ErrorResponseT
-  /**
-   * The sandbox is not running
-   */
-  409: ErrorResponseT
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses = {
-  /**
-   * The file
-   */
-  200: {
-    path: string
-    contents: string
-  }
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses]
-
-export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData = {
-  body?: {
-    path: string
-    contents: string
-  }
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/files"
-}
-
-export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors = {
-  /**
-   * The path leaves the workspace
-   */
-  400: ErrorResponseT
-  /**
-   * Caller lacks sandbox:write
-   */
-  403: ErrorResponseT
-  /**
-   * The sandbox is not running
-   */
-  409: ErrorResponseT
-}
-
-export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesError =
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors[keyof PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors]
-
-export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses = {
-  /**
-   * Written
-   */
-  200: {
-    path: string
-    contents: string
-  }
-}
-
-export type PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponse =
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses[keyof PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData = {
-  body?: never
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: {
-    path?: string
-  }
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/tree"
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors = {
-  /**
-   * The path leaves the workspace
-   */
-  400: ErrorResponseT
-  /**
-   * Caller lacks sandbox:read
-   */
-  403: ErrorResponseT
-  /**
-   * The sandbox is not running
-   */
-  409: ErrorResponseT
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeError =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors]
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses = {
-  /**
-   * The entries; a trailing slash marks a directory
-   */
-  200: {
-    path: string
-    entries: Array<string>
-  }
-}
-
-export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponse =
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses]
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData = {
-  body?: {
-    command: Array<string>
-    timeoutMs?: number
-  }
-  path: {
-    orgSlug: string
-    projectId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/exec"
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors = {
-  /**
-   * Caller lacks sandbox:write
-   */
-  403: ErrorResponseT
-  /**
-   * The sandbox is not running
-   */
-  409: ErrorResponseT
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecError =
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors]
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses = {
-  /**
-   * What the command said, and its exit code
-   */
-  200: {
-    stdout: string
-    stderr: string
-    exitCode: number | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponse =
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
   body?: never
@@ -4227,6 +4492,301 @@ export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses = {
 export type DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponse =
   DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses[keyof DeleteV1OrgsByOrgSlugApiKeysByApiKeyIdResponses]
 
+export type GetV1OrgsByOrgSlugOauthClientsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients"
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsErrors = {
+  /**
+   * Caller lacks oauth_client:read
+   */
+  403: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsError =
+  GetV1OrgsByOrgSlugOauthClientsErrors[keyof GetV1OrgsByOrgSlugOauthClientsErrors]
+
+export type GetV1OrgsByOrgSlugOauthClientsResponses = {
+  /**
+   * Clients
+   */
+  200: {
+    items: Array<{
+      id: string
+      name: string
+      description: string | null
+      logoUrl: string | null
+      homepageUrl: string
+      clientType: string
+      isFirstParty: boolean
+      isVerified: boolean
+      status: string
+      defaultScopes: Array<string>
+      redirectUris: Array<string>
+      createdAt: string
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsResponse =
+  GetV1OrgsByOrgSlugOauthClientsResponses[keyof GetV1OrgsByOrgSlugOauthClientsResponses]
+
+export type PostV1OrgsByOrgSlugOauthClientsData = {
+  body?: {
+    name: string
+    homepageUrl: string
+    clientType: "confidential" | "public"
+    redirectUris: Array<string>
+    description?: string | null
+    logoUrl?: string | null
+    defaultScopes?: Array<string>
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients"
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsErrors = {
+  /**
+   * Caller lacks oauth_client:create
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsError =
+  PostV1OrgsByOrgSlugOauthClientsErrors[keyof PostV1OrgsByOrgSlugOauthClientsErrors]
+
+export type PostV1OrgsByOrgSlugOauthClientsResponses = {
+  /**
+   * Created
+   */
+  201: {
+    id: string
+    name: string
+    description: string | null
+    logoUrl: string | null
+    homepageUrl: string
+    clientType: string
+    isFirstParty: boolean
+    isVerified: boolean
+    status: string
+    defaultScopes: Array<string>
+    redirectUris: Array<string>
+    createdAt: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsResponse =
+  PostV1OrgsByOrgSlugOauthClientsResponses[keyof PostV1OrgsByOrgSlugOauthClientsResponses]
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    clientId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}"
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdErrors = {
+  /**
+   * No such client in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdError =
+  GetV1OrgsByOrgSlugOauthClientsByClientIdErrors[keyof GetV1OrgsByOrgSlugOauthClientsByClientIdErrors]
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdResponses = {
+  /**
+   * Client
+   */
+  200: {
+    id: string
+    name: string
+    description: string | null
+    logoUrl: string | null
+    homepageUrl: string
+    clientType: string
+    isFirstParty: boolean
+    isVerified: boolean
+    status: string
+    defaultScopes: Array<string>
+    redirectUris: Array<string>
+    createdAt: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdResponse =
+  GetV1OrgsByOrgSlugOauthClientsByClientIdResponses[keyof GetV1OrgsByOrgSlugOauthClientsByClientIdResponses]
+
+export type PatchV1OrgsByOrgSlugOauthClientsByClientIdData = {
+  body?: {
+    name?: string
+    homepageUrl?: string
+    description?: string | null
+    logoUrl?: string | null
+    redirectUris?: Array<string>
+    defaultScopes?: Array<string>
+  }
+  path: {
+    orgSlug: string
+    clientId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}"
+}
+
+export type PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors = {
+  /**
+   * No such client in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugOauthClientsByClientIdError =
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors[keyof PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors]
+
+export type PatchV1OrgsByOrgSlugOauthClientsByClientIdResponses = {
+  /**
+   * Updated
+   */
+  200: unknown
+}
+
+export type PutV1OrgsByOrgSlugOauthClientsByClientIdStatusData = {
+  body?: {
+    status: "active" | "suspended"
+  }
+  path: {
+    orgSlug: string
+    clientId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/status"
+}
+
+export type PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors = {
+  /**
+   * No such client in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PutV1OrgsByOrgSlugOauthClientsByClientIdStatusError =
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors[keyof PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors]
+
+export type PutV1OrgsByOrgSlugOauthClientsByClientIdStatusResponses = {
+  /**
+   * Updated
+   */
+  200: unknown
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    clientId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets"
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses = {
+  /**
+   * Secrets
+   */
+  200: {
+    items: Array<{
+      id: string
+      lastFour: string
+      createdAt: string
+      expiresAt: string | null
+      revokedAt: string | null
+      lastUsedAt: string | null
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponse =
+  GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses[keyof GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses]
+
+export type PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    clientId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets"
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors = {
+  /**
+   * Public clients have no secret
+   */
+  400: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsError =
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors[keyof PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors]
+
+export type PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses = {
+  /**
+   * The new secret
+   */
+  201: {
+    id: string
+    /**
+     * Shown once. It cannot be retrieved again.
+     */
+    secret: string
+    lastFour: string
+    createdAt: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponse =
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses[keyof PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses]
+
+export type DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    clientId: string
+    secretId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets/{secretId}"
+}
+
+export type DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors = {
+  /**
+   * No such secret on this client
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdError =
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors[keyof DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors]
+
+export type DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponses = {
+  /**
+   * Revoked
+   */
+  200: unknown
+}
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never
@@ -4974,3 +5534,341 @@ export type PostV1InternalMeteringEventsResponses = {
 
 export type PostV1InternalMeteringEventsResponse =
   PostV1InternalMeteringEventsResponses[keyof PostV1InternalMeteringEventsResponses]
+
+export type PostV1InternalPgResolveData = {
+  body?: {
+    backend_service_id: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/internal/pg/resolve"
+}
+
+export type PostV1InternalPgResolveErrors = {
+  /**
+   * No live database for that service, or the service is suspended
+   */
+  404: unknown
+}
+
+export type PostV1InternalPgResolveResponses = {
+  /**
+   * Where to connect and with what
+   */
+  200: {
+    host: string
+    port: number
+    database: string
+    role: string
+    password: string
+  }
+}
+
+export type PostV1InternalPgResolveResponse =
+  PostV1InternalPgResolveResponses[keyof PostV1InternalPgResolveResponses]
+
+export type PostV1DeployTokenData = {
+  body?: {
+    oidc_token: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/token"
+}
+
+export type PostV1DeployTokenErrors = {
+  /**
+   * The OIDC token did not verify
+   */
+  401: unknown
+  /**
+   * No SproutOS project is connected to that repository
+   */
+  404: unknown
+}
+
+export type PostV1DeployTokenResponses = {
+  /**
+   * A deploy token
+   */
+  200: {
+    token: string
+    expires_in: number
+  }
+}
+
+export type PostV1DeployTokenResponse = PostV1DeployTokenResponses[keyof PostV1DeployTokenResponses]
+
+export type PostV1DeployUploadUrlData = {
+  body?: {
+    project: string
+    digest: string
+    preset: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/upload-url"
+}
+
+export type PostV1DeployUploadUrlErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+}
+
+export type PostV1DeployUploadUrlResponses = {
+  /**
+   * Where to PUT the archive
+   */
+  200: {
+    url: string
+    key: string
+  }
+}
+
+export type PostV1DeployUploadUrlResponse =
+  PostV1DeployUploadUrlResponses[keyof PostV1DeployUploadUrlResponses]
+
+export type PostV1DeployStaticUploadUrlData = {
+  body?: {
+    digest: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/static-upload-url"
+}
+
+export type PostV1DeployStaticUploadUrlErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+}
+
+export type PostV1DeployStaticUploadUrlResponses = {
+  /**
+   * Where to PUT the asset archive
+   */
+  200: {
+    url: string
+    key: string
+  }
+}
+
+export type PostV1DeployStaticUploadUrlResponse =
+  PostV1DeployStaticUploadUrlResponses[keyof PostV1DeployStaticUploadUrlResponses]
+
+export type PostV1DeployReleaseData = {
+  body?: {
+    project: string
+    key: string
+    digest: string
+    static_key?: string
+    static_digest?: string
+    preset: string
+    environment: string
+    commit: string
+    ref: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/release"
+}
+
+export type PostV1DeployReleaseErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+}
+
+export type PostV1DeployReleaseResponses = {
+  /**
+   * The deployment
+   */
+  200: {
+    deployment_id: string
+    url?: string
+  }
+}
+
+export type PostV1DeployReleaseResponse =
+  PostV1DeployReleaseResponses[keyof PostV1DeployReleaseResponses]
+
+export type PostV1ApkSigningClaimData = {
+  body?: {
+    signer_id: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/apk-signing/claim"
+}
+
+export type PostV1ApkSigningClaimErrors = {
+  /**
+   * Missing or invalid signer token
+   */
+  401: unknown
+}
+
+export type PostV1ApkSigningClaimResponses = {
+  /**
+   * A job, with URLs to download the unsigned APK and upload the signed one
+   */
+  200: {
+    job_id: string
+    project_id: string
+    deployment_id: string
+    download_url: string
+    unsigned_digest: string
+    upload_url: string
+    signed_key: string
+  }
+  /**
+   * Nothing to sign
+   */
+  204: void
+}
+
+export type PostV1ApkSigningClaimResponse =
+  PostV1ApkSigningClaimResponses[keyof PostV1ApkSigningClaimResponses]
+
+export type PostV1ApkSigningCompleteData = {
+  body?: {
+    job_id: string
+    signer_id: string
+    signed_key: string
+    signed_digest: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/apk-signing/complete"
+}
+
+export type PostV1ApkSigningCompleteErrors = {
+  /**
+   * Missing or invalid signer token
+   */
+  401: unknown
+  /**
+   * The claim is no longer held by this signer
+   */
+  409: unknown
+}
+
+export type PostV1ApkSigningCompleteResponses = {
+  /**
+   * Recorded
+   */
+  200: unknown
+}
+
+export type PostV1ApkSigningFailData = {
+  body?: {
+    job_id: string
+    signer_id: string
+    error: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/apk-signing/fail"
+}
+
+export type PostV1ApkSigningFailErrors = {
+  /**
+   * Missing or invalid signer token
+   */
+  401: unknown
+}
+
+export type PostV1ApkSigningFailResponses = {
+  /**
+   * Recorded
+   */
+  200: unknown
+}
+
+export type GetV1AndroidCatalogueData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/android/catalogue"
+}
+
+export type GetV1AndroidCatalogueResponses = {
+  /**
+   * The catalogue
+   */
+  200: unknown
+}
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

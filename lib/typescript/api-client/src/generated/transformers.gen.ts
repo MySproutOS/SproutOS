@@ -2,6 +2,7 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetAdminUsersResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
@@ -13,9 +14,11 @@ import type {
   GetV1OrgsByOrgSlugMembersResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponse,
@@ -41,6 +44,7 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugApiKeysResponse,
@@ -55,6 +59,7 @@ import type {
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
 } from "./types.gen"
 
 export const getV1OrgsResponseTransformer = async (data: any): Promise<GetV1OrgsResponse> => {
@@ -223,6 +228,25 @@ export const putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer = async
   return data
 }
 
+export const getV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    item.updatedAt = new Date(item.updatedAt)
+    return item
+  })
+  return data
+}
+
+export const putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer = async (
+  data: any,
+): Promise<PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  data.updatedAt = new Date(data.updatedAt)
+  return data
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponse> => {
@@ -265,6 +289,29 @@ export const getV1OrgsByOrgSlugRepositoriesResponseTransformer = async (
     item.createdAt = new Date(item.createdAt)
     return item
   })
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
+  data.lastActivityAt = new Date(data.lastActivityAt)
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
+  data.lastActivityAt = new Date(data.lastActivityAt)
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponse> => {
+  data.expiresAt = new Date(data.expiresAt)
   return data
 }
 
@@ -355,22 +402,6 @@ export const postV1OrgsByOrgSlugAnalysesResponseTransformer = async (
 export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse> => {
-  data.createdAt = new Date(data.createdAt)
-  return data
-}
-
-export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
-  data: any,
-): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
-  data.lastActivityAt = new Date(data.lastActivityAt)
-  data.createdAt = new Date(data.createdAt)
-  return data
-}
-
-export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer = async (
-  data: any,
-): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse> => {
-  data.lastActivityAt = new Date(data.lastActivityAt)
   data.createdAt = new Date(data.createdAt)
   return data
 }
@@ -666,5 +697,25 @@ export const getV1UserMeImpersonationResponseTransformer = async (
   if (data.expiresAt) {
     data.expiresAt = new Date(data.expiresAt)
   }
+  return data
+}
+
+export const getAdminUsersResponseTransformer = async (
+  data: any,
+): Promise<GetAdminUsersResponse> => {
+  data.items = data.items.map((item: any) => {
+    if (item.deletedAt) {
+      item.deletedAt = new Date(item.deletedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postAdminUsersImpersonateResponseTransformer = async (
+  data: any,
+): Promise<PostAdminUsersImpersonateResponse> => {
+  data.expiresAt = new Date(data.expiresAt)
   return data
 }

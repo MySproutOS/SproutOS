@@ -1,6 +1,7 @@
 import { Link, createFileRoute } from "@tanstack/react-router"
-import { PlusIcon, SearchIcon } from "lucide-react"
+import { SearchIcon } from "lucide-react"
 import { useState } from "react"
+import { NewProjectDialog } from "@frontends/dashboard/components/projects/new-project-dialog"
 import { Button } from "@ui/base/ui/button"
 import { Input } from "@ui/base/ui/input"
 import {
@@ -49,10 +50,7 @@ function ProjectsList() {
             className="pl-8"
           />
         </div>
-        <Button render={<Link to="/store" />}>
-          <PlusIcon />
-          New project
-        </Button>
+        <NewProjectDialog orgSlug={orgSlug} />
       </PageHeader>
 
       <PageBody>

@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -22,9 +23,11 @@ import {
   getV1OrgsByOrgSlugMembersResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer,
@@ -50,6 +53,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAnalysesResponseTransformer,
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
@@ -64,6 +68,7 @@ import {
   postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
+  putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
 } from "./transformers.gen"
 import type {
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
@@ -83,11 +88,17 @@ import type {
   DeleteV1OrgsByOrgSlugMembersByMemberIdData,
   DeleteV1OrgsByOrgSlugMembersByMemberIdErrors,
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponses,
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors,
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponses,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdErrors,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponses,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
@@ -105,6 +116,10 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
+  GetV1AndroidCatalogueData,
+  GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
   GetV1OrgsByOrgSlugAgentConfigData,
@@ -145,12 +160,23 @@ import type {
   GetV1OrgsByOrgSlugGithubRepositoriesData,
   GetV1OrgsByOrgSlugGithubRepositoriesErrors,
   GetV1OrgsByOrgSlugGithubRepositoriesResponses,
+  GetV1OrgsByOrgSlugGithubRepositoryNameData,
+  GetV1OrgsByOrgSlugGithubRepositoryNameErrors,
+  GetV1OrgsByOrgSlugGithubRepositoryNameResponses,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesErrors,
   GetV1OrgsByOrgSlugInvitesResponses,
   GetV1OrgsByOrgSlugMembersData,
   GetV1OrgsByOrgSlugMembersErrors,
   GetV1OrgsByOrgSlugMembersResponses,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdData,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdResponses,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsData,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses,
+  GetV1OrgsByOrgSlugOauthClientsData,
+  GetV1OrgsByOrgSlugOauthClientsErrors,
+  GetV1OrgsByOrgSlugOauthClientsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -162,6 +188,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses,
@@ -177,9 +206,12 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData,
   GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors,
@@ -253,6 +285,9 @@ import type {
   GetV1UserMeProfileResponses,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugErrors,
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdData,
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdResponses,
   PatchV1OrgsByOrgSlugProjectsByProjectIdData,
   PatchV1OrgsByOrgSlugProjectsByProjectIdErrors,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponses,
@@ -268,12 +303,39 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
+  PostV1ApkSigningClaimData,
+  PostV1ApkSigningClaimErrors,
+  PostV1ApkSigningClaimResponses,
+  PostV1ApkSigningCompleteData,
+  PostV1ApkSigningCompleteErrors,
+  PostV1ApkSigningCompleteResponses,
+  PostV1ApkSigningFailData,
+  PostV1ApkSigningFailErrors,
+  PostV1ApkSigningFailResponses,
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1DeployReleaseData,
+  PostV1DeployReleaseErrors,
+  PostV1DeployReleaseResponses,
+  PostV1DeployStaticUploadUrlData,
+  PostV1DeployStaticUploadUrlErrors,
+  PostV1DeployStaticUploadUrlResponses,
+  PostV1DeployTokenData,
+  PostV1DeployTokenErrors,
+  PostV1DeployTokenResponses,
+  PostV1DeployUploadUrlData,
+  PostV1DeployUploadUrlErrors,
+  PostV1DeployUploadUrlResponses,
   PostV1InternalMeteringEventsData,
   PostV1InternalMeteringEventsErrors,
   PostV1InternalMeteringEventsResponses,
+  PostV1InternalPgResolveData,
+  PostV1InternalPgResolveErrors,
+  PostV1InternalPgResolveResponses,
   PostV1InvitesAcceptData,
   PostV1InvitesAcceptErrors,
   PostV1InvitesAcceptResponses,
@@ -302,6 +364,12 @@ import type {
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesErrors,
   PostV1OrgsByOrgSlugInvitesResponses,
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsData,
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors,
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses,
+  PostV1OrgsByOrgSlugOauthClientsData,
+  PostV1OrgsByOrgSlugOauthClientsErrors,
+  PostV1OrgsByOrgSlugOauthClientsResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -311,6 +379,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
@@ -377,12 +448,18 @@ import type {
   PutV1OrgsByOrgSlugMembersByMemberIdRolesData,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesErrors,
   PutV1OrgsByOrgSlugMembersByMemberIdRolesResponses,
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusData,
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors,
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusResponses,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvErrors,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponses,
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData,
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphData,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphErrors,
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponses,
@@ -994,6 +1071,86 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId = <
   >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/env/{envVarId}", ...options })
 
 /**
+ * Lists a project's config files. Contents are never included.
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdFiles = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdFilesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/files",
+    ...options,
+  })
+
+/**
+ * Writes one config file, mounted at its path in the container. Contents are envelope-encrypted before storage.
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdFiles = <ThrowOnError extends boolean = false>(
+  options: Options<PutV1OrgsByOrgSlugProjectsByProjectIdFilesData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponses,
+    PutV1OrgsByOrgSlugProjectsByProjectIdFilesErrors,
+    ThrowOnError
+  >({
+    responseTransformer: putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/files",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Returns one config file's decrypted contents. Written to the audit log.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/files/{fileId}/reveal", ...options })
+
+/**
+ * Removes one config file
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdResponses,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/files/{fileId}", ...options })
+
+/**
  * Lists upstream update suggestions for a forked project
  */
 export const getV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestions = <
@@ -1088,6 +1245,172 @@ export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = fa
   })
 
 /**
+ * Stops the caller's dev sandbox, keeping its workspace
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox", ...options })
+
+/**
+ * The caller's dev sandbox for this project
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
+    ...options,
+  })
+
+/**
+ * Starts the caller's dev sandbox, or returns the one already running
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
+    ...options,
+  })
+
+/**
+ * A signed, short-lived URL onto a port in the sandbox
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreview = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/preview",
+    ...options,
+  })
+
+/**
+ * Reads a file from the sandbox workspace
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxFile = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/file", ...options })
+
+/**
+ * Writes a file into the sandbox workspace
+ */
+export const putV1OrgsByOrgSlugProjectsByProjectIdSandboxFile = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
+  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileResponses,
+    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFileErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/file",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists a directory in the sandbox workspace
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxTree = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/tree", ...options })
+
+/**
+ * Runs a command in the sandbox workspace
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/exec",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
  * Lists the repositories the organization's GitHub App installation can reach
  */
 export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolean = false>(
@@ -1102,6 +1425,22 @@ export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolea
     GetV1OrgsByOrgSlugGithubRepositoriesErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/github/repositories", ...options })
+
+/**
+ * Whether a repository name is free on the account a new project would use
+ */
+export const getV1OrgsByOrgSlugGithubRepositoryName = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugGithubRepositoryNameData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugGithubRepositoryNameResponses,
+  GetV1OrgsByOrgSlugGithubRepositoryNameErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugGithubRepositoryNameResponses,
+    GetV1OrgsByOrgSlugGithubRepositoryNameErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/github/repository-name", ...options })
 
 /**
  * Lists the organization's model credentials, without their secrets
@@ -1467,150 +1806,6 @@ export const getV1OrgsByOrgSlugDeploymentsByDeploymentId = <ThrowOnError extends
     GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/deployments/{deploymentId}", ...options })
-
-/**
- * Stops the caller's dev sandbox
- */
-export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
-): RequestResult<
-  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-  DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).delete<
-    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-    DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-    ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox", ...options })
-
-/**
- * The caller's dev sandbox for this project
- */
-export const getV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError extends boolean = false>(
-  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
-): RequestResult<
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).get<
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-    ThrowOnError
-  >({
-    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
-    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
-    ...options,
-  })
-
-/**
- * Starts the caller's dev sandbox, or returns the running one
- */
-export const postV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError extends boolean = false>(
-  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData, ThrowOnError>,
-): RequestResult<
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).post<
-    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses,
-    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
-    ThrowOnError
-  >({
-    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
-    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
-    ...options,
-  })
-
-/**
- * Reads one file out of the workspace
- */
-export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData, ThrowOnError>,
-): RequestResult<
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).get<
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-    ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/files", ...options })
-
-/**
- * Writes one file, creating its directories
- */
-export const putV1OrgsByOrgSlugProjectsByProjectIdSandboxFiles = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesData, ThrowOnError>,
-): RequestResult<
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
-  PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).put<
-    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesResponses,
-    PutV1OrgsByOrgSlugProjectsByProjectIdSandboxFilesErrors,
-    ThrowOnError
-  >({
-    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/files",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  })
-
-/**
- * Lists a directory in the workspace
- */
-export const getV1OrgsByOrgSlugProjectsByProjectIdSandboxTree = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeData, ThrowOnError>,
-): RequestResult<
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses,
-  GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).get<
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeResponses,
-    GetV1OrgsByOrgSlugProjectsByProjectIdSandboxTreeErrors,
-    ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/tree", ...options })
-
-/**
- * Runs a command in the sandbox. This is the terminal
- */
-export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData, ThrowOnError>,
-): RequestResult<
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses,
-  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).post<
-    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecResponses,
-    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecErrors,
-    ThrowOnError
-  >({
-    url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/exec",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  })
 
 /**
  * One workflow and its current graph
@@ -2209,6 +2404,159 @@ export const deleteV1OrgsByOrgSlugApiKeysByApiKeyId = <ThrowOnError extends bool
   >({ url: "/v1/orgs/{orgSlug}/api-keys/{apiKeyId}", ...options })
 
 /**
+ * OAuth applications this organization has registered
+ */
+export const getV1OrgsByOrgSlugOauthClients = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugOauthClientsData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugOauthClientsResponses,
+  GetV1OrgsByOrgSlugOauthClientsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugOauthClientsResponses,
+    GetV1OrgsByOrgSlugOauthClientsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/oauth-clients", ...options })
+
+/**
+ * Register an OAuth application. Returns the secret once for confidential clients.
+ */
+export const postV1OrgsByOrgSlugOauthClients = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugOauthClientsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugOauthClientsResponses,
+  PostV1OrgsByOrgSlugOauthClientsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugOauthClientsResponses,
+    PostV1OrgsByOrgSlugOauthClientsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/oauth-clients",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * One OAuth application
+ */
+export const getV1OrgsByOrgSlugOauthClientsByClientId = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugOauthClientsByClientIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugOauthClientsByClientIdResponses,
+  GetV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugOauthClientsByClientIdResponses,
+    GetV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}", ...options })
+
+/**
+ * Update an OAuth application. Redirect URIs are replaced wholesale.
+ */
+export const patchV1OrgsByOrgSlugOauthClientsByClientId = <ThrowOnError extends boolean = false>(
+  options: Options<PatchV1OrgsByOrgSlugOauthClientsByClientIdData, ThrowOnError>,
+): RequestResult<
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdResponses,
+  PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugOauthClientsByClientIdResponses,
+    PatchV1OrgsByOrgSlugOauthClientsByClientIdErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Suspend or reactivate a client. Suspended clients cannot obtain tokens.
+ */
+export const putV1OrgsByOrgSlugOauthClientsByClientIdStatus = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PutV1OrgsByOrgSlugOauthClientsByClientIdStatusData, ThrowOnError>,
+): RequestResult<
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusResponses,
+  PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).put<
+    PutV1OrgsByOrgSlugOauthClientsByClientIdStatusResponses,
+    PutV1OrgsByOrgSlugOauthClientsByClientIdStatusErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/status",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * A client's secrets, without the secrets.
+ */
+export const getV1OrgsByOrgSlugOauthClientsByClientIdSecrets = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsData, ThrowOnError>,
+): RequestResult<GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses, unknown, ThrowOnError> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses,
+    unknown,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets", ...options })
+
+/**
+ * Issue an additional secret. Shown once and never again.
+ */
+export const postV1OrgsByOrgSlugOauthClientsByClientIdSecrets = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses,
+  PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsResponses,
+    PostV1OrgsByOrgSlugOauthClientsByClientIdSecretsErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets", ...options })
+
+/**
+ * Revoke a secret. The record is kept; the secret stops working.
+ */
+export const deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponses,
+  DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponses,
+    DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets/{secretId}", ...options })
+
+/**
  * Lists the store categories
  */
 export const getV1StoreCategories = <ThrowOnError extends boolean = false>(
@@ -2516,3 +2864,206 @@ export const postV1InternalMeteringEvents = <ThrowOnError extends boolean = fals
     PostV1InternalMeteringEventsErrors,
     ThrowOnError
   >({ url: "/v1/internal/metering/events", ...options })
+
+/**
+ * The backend connection details for one tenant database. Called by pg-proxy on connection, not by users.
+ */
+export const postV1InternalPgResolve = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1InternalPgResolveData, ThrowOnError>,
+): RequestResult<PostV1InternalPgResolveResponses, PostV1InternalPgResolveErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1InternalPgResolveResponses,
+    PostV1InternalPgResolveErrors,
+    ThrowOnError
+  >({
+    url: "/v1/internal/pg/resolve",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Exchange a GitHub Actions OIDC token for a short-lived SproutOS deploy token. Called by the deploy action.
+ */
+export const postV1DeployToken = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployTokenData, ThrowOnError>,
+): RequestResult<PostV1DeployTokenResponses, PostV1DeployTokenErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1DeployTokenResponses,
+    PostV1DeployTokenErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/token",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * A pre-signed URL to upload a build artifact to. Called by the deploy action.
+ */
+export const postV1DeployUploadUrl = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployUploadUrlData, ThrowOnError>,
+): RequestResult<PostV1DeployUploadUrlResponses, PostV1DeployUploadUrlErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1DeployUploadUrlResponses,
+    PostV1DeployUploadUrlErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/upload-url",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * A pre-signed URL for a deployment's static assets, which are served from the CDN rather than the function.
+ */
+export const postV1DeployStaticUploadUrl = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployStaticUploadUrlData, ThrowOnError>,
+): RequestResult<
+  PostV1DeployStaticUploadUrlResponses,
+  PostV1DeployStaticUploadUrlErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostV1DeployStaticUploadUrlResponses,
+    PostV1DeployStaticUploadUrlErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/static-upload-url",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Record an uploaded build as a deployment. Called by the deploy action.
+ */
+export const postV1DeployRelease = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployReleaseData, ThrowOnError>,
+): RequestResult<PostV1DeployReleaseResponses, PostV1DeployReleaseErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1DeployReleaseResponses,
+    PostV1DeployReleaseErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/release",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Claim the oldest APK awaiting signature. Polled by the on-premises signer.
+ */
+export const postV1ApkSigningClaim = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1ApkSigningClaimData, ThrowOnError>,
+): RequestResult<PostV1ApkSigningClaimResponses, PostV1ApkSigningClaimErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1ApkSigningClaimResponses,
+    PostV1ApkSigningClaimErrors,
+    ThrowOnError
+  >({
+    url: "/v1/apk-signing/claim",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Record a signed APK against the job that produced it.
+ */
+export const postV1ApkSigningComplete = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1ApkSigningCompleteData, ThrowOnError>,
+): RequestResult<PostV1ApkSigningCompleteResponses, PostV1ApkSigningCompleteErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1ApkSigningCompleteResponses,
+    PostV1ApkSigningCompleteErrors,
+    ThrowOnError
+  >({
+    url: "/v1/apk-signing/complete",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Report a signing failure. The job returns to the queue until it has run out of attempts.
+ */
+export const postV1ApkSigningFail = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1ApkSigningFailData, ThrowOnError>,
+): RequestResult<PostV1ApkSigningFailResponses, PostV1ApkSigningFailErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1ApkSigningFailResponses,
+    PostV1ApkSigningFailErrors,
+    ThrowOnError
+  >({
+    url: "/v1/apk-signing/fail",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Everything the SproutOS Android client shows: public apps, and the caller's own apps and sites.
+ */
+export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1AndroidCatalogueData, ThrowOnError>,
+): RequestResult<GetV1AndroidCatalogueResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
+    url: "/v1/android/catalogue",
+    ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
