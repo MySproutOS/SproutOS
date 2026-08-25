@@ -44,7 +44,22 @@ env:
 jobs:
   release:
     name: Build and upload
-    runs-on: ubuntu-latest
+    # arm64 runners, because arm64 is what this ships to.
+    #
+    # Both halves of the release are architecture-specific and both were wrong on an x86 runner:
+    #
+    # - The router is a static `aarch64-unknown-linux-musl` binary. Cross-compiling it needs a C
+    # toolchain for the target — `ring` has a build script — and the runner has none, so the build
+    # died with `failed to find tool "aarch64-linux-musl-gcc"`. On arm64 this is a *native* musl
+    # build and `musl-tools` is all it takes.
+    # - The API's dependency tree contains per-platform optional binaries — 300 MB of
+    # `@anthropic-ai/claude-agent-sdk` among them — and `pnpm deploy --prod` resolves them for the
+    # host it runs on. An x86 runner would have quietly put `linux-x64` into a tarball bound for
+    # Graviton, which is the same mistake a macOS laptop makes with `darwin-arm64` and just as
+    # silent: nothing fails until the instance tries to run it.
+    #
+    # Building on the target architecture makes both correct by construction rather than by flag.
+    runs-on: ubuntu-24.04-arm
     strategy:
       # Fail the whole release if either service fails to build. A half-released pair is worse than
       # no release: the cutover would move traffic to instances running one new service and one old.
@@ -79,6 +94,9 @@ jobs:
       - name: Build the router
         if: matrix.service == 'router'
         run: |
+          # `ring` and `lz4` have build scripts that compile C. On an arm64 host this is a native
+          # musl build, so the stock cross-compiler is all that is missing.
+          sudo apt-get update -qq && sudo apt-get install -y musl-tools
           rustup target add aarch64-unknown-linux-musl
           cargo build --release --target aarch64-unknown-linux-musl -p router
 
