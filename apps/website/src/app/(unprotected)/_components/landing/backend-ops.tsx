@@ -60,7 +60,9 @@ const CARDS = [
     footnote:
       "None of these can be turned down when idle — a managed database is billed by the hour it " +
       "exists, not the hour it is queried. That is the same $51.94 whether a thousand people use " +
-      "your app this month or nobody does.",
+      "your app this month or nobody does. Supabase's free tier stops at two active projects; a " +
+      "third means Pro at $25/mo, and each project past the first adds its own compute on top. " +
+      "Here a database is a thing you make, not a thing you get two of.",
   },
   {
     eyebrow: "Workflows & background jobs",

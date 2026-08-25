@@ -1,6 +1,7 @@
 import { getCurrentSession } from "@website/lib/auth"
 import { redirect } from "next/navigation"
 import { AppStore } from "./_components/landing/app-store"
+import { Automations } from "./_components/landing/automations"
 import { BackendOps } from "./_components/landing/backend-ops"
 import { FinalCta } from "./_components/landing/final-cta"
 import { ForBusiness } from "./_components/landing/for-business"
@@ -21,6 +22,7 @@ export default async function Page() {
       <Nav />
       <main>
         <Hero />
+        <Automations />
         <AppStore />
         <ForBusiness />
         <BackendOps />
