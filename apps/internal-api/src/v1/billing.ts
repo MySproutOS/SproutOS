@@ -13,7 +13,7 @@ import { requirePermission } from "../rbac"
 import { authMiddleware } from "../middleware"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
 import { ErrorCode } from "../utils/errors.enum"
-import { throwBadRequest, throwConflict } from "../utils/http-exception"
+import { throwBadRequest, throwConflict, throwError } from "../utils/http-exception"
 import { auditContext } from "../utils/request-context"
 import {
   billingSchemaAutoReloadRequest,
@@ -177,6 +177,29 @@ const app = new Hono()
             { target: "amountMicroUsd" },
           )
         }
+
+        /*
+          The 502 this route has always documented and never returned.
+
+          Anything Stripe refused fell through to `throw`, which is a bare 500 with the body
+          "Internal Server Error" — so the dialog says "that top-up could not be started" and the
+          reason exists only in a log nobody is reading. Switching this deployment from test to live
+          made every top-up fail this way, and the actual cause (a customer id belonging to the
+          other mode) was visible nowhere at all.
+
+          Stripe's own message is written for the person who has to act on it — "No such customer",
+          "Your card was declined" — so it is passed through rather than replaced with a category.
+        */
+        if (isStripeError(error)) {
+          console.error(`[billing] stripe refused a top-up for ${organization.id}:`, error)
+          return throwError(
+            c,
+            502,
+            ErrorCode.ServiceUnavailable,
+            `The payment provider refused this top-up: ${error.message}`,
+          )
+        }
+
         throw error
       }
     },
@@ -317,6 +340,52 @@ const app = new Hono()
  * Created lazily on first billing interaction rather than at signup, so an
  * organization that never pays leaves nothing behind in Stripe.
  */
+/**
+ * Does this customer id still resolve against the key we are holding?
+ *
+ * A Stripe customer belongs to one *mode*. `cus_…` created under `sk_test_` does not exist under
+ * `sk_live_`, and asking for it returns `resource_missing` — the same error as a customer somebody
+ * deleted in the dashboard, or one belonging to an account we no longer use.
+ *
+ * Checked rather than assumed, because the stored id is the only thing standing between a top-up
+ * and a 500. Switching this deployment from test to live turned every top-up into
+ * "Internal Server Error" with the real reason — a customer from the other mode — visible nowhere
+ * a customer or an operator would look.
+ */
+/**
+ * A Stripe SDK error, without importing the SDK's class hierarchy into a route.
+ *
+ * Every error the library raises carries a `type` beginning `Stripe`. Matching on that is looser
+ * than `instanceof Stripe.errors.StripeError` and survives the SDK being loaded twice, which is
+ * exactly the situation where an `instanceof` check quietly stops matching and a 502 becomes a 500
+ * again.
+ */
+function isStripeError(error: unknown): error is { message: string; type: string } {
+  const candidate = error as { message?: unknown; type?: unknown } | null
+  return (
+    typeof candidate?.type === "string" &&
+    candidate.type.startsWith("Stripe") &&
+    typeof candidate.message === "string"
+  )
+}
+
+/** `live` or `test`, from the key this process is holding. */
+function stripeModeTag(): string {
+  return (process.env.STRIPE_SECRET_KEY ?? "").startsWith("sk_live_") ? "live" : "test"
+}
+
+async function customerStillExists(customerId: string): Promise<boolean> {
+  try {
+    const customer = await stripe().customers.retrieve(customerId)
+    // A deleted customer resolves rather than throwing, and cannot be charged.
+    return !customer.deleted
+  } catch (error) {
+    // `resource_missing` is an answer: it is not ours, or not any more.
+    if ((error as { code?: string } | null)?.code === "resource_missing") return false
+    throw error
+  }
+}
+
 async function ensureStripeCustomer(organizationId: string, name: string): Promise<string> {
   const existing = await db
     .selectFrom("stripeCustomer")
@@ -324,13 +393,36 @@ async function ensureStripeCustomer(organizationId: string, name: string): Promi
     .where("organizationId", "=", organizationId)
     .executeTakeFirst()
 
-  if (existing) return existing.stripeCustomerId
+  /*
+    A stored id that no longer resolves is replaced rather than reported.
+
+    There is nothing the customer can do about a Stripe customer created in the other mode, and no
+    information is lost by minting a new one — the ledger is ours, and the Stripe customer is only
+    where payment methods hang. Healing here also covers the cases a `livemode` column would not:
+    a customer deleted in the dashboard, or a deployment repointed at a different Stripe account.
+  */
+  if (existing) {
+    if (await customerStillExists(existing.stripeCustomerId)) return existing.stripeCustomerId
+
+    console.warn(
+      `[billing] stripe customer ${existing.stripeCustomerId} for organization ${organizationId} ` +
+        "no longer resolves; creating a replacement",
+    )
+    await db.deleteFrom("stripeCustomer").where("organizationId", "=", organizationId).execute()
+  }
 
   const customer = await stripe().customers.create(
     { name, metadata: { organization_id: organizationId } },
-    // Deduplicates on Stripe's side, so a retry after a crash between the API
-    // call and the insert reuses the customer instead of orphaning one.
-    { idempotencyKey: `org:${organizationId}` },
+    /*
+      Deduplicates on Stripe's side, so a retry after a crash between the API call and the insert
+      reuses the customer instead of orphaning one.
+
+      Scoped by mode as well as organization. Idempotency keys are themselves per-mode, so this is
+      belt and braces rather than a correctness fix — but a key that names only the organization
+      reads as though one customer per organization is the invariant, and it is one customer per
+      organization *per mode*.
+    */
+    { idempotencyKey: `org:${organizationId}:${stripeModeTag()}` },
   )
 
   await db
