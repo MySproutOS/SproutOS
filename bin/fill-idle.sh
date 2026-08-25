@@ -56,8 +56,35 @@ for service in $SERVICES; do
   group="$NAME_PREFIX-$short-$idle"
   echo "$service: filling $idle ($DESIRED instance(s))"
 
-  # Instances read the release pointer at boot, so they come up on whatever the release job just
-  # wrote. Replacing them is how a re-run picks up a new release without a launch template change.
+  # Replace whatever is already there, then scale.
+  #
+  # Instances read the release pointer *at boot*, so an instance that is already running is running
+  # whatever the pointer said when it started. `set-desired-capacity` alone is therefore a no-op
+  # when the idle group is already at the requested size — and a silent one: the group reports the
+  # right count, the targets report healthy, the deploy reports success, and the release that was
+  # just built is nowhere.
+  #
+  # That is not hypothetical. Both colours were found serving releases two and three deploys behind
+  # the pointer, which is why a favicon committed hours earlier never appeared on the site while
+  # every deploy since had gone green.
+  #
+  # Terminating without decrementing makes the group launch replacements, which read the pointer the
+  # release job has just written. This is the idle colour, so nothing it does is visible to anyone.
+  existing=$(aws autoscaling describe-auto-scaling-groups \
+    --auto-scaling-group-names "$group" \
+    --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+    --output text)
+
+  for instance in $existing; do
+    echo "$service: replacing $instance so it boots the new release"
+    aws autoscaling terminate-instance-in-auto-scaling-group \
+      --instance-id "$instance" --no-should-decrement-desired-capacity >/dev/null
+  done
+
+  # Let the terminations register before asking for a capacity change, or the request collides with
+  # the scaling activity they start — the `ScalingActivityInProgress` the retry below handles.
+  [ -z "$existing" ] || sleep 15
+
   #
   # Retried, because `ScalingActivityInProgress` is a state and not an error. An Auto Scaling group
   # replacing an instance — including one this deploy's previous attempt left behind — rejects
