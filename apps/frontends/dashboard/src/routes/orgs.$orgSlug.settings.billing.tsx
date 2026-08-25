@@ -1,12 +1,12 @@
 import { formatBalanceMicroUsd, formatMicroUsd } from "@lib/billing/money"
 import { createFileRoute } from "@tanstack/react-router"
 import { Badge } from "@ui/base/ui/badge"
-import { Button } from "@ui/base/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/base/ui/card"
 import { Money } from "@ui/base/ui/money"
 import { Progress } from "@ui/base/ui/progress"
 import { Skeleton } from "@ui/base/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
+import { AddCreditDialog } from "@frontends/dashboard/components/billing/add-credit-dialog"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
 import { useCreditBalance, useInvoices, useUsageLines } from "@frontends/dashboard/data/billing"
@@ -49,9 +49,7 @@ function BillingSettings() {
                 <span className="text-[11px] text-muted-foreground">
                   {balance.data.runwayLabel}
                 </span>
-                <Button size="sm" className="self-start">
-                  Add credit
-                </Button>
+                <AddCreditDialog orgSlug={orgSlug} />
               </>
             )}
           </CardContent>
