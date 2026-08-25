@@ -32,7 +32,6 @@ type DeploymentRow = {
   prNumber: number | null
   url: string | null
   imageUri: string | null
-  knativeRevision: string | null
   /** Left over from the cluster, which chose a runtime class per workload. Lambda has none. */
   runtimeClass: string | null
   /** Why the deploy failed, when it failed after building. */
@@ -52,7 +51,6 @@ function present(row: DeploymentRow, buildFailureReason: string | null = null) {
     prNumber: row.prNumber,
     url: row.url,
     imageUri: row.imageUri,
-    knativeRevision: row.knativeRevision,
     runtimeClass: row.runtimeClass,
     /*
       Two reasons, because they answer different questions.
@@ -180,7 +178,6 @@ const app = new Hono()
           "prNumber",
           "url",
           "imageUri",
-          "knativeRevision",
           "runtimeClass",
           "failureReason",
           "createdAt",

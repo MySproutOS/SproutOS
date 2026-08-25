@@ -24,7 +24,18 @@ export const deploymentSchemaResponse = Type.Object({
   // The image and the revision are the platform's own identifiers rather than the customer's, but
   // they are the first thing anyone asks for when a deploy misbehaves.
   imageUri: Nullable(Type.String()),
-  knativeRevision: Nullable(Type.String()),
+  /*
+    Not `knativeRevision`, which used to be here.
+
+    ADR 0026 moved customer compute to Lambda, so nothing has written this since — every deployment
+    returns `null`, and it is `null` in the generated client and in the OpenAPI document a customer
+    reads. A field that can only ever be null is not a nullable field; it is a field that should not
+    be there.
+
+    The **column** stays. `2026_09_19_00_00_00_deployment_lambda.ts` explains why and the reasoning
+    holds: `usage_event` references those rows, and a deployment history nobody can read is a
+    billing dispute nobody can answer. Dropping it from the response is not dropping the record.
+  */
   /**
    * The runtime class the pod names, or null.
    *

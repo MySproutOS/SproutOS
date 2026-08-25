@@ -9,35 +9,53 @@ This document exists so that decision is one command rather than an evening of w
 
 ## What it costs to leave running
 
-Idle — nothing deployed to it, no traffic, `us-east-1` on-demand prices:
+Measured against this account on 2026-08-25, not estimated. Month-to-date actual spend was **$0.535**
+— the Route 53 hosted zone plus a few cents of S3 — because the free tier covers the rest. The table
+below is what a *full* month looks like with everything running.
 
-|                                                  | Monthly   | Free tier (first 12 months)        |
-| ------------------------------------------------ | --------- | ---------------------------------- |
-| Application Load Balancer                        | $16       | 750 hours included                 |
-| NAT — `fck-nat` on `t4g.nano`                    | $3        | 750 hours of `t4g.micro`, not nano |
-| RDS `db.t4g.micro`, 20 GB                        | $12       | included                           |
-| ElastiCache `cache.t4g.micro`                    | $12       | included                           |
-| EC2 `t4g.micro` × 0 (scaled to zero)             | $0        | 750 hours included                 |
-| NAT Elastic IP                                   | $3.60     | —                                  |
-| ALB public IPv4 × 2 (AWS's own, one per AZ)      | $7.20     | —                                  |
-| Route 53 hosted zone                             | $0.50     | —                                  |
-| **Serving nothing, account past its first year** | **≈ $43** |                                    |
-| **Serving nothing, free tier still active**      | **≈ $20** |                                    |
+**There are no credits on this account.** Cost Explorer's record-type breakdown shows only `Usage`
+and `Tax`, and `get-account-plan-state` returns not-found — this is a legacy free tier account, so
+the subsidy is twelve months of allowances rather than a pot of dollars that runs out.
 
-Everything is the smallest instance that exists for its service. What changed to get here, and what
-each gave up:
+| | While the free tier lasts | After it ends |
+| --- | --- | --- |
+| Application Load Balancer | $0 (730 h ≤ 750 free) | $16.20 |
+| RDS `db.t4g.micro` + 20 GB gp3 | $0 | $14.70 |
+| ElastiCache `cache.t4g.micro` | $0 | $12.41 |
+| EC2 — 2× `t4g.micro` + 1× `t4g.nano` | ~$9 | $15.50 |
+| **Public IPv4 × 3** | **$10.95** | **$10.95** |
+| Route 53 hosted zone | $0.50 | $0.50 |
+| S3 / CloudFront / KMS / CloudWatch | ~$1 | ~$1 |
+| **Total** | **≈ $21/month** | **≈ $70/month** |
 
-- **`fck-nat` instead of a NAT gateway** — $3 instead of $33, and no per-gigabyte processing charge.
-  It is one instance in one availability zone: a single point of failure for _egress_, replaced in
-  a couple of minutes, with the instance's throughput as a real ceiling. `use_nat_instance = false`
-  switches back. See `nat.tf`.
-- **RDS instead of Aurora** — Aurora Serverless v2 holds a 0.5-ACU floor per instance, about $44 a
-  month before a query. A `db.t4g.micro` is free for a year and around $12 after. There is no
-  failover target; `database_multi_az = true` adds one and doubles the instance cost.
-- **One database instance, not two.** The second was a failover reader holding its own floor.
+An earlier version of this table said $20 and $43. The $43 was wrong in two ways: it assumed the
+website Auto Scaling group sat at zero, and it priced only the NAT's Elastic IP while the load
+balancer quietly holds two more addresses.
 
-What is _not_ in the table, because it is usage-priced and zero when nothing runs: Lambda, S3,
-CloudFront, data transfer, and every tenant service on the OVH box.
+### The two lines worth understanding
+
+**The free tier's 750 hours is per service and in aggregate, not per instance.** One instance running
+continuously is about 730 hours, so the allowance is effectively *one* instance — and this estate
+runs three. That is the entire EC2 line. It is also the argument for `ecs.tf`: consolidating the
+website, the API and the worker onto one instance takes the count from three to two.
+
+**Public IPv4 is the largest line, and it is already at its floor.** Since 1 February 2024 AWS bills
+every public IPv4 address at $0.005/hour — Elastic or auto-assigned, attached or idle, with no free
+tier. Three addresses is not a choice:
+
+- **two belong to the load balancer**, one per availability zone, and AWS refuses to create an ALB
+  spanning fewer than two. They are the addresses `sproutos.me` resolves to. They are also *service
+  owned*: `release-address` on them answers `AuthFailure`, so the only way to hold fewer is to span
+  fewer subnets, which `aws_lb.main` already does.
+- **one belongs to the NAT instance**, and is the address every private instance appears as when it
+  reaches out. Nothing connects inbound to it.
+
+Getting below three means removing the load balancer or removing IPv4 egress — fronting tenants with
+CloudFront, or moving egress to the (free) egress-only gateway the VPC already has. Both are projects
+rather than settings.
+
+What is *not* in the table, because it is usage-priced and near zero when nothing runs: Lambda, data
+transfer, and every tenant service on the OVH box.
 
 ## Before the first plan
 

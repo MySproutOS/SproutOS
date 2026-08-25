@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32">
+  <!--
+    The same mark as `SproutMark` in `components/icons.tsx`, on the site's own background.
+
+    A favicon is drawn at 16px against a browser chrome we do not control, so `currentColor` is
+    replaced by the literal leaf green and the soil background is painted rather than left
+    transparent: on a light tab strip a transparent dark-green sprout is a smudge.
+
+    The colours are `--leaf` and `--soil-900` from `@ui/base/theme.css`, converted from OKLCH
+    because SVG has no access to a CSS custom property.
+  -->
+  <rect width="24" height="24" rx="5" fill="#111f18"/>
+  <g transform="translate(2.4 2.4) scale(0.8)">
+    <path d="M12 21v-8.4" stroke="#5ee39a" stroke-width="1.9" stroke-linecap="round"/>
+    <path d="M12 13.2C12 9.9 9.6 7.4 6 6.9c-.5 3.6 1.8 6.6 6 6.3Z"
+          fill="#5ee39a" fill-opacity="0.42" stroke="#5ee39a" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M12 12.4c.2-3.6 2.6-6.2 6.2-6.7.4 3.8-2 6.8-6.2 6.7Z"
+          fill="#5ee39a" stroke="#5ee39a" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M4.5 21h15" stroke="#5ee39a" stroke-width="1.9" stroke-linecap="round" stroke-opacity="0.45"/>
+  </g>
+</svg>
