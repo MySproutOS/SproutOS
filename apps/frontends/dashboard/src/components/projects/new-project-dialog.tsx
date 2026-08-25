@@ -297,6 +297,32 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
         </p>
       )}
 
+      {/*
+        The one blocker a person can clear themselves, said where they hit it.
+
+        Creating a repository needs either a GitHub App installation on the account or an OAuth
+        token carrying `repo`. A new organization has neither, and the failure surfaces inside a
+        `project_job` — so the project sits at "creating", turns `failed`, and the sentence naming
+        the fix is in a job record nobody opens.
+
+        The installation route cannot help here either: `github.installation.sync` matches an
+        installation to an organization by `repository.owner_login`, so an organization with no
+        repositories yet has nothing to match and the installation is deliberately kept out of the
+        table. Re-authenticating is the path that works from a standing start, and it is one link.
+      */}
+      {needsRepoName && nameCheck.data?.ownerLogin === null && repositoryName.length > 0 && (
+        <p className="rounded-md border border-border bg-secondary/40 p-2.5 text-[13px] text-muted-foreground">
+          SproutOS cannot create repositories for this organization yet.{" "}
+          <a
+            href={`${import.meta.env.VITE_NEXTJS_URL ?? ""}/login/github?scopes=repository`}
+            className="font-medium text-foreground underline underline-offset-2 hover:text-leaf"
+          >
+            Grant repository access
+          </a>{" "}
+          and come back — it takes one round trip through GitHub.
+        </p>
+      )}
+
       <DialogFooter>
         <Button type="submit" disabled={!ready || create.isPending}>
           {create.isPending ? "Creating…" : "Create project"}
