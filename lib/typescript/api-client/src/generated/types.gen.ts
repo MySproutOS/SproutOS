@@ -4616,6 +4616,10 @@ export type PostV1OrgsByOrgSlugOauthClientsResponses = {
     defaultScopes: Array<string>
     redirectUris: Array<string>
     createdAt: string
+    /**
+     * Shown once, on creation. It cannot be retrieved again.
+     */
+    secret?: string
   }
 }
 

@@ -64,7 +64,14 @@ export const oauthClientsSchemaStatusRequest = Type.Object({
   status: Type.Union([Type.Literal("active"), Type.Literal("suspended")]),
 })
 
-const OauthClient = Type.Object({
+/*
+  The fields as a plain map, so creation can reuse them and add one.
+
+  `Type.Composite` does not exist in typebox 1.x and an intersection would render as `allOf` in the
+  document, which several generators flatten badly. Spreading a property map produces one ordinary
+  object schema and stays legible in the generated types.
+*/
+const oauthClientProperties = {
   id: Type.String(),
   name: Type.String(),
   description: Nullable(Type.String()),
@@ -84,10 +91,29 @@ const OauthClient = Type.Object({
   defaultScopes: Type.Array(Type.String()),
   redirectUris: Type.Array(Type.String()),
   createdAt: Type.String(),
-})
+}
+
+const OauthClient = Type.Object(oauthClientProperties)
 
 export const oauthClientsSchemaListResponse = Type.Object({ items: Type.Array(OauthClient) })
 export const oauthClientsSchemaGetResponse = OauthClient
+
+/**
+ * Creation, which carries the first secret — and only here.
+ *
+ * The handler has always returned it. The *schema* said otherwise, declaring a plain client, so
+ * the field existed in the response and in no generated client: anything built from the OpenAPI
+ * document could not see the one value that is never retrievable again, and a caller following the
+ * spec would create a confidential client and silently lose its secret.
+ *
+ * Optional because a public client has none, which is the whole meaning of "public".
+ */
+export const oauthClientsSchemaCreateResponse = Type.Object({
+  ...oauthClientProperties,
+  secret: Type.Optional(
+    Type.String({ description: "Shown once, on creation. It cannot be retrieved again." }),
+  ),
+})
 
 /**
  * The only response that ever carries a secret, and only at the moment it is created.

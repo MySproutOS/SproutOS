@@ -4,7 +4,16 @@ import { cookieDomain, validateSessionToken } from "./lib/auth"
 
 /** Public paths handled by Next.js — everything else goes to the dashboard SPA.
  *  Note there is no "/api" here: the Hono API is a separate deployment on its own host. */
-const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs", "/download"]
+/*
+  `/oauth` is here rather than left to the authenticated branch below on purpose.
+
+  The consent screen has to render for both states: signed out it sends the person to log in and
+  brings them back to the same decision, signed in it asks the question. Falling through to the
+  authenticated branch would hand `/oauth/authorize` to the dashboard SPA, which has no such route
+  — which is what made `authorization_endpoint` answer with a redirect to `/login` and lose the
+  request.
+*/
+const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs", "/download", "/oauth"]
 
 /** The load balancer's health check, which has no session and must never be redirected to get one. */
 const HEALTH_PATH = "/healthz"

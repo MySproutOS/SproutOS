@@ -37,6 +37,13 @@ function SettingsLayout() {
         <Link to="/orgs/$orgSlug/settings/api-keys" params={{ orgSlug }} className={tabClassName}>
           API keys
         </Link>
+        <Link
+          to="/orgs/$orgSlug/settings/oauth-clients"
+          params={{ orgSlug }}
+          className={tabClassName}
+        >
+          OAuth apps
+        </Link>
       </div>
       <Outlet />
     </>

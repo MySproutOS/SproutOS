@@ -13,6 +13,7 @@ import { validator } from "../utils/validator"
 import {
   oauthClientsSchemaClientParam,
   oauthClientsSchemaCreateRequest,
+  oauthClientsSchemaCreateResponse,
   oauthClientsSchemaGetResponse,
   oauthClientsSchemaListResponse,
   oauthClientsSchemaOrgParam,
@@ -125,7 +126,7 @@ app
       responses: {
         201: {
           description: "Created",
-          content: { "application/json": { schema: resolver(oauthClientsSchemaGetResponse) } },
+          content: { "application/json": { schema: resolver(oauthClientsSchemaCreateResponse) } },
         },
         403: { description: "Caller lacks oauth_client:create", ...errorResponse },
       },
