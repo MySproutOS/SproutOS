@@ -100,6 +100,10 @@ jobs:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: us-east-1
+      # Read by the step that starts LocalStack, and by its own `if`. `secrets` cannot be referenced
+      # from an `if` — GitHub rejects the whole workflow file for it, which is why this run reported
+      # as ".github/workflows/ci.yml: failure" with no jobs at all rather than as a failing step.
+      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
       CLICKHOUSE_USER: sproutos
       CLICKHOUSE_PASSWORD: sproutos
     steps:
@@ -120,9 +124,7 @@ jobs:
       # Without `LOCALSTACK_AUTH_TOKEN` this is a no-op and those suites skip, which
       # `bin/check-skipped-tests.mjs` records against a ceiling rather than hiding.
       - name: Start LocalStack
-        if: ${{ secrets.LOCALSTACK_AUTH_TOKEN != '' }}
-        env:
-          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        if: ${{ env.LOCALSTACK_AUTH_TOKEN != '' }}
         run: |
           docker run -d --name localstack -p 4566:4566 \
             -e LOCALSTACK_AUTH_TOKEN="$LOCALSTACK_AUTH_TOKEN" \
