@@ -75,6 +75,14 @@ TENANT_DOMAIN=${tenant_domain}
 ROUTER_PORT=8080
 PORT=8080
 API_PORT=3001
+# Not secrets, and not optional either.
+#
+# `NEXT_PUBLIC_HOST_URL` is what `lib/typescript/oauth/src/github.ts` builds the OAuth redirect URI
+# from, and it is read through `requireEnv` — absent, the login route throws before it reaches
+# GitHub. It has to be the *one* host the OAuth App has registered, because GitHub compares the
+# redirect it is sent against the one on the application.
+NEXT_PUBLIC_HOST_URL=https://${tenant_domain}
+NEXT_PUBLIC_API_URL=https://api.${tenant_domain}
 ENVFILE
 
 # The database URL, composed here from the secret RDS manages rather than written into the launch
