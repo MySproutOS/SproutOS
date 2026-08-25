@@ -58,8 +58,29 @@ for service in $SERVICES; do
 
   # Instances read the release pointer at boot, so they come up on whatever the release job just
   # wrote. Replacing them is how a re-run picks up a new release without a launch template change.
-  aws autoscaling set-desired-capacity \
-    --auto-scaling-group-name "$group" --desired-capacity "$DESIRED" --honor-cooldown >/dev/null
+  #
+  # Retried, because `ScalingActivityInProgress` is a state and not an error. An Auto Scaling group
+  # replacing an instance — including one this deploy's previous attempt left behind — rejects
+  # `SetDesiredCapacity` outright, and treating that as fatal fails a release for a reason that
+  # resolves itself in under a minute. Any other error still fails immediately.
+  for attempt in $(seq 1 30); do
+    if error=$(aws autoscaling set-desired-capacity \
+      --auto-scaling-group-name "$group" --desired-capacity "$DESIRED" --honor-cooldown 2>&1); then
+      break
+    fi
+
+    if ! grep -q 'ScalingActivityInProgress' <<<"$error"; then
+      echo "$service: $error" >&2
+      exit 1
+    fi
+
+    if [ "$attempt" -eq 30 ]; then
+      echo "$service: $group was still busy after 5 minutes" >&2
+      exit 1
+    fi
+
+    sleep 10
+  done
 
   # Every target group the instances serve, not just the one the rule names.
   #

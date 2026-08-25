@@ -122,6 +122,19 @@ ProtectHome=yes
 ReadWritePaths=/var/log
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
+# A home directory, because a dynamic user does not have one and something in the bundle wants one.
+#
+# `DynamicUser` allocates a uid with no passwd entry and `ProtectHome` hides /home and /root, so
+# `os.homedir()` fails outright — `uv_os_homedir returned ENOENT` — and it is called at *import*
+# time by the Claude agent SDK, which esbuild inlines into the API bundle. The process dies before
+# any of its own code runs, and the message names neither the SDK nor the sandboxing.
+#
+# `StateDirectory` is the right answer rather than `HOME=/tmp`: systemd creates it, chowns it to the
+# dynamic uid and keeps it across restarts, so anything that writes a cache there is not writing to
+# a directory that vanishes.
+StateDirectory=sproutos
+Environment=HOME=/var/lib/sproutos
+
 [Install]
 WantedBy=multi-user.target
 UNIT
