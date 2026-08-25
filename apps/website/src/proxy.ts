@@ -6,6 +6,9 @@ import { cookieDomain, validateSessionToken } from "./lib/auth"
  *  Note there is no "/api" here: the Hono API is a separate deployment on its own host. */
 const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs", "/download"]
 
+/** The load balancer's health check, which has no session and must never be redirected to get one. */
+const HEALTH_PATH = "/healthz"
+
 /** Exact public paths */
 const NEXTJS_PUBLIC_EXACT = new Set(["/"])
 
@@ -63,6 +66,7 @@ const DASHBOARD_DEV_PORT = 3002
 
 function isNextJsRoute(pathname: string): boolean {
   if (NEXTJS_PUBLIC_EXACT.has(pathname)) return true
+  if (pathname === HEALTH_PATH) return true
   return NEXTJS_PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 }
 

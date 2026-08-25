@@ -94,6 +94,22 @@ if [ "$SERVICE" = "website" ]; then
   # delimiters in a URL. An unencoded `/` or `@` produces a connection string that parses into a
   # different host entirely, and the error names the wrong thing.
   echo "DATABASE_URL=postgresql://$DB_USER:$DB_PASS@${database_endpoint}/${database_name}?sslmode=require" >> /etc/sproutos/env
+
+  # Amazon's RDS certificate authority, because Node does not ship it.
+  #
+  # `sslmode=require` gets a TLS connection and node-postgres still verifies the chain, so without
+  # this the API connects, fails verification, and reports itself unready with "self-signed
+  # certificate in certificate chain" — which sounds like a misconfigured database and is really a
+  # missing root.
+  #
+  # The alternative people reach for is `rejectUnauthorized: false`, which makes the error go away
+  # by removing the only thing TLS was doing here: the connection would still be encrypted and would
+  # no longer be authenticated. The global bundle covers every region and rotation, and is one
+  # download.
+  curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+    -o /etc/sproutos/rds-ca.pem
+  chmod 0644 /etc/sproutos/rds-ca.pem
+  echo "NODE_EXTRA_CA_CERTS=/etc/sproutos/rds-ca.pem" >> /etc/sproutos/env
 fi
 
 chmod 0640 /etc/sproutos/env
