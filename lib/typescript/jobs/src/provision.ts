@@ -4,6 +4,7 @@ import {
   createPersonalRepository,
   forkRepository,
   generateFromTemplate,
+  GitHubApiError,
   getBranchHeadSha,
   getRepository,
   type GitHubCredential,
@@ -228,7 +229,7 @@ export async function runProvision(
       await mark("first_deploy", "running")
 
       const branch = created.defaultBranch
-      const sha = await getBranchHeadSha(
+      const sha = await headShaWhenPopulated(
         client,
         credential,
         created.ownerLogin,
@@ -402,6 +403,59 @@ async function createOnGitHub(
   return owner.data.type === "Organization"
     ? await createOrganizationRepository(client, credential, repository.ownerLogin, input)
     : await createPersonalRepository(client, { kind: "user", token: tokenOf(credential) }, input)
+}
+
+/*
+  A repository GitHub has created and not yet filled.
+
+  `generateFromTemplate` answers 201 with a complete-looking repository, and copies the template's
+  contents into it *afterwards* — the same asynchrony the fork path documents for its 202, which the
+  template path shares and nothing waited on. Reading the branch head in that window fails with
+  "Git Repository is empty", and the customer is shown a failed provision beside a repository on
+  GitHub that is perfectly fine seconds later.
+
+  Polled rather than slept: the wait is however long GitHub takes, and a fixed sleep is either a
+  guess that is usually too long or one that is occasionally too short. Bounded, because a template
+  that never populates has to end as an error rather than a job that never returns.
+
+  Not retried at the job level either. The job's own retry would begin at `create_repository`, and
+  the second attempt would find the name taken.
+*/
+const POPULATE_POLL_DELAYS_MS = [0, 500, 1_000, 2_000, 3_000, 4_000, 5_000, 5_000, 5_000]
+
+async function headShaWhenPopulated(
+  client: ReturnType<typeof createGitHubClient>,
+  credential: GitHubCredential,
+  owner: string,
+  name: string,
+  branch: string,
+): Promise<string> {
+  let last: unknown
+
+  for (const delay of POPULATE_POLL_DELAYS_MS) {
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+
+    try {
+      return await getBranchHeadSha(client, credential, owner, name, branch)
+    } catch (error) {
+      /*
+        Only the empty case is worth waiting on. A missing scope or a bad name will read the same on
+        the ninth attempt as the first, and turning those into a thirty-second pause before the same
+        error is worse than failing immediately.
+      */
+      if (!isEmptyRepository(error)) throw error
+      last = error
+    }
+  }
+
+  throw last instanceof Error
+    ? last
+    : new Error(`${owner}/${name} was still empty after waiting for GitHub to populate it`)
+}
+
+/** GitHub says this as a 409 on a repository that exists but holds no commits. */
+function isEmptyRepository(error: unknown): boolean {
+  return error instanceof GitHubApiError && /repository is empty/i.test(error.message)
 }
 
 /** `createPersonalRepository` refuses anything but a user token, and says why. This narrows it. */

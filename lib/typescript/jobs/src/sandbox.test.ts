@@ -240,6 +240,25 @@ describe("meterSandboxes", () => {
       meteredThrough: null,
     })
 
+    /*
+      Aged deliberately, rather than relying on the time this test takes to reach the next line.
+
+      `meterSandboxes` skips a row whose billable interval is not positive, and the interval for a
+      brand-new sandbox is however long elapses between these two statements. That is not a
+      quantity any assertion should depend on: it is short enough to round away, and `meterSandboxes`
+      is a *global* sweep, so another test file running in parallel can bill this sandbox first and
+      advance `metered_through` to the moment it ran. Either way this call finds nothing to bill and
+      the event never appears — observed as a failure in two runs out of three of the directory, and
+      a pass every time the file ran alone.
+
+      Ten seconds of real age makes the interval a fact about the row instead of a fact about the
+      scheduler. Written through the database's clock for the reason the handler documents: these
+      are two containers in CI and the skew between them is real.
+    */
+    await sql`update sandbox set created_at = now() - interval '10 seconds' where id = ${sandbox.id}`.execute(
+      db,
+    )
+
     await meterSandboxes(job, context)
 
     const event = (await eventsFor(sandbox.id)).find(
