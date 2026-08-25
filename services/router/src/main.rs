@@ -16,6 +16,24 @@ use router::serve::{self, Router};
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().json().init();
 
+    /*
+      Which TLS implementation, decided here rather than by whichever crate is compiled first.
+
+      rustls 0.23 takes its cipher suites from a process-wide `CryptoProvider`, and it will only
+      infer one when exactly one is compiled in. Two are: the AWS SDK brings `aws-lc-rs` and redis
+      brings `ring`. With both present rustls does not choose — it **panics on the first TLS
+      connection**, which is the router's first read from the platform Valkey, before it has served
+      anything. `SIGABRT`, restart, `SIGABRT`, and an Auto Scaling group replacing the instance
+      every three minutes.
+
+      `aws-lc-rs` because the AWS SDK is the heavier user of TLS here and it is that crate's own
+      default; the choice matters far less than making one.
+
+      The result is ignored deliberately: `install_default` fails only if a provider is already
+      installed, and this is the first thing `main` does.
+    */
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let valkey_url = std::env::var("VALKEY_URL").context("VALKEY_URL is not set")?;
     let client = redis::Client::open(valkey_url).context("VALKEY_URL is not a Valkey URL")?;
     let manager = ConnectionManager::new(client)

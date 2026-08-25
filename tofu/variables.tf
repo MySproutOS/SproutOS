@@ -172,3 +172,29 @@ variable "nat_instance_type" {
   type        = string
   default     = "t4g.nano"
 }
+
+/*
+  The OVH host, by address, because DNS has to name one.
+
+  Everything else in this estate is reached through an alias to something AWS names for us. The
+  forum is not ours to alias — it is a dedicated site on the box that also carries ClickHouse,
+  Kafka, tenant Valkey and OpenSearch — so these are the literal addresses `ovh/README.md` records,
+  and they are the one place in `tofu/` that has to change if the box moves.
+*/
+variable "ovh_host_ipv4" {
+  description = "The OVH dedicated host's IPv4 address."
+  type        = string
+  default     = "135.148.122.203"
+}
+
+variable "ovh_host_ipv6" {
+  description = "The OVH dedicated host's IPv6 address. OVH assigns a /64; this is the address configured on eno1."
+  type        = string
+  default     = "2604:2dc0:100:3bcb::"
+}
+
+variable "forum_subdomain" {
+  description = "The label under control_plane_domain that resolves to the OVH host rather than the ALB."
+  type        = string
+  default     = "forum"
+}

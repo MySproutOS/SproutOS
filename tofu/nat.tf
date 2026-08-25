@@ -178,40 +178,57 @@ resource "aws_instance" "nat" {
 
   ami           = data.aws_ami.fck_nat[0].id
   instance_type = var.nat_instance_type
-  subnet_id     = aws_subnet.public[0].id
 
-  vpc_security_group_ids = [aws_security_group.nat[0].id]
-  iam_instance_profile   = aws_iam_instance_profile.nat[0].name
+  iam_instance_profile = aws_iam_instance_profile.nat[0].name
 
   /*
-    The line that makes it a NAT at all.
+    The fixed interface, attached at launch as device 0 — not attached later by the instance itself.
 
-    EC2 drops packets whose destination is not the instance unless this is off. A NAT instance with
-    the check enabled comes up, passes its health check, and silently forwards nothing.
+    This was the other way round once, and it did not work: the instance launched into the public
+    subnet on its own interface with `map_public_ip_on_launch = false`, so it had no address, and
+    its user data asked it to call `ec2:AttachNetworkInterface` to pick up the interface holding the
+    Elastic IP. That call goes to the EC2 API over the internet — the internet this instance is
+    supposed to be providing. It could not make the call, the interface stayed `available`, and the
+    private route tables' default route sat in state `blackhole`.
+
+    **Nothing reported that.** The NAT instance was `running` and healthy, `tofu plan` was clean,
+    and the failure surfaced three layers away as service instances that booted, could not reach
+    S3's regional endpoint or SSM, failed their bootstrap and were replaced — an Auto Scaling loop
+    with no message naming the cause.
+
+    Attached at launch there is no call to make. The interface is the instance's primary one, it
+    already carries the Elastic IP, and the route tables point at an id that outlives any instance.
+
+    `subnet_id` and `vpc_security_group_ids` are not set here on purpose: both live on the interface
+    now, and AWS rejects an instance that specifies either alongside a primary interface.
   */
-  source_dest_check = false
+  network_interface {
+    device_index         = 0
+    network_interface_id = aws_network_interface.nat[0].id
+    # The interface is a resource in its own right and must survive the instance it is attached to —
+    # that being the entire reason it exists.
+    delete_on_termination = false
+  }
+
+  # `source_dest_check` is on the interface rather than here. EC2 drops packets whose destination is
+  # not the instance unless it is off, and an instance block cannot set it while a primary interface
+  # is specified — AWS rejects the pair.
 
   metadata_options {
     http_tokens                 = "required"
     http_put_response_hop_limit = 2
   }
 
-  user_data = <<-EOT
-    #!/bin/bash
-    echo "eni_id=${aws_network_interface.nat[0].id}" >> /etc/fck-nat.conf
-    echo "eip_id=${aws_eip.nat[0].id}" >> /etc/fck-nat.conf
-    service fck-nat restart
-  EOT
-
   tags = merge(local.tags, { Name = "${var.name_prefix}-nat" })
 }
 
 /*
-  A fixed network interface, separate from the instance.
+  A fixed network interface, declared before the instance and outliving it.
 
   The private route tables point at an interface id. If that id belonged to the instance, replacing
   the instance would change it and every private subnet would route to something that no longer
-  exists — until somebody noticed and ran an apply. A standalone interface outlives the instance.
+  exists — until somebody noticed and ran an apply. This interface outlives the instance, which
+  attaches it at launch as its primary interface.
 */
 resource "aws_network_interface" "nat" {
   count = var.use_nat_instance ? 1 : 0

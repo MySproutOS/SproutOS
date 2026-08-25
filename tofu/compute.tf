@@ -114,10 +114,12 @@ resource "aws_lb" "main" {
     allocated, released, or reduced any other way than by narrowing the subnet list.
 
     **Two is the floor, not a choice.** AWS rejects an application load balancer with fewer than two
-    subnets in two availability zones, so this cannot follow the rest of the estate down to one. The
-    VPC keeps all three public subnets — subnets are free — and this spans the first two.
+    subnets in two availability zones, so this cannot follow the rest of the estate down to one.
+
+    The Auto Scaling groups below are sliced from the same `local.serving_zone_count`, because a
+    load balancer narrower than its targets silently drops the ones it cannot reach.
   */
-  subnets = slice(aws_subnet.public[*].id, 0, 2)
+  subnets = slice(aws_subnet.public[*].id, 0, local.serving_zone_count)
 
   # A tenant application can legitimately hold a connection open — a server-sent event stream, a
   # long poll. The default 60s would cut those at exactly one minute, which reads to the customer
@@ -354,6 +356,29 @@ resource "aws_iam_role_policy" "instance" {
         Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
       },
       {
+        /*
+          Reading an encrypted object takes two permissions, not one.
+
+          The artifacts bucket is SSE-KMS under `aws_kms_key.secrets` (see `registry.tf`), and
+          `s3:GetObject` alone is not enough: S3 answers **`AccessDenied` on GetObject** while the
+          thing actually refused is `kms:Decrypt`. The message does name the key, but only if
+          somebody is reading it — the instance's own symptom was a bootstrap that failed and an
+          Auto Scaling group that replaced it, over and over, with no log anywhere but on the
+          instance being destroyed.
+
+          Decrypt only, and only through S3: `kms:ViaService` means this cannot be used to read
+          anything else the key protects, which includes the database's master password.
+        */
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
         # Tenant object storage. Scoped to the `v-*` prefix, which is what makes the bucket-name
         # check in the router a boundary rather than a formality — see `storage.tf`.
         Effect = "Allow"
@@ -429,8 +454,10 @@ resource "aws_launch_template" "service" {
 resource "aws_autoscaling_group" "website" {
   for_each = local.service_colours
 
-  name                = "${var.name_prefix}-web-${each.key}"
-  vpc_zone_identifier = aws_subnet.private[*].id
+  name = "${var.name_prefix}-web-${each.key}"
+  # The same zones the load balancer spans — see `local.serving_zone_count`. An instance outside
+  # them boots, passes its own health check, and is never sent a request.
+  vpc_zone_identifier = slice(aws_subnet.private[*].id, 0, local.serving_zone_count)
   target_group_arns   = [aws_lb_target_group.website[each.key].arn]
 
   # Zero is a valid size: only one colour serves at a time, and the idle one should cost nothing.
@@ -461,8 +488,10 @@ resource "aws_autoscaling_group" "website" {
 resource "aws_autoscaling_group" "router" {
   for_each = local.service_colours
 
-  name                = "${var.name_prefix}-router-${each.key}"
-  vpc_zone_identifier = aws_subnet.private[*].id
+  name = "${var.name_prefix}-router-${each.key}"
+  # The same zones the load balancer spans — see `local.serving_zone_count`. An instance outside
+  # them boots, passes its own health check, and is never sent a request.
+  vpc_zone_identifier = slice(aws_subnet.private[*].id, 0, local.serving_zone_count)
   target_group_arns   = [aws_lb_target_group.router[each.key].arn]
 
   min_size         = 0

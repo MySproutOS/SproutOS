@@ -105,3 +105,43 @@ resource "aws_route53_record" "alb_ipv6" {
     evaluate_target_health = false
   }
 }
+
+# ---------------------------------------------------------------------------
+# What points at the OVH host
+# ---------------------------------------------------------------------------
+
+/*
+  The forum, which is not on AWS.
+
+  `*.sproutos.me` above resolves every tenant hostname to the load balancer, and `forum` would have
+  been swept up with them. It is not a tenant application — it is a dedicated site on the OVH box —
+  so it needs its own records.
+
+  **A more specific name beats a wildcard**, which is DNS and not a Route 53 behaviour: a query for
+  `forum.sproutos.me` matches the exact record and the wildcard is never consulted. So these two
+  records are the whole change; nothing has to be excluded from `local.alb_names`.
+
+  Plain A and AAAA records rather than aliases: an alias points at an AWS resource, and this is a
+  machine in a Canadian OVH datacentre. The address is therefore literal and hard-coded, and the
+  cost of that is stated in `variables.tf` — if the box is rebuilt on new addresses, this is what
+  has to change with it.
+
+  300s, not the 60s the validation records use. The forum's address changes when the box does,
+  which is rarely, and a five-minute TTL is the ordinary trade for a record that is looked up on
+  every page load and almost never edited.
+*/
+resource "aws_route53_record" "forum_ipv4" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.forum_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+  ttl     = 300
+  records = [var.ovh_host_ipv4]
+}
+
+resource "aws_route53_record" "forum_ipv6" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.forum_subdomain}.${var.control_plane_domain}"
+  type    = "AAAA"
+  ttl     = 300
+  records = [var.ovh_host_ipv6]
+}

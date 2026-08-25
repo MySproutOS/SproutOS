@@ -14,11 +14,22 @@ axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
 reqwest.workspace = true
+# `tokio-rustls-comp` is not optional: the platform Valkey is ElastiCache with
+# `TransitEncryptionMode = required`, so its URL is `rediss://` and a client built without TLS
+# refuses it at parse time — "can't connect with TLS, the feature is not enabled". That surfaces as
+# a router that exits on start, an instance that never answers `/healthz`, and an Auto Scaling
+# group replacing it every three minutes.
 redis = { version = "0.27", default-features = false, features = [
   "tokio-comp",
   "aio",
   "connection-manager",
+  "tls-rustls",
+  "tokio-rustls-comp",
+  "tls-rustls-webpki-roots",
 ] }
+# Direct, only so `main` can name a provider — see the `install_default` call there. Both providers
+# are already in the graph via the AWS SDK and redis; nothing here adds one.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 search-proxy = { path = "../search-proxy" }
 serde.workspace = true
 serde_json.workspace = true
@@ -34,10 +45,18 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-lambda = "1"
 aws-sdk-s3 = "1"
 reqwest.workspace = true
+# `tokio-rustls-comp` is not optional: the platform Valkey is ElastiCache with
+# `TransitEncryptionMode = required`, so its URL is `rediss://` and a client built without TLS
+# refuses it at parse time — "can't connect with TLS, the feature is not enabled". That surfaces as
+# a router that exits on start, an instance that never answers `/healthz`, and an Auto Scaling
+# group replacing it every three minutes.
 redis = { version = "0.27", default-features = false, features = [
   "tokio-comp",
   "aio",
   "connection-manager",
+  "tls-rustls",
+  "tokio-rustls-comp",
+  "tls-rustls-webpki-roots",
 ] }
 serde_json.workspace = true
 tokio.workspace = true

@@ -14,6 +14,23 @@ locals {
   # quietly dominates a chatty cluster's bill.
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 3)
 
+  /*
+    The zones anything actually serves from, as one list.
+
+    An ALB holds a public IPv4 per subnet it spans and AWS bills each one, so the load balancer is
+    deliberately narrower than the VPC — and **an ALB will not send a request to a target in an
+    availability zone it does not span.** Narrowing the load balancer alone left the Auto Scaling
+    groups placing instances across all three private subnets, and the one that landed in the third
+    reported `unused` with "Target is in an Availability Zone that is not enabled for the load
+    balancer": an instance that booted, passed its own health check, and was never sent a request.
+
+    So the load balancer's subnets and the Auto Scaling groups' subnets are sliced from this single
+    number rather than each written out. Two is the floor AWS accepts for an application load
+    balancer; the VPC keeps all three subnets because subnets are free and widening is then a
+    one-line change rather than a renumbering.
+  */
+  serving_zone_count = 2
+
   # /16 split into /20s: 4094 usable addresses per subnet, twelve subnets, room to add pools without
   # renumbering. Renumbering a VPC means recreating it, and recreating it means recreating the
   # cluster inside it.
