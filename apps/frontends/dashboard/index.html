@@ -3,6 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Declared rather than left to the `/favicon.ico` convention.
+
+      A browser asking for `/favicon.ico` on its own gets it from the *website's* origin, and once
+      you are signed in `proxy.ts` classifies that path as an asset and rewrites it to the CDN —
+      where a missing object 403s, falls through the SPA error mapping and comes back as
+      `index.html` with a 200. The browser is handed HTML where an icon should be and shows
+      nothing, with no error anywhere.
+
+      Root-absolute, not relative: Vite leaves a bare `favicon.ico` in `index.html` alone, so the
+      browser would resolve it against the current route and ask for
+      `/orgs/<slug>/favicon.ico`. `/favicon.ico` is also the path a browser requests unprompted, so
+      the publish step puts a copy at the bucket root to answer both.
+    -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <title>Dashboard</title>
     <script>
       document.documentElement.classList.add("js")

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Apply database migrations, from CI, on push to main.
+# Apply database migrations and seeds, from CI, on push to main.
 #
 # ## Why this is not just `pnpm migrate:deploy` in a job
 #
@@ -24,7 +24,13 @@
 # ## Why running it once here is safe alongside anything else
 #
 # `apps/dbmigrator/src/deploy.ts` takes a Postgres advisory lock on a pinned key for the length of
-# the run. That was written for many replicas starting at once; it holds just as well for a CI job
+# the run, and `seed-cli.ts` takes a different one — different because the two are separate
+# operations that can each fail alone, and sharing a key would make them look atomic and make a seed
+# wait behind a migration it does not depend on.
+#
+# `&&`, so the seeds run only if the migrations did. A seed inserts into tables the migrations
+# create; running it against a half-migrated schema is how you get an error that names a column
+# instead of the real problem. That was written for many replicas starting at once; it holds just as well for a CI job
 # racing a hand-run migration. This script does not need to be the only writer, only a correct one.
 set -euo pipefail
 
@@ -77,7 +83,7 @@ command_id=$(aws ssm send-command \
   --instance-ids "$instance" \
   --document-name AWS-RunShellScript \
   --comment "migrate ${GITHUB_SHA:-manual}" \
-  --parameters 'commands=["set -a; . /etc/sproutos/env; set +a; cd /opt/sproutos/api && node migrate.mjs"]' \
+  --parameters 'commands=["set -a; . /etc/sproutos/env; set +a; cd /opt/sproutos/api && node migrate.mjs && node seed.mjs"]' \
   --query 'Command.CommandId' --output text)
 
 echo "command $command_id"
@@ -105,4 +111,4 @@ if [ "$status" != "Success" ]; then
   exit 1
 fi
 
-echo "migrations applied"
+echo "migrations and seeds applied"

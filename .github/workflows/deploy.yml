@@ -208,6 +208,24 @@ jobs:
               --platform=node --format=esm --target=node24 \
               --outdir="$staging/api/migrations"
 
+            # The seeds, same shape and for the same reason as the migrations: separate files the
+            # runner reads from a directory, next to a bundle that resolves the API's node_modules.
+            #
+            # Deployed because one of them is load-bearing. Without `0001_price_book` the usage
+            # route answers 409 "No active price book; usage cannot be rated" — which is what the
+            # dashboard's balance widget hung on, and is far better than rating every tenant against
+            # an empty price book and billing zero.
+            (cd apps/dbmigrator && node ../internal-api/build.mjs src/seed-entry.ts "$staging/api/seed.mjs")
+
+            # `--bundle`, unlike the migrations above. A migration imports only `kysely`; a seed
+            # also imports `../lib/rows` and friends, and compiling each file on its own leaves
+            # those relative specifiers pointing at a directory the release does not ship —
+            # `ERR_MODULE_NOT_FOUND: /opt/sproutos/api/lib/rows`. Bundling inlines them.
+            pnpm --filter=dbmigrator exec esbuild "src/seeds/*.ts" \
+              --bundle --packages=external \
+              --platform=node --format=esm --target=node24 \
+              --outdir="$staging/api/seeds"
+
             # `wait -n` then exit, rather than backgrounding and returning: systemd's unit is
             # `Type=simple` with one `ExecStart`, so this script *is* the service. Returning while
             # children ran would have systemd call the service dead and restart it in a loop;
@@ -391,6 +409,15 @@ jobs:
               --content-type "text/html" --only-show-errors
           done
 
+          # A copy at the bucket root, because that is the path a browser asks for on its own and
+          # the path `proxy.ts` rewrites to the CDN once a visitor is signed in. Without it that
+          # request 403s, falls through the distribution's SPA error mapping, and returns
+          # `index.html` with a 200 — the browser is handed HTML where an icon should be and shows
+          # no icon at all, with nothing logged anywhere.
+          aws s3 cp apps/frontends/dashboard/dist/favicon.ico "s3://$assets/favicon.ico" \
+            --cache-control "public,max-age=86400" \
+            --content-type "image/x-icon" --only-show-errors
+
           # Read back rather than trust the exit status. `s3 sync` succeeds cheerfully when its
           # source is an empty directory, so "the command worked" and "the bundle is published" are
           # different claims and only one of them matters.
@@ -406,7 +433,7 @@ jobs:
           if [ -n "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" ]; then
             aws cloudfront create-invalidation \
               --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
-              --paths "/dashboard/index.html" "/admin/index.html" \
+              --paths "/dashboard/index.html" "/admin/index.html" "/favicon.ico" \
               --query 'Invalidation.Id' --output text
           else
             echo "::warning::CLOUDFRONT_DISTRIBUTION_ID is unset; the previous index.html serves until the cache expires."
@@ -438,7 +465,7 @@ jobs:
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
   migrate:
-    name: Apply migrations
+    name: Apply migrations and seeds
     needs: fill
     runs-on: ubuntu-latest
     steps:
@@ -457,7 +484,7 @@ jobs:
       #
       # The idle instances are not serving, so a migration that fails here stops the release with
       # production still on the old colour and untouched.
-      - name: Migrate
+      - name: Migrate and seed
         run: bin/migrate.sh
         env:
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
