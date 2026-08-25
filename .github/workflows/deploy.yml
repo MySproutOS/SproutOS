@@ -281,6 +281,11 @@ jobs:
         env:
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
+          # The API's rule moves with the website's — one release on two ports, so they can never be
+          # different colours. `cutover.sh` requires it rather than defaulting, because a cutover
+          # that silently moved only half of a deployment would point the API at the colour the
+          # website had just drained.
+          API_RULE_ARN: ${{ vars.API_RULE_ARN }}
           SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
@@ -310,3 +315,8 @@ jobs:
         env:
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
+          # The API's rule moves with the website's — one release on two ports, so they can never be
+          # different colours. `cutover.sh` requires it rather than defaulting, because a cutover
+          # that silently moved only half of a deployment would point the API at the colour the
+          # website had just drained.
+          API_RULE_ARN: ${{ vars.API_RULE_ARN }}

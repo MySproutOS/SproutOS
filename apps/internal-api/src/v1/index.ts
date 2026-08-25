@@ -14,6 +14,7 @@ import billing from "./billing"
 import githubRepos from "./github-repos"
 import members, { invites } from "./members"
 import oauth from "./oauth"
+import oauthClients from "./oauth-clients"
 import organizations from "./organizations"
 import projects from "./projects"
 import roles from "./roles"
@@ -64,6 +65,9 @@ orgs.route("/", storeModeration)
 orgs.route("/:orgSlug/billing", billing)
 orgs.route("/", observability)
 orgs.route("/", apiKeys)
+// Registering an application against our own OAuth provider. Org-scoped and authenticated, unlike
+// `/oauth/*` below, which is the provider itself and authenticates the client rather than a session.
+orgs.route("/", oauthClients)
 
 /**
  * Unauthenticated by design.
