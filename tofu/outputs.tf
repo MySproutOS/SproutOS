@@ -20,19 +20,14 @@ output "role_arn" {
 
 output "database_endpoint" {
   description = "Control-plane Postgres writer endpoint"
-  value       = aws_rds_cluster.control_plane.endpoint
-}
-
-output "database_reader_endpoint" {
-  description = "Control-plane Postgres reader endpoint"
-  value       = aws_rds_cluster.control_plane.reader_endpoint
+  value       = aws_db_instance.control_plane.endpoint
 }
 
 # The ARN, not the secret. The value is fetched at runtime by whatever holds the IAM permission to
 # read it; putting it in an output writes it to state in the clear.
 output "database_credentials_secret_arn" {
   description = "Secrets Manager ARN holding the control-plane database password"
-  value       = aws_rds_cluster.control_plane.master_user_secret[0].secret_arn
+  value       = aws_db_instance.control_plane.master_user_secret[0].secret_arn
 }
 
 output "envelope_kms_key_arn" {

@@ -65,23 +65,38 @@ variable "vpc_cidr" {
   work in that sentence, because this is where the money goes.
 */
 variable "postgres_version" {
-  description = "Aurora PostgreSQL engine version for the control plane"
+  description = "PostgreSQL engine version for the control plane. RDS, not Aurora — see database.tf."
   type        = string
-  default     = "17.4"
+  # 17.4 was an *Aurora* version and does not exist on RDS — the API answers
+  # "Cannot find version 17.4 for postgres". Checked against
+  # `describe-orderable-db-instance-options` rather than assumed.
+  default = "17.11"
 }
 
 # Aurora Capacity Units. 0.5 is the floor that keeps the cluster warm; the first connection after a
 # pause waits for a resume, and the thing connecting is the API serving somebody's dashboard.
-variable "database_min_acu" {
-  description = "Minimum Aurora Serverless v2 capacity"
-  type        = number
-  default     = 0.5
+variable "database_instance_class" {
+  description = "RDS instance class. db.t4g.micro is in the free tier for the first year and a few dollars a month after."
+  type        = string
+  default     = "db.t4g.micro"
 }
 
-variable "database_max_acu" {
-  description = "Maximum Aurora Serverless v2 capacity"
+variable "database_storage_gb" {
+  description = "Allocated storage. 20 GB is the free-tier allowance."
   type        = number
-  default     = 16
+  default     = 20
+}
+
+variable "database_max_storage_gb" {
+  description = "Ceiling for storage autoscaling. What stops a runaway query turning a disk into a bill."
+  type        = number
+  default     = 100
+}
+
+variable "database_multi_az" {
+  description = "A standby in a second AZ. Doubles the instance cost and turns an AZ failure from a restore into a failover."
+  type        = bool
+  default     = false
 }
 
 variable "deletion_protection" {
@@ -103,9 +118,9 @@ variable "tenant_bucket_prefix" {
 }
 
 variable "service_instance_type" {
-  description = "EC2 type for the website and router instances. Graviton: the router is a static Rust binary and the website is Node, both of which build for arm64."
+  description = "EC2 type for the website and router. t4g.micro is in the free tier for the first year (750 hours/month, which covers one instance continuously). Graviton because the router is a static Rust binary and the website is Node, both of which build for arm64."
   type        = string
-  default     = "t4g.small"
+  default     = "t4g.micro"
 }
 
 variable "service_desired_count" {
@@ -121,7 +136,7 @@ variable "service_max_count" {
 }
 
 variable "cache_node_type" {
-  description = "ElastiCache node for the platform Valkey. The smallest: a route map and some counters."
+  description = "ElastiCache node for the platform Valkey. cache.t4g.micro is the smallest and is in the free tier for the first year. It holds a route map and some counters."
   type        = string
   default     = "cache.t4g.micro"
 }
@@ -144,13 +159,14 @@ variable "requests_per_target" {
   default     = 1000
 }
 
-variable "nat_gateway_count" {
-  description = "NAT gateways. One is $33/month and a single point of failure for egress; three is $99/month and zone-independent. Raise it before there is traffic worth protecting."
-  type        = number
-  default     = 1
+variable "use_nat_instance" {
+  description = "Egress through an fck-nat instance (~$3/month, one AZ, one instance) instead of a managed NAT gateway ($33/month plus $0.045/GB). See nat.tf for what is given up."
+  type        = bool
+  default     = true
+}
 
-  validation {
-    condition     = var.nat_gateway_count >= 1 && var.nat_gateway_count <= 3
-    error_message = "nat_gateway_count must be between 1 and one per availability zone (3)."
-  }
+variable "nat_instance_type" {
+  description = "The NAT instance. t4g.nano is ~$3/month and does several Gbps burst; it is credit-limited on sustained traffic."
+  type        = string
+  default     = "t4g.nano"
 }

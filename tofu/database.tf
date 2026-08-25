@@ -44,88 +44,80 @@ resource "aws_vpc_security_group_ingress_rule" "database_from_service" {
 # No egress rule at all. A database has nothing to say to the internet, and the database subnets
 # have no route out regardless — this is the second lock on that door.
 
-resource "aws_rds_cluster" "control_plane" {
-  cluster_identifier = "${var.name_prefix}-control-plane"
-  engine             = "aurora-postgresql"
-  engine_mode        = "provisioned"
-  engine_version     = var.postgres_version
-  database_name      = "main"
+/*
+  One RDS instance, not an Aurora cluster.
 
-  master_username = "sproutos"
+  Aurora buys three things this control plane does not need yet: read replicas it has no reads for,
+  storage that scales past what a single volume holds, and sub-second failover. It charges for them
+  whether or not they are used — Serverless v2 holds a 0.5-ACU floor per instance, so an idle
+  cluster is roughly $44 a month per instance before a single query.
+
+  A `db.t4g.micro` on regular RDS is in the free tier for the first year and is a few dollars a
+  month after. When the control plane outgrows it, moving back is a snapshot restore into an Aurora
+  cluster — Aurora reads Postgres snapshots — so this is not a door that closes.
+
+  **What is given up, stated plainly:** there is no failover target. An availability-zone failure
+  takes the control plane down until RDS restores it, which is minutes rather than seconds. Set
+  `database_multi_az = true` when that stops being acceptable; it doubles the instance cost and
+  needs nothing else changed.
+*/
+resource "aws_db_instance" "control_plane" {
+  identifier     = "${var.name_prefix}-control-plane"
+  engine         = "postgres"
+  engine_version = var.postgres_version
+  instance_class = var.database_instance_class
+  db_name        = "main"
+
+  allocated_storage = var.database_storage_gb
+  # Grows on its own rather than filling up at 3am. The ceiling is what stops a runaway query
+  # turning a disk into a bill.
+  max_allocated_storage = var.database_max_storage_gb
+  storage_type          = "gp3"
+  storage_encrypted     = true
+  kms_key_id            = aws_kms_key.database.arn
+
+  username = "sproutos"
   # Managed by RDS in Secrets Manager, so no password is ever written to state. A password in
-  # `terraform.tfstate` is a password in an S3 bucket, in a backup of that bucket, and in whatever
-  # laptop last ran a plan.
+  # `terraform.tfstate` is a password in whatever laptop last ran a plan.
   manage_master_user_password   = true
   master_user_secret_kms_key_id = aws_kms_key.secrets.arn
 
   db_subnet_group_name   = aws_db_subnet_group.control_plane.name
   vpc_security_group_ids = [aws_security_group.database.id]
-
-  storage_encrypted = true
-  kms_key_id        = aws_kms_key.database.arn
+  publicly_accessible    = false
+  multi_az               = var.database_multi_az
 
   /*
     Backups.
 
-    35 days is the maximum Aurora allows and the difference between the retention window and the
-    time it takes somebody to notice a slow corruption. The ledger is append-only and the audit log
-    has a trigger refusing DELETE, so the realistic disaster here is not "a table was dropped" but
-    "a migration was wrong three weeks ago" — which a seven-day window does not survive.
+    35 days is the maximum and the difference between the retention window and the time it takes
+    somebody to notice a slow corruption. The ledger is append-only and the audit log has a trigger
+    refusing DELETE, so the realistic disaster is not "a table was dropped" but "a migration was
+    wrong three weeks ago" — which a seven-day window does not survive.
   */
-  backup_retention_period      = 35
-  preferred_backup_window      = "07:00-08:00"
-  preferred_maintenance_window = "sun:08:30-sun:09:30"
+  backup_retention_period = 35
+  backup_window           = "07:00-08:00"
+  maintenance_window      = "sun:08:30-sun:09:30"
+  copy_tags_to_snapshot   = true
 
-  # PITR to any second in the retention window is what `backup_retention_period` actually buys on
-  # Aurora; continuous backup to S3 is on by default and cannot be turned off. The snapshot on
-  # destroy is the guard against a `tofu destroy` that was meant for a different workspace.
   skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name_prefix}-control-plane-final"
-  copy_tags_to_snapshot     = true
 
   deletion_protection = var.deletion_protection
 
-  # Postgres logs to CloudWatch. Not the tenant observability pipeline — that is ClickHouse, and it
+  # Postgres logs to CloudWatch. Not the tenant observability pipeline — that is ClickHouse and it
   # is for customers. This is for us, and slow-query logs are where a control plane's problems show
   # up first.
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
-  serverlessv2_scaling_configuration {
-    min_capacity = var.database_min_acu
-    max_capacity = var.database_max_acu
-  }
+  auto_minor_version_upgrade = false
 
   tags = local.tags
 
   lifecycle {
-    # The version is upgraded deliberately, in a maintenance window, not because a plan noticed a
-    # new minor. `engine_version` drift here is expected and is not a reason to replace a cluster.
+    # Upgraded deliberately in a maintenance window, not because a plan noticed a new minor.
     ignore_changes = [engine_version]
   }
-}
-
-/*
-  Two instances: a writer and one reader.
-
-  Not for read scaling — the control plane's reads are small — but because a single-instance Aurora
-  cluster has no failover target, and the recovery from an AZ failure is a restore rather than a
-  promotion. The reader is the difference between minutes and hours.
-*/
-resource "aws_rds_cluster_instance" "control_plane" {
-  count = 2
-
-  identifier         = "${var.name_prefix}-control-plane-${count.index}"
-  cluster_identifier = aws_rds_cluster.control_plane.id
-  instance_class     = "db.serverless"
-  engine             = aws_rds_cluster.control_plane.engine
-  engine_version     = aws_rds_cluster.control_plane.engine_version
-
-  performance_insights_enabled    = true
-  performance_insights_kms_key_id = aws_kms_key.database.arn
-  monitoring_interval             = 30
-  monitoring_role_arn             = aws_iam_role.rds_monitoring.arn
-
-  tags = local.tags
 }
 
 resource "aws_iam_role" "rds_monitoring" {
@@ -183,7 +175,7 @@ resource "aws_backup_selection" "control_plane" {
   name         = "${var.name_prefix}-control-plane"
   iam_role_arn = aws_iam_role.backup.arn
   plan_id      = aws_backup_plan.control_plane.id
-  resources    = [aws_rds_cluster.control_plane.arn]
+  resources    = [aws_db_instance.control_plane.arn]
 }
 
 resource "aws_iam_role" "backup" {

@@ -107,40 +107,6 @@ resource "aws_subnet" "database" {
   })
 }
 
-/*
-  One NAT gateway per AZ, not one shared.
-
-  A shared NAT is cheaper until the AZ holding it degrades, at which point every other AZ loses
-  egress — the failure mode a three-AZ deployment exists to avoid. It also means cross-AZ data
-  processing charges on every byte of egress from the other two.
-*/
-resource "aws_eip" "nat" {
-  count  = length(local.availability_zones)
-  domain = "vpc"
-  tags   = merge(local.tags, { Name = "${var.name_prefix}-nat-${count.index}" })
-}
-
-/*
-  One NAT gateway per availability zone, or one for all of them.
-
-  Per-AZ is the correct production shape: a NAT gateway is zonal, so a single one makes the other
-  two zones depend on the zone it lives in — an AZ failure takes egress out for instances that were
-  otherwise fine, and cross-AZ NAT traffic is billed on top.
-
-  It is also **$99 a month before a single request is served**, which is the largest idle cost in
-  this estate by a wide margin. For a deployment nobody is using yet that is the wrong trade, so
-  `nat_gateway_count` exists and defaults to one. Raise it to three before there is traffic worth
-  protecting; the routes below follow it either way.
-*/
-resource "aws_nat_gateway" "main" {
-  count = var.nat_gateway_count
-
-  allocation_id = aws_eip.nat[count.index].id
-  subnet_id     = aws_subnet.public[count.index].id
-  depends_on    = [aws_internet_gateway.main]
-
-  tags = merge(local.tags, { Name = "${var.name_prefix}-nat-${count.index}" })
-}
 
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
@@ -180,7 +146,9 @@ resource "aws_route" "private_ipv4" {
   destination_cidr_block = "0.0.0.0/0"
   # `% count`, so three private subnets share however many gateways there are. With one, every
   # subnet routes through it; with three, each has its own.
-  nat_gateway_id = aws_nat_gateway.main[count.index % var.nat_gateway_count].id
+  # Every private subnet egresses through the one NAT instance. See `nat.tf` for why it is an
+  # instance rather than a managed gateway.
+  network_interface_id = aws_network_interface.nat[0].id
 }
 
 resource "aws_route" "private_ipv6" {

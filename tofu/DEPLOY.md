@@ -11,24 +11,29 @@ This document exists so that decision is one command rather than an evening of w
 
 Idle — nothing deployed to it, no traffic, `us-east-1` on-demand prices:
 
-| | Monthly |
-| --- | --- |
-| NAT gateway × 1 | $33 |
-| Aurora Serverless v2, floor of 0.5 ACU | $44 |
-| Application Load Balancer | $16 |
-| EC2 `t4g.small` × 2 (one colour, two instances) | $25 |
-| ElastiCache `cache.t4g.micro` | $12 |
-| Route 53 hosted zone | $0.50 |
-| **Total, serving nothing** | **≈ $130** |
+| | Monthly | Free tier (first 12 months) |
+| --- | --- | --- |
+| Application Load Balancer | $16 | 750 hours included |
+| NAT — `fck-nat` on `t4g.nano` | $3 | 750 hours of `t4g.micro`, not nano |
+| RDS `db.t4g.micro`, 20 GB | $12 | included |
+| ElastiCache `cache.t4g.micro` | $12 | included |
+| EC2 `t4g.micro` × 0 (scaled to zero) | $0 | 750 hours included |
+| Elastic IP (attached) | $0 | — |
+| Route 53 hosted zone | $0.50 | — |
+| **Serving nothing, account past its first year** | **≈ $43** | |
+| **Serving nothing, free tier still active** | **≈ $20** | |
 
-Two numbers dominate, and both are adjustable:
+Everything is the smallest instance that exists for its service. What changed to get here, and what
+each gave up:
 
-- **NAT gateways.** `nat_gateway_count` defaults to **1** ($33). Production wants 3 ($99) so an
-  availability-zone failure does not take egress out for the other two — but that is $66 a month of
-  redundancy for a platform with no users. Raise it before there is traffic worth protecting.
-- **Aurora's floor.** `database_min_acu` is 0.5, which is Aurora Serverless v2's minimum that still
-  accepts a connection. Scale-to-zero exists and is not used here on purpose: resuming from zero
-  takes seconds, and the thing waiting is the API serving somebody's dashboard.
+- **`fck-nat` instead of a NAT gateway** — $3 instead of $33, and no per-gigabyte processing charge.
+  It is one instance in one availability zone: a single point of failure for *egress*, replaced in
+  a couple of minutes, with the instance's throughput as a real ceiling. `use_nat_instance = false`
+  switches back. See `nat.tf`.
+- **RDS instead of Aurora** — Aurora Serverless v2 holds a 0.5-ACU floor per instance, about $44 a
+  month before a query. A `db.t4g.micro` is free for a year and around $12 after. There is no
+  failover target; `database_multi_az = true` adds one and doubles the instance cost.
+- **One database instance, not two.** The second was a failover reader holding its own floor.
 
 What is *not* in the table, because it is usage-priced and zero when nothing runs: Lambda, S3,
 CloudFront, data transfer, and every tenant service on the OVH box.
@@ -63,15 +68,15 @@ tofu init
 tofu plan -out=plan.tfplan
 ```
 
-Read it. Expect roughly 90 resources on a first run. The things worth checking before you apply:
+Read it. Expect roughly 127 resources on a first run. The things worth checking before you apply:
 
 - **`aws_acm_certificate_validation.tenant`** — this one *waits*, for up to 45 minutes, on DNS that
   `dns.tf` writes. If the zone is not the one the domain is delegated to, this is where it hangs
   rather than where it fails.
 - **`aws_route53_record.alb_ipv4["sproutos.me"]`** — an alias at the apex. If the zone already has
   an A record there, the plan will replace it.
-- **NAT gateways and Aurora** — the two lines in the table above. Confirm the counts are what you
-  intend before they start billing.
+- **The NAT instance and the database** — the two lines above worth checking. Confirm
+  `use_nat_instance` and `database_instance_class` are what you intend before they start billing.
 
 ## Applying, and what follows
 
@@ -91,9 +96,21 @@ Until (3), the Auto Scaling groups will start instances that boot, find no relea
 their bootstrap and be replaced. That is a loop, and it bills. **Either run the deploy promptly or
 set `service_desired_count = 0` for the first apply.**
 
+## Two AWS constraints worth knowing
+
+**An ALB needs at least two subnets, in two availability zones.** That is not a choice this
+configuration makes — AWS rejects a load balancer with one. So the VPC keeps three public subnets
+across three zones even though only one of them holds anything that costs money. Subnets are free;
+what is in them is not.
+
+**An ALB cannot have an Elastic IP.** Only a Network Load Balancer supports one. An ALB is reached
+by its DNS name, and `dns.tf` points the apex and the wildcard at it with alias records — which is
+also why there is no address to allowlist here. The Elastic IP in this estate belongs to the NAT
+instance, which is the platform's *egress* address and the one OVH sees.
+
 ## Undoing it
 
-`tofu destroy` removes everything except what has deletion protection: the Aurora cluster
+`tofu destroy` removes everything except what has deletion protection: the database
 (`deletion_protection`) and the load balancer. Both are deliberate — they are the two resources
 whose accidental removal is unrecoverable and expensive respectively. Turn the variable off first if
 you mean it.
