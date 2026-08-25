@@ -21,6 +21,7 @@
     "kysely": "catalog:"
   },
   "devDependencies": {
+    "esbuild": "^0.25.0",
     "kysely-ctl": "^0.21.0",
     "tsx": "^4.23.12"
   }

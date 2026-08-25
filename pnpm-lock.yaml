@@ -181,6 +181,9 @@ importers:
         specifier: 'catalog:'
         version: 0.29.5
     devDependencies:
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
       kysely-ctl:
         specifier: ^0.21.0
         version: 0.21.0(kysely@0.29.5)

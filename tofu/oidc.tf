@@ -224,6 +224,42 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "*"
       },
       {
+        /*
+          Running the migration on an instance, because the database cannot be reached from a runner.
+
+          The control-plane database is in a subnet with no route to any gateway, so CI drives the
+          migration rather than performing it: `bin/migrate.sh` sends one shell command to an
+          instance already inside the VPC and reads back its exit status.
+
+          `SendCommand` is scoped two ways, and it needs both. The instance condition limits it to
+          this deployment's own instances — an unscoped grant would let this role run arbitrary
+          shell on every managed instance in the account, which is a far larger capability than
+          "deploy the website". The document is pinned to `AWS-RunShellScript` because that is the
+          one being used, and naming it keeps a future permission from arriving by accident.
+
+          `GetCommandInvocation` cannot be scoped to a resource at all — AWS rejects a policy that
+          tries — so it is `*`, and it only ever reads back the result of a command this role sent.
+        */
+        Sid    = "RunMigrationsOnAnInstance"
+        Effect = "Allow"
+        Action = ["ssm:SendCommand"]
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
+          "arn:aws:ec2:${var.aws_region}:${var.aws_account_id}:instance/*",
+        ]
+        Condition = {
+          StringEquals = {
+            "ssm:resourceTag/Service" = "website"
+          }
+        }
+      },
+      {
+        Sid      = "ReadTheMigrationResult"
+        Effect   = "Allow"
+        Action   = ["ssm:GetCommandInvocation"]
+        Resource = "*"
+      },
+      {
         Sid    = "MoveTraffic"
         Effect = "Allow"
         Action = ["elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyRule"]

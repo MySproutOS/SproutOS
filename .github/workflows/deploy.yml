@@ -188,6 +188,26 @@ jobs:
               --config.node-linker=hoisted "$RUNNER_TEMP/apidep"
             cp -r "$RUNNER_TEMP/apidep/node_modules" "$staging/api/node_modules"
 
+            # The migrator, next to the API so it resolves the API's `node_modules`.
+            #
+            # `deploy.ts` finds its migrations relative to its own module URL, so the bundle landing
+            # at `/opt/sproutos/api/migrate.mjs` makes it read `/opt/sproutos/api/migrations` — which
+            # is why the two are staged as a pair and not somewhere tidier.
+            #
+            # Built with the API's own `build.mjs`: it takes an entry and an outfile, and computes
+            # externals by walking workspace dependencies through to the npm packages underneath.
+            # `apps/dbmigrator` sits at the same depth as `apps/internal-api`, so its notion of the
+            # workspace root holds. The bundle needs `kysely`, `pg` and `dotenv` at runtime, all of
+            # which the API's production tree already carries.
+            (cd apps/dbmigrator && node ../internal-api/build.mjs src/cli.ts "$staging/api/migrate.mjs")
+
+            # Migrations stay separate files rather than being bundled in: `FileMigrationProvider`
+            # reads the directory and imports each one, and a migration inlined into the bundle is a
+            # migration the provider cannot see or record by name.
+            pnpm --filter=dbmigrator exec esbuild "src/migrations/*.ts" \
+              --platform=node --format=esm --target=node24 \
+              --outdir="$staging/api/migrations"
+
             # `wait -n` then exit, rather than backgrounding and returning: systemd's unit is
             # `Type=simple` with one `ExecStart`, so this script *is* the service. Returning while
             # children ran would have systemd call the service dead and restart it in a loop;
@@ -318,9 +338,35 @@ jobs:
           SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
+  migrate:
+    name: Apply migrations
+    needs: fill
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      # After the fill and before the cutover, which is the only ordering that is not a broken
+      # window. Before the fill would migrate from instances running the *previous* release, whose
+      # migrator predates the schema being asked for. After the cutover would put traffic on code
+      # that expects tables it does not yet have — which is exactly how production came to answer
+      # 500 on `/login/github/callback` with `relation "account" does not exist`.
+      #
+      # The idle instances are not serving, so a migration that fails here stops the release with
+      # production still on the old colour and untouched.
+      - name: Migrate
+        run: bin/migrate.sh
+        env:
+          NAME_PREFIX: ${{ vars.NAME_PREFIX }}
+          WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
+
   cutover:
     name: Move traffic
-    needs: fill
+    needs: [fill, migrate]
     # A push deploys all the way. A manual run keeps its opt-in, because the reason to dispatch by
     # hand is usually to stage something without moving traffic.
     if: ${{ github.event_name == 'push' || inputs.cutover }}
