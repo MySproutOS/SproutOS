@@ -124,6 +124,31 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
       },
       {
+        /*
+          Writing an encrypted object takes two permissions, the mirror of reading one.
+
+          The bucket is SSE-KMS, so `s3:PutObject` alone fails — and fails as `AccessDenied` on
+          `CreateMultipartUpload`, naming the KMS key but not the fact that the bucket's encryption
+          is what put it in the path. `GenerateDataKey` is what S3 calls to make the per-object key.
+
+          `Decrypt` alongside it because a multipart upload reads back what it has written to
+          complete the object, and a release tarball is well past the 8 MB threshold at which the
+          CLI switches to multipart.
+
+          Scoped through S3 only, so this role cannot use the key against Secrets Manager — which is
+          where the database password lives under the same key.
+        */
+        Sid      = "PublishReleasesEncryption"
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey", "kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
         # Named groups only, so a compromised workflow cannot scale something else in the account.
         Sid    = "FillTheIdleColour"
         Effect = "Allow"
