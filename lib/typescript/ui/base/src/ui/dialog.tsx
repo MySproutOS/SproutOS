@@ -48,12 +48,32 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-[28rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl shadow-black/50 outline-none transition-[transform,opacity] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98]",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[28rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl shadow-black/50 outline-none transition-[transform,opacity] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98]",
           className,
         )}
         {...props}
       >
-        {children}
+        {/*
+          The scroll lives here and not on the popup, and the popup is what is bounded.
+
+          A dialog is centred with `-translate-y-1/2`, so one taller than the viewport hangs off
+          **both** ends: its header is above the top of the screen and its footer — where every
+          confirm button lives — is below the bottom, with no way to reach either. Nothing clips or
+          overlaps, so it looks like a dialog that simply has no button. Found on the Add-credit
+          dialog, whose Stripe element is the first content tall enough to reach the edge, but it
+          was every dialog in the product.
+
+          `100dvh` rather than `100vh` because a mobile browser's chrome is included in the latter,
+          which is how you get a footer hidden behind the URL bar on exactly the devices with the
+          least room.
+
+          Scrolling the popup itself would have been one class less and would take the close button
+          with it — it is positioned against the popup, so the button would scroll off the top and
+          leave a dialog that cannot be dismissed or completed. The wrapper scrolls instead, and
+          `min-h-0` is what allows it to: a flex child's default `min-height:auto` refuses to
+          shrink below its content, so without it the wrapper wins and the popup overflows anyway.
+        */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">{children}</div>
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"

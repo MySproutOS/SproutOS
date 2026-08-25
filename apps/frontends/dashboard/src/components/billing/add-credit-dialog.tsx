@@ -14,7 +14,7 @@ import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { useState } from "react"
 import { useStartTopup, useTopupQuote } from "@frontends/dashboard/data/billing"
-import { stripeConfigured, stripePromise } from "./stripe"
+import { stripeConfigured, stripePromise, stripeTestMode } from "./stripe"
 
 /** Dollars a person actually picks, as micro-USD. The field below takes anything above the floor. */
 const PRESETS = [10n, 25n, 50n, 100n].map((dollars) => dollars * 1_000_000n)
@@ -255,6 +255,23 @@ function PaymentStep({ onDone }: { onDone: () => void }) {
       }}
     >
       <PaymentElement />
+
+      {/*
+        Said before the card is typed, not after it is refused.
+
+        Stripe rejects a real card in test mode with "Your card was declined", and the reason —
+        that the request was in test mode — arrives as a second sentence that reads like
+        boilerplate. So somebody whose card works everywhere else is told their card does not work,
+        by a system that knew in advance it would refuse it. The key's prefix says which account
+        this is; there is no reason to make the customer discover it.
+      */}
+      {stripeTestMode && (
+        <p className="rounded-md border border-border bg-secondary/40 p-2.5 text-[13px] text-muted-foreground">
+          <span className="font-medium text-foreground">Test mode.</span> Use{" "}
+          <code className="font-mono">4242 4242 4242 4242</code> with any future expiry, any CVC and
+          any postcode. A real card will be declined.
+        </p>
+      )}
 
       {error !== null && <p className="text-[13px] text-destructive">{error}</p>}
 

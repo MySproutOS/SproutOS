@@ -20,6 +20,20 @@ const KEY: string = process.env.STRIPE_PUBLIC_KEY ?? ""
 export const stripeConfigured = KEY !== ""
 
 /**
+ * Whether this deployment's Stripe account is in test mode.
+ *
+ * Read off the key's own prefix, which is the only thing that actually decides it — `pk_test_` and
+ * `pk_live_` are different accounts, and the secret key on the server has to match or every intent
+ * fails at confirmation.
+ *
+ * It is surfaced because the failure without it is genuinely confusing: a real card in test mode
+ * comes back as **"Your card was declined"**, with the explanation buried in a sentence about test
+ * mode that reads like boilerplate. Someone whose card works everywhere else is told their card
+ * does not work, by a system that knew in advance it would refuse it.
+ */
+export const stripeTestMode = KEY.startsWith("pk_test_")
+
+/**
  * Loaded once, lazily.
  *
  * `loadStripe` injects a script tag and Stripe asks that it be called once per page. Calling it at
