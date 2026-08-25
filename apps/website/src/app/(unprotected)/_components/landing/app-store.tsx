@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { Reveal } from "@ui/spa-shared/reveal"
 
 function Connector() {
@@ -44,11 +45,61 @@ function PersonalizeFlow() {
         </p>
       </div>
 
-      <p className="mt-6 border-t rule-soft pt-4 text-xs text-muted-foreground text-pretty">
-        When the original gets a fix or a new feature, it shows up in your copy too — your changes
-        stay put.
-      </p>
+      {/*
+        Upkeep is a step in the flow, not a footnote under it.
+
+        This was a paragraph below a divider, which is where a reader puts things that happened
+        once. It is the opposite: the loop is the part that never stops, and it is most of why
+        forking here differs from clicking "Fork" on GitHub. So it is drawn — an arrow leaving the
+        original, curving past everything the customer changed, and arriving back at their copy.
+      */}
+      <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed rule-soft px-5 py-4">
+        <UpkeepLoop />
+        <p className="text-xs text-muted-foreground text-pretty">
+          <span className="font-medium text-foreground">And it keeps up.</span> When the original
+          gets a fix or a new feature, it arrives in your copy — your changes stay put.
+        </p>
+      </div>
     </div>
+  )
+}
+
+/**
+ * The upkeep loop: out of the original, around, and back into your copy.
+ *
+ * `currentColor` throughout so it takes the surrounding text colour in either theme, and the
+ * arrowhead is a `marker` on the path rather than a second shape to keep aligned with it. Marked
+ * `aria-hidden` because the sentence beside it already says this — a screen reader announcing
+ * "loop" adds nothing.
+ */
+function UpkeepLoop() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 40 40"
+      className="size-9 shrink-0 text-primary"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    >
+      <defs>
+        <marker
+          id="upkeep-arrow"
+          viewBox="0 0 8 8"
+          refX="6"
+          refY="4"
+          markerWidth="5"
+          markerHeight="5"
+          orient="auto"
+        >
+          <path d="M0,1 L6,4 L0,7 z" fill="currentColor" stroke="none" />
+        </marker>
+      </defs>
+      {/* Three-quarters of a circle, so the gap reads as motion rather than a closed ring. */}
+      <path d="M32 14 A14 14 0 1 0 34 24" markerEnd="url(#upkeep-arrow)" />
+      <circle cx="20" cy="20" r="3.2" className="text-primary" />
+    </svg>
   )
 }
 
@@ -71,6 +122,19 @@ export function AppStore() {
             and new features arrive without undoing anything you changed. That upkeep can run on the
             Claude Code subscription you already pay for, your own API key, or an in-house model.
           </p>
+
+          {/*
+            The section described a store and offered no way to open it. `/store` renders for a
+            signed-out visitor — it is one of `SHARED_ROUTES` — so this needs no account and is not
+            a sign-up wall wearing a browse button.
+          */}
+          <Link
+            href="/store"
+            className="mt-6 inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/8 px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/70 hover:bg-primary/12"
+          >
+            Browse the store
+            <span aria-hidden="true">→</span>
+          </Link>
         </Reveal>
 
         <Reveal delay={100} className="flex justify-center lg:justify-end">
