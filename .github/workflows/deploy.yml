@@ -133,7 +133,21 @@ jobs:
             # per-platform optional binaries — `@anthropic-ai/claude-agent-sdk` is 300 MB of them —
             # and a tree resolved on a developer's macOS laptop puts `darwin-arm64` into a tarball
             # bound for Linux. This runner is Linux, which is the point of building here.
-            pnpm --filter=@api/internal deploy --prod --legacy "$RUNNER_TEMP/apidep"
+            #
+            # `node-linker=hoisted`, because the bundle's dependencies are not this app's.
+            #
+            # esbuild inlines the workspace packages — `@lib/lambda`, `@lib/dao` and the rest — so
+            # *their* npm dependencies become the bundle's, resolved from wherever `server.js`
+            # sits. pnpm's default isolated layout links into the top-level `node_modules` only what
+            # `apps/internal-api/package.json` itself declares, so the bundle started and died on
+            # `Cannot find package '@aws-sdk/client-lambda'` — a package that was installed, three
+            # directories away under `.pnpm`, and simply not resolvable from there.
+            #
+            # A hoisted layout puts every package at the top level, which is exactly the shape a
+            # bundle needs. The alternative is to restate every transitive dependency of every
+            # bundled workspace package in this app's own `dependencies`, and keep doing it.
+            pnpm --filter=@api/internal deploy --prod --legacy \
+              --config.node-linker=hoisted "$RUNNER_TEMP/apidep"
             cp -r "$RUNNER_TEMP/apidep/node_modules" "$staging/api/node_modules"
 
             # `wait -n` then exit, rather than backgrounding and returning: systemd's unit is

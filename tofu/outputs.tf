@@ -95,3 +95,23 @@ output "api_rule_arn" {
   description = "Listener rule for api.<domain>. Set as the API_RULE_ARN repository variable."
   value       = aws_lb_listener_rule.api.arn
 }
+
+output "forum_static_bucket" {
+  description = "Bucket the forum's assets are published to."
+  value       = one(aws_s3_bucket.forum_static[*].bucket)
+}
+
+output "forum_static_distribution_id" {
+  description = "CloudFront distribution to invalidate after a forum asset publish."
+  value       = one(aws_cloudfront_distribution.forum_static[*].id)
+}
+
+output "forum_static_role_arn" {
+  description = "Role SproutOS-Agent-Forum assumes to publish. Set as AWS_ROLE_ARN there."
+  value       = one(aws_iam_role.forum_static_deploy[*].arn)
+}
+
+output "forum_static_host" {
+  description = "Where the forum's assets are served from."
+  value       = local.forum_static_host
+}

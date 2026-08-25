@@ -239,3 +239,26 @@ variable "node_version" {
   type        = string
   default     = "24.14.0"
 }
+
+variable "environment" {
+  description = "Which deployment this is. Some resources exist only in production — see forum-static.tf."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be production or staging."
+  }
+}
+
+variable "forum_repo" {
+  description = "The repository that publishes the forum's static assets."
+  type        = string
+  default     = "SproutOS-Agent/SproutOS-Agent-Forum"
+}
+
+variable "forum_repo_ids" {
+  description = "The id-qualified form of forum_repo. See github_repo_ids for why both are trusted."
+  type        = string
+  default     = "SproutOS-Agent@320371408/SproutOS-Agent-Forum@1345557757"
+}
