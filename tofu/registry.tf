@@ -1,84 +1,11 @@
 /**
- * The registry, and where build artefacts live.
+ * Where build artefacts live.
  *
- * One repository per deployable rather than one shared with tag prefixes: a repository is the unit
- * an IAM policy and a lifecycle rule can name, so a shared one means the build role that pushes the
- * website can also replace the image the pg-proxy is about to pull.
+ * There is no container registry any more. Every deployable ships as a release tarball read from
+ * the bucket below — the website and the router by an instance at boot, a customer's application as
+ * a zip Lambda reads — so the eight ECR repositories that used to be here would be created empty
+ * and stay that way. See ADR 0026.
  */
-
-locals {
-  # Every image the platform builds. Tenant images are not here — those are built per project and
-  # belong in a separate repository namespace with per-tenant policy, which is phase 10's problem.
-  platform_images = [
-    "website",
-    "internal-api",
-    "worker",
-    "pg-proxy",
-    "valkey-proxy",
-    "search-proxy",
-    "storage-proxy",
-    "metering-agent",
-  ]
-}
-
-resource "aws_ecr_repository" "platform" {
-  for_each = toset(local.platform_images)
-
-  name = "${var.name_prefix}/${each.value}"
-  # `IMMUTABLE`, so a tag means one image forever. A mutable `:latest` is how a rollback rolls
-  # forward into the thing it was rolling back from.
-  image_tag_mutability = "IMMUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  encryption_configuration {
-    encryption_type = "KMS"
-    kms_key         = aws_kms_key.secrets.arn
-  }
-
-  tags = local.tags
-}
-
-/*
-  Keep the last 30 images, expire untagged after a day.
-
-  Untagged images are build layers nothing references; they accumulate at the rate of the CI
-  pipeline and are billed per gigabyte-month. Thirty tagged images is more rollback depth than
-  anyone has ever used and still bounded.
-*/
-resource "aws_ecr_lifecycle_policy" "platform" {
-  for_each = aws_ecr_repository.platform
-
-  repository = each.value.name
-
-  policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Expire untagged images after a day"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = 1
-        }
-        action = { type = "expire" }
-      },
-      {
-        rulePriority = 2
-        description  = "Keep the last 30 tagged images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 30
-        }
-        action = { type = "expire" }
-      },
-    ]
-  })
-}
 
 /*
   Build artefacts: tenant source archives, compiled bundles, the things a deploy needs and a running

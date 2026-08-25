@@ -75,8 +75,9 @@ paying for a GC and an event-loop hop.
   idea. Both splits are optional, so the router starts without a tenant Valkey or an OpenSearch.
 - `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
   `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM,
-  checked against RFC 7677's vector. **Its future is undecided** — managed Neon disables an endpoint
-  in 0.24s and pools connections itself, so the case for it is now tenant-credential mapping alone.
+  checked against RFC 7677's vector. **Built and tested, deliberately not deployed** — managed Neon
+  wakes its own endpoints and pools connections, so only tenant-credential mapping remains. ADR 0027
+  records the decision and what would bring it back.
 - `services/log-extension` — a Lambda extension, shipped as a layer and attached to every customer
   function. Subscribes to the Telemetry API and produces to Kafka, which ClickHouse consumes. Not a
   CloudWatch subscription filter: CloudWatch charges $0.50/GB before a line reaches us, and the

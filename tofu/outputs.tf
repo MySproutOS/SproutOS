@@ -40,11 +40,6 @@ output "envelope_kms_key_arn" {
   value       = aws_kms_key.envelope.arn
 }
 
-output "ecr_repository_urls" {
-  description = "Registry URL per platform image"
-  value       = { for name, repo in aws_ecr_repository.platform : name => repo.repository_url }
-}
-
 output "vpc_id" {
   description = "VPC everything is deployed into"
   value       = aws_vpc.main.id
