@@ -7,6 +7,16 @@ export {
 } from "./upkeep-decision"
 export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
+export {
+  destroySandbox,
+  meterSandboxes,
+  PROVIDER_COST_MICRO_USD_PER_SECOND,
+  provisionSandbox,
+  reapSandboxes,
+  SANDBOX_KINDS,
+  scheduleSandboxJobs,
+  stopSandbox,
+} from "./sandbox"
 export { RETENTION, type RetentionRule, sweepExpired, type SweepResult } from "./retention"
 export {
   claim,

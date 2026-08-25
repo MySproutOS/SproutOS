@@ -4,15 +4,44 @@ import { Nullable, UUID7String } from "../utils/common.serializer"
 export const sandboxSchemaSandbox = Type.Object({
   id: UUID7String,
   state: Type.String(),
-  /** Present once the pod exists. Absent while it is being created. */
-  podName: Nullable(Type.String()),
-  namespace: Nullable(Type.String()),
-  /** The VM boundary, when the cluster has one. Null says plainly that it does not. */
-  runtimeClass: Nullable(Type.String()),
+  /** Who is running it. `daytona` today; the driver interface exists so that can change. */
+  provider: Type.String(),
+  /**
+   * Null until the provider has actually created it.
+   *
+   * Not an error state — a row exists before the container does, so a create that dies mid-flight
+   * is still attributable and still reapable rather than an orphan nobody bills.
+   */
+  externalId: Nullable(Type.String()),
+  /** `container` or `android`. What kind of machine, not what isolates it. */
+  sandboxClass: Type.String(),
+  cpu: Type.Integer(),
+  memoryGib: Type.Integer(),
+  diskGib: Type.Integer(),
+  /**
+   * The port a preview link points at, once something is listening.
+   *
+   * There is deliberately no `runtimeClass` here any more. The column recorded a Kubernetes
+   * RuntimeClass and, per ADR 0012's amendment, spent its life claiming `kata-clh` while the pod
+   * had none. Under a rented provider the isolation is theirs and we cannot observe it, so the
+   * honest thing is to say nothing rather than to say `none` in a field whose name promises more.
+   */
+  previewPort: Nullable(Type.Integer()),
   idleTimeoutSeconds: Type.Integer(),
   alwaysOn: Type.Boolean(),
   lastActivityAt: Type.String({ format: "date-time" }),
   createdAt: Type.String({ format: "date-time" }),
+})
+
+/** A signed, short-lived URL into a port on the sandbox. */
+export const sandboxSchemaPreviewResponse = Type.Object({
+  url: Type.String(),
+  port: Type.Integer(),
+  expiresAt: Type.String({ format: "date-time" }),
+})
+
+export const sandboxSchemaPreviewQuery = Type.Object({
+  port: Type.Optional(Type.Integer({ minimum: 1, maximum: 65535 })),
 })
 
 export const sandboxSchemaProjectParam = Type.Object({

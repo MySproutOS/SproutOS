@@ -8,6 +8,15 @@ import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { PUBLISH_KINDS, publishRelease } from "./publish"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
+import {
+  destroySandbox,
+  meterSandboxes,
+  provisionSandbox,
+  reapSandboxes,
+  SANDBOX_KINDS,
+  scheduleSandboxJobs,
+  stopSandbox,
+} from "./sandbox"
 import { enqueue } from "./queue"
 import { WORKFLOW_RUN_KIND, workflowRunJob } from "./workflow-run"
 import { sweepExpired } from "./retention"
@@ -59,6 +68,11 @@ export const JOB_KINDS = {
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
   tearDownProject: TEARDOWN_KIND,
+  provisionSandbox: SANDBOX_KINDS.provision,
+  stopSandbox: SANDBOX_KINDS.stop,
+  destroySandbox: SANDBOX_KINDS.destroy,
+  reapSandboxes: SANDBOX_KINDS.reap,
+  meterSandboxes: SANDBOX_KINDS.meter,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -217,6 +231,11 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.provisionProject]: provisionProjectJob,
   [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
+  [JOB_KINDS.provisionSandbox]: provisionSandbox(),
+  [JOB_KINDS.stopSandbox]: stopSandbox(),
+  [JOB_KINDS.destroySandbox]: destroySandbox(),
+  [JOB_KINDS.reapSandboxes]: reapSandboxes,
+  [JOB_KINDS.meterSandboxes]: meterSandboxes,
 }
 
 /**
@@ -284,4 +303,5 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     maxAttempts: 3,
   })
   await scheduleUpkeepScan(db, now)
+  await scheduleSandboxJobs(db, now)
 }
