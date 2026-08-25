@@ -103,11 +103,49 @@ services:
       - KAFKA_NODE_ID=1
       - KAFKA_PROCESS_ROLES=broker,controller
       - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
-      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      # Two listeners with two different security postures, because they face different things.
+      #
+      # PLAINTEXT is the Docker network — ClickHouse's consumer and anything run with `docker exec`.
+      # It never leaves the host, and its principal is ANONYMOUS.
+      #
+      # EXTERNAL is the public internet. The log extension runs inside customers' Lambda execution
+      # environments in AWS and has no fixed address to allowlist, so the boundary cannot be a
+      # firewall rule — it is TLS for the broker's identity and SASL/SCRAM for the producer's.
+      # ADR 0026 already accepted that AWS reaches this box across the internet; this is that
+      # crossing done with both ends authenticated.
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      # The advertised name must match the certificate, and it is the name the client verifies.
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://kafka.sproutos.me:9094
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:SASL_SSL
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # SCRAM, not PLAIN. PLAIN sends the password itself and relies entirely on the TLS layer;
+      # SCRAM never puts it on the wire and the broker stores a salted verifier rather than
+      # anything replayable. SHA-512 because rskafka — the extension's client — implements it.
+      - KAFKA_SASL_ENABLED_MECHANISMS=SCRAM-SHA-512
+      - KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS=SCRAM-SHA-512
+      # The login module for that mechanism, which Kafka will not start without: enabling a SASL
+      # mechanism and not saying how to authenticate it is a fatal error at boot, not a warning
+      # ("Could not find a 'KafkaServer' or 'external.KafkaServer' entry in the JAAS configuration").
+      #
+      # The triple underscores are the image's escaping, not a typo: it lowercases the name, maps
+      # `_` to `.` and `___` to `-`, so this is
+      # `listener.name.external.scram-sha-512.sasl.jaas.config`. No credentials appear here — the
+      # module reads them from the cluster's own SCRAM store, which is where `kafka-configs.sh`
+      # writes a salted verifier rather than a password.
+      - "KAFKA_LISTENER_NAME_EXTERNAL_SCRAM___SHA___512_SASL_JAAS_CONFIG=org.apache.kafka.common.security.scram.ScramLoginModule required;"
+      # PEM rather than JKS: Kafka 4 reads it directly, so the certbot renewal is the whole rotation
+      # and there is no keytool step to forget. The file is the private key followed by the chain.
+      - KAFKA_SSL_KEYSTORE_TYPE=PEM
+      - KAFKA_SSL_KEYSTORE_LOCATION=/etc/kafka/tls/keystore.pem
+      # Authentication alone would let any authenticated producer read every topic. The authorizer
+      # is what makes the log credential a *log* credential.
+      - KAFKA_AUTHORIZER_CLASS_NAME=org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      # The local listener's principal, so ClickHouse's consumer and administration keep working
+      # without an ACL each. Nothing outside the Docker network can present it: the external
+      # listener requires SASL, and an unauthenticated connection there is rejected before it has a
+      # principal at all.
+      - KAFKA_SUPER_USERS=User:ANONYMOUS
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
@@ -118,8 +156,12 @@ services:
       - KAFKA_HEAP_OPTS=-Xms4g -Xmx6g
     volumes:
       - /data/sproutos/kafka:/var/lib/kafka/data
+      - /data/sproutos/kafka-tls:/etc/kafka/tls:ro
     ports:
       - "127.0.0.1:9092:9092"
+      # Bound to every interface, unlike everything else on this box. That is the point of it and
+      # it is why the listener above requires SASL and TLS.
+      - "9094:9094"
 
   clickhouse:
     container_name: sproutos_clickhouse

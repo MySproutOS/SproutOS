@@ -52,14 +52,14 @@ Zone that is not enabled for the load balancer".
 Every check that existed passed, and each was answering a narrower question than the one that
 mattered:
 
-| The check | What it actually asked |
-| --- | --- |
-| `tofu plan` | do the resources match the configuration |
-| ASG health | is the instance running |
-| `cargo test` | does the code behave against a local Valkey with no TLS |
-| `cutover.test.sh` | does the script make the right API calls |
+| The check         | What it actually asked                                  |
+| ----------------- | ------------------------------------------------------- |
+| `tofu plan`       | do the resources match the configuration                |
+| ASG health        | is the instance running                                 |
+| `cargo test`      | does the code behave against a local Valkey with no TLS |
+| `cutover.test.sh` | does the script make the right API calls                |
 
-None of them asked *can a request reach a customer's code*, and that is the only question whose
+None of them asked _can a request reach a customer's code_, and that is the only question whose
 answer was no. The failures were all in the seams — between an instance and its egress, between a
 role and a key, between a crate's features and a managed service's requirements, between a load
 balancer's zones and an autoscaler's. Seams are where no component's own health check looks.
@@ -78,7 +78,7 @@ drift from outside; it absorbs drift from inside identically, and nothing distin
 - `database.tf` no longer ignores `engine_version`; `auto_minor_version_upgrade = false` already
   meant there was no drift to ignore.
 - `compute.tf`'s remaining `ignore_changes` — which is load-bearing, the cutover owns those weights
-  — now states in the file that a change to the *shape* of the block is invisible to `plan` and
+  — now states in the file that a change to the _shape_ of the block is invisible to `plan` and
   needs `-replace`.
 - The router's `Cargo.toml` says in a comment why `tokio-rustls-comp` is not optional, and `main`
   installs a `CryptoProvider` explicitly with the reasoning beside it.

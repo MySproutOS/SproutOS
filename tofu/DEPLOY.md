@@ -11,24 +11,24 @@ This document exists so that decision is one command rather than an evening of w
 
 Idle — nothing deployed to it, no traffic, `us-east-1` on-demand prices:
 
-| | Monthly | Free tier (first 12 months) |
-| --- | --- | --- |
-| Application Load Balancer | $16 | 750 hours included |
-| NAT — `fck-nat` on `t4g.nano` | $3 | 750 hours of `t4g.micro`, not nano |
-| RDS `db.t4g.micro`, 20 GB | $12 | included |
-| ElastiCache `cache.t4g.micro` | $12 | included |
-| EC2 `t4g.micro` × 0 (scaled to zero) | $0 | 750 hours included |
-| NAT Elastic IP | $3.60 | — |
-| ALB public IPv4 × 2 (AWS's own, one per AZ) | $7.20 | — |
-| Route 53 hosted zone | $0.50 | — |
-| **Serving nothing, account past its first year** | **≈ $43** | |
-| **Serving nothing, free tier still active** | **≈ $20** | |
+|                                                  | Monthly   | Free tier (first 12 months)        |
+| ------------------------------------------------ | --------- | ---------------------------------- |
+| Application Load Balancer                        | $16       | 750 hours included                 |
+| NAT — `fck-nat` on `t4g.nano`                    | $3        | 750 hours of `t4g.micro`, not nano |
+| RDS `db.t4g.micro`, 20 GB                        | $12       | included                           |
+| ElastiCache `cache.t4g.micro`                    | $12       | included                           |
+| EC2 `t4g.micro` × 0 (scaled to zero)             | $0        | 750 hours included                 |
+| NAT Elastic IP                                   | $3.60     | —                                  |
+| ALB public IPv4 × 2 (AWS's own, one per AZ)      | $7.20     | —                                  |
+| Route 53 hosted zone                             | $0.50     | —                                  |
+| **Serving nothing, account past its first year** | **≈ $43** |                                    |
+| **Serving nothing, free tier still active**      | **≈ $20** |                                    |
 
 Everything is the smallest instance that exists for its service. What changed to get here, and what
 each gave up:
 
 - **`fck-nat` instead of a NAT gateway** — $3 instead of $33, and no per-gigabyte processing charge.
-  It is one instance in one availability zone: a single point of failure for *egress*, replaced in
+  It is one instance in one availability zone: a single point of failure for _egress_, replaced in
   a couple of minutes, with the instance's throughput as a real ceiling. `use_nat_instance = false`
   switches back. See `nat.tf`.
 - **RDS instead of Aurora** — Aurora Serverless v2 holds a 0.5-ACU floor per instance, about $44 a
@@ -36,7 +36,7 @@ each gave up:
   failover target; `database_multi_az = true` adds one and doubles the instance cost.
 - **One database instance, not two.** The second was a failover reader holding its own floor.
 
-What is *not* in the table, because it is usage-priced and zero when nothing runs: Lambda, S3,
+What is _not_ in the table, because it is usage-priced and zero when nothing runs: Lambda, S3,
 CloudFront, data transfer, and every tenant service on the OVH box.
 
 ## Before the first plan
@@ -71,7 +71,7 @@ tofu plan -out=plan.tfplan
 
 Read it. Expect roughly 127 resources on a first run. The things worth checking before you apply:
 
-- **`aws_acm_certificate_validation.tenant`** — this one *waits*, for up to 45 minutes, on DNS that
+- **`aws_acm_certificate_validation.tenant`** — this one _waits_, for up to 45 minutes, on DNS that
   `dns.tf` writes. If the zone is not the one the domain is delegated to, this is where it hangs
   rather than where it fails.
 - **`aws_route53_record.alb_ipv4["sproutos.me"]`** — an alias at the apex. If the zone already has
@@ -108,14 +108,14 @@ what is in them is not.
 by its DNS name, and `dns.tf` points the apex and the wildcard at it with alias records, which is
 also why there is no address to allowlist here.
 
-It does still *hold* public IPv4 addresses: AWS allocates one per subnet the load balancer spans,
+It does still _hold_ public IPv4 addresses: AWS allocates one per subnet the load balancer spans,
 owned by the service. They appear in `describe-addresses` and cannot be disassociated or released —
 AWS answers `AuthFailure` — so the only way to hold fewer is to span fewer subnets, which is why
 `aws_lb.main` takes `slice(..., 0, 2)` rather than all three. Since 1 February 2024 each one is
 billed at $0.005/hour like any other public IPv4.
 
 The one Elastic IP this configuration allocates belongs to the NAT instance. It is the platform's
-*egress* address and the one OVH sees, and it is not a cost the estate could avoid by letting the
+_egress_ address and the one OVH sees, and it is not a cost the estate could avoid by letting the
 subnet auto-assign an address: auto-assigned and Elastic are billed identically, and auto-assign
 only works on an instance's primary interface, which is not where `nat.tf` needs it.
 

@@ -198,3 +198,9 @@ variable "forum_subdomain" {
   type        = string
   default     = "forum"
 }
+
+variable "kafka_subdomain" {
+  description = "The label the log extension connects to. Resolves to the OVH host, and is the name on its TLS certificate."
+  type        = string
+  default     = "kafka"
+}

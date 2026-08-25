@@ -4,9 +4,11 @@
 //! environment, so a C dependency is a build toolchain and several megabytes charged to their cold
 //! start — for a producer that writes JSON to one topic and never consumes.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
-use rskafka::client::ClientBuilder;
 use rskafka::client::partition::{Compression, PartitionClient, UnknownTopicHandling};
+use rskafka::client::{ClientBuilder, Credentials, SaslConfig};
 use rskafka::record::Record;
 
 pub struct Producer {
@@ -42,10 +44,48 @@ pub async fn connect() -> anyhow::Result<Producer> {
 
     let project_id = std::env::var("SPROUTOS_PROJECT_ID").unwrap_or_default();
 
-    let client = ClientBuilder::new(brokers)
-        .build()
-        .await
-        .context("could not reach Kafka")?;
+    /*
+      Authenticated in both directions, whenever a username is configured.
+
+      This connection leaves AWS and crosses the public internet to the OVH host (ADR 0026), which
+      is not a thing to do in the clear. There is no address to allowlist at either end — the
+      extension runs inside customers' Lambda execution environments — so the boundary is
+      cryptographic or it does not exist:
+
+      - **TLS proves the broker.** The certificate is checked against `kafka.sproutos.me`, which is
+        why the broker advertises a name rather than an address.
+      - **SASL/SCRAM-SHA-512 proves the producer.** SCRAM never puts the password on the wire and
+        the broker stores a salted verifier, so neither a packet capture nor the broker's own disk
+        yields anything replayable. The credential is authorized to `Write` one topic and nothing
+        else.
+
+      Both are configured together or not at all. A username without TLS would send a SCRAM
+      exchange over a plain socket, and TLS is not optional for the mechanism's guarantees to mean
+      anything — so this is one branch, not two flags that can disagree.
+    */
+    let mut builder = ClientBuilder::new(brokers);
+
+    if let Ok(username) = std::env::var("KAFKA_SASL_USERNAME")
+        && !username.is_empty()
+    {
+        let password = std::env::var("KAFKA_SASL_PASSWORD")
+            .context("KAFKA_SASL_USERNAME is set but KAFKA_SASL_PASSWORD is not")?;
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        builder = builder
+            .tls_config(Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            ))
+            .sasl_config(SaslConfig::ScramSha512(Credentials::new(
+                username, password,
+            )));
+    }
+
+    let client = builder.build().await.context("could not reach Kafka")?;
 
     let partition = client
         .partition_client(

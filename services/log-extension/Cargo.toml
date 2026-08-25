@@ -19,6 +19,22 @@ rskafka = { version = "0.6", default-features = false, features = [
   "compression-lz4",
   "transport-tls",
 ] }
+# rustls only to hand rskafka a `ClientConfig`, and `webpki-roots` to put trust anchors in it.
+#
+# The Mozilla root store compiled in, rather than the execution environment's. A Lambda runtime is
+# not obliged to ship a CA bundle and the extension has to work in every one of them, so reading
+# `/etc/ssl/certs` is a dependency on somebody else's base image. The cost is that a new root needs
+# a rebuild, which for a Let's Encrypt chain is years of notice.
+#
+# `ring` matches rskafka's own feature selection. Only one provider is in this graph, so unlike the
+# router there is no `CryptoProvider` to install.
+rustls = { version = "0.23", default-features = false, features = [
+  "logging",
+  "ring",
+  "std",
+  "tls12",
+] }
+webpki-roots = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde.workspace = true
 serde_json.workspace = true

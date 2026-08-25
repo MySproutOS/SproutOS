@@ -43,7 +43,25 @@ pub struct NextEvent {
 /// and the defaults favour throughput over latency; a log viewer that polls once a second wants the
 /// timeout low. `max_bytes` is bounded because the whole batch arrives in one POST into this
 /// extension's own memory, which is the customer's memory.
-pub fn subscription_body(extension_id: &str) -> serde_json::Value {
+pub fn subscription_body() -> serde_json::Value {
+    /*
+      Exactly four fields, and no fifth.
+
+      The Telemetry API validates this body strictly and rejects an unknown key rather than
+      ignoring it:
+
+          400 {"errorType":"Telemetry.DeserializationError",
+               "errorMessage":"unknown field `extensionName`, expected one of `schemaVersion`,
+                               `types`, `buffering`, `destination`"}
+
+      An `extensionName` was here, which looks reasonable — the extension does have to identify
+      itself. It identifies itself in the `Lambda-Extension-Identifier` *header*, which `subscribe`
+      already sends; naming itself again in the body is the API's definition of malformed.
+
+      The consequence was not a failed subscription but a failed *function*: the extension exits
+      non-zero, Lambda reports `Extension.Crash`, and every invocation of the customer's code fails
+      with it. An extension is inside the customer's execution environment, so its bugs are theirs.
+    */
     serde_json::json!({
         "schemaVersion": "2022-12-13",
         "types": ["platform", "function"],
@@ -52,7 +70,6 @@ pub fn subscription_body(extension_id: &str) -> serde_json::Value {
             "protocol": "HTTP",
             "URI": format!("http://{LISTENER_HOST}:{LISTENER_PORT}"),
         },
-        "extensionName": extension_id,
     })
 }
 
@@ -68,10 +85,24 @@ pub async fn register(client: &reqwest::Client, base: &str) -> anyhow::Result<St
     let response = client
         .post(format!("{base}/2020-01-01/extension/register"))
         .header("Lambda-Extension-Name", extension_name()?)
-        // `INVOKE` is not subscribed to. This extension does not need to know a request started —
-        // the telemetry says so — and an extension registered for INVOKE that is slow to call
-        // `/next` delays the customer's own handler.
-        .json(&serde_json::json!({ "events": ["SHUTDOWN"] }))
+        /*
+          `INVOKE` as well as `SHUTDOWN`, and not because this extension wants to know a request
+          started — the telemetry says so.
+          It is subscribed to because **`/next` is the only thing that thaws this process.** The
+          execution environment is frozen between invocations, so an extension registered for
+          `SHUTDOWN` alone blocks in `/next` for the entire life of the sandbox: telemetry arrives
+          at the listener and fills the channel, and nothing drains it until the environment dies.
+          Logs then appear minutes late, in one burst, inside whatever grace period Lambda grants a
+          shutdown — and not at all if that period ends first.
+          Registered for `INVOKE`, `/next` returns once per invocation, the loop drains what the
+          previous one produced, and a line is in ClickHouse seconds after it is written.
+          The cost is real and is the reason the loop drains *before* calling `/next` rather than
+          after: Lambda holds an invocation open until every `INVOKE`-registered extension has asked
+          for the next event, so time spent here is time on the customer's bill. Draining first
+          means the produce that delays invocation N carries invocation N-1's lines, and a function
+          that is never called again leaves its last lines to the shutdown path below.
+        */
+        .json(&serde_json::json!({ "events": ["INVOKE", "SHUTDOWN"] }))
         .send()
         .await
         .context("could not reach the Extensions API")?;
@@ -108,7 +139,7 @@ pub async fn subscribe(
     let response = client
         .put(format!("{base}/2022-07-01/telemetry"))
         .header(EXTENSION_ID_HEADER, extension_id)
-        .json(&subscription_body(extension_id))
+        .json(&subscription_body())
         .send()
         .await
         .context("could not subscribe to the Telemetry API")?;
@@ -152,7 +183,7 @@ mod tests {
 
     #[test]
     fn subscribes_to_the_customers_logs_and_not_to_its_own() {
-        let body = subscription_body("log-extension");
+        let body = subscription_body();
         let types = body["types"].as_array().expect("types");
 
         assert!(types.iter().any(|value| value == "function"));
@@ -164,7 +195,7 @@ mod tests {
 
     #[test]
     fn asks_for_delivery_at_the_name_lambda_resolves() {
-        let body = subscription_body("log-extension");
+        let body = subscription_body();
 
         // `sandbox.localdomain`, not `127.0.0.1`: it is the name the Telemetry API delivers to, and
         // a URI naming loopback is a subscription that succeeds and then delivers nothing.
@@ -174,9 +205,29 @@ mod tests {
         );
     }
 
+    /// The Telemetry API rejects an unknown key rather than ignoring it, and the rejection fails
+    /// the customer's function rather than just the subscription. Every one of the other tests here
+    /// passed while an `extensionName` in this body made every invocation `Extension.Crash` — they
+    /// each asserted that something they wanted was present, and nothing asserted that nothing else
+    /// was. This is that assertion.
+    #[test]
+    fn carries_no_field_the_api_does_not_accept() {
+        let body = subscription_body();
+        let object = body.as_object().expect("an object");
+
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+
+        assert_eq!(
+            keys,
+            ["buffering", "destination", "schemaVersion", "types"],
+            "the API accepts exactly these four and 400s on anything else"
+        );
+    }
+
     #[test]
     fn keeps_the_buffer_small_because_it_is_the_customers_memory() {
-        let body = subscription_body("log-extension");
+        let body = subscription_body();
 
         // The batch arrives in one POST into this process, inside the customer's memory limit.
         assert_eq!(body["buffering"]["maxBytes"].as_u64(), Some(262_144));

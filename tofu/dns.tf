@@ -145,3 +145,32 @@ resource "aws_route53_record" "forum_ipv6" {
   ttl     = 300
   records = [var.ovh_host_ipv6]
 }
+
+/*
+  The name the log extension connects to, and the name on the certificate it checks.
+
+  This could have been the bare address — the extension is given `KAFKA_BROKERS` and would take
+  `135.148.122.203:9094` quite happily. It is a name for two reasons that are really one: a TLS
+  certificate is issued for a name, and a client that cannot verify a name is a client that cannot
+  verify anything. The extension runs inside customers' Lambda execution environments and crosses
+  the public internet to get here (ADR 0026), so the connection is authenticated in both directions
+  — the certificate proves the broker, SASL/SCRAM proves the producer.
+
+  The second reason is the ordinary one: when the box is replaced, one record changes rather than
+  an environment variable on every customer function.
+*/
+resource "aws_route53_record" "kafka_ipv4" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.kafka_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+  ttl     = 300
+  records = [var.ovh_host_ipv4]
+}
+
+resource "aws_route53_record" "kafka_ipv6" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.kafka_subdomain}.${var.control_plane_domain}"
+  type    = "AAAA"
+  ttl     = 300
+  records = [var.ovh_host_ipv6]
+}
