@@ -53,7 +53,18 @@ const DIMENSIONS = {
  * and it also means a provider outage cannot silently stop the meter.
  */
 export const meterSandboxes: JobHandler = async (_job, { db }) => {
-  const now = new Date()
+  /*
+    The database's clock, not this process's.
+
+    `created_at` and `metered_through` are both written by Postgres, so an interval measured against
+    `new Date()` is a subtraction across two clocks. In CI those are two containers and the skew is
+    real: a sandbox created microseconds ago read as created *in the future*, `seconds` came out
+    negative, the row was skipped, and it was never billed at all — the test that caught it found no
+    usage row rather than a wrong one. `@lib/jobs`'s queue already defaults `run_at` to `sql\`now()\``
+    for the same reason.
+  */
+  const clock = await sql<{ now: Date }>`select now() as now`.execute(db)
+  const now = clock.rows[0]?.now ?? new Date()
 
   const due = await db
     .selectFrom("sandbox")
