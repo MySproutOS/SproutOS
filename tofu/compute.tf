@@ -495,9 +495,14 @@ resource "aws_iam_policy" "application" {
           the instance has to fetch it at boot to compose `DATABASE_URL`. Scoped to the one secret
           RDS manages for this instance, not to `*`.
         */
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_db_instance.control_plane.master_user_secret[0].secret_arn,
+          # The application's own secrets — GitHub OAuth, webhooks, Stripe. Read once at boot and
+          # written into the environment file the service unit sources.
+          aws_secretsmanager_secret.application.arn,
+        ]
       },
       {
         /*
@@ -604,9 +609,10 @@ resource "aws_launch_template" "service" {
 
     # Read at boot by the website instances only, to compose `DATABASE_URL`. The ARN is not a
     # secret; what it names is, and reading it needs the instance role.
-    database_secret_arn = aws_db_instance.control_plane.master_user_secret[0].secret_arn
-    database_endpoint   = aws_db_instance.control_plane.endpoint
-    database_name       = aws_db_instance.control_plane.db_name
+    database_secret_arn    = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+    application_secret_arn = aws_secretsmanager_secret.application.arn
+    database_endpoint      = aws_db_instance.control_plane.endpoint
+    database_name          = aws_db_instance.control_plane.db_name
   }))
 
   metadata_options {

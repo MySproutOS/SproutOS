@@ -110,6 +110,26 @@ if [ "$SERVICE" = "website" ]; then
     -o /etc/sproutos/rds-ca.pem
   chmod 0644 /etc/sproutos/rds-ca.pem
   echo "NODE_EXTRA_CA_CERTS=/etc/sproutos/rds-ca.pem" >> /etc/sproutos/env
+
+  # The application's own secrets: GitHub OAuth, the webhook secrets, Stripe.
+  #
+  # Without these the site boots, serves its landing page, and answers 500 on the first request that
+  # needs one — "Missing required environment variable: GITHUB_OAUTH_CLIENT_ID" from the login
+  # route, which is a failure a health check on `/healthz` cannot see because the process is fine.
+  #
+  # Written as `KEY=value` one per line, with `\n` left as the two characters it is in the JSON.
+  # systemd's `EnvironmentFile` has no line-continuation, so a real newline in a value silently
+  # truncates it — and `GITHUB_APP_PRIVATE_KEY` is a PEM.
+  APP_SECRETS=$(aws secretsmanager get-secret-value \
+    --secret-id "${application_secret_arn}" --query SecretString --output text --region "$REGION")
+
+  python3 - "$APP_SECRETS" >> /etc/sproutos/env <<'PYTHON'
+import json, sys
+for key, value in json.loads(sys.argv[1]).items():
+    if key == "placeholder":
+        continue
+    print(f"{key}={value}")
+PYTHON
 fi
 
 chmod 0640 /etc/sproutos/env
