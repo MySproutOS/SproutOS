@@ -118,6 +118,19 @@ jobs:
             # ship together so a release can never leave the website on a new version and the API
             # on an old one.
             cp -r apps/website/.next/standalone/. "$staging/"
+
+            # `.next/static` and `public/`, which standalone deliberately leaves out.
+            #
+            # Next's tracing excludes them because it assumes a CDN serves them, so the standalone
+            # output is the server and its modules and nothing a browser downloads. Shipping only
+            # that produces a site that renders, returns 200 for every page, and 404s every stylesheet
+            # and chunk — the HTML is correct and the page is unstyled, which no health check and no
+            # `curl` of `/` will ever notice.
+            cp -r apps/website/.next/static "$staging/apps/website/.next/static"
+            if [ -d apps/website/public ]; then
+              cp -r apps/website/public "$staging/apps/website/public"
+            fi
+
             mkdir -p "$staging/api"
             cp -r apps/internal-api/build/. "$staging/api/"
 
