@@ -172,13 +172,38 @@ resource "aws_iam_role_policy" "deploy" {
         # Named groups only, so a compromised workflow cannot scale something else in the account.
         Sid    = "FillTheIdleColour"
         Effect = "Allow"
-        Action = ["autoscaling:SetDesiredCapacity", "autoscaling:DescribeAutoScalingGroups"]
+        /*
+          The two mutating calls, scoped to this platform's own groups.
+
+          `TerminateInstanceInAutoScalingGroup` is here because filling the idle colour has to
+          *replace* what is already running, not merely count it: an instance reads the release
+          pointer at boot, so one that is already up is running an older release however healthy it
+          looks.
+        */
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:TerminateInstanceInAutoScalingGroup",
+        ]
         Resource = [
           for group in concat(
             [for colour in local.service_colours : aws_autoscaling_group.website[colour].arn],
             [for colour in local.service_colours : aws_autoscaling_group.router[colour].arn],
           ) : group
         ]
+      },
+      {
+        /*
+          `Describe*` takes no resource, and scoping it is how it gets denied.
+
+          Auto Scaling's read calls do not support resource-level permissions: listing is not an
+          operation *on* a group, it is an operation that returns groups. Naming ARNs here produces
+          an `AccessDenied` that reads as a missing permission when the permission was granted — it
+          was simply granted against a resource the action cannot be scoped to.
+        */
+        Sid      = "ReadAutoScalingState"
+        Effect   = "Allow"
+        Action   = ["autoscaling:DescribeAutoScalingGroups"]
+        Resource = "*"
       },
       {
         /*
