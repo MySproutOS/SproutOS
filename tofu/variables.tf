@@ -204,3 +204,32 @@ variable "kafka_subdomain" {
   type        = string
   default     = "kafka"
 }
+
+/*
+  The same repository, spelled the way GitHub's OIDC token spells it.
+
+  GitHub can issue a `sub` claim qualified by numeric owner and repository *ids* rather than names:
+
+      repo:MySproutOS@319999162/SproutOS@1340349949:ref:refs/heads/main
+
+  rather than `repo:MySproutOS/SproutOS:ref:refs/heads/main`. It exists so a trust policy survives a
+  rename — names are reusable, ids are not — and it is set per organization, so which form arrives
+  is not visible from anything in this repository. `gh api /repos/<owner>/<repo>/actions/oidc/customization/sub`
+  reports it as `sub_claim_prefix`.
+
+  A policy written for the name form is not *wrong* anywhere it can be read; it simply never
+  matches, and the failure is `Not authorized to perform sts:AssumeRoleWithWebIdentity` with nothing
+  naming the claim that missed.
+
+  Both forms are trusted below, spelled out in full. A wildcard on the organization name would be
+  shorter and worse: it would also match an organization someone else can create whose name merely
+  starts with ours.
+
+  (And a literal wildcard-then-slash cannot be written in this comment at all — it ends it. Which is
+  its own small argument for not reaching for one.)
+*/
+variable "github_repo_ids" {
+  description = "The id-qualified form of github_repo, from the sub_claim_prefix. Empty to trust only the name form."
+  type        = string
+  default     = "MySproutOS@319999162/SproutOS@1340349949"
+}

@@ -92,10 +92,14 @@ resource "aws_iam_role" "deploy" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = [
+          # Both spellings of the same repository — see `github_repo_ids` in `variables.tf` for why
+          # there are two. `compact` drops the id form if the variable is empty.
+          "token.actions.githubusercontent.com:sub" = compact([
             "repo:${var.github_repo}:ref:refs/heads/main",
             "repo:${var.github_repo}:environment:production",
-          ]
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:ref:refs/heads/main",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:production",
+          ])
         }
       }
     }]
