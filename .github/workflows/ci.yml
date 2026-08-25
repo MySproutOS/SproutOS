@@ -204,6 +204,14 @@ jobs:
       - name: Every API entrypoint the release ships is started
         run: node bin/check-release-processes.mjs
 
+      # A key named in `write_app_secrets` but absent from Parameter Store is skipped in silence —
+      # the loop iterates over what SSM returned. The instance boots, reports healthy, and answers
+      # 500 on the first request that needs the value. This compares the three lists that decide
+      # what reaches an instance; `--live` additionally asks Parameter Store, and runs in Deploy
+      # where credentials exist.
+      - name: Application configuration can reach production
+        run: node bin/check-app-config.mjs
+
   rust:
     name: (cargo) Format, Clippy, and Test
     runs-on: ubuntu-latest
