@@ -17,17 +17,17 @@ below is what a _full_ month looks like with everything running.
 and `Tax`, and `get-account-plan-state` returns not-found — this is a legacy free tier account, so
 the subsidy is twelve months of allowances rather than a pot of dollars that runs out.
 
-|                                      | While the free tier lasts | After it ends   |
-| ------------------------------------ | ------------------------- | --------------- |
-| Application Load Balancer            | $0 (730 h ≤ 750 free)     | $16.20          |
-| RDS `db.t4g.micro` + 20 GB gp3       | $0                        | $14.70          |
-| ElastiCache `cache.t4g.micro`        | $0                        | $12.41          |
-| EC2 — 2× `t4g.micro` + 1× `t4g.nano` | ~$9                       | $15.50          |
-| **Public IPv4 × 3**                  | **$10.95**                | **$10.95**      |
-| Route 53 hosted zone                 | $0.50                     | $0.50           |
-| S3 / CloudFront / KMS / CloudWatch   | ~$1                       | ~$1             |
-| Secrets Manager (RDS master password) | $0.40                    | $0.40           |
-| **Total**                            | **≈ $21/month**           | **≈ $70/month** |
+|                                       | While the free tier lasts | After it ends   |
+| ------------------------------------- | ------------------------- | --------------- |
+| Application Load Balancer             | $0 (730 h ≤ 750 free)     | $16.20          |
+| RDS `db.t4g.micro` + 20 GB gp3        | $0                        | $13.98          |
+| ElastiCache `cache.t4g.micro`         | $0                        | $11.68          |
+| EC2 — 2× `t4g.micro` + 1× `t4g.nano`  | ~$9                       | $15.50          |
+| **Public IPv4 × 3**                   | **$10.95**                | **$10.95**      |
+| Route 53 hosted zone                  | $0.50                     | $0.50           |
+| S3 / CloudFront / KMS / CloudWatch    | ~$1                       | ~$1             |
+| Secrets Manager (RDS master password) | $0.40                     | $0.40           |
+| **Total**                             | **≈ $21/month**           | **≈ $70/month** |
 
 An earlier version of this table said $20 and $43. The $43 was wrong in two ways: it assumed the
 website Auto Scaling group sat at zero, and it priced only the NAT's Elastic IP while the load
@@ -118,6 +118,7 @@ takes three more things, in this order:
    Parameter Store rather than Secrets Manager because standard parameters are free and a secret is
    $0.40 a month, and nothing here uses managed rotation. The one secret still in Secrets Manager is
    the database's master password, which `manage_master_user_password` puts there and RDS rotates.
+
 3. **Run the Deploy workflow.** It builds the website and router, uploads a release tarball, writes
    the pointer, fills the idle colour, and waits for health. The cutover is a separate job behind a
    protected environment.

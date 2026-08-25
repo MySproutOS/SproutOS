@@ -31,7 +31,7 @@ const CARDS = [
       {
         label: "The cheapest EC2 that can serve it",
         detail: "t4g.nano + 8 GB disk + a public IPv4, on all month",
-        monthly: 7.31,
+        monthly: 7.36,
       },
     ],
     footnote:
@@ -51,14 +51,14 @@ const CARDS = [
       {
         label: "RDS Postgres",
         detail: "db.t4g.micro + 20 GB — the smallest one AWS sells",
-        monthly: 14.7,
+        monthly: 13.98,
       },
-      { label: "ElastiCache", detail: "cache.t4g.micro", monthly: 12.41 },
+      { label: "ElastiCache", detail: "cache.t4g.micro", monthly: 11.68 },
       { label: "OpenSearch", detail: "one t3.small.search node", monthly: 26.28 },
     ],
     footnote:
       "None of these can be turned down when idle — a managed database is billed by the hour it " +
-      "exists, not the hour it is queried. That is the same $53.39 whether a thousand people use " +
+      "exists, not the hour it is queried. That is the same $51.94 whether a thousand people use " +
       "your app this month or nobody does.",
   },
   {
@@ -77,7 +77,7 @@ const CARDS = [
       {
         label: "An EC2 worker sitting there",
         detail: "t4g.nano awake all month to be busy for twelve hours of it",
-        monthly: 7.31,
+        monthly: 7.36,
       },
     ],
     footnote:
@@ -172,10 +172,10 @@ export function BackendOps() {
 
         <Reveal delay={120}>
           <p className="mt-8 max-w-3xl text-sm text-muted-foreground text-pretty">
-            Comparison figures are published list prices for us-east-1, checked August 2026, and are
-            the cheapest option each vendor offers rather than a typical bill. You don't need to
-            know what any of these are called — you describe what you want, and SproutOS picks the
-            pieces and wires them together.
+            Comparison figures are published list prices for us-east-1, read from the AWS pricing
+            API in August 2026 and multiplied by 730 hours, and are the cheapest option each vendor
+            offers rather than a typical bill. You don't need to know what any of these are called —
+            you describe what you want, and SproutOS picks the pieces and wires them together.
           </p>
         </Reveal>
       </div>
