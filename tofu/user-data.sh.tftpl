@@ -119,32 +119,43 @@ if [ "$SERVICE" = "website" ]; then
   chmod 0644 /etc/sproutos/rds-ca.pem
   echo "NODE_EXTRA_CA_CERTS=/etc/sproutos/rds-ca.pem" >> /etc/sproutos/env
 
-  # The application's own secrets: GitHub OAuth, the webhook secrets, Stripe.
-  #
-  # Without these the site boots, serves its landing page, and answers 500 on the first request that
-  # needs one — "Missing required environment variable: GITHUB_OAUTH_CLIENT_ID" from the login
-  # route, which is a failure a health check on `/healthz` cannot see because the process is fine.
-  #
-  # One `SecureString` parameter per variable, under one path — see `app-secrets.tf` for why this is
-  # Parameter Store and not Secrets Manager. `--recursive` is not needed for a flat path but costs
-  # nothing and keeps this working if the path ever gains a level; `--with-decryption` is the call
-  # that actually needs `kms:Decrypt`.
-  #
-  # `get-parameters-by-path` returns at most ten parameters per page, and there are more than ten.
-  # The AWS CLI follows `NextToken` by itself, so this one call really does return all of them —
-  # but that is the CLI's doing, not the API's: `--no-paginate` here, or the same call from an SDK
-  # without a paginator, would silently deliver the first ten and the rest would surface as a 500
-  # from whichever route happened to need the eleventh.
+fi
+
+
+# The application's own secrets, from one Parameter Store path — see `app-secrets.tf` for why this
+# is Parameter Store and not Secrets Manager.
+#
+# Takes the keys to write, because the two services do not need the same ones. The website is the
+# only thing that talks to GitHub and Stripe; the router only needs what it verifies log tokens and
+# reaches Kafka with. One instance role covers both, so this is not a privilege boundary — but a
+# credential that is never written to a host is a credential that cannot leak from it, and the
+# narrower list costs nothing.
+#
+# Without these the site boots, serves its landing page, and answers 500 on the first request that
+# needs one — "Missing required environment variable: GITHUB_OAUTH_CLIENT_ID" from the login route,
+# which is a failure a health check on `/healthz` cannot see because the process is fine.
+#
+# `get-parameters-by-path` returns at most ten parameters per page, and there are more than ten. The
+# AWS CLI follows `NextToken` by itself, so this one call really does return all of them — but that
+# is the CLI's doing, not the API's: `--no-paginate` here, or the same call from an SDK without a
+# paginator, would silently deliver the first ten and the rest would surface as a 500 from whichever
+# route happened to need the eleventh.
+write_app_secrets() {
+  WANTED="$1"
   APP_PARAMS=$(aws ssm get-parameters-by-path \
     --path "${application_parameter_path}" --recursive --with-decryption \
     --query 'Parameters[].[Name,Value]' --output json --region "$REGION")
 
-  python3 - "${application_parameter_path}" "$APP_PARAMS" >> /etc/sproutos/env <<'PYTHON'
-import json, sys
+  WANTED="$WANTED" python3 - "${application_parameter_path}" "$APP_PARAMS" >> /etc/sproutos/env <<'PYTHON'
+import json, os, sys
 
 prefix = sys.argv[1].rstrip("/") + "/"
+wanted = os.environ["WANTED"].split()
+
 for name, value in json.loads(sys.argv[2]):
     key = name[len(prefix):] if name.startswith(prefix) else name.rsplit("/", 1)[-1]
+    if wanted and key not in wanted:
+        continue
     # Single-quoted, with newlines escaped rather than written through.
     #
     # systemd's `EnvironmentFile` has no line continuation: a real newline in a value ends the
@@ -155,12 +166,11 @@ for name, value in json.loads(sys.argv[2]):
     # expects rather than a workaround invented here.
     #
     # The quotes are what make that unambiguous. systemd parses unquoted and double-quoted values
-    # with shell-like rules and interprets backslash escapes in them, so a bare `\n` would be
-    # turned back into the newline this is trying to avoid. Inside single quotes nothing is
-    # interpreted, so the two characters arrive as two characters. Only the newline is escaped, and
-    # backslashes are left alone, because `replaceAll("\\n", "\n")` on the reading side is exactly
-    # that one substitution and nothing else — doubling backslashes here would leave doubled
-    # backslashes there.
+    # with shell-like rules and interprets backslash escapes in them, so a bare `\n` would be turned
+    # back into the newline this is trying to avoid. Inside single quotes nothing is interpreted, so
+    # the two characters arrive as two characters. Only the newline is escaped and backslashes are
+    # left alone, because `replaceAll("\\n", "\n")` on the reading side is exactly that one
+    # substitution and nothing else.
     #
     # A value containing a single quote cannot be written this way and is refused rather than
     # silently mangled. None of the credentials this carries has one.
@@ -168,6 +178,24 @@ for name, value in json.loads(sys.argv[2]):
         raise SystemExit(f"{key} contains a single quote, which cannot be written to the env file")
     print(f"{key}='" + value.replace("\n", "\\n") + "'")
 PYTHON
+}
+
+# The website and API talk to GitHub, Stripe and the signer, and publish the log token onto every
+# tenant Lambda. An empty list would mean "everything under the path", which is what this used to
+# do; naming them means a key added for some future service does not silently appear here too.
+if [ "$SERVICE" = "website" ]; then
+  write_app_secrets "GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET GITHUB_APP_ID \
+    GITHUB_APP_CLIENT_ID GITHUB_APP_CLIENT_SECRET GITHUB_APP_PRIVATE_KEY GITHUB_WEBHOOK_SECRET \
+    STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
+    DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT"
+fi
+
+# The router verifies the per-project log token the extension presents and holds the Kafka
+# connection open. `LOG_TOKEN_SECRET` has to be the *same* value the website stamps onto tenant
+# functions — the router recomputes the token from it, so a mismatch rejects every log line with a
+# 401 and the pipeline goes quiet without erroring anywhere a person would look.
+if [ "$SERVICE" = "router" ]; then
+  write_app_secrets "LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD"
 fi
 
 chmod 0640 /etc/sproutos/env
