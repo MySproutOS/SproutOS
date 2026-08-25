@@ -67,10 +67,12 @@ variable "vpc_cidr" {
 variable "postgres_version" {
   description = "PostgreSQL engine version for the control plane. RDS, not Aurora — see database.tf."
   type        = string
-  # 17.4 was an *Aurora* version and does not exist on RDS — the API answers
-  # "Cannot find version 17.4 for postgres". Checked against
-  # `describe-orderable-db-instance-options` rather than assumed.
-  default = "17.11"
+  # 18 to match the compose Postgres, so a migration that applies locally applies here.
+  #
+  # 17.4 was an *Aurora* version and does not exist on RDS — the API answers "Cannot find version
+  # 17.4 for postgres". Every version here is checked against
+  # `describe-orderable-db-instance-options` for the chosen instance class rather than assumed.
+  default = "18.6"
 }
 
 # Aurora Capacity Units. 0.5 is the floor that keeps the cluster warm; the first connection after a

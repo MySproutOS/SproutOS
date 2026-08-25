@@ -49,9 +49,12 @@ case "$2" in
   describe-target-health) echo "$STUB_HEALTHY" ;;
   modify-rule|modify-listener)
     echo "$*" >> "$STUB_CALLS"
-    for ((i = 1; i <= $#; i++)); do
-      case "${!i}" in *TargetGroupArn=*) echo "${!i#*TargetGroupArn=}" > "$STUB_STATE" ;; esac
-    done
+    # The colour that is live afterwards is the one the action gave weight 100 — the same reading
+    # the script's own `current_arn` does. A stub that took the *first* ARN in the JSON would agree
+    # with the script by accident and stop being able to catch a cutover written the wrong way round.
+    live=$(grep -o '"TargetGroupArn":"[^"]*","Weight":100' <<<"$*" | head -1 \
+      | sed 's/"TargetGroupArn":"//; s/","Weight":100//')
+    [ -n "$live" ] && echo "$live" > "$STUB_STATE"
     ;;
 esac
 STUB
@@ -81,6 +84,12 @@ echo "cutover.sh"
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router)
 check "moves to the colour that is not live" "1" "$(grep -c 'router is on green' <<<"$out")"
 check "modifies the listener, not a rule" "1" "$(grep -c 'modify-listener' "$STUB_CALLS")"
+# Both groups stay attached and the idle one is given none of the traffic, rather than being taken
+# off the listener. The scaling policies need every group routed — a target group nothing forwards
+# to rejects an `ALBRequestCountPerTarget` policy outright, which is what a bare
+# `Type=forward,TargetGroupArn=…` would cause on the next apply.
+check "sends the idle colour to zero, not off the listener" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:blue","Weight":0' "$STUB_CALLS")"
 
 STUB_LIVE="arn:green" STUB_HEALTHY=2 out=$(run router)
 check "moves back the other way with the same command" "1" "$(grep -c 'router is on blue' <<<"$out")"

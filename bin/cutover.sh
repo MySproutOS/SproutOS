@@ -2,10 +2,10 @@
 #
 # Move one service's traffic from the colour serving it to the other.
 #
-# Blue/green here is two target groups per service and a listener rule that names one of them. The
-# deploy fills the idle group, waits for its own health checks to pass, and then this changes one
-# ARN. Rollback is this script again with no arguments — it always moves to whichever colour is not
-# live, so "roll back" and "roll forward" are the same operation.
+# Blue/green here is two target groups per service, both attached to the listener, with all the
+# weight on one of them. The deploy fills the idle group, waits for its own health checks to pass,
+# and then this moves the weight. Rollback is this script again with no arguments — it always moves
+# to whichever colour is not live, so "roll back" and "roll forward" are the same operation.
 #
 # Usage: cutover.sh <service> [--to blue|green] [--dry-run]
 #   service   website | router
@@ -47,14 +47,28 @@ group_arn() {
     --output text
 }
 
+# The target group currently carrying traffic: the one with a non-zero weight.
+#
+# The listener forwards to both colours with weights rather than naming one — see `compute.tf`, and
+# the scaling policy that could not exist without it. So "which is live" is a weight, not an ARN.
 current_arn() {
   if [ "$SERVICE" = "website" ]; then
     aws elbv2 describe-rules --rule-arns "$WEBSITE_RULE_ARN" \
-      --query 'Rules[0].Actions[0].TargetGroupArn' --output text
+      --query 'Rules[0].Actions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
+      --output text
   else
     aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" \
-      --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text
+      --query 'Listeners[0].DefaultActions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
+      --output text
   fi
+}
+
+# All the weight on one colour and none on the other. A partial shift is possible with this shape
+# and is deliberately not what this does: a cutover that half-worked is harder to reason about at
+# three in the morning than one that did or did not.
+forward_action() {
+  local live="$1" idle="$2"
+  printf '[{"Type":"forward","ForwardConfig":{"TargetGroups":[{"TargetGroupArn":"%s","Weight":100},{"TargetGroupArn":"%s","Weight":0}]}}]' "$live" "$idle"
 }
 
 blue=$(group_arn blue)
@@ -114,12 +128,14 @@ if [ -n "$DRY_RUN" ]; then
   exit 0
 fi
 
+other_arn=$([ "$target_arn" = "$blue" ] && echo "$green" || echo "$blue")
+
 if [ "$SERVICE" = "website" ]; then
   aws elbv2 modify-rule --rule-arn "$WEBSITE_RULE_ARN" \
-    --actions "Type=forward,TargetGroupArn=$target_arn" >/dev/null
+    --actions "$(forward_action "$target_arn" "$other_arn")" >/dev/null
 else
   aws elbv2 modify-listener --listener-arn "$LISTENER_ARN" \
-    --default-actions "Type=forward,TargetGroupArn=$target_arn" >/dev/null
+    --default-actions "$(forward_action "$target_arn" "$other_arn")" >/dev/null
 fi
 
 # Read back rather than trust the call. `modify-rule` returns the rule it wrote, but reading it

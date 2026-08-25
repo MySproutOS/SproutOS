@@ -27,10 +27,12 @@ for service in $SERVICES; do
   if [ "$service" = "website" ]; then
     : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set}"
     live=$(aws elbv2 describe-rules --rule-arns "$WEBSITE_RULE_ARN" \
-      --query 'Rules[0].Actions[0].TargetGroupArn' --output text)
+      --query 'Rules[0].Actions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
+      --output text)
   else
     live=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" \
-      --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text)
+      --query 'Listeners[0].DefaultActions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
+      --output text)
   fi
 
   blue=$(group_arn "$NAME_PREFIX-$short-blue")

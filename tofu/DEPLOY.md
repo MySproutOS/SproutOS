@@ -18,7 +18,8 @@ Idle — nothing deployed to it, no traffic, `us-east-1` on-demand prices:
 | RDS `db.t4g.micro`, 20 GB | $12 | included |
 | ElastiCache `cache.t4g.micro` | $12 | included |
 | EC2 `t4g.micro` × 0 (scaled to zero) | $0 | 750 hours included |
-| Elastic IP (attached) | $0 | — |
+| NAT Elastic IP | $3.60 | — |
+| ALB public IPv4 × 2 (AWS's own, one per AZ) | $7.20 | — |
 | Route 53 hosted zone | $0.50 | — |
 | **Serving nothing, account past its first year** | **≈ $43** | |
 | **Serving nothing, free tier still active** | **≈ $20** | |
@@ -103,10 +104,20 @@ configuration makes — AWS rejects a load balancer with one. So the VPC keeps t
 across three zones even though only one of them holds anything that costs money. Subnets are free;
 what is in them is not.
 
-**An ALB cannot have an Elastic IP.** Only a Network Load Balancer supports one. An ALB is reached
-by its DNS name, and `dns.tf` points the apex and the wildcard at it with alias records — which is
-also why there is no address to allowlist here. The Elastic IP in this estate belongs to the NAT
-instance, which is the platform's *egress* address and the one OVH sees.
+**An ALB cannot have an Elastic IP** — only a Network Load Balancer supports one. An ALB is reached
+by its DNS name, and `dns.tf` points the apex and the wildcard at it with alias records, which is
+also why there is no address to allowlist here.
+
+It does still *hold* public IPv4 addresses: AWS allocates one per subnet the load balancer spans,
+owned by the service. They appear in `describe-addresses` and cannot be disassociated or released —
+AWS answers `AuthFailure` — so the only way to hold fewer is to span fewer subnets, which is why
+`aws_lb.main` takes `slice(..., 0, 2)` rather than all three. Since 1 February 2024 each one is
+billed at $0.005/hour like any other public IPv4.
+
+The one Elastic IP this configuration allocates belongs to the NAT instance. It is the platform's
+*egress* address and the one OVH sees, and it is not a cost the estate could avoid by letting the
+subnet auto-assign an address: auto-assigned and Elastic are billed identically, and auto-assign
+only works on an instance's primary interface, which is not where `nat.tf` needs it.
 
 ## Undoing it
 

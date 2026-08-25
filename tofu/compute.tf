@@ -103,8 +103,21 @@ resource "aws_lb" "main" {
   name               = "${var.name_prefix}-alb"
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
   ip_address_type    = "dualstack"
+
+  /*
+    Two subnets, not the three that exist.
+
+    An ALB holds one public IPv4 address per subnet it spans, and since 1 February 2024 AWS bills
+    every public IPv4 address — so a third availability zone with nothing in it was $3.60 a month
+    for an address nothing answers on. These are AWS's addresses, not Elastic IPs: they cannot be
+    allocated, released, or reduced any other way than by narrowing the subnet list.
+
+    **Two is the floor, not a choice.** AWS rejects an application load balancer with fewer than two
+    subnets in two availability zones, so this cannot follow the rest of the estate down to one. The
+    VPC keeps all three public subnets — subnets are free — and this spans the first two.
+  */
+  subnets = slice(aws_subnet.public[*].id, 0, 2)
 
   # A tenant application can legitimately hold a connection open — a server-sent event stream, a
   # long poll. The default 60s would cut those at exactly one minute, which reads to the customer
@@ -186,14 +199,45 @@ resource "aws_lb_listener" "https" {
     Round that way because tenant hostnames are unbounded and the control plane's are three. A
     default of "website" would need a rule matching every tenant host, which is not expressible.
   */
+  /*
+    Both target groups, weighted.
+
+    A single `target_group_arn` was here first and made the *green* scaling policy impossible to
+    create: a target-tracking policy on `ALBRequestCountPerTarget` is rejected with "The load
+    balancer does not route traffic to the target group", because an unrouted group has no request
+    count to track. AWS refused it at apply; nothing in a plan could have seen it.
+
+    Weighted forward fixes that and is the better shape anyway: both groups are attached, green
+    simply gets none of the traffic, and the cutover is a change of weights rather than a change of
+    ARN — which also makes a gradual shift possible later without touching this again.
+  */
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.router["blue"].arn
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.router["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.router["green"].arn
+        weight = 0
+      }
+    }
   }
 
+  /*
+    The deploy flips this between blue and green outside OpenTofu. Without this, the next `apply`
+    would silently roll production back to whichever colour the state file remembers.
+
+    **The cost, which bit once:** this hides changes to the *shape* of the action too, not only the
+    weights. Terraform cannot ignore the weights alone — `target_group` is a block, and a weight
+    cannot be addressed apart from the ARN beside it. So an earlier run created this listener with a
+    single unweighted `TargetGroupArn`, green was never attached, and green's scaling policy was
+    rejected with "the load balancer does not route traffic to the target group" — while `plan`
+    reported no changes at all. **Changing the shape of this block needs `-replace`.**
+  */
   lifecycle {
-    # The deploy flips this between blue and green outside OpenTofu. Without this, the next `apply`
-    # would silently roll production back to whichever colour the state file remembers.
     ignore_changes = [default_action]
   }
 }
@@ -203,8 +247,18 @@ resource "aws_lb_listener_rule" "website" {
   priority     = 100
 
   action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.website["blue"].arn
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.website["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.website["green"].arn
+        weight = 0
+      }
+    }
   }
 
   condition {
@@ -213,6 +267,8 @@ resource "aws_lb_listener_rule" "website" {
     }
   }
 
+  # Same reasoning, and the same trap, as the listener above: the cutover owns the weights, and a
+  # change to the shape of this block is invisible to `plan` and needs `-replace`.
   lifecycle {
     ignore_changes = [action]
   }
@@ -544,8 +600,10 @@ resource "aws_elasticache_parameter_group" "platform" {
   stays low while latency climbs, and a CPU-based policy would scale after the users had already
   noticed. Requests per target is the thing that actually correlates with being overloaded here.
 
-  Only on the colour that is live: the idle group is at zero between deploys, and a policy on it
-  would fight `fill-idle.sh` for the desired count.
+  On both colours, which is only possible because the listener forwards to both with weights. The
+  idle group receives no traffic, so its request count is zero and the policy never scales it out —
+  the policy existing is what matters, so that a cutover does not need one created at the moment
+  traffic arrives.
 */
 resource "aws_autoscaling_policy" "website" {
   for_each = local.service_colours

@@ -112,12 +112,20 @@ resource "aws_db_instance" "control_plane" {
 
   auto_minor_version_upgrade = false
 
-  tags = local.tags
+  /*
+    Major upgrades happen because this configuration asked for one, in place, keeping the data.
 
-  lifecycle {
-    # Upgraded deliberately in a maintenance window, not because a plan noticed a new minor.
-    ignore_changes = [engine_version]
-  }
+    There was an `ignore_changes = [engine_version]` here, on the reasoning that an upgrade should
+    be a deliberate act in a maintenance window rather than something a plan noticed. It was
+    redundant — `auto_minor_version_upgrade = false` already means RDS never moves the version on
+    its own, so there was no drift to ignore — and it was worse than redundant: it hid *our own*
+    change. The variable was set to 18 and the instance came up on 17.11 with `plan` reporting no
+    changes, which is the same failure the listener had in `compute.tf`. The version this file
+    states is now the version that runs.
+  */
+  allow_major_version_upgrade = true
+
+  tags = local.tags
 }
 
 resource "aws_iam_role" "rds_monitoring" {
