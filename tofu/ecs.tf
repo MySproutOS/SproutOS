@@ -323,14 +323,23 @@ resource "aws_ecs_service" "web" {
   deployment_maximum_percent         = 100
   deployment_minimum_healthy_percent = 0
 
+  /*
+    The idle colour, so ECS and the Auto Scaling groups never share a target group.
+
+    Both register targets; if they shared one, the load balancer would round-robin between an ECS
+    task and an EC2 instance running a different release, and which one answered would be luck.
+    ECS takes green while the EC2 instances hold blue, `cutover.sh` moves the weight when green is
+    healthy, and the old groups are scaled to zero afterwards. The same mechanism that rolls a
+    release also rolls the platform it runs on.
+  */
   load_balancer {
-    target_group_arn = aws_lb_target_group.website["blue"].arn
+    target_group_arn = aws_lb_target_group.website["green"].arn
     container_name   = "website"
     container_port   = 8080
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.api["blue"].arn
+    target_group_arn = aws_lb_target_group.api["green"].arn
     container_name   = "api"
     container_port   = 3001
   }
