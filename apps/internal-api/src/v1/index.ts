@@ -17,6 +17,7 @@ import oauth from "./oauth"
 import oauthClients from "./oauth-clients"
 import organizations from "./organizations"
 import projects from "./projects"
+import sandboxes from "./sandboxes"
 import roles from "./roles"
 import services from "./services"
 import store, { storeModeration } from "./store"
@@ -51,6 +52,7 @@ orgs.route("/", organizations)
 orgs.route("/", members)
 orgs.route("/", roles)
 orgs.route("/", projects)
+orgs.route("/", sandboxes)
 orgs.route("/", githubRepos)
 orgs.route("/", agent)
 orgs.route("/", agentChat)

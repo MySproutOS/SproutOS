@@ -857,6 +857,7 @@ export interface Sandbox {
   idleTimeoutS: Generated<number>
   lastActivityAt: Generated<Timestamp>
   memoryGib: Generated<number>
+  meteredThrough: Timestamp | null
   previewPort: number | null
   projectId: string
   provider: Generated<string>

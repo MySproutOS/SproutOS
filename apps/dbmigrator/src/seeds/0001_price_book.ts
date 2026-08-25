@@ -38,6 +38,24 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   ["ai_output_token", "16.5"],
   ["ai_cache_read_token", "0.33"],
   ["agent_run_second", "40"],
+  /*
+    Sandboxes, priced against what the provider charges us rather than against Lambda.
+
+    Daytona bills per second at $0.0504 per vCPU-hour, $0.0162 per GiB-hour of memory and
+    $0.000108 per GiB-hour of disk — 14, 4.5 and 0.03 micro-USD per second respectively, which
+    `PROVIDER_COST_MICRO_USD_PER_SECOND` in `@lib/jobs/sandbox` repeats so the two can be compared.
+    These rates sit above those, because a dimension priced below its own cost is a sandbox sold at
+    a loss and there is no error state for that; it looks exactly like a working platform until
+    somebody reads the invoice from the other side.
+
+    A vCPU rate exists here and deliberately not for `site_*`. `2026_09_20_00_00_00_lambda_billing`
+    retired two CPU-time dimensions because Lambda allocates CPU in proportion to memory and has no
+    vCPU knob to charge for. A sandbox has real, requested CPU limits, so the knob is back and so is
+    the charge.
+  */
+  ["sandbox_cpu_second", "21"],
+  ["sandbox_gib_second", "7"],
+  ["sandbox_disk_gib_second", "0.05"],
 ]
 
 export async function seed(db: Kysely<any>): Promise<void> {
