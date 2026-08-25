@@ -256,60 +256,6 @@ fn source_ip(headers: &HeaderMap) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::HeaderName;
-
-    fn headers_from(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        for (name, value) in pairs {
-            headers.insert(
-                HeaderName::from_bytes(name.as_bytes()).expect("valid header name"),
-                HeaderValue::from_str(value).expect("valid header value"),
-            );
-        }
-        headers
-    }
-
-    #[test]
-    fn takes_the_client_from_the_front_of_the_forwarded_list() {
-        // The ALB appends its own hop. The last entry is the load balancer; the first is the person.
-        let headers = headers_from(&[("x-forwarded-for", "203.0.113.7, 10.0.1.4, 10.0.2.9")]);
-
-        assert_eq!(source_ip(&headers), "203.0.113.7");
-    }
-
-    #[test]
-    fn has_no_source_ip_rather_than_a_wrong_one() {
-        assert_eq!(source_ip(&HeaderMap::new()), "");
-    }
-
-    #[test]
-    fn does_not_forward_headers_that_describe_our_own_connection() {
-        let headers = headers_from(&[
-            ("host", "myapp.sproutos.me"),
-            ("connection", "keep-alive"),
-            ("transfer-encoding", "chunked"),
-            ("x-real-header", "kept"),
-        ]);
-
-        let forwarded = forwarded_headers(&headers);
-
-        // Forwarding these makes a handler believe it owns a framing it does not.
-        assert!(!forwarded.contains_key("connection"));
-        assert!(!forwarded.contains_key("transfer-encoding"));
-        assert_eq!(
-            forwarded.get("x-real-header").map(String::as_str),
-            Some("kept")
-        );
-        assert_eq!(
-            forwarded.get("host").map(String::as_str),
-            Some("myapp.sproutos.me")
-        );
-    }
-}
-
 /// Accept a batch of runtime logs from a Lambda extension.
 ///
 /// The handler does three things and none of them is "talk to Kafka": verify the token, stamp the
@@ -386,5 +332,59 @@ fn ingest_logs(
             tracing::warn!(count, project_id, "log queue full; dropped a batch");
             (StatusCode::ACCEPTED, "dropped").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderName;
+
+    fn headers_from(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                HeaderName::from_bytes(name.as_bytes()).expect("valid header name"),
+                HeaderValue::from_str(value).expect("valid header value"),
+            );
+        }
+        headers
+    }
+
+    #[test]
+    fn takes_the_client_from_the_front_of_the_forwarded_list() {
+        // The ALB appends its own hop. The last entry is the load balancer; the first is the person.
+        let headers = headers_from(&[("x-forwarded-for", "203.0.113.7, 10.0.1.4, 10.0.2.9")]);
+
+        assert_eq!(source_ip(&headers), "203.0.113.7");
+    }
+
+    #[test]
+    fn has_no_source_ip_rather_than_a_wrong_one() {
+        assert_eq!(source_ip(&HeaderMap::new()), "");
+    }
+
+    #[test]
+    fn does_not_forward_headers_that_describe_our_own_connection() {
+        let headers = headers_from(&[
+            ("host", "myapp.sproutos.me"),
+            ("connection", "keep-alive"),
+            ("transfer-encoding", "chunked"),
+            ("x-real-header", "kept"),
+        ]);
+
+        let forwarded = forwarded_headers(&headers);
+
+        // Forwarding these makes a handler believe it owns a framing it does not.
+        assert!(!forwarded.contains_key("connection"));
+        assert!(!forwarded.contains_key("transfer-encoding"));
+        assert_eq!(
+            forwarded.get("x-real-header").map(String::as_str),
+            Some("kept")
+        );
+        assert_eq!(
+            forwarded.get("host").map(String::as_str),
+            Some("myapp.sproutos.me")
+        );
     }
 }

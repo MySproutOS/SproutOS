@@ -1,11 +1,16 @@
-//! The extension's producer against a real broker, and out the other side in ClickHouse.
+//! The router's producer against a real broker, and out the other side in ClickHouse.
 //!
-//! The parsing is unit-tested and pure. What only a real broker can show is that the bytes this
-//! produces are bytes ClickHouse's `JSONEachRow` consumer accepts — a mismatch there is silent,
-//! because broken messages are skipped by design.
+//! This test used to live in `log-extension`, because the extension used to hold the Kafka
+//! connection. It does not any more — a credential in a customer's sandbox could forge another
+//! tenant's `project_id` — so the producer, and this test with it, moved to the router.
+//!
+//! The property is unchanged and is the reason the test exists at all: the bytes this produces must
+//! be bytes ClickHouse's `JSONEachRow` consumer accepts. A mismatch there is **silent**, because
+//! `kafka_skip_broken_messages` is set on the consumer by design — one malformed record must not
+//! wedge every tenant's logs. So nothing fails; the rows simply never arrive.
 
-use log_extension::kafka;
-use log_extension::telemetry::{TelemetryEvent, encode_batch, to_row};
+use router::log_kafka::KafkaProducer;
+use router::logs::{IncomingRecord, ProduceBatch, stamp};
 
 fn brokers() -> String {
     std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:29092".into())
@@ -27,37 +32,50 @@ async fn produces_rows_clickhouse_accepts() {
         return;
     }
 
-    // Deterministic, so the assertion below can find exactly these rows.
-    let project_id = "01a03800-0000-7000-8000-00000000ext1";
+    /*
+      A fresh project id per run, which the previous version of this test did not have.
+
+      It used a fixed id and asserted an *absolute* count of two. `runtime_log` keeps rows for three
+      days, so the second run of the day saw four, the third six, and the assertion could only ever
+      pass once against a given ClickHouse — it read `left: 8` by the time anyone ran it again. The
+      id was fixed "so the assertion can find exactly these rows", and unique ids serve that better:
+      each run owns its own rows and cannot see anybody else's.
+
+      Built from the clock rather than a UUID crate, because the column is a UUID and the only
+      property needed is that two runs differ.
+    */
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_nanos() as u64;
+    let project_id = &format!("01a03800-0000-7000-8000-{:012x}", unique & 0xffff_ffff_ffff);
     let deployment_id = "01a03800-0000-7000-8000-00000000ext2";
 
-    let events: Vec<TelemetryEvent> = serde_json::from_str(
+    // The shape the extension posts: no project, because it has no say in one. `stamp` writes the
+    // attribution, which is the boundary this whole path was rebuilt around.
+    let incoming: Vec<IncomingRecord> = serde_json::from_str(
         r#"[
-          {"time":"2026-08-24T13:00:00.000Z","type":"function","record":"from the extension"},
-          {"time":"2026-08-24T13:00:00.100Z","type":"platform.report","record":{
-             "requestId":"8a2f4b1c-0000-4000-8000-00000000ffff",
-             "metrics":{"durationMs":3.5,"billedDurationMs":4,"memorySizeMB":256,
-                        "initDurationMs":180.0}}}
+          {"ts":"2026-08-24 13:00:00.000","request_id":"8a2f4b1c-0000-4000-8000-00000000ffff",
+           "level":"info","message":"from the extension"},
+          {"ts":"2026-08-24 13:00:00.100","request_id":"8a2f4b1c-0000-4000-8000-00000000ffff",
+           "level":"platform","message":"platform.report",
+           "duration_ms":3.5,"billed_ms":4,"memory_mb":256,"init_ms":180.0,"cold_start":true}
         ]"#,
     )
-    .expect("telemetry records");
+    .expect("incoming records");
 
-    let rows: Vec<_> = events
-        .iter()
-        .filter_map(|event| to_row(event, project_id, deployment_id))
+    let rows: Vec<_> = incoming
+        .into_iter()
+        .map(|record| stamp(record, project_id, deployment_id))
         .collect();
     assert_eq!(rows.len(), 2);
 
     unsafe {
         std::env::set_var("KAFKA_BROKERS", brokers());
-        std::env::set_var("SPROUTOS_PROJECT_ID", project_id);
     }
 
-    let producer = kafka::connect().await.expect("a producer");
-    producer
-        .send(&encode_batch(&rows))
-        .await
-        .expect("produce succeeds");
+    let producer = KafkaProducer::connect().await.expect("a producer");
+    producer.produce(&rows).await.expect("produce succeeds");
 
     // Read back through ClickHouse's HTTP interface rather than a client library: the point is that
     // the consumer accepted these bytes, and the fewest layers between the assertion and that fact

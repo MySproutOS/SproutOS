@@ -9,9 +9,6 @@ catalogs:
     '@anthropic-ai/claude-agent-sdk':
       specifier: ^0.3.237
       version: 0.3.237
-    '@aws-sdk/client-ecr':
-      specifier: ^3.1114.0
-      version: 3.1115.0
     '@aws-sdk/client-iam':
       specifier: ^3.1114.0
       version: 3.1116.0
@@ -357,12 +354,6 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 'catalog:'
         version: 0.3.237(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
-      '@aws-sdk/client-ecr':
-        specifier: 'catalog:'
-        version: 3.1115.0
-      '@aws-sdk/client-iam':
-        specifier: 'catalog:'
-        version: 3.1116.0
       '@aws-sdk/client-kms':
         specifier: 'catalog:'
         version: 3.1114.0
@@ -1211,10 +1202,6 @@ packages:
 
   '@aws-sdk/checksums@3.1000.29':
     resolution: {integrity: sha512-Dtu0gr4dnATZAPwEYbpCsG+MpLM7OAliy2gTepEFQwl1vZ6DL3QMH2FveMa3HLvPsOdhJsPRB3KtxVhph9T75A==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/client-ecr@3.1115.0':
-    resolution: {integrity: sha512-+xf0dEHA8klLJzmkqF5/rYJxEh1Bh+aFpQv/ft2sEKghT1ZCGTfV6qxFrDokBxr12xJlJotnr23WA9TMfV1tnQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-iam@3.1116.0':
@@ -5174,17 +5161,6 @@ snapshots:
       '@aws-sdk/core': 3.977.9
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.33.3
-      '@smithy/types': 4.17.2
-      tslib: 2.8.1
-
-  '@aws-sdk/client-ecr@3.1115.0':
-    dependencies:
-      '@aws-sdk/core': 3.977.8
-      '@aws-sdk/credential-provider-node': 3.972.80
-      '@aws-sdk/types': 3.974.4
-      '@smithy/core': 3.33.2
-      '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.11.2
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
