@@ -242,11 +242,27 @@ describe("meterSandboxes", () => {
 
     await meterSandboxes(job, context)
 
-    const cpu = Number(
-      (await eventsFor(sandbox.id)).find((row) => row.dimension === "sandbox_cpu_second")?.quantity,
+    const event = (await eventsFor(sandbox.id)).find(
+      (row) => row.dimension === "sandbox_cpu_second",
     )
-    // Seconds since it was created a moment ago — not the ~1.8 billion since 1970.
-    expect(cpu).toBeLessThan(60)
+
+    /*
+      Asserted separately, because `Number(undefined)` is `NaN` and every comparison against `NaN`
+      is false. Folded into the bound below, a *missing* event failed as though the quantity were
+      too large — which is what this test did on CI while passing locally, and it named a number
+      rather than the absence.
+    */
+    expect(event, "no sandbox_cpu_second event was produced").toBeDefined()
+
+    /*
+      An hour, not a minute.
+
+      The bug this guards against bills from the Unix epoch: roughly 1.8 *billion* seconds. Anything
+      measured from creation is bounded by how long this test takes. Sixty seconds was a bound on
+      the runner's speed rather than on the behaviour, and a loaded CI runner is exactly where it
+      breaks — while still catching the real fault by six orders of magnitude at any threshold.
+    */
+    expect(Number(event?.quantity)).toBeLessThan(3600)
   })
 })
 
