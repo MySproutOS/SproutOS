@@ -1,5 +1,5 @@
 import { MINIMUM_TOPUP } from "@lib/billing/money"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   getV1OrgsByOrgSlugBillingBalanceOptions,
   getV1OrgsByOrgSlugBillingStatementsOptions,
@@ -81,6 +81,49 @@ export function creditRunway(
     label: `~${days} ${days === 1 ? "day" : "days"} at current burn`,
   }
 }
+
+/**
+ * Waits for a top-up to actually land, rather than assuming it has.
+ *
+ * The ledger moves from `payment_intent.succeeded` in `stripe-webhooks.ts`, not from the browser —
+ * so when the payment dialog closes, the balance genuinely has not changed yet, and a single
+ * refetch fired on close reads the old number and stops. That is what "I paid and it still says
+ * $0.00" is: no bug in the ledger, no bug in the fetch, just a question asked a second too early.
+ *
+ * Nor can it be optimistically written: the credit added is the payment *minus Stripe's fee*, so
+ * the only party that knows the real number is the webhook. Polling briefly is the honest way to
+ * ask "has it arrived yet" — bounded, because a webhook that never comes must not spin forever.
+ */
+export function useAwaitTopup(orgSlug: string) {
+  const queryClient = useQueryClient()
+
+  return async function awaitTopup(): Promise<void> {
+    const key = getV1OrgsByOrgSlugBillingBalanceOptions({ path: { orgSlug } }).queryKey
+    const usageKey = getV1OrgsByOrgSlugBillingUsageOptions({ path: { orgSlug } }).queryKey
+
+    const before = queryClient.getQueryData(key)?.availableMicroUsd
+
+    for (const delay of TOPUP_POLL_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      await queryClient.invalidateQueries({ queryKey: key })
+
+      const now = queryClient.getQueryData(key)?.availableMicroUsd
+
+      // Moved, so the webhook landed. Usage feeds the runway line beside the balance, so it is
+      // refreshed once here rather than on every poll.
+      if (now !== undefined && now !== before) {
+        await queryClient.invalidateQueries({ queryKey: usageKey })
+        return
+      }
+    }
+  }
+}
+
+/*
+  Backing off rather than a fixed interval: the webhook usually lands in about a second, and the
+  long tail is Stripe retrying. Six requests over ~15 seconds costs little and covers both.
+*/
+const TOPUP_POLL_DELAYS_MS = [700, 1_300, 2_000, 3_000, 4_000, 4_000]
 
 export function useCreditBalance(orgSlug: string) {
   const balance = useQuery(getV1OrgsByOrgSlugBillingBalanceOptions({ path: { orgSlug } }))

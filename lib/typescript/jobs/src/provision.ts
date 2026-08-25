@@ -8,6 +8,7 @@ import {
   getRepository,
   type GitHubCredential,
   type GitHubRepository,
+  organizationGitHubCredential,
   userGitHubCredential,
 } from "@lib/github"
 import { crudDeployment, crudStoreListing, crudStoreListingEvent } from "@lib/dao"
@@ -171,7 +172,22 @@ export async function runProvision(
     const createStep = job.kind === "fork" ? "fork_repository" : "create_repository"
     await mark(createStep, "running")
 
-    const credential = github?.credential ?? (await userGitHubCredential(db, payload.userId))
+    /*
+      The App first, then the person — the order ADR 0005 states and this path did not follow.
+
+      Only `userGitHubCredential` was consulted here, so an organization with the App installed and
+      a signed-in user whose OAuth token lacked `repo` failed with `NoUsableCredentialError` — an
+      error whose own message says to install the App. It was installed. Nothing here could see it.
+
+      Order matters beyond fixing that: an installation token is scoped to what the customer granted
+      and carries its own rate limit, while the user token is broad and personal. Reaching for the
+      user token first would mean the platform acting as a person whenever it happened to be able
+      to, which is exactly what ADR 0005 set out to stop.
+    */
+    const credential =
+      github?.credential ??
+      (await organizationGitHubCredential(db, repository.organizationId, repository.ownerLogin)) ??
+      (await userGitHubCredential(db, payload.userId))
     if (credential === undefined) throw new NoUsableCredentialError()
 
     const client = github?.client ?? createGitHubClient()

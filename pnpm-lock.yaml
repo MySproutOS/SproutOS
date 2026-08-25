@@ -787,6 +787,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
 
   lib/typescript/jobs:
     dependencies:

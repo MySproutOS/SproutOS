@@ -16,6 +16,7 @@ export {
   readRateLimit,
   throwForResponse,
 } from "./client"
+export { organizationGitHubCredential } from "./installation-credential"
 export {
   GitHubApiError,
   GitHubAuthError,

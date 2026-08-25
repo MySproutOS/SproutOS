@@ -13,7 +13,7 @@ import {
 import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { useState } from "react"
-import { useStartTopup, useTopupQuote } from "@frontends/dashboard/data/billing"
+import { useAwaitTopup, useStartTopup, useTopupQuote } from "@frontends/dashboard/data/billing"
 import { stripeConfigured, stripePromise, stripeTestMode } from "./stripe"
 
 /** Dollars a person actually picks, as micro-USD. The field below takes anything above the floor. */
@@ -110,7 +110,7 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
           },
         }}
       >
-        <PaymentStep onDone={onDone} />
+        <PaymentStep orgSlug={orgSlug} onDone={onDone} />
       </Elements>
     )
   }
@@ -221,7 +221,8 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
   )
 }
 
-function PaymentStep({ onDone }: { onDone: () => void }) {
+function PaymentStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }) {
+  const awaitTopup = useAwaitTopup(orgSlug)
   const stripe = useStripe()
   const elements = useElements()
   const [error, setError] = useState<string | null>(null)
@@ -251,6 +252,16 @@ function PaymentStep({ onDone }: { onDone: () => void }) {
               return
             }
             onDone()
+
+            /*
+              Close first, then wait for the balance to move.
+
+              The customer is done — holding the dialog open on a spinner while a webhook we do not
+              control makes up its mind would be making them wait for our plumbing. Closing and
+              refreshing behind them means the card is right by the time they look at it, which is
+              the thing that was broken: the dialog closed and the balance still said $0.00.
+            */
+            void awaitTopup()
           })
       }}
     >
