@@ -229,9 +229,21 @@ jobs:
             # `wait -n` then exit, rather than backgrounding and returning: systemd's unit is
             # `Type=simple` with one `ExecStart`, so this script *is* the service. Returning while
             # children ran would have systemd call the service dead and restart it in a loop;
-            # waiting for both would let one crashed process go unnoticed. Exiting when the first
-            # child does makes systemd restart the pair, which is the only honest state — the
-            # release is both processes or it is not running.
+            # waiting for all of them would let one crashed process go unnoticed. Exiting when the
+            # first child does makes systemd restart the set, which is the only honest state — the
+            # release is all three processes or it is not running.
+            #
+            # **The worker is one of the three, and it was missing.** `apps/internal-api/build.mjs`
+            # has always emitted `worker.js` beside `server.js` and the `cp -r` above has always
+            # shipped it; nothing ever ran it. So every enqueued job on this platform sat at
+            # `queued` forever: project provisioning never created a repository, `deploy.release`
+            # never published a Lambda, the billing rollup never turned a metered event into a
+            # number a customer could see, retention never swept, and fork upkeep never scanned.
+            #
+            # None of it errored. `enqueue` returns a row and the API answers 201 with a job id the
+            # dashboard then polls, so a project stayed at "creating" with four pending steps and no
+            # failure anywhere — `docs/findings/0006-features-with-no-executor.md`, at the scale of
+            # the whole queue. Found by creating a project on prod and watching the job not move.
             #
             # Written line by line rather than with a heredoc: a heredoc's terminator has to sit at
             # column zero, and inside a YAML block scalar every line is already indented.
@@ -239,6 +251,7 @@ jobs:
               echo '#!/usr/bin/env bash'
               echo 'set -euo pipefail'
               echo 'node /opt/sproutos/api/server.js &'
+              echo 'node /opt/sproutos/api/worker.js &'
               echo 'node /opt/sproutos/apps/website/server.js &'
               echo 'wait -n'
               echo 'exit 1'

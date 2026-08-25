@@ -32,6 +32,12 @@ type Listing = {
    * It was hardcoded to `main` for every listing, and it is what the fork's production branch and
    * the first deploy's ref are both taken from. WriteFreely's is `develop`; a listing seeded with
    * `main` would fork correctly and then deploy a branch that does not exist.
+   *
+   * That fix corrected WriteFreely and stopped. Checking all six against the GitHub API afterwards
+   * found **linkding and Shiori still on `master`** — two of six listings carrying exactly the
+   * defect this comment describes, under a comment saying it had been dealt with. Both are
+   * corrected here, and every value is now one the API was asked for rather than one that looked
+   * right.
    */
   defaultBranch: string
 }
@@ -53,7 +59,8 @@ const LISTINGS: Listing[] = [
     rootDir: ".",
     // `docker/alpine.Dockerfile` is the other one; the default is the glibc build.
     dockerfilePath: "docker/default.Dockerfile",
-    defaultBranch: "main",
+    // `master`. Verified against the API, not assumed — see the note on this field.
+    defaultBranch: "master",
   },
   {
     slug: "memos",
@@ -87,6 +94,33 @@ const LISTINGS: Listing[] = [
     tags: ["read-later", "archive", "go"],
     rootDir: ".",
     dockerfilePath: "Dockerfile",
+    // `master`. Verified against the API, not assumed — see the note on this field.
+    defaultBranch: "master",
+  },
+  {
+    slug: "twenty",
+    name: "Twenty",
+    tagline: "An open-source CRM that does not bill per seat to stay usable.",
+    descriptionMd:
+      "Contacts, companies, opportunities and a customisable pipeline, with an API and webhooks " +
+      "for the rest. The open alternative to Salesforce, and the largest application in the store " +
+      "— it wants a real database rather than the cheapest instance.",
+    categorySlug: "productivity",
+    upstreamOwner: "twentyhq",
+    upstreamRepo: "twenty",
+    homepageUrl: "https://twenty.com",
+    /*
+      Not an SPDX identifier, and not recorded as one.
+
+      Twenty ships its own licence — AGPL for the core with a separate enterprise edition — and
+      GitHub reports it as `NOASSERTION`. Writing `AGPL-3.0` here to satisfy the field's shape would
+      state something about a customer's obligations that is not true, so it says what it is.
+    */
+    licenseSpdx: "LicenseRef-Twenty",
+    tags: ["crm", "sales", "typescript"],
+    rootDir: ".",
+    // A monorepo: the deployable image is assembled under `packages/twenty-docker`, not at the root.
+    dockerfilePath: "packages/twenty-docker/twenty/Dockerfile",
     defaultBranch: "main",
   },
   {
