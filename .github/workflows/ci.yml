@@ -261,18 +261,24 @@ jobs:
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Identical to the one in the build job above, deliberately.
+      #
+      # This started as `:25.8-alpine` with a different health command, and the container failed to
+      # initialise on every run — while a working ClickHouse service sat twenty lines further up in
+      # the same file. Copying the definition that already runs is the whole fix, and the lesson is
+      # that a second copy of a service should be a copy.
       clickhouse:
-        image: clickhouse/clickhouse-server:25.8-alpine
+        image: clickhouse/clickhouse-server:25.8
         ports:
           - 28123:8123
         env:
+          CLICKHOUSE_DB: observability
           CLICKHOUSE_USER: sproutos
           CLICKHOUSE_PASSWORD: sproutos
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
         options: >-
-          --ulimit nofile=262144:262144
-          --health-cmd "wget -qO- http://localhost:8123/ping || exit 1"
-          --health-interval 10s
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
