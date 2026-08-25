@@ -1,3 +1,4 @@
+export { DEPLOYMENT_DOCTRINE } from "./deployment-doctrine"
 export {
   type OpenAiUsage,
   type PlatformMessage,

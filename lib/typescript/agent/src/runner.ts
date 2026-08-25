@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
+import { DEPLOYMENT_DOCTRINE } from "./deployment-doctrine"
 import { agentSubprocessEnv, toSdkPermissionMode } from "./env"
 import { disallowedTools } from "./tools"
 import type { TokenUsage } from "./pricing"
@@ -118,6 +119,14 @@ export async function runAgentTurn(
           prompt: input.prompt,
           options: {
             cwd: input.cwd,
+            /*
+              The preset plus what this platform means by "deploy".
+
+              `append` rather than a replacement: the preset carries Claude Code's own tool and
+              file-editing conventions, and dropping those to state six bullet points would trade a
+              working coding agent for an informed one.
+            */
+            systemPrompt: { type: "preset", preset: "claude_code", append: DEPLOYMENT_DOCTRINE },
             // Replaces the environment entirely — see env.ts. This is the line that keeps the API
             // process's secrets out of the agent.
             env: agentSubprocessEnv(credential),
