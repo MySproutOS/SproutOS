@@ -1,8 +1,11 @@
-import { useQuery } from "@tanstack/react-query"
+import { MINIMUM_TOPUP } from "@lib/billing/money"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   getV1OrgsByOrgSlugBillingBalanceOptions,
   getV1OrgsByOrgSlugBillingStatementsOptions,
+  getV1OrgsByOrgSlugBillingTopupQuoteOptions,
   getV1OrgsByOrgSlugBillingUsageOptions,
+  postV1OrgsByOrgSlugBillingTopupMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type CreditBalance = {
@@ -141,4 +144,36 @@ export function useInvoices(orgSlug: string) {
       totalMicros: BigInt(statement.totalMicroUsd),
     })),
   }
+}
+
+/**
+ * Start a top-up.
+ *
+ * Returns the Stripe client secret for a PaymentIntent the browser then confirms. The credit is
+ * **not** applied here and must not be: `settle()` runs from the `payment_intent.succeeded`
+ * webhook, so the ledger moves when Stripe says the money moved, not when a browser says it
+ * submitted a form. A tab closed mid-confirmation still gets its credit; a request replayed against
+ * this endpoint does not get it twice.
+ */
+export function useStartTopup(orgSlug: string) {
+  return useMutation({
+    ...postV1OrgsByOrgSlugBillingTopupMutation({ path: { orgSlug } }),
+  })
+}
+
+/**
+ * What a top-up actually costs and what it buys.
+ *
+ * Quoted by the server rather than computed here. The processing fee is a function the billing
+ * library owns (`processingFee`), and a second implementation in the browser is a second answer —
+ * the customer would be shown one number and charged another, and neither side would error.
+ */
+export function useTopupQuote(orgSlug: string, amountMicroUsd: bigint, enabled: boolean) {
+  return useQuery({
+    ...getV1OrgsByOrgSlugBillingTopupQuoteOptions({
+      path: { orgSlug },
+      query: { amountMicroUsd: amountMicroUsd.toString() },
+    }),
+    enabled: enabled && amountMicroUsd >= MINIMUM_TOPUP,
+  })
 }

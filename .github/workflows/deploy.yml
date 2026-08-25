@@ -372,6 +372,9 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
           VITE_NEXTJS_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+          # Public by design — it identifies the account to Stripe.js and can do nothing
+          # alone. A variable rather than a secret, so a build log showing it is not an incident.
+          STRIPE_PUBLIC_KEY: ${{ vars.STRIPE_PUBLIC_KEY }}
         run: |
           VITE_ASSET_BASE="${{ vars.ASSET_BASE_URL }}/dashboard/" pnpm run build --filter=dashboard
           VITE_ASSET_BASE="${{ vars.ASSET_BASE_URL }}/admin/" pnpm run build --filter=admin
