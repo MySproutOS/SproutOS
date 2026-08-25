@@ -318,32 +318,27 @@ jobs:
     runs-on: ubuntu-latest
     # Independent of the release: these are static bundles behind a CDN, not instances, so there is
     # no colour to fill and nothing to cut over. A failure here leaves the previous bundle serving.
+    #
+    # Unconditional, with no path filter. Upstream filters on `apps/frontends/**` and the shared
+    # libraries, which is right for a repository whose SPAs are already published — and wrong here,
+    # where they never have been. The first version of this job carried those filters, ran on a
+    # commit that touched only `.github/` and `tofu/`, skipped every step and reported success
+    # having uploaded nothing. A green job and an empty bucket is the failure `cutover.sh` warns
+    # about in its own comments: worse than an error, because the release looks done.
+    #
+    # The build is a couple of seconds and `s3 sync` only transfers what differs, so running every
+    # time costs almost nothing and removes a class of silent skip.
     steps:
       - uses: actions/checkout@v5
 
-      # Only when something that ends up *in* a bundle changed. Both SPAs import the shared UI and
-      # the generated API client, so a change to either rebuilds both — the filters are wider than
-      # the app directories on purpose.
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            spa:
-              - 'apps/frontends/**'
-              - 'lib/typescript/ui/**'
-              - 'lib/typescript/api-client/**'
-
       - uses: pnpm/action-setup@v4
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
 
       - uses: actions/setup-node@v5
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
         with:
           node-version: "24.14.0"
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
 
       # One at a time, because both configs read the same `VITE_ASSET_BASE` and each needs a
       # different value — a single `--filter=dashboard --filter=admin` run would give them one.
@@ -356,7 +351,6 @@ jobs:
       # production build without it, and refuses a localhost value, because either produces a bundle
       # that sends authenticated requests to the wrong origin and reads as a silent sign-out.
       - name: Build
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
           VITE_NEXTJS_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
@@ -368,13 +362,11 @@ jobs:
       # invalidate this distribution, and nothing else — a deploy of the website has no business
       # rewriting the dashboard, and vice versa.
       - uses: aws-actions/configure-aws-credentials@v4
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-spa-deploy
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Publish
-        if: steps.filter.outputs.spa == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           assets="${{ vars.ASSET_BUCKET }}"
           if [ -z "$assets" ]; then
@@ -397,6 +389,15 @@ jobs:
             aws s3 cp "$src/index.html" "s3://$assets/$spa/index.html" \
               --cache-control "no-cache,must-revalidate" \
               --content-type "text/html" --only-show-errors
+          done
+
+          # Read back rather than trust the exit status. `s3 sync` succeeds cheerfully when its
+          # source is an empty directory, so "the command worked" and "the bundle is published" are
+          # different claims and only one of them matters.
+          for spa in dashboard admin; do
+            n=$(aws s3 ls "s3://$assets/$spa/" --recursive | grep -c . || true)
+            echo "$spa: $n object(s) in the bucket"
+            [ "$n" -gt 0 ] || { echo "::error::$spa published nothing"; exit 1; }
           done
 
           # Only the two entry points: everything else is content-hashed, so a release is new keys
