@@ -39,6 +39,9 @@ verification starts.
 | `registry.tf`                       | ECR per image, artifact bucket                                    |
 | `s3.tf`, `cloudfront.tf`, `oidc.tf` | SPA assets and CI's deploy role, from the original scaffold       |
 
+See **`DEPLOY.md`** for what applying this costs per month, what to check in the first plan, and
+the order things have to happen in afterwards.
+
 ## Decisions worth knowing before changing something
 
 **IPv6 is not decoration.** A platform whose thesis is density hits IPv4 exhaustion inside the

@@ -144,3 +144,13 @@ variable "requests_per_target" {
   default     = 1000
 }
 
+variable "nat_gateway_count" {
+  description = "NAT gateways. One is $33/month and a single point of failure for egress; three is $99/month and zone-independent. Raise it before there is traffic worth protecting."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.nat_gateway_count >= 1 && var.nat_gateway_count <= 3
+    error_message = "nat_gateway_count must be between 1 and one per availability zone (3)."
+  }
+}
