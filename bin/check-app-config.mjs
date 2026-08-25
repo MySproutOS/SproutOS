@@ -27,36 +27,62 @@ import { readFileSync } from "node:fs"
 const putSecrets = readFileSync("bin/put-app-secrets.sh", "utf8")
 const userData = readFileSync("tofu/user-data.sh.tftpl", "utf8")
 
-/** The allowlist `put-app-secrets.sh` copies into Parameter Store. */
-function parameterStoreKeys() {
-  const block = /KEYS=\(([\s\S]*?)\n\)/.exec(putSecrets)
-  if (block === null) throw new Error("bin/put-app-secrets.sh no longer declares KEYS=( ... )")
-  return new Set(
-    block[1]
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => /^[A-Z][A-Z0-9_]*$/.test(line)),
-  )
+/**
+ * Names that look like an environment variable, out of arbitrary text.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function envNames(text) {
+  return text.split(/[^A-Z0-9_]+/).filter((token) => /^[A-Z][A-Z0-9_]*$/.test(token))
 }
 
-/** Every key any `write_app_secrets "..."` call asks the instance to write. */
+/**
+ * The allowlist `put-app-secrets.sh` copies into Parameter Store.
+ *
+ * @returns {Set<string>}
+ */
+function parameterStoreKeys() {
+  const block = /KEYS=\(([\s\S]*?)\n\)/.exec(putSecrets)
+  if (block === null || block[1] === undefined) {
+    throw new Error("bin/put-app-secrets.sh no longer declares KEYS=( ... )")
+  }
+  return new Set(envNames(block[1]))
+}
+
+/**
+ * Every key any `write_app_secrets "..."` call asks the instance to write.
+ *
+ * @returns {Set<string>}
+ */
 function requestedAtBoot() {
+  /** @type {Set<string>} */
   const keys = new Set()
   for (const match of userData.matchAll(/write_app_secrets\s+"([^"]*)"/g)) {
-    for (const key of match[1].split(/\s+/)) {
-      const trimmed = key.replace(/\\$/, "").trim()
-      if (/^[A-Z][A-Z0-9_]*$/.test(trimmed)) keys.add(trimmed)
-    }
+    const list = match[1]
+    if (list === undefined) continue
+    for (const key of envNames(list)) keys.add(key)
   }
   if (keys.size === 0) throw new Error("tofu/user-data.sh.tftpl no longer calls write_app_secrets")
   return keys
 }
 
-/** Non-secret configuration written straight into the env file. */
+/**
+ * Non-secret configuration written straight into the env file.
+ *
+ * @returns {Set<string>}
+ */
 function writtenDirectly() {
+  /** @type {Set<string>} */
   const keys = new Set()
-  for (const match of userData.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) keys.add(match[1])
-  for (const match of userData.matchAll(/echo\s+"([A-Z][A-Z0-9_]*)=/g)) keys.add(match[1])
+  for (const match of userData.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) {
+    const key = match[1]
+    if (key !== undefined) keys.add(key)
+  }
+  for (const match of userData.matchAll(/echo\s+"([A-Z][A-Z0-9_]*)=/g)) {
+    const key = match[1]
+    if (key !== undefined) keys.add(key)
+  }
   return keys
 }
 
@@ -82,7 +108,7 @@ const warnings = []
   a parameter is not an error — it is an absence, and absence is indistinguishable from a value
   nobody happened to need on this boot.
 */
-for (const key of [...requested].sort()) {
+for (const key of [...requested].sort((a, b) => a.localeCompare(b))) {
   if (!inParameterStore.has(key)) {
     problems.push(
       `${key} is requested by write_app_secrets but is not in put-app-secrets.sh's allowlist, ` +
@@ -95,7 +121,7 @@ for (const key of [...requested].sort()) {
   The other direction is a weaker signal but still worth saying: a parameter that is stored and
   never read is a credential sitting in an account for no reason.
 */
-for (const key of [...inParameterStore].sort()) {
+for (const key of [...inParameterStore].sort((a, b) => a.localeCompare(b))) {
   if (!requested.has(key) && !direct.has(key)) {
     warnings.push(
       `${key} is written to Parameter Store by put-app-secrets.sh but no write_app_secrets call ` +
@@ -136,9 +162,15 @@ if (process.argv.includes("--live")) {
   )
 
   // Names only — the values are secrets and this prints its findings.
-  const present = new Set(JSON.parse(raw).map((name) => name.split("/").pop()))
+  const names = /** @type {string[]} */ (JSON.parse(String(raw)))
+  /** @type {Set<string>} */
+  const present = new Set()
+  for (const name of names) {
+    const leaf = name.split("/").pop()
+    if (leaf !== undefined) present.add(leaf)
+  }
 
-  for (const key of [...requested].sort()) {
+  for (const key of [...requested].sort((a, b) => a.localeCompare(b))) {
     if (!present.has(key)) {
       problems.push(
         `${key} is requested at boot and is not in Parameter Store at ${path}. ` +
