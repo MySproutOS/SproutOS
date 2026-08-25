@@ -74,4 +74,19 @@ export const githubSchemaNameCheckResponse = Type.Object({
    * check" are different answers and a boolean flattens the second into the first.
    */
   reason: Nullable(Type.String()),
+  /**
+   * The same answer as `reason`, in a form code can branch on.
+   *
+   * The dialog needs to offer "you already have that repository — use it, or pick another name",
+   * and that offer is only correct for one of these cases. Deriving it by matching on `reason`
+   * would make a sentence written for a person load-bearing for control flow: reword the copy and
+   * the branch silently stops firing, with every test still green.
+   */
+  conflict: Nullable(
+    Type.Union([
+      Type.Literal("exists"),
+      Type.Literal("invalid_name"),
+      Type.Literal("no_installation"),
+    ]),
+  ),
 })

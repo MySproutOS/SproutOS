@@ -226,7 +226,13 @@ const app = new Hono()
       */
       const shape = repositoryNameProblem(name)
       if (shape !== null) {
-        return c.json({ name, ownerLogin: null, available: false, reason: shape })
+        return c.json({
+          name,
+          ownerLogin: null,
+          available: false,
+          reason: shape,
+          conflict: "invalid_name" as const,
+        })
       }
 
       const installations = await fetchGithubInstallation(db).listUsable(organization.id, [
@@ -267,6 +273,7 @@ const app = new Hono()
             owner === undefined
               ? "No GitHub account is connected to this organization yet, so the name cannot be checked. Install the SproutOS GitHub App on the account that should own the repository."
               : `The SproutOS GitHub App is not installed on ${owner}, so the name cannot be checked there.`,
+          conflict: "no_installation" as const,
         })
       }
 
@@ -280,6 +287,7 @@ const app = new Hono()
           ownerLogin: installation.accountLogin,
           available: false,
           reason: `${installation.accountLogin}/${name} already exists.`,
+          conflict: "exists" as const,
         })
       } catch (error) {
         /*
@@ -292,6 +300,7 @@ const app = new Hono()
             ownerLogin: installation.accountLogin,
             available: true,
             reason: null,
+            conflict: null,
           })
         }
 

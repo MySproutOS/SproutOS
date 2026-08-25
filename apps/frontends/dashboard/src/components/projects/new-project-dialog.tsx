@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   CheckIcon,
   FolderGitIcon,
+  GitBranchIcon,
   GitForkIcon,
   GlobeIcon,
   LockIcon,
@@ -30,6 +31,7 @@ import {
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
+import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { slugify } from "./slug"
 
 /**
@@ -44,7 +46,7 @@ import { slugify } from "./slug"
  * The create runs inside a `project_job`, so GitHub's "name already exists" would otherwise reach
  * the customer as a failed provision some minutes later, by which time the form is gone.
  */
-type Source = "store" | "blank" | "repository"
+type Source = "store" | "template" | "blank" | "repository"
 
 const CARDS: { id: Source; icon: typeof GitForkIcon; title: string; detail: string }[] = [
   {
@@ -52,6 +54,12 @@ const CARDS: { id: Source; icon: typeof GitForkIcon; title: string; detail: stri
     icon: GitForkIcon,
     title: "Fork an app",
     detail: "Start from something in the store that already runs, then make it yours.",
+  },
+  {
+    id: "template",
+    icon: GitBranchIcon,
+    title: "From any GitHub repository",
+    detail: "Paste a repository. SproutOS copies it into a new one that belongs to you.",
   },
   {
     id: "blank",
@@ -126,6 +134,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const [repositoryId, setRepositoryId] = useState<string | null>(null)
   const [touchedRepoName, setTouchedRepoName] = useState(false)
   const [owner, setOwner] = useState<string | null>(null)
+  const [templateRef, setTemplateRef] = useState("")
   /*
     Public by default, and stated rather than assumed.
 
@@ -137,7 +146,9 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
 
   const navigate = useNavigate()
   const listings = useStoreListings()
-  const repositories = useGithubRepositories(orgSlug, source === "repository")
+  // Enabled beyond the "repository" card: the existing-repository prompt needs this list to know
+  // whether the repository somebody already has is one the App can actually attach a project to.
+  const repositories = useGithubRepositories(orgSlug, true)
   const owners = useGithubOwners(orgSlug, source !== "repository")
   const ownerOptions = owners.data?.data ?? []
   // The picker is uncontrolled until the list arrives, so the effective owner is the chosen one or
@@ -172,10 +183,42 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
     source !== "repository" && debounced.length > 0,
   )
 
+  const template = parseRepoRef(templateRef)
+
+  /*
+    The upstream's own name is the obvious default for the copy, and it is almost always what people
+    want — but only until they say otherwise, which is the same rule the project name already
+    follows. Applied on the event rather than in an effect, for the reason `applyName` documents.
+  */
+  function applyTemplate(next: string) {
+    setTemplateRef(next)
+    const parsed = parseRepoRef(next)
+    if (parsed !== null && !touchedRepoName) setRepositoryName(parsed.repo)
+  }
+
+  /*
+    A name that is free, derived from one that is not.
+
+    Suffixing rather than asking them to invent one: the name they typed is the name they wanted,
+    and `-2` says "the same thing again" in a way `toyourcredit-new` does not. It only ever seeds
+    the box — the availability check still has to agree before Create is enabled.
+  */
+  const suggestedName = nextFreeName(repositoryName, repositories.data?.data ?? [])
+
+  // The row for the repository they already have, when the App can actually reach it. Without one
+  // there is nothing to attach a project to, and only the rename is a real option.
+  const existingRepositoryId =
+    repositories.data?.data.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === repositoryName.toLowerCase() &&
+        candidate.ownerLogin.toLowerCase() === (effectiveOwner ?? "").toLowerCase(),
+    )?.githubRepoId ?? null
+
   const needsRepoName = source !== "repository"
   const ready =
     name.trim().length > 0 &&
     (source !== "store" || listingId !== null) &&
+    (source !== "template" || template !== null) &&
     (source !== "repository" || repositoryId !== null) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
@@ -201,10 +244,21 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                   : source === "repository"
                     ? { type: "repository", repositoryId: repositoryId! }
                     : {
+                        /*
+                          `blank` with a template is the copy, and `blank` without one is the empty
+                          repository — the same API shape, which is why they are one branch here.
+                          A template copy rather than a fork: a fork carries GitHub's "forked from"
+                          link and cannot be made private or renamed freely, and what somebody
+                          starting a project wants is their own repository, not an attribution to
+                          somebody else's.
+                        */
                         type: "blank",
                         repositoryName,
                         private: isPrivate,
                         ...(effectiveOwner === null ? {} : { ownerLogin: effectiveOwner }),
+                        ...(source === "template" && template !== null
+                          ? { templateOwner: template.owner, templateRepo: template.repo }
+                          : {}),
                       },
             },
           },
@@ -271,6 +325,34 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
               </option>
             ))}
           </select>
+        </div>
+      )}
+
+      {source === "template" && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="np-template">Repository to copy</Label>
+          <Input
+            id="np-template"
+            value={templateRef}
+            onChange={(event) => {
+              applyTemplate(event.target.value)
+            }}
+            placeholder="Andrew-Chen-Wang/reddit-clone"
+            aria-describedby="np-template-status"
+            spellCheck={false}
+          />
+          <p id="np-template-status" className="text-[13px] text-muted-foreground">
+            {templateRef.trim() === "" ? (
+              "Any public repository — paste the URL or owner/repo."
+            ) : template === null ? (
+              <span className="flex items-start gap-1.5 text-destructive">
+                <XIcon className="mt-0.5 size-3.5 shrink-0" />
+                That does not look like a GitHub repository.
+              </span>
+            ) : (
+              `Copying ${template.owner}/${template.repo}. The copy is yours — no fork link, no shared history.`
+            )}
+          </p>
         </div>
       )}
 
@@ -388,6 +470,60 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
               </span>
             )}
           </p>
+
+          {/*
+            You may already have this repository, and that is not an error.
+
+            Copying a repository twice is a normal thing to do — and so is having copied it months
+            ago and forgotten. Reporting only "that name is taken" leaves somebody to invent a name
+            and wonder whether they were about to duplicate their own work. Both real answers are
+            offered instead, and neither is chosen for them: reusing a repository picks up whatever
+            is already in it, which is right when it is the project they meant and wrong when it is
+            an abandoned experiment. Only the person knows which.
+          */}
+          {nameCheck.data?.conflict === "exists" && (
+            <div className="flex flex-col gap-2 rounded-md border border-border bg-secondary/40 p-2.5">
+              <p className="text-[13px] text-foreground">
+                You already have{" "}
+                <span className="font-medium">
+                  {nameCheck.data.ownerLogin}/{repositoryName}
+                </span>
+                .
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {existingRepositoryId !== null && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setRepositoryId(existingRepositoryId)
+                      setSource("repository")
+                    }}
+                  >
+                    Use that repository
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setTouchedRepoName(true)
+                    setRepositoryName(suggestedName)
+                  }}
+                >
+                  Name it {suggestedName}
+                </Button>
+              </div>
+              {existingRepositoryId === null && (
+                <p className="text-xs text-muted-foreground">
+                  It is not one the SproutOS App can reach, so it cannot be used directly — grant
+                  the App access to it, or create a new one.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

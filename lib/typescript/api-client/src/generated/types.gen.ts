@@ -2413,6 +2413,7 @@ export type GetV1OrgsByOrgSlugGithubRepositoryNameResponses = {
     ownerLogin: string | null
     available: boolean
     reason: string | null
+    conflict: "exists" | "invalid_name" | "no_installation" | null
   }
 }
 
