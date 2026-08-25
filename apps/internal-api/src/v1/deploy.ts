@@ -85,10 +85,26 @@ const uploadRequest = Type.Object({
 })
 const uploadResponse = Type.Object({ url: Type.String(), key: Type.String() })
 
+/*
+  The static archive's request carries no project.
+
+  The build one takes a `project` for the caller's benefit — it is echoed in errors — but the key is
+  built from the *token's* project id either way. This one omits it entirely so there is nothing to
+  mistake for an input: assets go under the project the token was minted for, and a caller cannot
+  ask for someone else's prefix in a bucket every tenant shares.
+*/
+const staticUploadRequest = Type.Object({
+  digest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+})
+
 const releaseRequest = Type.Object({
   project: Type.String({ minLength: 1 }),
   key: Type.String({ minLength: 1 }),
   digest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+  // Absent when the build produced no assets — an API has none — so both are optional and are
+  // either present together or not at all.
+  static_key: Type.Optional(Type.String({ minLength: 1 })),
+  static_digest: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
   preset: Type.String({ minLength: 1 }),
   environment: Type.String({ minLength: 1 }),
   commit: Type.String({ minLength: 1 }),
@@ -205,6 +221,54 @@ const deploy: Hono = new Hono()
         new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: "application/zip" }),
         // Long enough for a large upload on a slow runner, short enough that a URL in a log is
         // useless before anyone reads it.
+        { expiresIn: 900 },
+      )
+
+      return c.json({ url, key })
+    },
+  )
+  .post(
+    "/deploy/static-upload-url",
+    describeRoute({
+      description:
+        "A pre-signed URL for a deployment's static assets, which are served from the CDN rather than the function.",
+      responses: {
+        200: {
+          description: "Where to PUT the asset archive",
+          content: { "application/json": { schema: resolver(uploadResponse) } },
+        },
+        401: { description: "Missing or expired deploy token" },
+      },
+    }),
+    validator("json", staticUploadRequest),
+    async (c) => {
+      const authorized = bearer(c.req.header("Authorization"))
+      if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+
+      const { digest } = c.req.valid("json")
+
+      /*
+        Keyed by project and digest, like the build archive, so re-uploading an unchanged asset set
+        is idempotent — which it will be constantly, since most deploys change the server and not
+        the fonts.
+
+        The project id comes from the token and never from the body. This is the shared tenant
+        bucket, so the prefix *is* the tenancy boundary: a key assembled from anything the caller
+        sent would let one project write into another's assets.
+      */
+      const key = `static/${authorized.projectId}/${digest}.zip`
+      const bucket = process.env.TENANT_STATIC_BUCKET ?? "sproutos-dev-artifacts"
+
+      const client = new S3Client({
+        region: process.env.AWS_REGION ?? "us-east-1",
+        ...(process.env.AWS_ENDPOINT_URL === undefined
+          ? {}
+          : { endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true }),
+      })
+
+      const url = await getSignedUrl(
+        client,
+        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: "application/zip" }),
         { expiresIn: 900 },
       )
 
