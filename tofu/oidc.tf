@@ -231,22 +231,29 @@ resource "aws_iam_role_policy" "deploy" {
           migration rather than performing it: `bin/migrate.sh` sends one shell command to an
           instance already inside the VPC and reads back its exit status.
 
-          `SendCommand` is scoped two ways, and it needs both. The instance condition limits it to
-          this deployment's own instances — an unscoped grant would let this role run arbitrary
-          shell on every managed instance in the account, which is a far larger capability than
-          "deploy the website". The document is pinned to `AWS-RunShellScript` because that is the
-          one being used, and naming it keeps a future permission from arriving by accident.
+          **Two statements, because `SendCommand` authorizes against two resources** — the document
+          and each target instance — and an IAM condition applies to every resource in the statement
+          it sits in. Written as one statement with the tag condition, the condition was also
+          evaluated against `AWS-RunShellScript`, which carries no `Service` tag, so it failed and
+          the call was denied with "no identity-based policy allows the ssm:SendCommand action" —
+          a message that reads like the action was never granted at all.
 
-          `GetCommandInvocation` cannot be scoped to a resource at all — AWS rejects a policy that
-          tries — so it is `*`, and it only ever reads back the result of a command this role sent.
+          The instance half stays scoped: an unscoped grant would let this role run arbitrary shell
+          on every managed instance in the account, including the NAT instance and the router, which
+          is a far larger capability than "deploy the website". `Service` is the tag the launch
+          template actually sets; `Project` is on the OpenTofu resources and never reaches the
+          instances.
         */
-        Sid    = "RunMigrationsOnAnInstance"
-        Effect = "Allow"
-        Action = ["ssm:SendCommand"]
-        Resource = [
-          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
-          "arn:aws:ec2:${var.aws_region}:${var.aws_account_id}:instance/*",
-        ]
+        Sid      = "RunMigrationsUsingTheShellDocument"
+        Effect   = "Allow"
+        Action   = ["ssm:SendCommand"]
+        Resource = ["arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"]
+      },
+      {
+        Sid      = "RunMigrationsOnWebsiteInstancesOnly"
+        Effect   = "Allow"
+        Action   = ["ssm:SendCommand"]
+        Resource = ["arn:aws:ec2:${var.aws_region}:${var.aws_account_id}:instance/*"]
         Condition = {
           StringEquals = {
             "ssm:resourceTag/Service" = "website"
