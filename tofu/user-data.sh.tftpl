@@ -16,6 +16,33 @@ REGION="${aws_region}"
 
 dnf install -y awscli tar gzip
 
+# Node, for the website. The router needs nothing.
+#
+# Amazon Linux 2023 ships no Node at all, and the failure is not subtle once you are on the box —
+# `/opt/sproutos/start: line 3: node: command not found`, restarting every two seconds — but from
+# outside it is only an Auto Scaling group whose instances never pass a health check. The router
+# never surfaced it because a static musl binary has no runtime to be missing.
+#
+# From nodejs.org rather than `dnf install nodejs`, because the distribution's package is whatever
+# major AL2023 chose and the release was built and typechecked against ${node_version}. A Next.js
+# standalone server usually tolerates one major either way; "usually" is not a property to hang a
+# deploy on when pinning is one URL.
+#
+# The alternative was to put Node in the release tarball, which makes it hermetic at the cost of
+# ~60 MB on every instance launch of an artefact that is already 127 MB. Worth revisiting if boot
+# time starts to matter more than transfer.
+if [ "$SERVICE" = "website" ]; then
+  NODE_VERSION="${node_version}"
+  curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-arm64.tar.xz" \
+    -o /tmp/node.tar.xz
+  install -d -m 0755 /opt/node
+  tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+  rm -f /tmp/node.tar.xz
+  # On PATH for the unit, which runs as a DynamicUser with the default systemd path.
+  ln -sf /opt/node/bin/node /usr/local/bin/node
+  ln -sf /opt/node/bin/npm /usr/local/bin/npm
+fi
+
 install -d -m 0755 /opt/sproutos
 install -d -m 0755 /etc/sproutos
 

@@ -233,3 +233,9 @@ variable "github_repo_ids" {
   type        = string
   default     = "MySproutOS@319999162/SproutOS@1340349949"
 }
+
+variable "node_version" {
+  description = "Node for the website instances. Must match .config/mise.toml and the deploy workflow."
+  type        = string
+  default     = "24.14.0"
+}

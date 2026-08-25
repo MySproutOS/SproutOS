@@ -541,6 +541,11 @@ resource "aws_launch_template" "service" {
     valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
     tenant_domain    = var.control_plane_domain
 
+    # Kept in step with `.config/mise.toml` and the deploy workflow by hand, because three places
+    # is already one too many. A mismatch means the release was built on one Node and runs on
+    # another.
+    node_version = var.node_version
+
     # Read at boot by the website instances only, to compose `DATABASE_URL`. The ARN is not a
     # secret; what it names is, and reading it needs the instance role.
     database_secret_arn = aws_db_instance.control_plane.master_user_secret[0].secret_arn
