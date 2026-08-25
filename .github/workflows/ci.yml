@@ -197,6 +197,13 @@ jobs:
       - name: Every imported workspace package is declared
         run: node bin/check-workspace-deps.mjs
 
+      # The worker was built, packaged and shipped for the life of the platform, and the release
+      # script started `server.js` and the website and not it. Every background job sat `queued`:
+      # no project ever provisioned, no deploy ever published, no usage was ever rolled up. Nothing
+      # errored, because a queue with no consumer looks exactly like a quiet one.
+      - name: Every API entrypoint the release ships is started
+        run: node bin/check-release-processes.mjs
+
   rust:
     name: (cargo) Format, Clippy, and Test
     runs-on: ubuntu-latest
