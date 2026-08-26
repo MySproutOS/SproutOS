@@ -67,6 +67,18 @@ export async function installSproutosSkill(input: SkillInput): Promise<void> {
   await writeFile(skillPath, skillBody(input))
 }
 
+/**
+ * The skill's text, without writing it anywhere.
+ *
+ * The sandbox needs the body rather than the side effect: there is no local filesystem to write
+ * into, and the two harnesses want it in different places — `.claude/skills` for Claude Code,
+ * `AGENTS.md` for Codex, which knows nothing about skills. Exported so `bootstrapSandbox` renders
+ * once and places it twice, rather than keeping a second copy of the text that drifts.
+ */
+export function renderSproutosSkill(input: Omit<SkillInput, "workspace">): string {
+  return skillBody({ ...input, workspace: { path: "" } as SkillInput["workspace"] })
+}
+
 function skillBody(input: SkillInput): string {
   const project = input.projectSlug ?? "<your-project-slug>"
 

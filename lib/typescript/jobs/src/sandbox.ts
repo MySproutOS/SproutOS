@@ -1,4 +1,11 @@
-import { crudSandbox, fetchSandbox } from "@lib/dao"
+import {
+  bootstrapSandbox,
+  harnessFor,
+  renderSproutosSkill,
+  resolveAgentCredential,
+} from "@lib/agent"
+import { crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
+import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { daytonaConfigFromEnv, daytonaDriver, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
 import type { DB } from "@sproutos/db"
@@ -176,6 +183,113 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
   if (idle.length > 0) console.info(`[jobs] reaping ${idle.length} idle sandboxes`)
 }
 
+/**
+ * Put a checkout, an identity and the platform's instructions into a fresh sandbox.
+ *
+ * Returns what went wrong rather than throwing, for the reason at the call site: a partially
+ * bootstrapped sandbox is still worth having, and a provision that fails because a file did not
+ * write tells the customer to retry something that was not their problem.
+ *
+ * The GitHub App installation, not the user's OAuth token. An installation token is scoped to the
+ * repositories the customer granted and expires in an hour; a user token is scoped to everything
+ * that user can reach, for as long as it lives, and would be sitting inside a machine a model runs
+ * commands on.
+ */
+async function bootstrap(
+  db: Kysely<DB>,
+  sandboxDriver: SandboxDriver,
+  input: { externalId: string; organizationId: string; projectId: string; userId: string },
+): Promise<string[]> {
+  try {
+    const project = await db
+      .selectFrom("project")
+      .innerJoin("repository", "repository.id", "project.repositoryId")
+      .select([
+        "project.slug as slug",
+        "project.productionBranch as branch",
+        "repository.ownerLogin as owner",
+        "repository.name as name",
+      ])
+      .where("project.id", "=", input.projectId)
+      .executeTakeFirst()
+    if (project === undefined) return ["the project disappeared before the sandbox was ready"]
+
+    /*
+      The installation that owns this repository, or the organization's only one.
+
+      `listUsable` already excludes suspended and deleted installations — a suspended App is the
+      common way this breaks, and cloning with its token fails with a 401 that says nothing about
+      suspension.
+    */
+    const installations = await fetchGithubInstallation(db).listUsable(input.organizationId, [
+      "installationId",
+      "accountLogin",
+    ])
+    const installation =
+      installations.find((row) => row.accountLogin === project.owner) ?? installations[0]
+    if (installation === undefined) {
+      // Not a failure of the sandbox. Said plainly because "the agent cannot see your code" has a
+      // cause the customer can act on, and a generic bootstrap error does not.
+      return [
+        "this organization has no GitHub App installation, so the repository could not be cloned",
+      ]
+    }
+
+    const tokens = createInstallationTokenStore({
+      client: createGitHubClient(),
+      signJwt: envAppJwtSigner(),
+    })
+    /*
+      `installation_id` is `int8`, which Kysely surfaces as a string.
+
+      Coerced here rather than left to `Number()` at some later call site: GitHub's ids are well
+      inside the safe range, and the alternative is a token request against `/app/installations/
+      [object Object]` — a 404 that reads like an uninstalled App.
+    */
+    const token = await tokens.get(Number(installation.installationId))
+
+    const user = await db
+      .selectFrom("user")
+      .select(["email", "name"])
+      .where("id", "=", input.userId)
+      .executeTakeFirst()
+
+    const credential = await resolveAgentCredential(db, input.organizationId)
+    const harness = credential.billing === "byo" ? harnessFor(credential.kind) : ("codex" as const)
+
+    const result = await bootstrapSandbox({
+      author: {
+        /*
+          The customer's own identity, so the history reads as theirs with a co-author trailer
+          rather than as a robot's. A commit attributed to the platform is one a customer cannot
+          find when they search their own history.
+        */
+        email: user?.email ?? "agent@sproutos.me",
+        name: user?.name ?? "SproutOS Agent",
+      },
+      driver: sandboxDriver,
+      externalId: input.externalId,
+      harness,
+      model: credential.billing === "none" ? null : credential.model,
+      proxyBaseUrl: process.env.LLM_PROXY_URL ?? "https://llm.sproutos.me",
+      repository: {
+        branch: project.branch,
+        fullName: `${project.owner}/${project.name}`,
+        token: token.token,
+      },
+      skill: renderSproutosSkill({
+        apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me",
+        projectSlug: project.slug,
+        tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
+      }),
+    })
+
+    return result.problems
+  } catch (cause) {
+    return [String(cause)]
+  }
+}
+
 type SandboxPayload = { sandboxId?: string }
 
 function driver(): SandboxDriver {
@@ -241,6 +355,31 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
       })
+
+      /*
+        A sandbox with nothing in it is a sandbox nobody can work in.
+
+        Until now `create` was the whole job: the container came up empty — no checkout, no git
+        identity, no instructions — and every route that followed assumed a workspace that had never
+        been put there. Bootstrapping here rather than on first use means the cost is paid while the
+        customer is already waiting for the sandbox to start, instead of in the middle of their
+        first message.
+
+        Failures are recorded on the row and do not fail the job. A sandbox with a checkout and no
+        skill is degraded; one that failed to provision because a file did not write is gone, and
+        the customer is told to try again for a reason that has nothing to do with them.
+      */
+      const problems = await bootstrap(db, makeDriver(), {
+        externalId: created.externalId,
+        organizationId: sandbox.organizationId,
+        projectId: sandbox.projectId,
+        userId: sandbox.userId,
+      })
+      if (problems.length > 0) {
+        console.warn(
+          `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
+        )
+      }
     } catch (error) {
       await crudSandbox(db).update(sandbox.id, { state: "failed" })
       throw error

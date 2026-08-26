@@ -406,6 +406,8 @@ if [ "$SERVICE" = "website" ]; then
     STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
+    SANDBOX_DAYTONA_API_KEY SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
+    SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
     SERVICE_VALKEY_ADMIN_URL"
 fi
@@ -419,7 +421,7 @@ if [ "$SERVICE" = "router" ]; then
   # and requires a password. It was withheld until that was true: the split starts when this is set
   # and `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does
   # not disable a feature — it stops the router, which is the front door.
-  write_app_secrets "LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
+  write_app_secrets "LLM_PROXY_SECRET LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
     SEARCH_PROXY_UPSTREAM_AUTHORIZATION VALKEY_PROXY_BACKEND"
 fi
 

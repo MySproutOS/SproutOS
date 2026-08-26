@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "catalog:",
+    "@lib/agent": "workspace:*",
     "@lib/analyzer": "workspace:*",
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",

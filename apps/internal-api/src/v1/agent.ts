@@ -6,6 +6,7 @@ import {
   type MintedProxyToken,
   mintProxyToken,
   refreshProxyToken,
+  upstreamKindFor,
   RefreshRejectedError,
   resolveAgentCredential,
 } from "@lib/agent"
@@ -482,25 +483,6 @@ function present(minted: MintedProxyToken) {
     id: minted.id,
     refreshExpiresAt: minted.refreshExpiresAt.toISOString(),
     refreshToken: minted.refreshToken,
-  }
-}
-
-/**
- * Which wire format the proxy will be speaking for this credential kind.
- *
- * Total by construction rather than a lookup with a default: a kind added to the union without a
- * mapping is a type error here, not a session that silently sends an Anthropic key to OpenAI.
- */
-function upstreamKindFor(
-  kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key",
-) {
-  switch (kind) {
-    case "claude_subscription":
-    case "anthropic_api_key":
-      return "anthropic"
-    case "openai_api_key":
-    case "openrouter_api_key":
-      return "openai"
   }
 }
 

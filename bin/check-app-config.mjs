@@ -34,6 +34,14 @@
  *
  * A fallback is what makes this silent. Without one the application would crash at boot; with one it
  * runs, looks healthy, and is wrong somewhere only a real request reaches.
+ *
+ * ## And the syntax it first missed
+ *
+ * The first version matched `process.env.NAME` and nothing else. `daytonaConfigFromEnv` takes
+ * `env: NodeJS.ProcessEnv = process.env` and reads `env.SANDBOX_DAYTONA_API_KEY` — done that way
+ * precisely so it can be tested — so the check reported the configuration clean while the key that
+ * decides whether a sandbox can exist at all was provided by nothing, anywhere. A check that knows
+ * one spelling is a check that is confident about the code it happens to recognise.
  */
 import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
@@ -120,6 +128,15 @@ function writtenDirectly() {
  * @returns {Set<string>}
  */
 function readByCode() {
+  /*
+    Two spellings, because the code uses two.
+
+    `process.env.NAME` is the common one. `env.NAME` appears wherever a module takes
+    `env: NodeJS.ProcessEnv = process.env` so it can be tested — which is good practice and was
+    invisible here. Matching the second everywhere would catch any local named `env`; matching it
+    only in files that mention `NodeJS.ProcessEnv` keeps it to the modules that actually read
+    configuration.
+  */
   const out = execFileSync(
     "git",
     [
@@ -141,8 +158,23 @@ function readByCode() {
   )
   /** @type {Set<string>} */
   const keys = new Set()
-  for (const line of out.split("\n")) {
-    const name = line.trim().replace("process.env.", "")
+
+  const viaParameter = execFileSync(
+    "sh",
+    [
+      "-c",
+      // Files that declare a ProcessEnv parameter, then the `env.NAME` reads inside them.
+      String.raw`git grep -l 'NodeJS\.ProcessEnv' -- apps lib packages ':!*.test.ts' ':!*.test.tsx' ` +
+        String.raw`| xargs -r grep -hoE '\benv\.[A-Z][A-Z0-9_]*' || true`,
+    ],
+    { encoding: "utf8" },
+  )
+
+  for (const line of `${out}\n${viaParameter}`.split("\n")) {
+    const name = line
+      .trim()
+      .replace("process.env.", "")
+      .replace(/^env\./, "")
     // `process.env[`NEXT_PUBLIC_${x}`]` matches as far as the interpolation, leaving a prefix that
     // is not a variable name.
     if (name !== "" && !name.endsWith("_")) keys.add(name)

@@ -1,5 +1,9 @@
 import type { AgentEvent } from "@lib/agent"
 import {
+  harnessFor,
+  mintProxyToken,
+  runSandboxTurn,
+  upstreamKindFor,
   AgentNotConfiguredError,
   checkout,
   commitAndPush,
@@ -11,6 +15,9 @@ import {
 } from "@lib/agent"
 import { InsufficientBalanceError } from "@lib/billing"
 import {
+  crudSandbox,
+  fetchSandbox,
+  sandboxScopeFor,
   crudAgentSession,
   crudAuditLog,
   fetchAgentSession,
@@ -25,6 +32,8 @@ import {
   userGitHubCredential,
 } from "@lib/github"
 import { srnFor } from "@lib/srn"
+import { daytonaConfigFromEnv, daytonaDriver } from "@lib/sandbox"
+import { sealForProxy } from "@lib/proxy-secret"
 import { db } from "@sproutos/db"
 import { randomUUID } from "node:crypto"
 import { Hono } from "hono"
@@ -55,6 +64,30 @@ const errorResponse = {
  * anything useful has gone wrong rather than gone deep. Scheduled fork upkeep is the place for a
  * long leash, and it is a different entry point.
  */
+/**
+ * How long a sandbox turn may run.
+ *
+ * Longer than a control-plane turn because the agent can actually do things here — an install and a
+ * test suite is minutes before the model has said anything. Bounded all the same: an agent that has
+ * stopped making progress should end, and the sandbox's own idle reaper cannot tell the difference
+ * between thinking and hanging.
+ */
+const SANDBOX_TURN_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * The sandbox this project's group has running, if any.
+ *
+ * Group-scoped, like every other sandbox lookup: a child's turn belongs in the checkout its code
+ * actually lives in. `running` rather than merely present — a stopped container accepts nothing and
+ * a turn routed into one hangs until the timeout.
+ */
+async function runningSandbox(organizationId: string, projectId: string, userId: string) {
+  const scope = await sandboxScopeFor(db, organizationId, projectId)
+  if (scope === undefined) return undefined
+  const row = await fetchSandbox(db).forUser(organizationId, scope, userId)
+  return row?.state === "running" ? row : undefined
+}
+
 const MAX_TURNS = 24
 
 const app = new Hono()
@@ -264,6 +297,56 @@ const app = new Hono()
               numTurns: 1,
               durationMs: 0,
             })
+            await flush()
+            return
+          }
+
+          /*
+            The sandbox, when there is one.
+
+            This is the path the product is supposed to have: the agent runs on a machine of its
+            own, where a shell is just a shell, so it can install, test and start a dev server —
+            and the preview then has something to show. The control-plane checkout below is the
+            fallback for a customer with no sandbox running, and it is strictly weaker: `tools.ts`
+            refuses `Bash` there because the subprocess shares a uid with this API.
+
+            Chosen by whether a sandbox is *running*, not by whether one exists. A `stopped` row is
+            the ordinary state of a sandbox somebody used yesterday, and routing a turn into a
+            stopped container would hang until the timeout.
+          */
+          const sandbox = await runningSandbox(organization.id, projectId, c.var.user.id)
+          if (sandbox !== undefined && sandbox.externalId !== null) {
+            const proxy = await mintProxyToken(db, {
+              agentCredentialId: credential.billing === "byo" ? credential.credentialId : null,
+              organizationId: organization.id,
+              projectId,
+              upstreamBaseUrl: credential.billing === "byo" ? credential.baseUrl : null,
+              upstreamKind: credential.billing === "byo" ? upstreamKindFor(credential.kind) : null,
+              upstreamSecret: credential.billing === "byo" ? sealForProxy(credential.secret) : null,
+            })
+
+            const { exitCode } = await runSandboxTurn({
+              driver: daytonaDriver(daytonaConfigFromEnv()),
+              externalId: sandbox.externalId,
+              harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
+              model: credential.model,
+              onEvent: (event) => {
+                void emit(event)
+              },
+              prompt,
+              proxyBaseUrl: process.env.LLM_PROXY_URL ?? "https://llm.sproutos.me",
+              refreshUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${c.req.param("orgSlug")}/agent/proxy-token/refresh`,
+              timeoutMs: SANDBOX_TURN_TIMEOUT_MS,
+              token: proxy,
+              // Or the reaper stops the sandbox out from under a turn that is still working.
+              touch: () => crudSandbox(db).touch(sandbox.id),
+            })
+
+            await sessions.closeTurn(turn.id, {
+              resultSubtype: exitCode === 0 ? "success" : "error",
+              numTurns: 1,
+            })
+            await sessions.setStatus(sessionId, exitCode === 0 ? "idle" : "failed")
             await flush()
             return
           }

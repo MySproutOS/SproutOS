@@ -102,3 +102,24 @@ export function codexProviderFor(kind: AgentCredentialKind): CodexProvider | und
       return undefined
   }
 }
+
+/**
+ * Which provider wire format a credential kind means, for the LLM proxy.
+ *
+ * Total by construction rather than a lookup with a default: a kind added to the union without a
+ * mapping is a type error here, not a session that silently sends an Anthropic key to OpenAI and
+ * parses usage with the wrong shape — which would bill zero and look like a quiet turn.
+ *
+ * Lives beside `harnessFor` because the two answer halves of one question and were, briefly, in two
+ * files that could disagree about the same credential.
+ */
+export function upstreamKindFor(kind: AgentCredentialKind): "anthropic" | "openai" {
+  switch (kind) {
+    case "claude_subscription":
+    case "anthropic_api_key":
+      return "anthropic"
+    case "openai_api_key":
+    case "openrouter_api_key":
+      return "openai"
+  }
+}
