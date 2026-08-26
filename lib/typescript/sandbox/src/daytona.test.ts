@@ -46,14 +46,10 @@ describe("buildCreateParams", () => {
     expect(buildCreateParams(config, input).public).toBe(false)
   })
 
-  it("blocks link-local and private egress", () => {
+  it("does not restrict outbound domains", () => {
     const params = buildCreateParams(config, input)
-    const list = params.domainAllowList ?? ""
-    expect(list).not.toBe("")
+    expect(params.domainAllowList).toBeUndefined()
     expect(params.networkAllowList).toBeUndefined()
-    expect(list.split(",")).toContain("*.github.com")
-    expect(list.split(",")).toContain("*.sproutos.me")
-    expect(list.split(",")).toHaveLength(20)
   })
 
   describe("autostop backstop", () => {

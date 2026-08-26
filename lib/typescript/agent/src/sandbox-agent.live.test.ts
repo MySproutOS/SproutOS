@@ -96,6 +96,15 @@ describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
 
     const curl = await activeDriver.exec(externalId, ["sh", "-c", "command -v curl"], 30_000)
     expect({ exitCode: curl.exitCode, stderr: curl.stderr }).toMatchObject({ exitCode: 0 })
+    const arbitraryDomain = await activeDriver.exec(
+      externalId,
+      ["curl", "--fail", "--silent", "--show-error", "https://www.google.com/generate_204"],
+      30_000,
+    )
+    expect({ exitCode: arbitraryDomain.exitCode, stderr: arbitraryDomain.stderr }).toEqual({
+      exitCode: 0,
+      stderr: "",
+    })
     const metadata = await activeDriver.exec(
       externalId,
       [
