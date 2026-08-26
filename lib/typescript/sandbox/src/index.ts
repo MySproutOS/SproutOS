@@ -8,7 +8,6 @@ export {
   WORKSPACE_DIR,
   type DaytonaConfig,
 } from "./daytona"
-export { EGRESS_ALLOWED_DOMAINS, EGRESS_DOMAIN_ALLOW_LIST } from "./egress"
 export {
   SANDBOX_CLASSES,
   SandboxNotFoundError,

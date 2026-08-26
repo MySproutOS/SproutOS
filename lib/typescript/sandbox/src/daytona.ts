@@ -1,6 +1,5 @@
 import { Daytona, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytona/sdk"
 import { quoteArgv } from "./argv"
-import { EGRESS_DOMAIN_ALLOW_LIST } from "./egress"
 import {
   SandboxNotFoundError,
   SandboxUnavailableError,
@@ -127,10 +126,10 @@ export function buildCreateParams(
     */
     autoStopInterval: Math.max(1, Math.ceil(input.idleTimeoutS / 60)),
     /*
-    Egress. See `egress.ts` — this is finding 0009's network policy written as an allow list,
-    and the property it exists for is that 169.254.169.254 is not in it.
+    Do not set Daytona's domain or network allow-list fields. Sandboxes need the ordinary internet
+    to install arbitrary customer dependencies and talk to arbitrary third-party APIs; an allow
+    list would make those valid programs fail according to which vendor they happen to use.
     */
-    domainAllowList: EGRESS_DOMAIN_ALLOW_LIST,
     // Never public. A preview is reached with a signed, short-lived URL; `public` would make a
     // customer's work-in-progress readable by anyone who guesses the sandbox id.
     public: false,

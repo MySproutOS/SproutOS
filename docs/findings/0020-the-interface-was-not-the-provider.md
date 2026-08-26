@@ -11,8 +11,13 @@ process-lifecycle behavior the local driver could not reproduce.
    platform now builds one 2 CPU / 4 GiB / 10 GiB snapshot, refuses a database row that claims a
    different billable size, and sends no invalid override.
 2. Daytona accepts at most ten CIDRs. The generated public-IPv4 complement contained 73, so every
-   create returned 400. Sandboxes now use the provider-enforced twenty-domain policy and the live
-   test proves the metadata endpoint is unreachable.
+   create returned 400. A twenty-domain policy proved the provider integration but was not a valid
+   product boundary: customer code must be able to install arbitrary dependencies and call
+   arbitrary third-party APIs. Sandboxes therefore leave both Daytona allow-list fields unset.
+   Daytona's own infrastructure boundary is still checked live by probing the metadata endpoint.
+   General access also depends on the Daytona organization being Tier 3 or 4; lower-tier policy is
+   provider-wide and cannot be overridden by a create parameter. The live test reaches a domain
+   outside the former list so an account downgrade cannot silently narrow customer programs.
 3. Deleting a Daytona process session kills descendants, including a `nohup` dev server. The old
    cleanup made previews disappear when an agent turn ended. Completed agent sessions now live
    until sandbox stop/destroy, where they are explicitly removed.
