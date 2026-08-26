@@ -226,13 +226,45 @@ pub async fn serve_connection(
         configured backend below, and a suspended tenant then fails to find its database there,
         which is the outcome suspension is for.
     */
-    let backend = match &resolver {
+    /*
+        The database and role come from the resolver too, not only the address.
+
+        `as_backend_config()` carried host, port, user and password and dropped `database` and
+        `role`, so a resolved session connected to Neon and then asked for the `sprout_db_…` name
+        this proxy derives from the credential. Neon answered, correctly:
+
+            database "sprout_db_01m0ych7yte79aebatsqngqp1w" does not exist
+
+        Those two names are both right and describe different things. `sprout_db_…` is what a
+        customer is *told* their database is called — a name this platform owns, so Neon's default
+        `neondb` never leaks into a URI. The resolver returns what Neon actually called it. The
+        proxy is the thing that maps one to the other, and it was using the customer-facing name on
+        the backend side.
+
+        `SET ROLE` to the resolved role is then a no-op, because the connection is already that
+        role. That is fine here and worth being explicit about: on the shared cluster the `SET ROLE`
+        is the isolation, and on Neon the isolation is the project — one per customer database, so
+        there is no other tenant on the far side of this connection to be separated from.
+    */
+    let (backend, database, role) = match &resolver {
         Some(resolver) => match resolver.resolve(&identity.resource_id.to_string()).await? {
-            Some(resolved) => resolved.as_backend_config(),
-            None => backend,
+            Some(resolved) => (
+                resolved.as_backend_config(),
+                resolved.database.clone(),
+                resolved.role.clone(),
+            ),
+            None => (backend, database, role),
         },
-        None => backend,
+        None => (backend, database, role),
     };
+
+    // Re-checked after resolution, because these now come from the control plane rather than from a
+    // UUID this proxy derived — and `role` still reaches `SET ROLE`, which cannot be parameterized.
+    if !routing::is_safe_identifier(&database) || !routing::is_safe_identifier(&role) {
+        return Err(SessionError::Backend(
+            "the resolved database or role is not a safe identifier".to_owned(),
+        ));
+    }
 
     // Everything past here is the backend half: connect, drop privileges, splice. It is separated so
     // the authentication path above can be read on its own.

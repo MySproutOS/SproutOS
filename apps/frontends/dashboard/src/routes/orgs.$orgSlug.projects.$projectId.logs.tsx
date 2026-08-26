@@ -26,11 +26,18 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   DEFAULT_FILTERS,
+  DEFAULT_OTLP_FILTERS,
   LOG_LEVELS,
   formatBytes,
   invocationSummary,
+  type LogSource,
   logTime,
+  type OtlpFilters,
+  type OtlpLine,
+  otlpTone,
+  SEVERITY_LEVELS,
   severityTone,
+  useOtlpLogs,
   useLogs,
   useObservabilityStream,
   useRotateIngestKey,
@@ -58,6 +65,7 @@ const WINDOWS = [
   the mapping rather than relying on Base UI matching an `items` array against the current value.
 */
 const LEVEL_LABELS = new Map(LOG_LEVELS.map((level) => [level.value, level.label]))
+const SEVERITY_LABELS = new Map(SEVERITY_LEVELS.map((l) => [String(l.value), l.label]))
 const WINDOW_LABELS = new Map(WINDOWS.map((window) => [String(window.value), window.label]))
 
 function labelFor(labels: Map<string, string>, value: unknown): string {
@@ -78,12 +86,32 @@ function ProjectLogs() {
   // The box is separate from the applied filter so typing does not fire a query per keystroke.
   const [searchDraft, setSearchDraft] = useState("")
 
+  /*
+    Which table is being read.
+
+    Runtime is the default because it is the one that fills by itself: a project's own output goes
+    to it whether or not anybody configured anything. OpenTelemetry is the opt-in source, and it is
+    empty until somebody points an exporter at it — which is why the ingest key lives on that tab
+    rather than in the page header, where it invited people to configure something they did not
+    need in order to see logs they already had.
+  */
+  const [source, setSource] = useState<LogSource>("runtime")
+  const [otlpFilters, setOtlpFilters] = useState<OtlpFilters>(DEFAULT_OTLP_FILTERS)
+
   const stream = useObservabilityStream(orgSlug, projectId)
   const logs = useLogs(orgSlug, projectId, filters)
+  const otlp = useOtlpLogs(orgSlug, projectId, otlpFilters)
 
   const lines: LogLine[] = (logs.data?.pages ?? []).flatMap(
     (page) => (page?.lines ?? []) as LogLine[],
   )
+  const otlpLines: OtlpLine[] = (otlp.data?.pages ?? []).flatMap(
+    (page) => (page?.lines ?? []) as OtlpLine[],
+  )
+
+  // Whichever source is showing owns the loading, error and paging state below.
+  const active = source === "runtime" ? logs : otlp
+  const activeCount = source === "runtime" ? lines.length : otlpLines.length
   const configured = (stream.data?.streamId ?? null) !== null
 
   return (
@@ -100,15 +128,49 @@ function ProjectLogs() {
             <ArrowLeftIcon className="size-4" />
             Project
           </Button>
-          <IngestKeyDialog orgSlug={orgSlug} projectId={projectId} configured={configured} />
+          {source === "otlp" ? (
+            <IngestKeyDialog orgSlug={orgSlug} projectId={projectId} configured={configured} />
+          ) : null}
         </div>
       </PageHeader>
       <PageBody>
+        {/*
+          Two sources, named for where the logs come from rather than for the technology.
+
+          "Runtime" is what the project printed; "OpenTelemetry" is what its exporter sent. Somebody
+          who has never heard of OTel needs to recognise the first one immediately, and somebody who
+          has will find the second exactly where they expect.
+        */}
+        <div className="mb-3 flex items-center gap-1 rounded-md border border-border p-1 w-fit">
+          <Button
+            size="sm"
+            variant={source === "runtime" ? "default" : "ghost"}
+            onClick={() => {
+              setSource("runtime")
+            }}
+          >
+            Runtime
+          </Button>
+          <Button
+            size="sm"
+            variant={source === "otlp" ? "default" : "ghost"}
+            onClick={() => {
+              setSource("otlp")
+            }}
+          >
+            OpenTelemetry
+          </Button>
+        </div>
+
         <form
           className="flex flex-wrap items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault()
-            setFilters((current) => ({ ...current, search: searchDraft.trim() }))
+            if (source === "runtime") {
+              setFilters((current) => ({ ...current, search: searchDraft.trim() }))
+            } else {
+              setOtlpFilters((current) => ({ ...current, search: searchDraft.trim() }))
+            }
           }}
         >
           <div className="min-w-[16rem] flex-1">
@@ -129,28 +191,63 @@ function ProjectLogs() {
             </div>
           </div>
 
-          <Select
-            value={filters.level}
-            onValueChange={(value) => {
-              setFilters((current) => ({ ...current, level: value === null ? "" : String(value) }))
-            }}
-          >
-            <SelectTrigger className="w-[13rem]">
-              <SelectValue>{(value) => labelFor(LEVEL_LABELS, value)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {LOG_LEVELS.map((level) => (
-                <SelectItem key={level.value} value={level.value}>
-                  {level.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {source === "runtime" ? (
+            <Select
+              value={filters.level}
+              onValueChange={(value) => {
+                setFilters((current) => ({
+                  ...current,
+                  level: value === null ? "" : String(value),
+                }))
+              }}
+            >
+              <SelectTrigger className="w-[13rem]">
+                <SelectValue>{(value) => labelFor(LEVEL_LABELS, value)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {LOG_LEVELS.map((level) => (
+                  <SelectItem key={level.value} value={level.value}>
+                    {level.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            /*
+              A severity *floor* for OTLP, where the runtime source has an exact level.
+
+              The difference is not cosmetic: OTel severity numbers are an ordering the spec
+              defines, so "warning and above" is exact. Runtime levels are parsed out of whatever a
+              program printed, so the same control there would assert an ordering we inferred.
+            */
+            <Select
+              value={String(otlpFilters.minSeverity)}
+              onValueChange={(value) => {
+                setOtlpFilters((current) => ({ ...current, minSeverity: Number(value ?? 0) }))
+              }}
+            >
+              <SelectTrigger className="w-[13rem]">
+                <SelectValue>{(value) => labelFor(SEVERITY_LABELS, value)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {SEVERITY_LEVELS.map((level) => (
+                  <SelectItem key={level.value} value={String(level.value)}>
+                    {level.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
           <Select
-            value={String(filters.windowMinutes)}
+            value={String(source === "runtime" ? filters.windowMinutes : otlpFilters.windowMinutes)}
             onValueChange={(value) => {
-              setFilters((current) => ({ ...current, windowMinutes: Number(value ?? 60) }))
+              const minutes = Number(value ?? 60)
+              if (source === "runtime") {
+                setFilters((current) => ({ ...current, windowMinutes: minutes }))
+              } else {
+                setOtlpFilters((current) => ({ ...current, windowMinutes: minutes }))
+              }
             }}
           >
             <SelectTrigger className="w-[11rem]">
@@ -187,26 +284,41 @@ function ProjectLogs() {
         ) : null}
 
         <div className="mt-4">
-          {logs.isPending ? <ListSkeleton rows={8} /> : null}
-          {logs.isError ? <ListError onRetry={() => void logs.refetch()} /> : null}
+          {active.isPending ? <ListSkeleton rows={8} /> : null}
+          {active.isError ? <ListError onRetry={() => void active.refetch()} /> : null}
 
-          {!logs.isPending && !logs.isError && lines.length === 0 ? (
+          {/*
+            The empty state says something true of the source being shown.
+
+            It used to key on `configured` — whether an OTLP ingest key had been issued — and tell
+            everybody to "point an OpenTelemetry exporter at this project". That was right when this
+            page only ever read the OTel table. Against runtime logs it is advice for a different
+            feature: nothing needs pointing anywhere, the project's own output arrives by itself,
+            and what is actually missing is a deployment that ran.
+          */}
+          {!active.isPending && !active.isError && activeCount === 0 ? (
             <EmptyState className="my-6">
               <EmptyStateIcon>
                 <ScrollTextIcon className="size-[26px] text-primary" />
               </EmptyStateIcon>
               <EmptyStateTitle>
-                {configured ? "No logs in this window" : "Nothing sent yet"}
+                {source === "runtime"
+                  ? "No logs in this window"
+                  : configured
+                    ? "No records in this window"
+                    : "Nothing sent yet"}
               </EmptyStateTitle>
               <EmptyStateDescription>
-                {configured
-                  ? "Widen the time range, or clear the filters."
-                  : "Point an OpenTelemetry exporter at this project to start collecting logs."}
+                {source === "runtime"
+                  ? "Widen the time range, or clear the filters. A deployed project logs whatever it prints — nothing to set up."
+                  : configured
+                    ? "Widen the time range, or clear the filters."
+                    : "Get an ingest key and point an OpenTelemetry exporter at this project."}
               </EmptyStateDescription>
             </EmptyState>
           ) : null}
 
-          {lines.length > 0 ? (
+          {source === "runtime" && lines.length > 0 ? (
             <div className="rule-soft overflow-hidden rounded-md border">
               {/*
                 A list of monospaced rows rather than a table.
@@ -255,7 +367,37 @@ function ProjectLogs() {
             </div>
           ) : null}
 
-          {logs.hasNextPage ? (
+          {source === "otlp" && otlpLines.length > 0 ? (
+            <div className="rule-soft overflow-hidden rounded-md border">
+              <ul className="divide-y divide-border">
+                {otlpLines.map((line) => (
+                  <li
+                    key={`${line.cursor}-${line.body.slice(0, 24)}`}
+                    className="flex gap-3 px-3 py-1.5 font-mono text-xs"
+                  >
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {logTime(line.timestamp)}
+                    </span>
+                    <span
+                      className={`w-14 shrink-0 uppercase ${TONE_CLASS[otlpTone(line.severityNumber)]}`}
+                    >
+                      {line.severityText === "" ? "—" : line.severityText}
+                    </span>
+                    {/* The emitting service, which is the column OTel has and runtime logs do not:
+                        one project can send from several. */}
+                    {line.serviceName === "" ? null : (
+                      <span className="shrink-0 text-muted-foreground">{line.serviceName}</span>
+                    )}
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                      {line.body}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {active.hasNextPage ? (
             <Button
               variant="outline"
               size="sm"

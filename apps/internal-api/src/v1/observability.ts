@@ -4,6 +4,7 @@ import {
   observabilityConfigured,
   projectServices,
   queryRuntimeLogs,
+  searchLogs,
   RUNTIME_LOG_RETENTION_DAYS,
   runtimeUsage,
   type RetentionDays,
@@ -23,6 +24,8 @@ import {
   observabilitySchemaKeyResponse,
   observabilitySchemaLogQuery,
   observabilitySchemaLogsResponse,
+  observabilitySchemaOtlpQuery,
+  observabilitySchemaOtlpResponse,
   observabilitySchemaProjectParam,
   observabilitySchemaStreamResponse,
 } from "./observability.serializer"
@@ -161,6 +164,68 @@ observability
           lines.length < pageSize ? null : (lines[lines.length - 1]?.cursor ?? null)
 
         return c.json({ lines, nextBefore })
+      } catch (error) {
+        return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
+      }
+    },
+  )
+  /*
+    The second source, for projects that send OpenTelemetry.
+
+    A separate route rather than a `source` parameter on the one above, because the two return
+    genuinely different rows — `trace_id` and attribute maps here, Lambda's billing fields there —
+    and a union response would give the generated client a type every caller has to narrow before
+    it can read anything. Two routes, two honest shapes.
+  */
+  .get(
+    "/:orgSlug/projects/:projectId/logs/otlp",
+    describeRoute({
+      description: "Search the logs a project's own OpenTelemetry exporter sent",
+      responses: {
+        200: {
+          description: "A page of OTLP records, newest first",
+          content: { "application/json": { schema: resolver(observabilitySchemaOtlpResponse) } },
+        },
+        403: { description: "Caller lacks observability:logs:read", ...errorResponse },
+        503: { description: "Log storage is not configured", ...errorResponse },
+      },
+    }),
+    requirePermission("observability:logs:read", paramResource("project", "project", "projectId")),
+    validator("param", observabilitySchemaProjectParam),
+    validator("query", observabilitySchemaOtlpQuery),
+    async (c) => {
+      if (!observabilityConfigured()) {
+        return throwConflict(c, "Log storage is not configured on this deployment")
+      }
+      const { projectId } = c.req.valid("param")
+      const query = c.req.valid("query")
+
+      const project = await ownedProject(c.var.organization.id, projectId)
+      if (project === undefined) return throwNotFound(c, "Project not found")
+
+      const until = query.until ?? new Date().toISOString()
+      const since = query.since ?? new Date(Date.now() - DEFAULT_WINDOW_MS).toISOString()
+      const minSeverity = Number(query.minSeverity)
+      const limit = Number(query.limit)
+
+      try {
+        const result = await searchLogs({
+          projectId,
+          since,
+          until,
+          limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : 100,
+          ...(query.search === undefined || query.search === "" ? {} : { search: query.search }),
+          ...(Number.isFinite(minSeverity) && minSeverity > 0 ? { minSeverity } : {}),
+          ...(query.service === undefined || query.service === ""
+            ? {}
+            : { service: query.service }),
+          ...(query.traceId === undefined || query.traceId === ""
+            ? {}
+            : { traceId: query.traceId }),
+          ...(query.before === undefined ? {} : { before: query.before }),
+        })
+
+        return c.json(result)
       } catch (error) {
         return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
       }

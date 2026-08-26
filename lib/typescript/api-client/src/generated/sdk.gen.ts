@@ -200,6 +200,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData,
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityErrors,
@@ -2316,6 +2319,22 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdLogs = <ThrowOnError extends b
     GetV1OrgsByOrgSlugProjectsByProjectIdLogsErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/logs", ...options })
+
+/**
+ * Search the logs a project's own OpenTelemetry exporter sent
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/logs/otlp", ...options })
 
 /**
  * A project's ingest settings and usage

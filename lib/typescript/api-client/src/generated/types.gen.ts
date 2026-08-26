@@ -4336,6 +4336,65 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses = {
 export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse =
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: {
+    since?: string
+    until?: string
+    search?: string
+    minSeverity?: string
+    service?: string
+    traceId?: string
+    limit?: string
+    before?: string
+  }
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/logs/otlp"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors = {
+  /**
+   * Caller lacks observability:logs:read
+   */
+  403: ErrorResponseT
+  /**
+   * Log storage is not configured
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses = {
+  /**
+   * A page of OTLP records, newest first
+   */
+  200: {
+    lines: Array<{
+      timestamp: string
+      cursor: string
+      severityNumber: number
+      severityText: string
+      body: string
+      serviceName: string
+      scopeName: string
+      traceId: string
+      spanId: string
+      attributes: {
+        [key: string]: unknown | string
+      }
+    }>
+    nextBefore: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData = {
   body?: never
   path: {

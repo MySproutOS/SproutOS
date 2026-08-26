@@ -87,6 +87,25 @@ mod tests {
         assert!(database_for(&identity).len() < 63);
     }
 
+    /*
+      The names the *resolver* returns go through the same gate, and they are not ours.
+
+      A database and role derived from a UUID here cannot contain anything that needs escaping. What
+      comes back from the control plane is whatever Neon called it, and it reaches `SET ROLE`, which
+      cannot be parameterized — so it is checked rather than trusted, and the check is deliberately
+      narrower than Postgres's own rules. Neon's defaults pass; anything with a hyphen or a capital
+      is refused, which fails closed on a legitimate name rather than open on a crafted one.
+    */
+    #[test]
+    fn neons_own_names_pass_and_anything_needing_quoting_does_not() {
+        assert!(is_safe_identifier("neondb"));
+        assert!(is_safe_identifier("neondb_owner"));
+
+        assert!(!is_safe_identifier("neon-db"));
+        assert!(!is_safe_identifier("NeonDb"));
+        assert!(!is_safe_identifier("neondb\"; drop database x --"));
+    }
+
     #[test]
     fn anything_that_could_escape_a_statement_is_refused() {
         for candidate in [

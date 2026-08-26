@@ -58,6 +58,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
   getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId,
   getV1OrgsByOrgSlugProjectsByProjectIdLogs,
+  getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp,
   getV1OrgsByOrgSlugProjectsByProjectIdObservability,
   getV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   getV1OrgsByOrgSlugProjectsByProjectIdSandboxFile,
@@ -277,6 +278,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityData,
   GetV1OrgsByOrgSlugProjectsByProjectIdObservabilityError,
@@ -3554,6 +3558,86 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdLogsInfiniteOptions = (
         return data
       },
       queryKey: getV1OrgsByOrgSlugProjectsByProjectIdLogsInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp", options)
+
+/**
+ * Search the logs a project's own OpenTelemetry exporter sent
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpInfiniteQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>,
+): QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>> =>
+  createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp", options, true)
+
+/**
+ * Search the logs a project's own OpenTelemetry exporter sent
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpInfiniteOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>,
+) => {
+  const opts = infiniteQueryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpError,
+    InfiniteData<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpResponse>,
+    QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>>,
+    | string
+    | Pick<
+        QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>>[0],
+        "body" | "headers" | "path" | "query"
+      >
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  before: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlp({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getV1OrgsByOrgSlugProjectsByProjectIdLogsOtlpInfiniteQueryKey(options),
     },
   )
   return opts as Omit<typeof opts, "initialData">

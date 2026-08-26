@@ -50,6 +50,45 @@ export const observabilitySchemaLogLine = Type.Object({
   coldStart: Nullable(Type.Boolean()),
 })
 
+/*
+  The OpenTelemetry line, which is a different table and a different shape.
+
+  Kept beside the runtime one rather than unified into it. `log_record` carries `trace_id`,
+  `span_id` and two attribute maps that a runtime line has no equivalent for, and `runtime_log`
+  carries Lambda's billing fields that an OTel record has nowhere to put. Merging them would mean
+  every column nullable and a reader that cannot tell which half is meaningful.
+*/
+export const observabilitySchemaOtlpLine = Type.Object({
+  timestamp: Type.String(),
+  cursor: Type.String(),
+  severityNumber: Type.Integer(),
+  severityText: Type.String(),
+  body: Type.String(),
+  serviceName: Type.String(),
+  scopeName: Type.String(),
+  traceId: Type.String(),
+  spanId: Type.String(),
+  attributes: Type.Record(Type.String(), Type.String()),
+})
+
+export const observabilitySchemaOtlpResponse = Type.Object({
+  lines: Type.Array(observabilitySchemaOtlpLine),
+  nextBefore: Nullable(Type.String()),
+})
+
+/** Query parameters for the OTLP source, which filters on severity rather than a parsed level. */
+export const observabilitySchemaOtlpQuery = Type.Object({
+  since: Type.Optional(Type.String()),
+  until: Type.Optional(Type.String()),
+  search: Type.Optional(Type.String({ maxLength: 200 })),
+  /** OTel severity number: 9 INFO, 13 WARN, 17 ERROR. A floor, unlike the runtime level. */
+  minSeverity: Type.Optional(Type.String()),
+  service: Type.Optional(Type.String({ maxLength: 200 })),
+  traceId: Type.Optional(Type.String({ maxLength: 64 })),
+  limit: Type.Optional(Type.String()),
+  before: Type.Optional(Type.String({ maxLength: 32 })),
+})
+
 export const observabilitySchemaLogsResponse = Type.Object({
   lines: Type.Array(observabilitySchemaLogLine),
   nextBefore: Nullable(Type.String()),
