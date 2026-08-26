@@ -3,6 +3,7 @@ import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
   ServiceNotConfiguredError,
+  SecretNotRecoverableError,
   ServiceNotProvisionedError,
   neonPostgresDriverFromEnv,
   objectStorageDriverFromEnv,
@@ -463,6 +464,21 @@ const app = new Hono()
       } catch (error) {
         if (error instanceof ServiceNotProvisionedError) {
           return throwBadRequest(c, "That service has not finished provisioning")
+        }
+        /*
+          Designed, explainable, and it was reaching the customer as a 500.
+
+          The driver throws this deliberately: what a customer connects with is hashed, by us and
+          by anyone who steals the table, so there is nothing here to reveal. The route did not
+          catch it, so asking for a URI that cannot exist produced `Internal Server Error` — which
+          says the platform is broken rather than that the answer is "rotate".
+        */
+        if (error instanceof SecretNotRecoverableError) {
+          return throwBadRequest(
+            c,
+            "This service's credential is stored as a one-way hash and cannot be shown again. " +
+              "Rotate it to issue a new one — that returns a URI, and invalidates the old.",
+          )
         }
         throw error
       }
