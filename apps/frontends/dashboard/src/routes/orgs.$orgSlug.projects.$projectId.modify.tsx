@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router"
 import { ArrowLeftIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@ui/base/ui/button"
@@ -28,7 +28,12 @@ import { Switch } from "@ui/base/ui/switch"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
-import { useProject, useRegions, useUpdateProject } from "@frontends/dashboard/data/projects"
+import {
+  useProject,
+  useRegions,
+  useUpdateProject,
+  useDeleteProject,
+} from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/modify")({
   component: ModifyProject,
@@ -115,6 +120,9 @@ function ModifyForm({
   */
   const regions = useRegions()
   const update = useUpdateProject(orgSlug)
+  const remove = useDeleteProject(orgSlug)
+  const navigate = useNavigate()
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const available = regions.data?.data ?? []
   const regionItems = available.map((row) => ({ label: row.code, value: row.code }))
@@ -252,9 +260,42 @@ function ModifyForm({
                   This removes the deployment and its data. It cannot be undone.
                 </DialogDescription>
               </DialogHeader>
+              {deleteError === null ? null : (
+                <p className="mt-3 text-xs text-destructive">{deleteError}</p>
+              )}
               <DialogFooter>
                 <DialogClose render={<Button variant="outline">Cancel</Button>} />
-                <DialogClose render={<Button variant="destructive">Delete</Button>} />
+                {/*
+                  A button that deletes, rather than a `DialogClose` that does not.
+
+                  This was `<DialogClose render={<Button variant="destructive">Delete</Button>} />`,
+                  which closed the dialog and sent nothing — indistinguishable from a working delete
+                  right up until the project was still in the list.
+                */}
+                <Button
+                  variant="destructive"
+                  disabled={remove.isPending}
+                  onClick={() => {
+                    setDeleteError(null)
+                    remove.mutate(
+                      { path: { orgSlug, projectId } },
+                      {
+                        onSuccess: () => {
+                          void navigate({ to: "/orgs/$orgSlug/projects", params: { orgSlug } })
+                        },
+                        onError: (cause) => {
+                          setDeleteError(
+                            cause instanceof Error
+                              ? cause.message
+                              : "That did not work. Try again.",
+                          )
+                        },
+                      },
+                    )
+                  }}
+                >
+                  {remove.isPending ? "Deleting…" : "Delete"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

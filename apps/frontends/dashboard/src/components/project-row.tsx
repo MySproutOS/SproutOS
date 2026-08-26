@@ -1,7 +1,17 @@
+import { useState } from "react"
 import { formatMicroUsd } from "@lib/billing/money"
 import { Link } from "@tanstack/react-router"
 import { ExternalLinkIcon, EllipsisVerticalIcon, RefreshCcwIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@ui/base/ui/dialog"
 import { Button } from "@ui/base/ui/button"
 import { Money } from "@ui/base/ui/money"
 import {
@@ -15,6 +25,7 @@ import {
   PROJECT_STATUS_LABELS,
   type Project,
   type ProjectStatus,
+  useDeleteProject,
 } from "@frontends/dashboard/data/projects"
 
 const STATUS_VARIANTS: Record<ProjectStatus, "success" | "warning" | "destructive" | "outline"> = {
@@ -25,6 +36,10 @@ const STATUS_VARIANTS: Record<ProjectStatus, "success" | "warning" | "destructiv
 }
 
 export function ProjectRow({ orgSlug, project }: { orgSlug: string; project: Project }) {
+  const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const remove = useDeleteProject(orgSlug)
+
   return (
     <div className="flex items-center gap-3.5 rounded-lg border border-border bg-card px-4 py-3.5 transition-colors hover:border-soil-600">
       <span
@@ -136,9 +151,62 @@ export function ProjectRow({ orgSlug, project }: { orgSlug: string; project: Pro
             Modify
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive">Delete project</DropdownMenuItem>
+          {/*
+            A handler, not a label.
+
+            This item had none at all — it rendered destructive-red, opened nothing and sent
+            nothing. Both of the dashboard's "Delete project" controls were like this, which is the
+            worst possible shape for a destructive action: it looks like it worked.
+          */}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => {
+              setConfirming(true)
+            }}
+          >
+            Delete project
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {project.name}?</DialogTitle>
+            <DialogDescription>
+              {project.isGroup
+                ? "This group holds other projects. Deleting it does not delete them — they are left without a group."
+                : "This tears down its databases and stops every workflow it owns. Billing records are kept."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {error === null ? null : <p className="mt-3 text-xs text-destructive">{error}</p>}
+
+          <DialogFooter className="mt-6">
+            <DialogClose render={<Button variant="outline">Cancel</Button>} />
+            <Button
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={() => {
+                setError(null)
+                remove.mutate(
+                  { path: { orgSlug, projectId: project.id } },
+                  {
+                    onSuccess: () => {
+                      setConfirming(false)
+                    },
+                    onError: (cause) => {
+                      setError(cause instanceof Error ? cause.message : "That did not work.")
+                    },
+                  },
+                )
+              }}
+            >
+              {remove.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

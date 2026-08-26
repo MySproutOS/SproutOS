@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  deleteV1OrgsByOrgSlugProjectsByProjectIdMutation,
   getV1OrgsByOrgSlugProjectsByProjectIdOptions,
   getV1OrgsByOrgSlugProjectsByProjectIdQueryKey,
   getV1OrgsByOrgSlugProjectsOptions,
@@ -222,4 +223,30 @@ export function useUpdateProject(orgSlug: string) {
 /** The regions a project's services may be placed in. Served from the database, not hardcoded. */
 export function useRegions() {
   return useQuery(getV1RegionsOptions())
+}
+
+/**
+ * Tear a project down.
+ *
+ * There were two "Delete project" controls in the dashboard — the row's dropdown item and the
+ * Modify screen's danger-zone dialog — and **neither sent a request**. The dialog's confirm button
+ * was a `DialogClose`, so it closed and did nothing; the dropdown item had no handler at all. Both
+ * looked exactly like a working delete: the dialog appeared, the confirmation was destructive-red,
+ * and the project was still there afterwards.
+ *
+ * The API soft-deletes and enqueues a teardown (ADR 0017) — `usage_event` references these rows, so
+ * a hard delete would destroy the billing history that justifies charges already made.
+ */
+export function useDeleteProject(orgSlug: string) {
+  const client = useQueryClient()
+  const mutation = deleteV1OrgsByOrgSlugProjectsByProjectIdMutation()
+
+  return useMutation({
+    ...mutation,
+    onSuccess: async () => {
+      await client.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugProjectsQueryKey({ path: { orgSlug } }),
+      })
+    },
+  })
 }

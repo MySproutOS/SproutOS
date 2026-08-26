@@ -58,6 +58,18 @@ export function fetchProject(db: Kysely<DB>) {
         "project.repositoryId as repositoryId",
         "project.storeListingId as storeListingId",
         "project.agentCredentialId as agentCredentialId",
+        /*
+          The group fields, which the list needs as much as the detail does.
+
+          This selection is written out rather than derived from `PROJECT_FIELDS`, so adding a column
+          there does not add it here — and the symptom is silent: the list renders, the field is
+          simply `undefined`, and every group came back looking like an ordinary project.
+        */
+        "project.isGroup as isGroup",
+        "project.parentProjectId as parentProjectId",
+        "project.liveDeploymentId as liveDeploymentId",
+        "project.dockerfilePath as dockerfilePath",
+        "project.scaleMode as scaleMode",
         "project.createdAt as createdAt",
         "project.updatedAt as updatedAt",
         "repository.ownerLogin as repositoryOwnerLogin",
