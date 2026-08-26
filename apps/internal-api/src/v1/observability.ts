@@ -15,7 +15,8 @@ import { validator } from "../utils/validator"
 import { authMiddleware } from "../middleware"
 import { paramResource, requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwConflict, throwNotFound } from "../utils/http-exception"
+import { throwConflict, throwError, throwNotFound } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
 import {
   observabilitySchemaKeyRequest,
   observabilitySchemaKeyResponse,
@@ -44,6 +45,28 @@ function ingestEndpoint(): string {
  * can see it. Nothing here takes a project id from a query string or a body — that would be an
  * identifier the RBAC check did not look at.
  */
+/**
+ * Turns a failure to reach the log store into something that says so.
+ *
+ * Both observability routes answered a bare `500 Internal Server Error` when ClickHouse could not
+ * be queried, which is the least useful thing they could have said: the store is on another host,
+ * behind an IP allowlist, with its own credentials and its own database name, and any of those
+ * being wrong produces exactly this response. Worse, the one tool for finding out *which* is the
+ * log viewer — so the failure hid the only instrument for diagnosing it.
+ *
+ * 502, because the request was fine and something it depends on was not. The cause is included:
+ * every caller here has already passed `observability:logs:read` on their own project, so this
+ * reveals nothing they should not see, and without it the next person is exactly where this one
+ * was. `CLICKHOUSE_URL` is a hostname and carries no credential; the password is a separate
+ * variable and never appears in a client error.
+ */
+function logStoreFailure(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  console.error(`[observability] the log store did not answer: ${detail}`)
+
+  return `The log store did not answer: ${detail.slice(0, 300)}`
+}
+
 const observability: Hono = new Hono()
 observability.use("*", authMiddleware)
 
@@ -82,19 +105,23 @@ observability
       const minSeverity = Number(query.minSeverity)
       const limit = Number(query.limit)
 
-      const result = await searchLogs({
-        projectId,
-        since,
-        until,
-        limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : 100,
-        ...(query.search === undefined ? {} : { search: query.search }),
-        ...(Number.isFinite(minSeverity) && minSeverity > 0 ? { minSeverity } : {}),
-        ...(query.service === undefined ? {} : { service: query.service }),
-        ...(query.traceId === undefined ? {} : { traceId: query.traceId }),
-        ...(query.before === undefined ? {} : { before: query.before }),
-      })
+      try {
+        const result = await searchLogs({
+          projectId,
+          since,
+          until,
+          limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : 100,
+          ...(query.search === undefined ? {} : { search: query.search }),
+          ...(Number.isFinite(minSeverity) && minSeverity > 0 ? { minSeverity } : {}),
+          ...(query.service === undefined ? {} : { service: query.service }),
+          ...(query.traceId === undefined ? {} : { traceId: query.traceId }),
+          ...(query.before === undefined ? {} : { before: query.before }),
+        })
 
-      return c.json(result)
+        return c.json(result)
+      } catch (error) {
+        return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
+      }
     },
   )
   .get(
@@ -135,9 +162,19 @@ observability
         is absent would make the one screen that explains how to send logs the screen you cannot
         open until logs are already working.
       */
-      const [usage, services] = observabilityConfigured()
-        ? await Promise.all([projectUsage(projectId, since), projectServices(projectId, since)])
-        : [{ records: 0, bytes: 0 }, []]
+      let usage: Awaited<ReturnType<typeof projectUsage>> = { records: 0, bytes: 0 }
+      let services: Awaited<ReturnType<typeof projectServices>> = []
+
+      if (observabilityConfigured()) {
+        try {
+          ;[usage, services] = await Promise.all([
+            projectUsage(projectId, since),
+            projectServices(projectId, since),
+          ])
+        } catch (error) {
+          return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
+        }
+      }
 
       return c.json({
         streamId: stream?.id ?? null,
