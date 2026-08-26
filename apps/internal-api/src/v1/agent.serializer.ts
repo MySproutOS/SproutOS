@@ -69,3 +69,22 @@ export const agentSchemaConfigUpdateRequest = Type.Object({
   maxBudgetMicroUsd: Type.Optional(Nullable(MicroUsdString)),
   permissionMode: Type.Optional(Type.Union(PERMISSION_MODES.map((mode) => Type.Literal(mode)))),
 })
+
+/** What a sandbox agent is given in place of a model provider's credential. */
+export const agentSchemaProxyTokenRequest = Type.Object({
+  /** The project the sandbox is working on, so usage is attributed to it. */
+  projectId: Type.Optional(Nullable(UUID7String)),
+})
+
+export const agentSchemaProxyRefreshRequest = Type.Object({
+  refreshToken: Type.String({ minLength: 1 }),
+})
+
+export const agentSchemaProxyTokenResponse = Type.Object({
+  id: UUID7String,
+  /** Returned once. Only a hash is stored, so this cannot be shown again. */
+  accessToken: Type.String(),
+  refreshToken: Type.String(),
+  accessExpiresAt: Type.String({ format: "date-time" }),
+  refreshExpiresAt: Type.String({ format: "date-time" }),
+})

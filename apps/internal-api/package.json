@@ -45,6 +45,7 @@
     "@lib/oauth": "workspace:*",
     "@lib/oauth-provider": "workspace:*",
     "@lib/observability": "workspace:*",
+    "@lib/proxy-secret": "workspace:*",
     "@lib/queue": "workspace:*",
     "@lib/sandbox": "workspace:*",
     "@lib/services": "workspace:*",

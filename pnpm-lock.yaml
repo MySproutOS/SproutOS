@@ -444,6 +444,9 @@ importers:
       '@lib/observability':
         specifier: workspace:*
         version: link:../../lib/typescript/observability
+      '@lib/proxy-secret':
+        specifier: workspace:*
+        version: link:../../lib/typescript/proxy-secret
       '@lib/queue':
         specifier: workspace:*
         version: link:../../lib/typescript/queue

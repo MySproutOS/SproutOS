@@ -10,6 +10,10 @@ export type AgentProxyTokenInsert = {
   refreshTokenHash: string
   accessExpiresAt: Date
   refreshExpiresAt: Date
+  upstreamKind: string | null
+  upstreamBaseUrl: string | null
+  /** Sealed for the proxy — see `@lib/proxy-secret`. Never the plaintext. */
+  upstreamSecret: string | null
 }
 
 export function crudAgentProxyToken(db: Kysely<DB>) {

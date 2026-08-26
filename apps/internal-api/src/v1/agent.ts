@@ -1,7 +1,15 @@
 import { crudAgentConfig, crudAgentCredential, crudAuditLog, fetchAgentConfig } from "@lib/dao"
 import { srnFor } from "@lib/srn"
 import { seal } from "@lib/envelope"
-import { credentialContext, resolveAgentCredential } from "@lib/agent"
+import {
+  credentialContext,
+  type MintedProxyToken,
+  mintProxyToken,
+  refreshProxyToken,
+  RefreshRejectedError,
+  resolveAgentCredential,
+} from "@lib/agent"
+import { sealForProxy } from "@lib/proxy-secret"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
@@ -15,6 +23,9 @@ import { ErrorCode } from "../utils/errors.enum"
 import { throwBadRequest, throwNotFound } from "../utils/http-exception"
 import { auditContext } from "../utils/request-context"
 import {
+  agentSchemaProxyRefreshRequest,
+  agentSchemaProxyTokenRequest,
+  agentSchemaProxyTokenResponse,
   agentSchemaConfig,
   agentSchemaConfigUpdateRequest,
   agentSchemaCredentialCreateRequest,
@@ -350,5 +361,149 @@ const app = new Hono()
       })
     },
   )
+
+/**
+ * Mint the credential a sandbox agent runs with.
+ *
+ * The agent gets one of these and never a model provider's key. `CreateSandboxInput.env` has said
+ * so since it was written; this is what finally makes it possible, because until now there was
+ * nothing else to give it.
+ *
+ * The upstream credential is resolved and sealed **here**, once, so the router can open exactly
+ * this session and nothing else. Sealing it at mint time also means a customer who rotates their
+ * key keeps working until the token expires, rather than having a turn change providers halfway
+ * through in a way nobody could explain.
+ */
+const proxyTokens = new Hono()
+  .use(authMiddleware)
+  .post(
+    "/:orgSlug/agent/proxy-token",
+    describeRoute({
+      description: "Mint an access/refresh pair for a sandbox agent to reach the LLM proxy",
+      responses: {
+        201: {
+          description: "The pair. Both values are returned once and are not recoverable",
+          content: { "application/json": { schema: resolver(agentSchemaProxyTokenResponse) } },
+        },
+        409: {
+          description: "This organization has no usable model credential",
+          ...ErrorSchemaResponse,
+        },
+      },
+    }),
+    requirePermission("credential:read"),
+    validator("json", agentSchemaProxyTokenRequest),
+    async (c) => {
+      const organization = c.var.organization
+      const body = c.req.valid("json")
+
+      const resolved = await resolveAgentCredential(db, organization.id)
+      if (resolved.billing === "none") {
+        return throwBadRequest(
+          c,
+          "This organization has no model credential configured, and no credit to fall back on. " +
+            "Add one in Settings before starting an agent.",
+        )
+      }
+
+      /*
+        A byo credential is sealed for the proxy; a platform-billed run carries nothing.
+
+        The platform's own key lives in the router's environment. Copying it into every token row
+        would multiply the places a rotation has to reach by the number of live sandboxes, for no
+        gain — it is one credential for the whole platform either way.
+      */
+      const upstream =
+        resolved.billing === "byo"
+          ? {
+              upstreamBaseUrl: resolved.baseUrl,
+              upstreamKind: upstreamKindFor(resolved.kind),
+              upstreamSecret: sealForProxy(resolved.secret),
+            }
+          : { upstreamBaseUrl: null, upstreamKind: null, upstreamSecret: null }
+
+      const minted = await mintProxyToken(db, {
+        agentCredentialId: resolved.billing === "byo" ? resolved.credentialId : null,
+        organizationId: organization.id,
+        projectId: body.projectId ?? null,
+        ...upstream,
+      })
+
+      /*
+        Audited, and the audit names no token.
+
+        `audit_log` is append-only, so a token written into it would be a live credential that
+        literally cannot be deleted. The same rule the env-var route already follows.
+      */
+      await crudAuditLog(db).record({
+        action: "credential:read",
+        actorUserId: c.var.user.id,
+        after: { billing: resolved.billing, projectId: body.projectId ?? null, proxyToken: true },
+        organizationId: organization.id,
+        resourceSrn: srnFor("agent", organization.id, "proxy-token", minted.id),
+        ...auditContext(c),
+      })
+
+      return c.json(present(minted), 201)
+    },
+  )
+  .post(
+    "/:orgSlug/agent/proxy-token/refresh",
+    describeRoute({
+      description: "Exchange a refresh token for a new pair",
+      responses: {
+        200: {
+          description: "A new pair. The old refresh token stops working",
+          content: { "application/json": { schema: resolver(agentSchemaProxyTokenResponse) } },
+        },
+        401: { description: "That refresh token is not usable", ...ErrorSchemaResponse },
+      },
+    }),
+    requirePermission("credential:read"),
+    validator("json", agentSchemaProxyRefreshRequest),
+    async (c) => {
+      try {
+        return c.json(present(await refreshProxyToken(db, c.req.valid("json").refreshToken)))
+      } catch (error) {
+        if (error instanceof RefreshRejectedError) {
+          // One message for unknown, expired and revoked: telling the holder which it was tells an
+          // attacker probing tokens whether the token was ever real.
+          return c.json({ message: "That refresh token is not usable. Start a new run." }, 401)
+        }
+        throw error
+      }
+    },
+  )
+
+function present(minted: MintedProxyToken) {
+  return {
+    accessExpiresAt: minted.accessExpiresAt.toISOString(),
+    accessToken: minted.accessToken,
+    id: minted.id,
+    refreshExpiresAt: minted.refreshExpiresAt.toISOString(),
+    refreshToken: minted.refreshToken,
+  }
+}
+
+/**
+ * Which wire format the proxy will be speaking for this credential kind.
+ *
+ * Total by construction rather than a lookup with a default: a kind added to the union without a
+ * mapping is a type error here, not a session that silently sends an Anthropic key to OpenAI.
+ */
+function upstreamKindFor(
+  kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key",
+) {
+  switch (kind) {
+    case "claude_subscription":
+    case "anthropic_api_key":
+      return "anthropic"
+    case "openai_api_key":
+    case "openrouter_api_key":
+      return "openai"
+  }
+}
+
+app.route("", proxyTokens)
 
 export default app

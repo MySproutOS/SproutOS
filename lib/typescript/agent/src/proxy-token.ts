@@ -66,6 +66,17 @@ export async function mintProxyToken(
     projectId: string | null
     /** Absent means the platform's own key, billed to credit. */
     agentCredentialId: string | null
+    /*
+      What the proxy should send upstream, decided here and carried on the row.
+
+      Resolved once at mint time rather than per request: the router would otherwise re-derive
+      configuration that can change under it, and a turn that silently switched providers halfway
+      through would be very hard to explain. All three null means the platform's own key, which the
+      router reads from its own environment.
+    */
+    upstreamKind?: string | null
+    upstreamBaseUrl?: string | null
+    upstreamSecret?: string | null
     now?: Date
   },
 ): Promise<MintedProxyToken> {
@@ -85,6 +96,9 @@ export async function mintProxyToken(
     projectId: input.projectId,
     refreshExpiresAt,
     refreshTokenHash: refresh.hash,
+    upstreamBaseUrl: input.upstreamBaseUrl ?? null,
+    upstreamKind: input.upstreamKind ?? null,
+    upstreamSecret: input.upstreamSecret ?? null,
   })
 
   return {
