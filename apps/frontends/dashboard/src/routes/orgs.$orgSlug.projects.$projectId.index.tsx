@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import { ProductionDeployment } from "@frontends/dashboard/components/projects/production-deployment"
+import { GroupChildren } from "@frontends/dashboard/components/projects/group-children"
 import { PROJECT_STATUS_LABELS, useProject } from "@frontends/dashboard/data/projects"
 import { useRecentJobs } from "@frontends/dashboard/data/workflows"
 
@@ -164,6 +165,8 @@ function ProjectDetail() {
               project={data}
               liveDeploymentId={data.liveDeploymentId}
             />
+
+            {data.isGroup ? <GroupChildren orgSlug={orgSlug} group={data} /> : null}
 
             <section className="flex flex-col gap-2.5">
               <h2 className="eyebrow">Recent jobs</h2>

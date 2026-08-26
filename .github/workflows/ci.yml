@@ -90,6 +90,16 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       SERVICE_VALKEY_ADMIN_URL: redis://127.0.0.1:41023
+      # The host a *customer* is handed, as distinct from the admin URL above.
+      #
+      # Absent, `driverFor("valkey")` throws `ServiceNotConfiguredError` the moment anything builds a
+      # connection URI — which `oauth-grants.test.ts` does, because revoking a grant rotates the
+      # credentials of every service that grant created. The test passed locally on a `.env` that has
+      # these and failed here on an environment that did not, which is the least useful kind of
+      # difference between the two.
+      SERVICE_VALKEY_PUBLIC_HOST: localhost
+      SERVICE_POSTGRES_PUBLIC_HOST: localhost
+      SERVICE_SEARCH_PUBLIC_HOST: localhost
       SEARCH_ADMIN_URL: http://127.0.0.1:29200
       CLICKHOUSE_URL: http://127.0.0.1:28123
       CLICKHOUSE_DATABASE: observability
