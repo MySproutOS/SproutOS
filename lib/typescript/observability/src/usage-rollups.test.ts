@@ -20,7 +20,9 @@ if (!reachable && process.env.CI !== undefined) {
 }
 
 const run = crypto.randomUUID()
-const eventIds = [0, 1].map((index) => createHash("sha256").update(`${run}:${index}`).digest("hex"))
+const eventIds = [0, 1, 2].map((index) =>
+  createHash("sha256").update(`${run}:${index}`).digest("hex"),
+)
 
 afterAll(async () => {
   if (!reachable) return
@@ -92,5 +94,61 @@ describe.runIf(reachable)("ClickHouse absolute usage rollups", () => {
       // Event time, not the 2035 ingestion time.
       expect(row.bucketStart.getUTCFullYear()).toBe(2030)
     }
+  })
+
+  it("zeros the old grain when a newer event version changes attribution", async () => {
+    const organizationId = crypto.randomUUID()
+    const base = {
+      event_id: eventIds[2],
+      organization_id: organizationId,
+      project_id: null,
+      resource_type: "site",
+      resource_id: null,
+      quantity: "4.000000000",
+      window_start: null,
+      window_end: null,
+      node_id: null,
+      pod_uid: null,
+      source: "usage-rollup-correction-test",
+      external_id: "corrected",
+      charged_externally: false,
+      attributes: {},
+    }
+    await clickhouse().insert({
+      table: "usage_event_raw",
+      format: "JSONEachRow",
+      values: [
+        {
+          ...base,
+          dimension: "site_request",
+          occurred_at: "2031-01-01 01:01:01.000",
+          ingested_at: "2036-01-01 00:00:01.000",
+          stored_at: "2036-01-01 00:00:01.000",
+          version: "2082758401000",
+        },
+        {
+          ...base,
+          dimension: "site_gib_second",
+          occurred_at: "2031-02-02 02:02:02.000",
+          ingested_at: "2036-01-01 00:00:02.000",
+          stored_at: "2036-01-01 00:00:02.000",
+          version: "2082758402000",
+        },
+      ],
+    })
+
+    const rows = await usageRollupsChangedBetween(
+      new Date("2036-01-01T00:00:01.500Z"),
+      new Date("2036-01-01T00:00:02.500Z"),
+    )
+    const ours = rows.filter((row) => row.organizationId === organizationId)
+
+    expect(ours).toHaveLength(6)
+    expect(
+      ours.filter((row) => row.dimension === "site_request").map((row) => Number(row.quantity)),
+    ).toEqual([0, 0, 0])
+    expect(
+      ours.filter((row) => row.dimension === "site_gib_second").map((row) => Number(row.quantity)),
+    ).toEqual([4, 4, 4])
   })
 })

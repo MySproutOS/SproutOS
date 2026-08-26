@@ -32,4 +32,20 @@ describe("PLATFORM_HANDLERS", () => {
 
     expect(orphans).toEqual([])
   })
+
+  it("fails visibly when the authoritative ClickHouse importer is unconfigured", async () => {
+    const previous = process.env.CLICKHOUSE_URL
+    delete process.env.CLICKHOUSE_URL
+    try {
+      const handler = PLATFORM_HANDLERS[JOB_KINDS.importUsage]
+      expect(handler).toBeTypeOf("function")
+      if (handler === undefined) throw new Error("ClickHouse importer is not registered")
+      await expect(handler({} as never, { db: {} } as never)).rejects.toThrow(
+        "CLICKHOUSE_URL is not set; authoritative usage rollups cannot be imported into billing",
+      )
+    } finally {
+      if (previous === undefined) delete process.env.CLICKHOUSE_URL
+      else process.env.CLICKHOUSE_URL = previous
+    }
+  })
 })

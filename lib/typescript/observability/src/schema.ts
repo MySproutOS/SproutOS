@@ -238,7 +238,14 @@ export function usageEventStoredAtDdl(database = ""): string {
   return `alter table ${qualified(database, USAGE_EVENT_RAW_TABLE)} add column if not exists stored_at DateTime64(3, 'UTC') default now64(3, 'UTC')`
 }
 
-/** The JSONEachRow consumer for normalized, one-event-per-message usage records. */
+/**
+ * The JSONEachRow consumer for normalized, one-event-per-message usage records.
+ *
+ * Authentication is deliberately absent from this DDL. ClickHouse applies the matching
+ * server-side `<kafka><kafka_topic>` configuration: plaintext on the private OVH Compose network,
+ * or SASL_SSL/SCRAM-SHA-512 for a remote consumer. Putting those settings here would copy the
+ * password into CREATE TABLE text and the query log.
+ */
 export function usageEventQueueDdl(brokers: string, topic: string, database = ""): string {
   validateKafkaLocation(brokers, topic, "KAFKA_USAGE_EVENT_TOPIC")
   const table = qualified(database, USAGE_EVENT_QUEUE_TABLE)

@@ -57,6 +57,13 @@ export {
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 export {
+  METERING_OUTBOX_BATCH_SIZE,
+  METERING_OUTBOX_PUBLISH_TIMEOUT_MS,
+  METERING_OUTBOX_PROJECT_TIMEOUT_MS,
+  type MeteringOutboxRelayDependencies,
+  meteringOutboxRelay,
+} from "./metering-outbox"
+export {
   CLAIM_TIMEOUT_MS,
   claimSigningJob,
   completeSigning,

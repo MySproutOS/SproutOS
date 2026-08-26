@@ -1,6 +1,8 @@
-import type { DB } from "@sproutos/db"
-import { InsufficientBalanceError, placeHold, releaseHold, settleHold } from "@lib/billing"
-import type { Kysely } from "kysely"
+import type { DB, JsonValue } from "@sproutos/db"
+import { InsufficientBalanceError, placeHold, settleHoldWithin } from "@lib/billing"
+import { crudMeteringOutbox } from "@lib/dao"
+import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
+import type { Kysely, Transaction } from "kysely"
 import { v7 } from "uuid"
 import { estimateRunCost, rateTokens, type TokenUsage } from "./pricing"
 import { type ResolvedAgentCredential, resolveAgentCredential } from "./resolve"
@@ -76,6 +78,8 @@ export async function withMeteredRun<T>(
   if (credential.billing === "none") throw new AgentNotConfiguredError(credential.reason)
 
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }
+  const runId = v7()
+  const startedAt = new Date()
   const report = (delta: TokenUsage) => {
     usage.inputTokens += delta.inputTokens
     usage.outputTokens += delta.outputTokens
@@ -85,7 +89,20 @@ export async function withMeteredRun<T>(
   if (credential.billing === "byo") {
     // Their key, their bill. We still count the tokens, because the usage is worth showing even
     // when there is nothing to charge for it.
-    const value = await body({ credential, report })
+    let value: T
+    try {
+      value = await body({ credential, report })
+    } catch (error) {
+      // A provider error can arrive after it has consumed and billed tokens. Persist everything
+      // reported before the failure just as the platform-credit path does.
+      await db.transaction().execute(async (tx) => {
+        await recordRunUsage(tx, input, usage, runId, startedAt, true)
+      })
+      throw error
+    }
+    await db.transaction().execute(async (tx) => {
+      await recordRunUsage(tx, input, usage, runId, startedAt, true)
+    })
     return { value, usage, chargedMicroUsd: 0n }
   }
 
@@ -111,15 +128,13 @@ export async function withMeteredRun<T>(
   try {
     value = await body({ credential, report })
   } catch (error) {
-    // Settle whatever was already spent before the failure; release outright if nothing was.
-    // Discarding real token spend because the run threw would mean paying for it ourselves.
-    const spent = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0)
-    if (spent === 0) await releaseHold(db, holdId)
-    else await settleFrom(db, holdId, usage, input)
+    // Settle whatever was already spent before the failure. A zero-token failure releases the
+    // hold while still preserving any measurable run time.
+    await settleFrom(db, holdId, usage, input, runId, startedAt)
     throw error
   }
 
-  const charged = await settleFrom(db, holdId, usage, input)
+  const charged = await settleFrom(db, holdId, usage, input, runId, startedAt)
   return { value, usage, chargedMicroUsd: charged }
 }
 
@@ -128,78 +143,111 @@ async function settleFrom(
   holdId: string,
   usage: TokenUsage,
   input: MeteredRun,
+  runId: string,
+  startedAt: Date,
 ): Promise<bigint> {
   const rated = await rateTokens(db, usage)
 
-  await settleHold(db, {
-    holdId,
-    actual: rated.usage,
-    overheadAmount: rated.overhead,
-    // Deterministic in the hold, so a retried settlement posts once. The hold itself already
-    // refuses a second close, but the ledger key means a retry that races the close is a no-op
-    // rather than a duplicate charge.
-    idempotencyKey: `hold:${holdId}`,
-    description: input.description ?? null,
+  await db.transaction().execute(async (tx) => {
+    await settleHoldWithin(tx, {
+      holdId,
+      actual: rated.usage,
+      overheadAmount: rated.overhead,
+      // Deterministic in the hold, so a retried settlement posts once. The hold itself already
+      // refuses a second close, but the ledger key means a retry that races the close is a no-op
+      // rather than a duplicate charge.
+      idempotencyKey: `hold:${holdId}`,
+      description: input.description ?? null,
+    })
+    await recordRunUsage(tx, input, usage, runId, startedAt, true)
   })
-
-  await recordTokenUsage(db, input, usage, holdId)
   return rated.total
 }
 
 /**
- * Write the run's tokens to `usage_event`.
+ * Commit the run's usage to the transactional Kafka outbox.
  *
- * Separate from the ledger posting on purpose. The ledger says what was charged; `usage_event`
- * says what was consumed, per dimension, and is what a statement itemizes. A charge with no
- * matching events is a bill nobody can explain.
+ * For platform credit, the caller runs this in the same transaction as the hold settlement. A
+ * charge can therefore never exist without publishable statement detail. BYO tokens are marked
+ * externally charged (the provider bills the customer); run time remains a platform dimension.
  */
-async function recordTokenUsage(
-  db: Kysely<DB>,
+async function recordRunUsage(
+  db: Kysely<DB> | Transaction<DB>,
   input: MeteredRun,
   usage: TokenUsage,
-  holdId: string,
+  runId: string,
+  startedAt: Date,
+  tokensChargedExternally: boolean,
 ): Promise<void> {
   const occurredAt = new Date()
-  const rows = [
-    { dimension: "ai_input_token", quantity: usage.inputTokens },
-    { dimension: "ai_output_token", quantity: usage.outputTokens },
-    { dimension: "ai_cache_read_token", quantity: usage.cacheReadTokens ?? 0 },
-  ]
-    .filter((row) => row.quantity > 0)
-    .map((row) => ({
+  const events = runUsageEvents(input, usage, runId, startedAt, occurredAt, tokensChargedExternally)
+
+  for (const event of events) {
+    await crudMeteringOutbox(db).create({
       id: v7(),
-      organizationId: input.organizationId,
-      projectId: input.projectId ?? null,
-      resourceType: input.resourceType,
-      resourceId: input.resourceId ?? null,
-      dimension: row.dimension,
-      quantity: String(row.quantity),
-      occurredAt,
-      source: "agent",
-      // The hold is the run's identity here, which makes the whole write idempotent: a retried
-      // settlement collides on (source, external_id, occurred_at) rather than double-counting.
-      externalId: `${holdId}:${row.dimension}`,
-      /*
-        Charged by the hold settlement, not by `chargeUsage`.
+      eventId: event.eventId,
+      payload: JSON.parse(encodeUsageEvent(event)) as JsonValue,
+    })
+  }
+}
 
-        This used to set `rated_at` instead, which meant "already charged" to whoever wrote it and
-        "already folded into `usage_rollup`" to `rollUpUsage` — so the rollup skipped these events,
-        they never reached `usage_rollup`, and the statement and dashboard, which are both built
-        from `usage_rollup`, showed no AI line at all. The customer was charged and could not see
-        what for, which is the thing the comment above this function exists to prevent.
+/** Pure construction boundary so every dimension and its charging semantics are regression tested. */
+export function runUsageEvents(
+  input: MeteredRun,
+  usage: TokenUsage,
+  runId: string,
+  startedAt: Date,
+  occurredAt: Date,
+  tokensChargedExternally: boolean,
+) {
+  const rows: {
+    dimension: BillableDimension
+    quantity: number
+    chargedExternally: boolean
+  }[] = [
+    {
+      dimension: "ai_input_token",
+      quantity: usage.inputTokens,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_output_token",
+      quantity: usage.outputTokens,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_cache_read_token",
+      quantity: usage.cacheReadTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "agent_run_second",
+      quantity: (occurredAt.getTime() - startedAt.getTime()) / 1000,
+      chargedExternally: false,
+    },
+  ]
 
-        Now they roll up like anything else and the grain they land in is credited as already paid.
-      */
-      chargedExternally: true,
-    }))
-
-  if (rows.length === 0) return
-
-  await db
-    .insertInto("usageEvent")
-    .values(rows)
-    .onConflict((oc) => oc.columns(["source", "externalId", "occurredAt"]).doNothing())
-    .execute()
+  return rows
+    .filter((row) => row.quantity > 0)
+    .map((row) =>
+      usageEventRecord({
+        organizationId: input.organizationId,
+        projectId: input.projectId ?? null,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId ?? null,
+        dimension: row.dimension,
+        quantity: String(row.quantity),
+        occurredAt,
+        windowStart: startedAt,
+        windowEnd: occurredAt,
+        nodeId: null,
+        podUid: null,
+        source: "agent",
+        externalId: `${runId}:${row.dimension}`,
+        chargedExternally: row.chargedExternally,
+        attributes: {},
+      }),
+    )
 }
 
 export { InsufficientBalanceError }

@@ -212,6 +212,7 @@ export function usageEventKafkaConfigFromEnv(
 
 export type UsageEventProducer = {
   send: (events: UsageEventRecord[]) => Promise<void>
+  sendEncoded: (events: { eventId: string; value: string }[]) => Promise<void>
   disconnect: () => Promise<void>
 }
 
@@ -244,15 +245,21 @@ export async function connectUsageEventProducer(
   })
   await producer.connect()
 
+  const sendEncoded = async (events: { eventId: string; value: string }[]) => {
+    if (events.length === 0) return
+    await producer.send({
+      topic: config.topic,
+      acks: -1,
+      messages: events.map((event) => ({ key: event.eventId, value: event.value })),
+    })
+  }
+
   return {
-    send: async (events) => {
-      if (events.length === 0) return
-      await producer.send({
-        topic: config.topic,
-        acks: -1,
-        messages: events.map((event) => ({ key: event.eventId, value: encodeUsageEvent(event) })),
-      })
-    },
+    send: async (events) =>{ 
+      await sendEncoded(
+        events.map((event) => ({ eventId: event.eventId, value: encodeUsageEvent(event) })),
+      ); },
+    sendEncoded,
     disconnect: () => producer.disconnect(),
   }
 }

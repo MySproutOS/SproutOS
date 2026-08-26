@@ -36,6 +36,7 @@ import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
+import { meteringOutboxRelay } from "./metering-outbox"
 
 /**
  * How many rollup batches one job run works through.
@@ -71,6 +72,7 @@ export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   rollUpUsage: "billing.roll_up_usage",
   importUsage: "billing.import_clickhouse_usage",
+  relayMeteringOutbox: "billing.relay_metering_outbox",
   chargeUsage: "billing.charge_usage",
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
@@ -136,7 +138,11 @@ const rollUpUsageJob: JobHandler = async (_job, { db }) => {
  * rollups commit together in Postgres, so a retry recomputes the same absolute values.
  */
 const importUsageJob: JobHandler = async (_job, { db }) => {
-  if (!observabilityConfigured()) return
+  if (!observabilityConfigured()) {
+    throw new Error(
+      "CLICKHOUSE_URL is not set; authoritative usage rollups cannot be imported into billing",
+    )
+  }
   const since = (await importedUsageCursor(db)) ?? new Date(0)
   const until = await clickhouseUsageWatermark()
   const rows = await usageRollupsChangedBetween(since, until)
@@ -250,6 +256,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.importUsage]: importUsageJob,
+  [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
@@ -281,6 +288,15 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  await enqueue(db, {
+    /*
+      Every minute. This is the durable bridge for control-plane usage committed alongside a
+      ledger settlement or resource watermark; a minute is the maximum normal Kafka delay.
+    */
+    kind: JOB_KINDS.relayMeteringOutbox,
+    idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 10,
+  })
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,

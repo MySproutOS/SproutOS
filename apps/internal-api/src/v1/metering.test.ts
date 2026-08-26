@@ -3,7 +3,9 @@ import {
   canonical,
   sign,
   usageEventId,
+  usageEventRecord,
   type UsageBatch,
+  type UsageEventProducer,
   type UsageEventRecord,
 } from "@lib/metering"
 import {
@@ -17,9 +19,9 @@ import { db } from "@sproutos/db"
 import { Redis } from "ioredis"
 import { Kafka } from "kafkajs"
 import { v7 } from "uuid"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import app from "../index"
-import { closeMeteringSinks, setMeteringSinksForTest } from "./metering"
+import { closeMeteringSinks, publishUsageEvents, setMeteringSinksForTest } from "./metering"
 import {
   cleanupFixtures,
   createTestUser,
@@ -139,6 +141,43 @@ afterAll(async () => {
 })
 
 describe.skipIf(!reachable)("metering ingest", () => {
+  it("reconnects after a failed default Kafka connection and skips Kafka for an empty batch", async () => {
+    await closeMeteringSinks()
+    const send = vi.fn<UsageEventProducer["send"]>(() => Promise.resolve())
+    const sendEncoded = vi.fn<UsageEventProducer["sendEncoded"]>(() => Promise.resolve())
+    const disconnect = vi.fn<UsageEventProducer["disconnect"]>(() => Promise.resolve())
+    const connect = vi
+      .fn<() => Promise<UsageEventProducer>>()
+      .mockRejectedValueOnce(new Error("broker unavailable"))
+      .mockResolvedValue({ send, sendEncoded, disconnect })
+    const event = usageEventRecord({
+      organizationId,
+      projectId: null,
+      resourceType: "site",
+      resourceId: null,
+      dimension: "site_request",
+      quantity: "1",
+      occurredAt: new Date(),
+      windowStart: null,
+      windowEnd: null,
+      nodeId: null,
+      podUid: null,
+      source: "test",
+      externalId: v7(),
+      chargedExternally: false,
+      attributes: {},
+    })
+
+    await publishUsageEvents([], connect)
+    expect(connect).not.toHaveBeenCalled()
+    await expect(publishUsageEvents([event], connect)).rejects.toThrow("broker unavailable")
+    await publishUsageEvents([event], connect)
+
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledWith([event])
+    await closeMeteringSinks()
+  })
+
   it("stores a signed batch", async () => {
     const batch = batchOf([{}])
     const response = await post(batch)

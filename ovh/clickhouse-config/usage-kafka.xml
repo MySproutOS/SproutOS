@@ -1,0 +1,20 @@
+<clickhouse>
+  <!--
+    Kafka credentials are server configuration, not table DDL. ClickHouse applies this block to
+    the usage topic named by the environment-backed `name` element.
+
+    The current OVH topology uses kafka:9092 on the private Compose network with `plaintext`.
+    A remote ClickHouse server sets the same environment-backed block to `sasl_ssl` and
+    SCRAM-SHA-512 with a consumer-only identity. The Kafka table keeps only its non-secret broker,
+    topic, group and format settings, so neither CREATE TABLE nor the query log contains a password.
+  -->
+  <kafka>
+    <kafka_topic>
+      <name from_env="CLICKHOUSE_USAGE_KAFKA_TOPIC" />
+      <security_protocol from_env="CLICKHOUSE_USAGE_KAFKA_SECURITY_PROTOCOL" />
+      <sasl_mechanism from_env="CLICKHOUSE_USAGE_KAFKA_SASL_MECHANISM" />
+      <sasl_username from_env="CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME" />
+      <sasl_password from_env="CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD" />
+    </kafka_topic>
+  </kafka>
+</clickhouse>

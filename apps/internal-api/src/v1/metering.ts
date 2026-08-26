@@ -35,13 +35,35 @@ let producer: Promise<UsageEventProducer> | undefined
 let valkey: Redis | undefined
 let sinkOverride: MeteringSinks | undefined
 
+/**
+ * Publish through the process-wide producer without letting one failed connection poison every
+ * later request. Empty accepted batches do not need Kafka at all.
+ */
+export async function publishUsageEvents(
+  events: UsageEventRecord[],
+  connect: typeof connectUsageEventProducer = connectUsageEventProducer,
+): Promise<void> {
+  if (events.length === 0) return
+
+  if (producer === undefined) {
+    const connecting = connect()
+    producer = connecting
+    try {
+      await connecting
+    } catch (error) {
+      if (producer === connecting) producer = undefined
+      throw error
+    }
+  }
+
+  await (await producer).send(events)
+}
+
 function defaultSinks(): MeteringSinks {
   return {
-    publish: async (events) => {
-      producer ??= connectUsageEventProducer()
-      await (await producer).send(events)
-    },
+    publish: publishUsageEvents,
     project: async (events) => {
+      if (events.length === 0) return
       valkey ??= new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
       await Promise.all(
         events.map(async (event) => {

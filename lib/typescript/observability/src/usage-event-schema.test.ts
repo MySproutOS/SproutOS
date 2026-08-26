@@ -77,6 +77,21 @@ describe("the raw usage-event schema", () => {
       /KAFKA_USAGE_EVENT_TOPIC/,
     )
   })
+
+  it("keeps Kafka authentication in environment-backed server configuration", () => {
+    const path = join(import.meta.dirname, "../../../../ovh/clickhouse-config/usage-kafka.xml")
+    const config = readFileSync(path, "utf8")
+
+    expect(config).toContain('from_env="CLICKHOUSE_USAGE_KAFKA_SECURITY_PROTOCOL"')
+    expect(config).toContain('from_env="CLICKHOUSE_USAGE_KAFKA_SASL_MECHANISM"')
+    expect(config).toContain('from_env="CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME"')
+    expect(config).toContain('from_env="CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD"')
+    expect(config).not.toMatch(/<sasl_(?:username|password)>[^<]+/)
+
+    const ddl = usageEventQueueDdl("kafka.sproutos.me:9094", "usage-events")
+    expect(ddl).not.toContain("sasl")
+    expect(ddl).not.toContain("password")
+  })
 })
 
 const eventId = "a".repeat(64)

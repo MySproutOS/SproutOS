@@ -66,3 +66,27 @@ configure_producer() {
 # may write logs and not billing events. Kafka enforces that even if either process is compromised.
 configure_producer "$RUNTIME_TOPIC" "$RUNTIME_USERNAME" "$RUNTIME_PASSWORD"
 configure_producer "$USAGE_TOPIC" "$USAGE_USERNAME" "$USAGE_PASSWORD"
+
+# The production OVH topology consumes over the private Docker listener and needs no Kafka
+# credential. If ClickHouse is moved off-host, its server-side topic configuration switches to
+# SASL_SSL and this creates a separate read-only identity. Reusing the API's usage producer would
+# turn an API compromise into permission to consume and advance the billing consumer group.
+if [ "${CLICKHOUSE_USAGE_KAFKA_SECURITY_PROTOCOL:-plaintext}" = "sasl_ssl" ]; then
+  CONSUMER_USERNAME="${CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME:?set CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME in $ENV_FILE}"
+  CONSUMER_PASSWORD="${CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD:?set CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD in $ENV_FILE}"
+  CONSUMER_GROUP="clickhouse-usage-event-v1"
+
+  docker exec "$CONTAINER" /opt/kafka/bin/kafka-configs.sh \
+    --bootstrap-server "$BROKER" \
+    --alter --entity-type users --entity-name "$CONSUMER_USERNAME" \
+    --add-config "SCRAM-SHA-512=[iterations=8192,password=$CONSUMER_PASSWORD]" >/dev/null
+
+  docker exec "$CONTAINER" /opt/kafka/bin/kafka-acls.sh \
+    --bootstrap-server "$BROKER" \
+    --add --allow-principal "User:$CONSUMER_USERNAME" \
+    --operation Describe --operation Read --topic "$USAGE_TOPIC" >/dev/null
+  docker exec "$CONTAINER" /opt/kafka/bin/kafka-acls.sh \
+    --bootstrap-server "$BROKER" \
+    --add --allow-principal "User:$CONSUMER_USERNAME" \
+    --operation Read --group "$CONSUMER_GROUP" >/dev/null
+fi

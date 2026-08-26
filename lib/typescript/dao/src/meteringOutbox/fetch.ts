@@ -1,5 +1,12 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely, Selectable } from "kysely"
+import { sql, type Kysely } from "kysely"
+
+export type MeteringOutboxClaim = {
+  id: string
+  eventId: string
+  /** JSONB rendered as text so CamelCasePlugin cannot rewrite the wire object's snake-case keys. */
+  payload: string
+}
 
 export function fetchMeteringOutbox(db: Kysely<DB>) {
   /**
@@ -9,10 +16,10 @@ export function fetchMeteringOutbox(db: Kysely<DB>) {
    * two, Kafka receives the same stable event id again and ClickHouse replaces the duplicate. The
    * opposite order would lose a billable event permanently.
    */
-  async function claim(limit: number): Promise<Selectable<DB["meteringOutbox"]>[]> {
+  async function claim(limit: number): Promise<MeteringOutboxClaim[]> {
     return await db
       .selectFrom("meteringOutbox")
-      .selectAll()
+      .select(["id", "eventId", sql<string>`payload::text`.as("payload")])
       .orderBy("createdAt", "asc")
       .limit(limit)
       .forUpdate()

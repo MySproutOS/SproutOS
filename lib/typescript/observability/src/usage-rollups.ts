@@ -49,6 +49,31 @@ export async function usageRollupsChangedBetween(
   const result = await clickhouse().query({
     query: `
 with
+  changed_event_ids as (
+    select distinct event_id
+    from ${USAGE_EVENT_RAW_TABLE}
+    where stored_at > parseDateTime64BestEffort({since:String}, 3, 'UTC')
+      and stored_at <= parseDateTime64BestEffort({until:String}, 3, 'UTC')
+  ),
+  affected as (
+    /*
+      Use every version of each changed identity, not only its newest version. If a corrected event
+      moves to another organization, dimension or event-time bucket, the old grain must be emitted
+      with an absolute zero or Postgres keeps its previous billable total forever.
+    */
+    select distinct
+      organization_id,
+      project_id,
+      dimension,
+      arrayJoin(['minute', 'hour', 'day']) as bucket,
+      multiIf(
+        bucket = 'minute', toStartOfMinute(occurred_at),
+        bucket = 'hour', toStartOfHour(occurred_at),
+        toStartOfDay(occurred_at)
+      ) as bucket_start
+    from ${USAGE_EVENT_RAW_TABLE}
+    inner join changed_event_ids using (event_id)
+  ),
   deduped as (
     select * from ${USAGE_EVENT_RAW_TABLE} final
   ),
@@ -66,41 +91,27 @@ with
       quantity,
       charged_externally
     from deduped
-  ),
-  affected as (
-    select distinct
-      organization_id,
-      project_id,
-      dimension,
-      arrayJoin(['minute', 'hour', 'day']) as bucket,
-      multiIf(
-        bucket = 'minute', toStartOfMinute(occurred_at),
-        bucket = 'hour', toStartOfHour(occurred_at),
-        toStartOfDay(occurred_at)
-      ) as bucket_start
-    from ${USAGE_EVENT_RAW_TABLE}
-    where stored_at > parseDateTime64BestEffort({since:String}, 3, 'UTC')
-      and stored_at <= parseDateTime64BestEffort({until:String}, 3, 'UTC')
   )
 select
-  expanded.organization_id,
-  expanded.project_id,
-  expanded.dimension,
-  expanded.bucket,
-  formatDateTime(expanded.bucket_start, '%FT%T.000Z', 'UTC') as bucket_start,
-  toString(sum(expanded.quantity)) as quantity,
-  toString(sumIf(expanded.quantity, expanded.charged_externally)) as externally_charged_quantity
-from expanded
-inner join affected
+  affected.organization_id,
+  affected.project_id,
+  affected.dimension,
+  affected.bucket,
+  formatDateTime(affected.bucket_start, '%FT%T.000Z', 'UTC') as bucket_start,
+  toString(coalesce(sum(expanded.quantity), toDecimal128(0, 9))) as quantity,
+  toString(coalesce(sumIf(expanded.quantity, expanded.charged_externally), toDecimal128(0, 9)))
+    as externally_charged_quantity
+from affected
+left join expanded
   on expanded.organization_id = affected.organization_id
  and isNotDistinctFrom(expanded.project_id, affected.project_id)
  and expanded.dimension = affected.dimension
  and expanded.bucket = affected.bucket
  and expanded.bucket_start = affected.bucket_start
-group by expanded.organization_id, expanded.project_id, expanded.dimension,
-         expanded.bucket, expanded.bucket_start
-order by expanded.organization_id, expanded.project_id, expanded.dimension,
-         expanded.bucket, expanded.bucket_start
+group by affected.organization_id, affected.project_id, affected.dimension,
+         affected.bucket, affected.bucket_start
+order by affected.organization_id, affected.project_id, affected.dimension,
+         affected.bucket, affected.bucket_start
 `,
     query_params: { since: since.toISOString(), until: until.toISOString() },
     format: "JSONEachRow",

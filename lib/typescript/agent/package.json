@@ -18,6 +18,7 @@
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
     "@lib/envelope": "workspace:*",
+    "@lib/metering": "workspace:*",
     "@lib/sandbox": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@utils/crypto": "workspace:*",

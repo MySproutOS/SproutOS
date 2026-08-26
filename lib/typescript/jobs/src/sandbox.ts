@@ -4,12 +4,13 @@ import {
   renderSproutosSkill,
   resolveAgentCredential,
 } from "@lib/agent"
-import { crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
+import { crudMeteringOutbox, crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
+import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
 import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
 import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
-import type { DB } from "@sproutos/db"
+import type { DB, JsonValue } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
@@ -46,7 +47,7 @@ const DIMENSIONS = {
   cpu: "sandbox_cpu_second",
   memoryGib: "sandbox_gib_second",
   diskGib: "sandbox_disk_gib_second",
-} as const
+} as const satisfies Record<string, BillableDimension>
 
 /**
  * Meter every running sandbox up to now.
@@ -61,75 +62,85 @@ const DIMENSIONS = {
  * and it also means a provider outage cannot silently stop the meter.
  */
 export const meterSandboxes: JobHandler = async (_job, { db }) => {
-  /*
-    The database's clock, not this process's.
-
-    `created_at` and `metered_through` are both written by Postgres, so an interval measured against
-    `new Date()` is a subtraction across two clocks. In CI those are two containers and the skew is
-    real: a sandbox created microseconds ago read as created *in the future*, `seconds` came out
-    negative, the row was skipped, and it was never billed at all — the test that caught it found no
-    usage row rather than a wrong one. `@lib/jobs`'s queue already defaults `run_at` to `sql\`now()\``
-    for the same reason.
-  */
-  const clock = await sql<{ now: Date }>`select now() as now`.execute(db)
-  const now = clock.rows[0]?.now ?? new Date()
-
   const due = await db
     .selectFrom("sandbox")
-    .innerJoin("project", "project.id", "sandbox.projectId")
-    .select([
-      "sandbox.id",
-      "sandbox.projectId",
-      "sandbox.cpu",
-      "sandbox.memoryGib",
-      "sandbox.diskGib",
-      "sandbox.meteredThrough",
-      "sandbox.createdAt",
-      "project.organizationId",
-    ])
+    .select("id")
     .where("sandbox.state", "in", ["starting", "running", "idle"])
+    // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
+    // deadlock by each holding the row the other plans to claim next.
+    .orderBy("id")
     .execute()
 
   let metered = 0
 
-  for (const sandbox of due) {
-    // Null means never metered. `created_at`, not the epoch — the difference is forty years of
-    // compute nobody ran.
-    const from = sandbox.meteredThrough ?? sandbox.createdAt
-    const seconds = (now.getTime() - new Date(from).getTime()) / 1000
-    // A clock that went backwards, or a row metered in the same second twice. Neither is billable.
-    if (seconds <= 0) continue
-
-    const quantities: Record<keyof typeof DIMENSIONS, number> = {
-      cpu: seconds * sandbox.cpu,
-      memoryGib: seconds * sandbox.memoryGib,
-      diskGib: seconds * sandbox.diskGib,
-    }
-
+  for (const candidate of due) {
     /*
-      The interval and the watermark move together.
+      The row lock is the claim on this interval.
 
-      If the insert commits and the update does not, the next run meters the same interval again —
-      harmless, because `(source, external_id, occurred_at)` drops it. If the update commits and the
-      insert does not, that interval is never billed and there is nothing left to notice it. So both
-      happen in one transaction, and the failure that survives is the recoverable one.
+      Two schedulers can select the same candidate before either advances its watermark. Reading the
+      authoritative watermark only after `FOR UPDATE` makes the second transaction wait, then see
+      the first one's new endpoint. Locking only `sandbox` matters: locking the joined project row
+      would unnecessarily serialize every sandbox belonging to one project.
     */
-    await db.transaction().execute(async (tx) => {
-      await tx
-        .insertInto("usageEvent")
-        .values(
-          (Object.keys(DIMENSIONS) as (keyof typeof DIMENSIONS)[]).map((key) => ({
-            id: v7(),
+    const didMeter = await db.transaction().execute(async (tx) => {
+      const sandbox = await tx
+        .selectFrom("sandbox")
+        .innerJoin("project", "project.id", "sandbox.projectId")
+        .select([
+          "sandbox.id",
+          "sandbox.projectId",
+          "sandbox.cpu",
+          "sandbox.memoryGib",
+          "sandbox.diskGib",
+          "sandbox.meteredThrough",
+          "sandbox.createdAt",
+          "project.organizationId",
+        ])
+        .where("sandbox.id", "=", candidate.id)
+        .where("sandbox.state", "in", ["starting", "running", "idle"])
+        .forUpdate("sandbox")
+        .executeTakeFirst()
+      if (sandbox === undefined) return false
+
+      /*
+        The database's clock, taken after the lock.
+
+        `created_at` and `metered_through` are both written by Postgres, so an interval measured
+        against `new Date()` is a subtraction across two clocks. `clock_timestamp()` rather than
+        `now()` is important here: Postgres fixes `now()` at transaction start, which may be before
+        a concurrent meter whose row lock this transaction just waited for.
+      */
+      const clock = await sql<{ now: Date }>`select clock_timestamp() as now`.execute(tx)
+      const now = clock.rows[0]?.now
+      if (now === undefined) throw new Error("Postgres returned no clock timestamp")
+
+      // Null means never metered. `created_at`, not the epoch — the difference is forty years of
+      // compute nobody ran.
+      const from = sandbox.meteredThrough ?? sandbox.createdAt
+      const seconds = (now.getTime() - new Date(from).getTime()) / 1000
+      // A clock that went backwards, or a row metered in the same millisecond twice. Neither is
+      // billable.
+      if (seconds <= 0) return false
+
+      const quantities: Record<keyof typeof DIMENSIONS, number> = {
+        cpu: seconds * sandbox.cpu,
+        memoryGib: seconds * sandbox.memoryGib,
+        diskGib: seconds * sandbox.diskGib,
+      }
+
+      const outbox = crudMeteringOutbox(tx)
+      await Promise.all(
+        (Object.keys(DIMENSIONS) as (keyof typeof DIMENSIONS)[]).map(async (key) => {
+          const event = usageEventRecord({
             source: "sandbox",
             /*
               Keyed on the interval **and the dimension**.
 
-              Without the dimension all three rows share `(source, external_id, occurred_at)`, and
-              the conflict clause below — which exists to make retries free — silently drops two of
-              them. The customer is billed for CPU and not for memory or disk, every row inserts
-              without error, and the only evidence is a bill that is a third of what it should be.
-              Caught by `sandbox.test.ts` asserting all three dimensions land, which is why that
-              test lists them rather than counting.
+              Without the dimension all three rows have the same source identity, so the outbox's
+              unique event id silently drops two of them. The customer is billed for CPU and not
+              for memory or disk, every row inserts without error, and the only evidence is a bill
+              that is a third of what it should be. Caught by `sandbox.test.ts` asserting all three
+              dimensions land, which is why that test lists them rather than counting.
             */
             externalId: `${sandbox.id}:${DIMENSIONS[key]}:${new Date(from).toISOString()}`,
             organizationId: sandbox.organizationId,
@@ -141,19 +152,29 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
             occurredAt: now,
             windowStart: new Date(from),
             windowEnd: now,
-          })),
-        )
-        .onConflict((oc) => oc.columns(["source", "externalId", "occurredAt"]).doNothing())
-        .execute()
+            nodeId: null,
+            podUid: null,
+            chargedExternally: false,
+            attributes: {},
+          })
+          await outbox.create({
+            id: v7(),
+            eventId: event.eventId,
+            payload: JSON.parse(encodeUsageEvent(event)) as JsonValue,
+          })
+        }),
+      )
 
       await tx
         .updateTable("sandbox")
         .set({ meteredThrough: now })
         .where("id", "=", sandbox.id)
         .execute()
+
+      return true
     })
 
-    metered += 1
+    if (didMeter) metered += 1
   }
 
   if (metered > 0) console.info(`[jobs] metered ${metered} sandboxes`)

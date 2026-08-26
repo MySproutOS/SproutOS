@@ -681,6 +681,9 @@ importers:
       '@lib/envelope':
         specifier: workspace:*
         version: link:../envelope
+      '@lib/metering':
+        specifier: workspace:*
+        version: link:../metering
       '@lib/sandbox':
         specifier: workspace:*
         version: link:../sandbox
@@ -850,6 +853,9 @@ importers:
       '@lib/lambda':
         specifier: workspace:*
         version: link:../lambda
+      '@lib/metering':
+        specifier: workspace:*
+        version: link:../metering
       '@lib/observability':
         specifier: workspace:*
         version: link:../observability

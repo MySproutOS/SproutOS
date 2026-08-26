@@ -253,6 +253,6 @@ export type { CreateOauthClient, CreateOauthClientSecret } from "./oauthClient/c
 export { fetchOauthClient, OAUTH_CLIENT_FIELDS } from "./oauthClient/fetch"
 export type { OauthClientType } from "./oauthClient/fetch"
 export { crudMeteringOutbox } from "./meteringOutbox/crud"
-export { fetchMeteringOutbox } from "./meteringOutbox/fetch"
+export { fetchMeteringOutbox, type MeteringOutboxClaim } from "./meteringOutbox/fetch"
 export { crudMeteringImportState } from "./meteringImportState/crud"
 export { fetchMeteringImportState } from "./meteringImportState/fetch"

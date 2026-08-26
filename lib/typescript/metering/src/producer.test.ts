@@ -186,6 +186,14 @@ describe("publishing usage events", () => {
       messages: [{ key: event.eventId, value: encodeUsageEvent(event) }],
     })
 
+    send.mockClear()
+    await connected.sendEncoded([{ eventId: event.eventId, value: '{"already":"encoded"}' }])
+    expect(send).toHaveBeenCalledWith({
+      topic: "usage-events",
+      acks: -1,
+      messages: [{ key: event.eventId, value: '{"already":"encoded"}' }],
+    })
+
     await connected.disconnect()
     expect(disconnect).toHaveBeenCalledOnce()
   })

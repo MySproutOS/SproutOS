@@ -55,3 +55,11 @@ docker compose up -d        # on the host, from /opt/sproutos
 
 Nothing here is an undocumented command: host preparation and broker provisioning live in these
 scripts. If a step is missing from them, that is the bug.
+
+ClickHouse consumes Kafka over the private Compose listener by default, so
+`CLICKHOUSE_USAGE_KAFKA_SECURITY_PROTOCOL=plaintext` carries no credential. If ClickHouse moves
+off-host, set it to `sasl_ssl` and set `CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME` and
+`CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD` in the protected host `.env`, then rerun
+`bootstrap-kafka.sh`. The script creates a consumer-only SCRAM-SHA-512 identity and topic/group
+ACLs. ClickHouse reads those values from `clickhouse-config/usage-kafka.xml`; they never appear in
+the Kafka table DDL or ClickHouse query log.
