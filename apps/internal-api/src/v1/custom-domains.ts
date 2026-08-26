@@ -378,18 +378,25 @@ const routes = app
           new RequestCertificateCommand({
             DomainName: hostname,
             /*
-              An apex gets `www` too, on the same certificate.
+              An apex gets a wildcard alternative name, not just `www`.
 
               Almost nobody who points `example.com` at us wants `www.example.com` to be a
-              certificate error, and the two share one validation — ACM validates the alternative
-              name through the same zone, so this costs the customer no extra record. Without it the
-              apex works, `www` fails a TLS handshake, and the failure looks like a platform fault
-              rather than a certificate that was never asked for.
+              certificate error — that was the first failure `textscam.com` produced once it served.
+              `www` alone would fix that one case and need **its own validation record**, because
+              ACM validates each alternative name separately.
 
-              Only for an apex: adding `www.www.example.com` for a subdomain would be nonsense, and
-              ACM would ask for a validation record nobody will publish.
+              `*.example.com` does not. ACM uses the *same* validation record for a wildcard as for
+              the base domain, so this covers `www` and every other subdomain the customer later
+              points at us while asking them for exactly the one record they already published.
+
+              It also conserves the thing that actually limits this feature: an ALB listener carries
+              25 certificates (see `@utils/feature-flags`). One certificate per customer *domain*
+              rather than per hostname is the difference between 25 customers and 25 subdomains.
+
+              Only for an apex. `*.app.example.com` for a subdomain covers names nobody asked for
+              and needs a validation record nobody will publish.
             */
-            ...(isApex ? { SubjectAlternativeNames: [`www.${hostname}`] } : {}),
+            ...(isApex ? { SubjectAlternativeNames: [`*.${hostname}`] } : {}),
             ValidationMethod: "DNS",
             Tags: [
               { Key: "sproutos:project", Value: projectId },
