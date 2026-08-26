@@ -85,6 +85,25 @@ for service in $SERVICES; do
   # the scaling activity they start — the `ScalingActivityInProgress` the retry below handles.
   [ -z "$existing" ] || sleep 15
 
+  # Skipped entirely when the group is already the size we want.
+  #
+  # This is the common case — `DESIRED` is 1 and the idle group holds 1 — and the call is a no-op
+  # that can only fail: the terminations above leave the group replacing an instance, and
+  # `SetDesiredCapacity` is rejected with `ScalingActivityInProgress` for as long as that takes. The
+  # retry loop below then burns five minutes and fails the deploy, having asked for a change that
+  # was never needed.
+  #
+  # That is not hypothetical either: the router's replacement outlasted the window and failed a
+  # release whose website half had already gone healthy. The termination is what boots the new
+  # release; the capacity call only matters when the size is actually changing.
+  current=$(aws autoscaling describe-auto-scaling-groups \
+    --auto-scaling-group-names "$group" \
+    --query 'AutoScalingGroups[0].DesiredCapacity' --output text)
+
+  if [ "$current" = "$DESIRED" ]; then
+    echo "$service: $group is already at $DESIRED; the replacement above is the whole change"
+  else
+
   #
   # Retried, because `ScalingActivityInProgress` is a state and not an error. An Auto Scaling group
   # replacing an instance — including one this deploy's previous attempt left behind — rejects
@@ -108,6 +127,7 @@ for service in $SERVICES; do
 
     sleep 10
   done
+  fi
 
   # Every target group the instances serve, not just the one the rule names.
   #
