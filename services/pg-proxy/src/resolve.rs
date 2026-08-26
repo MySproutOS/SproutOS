@@ -166,6 +166,9 @@ impl ResolvedBackend {
             port: self.port,
             user: self.role.clone(),
             password: self.password.clone(),
+            // A resolved backend is managed Postgres over the internet. Plaintext there is every
+            // tenant's rows on the wire, and Neon refuses it outright in any case.
+            require_tls: true,
         }
     }
 }

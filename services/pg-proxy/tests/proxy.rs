@@ -50,6 +50,7 @@ fn backend_config() -> BackendConfig {
             .unwrap_or(parsed.1),
         user: std::env::var("PG_PROXY_BACKEND_USER").unwrap_or(parsed.2),
         password: std::env::var("PG_PROXY_BACKEND_PASSWORD").unwrap_or(parsed.3),
+        require_tls: false,
     }
 }
 

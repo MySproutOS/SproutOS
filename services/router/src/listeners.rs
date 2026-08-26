@@ -214,6 +214,10 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
             .unwrap_or(5432),
         user: std::env::var("PG_PROXY_BACKEND_USER").unwrap_or_else(|_| "postgres".into()),
         password: backend_password.unwrap_or_default(),
+        // The shared-cluster fallback only. Anything the resolver returns is managed Postgres over
+        // the internet and sets this itself.
+        require_tls: std::env::var("PG_PROXY_BACKEND_REQUIRE_TLS")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),
     };
 
     // One registry for the process: a `CancelRequest` arrives on a different connection from the

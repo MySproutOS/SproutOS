@@ -51,6 +51,10 @@ async fn main() -> anyhow::Result<()> {
         password: std::env::var("PG_PROXY_BACKEND_PASSWORD").map_err(|_| {
             anyhow::anyhow!("PG_PROXY_BACKEND_PASSWORD is not set; the proxy cannot connect")
         })?,
+        // The shared cluster this binary is pointed at, which is a local one in every case that
+        // still uses it. A resolved backend sets this itself — see `resolve.rs`.
+        require_tls: std::env::var("PG_PROXY_BACKEND_REQUIRE_TLS")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),
     };
 
     // One registry for the process: a `CancelRequest` arrives on a different connection from the

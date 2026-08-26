@@ -6,10 +6,138 @@
 //! left to the tenant's first statement — a session that reached the splice still administrative
 //! would let one customer read every other customer's tables.
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
+
+use rustls_pki_types::ServerName;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
 use crate::{BackendConfig, SessionError};
+
+/// `SSLRequest`: the eight bytes that ask a Postgres server to start TLS.
+///
+/// Postgres does not wrap its protocol in TLS — it negotiates *inside* it. The client sends this
+/// instead of a startup packet and the server answers one byte: `S` to proceed with a handshake,
+/// `N` to carry on in the clear. Which is also why no load balancer can terminate TLS in front of
+/// Postgres: there is nothing at the front of the connection to terminate.
+const SSL_REQUEST_CODE: i32 = 80_877_103;
+
+/// The backend socket, which is either a plain one or a TLS session over it.
+///
+/// An enum rather than a boxed trait object: every byte a tenant sends crosses this, and a vtable
+/// hop per poll is not worth the lines it saves. The same shape `valkey-proxy` uses upstream.
+#[derive(Debug)]
+pub enum Stream {
+    Plain(TcpStream),
+    Tls(Box<TlsStream<TcpStream>>),
+}
+
+impl AsyncRead for Stream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Stream::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
+            Stream::Tls(stream) => Pin::new(stream.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Stream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Stream::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
+            Stream::Tls(stream) => Pin::new(stream.as_mut()).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Stream::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            Stream::Tls(stream) => Pin::new(stream.as_mut()).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Stream::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            Stream::Tls(stream) => Pin::new(stream.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
+/// Built once. Assembling a root store per connection would parse the whole bundle each time.
+fn connector() -> TlsConnector {
+    static CONNECTOR: std::sync::OnceLock<TlsConnector> = std::sync::OnceLock::new();
+
+    CONNECTOR
+        .get_or_init(|| {
+            // Webpki's bundled roots: the image carries no system certificate store, and managed
+            // Postgres chains to public roots.
+            let roots = RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+            TlsConnector::from(Arc::new(
+                ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            ))
+        })
+        .clone()
+}
+
+/// Ask for TLS, and upgrade if the server agrees.
+async fn negotiate_tls(
+    mut server: TcpStream,
+    backend: &BackendConfig,
+) -> Result<Stream, SessionError> {
+    let mut request = Vec::with_capacity(8);
+    request.extend_from_slice(&8_i32.to_be_bytes());
+    request.extend_from_slice(&SSL_REQUEST_CODE.to_be_bytes());
+    server.write_all(&request).await?;
+    server.flush().await?;
+
+    let mut answer = [0u8; 1];
+    server.read_exact(&mut answer).await?;
+
+    match answer[0] {
+        b'S' => {
+            let name = ServerName::try_from(backend.host.clone()).map_err(|_| {
+                SessionError::Backend(format!("{} is not a valid TLS server name", backend.host))
+            })?;
+            let session = connector().connect(name, server).await.map_err(|error| {
+                SessionError::Backend(format!("the TLS handshake failed: {error}"))
+            })?;
+            Ok(Stream::Tls(Box::new(session)))
+        }
+        /*
+          The server declined. Acceptable only where the configuration says so.
+
+          Refusing loudly rather than continuing is the point: a backend that will not do TLS and a
+          configuration that requires it is a misconfiguration, and the alternative is a tenant's
+          rows crossing the internet in the clear while everything reports healthy.
+        */
+        b'N' if !backend.require_tls => Ok(Stream::Plain(server)),
+        b'N' => Err(SessionError::Backend(
+            "the backend refused TLS and this connection requires it".to_owned(),
+        )),
+        other => Err(SessionError::Backend(format!(
+            "the backend answered SSLRequest with {other:#x}, which is not S or N"
+        ))),
+    }
+}
 
 /// Read the backend's address and credentials from the environment.
 pub fn backend_config_from_env() -> Result<BackendConfig, SessionError> {
@@ -27,12 +155,21 @@ pub fn backend_config_from_env() -> Result<BackendConfig, SessionError> {
         port,
         user,
         password,
+        /*
+          Off by default for the *configured* cluster, unlike a resolved one.
+
+          The shared cluster in development is the compose Postgres on loopback, which has no
+          certificate. A deployment whose shared cluster is remote sets this, and then a backend
+          that declines TLS fails the session rather than quietly carrying rows in the clear.
+        */
+        require_tls: std::env::var("PG_PROXY_BACKEND_REQUIRE_TLS")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),
     })
 }
 
 /// A backend session, plus the handshake the client still needs to see.
 pub struct Backend {
-    pub stream: TcpStream,
+    pub stream: Stream,
     /// `ParameterStatus` as the backend sent it.
     ///
     /// **Not** `BackendKeyData` — that is replaced, see `key`.
@@ -60,12 +197,15 @@ pub async fn connect(
     database: &str,
     role: &str,
 ) -> Result<Backend, SessionError> {
-    let mut server = TcpStream::connect((backend.host.as_str(), backend.port))
+    let socket = TcpStream::connect((backend.host.as_str(), backend.port))
         .await
         .map_err(|error| SessionError::Backend(format!("could not reach the cluster: {error}")))?;
     // The tenant's queries are request/response; a delayed ACK on a small packet is latency added
     // to every one of them.
-    let _ = server.set_nodelay(true);
+    let _ = socket.set_nodelay(true);
+
+    // Before the startup packet, because that is where Postgres puts the negotiation.
+    let mut server = negotiate_tls(socket, backend).await?;
 
     send_startup(&mut server, &backend.user, database).await?;
     let (handshake, key) = complete_authentication(&mut server, &backend.password).await?;
@@ -78,11 +218,7 @@ pub async fn connect(
     })
 }
 
-async fn send_startup(
-    server: &mut TcpStream,
-    user: &str,
-    database: &str,
-) -> Result<(), SessionError> {
+async fn send_startup(server: &mut Stream, user: &str, database: &str) -> Result<(), SessionError> {
     let mut body = Vec::new();
     body.extend_from_slice(&crate::protocol::PROTOCOL_3_0.to_be_bytes());
 
@@ -118,7 +254,7 @@ async fn send_startup(
 type Handshake = (Vec<u8>, Option<crate::cancel::BackendKey>);
 
 async fn complete_authentication(
-    server: &mut TcpStream,
+    server: &mut Stream,
     password: &str,
 ) -> Result<Handshake, SessionError> {
     // Everything the client will need to be told, kept in the bytes the backend used to say it.
@@ -200,7 +336,7 @@ async fn complete_authentication(
 /// is the previous step's output, and splitting it across the outer message loop would mean holding
 /// the half-finished exchange in a variable that is meaningless the rest of the time.
 async fn scram_exchange(
-    server: &mut TcpStream,
+    server: &mut Stream,
     password: &str,
     mechanisms: &[u8],
 ) -> Result<(), SessionError> {
@@ -258,7 +394,7 @@ fn getrandom(buffer: &mut [u8]) {
 ///
 /// Asserted rather than assumed: an `ErrorResponse` here is a wrong password, and reading it as a
 /// SASL payload would produce a parse error that says nothing about what happened.
-async fn read_auth_payload(server: &mut TcpStream, expected: i32) -> Result<String, SessionError> {
+async fn read_auth_payload(server: &mut Stream, expected: i32) -> Result<String, SessionError> {
     let mut tag = [0u8; 1];
     server.read_exact(&mut tag).await?;
 
@@ -292,7 +428,7 @@ async fn read_auth_payload(server: &mut TcpStream, expected: i32) -> Result<Stri
 }
 
 async fn send_sasl_initial(
-    server: &mut TcpStream,
+    server: &mut Stream,
     mechanism: &str,
     message: &str,
 ) -> Result<(), SessionError> {
@@ -315,7 +451,7 @@ async fn send_sasl_initial(
     Ok(())
 }
 
-async fn send_sasl_response(server: &mut TcpStream, message: &str) -> Result<(), SessionError> {
+async fn send_sasl_response(server: &mut Stream, message: &str) -> Result<(), SessionError> {
     // No null terminator and no inner length: a SASLResponse is the raw payload.
     let length = i32::try_from(4 + message.len()).unwrap_or(i32::MAX);
     server.write_all(b"p").await?;
@@ -325,7 +461,7 @@ async fn send_sasl_response(server: &mut TcpStream, message: &str) -> Result<(),
     Ok(())
 }
 
-async fn send_password(server: &mut TcpStream, password: &str) -> Result<(), SessionError> {
+async fn send_password(server: &mut Stream, password: &str) -> Result<(), SessionError> {
     let length = i32::try_from(password.len() + 5).unwrap_or(i32::MAX);
     server.write_all(b"p").await?;
     server.write_all(&length.to_be_bytes()).await?;
@@ -370,7 +506,7 @@ fn md5_hex(input: &[u8]) -> String {
 ///
 /// A simple query, and the identifier is not parameterizable — `SET ROLE $1` is not valid SQL. That
 /// is why `routing::is_safe_identifier` is asserted before this is ever reached.
-async fn set_role(server: &mut TcpStream, role: &str) -> Result<(), SessionError> {
+async fn set_role(server: &mut Stream, role: &str) -> Result<(), SessionError> {
     let statement = format!("SET ROLE {role}");
     let length = i32::try_from(statement.len() + 5).unwrap_or(i32::MAX);
 

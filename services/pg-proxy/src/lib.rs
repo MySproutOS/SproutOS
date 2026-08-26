@@ -66,6 +66,23 @@ pub struct BackendConfig {
     /// drops to the tenant's role immediately after connecting.
     pub user: String,
     pub password: String,
+    /*
+      Whether an unencrypted backend connection is acceptable.
+
+      TLS is always *offered* — `backend::connect` sends `SSLRequest` and upgrades if the server
+      answers `S`. This decides what happens when it answers `N`.
+
+      `true` for anything the resolver returns, because that is a managed Postgres reached across
+      the internet and a plaintext session there would carry every tenant's rows in the clear.
+      `false` for the configured shared cluster, which in development is the compose Postgres on
+      loopback with no certificate at all.
+
+      This field exists because the proxy had no TLS whatsoever: it opened the backend with a bare
+      `TcpStream::connect`, and Neon refused every session with "connection is insecure (try using
+      `sslmode=require`)". The customer-facing half worked perfectly — the tenant authenticated,
+      the database was resolved — and then the backend hung up.
+    */
+    pub require_tls: bool,
 }
 
 /// Decide who is connecting, without touching the network.
@@ -220,7 +237,7 @@ pub async fn serve_connection(
     // Everything past here is the backend half: connect, drop privileges, splice. It is separated so
     // the authentication path above can be read on its own.
     let backend_session = connect_backend(&backend, &database, &role).await?;
-    let mut server = backend_session.stream;
+    let server = backend_session.stream;
 
     /*
         Finish the client's handshake, in the order libpq expects.
@@ -253,7 +270,9 @@ pub async fn serve_connection(
     send_ready_for_query(&mut client).await?;
 
     let (mut client_read, mut client_write) = client.into_split();
-    let (mut server_read, mut server_write) = server.split();
+    // `tokio::io::split`, not the borrowed `TcpStream::split`: the backend may now be a TLS
+    // session rather than a socket, so the halves come from the generic split.
+    let (mut server_read, mut server_write) = tokio::io::split(server);
 
     /*
         Copy both ways until either side stops.
