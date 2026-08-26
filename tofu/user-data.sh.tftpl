@@ -14,7 +14,14 @@ SERVICE="${service}"
 BUCKET="${artifacts_bucket}"
 REGION="${aws_region}"
 
-dnf install -y awscli tar gzip
+# `git` is not optional and is not obvious.
+#
+# Amazon Linux 2023 ships without it, and the agent shells out to `git clone` to make the checkout it
+# works in — so every agent turn failed with `spawn git ENOENT`, a message that names a missing
+# binary and says nothing about which one the *product* needed. Nothing else on the instance uses
+# git, which is exactly why its absence went unnoticed until an agent run was attempted in
+# production for the first time.
+dnf install -y awscli tar gzip git
 
 # Node, for the website. The router needs nothing.
 #
