@@ -285,6 +285,15 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener_rule.website.arn,
           # The API's rule moves with the website's — one release, two ports, see `bin/cutover.sh`.
           aws_lb_listener_rule.api.arn,
+          # The search split's rule moves with the router's listener, for the same reason.
+          #
+          # Enumerated rather than a wildcard on the listener, so a rule added by hand cannot be
+          # moved by CI. The cost is that adding one here is a step that is easy to forget — and it
+          # was: the cutover's first run with a search rule got `AccessDenied` on `ModifyRule` after
+          # the fill had already succeeded. What made that harmless rather than an outage is the
+          # ordering in `cutover.sh`, which moves the *not yet serving* rule first: the listener was
+          # never touched, so traffic stayed where it was.
+          aws_lb_listener_rule.search.arn,
         ]
       },
     ]

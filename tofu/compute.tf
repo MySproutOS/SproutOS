@@ -713,7 +713,24 @@ resource "aws_launch_template" "service" {
 
   vpc_security_group_ids = [aws_security_group.service.id]
 
-  user_data = base64encode(templatefile("${path.module}/user-data.sh.tftpl", {
+  /*
+    Gzipped, not merely base64-encoded, because EC2 caps user data at 16384 bytes.
+
+    That is a hard API limit on the *decoded* bytes and the script crossed it — `CreateLaunchTemplateVersion`
+    answers `InvalidUserData.Malformed: User data is limited to 16384 bytes`, so a version is simply
+    never created. The failure is at apply and it is loud, but it is loud in the wrong place: what it
+    reads as is "OpenTofu could not write a launch template", not "the boot script is too long", and
+    an apply whose output is being filtered for the interesting lines can lose it entirely.
+
+    cloud-init sniffs the gzip magic bytes and decompresses before it decides what kind of user data
+    this is, so nothing in the script changes. The script is 18,958 bytes and compresses to 8,147,
+    which is not a close call — this is prose-heavy shell, and prose is what gzip is best at.
+
+    The alternative was to cut the comments. They are the reason anybody can read this file, most of
+    them exist because something in here was once wrong in a way that took hours to find, and buying
+    room by deleting them would be paying in the only currency this file has.
+  */
+  user_data = base64gzip(templatefile("${path.module}/user-data.sh.tftpl", {
     service          = each.key
     artifacts_bucket = aws_s3_bucket.artifacts.bucket
     aws_region       = var.aws_region
@@ -811,7 +828,16 @@ resource "aws_autoscaling_group" "router" {
   # The same zones the load balancer spans — see `local.serving_zone_count`. An instance outside
   # them boots, passes its own health check, and is never sent a request.
   vpc_zone_identifier = slice(aws_subnet.private[*].id, 0, local.serving_zone_count)
-  target_group_arns   = [aws_lb_target_group.router[each.key].arn]
+  # Both, because both listeners run in this process. A target group is a port on a set of
+  # instances, not a fleet of its own — the same reasoning as the website's pair above.
+  #
+  # Adding the group without adding it here creates a target group with no targets, which the
+  # console shows as a healthy-looking resource and the load balancer answers 503 from. Nothing
+  # errors: `search.<domain>` simply has nowhere to send a request.
+  target_group_arns = [
+    aws_lb_target_group.router[each.key].arn,
+    aws_lb_target_group.search[each.key].arn,
+  ]
 
   min_size         = 0
   max_size         = var.service_max_count
