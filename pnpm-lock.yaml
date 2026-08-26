@@ -905,6 +905,10 @@ importers:
         version: 26.2.0
 
   lib/typescript/metering:
+    dependencies:
+      ioredis:
+        specifier: ^6.0.0
+        version: 6.0.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

@@ -13,6 +13,9 @@
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "ioredis": "^6.0.0"
+  },
   "devDependencies": {
     "@types/node": "catalog:"
   }
