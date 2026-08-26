@@ -49,8 +49,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::upstream::{self, Upstream};
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -131,7 +131,7 @@ impl MasterQueue {
 /// The writer task: batch, deduplicate, write, repeat.
 async fn run(backend: String, mut receiver: mpsc::Receiver<Wake>) {
     let mut pending: HashMap<String, u64> = HashMap::new();
-    let mut connection: Option<TcpStream> = None;
+    let mut connection: Option<Upstream> = None;
     let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
 
     loop {
@@ -158,7 +158,7 @@ async fn run(backend: String, mut receiver: mpsc::Receiver<Wake>) {
 
 async fn flush(
     backend: &str,
-    connection: &mut Option<TcpStream>,
+    connection: &mut Option<Upstream>,
     pending: &mut HashMap<String, u64>,
 ) {
     if pending.is_empty() {
@@ -166,7 +166,10 @@ async fn flush(
     }
 
     if connection.is_none() {
-        match TcpStream::connect(backend).await {
+        // Same address, same scheme, same TLS decision as the tenant path — see `upstream.rs`. A master
+        // queue that could only open a plain socket would fail against exactly the backends the
+        // tenant connections reach.
+        match upstream::connect(backend).await {
             Ok(stream) => *connection = Some(stream),
             Err(cause) => {
                 /*

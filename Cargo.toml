@@ -47,6 +47,11 @@ subtle = "2"
 argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+# The tenant Valkey upstream. ElastiCache is created with `transit_encryption_enabled`, so a proxy
+# that can only open a plain socket cannot reach it at all — see `services/valkey-proxy/src/upstream.rs`.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = "1"
+webpki-roots = "0.26"
 
 [profile.release]
 lto = "thin"

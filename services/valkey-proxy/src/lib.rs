@@ -21,6 +21,7 @@ pub mod keyspace;
 pub mod master;
 pub mod reply;
 pub mod resp;
+pub mod upstream;
 
 use std::collections::VecDeque;
 
@@ -66,10 +67,18 @@ pub async fn serve(
     };
 
     let prefix = prefix_for(&identity);
-    let mut upstream = TcpStream::connect(backend).await?;
+    let upstream = upstream::connect(backend).await?;
     info!(tenant = %identity, "authenticated");
 
-    let (mut upstream_read, mut upstream_write) = upstream.split();
+    /*
+      `tokio::io::split`, not the borrowed `TcpStream::split`.
+
+      The upstream may now be a TLS session rather than a socket, so the halves come from the
+      generic split over `AsyncRead + AsyncWrite`. It costs a lock per half and buys a proxy that
+      can reach a backend with transit encryption enabled — which is every ElastiCache this
+      platform would point it at.
+    */
+    let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);
     let (mut client_read, mut client_write) = client.split();
 
     let mut upstream_buffer = BytesMut::with_capacity(READ_BUFFER);

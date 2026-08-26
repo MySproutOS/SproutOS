@@ -3519,15 +3519,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "rustls-pki-types",
  "serde_json",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",
  "thiserror 2.0.20",
  "tokio",
  "tokio-postgres",
+ "tokio-rustls 0.26.4",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
