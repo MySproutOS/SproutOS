@@ -143,3 +143,35 @@ export function createInstallationTokenStore(options: InstallationTokenStoreOpti
 export function envAppJwtSigner(env: NodeJS.ProcessEnv = process.env): () => string {
   return () => createAppJwt(githubAppConfigFromEnv(env))
 }
+
+/**
+ * The App's own slug, which is the only way to build its installation URL.
+ *
+ * `https://github.com/apps/<slug>/installations/new` is where a customer installs the App on an
+ * account that does not have it, and the slug is not `GITHUB_APP_ID` — that is a number, and the
+ * URL wants the name GitHub derived from the App's title. Nothing in this repository knew it, so
+ * nothing could offer the link, so an organization with the App on one account had no way to reach
+ * any other and no way to be told that installing it elsewhere was even possible.
+ *
+ * Cached for the process: it changes only if somebody renames the App, and it costs a signature
+ * plus a round trip.
+ */
+export async function githubAppSlug(client: GitHubClient, signJwt: () => string): Promise<string> {
+  if (cachedSlug !== null) return cachedSlug
+
+  const response = await client.request<{ slug?: string }>({
+    method: "GET",
+    path: "/app",
+    credential: appJwt(signJwt()),
+  })
+
+  const slug = response.data.slug
+  if (slug === undefined || slug === "") {
+    throw new Error("GitHub did not return a slug for this App")
+  }
+
+  cachedSlug = slug
+  return slug
+}
+
+let cachedSlug: string | null = null

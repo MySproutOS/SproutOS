@@ -1,5 +1,6 @@
 export {
   createAppJwt,
+  githubAppSlug,
   createInstallationTokenStore,
   envAppJwtSigner,
   type GitHubAppConfig,

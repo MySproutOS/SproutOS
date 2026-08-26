@@ -3,6 +3,7 @@ import {
   createGitHubClient,
   createInstallationTokenStore,
   envAppJwtSigner,
+  githubAppSlug,
   GitHubNotFoundError,
   GitHubRateLimitError,
   GitHubTransportError,
@@ -69,6 +70,18 @@ export function repositoryNameProblem(name: string): string | null {
     return "Use letters, numbers, hyphens, underscores and dots only — no spaces."
   }
   return null
+}
+
+/**
+ * Where GitHub keeps this installation's settings.
+ *
+ * Two different paths, and the wrong one is a 404 inside somebody's own GitHub settings — which
+ * reads as the App being broken rather than as a bad link, so it is worth the branch.
+ */
+function manageInstallationUrl(accountType: string, login: string, installationId: string): string {
+  return accountType === "Organization"
+    ? `https://github.com/organizations/${encodeURIComponent(login)}/settings/installations/${encodeURIComponent(installationId)}`
+    : `https://github.com/settings/installations/${encodeURIComponent(installationId)}`
 }
 
 const app = new Hono()
@@ -179,7 +192,26 @@ const app = new Hono()
       const installations = await fetchGithubInstallation(db).listUsable(c.var.organization.id, [
         "accountLogin",
         "accountType",
+        "installationId",
       ])
+
+      /*
+        The slug, so the customer can install the App somewhere it is not.
+
+        Absent this the interface can only ever offer the accounts that already have it — which for
+        most organizations is one, and for a new one is none. There was no route from "I want this
+        on my personal account too" to actually doing it, anywhere in the product.
+
+        Null when the App is not configured, rather than a guess: a link to
+        `github.com/apps/undefined/installations/new` is a 404 that reads as the App being broken.
+      */
+      let installUrl: string | null = null
+      try {
+        const slug = await githubAppSlug(createGitHubClient(), envAppJwtSigner())
+        installUrl = `https://github.com/apps/${slug}/installations/new`
+      } catch (error) {
+        if (!(error instanceof MissingGitHubAppConfigError)) throw error
+      }
 
       /*
         An empty list, not a 404.
@@ -193,7 +225,13 @@ const app = new Hono()
           login: installation.accountLogin,
           accountType: installation.accountType,
           isDefault: index === 0,
+          manageUrl: manageInstallationUrl(
+            installation.accountType,
+            installation.accountLogin,
+            installation.installationId,
+          ),
         })),
+        installUrl,
       })
     },
   )

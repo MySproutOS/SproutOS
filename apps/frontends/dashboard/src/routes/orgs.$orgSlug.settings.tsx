@@ -34,6 +34,9 @@ function SettingsLayout() {
         <Link to="/orgs/$orgSlug/settings/agent" params={{ orgSlug }} className={tabClassName}>
           Agent
         </Link>
+        <Link to="/orgs/$orgSlug/settings/github" params={{ orgSlug }} className={tabClassName}>
+          GitHub
+        </Link>
         <Link to="/orgs/$orgSlug/settings/api-keys" params={{ orgSlug }} className={tabClassName}>
           API keys
         </Link>

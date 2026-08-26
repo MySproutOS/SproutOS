@@ -2368,7 +2368,9 @@ export type GetV1OrgsByOrgSlugGithubOwnersResponses = {
       login: string
       accountType: string
       isDefault: boolean
+      manageUrl: string
     }>
+    installUrl: string | null
   }
 }
 

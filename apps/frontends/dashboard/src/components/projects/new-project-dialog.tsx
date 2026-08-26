@@ -159,6 +159,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const repositories = useGithubRepositories(orgSlug, true)
   const owners = useGithubOwners(orgSlug, source !== "repository")
   const ownerOptions = owners.data?.data ?? []
+  const installUrl = owners.data?.installUrl ?? null
   // The picker is uncontrolled until the list arrives, so the effective owner is the chosen one or
   // whichever the API marked default — the same one the server would have used on its own.
   const effectiveOwner =
@@ -416,7 +417,17 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
             on the organization.
           */}
           <div className="flex items-center gap-1.5">
-            {ownerOptions.length > 1 ? (
+            {/*
+              Always a control, even with one account.
+
+              It used to render a single owner as plain text on the reasoning that one account is
+              not a choice. That is true and it is not what a person reads: an unstyled login beside
+              an input says "this is where your code goes and you cannot change it", when the actual
+              situation is "you have installed the App on one account so far". The two are very
+              different and only one of them is true. A select that lists one account and offers to
+              add another says the second.
+            */}
+            {ownerOptions.length > 0 ? (
               <Select
                 items={ownerOptions.map((candidate) => ({
                   label: candidate.login,
@@ -440,14 +451,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                 </SelectContent>
               </Select>
             ) : (
-              /*
-                One account is not a choice, so it is shown rather than offered — a select with a
-                single option asks somebody to confirm something they cannot change. Nothing at all
-                would be worse: the full path is what makes the availability line below legible.
-              */
-              <span className="shrink-0 truncate text-[13px] text-muted-foreground">
-                {effectiveOwner ?? "—"}
-              </span>
+              <span className="shrink-0 truncate text-[13px] text-muted-foreground">—</span>
             )}
             <span className="text-muted-foreground">/</span>
             <Input
@@ -533,6 +537,29 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
             </div>
           )}
         </div>
+      )}
+
+      {/*
+        The way out of a one-account organization.
+
+        Nothing in the product said the App could be installed anywhere else, so an organization
+        whose App landed on one account had no route to a second and no reason to think there was
+        one. Shown beside the owner rather than only in settings, because this is the moment
+        somebody discovers the account they wanted is missing.
+      */}
+      {needsRepoName && installUrl !== null && (
+        <p className="text-[13px] text-muted-foreground">
+          Need a different account?{" "}
+          <a
+            href={installUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-foreground underline underline-offset-2 hover:text-leaf"
+          >
+            Install the SproutOS App there
+          </a>{" "}
+          and it will appear here.
+        </p>
       )}
 
       {needsRepoName && (

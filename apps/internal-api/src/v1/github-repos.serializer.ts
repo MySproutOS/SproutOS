@@ -41,8 +41,23 @@ export const githubSchemaOwnerListResponse = Type.Object({
       accountType: Type.String(),
       /** The one used when the caller does not choose — the oldest installation. */
       isDefault: Type.Boolean(),
+      /**
+       * Where the customer changes which repositories this installation can reach.
+       *
+       * Built here rather than in the browser because the path differs by account type and getting
+       * it wrong lands on a 404 inside somebody's GitHub settings, which reads as the App being
+       * broken rather than as a wrong link.
+       */
+      manageUrl: Type.String(),
     }),
   ),
+  /**
+   * Where to install the App on an account that does not have it yet.
+   *
+   * Null when the App is not configured on this deployment, which is the one case where offering
+   * the link would be worse than offering nothing: it would 404 on a slug that does not exist.
+   */
+  installUrl: Nullable(Type.String()),
 })
 
 /**
