@@ -17,7 +17,14 @@ import { v7 } from "uuid"
 */
 const installations = vi.fn<() => Promise<unknown[]>>()
 
-vi.mock("@lib/github", () => ({
+/*
+  Partial, because the row this asserts is written by the real `linkInstallation`.
+
+  Only the calls that would reach GitHub are replaced. Stubbing the whole module would leave the
+  test passing against a mock of the very write it exists to check.
+*/
+vi.mock("@lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@lib/github")>()),
   appJwt: (token: string) => ({ kind: "app", token }),
   createGitHubClient: () => ({
     request: async () => ({ data: await installations() }),

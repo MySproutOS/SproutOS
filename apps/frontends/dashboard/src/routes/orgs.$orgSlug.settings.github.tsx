@@ -5,7 +5,38 @@ import { useGithubOwners } from "@frontends/dashboard/data/new-project"
 
 export const Route = createFileRoute("/orgs/$orgSlug/settings/github")({
   component: GithubSettings,
+  validateSearch: (search: Record<string, unknown>): { install?: string } =>
+    typeof search.install === "string" ? { install: search.install } : {},
 })
+
+/*
+  What `/github/setup` says on the way back.
+
+  Every one of these was previously the same screen — the page you were already on, unchanged —
+  because the install link went straight to GitHub and nothing came back. "Nothing appears to have
+  happened" is the correct reading of an install that worked, one that needs an owner's approval,
+  and one that was refused, and the three want very different things from the reader.
+*/
+const OUTCOMES: Record<string, { tone: "ok" | "warn"; message: string }> = {
+  installed: { tone: "ok", message: "The App is installed. It should appear below." },
+  requested: {
+    tone: "warn",
+    message:
+      "GitHub has asked that organization's owners to approve the installation. It will appear here once they do.",
+  },
+  forbidden: {
+    tone: "warn",
+    message: "GitHub did not confirm you can administer that installation, so it was not linked.",
+  },
+  reconnect: {
+    tone: "warn",
+    message: "Your GitHub sign-in has expired. Sign in with GitHub again, then install the App.",
+  },
+  failed: {
+    tone: "warn",
+    message: "GitHub did not say which installation was created, so there was nothing to link.",
+  },
+}
 
 /**
  * Where the GitHub App is installed, and how to change that.
@@ -20,6 +51,8 @@ export const Route = createFileRoute("/orgs/$orgSlug/settings/github")({
  */
 function GithubSettings() {
   const { orgSlug } = Route.useParams()
+  const { install } = Route.useSearch()
+  const outcome = install === undefined ? undefined : OUTCOMES[install]
   const owners = useGithubOwners(orgSlug, true)
   const accounts = owners.data?.data ?? []
   const installUrl = owners.data?.installUrl ?? null
@@ -38,7 +71,7 @@ function GithubSettings() {
         {installUrl !== null && (
           <Button
             render={
-              <a href={installUrl} target="_blank" rel="noreferrer">
+              <a href={installUrl}>
                 <PlusIcon />
                 Install on an account
               </a>
@@ -46,6 +79,18 @@ function GithubSettings() {
           />
         )}
       </div>
+
+      {outcome === undefined ? null : (
+        <div
+          className={
+            outcome.tone === "ok"
+              ? "rounded-lg border border-border bg-secondary/40 p-3 text-[13px] text-foreground"
+              : "rounded-lg border border-border bg-secondary/40 p-3 text-[13px] text-muted-foreground"
+          }
+        >
+          {outcome.message}
+        </div>
+      )}
 
       {owners.isPending ? (
         <p className="text-[13px] text-muted-foreground">Loading…</p>

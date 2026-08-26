@@ -3,6 +3,7 @@ import {
   appJwt,
   createGitHubClient,
   envAppJwtSigner,
+  linkInstallation,
   MissingGitHubAppConfigError,
 } from "@lib/github"
 import type { DB } from "@sproutos/db"
@@ -107,53 +108,6 @@ const installationSync: JobHandler = async (job, { db }) => {
     permissions: installation.permissions ?? {},
     suspended: action === "suspend",
   })
-}
-
-/** The facts about an installation this platform stores, from a webhook or from `/app/installations`. */
-type InstallationFacts = {
-  id: number
-  login: string
-  accountType: string
-  repositorySelection: string
-  permissions: Record<string, string>
-  suspended: boolean
-}
-
-/** Writes the row that makes the App usable for an organization. */
-async function linkInstallation(
-  db: Kysely<DB>,
-  organizationId: string,
-  facts: InstallationFacts,
-): Promise<void> {
-  await db
-    .insertInto("githubInstallation")
-    .values({
-      id: v7(),
-      organizationId,
-      installationId: String(facts.id),
-      accountLogin: facts.login,
-      accountType: facts.accountType,
-      repositorySelection: facts.repositorySelection,
-      permissions: facts.permissions as never,
-    })
-    /*
-      Keyed on the installation, because GitHub reuses the id across events — `created`,
-      `new_permissions_accepted`, `suspend`, `unsuspend` all carry the same one. Inserting on each
-      would give one installation several rows and whichever was read first would win.
-    */
-    .onConflict((oc) =>
-      oc.column("installationId").doUpdateSet({
-        organizationId,
-        accountLogin: facts.login,
-        repositorySelection: facts.repositorySelection,
-        permissions: facts.permissions as never,
-        suspendedAt: facts.suspended ? new Date() : null,
-        updatedAt: new Date(),
-      }),
-    )
-    .execute()
-
-  console.info(`[jobs] installation ${facts.id} on ${facts.login} linked to ${organizationId}`)
 }
 
 /** What `GET /app/installations` returns, narrowed to the fields stored. */

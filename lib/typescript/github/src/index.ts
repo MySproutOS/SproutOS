@@ -64,4 +64,5 @@ export {
   syncWithUpstream,
   type UpstreamPosition,
 } from "./upstream"
-export { REPOSITORY_SCOPE, userGitHubCredential } from "./user-credential"
+export { REPOSITORY_SCOPE, userGitHubCredential, userGitHubIdentity } from "./user-credential"
+export { linkInstallation, type InstallationFacts } from "./link-installation"

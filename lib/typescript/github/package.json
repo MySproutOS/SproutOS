@@ -17,7 +17,8 @@
   "dependencies": {
     "@lib/envelope": "workspace:*",
     "@sproutos/db": "workspace:*",
-    "kysely": "catalog:"
+    "kysely": "catalog:",
+    "uuid": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

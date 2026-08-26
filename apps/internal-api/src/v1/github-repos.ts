@@ -205,10 +205,27 @@ const app = new Hono()
         Null when the App is not configured, rather than a guess: a link to
         `github.com/apps/undefined/installations/new` is a 404 that reads as the App being broken.
       */
+      /*
+        Our own route, not GitHub's, and that indirection is the whole fix.
+
+        Linking straight to `github.com/apps/<slug>/installations/new` loses the one fact the
+        platform cannot recover afterwards: which organization asked. GitHub's webhook names the
+        account it was installed on, and `installationSync` had to guess the organization from
+        `repository.owner_login` — so installing the App before creating a repository, which is
+        exactly what this page invites, silently wrote nothing and the App stayed invisible.
+
+        `/github/install` remembers the organization, sends the browser to the same GitHub page, and
+        GitHub's setup callback comes back to `/github/setup` with the answer still in hand.
+
+        Still null when the App is not configured. The slug lookup is what fails in that case and it
+        happens on the other side of the redirect now, so this asks for it here purely to find out —
+        a link that leads to a route that cannot finish is worse than no link.
+      */
       let installUrl: string | null = null
       try {
-        const slug = await githubAppSlug(createGitHubClient(), envAppJwtSigner())
-        installUrl = `https://github.com/apps/${slug}/installations/new`
+        await githubAppSlug(createGitHubClient(), envAppJwtSigner())
+        const host = process.env.NEXT_PUBLIC_HOST_URL ?? ""
+        installUrl = `${host}/github/install?org=${encodeURIComponent(c.req.param("orgSlug"))}`
       } catch (error) {
         if (!(error instanceof MissingGitHubAppConfigError)) throw error
       }

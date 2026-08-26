@@ -22,9 +22,34 @@ import type { GitHubCredential } from "./types"
  */
 export const REPOSITORY_SCOPE = "repo"
 
+/**
+ * The same token, without asking whether it may touch repositories.
+ *
+ * `userGitHubCredential` refuses a token that lacks `repo`, which is right for its callers and
+ * wrong for the ones that only want to know *who this person is on GitHub* — `GET /user/installations`
+ * answers "may this user administer this installation", and every signed-in user's identity token
+ * can ask it. Gating that on `repo` would mean the App could only be linked by someone who had
+ * already granted blanket access to every private repository they can see, in order to perform the
+ * step that exists so the platform does not need that grant.
+ */
+export async function userGitHubIdentity(
+  db: Kysely<DB>,
+  userId: string,
+): Promise<GitHubCredential | undefined> {
+  return await readToken(db, userId, false)
+}
+
 export async function userGitHubCredential(
   db: Kysely<DB>,
   userId: string,
+): Promise<GitHubCredential | undefined> {
+  return await readToken(db, userId, true)
+}
+
+async function readToken(
+  db: Kysely<DB>,
+  userId: string,
+  requireRepositoryScope: boolean,
 ): Promise<GitHubCredential | undefined> {
   const account = await db
     .selectFrom("account")
@@ -43,7 +68,7 @@ export async function userGitHubCredential(
     GitHub does not reveal the existence of repositories you cannot see. That is the correct
     behaviour and a terrible error: it sends the reader looking for a typo in a name that is right.
   */
-  if (!account.scopes.includes(REPOSITORY_SCOPE)) return undefined
+  if (requireRepositoryScope && !account.scopes.includes(REPOSITORY_SCOPE)) return undefined
 
   const token = await open(
     {

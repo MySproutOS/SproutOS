@@ -541,6 +541,9 @@ importers:
       '@lib/envelope':
         specifier: workspace:*
         version: link:../../lib/typescript/envelope
+      '@lib/github':
+        specifier: workspace:*
+        version: link:../../lib/typescript/github
       '@lib/oauth':
         specifier: workspace:*
         version: link:../../lib/typescript/oauth
@@ -786,13 +789,13 @@ importers:
       kysely:
         specifier: 'catalog:'
         version: 0.29.5
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.2
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
-      uuid:
-        specifier: 'catalog:'
-        version: 14.0.2
 
   lib/typescript/jobs:
     dependencies:

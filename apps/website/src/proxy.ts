@@ -13,7 +13,24 @@ import { cookieDomain, validateSessionToken } from "./lib/auth"
   — which is what made `authorization_endpoint` answer with a redirect to `/login` and lose the
   request.
 */
-const NEXTJS_PUBLIC_PREFIXES = ["/login", "/blog", "/legal", "/docs", "/download", "/oauth"]
+/*
+  `/github` is the GitHub App install round trip, not a page.
+
+  It has to be here rather than under the dashboard SPA because both halves are Next.js route
+  handlers that issue redirects: the SPA is a static bundle and cannot answer GitHub's setup
+  callback. Public in the sense that the proxy does not gate it — `/github/setup` reads the session
+  itself and sends an unauthenticated caller to `/login`, because bouncing them off the proxy would
+  lose the `installation_id` GitHub only sends once.
+*/
+const NEXTJS_PUBLIC_PREFIXES = [
+  "/login",
+  "/blog",
+  "/legal",
+  "/docs",
+  "/download",
+  "/oauth",
+  "/github",
+]
 
 /** The load balancer's health check, which has no session and must never be redirected to get one. */
 const HEALTH_PATH = "/healthz"
