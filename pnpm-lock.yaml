@@ -909,6 +909,9 @@ importers:
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0
+      kafkajs:
+        specifier: ^2.2.4
+        version: 2.2.4
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

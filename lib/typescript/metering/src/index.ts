@@ -20,3 +20,17 @@ export {
   quantityToNanoUnits,
   type ActiveUsageEvent,
 } from "./active-counters"
+export {
+  DEFAULT_USAGE_EVENT_TOPIC,
+  connectUsageEventProducer,
+  decimalQuantity,
+  encodeUsageEvent,
+  usageEventId,
+  usageEventKafkaConfigFromEnv,
+  usageEventRecord,
+  type KafkaFactory,
+  type NewUsageEventRecord,
+  type UsageEventKafkaConfig,
+  type UsageEventProducer,
+  type UsageEventRecord,
+} from "./producer"

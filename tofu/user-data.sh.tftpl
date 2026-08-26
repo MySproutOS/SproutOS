@@ -132,6 +132,11 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
 
+# Separate topics because their failure policies differ: runtime logs may be dropped to protect a
+# customer's request, while usage ingest acknowledges only after Kafka has replicated the event.
+KAFKA_RUNTIME_LOG_TOPIC=runtime-logs
+KAFKA_USAGE_EVENT_TOPIC=usage-events
+
 # The key `@lib/envelope` wraps data keys with.
 #
 # An ARN identifies a key; it is not one, and holding it grants nothing — the instance can use this
@@ -421,6 +426,7 @@ if [ "$SERVICE" = "website" ]; then
     STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
+    KAFKA_BROKERS KAFKA_USAGE_EVENT_SASL_USERNAME KAFKA_USAGE_EVENT_SASL_PASSWORD \
     SANDBOX_DRIVER SANDBOX_DAYTONA_API_KEY SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
     SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \

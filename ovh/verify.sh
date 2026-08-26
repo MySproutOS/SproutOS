@@ -68,5 +68,14 @@ idx=$($CH "select count() from system.data_skipping_indices where database='spro
 check "runtime_log skip index" "${idx:-error}" "1"
 
 echo
+echo "kafka"
+for topic in "${KAFKA_RUNTIME_LOG_TOPIC:-runtime-logs}" "${KAFKA_USAGE_EVENT_TOPIC:-usage-events}"; do
+  partitions=$(sudo docker exec sproutos_kafka /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server kafka:9092 --describe --topic "$topic" 2>/dev/null \
+    | sed -n 's/.*PartitionCount: \([0-9][0-9]*\).*/\1/p' | head -1)
+  check "$topic partitions" "${partitions:-missing}" "3"
+done
+
+echo
 if [ "$FAILED" -eq 0 ]; then echo "all checks passed"; else echo "checks FAILED"; fi
 exit "$FAILED"
