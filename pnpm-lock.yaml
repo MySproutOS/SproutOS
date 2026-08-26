@@ -681,6 +681,9 @@ importers:
       '@lib/envelope':
         specifier: workspace:*
         version: link:../envelope
+      '@lib/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db

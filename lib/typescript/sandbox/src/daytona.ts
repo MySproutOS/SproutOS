@@ -212,6 +212,84 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
     })
   }
 
+  /**
+   * Run a command and stream its output while it runs.
+   *
+   * `runAsync: true` is the whole difference from `exec`. The synchronous form returns when the
+   * command is over, which for an agent turn means several minutes of nothing followed by
+   * everything at once. Asynchronous returns a command id immediately, and the SDK will call back
+   * with log chunks as they are produced.
+   *
+   * The exit code is fetched afterwards, because the streaming call does not carry one — and a
+   * caller that assumed success from "the stream ended" would treat a crashed agent as a finished
+   * one.
+   */
+  async function execStream(
+    externalId: string,
+    argv: string[],
+    timeoutMs: number,
+    onStdout: (chunk: string) => void,
+    onStderr: (chunk: string) => void,
+  ): Promise<ExecResult> {
+    const sandbox = await get(externalId)
+    const command = quoteArgv(argv)
+    const sessionId = `stream-${crypto.randomUUID()}`
+
+    return await call(async () => {
+      await sandbox.process.createSession(sessionId)
+      try {
+        const started = await sandbox.process.executeSessionCommand(sessionId, {
+          command,
+          runAsync: true,
+        })
+        const commandId = started.cmdId
+        if (commandId === undefined) {
+          // Without an id there is nothing to follow. Falling back to the synchronous form would be
+          // worse than saying so: it would look like it worked and stream nothing.
+          throw new Error("the sandbox provider started a command with no id to follow")
+        }
+
+        let stdout = ""
+        let stderr = ""
+        const collecting = sandbox.process.getSessionCommandLogs(
+          sessionId,
+          commandId,
+          (chunk) => {
+            stdout += chunk
+            onStdout(chunk)
+          },
+          (chunk) => {
+            stderr += chunk
+            onStderr(chunk)
+          },
+        )
+
+        /*
+          A timeout around the follow, not inside it.
+
+          `getSessionCommandLogs` resolves when the command ends; it has no deadline of its own, so
+          a hung agent would hold this request open until something else gave up. Racing it against
+          a timer is what makes `timeoutMs` mean anything.
+        */
+        let timer: NodeJS.Timeout | undefined
+        const deadline = new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() =>{  resolve("timeout"); }, timeoutMs)
+        })
+        const outcome = await Promise.race([collecting.then(() => "done" as const), deadline])
+        if (timer !== undefined) clearTimeout(timer)
+
+        if (outcome === "timeout") {
+          return { stdout, stderr, exitCode: -1 }
+        }
+
+        const finished = await sandbox.process.getSessionCommand(sessionId, commandId)
+        return { stdout, stderr, exitCode: finished.exitCode ?? -1 }
+      } finally {
+        await sandbox.process.deleteSession(sessionId).catch(() => {})
+      }
+    })
+  }
+
   async function readFile(externalId: string, path: string): Promise<string> {
     const sandbox = await get(externalId)
     const buffer = await call(() => sandbox.fs.downloadFile(path))
@@ -282,6 +360,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
       }
     },
     exec,
+    execStream,
     readFile,
     writeFile,
     tree,

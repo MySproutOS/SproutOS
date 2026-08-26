@@ -110,6 +110,26 @@ export type SandboxDriver = {
    * a request nobody made; the array is the shape that cannot be silently coerced into.
    */
   exec: (externalId: string, argv: string[], timeoutMs: number) => Promise<ExecResult>
+  /**
+   * Run a command and watch its output arrive.
+   *
+   * Separate from `exec` rather than replacing it, because the two answer different questions. A
+   * build step is a result: you want the exit code and you do not care what it printed until it is
+   * over. An agent turn is a *performance* — it runs for minutes and the whole value of watching it
+   * is seeing the tool calls as they happen. `exec` on an agent turn is a spinner for five minutes
+   * followed by a wall of text.
+   *
+   * `onStdout` receives arbitrary chunks, split wherever the transport split them. Callers that
+   * parse line-oriented output must buffer to line boundaries themselves — a chunk can end
+   * mid-line, and code that assumes otherwise works on every short output and fails on real ones.
+   */
+  execStream: (
+    externalId: string,
+    argv: string[],
+    timeoutMs: number,
+    onStdout: (chunk: string) => void,
+    onStderr: (chunk: string) => void,
+  ) => Promise<ExecResult>
   readFile: (externalId: string, path: string) => Promise<string>
   writeFile: (externalId: string, path: string, content: string) => Promise<void>
   tree: (externalId: string, path?: string) => Promise<TreeEntry[]>

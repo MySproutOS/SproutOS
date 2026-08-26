@@ -49,6 +49,7 @@ import {
 } from "./agentCredential/fetch"
 import { type AgentProxyTokenInsert, crudAgentProxyToken } from "./agentProxyToken/crud"
 import { fetchAgentProxyToken } from "./agentProxyToken/fetch"
+import { sandboxScopeFor } from "./sandbox/scope"
 import { fetchGithubInstallation } from "./githubInstallation/fetch"
 import { crudProject } from "./project/crud"
 import { fetchProject } from "./project/fetch"
@@ -130,6 +131,7 @@ export {
   type AgentProxyTokenInsert,
   crudAgentCredential,
   crudAgentProxyToken,
+  sandboxScopeFor,
   fetchAgentProxyToken,
   crudAgentSession,
   crudAccount,

@@ -52,3 +52,4 @@ export {
 } from "./harness"
 export * from "./proxy-token"
 export * from "./sandbox-env"
+export * from "./sandbox-agent"

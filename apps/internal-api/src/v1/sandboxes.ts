@@ -1,4 +1,4 @@
-import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox } from "@lib/dao"
+import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
 import { enqueue, SANDBOX_KINDS } from "@lib/jobs"
 import {
   daytonaConfigFromEnv,
@@ -113,8 +113,27 @@ function workspacePath(relative: string): string | null {
  * idle has to mean *nobody is using it* rather than *nothing has been written* — a person reading
  * code for twenty minutes is using it.
  */
+/**
+ * The sandbox for a project, which is the sandbox for its *group*.
+ *
+ * A group is one repository and one checkout; its children are directories inside it. A sandbox per
+ * child would mean two clones of the same repository, two `node_modules`, two dev servers that
+ * cannot see each other, and an agent that fixes a shared library in one and cannot see it from
+ * the other. For a monorepo — the shape this platform is built around — that is not isolation, it
+ * is a split brain.
+ *
+ * Every route here goes through this rather than through `forUser` directly, so that asking about
+ * `apps/website` and asking about `apps/internal-api` reach the same workspace. Bypassing it is how
+ * two sandboxes for one repository would come back.
+ */
+async function sandboxFor(organizationId: string, projectId: string, userId: string) {
+  const scope = await sandboxScopeFor(db, organizationId, projectId)
+  if (scope === undefined) return undefined
+  return await fetchSandbox(db).forUser(organizationId, scope, userId)
+}
+
 async function activeSandbox(organizationId: string, projectId: string, userId: string) {
-  const row = await fetchSandbox(db).forUser(organizationId, projectId, userId)
+  const row = await sandboxFor(organizationId, projectId, userId)
   if (row === undefined) return undefined
   await crudSandbox(db).touch(row.id)
   return row
@@ -150,7 +169,7 @@ const app = new Hono()
     validator("param", sandboxSchemaProjectParam),
     async (c) => {
       const { projectId } = c.req.valid("param")
-      const row = await fetchSandbox(db).forUser(c.var.organization.id, projectId, c.var.user.id)
+      const row = await sandboxFor(c.var.organization.id, projectId, c.var.user.id)
       if (row === undefined) return throwNotFound(c, "No sandbox for this project")
       return c.json(serialize(row))
     },
@@ -200,8 +219,16 @@ const app = new Hono()
         return c.json(serialize(existing), 201)
       }
 
+      /*
+        Created against the group, so the next child asking finds this one.
+
+        Resolved again rather than reusing the lookup above: `existing` being absent says only that
+        there is no sandbox, not what the scope is.
+      */
+      const scope = (await sandboxScopeFor(db, organization.id, projectId)) ?? projectId
+
       const created = await crudSandbox(db).create({
-        projectId,
+        projectId: scope,
         userId: c.var.user.id,
         state: "starting",
         idleTimeoutS: IDLE_TIMEOUT_S,
@@ -248,7 +275,7 @@ const app = new Hono()
     validator("param", sandboxSchemaProjectParam),
     async (c) => {
       const { projectId } = c.req.valid("param")
-      const row = await fetchSandbox(db).forUser(c.var.organization.id, projectId, c.var.user.id)
+      const row = await sandboxFor(c.var.organization.id, projectId, c.var.user.id)
       if (row === undefined) return throwNotFound(c, "No sandbox for this project")
 
       // Stop, not destroy: the workspace is the customer's work and outlives the container.
