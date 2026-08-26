@@ -3,6 +3,7 @@ import {
   assertRegisteredRedirect,
   createAuthorizationCode,
   exchangeAuthorizationCode,
+  hashClientSecret,
   introspect,
   OAuthError,
   revokeToken,
@@ -10,7 +11,7 @@ import {
 } from "@lib/oauth-provider"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
-import { constantTimeEqualUtf8, encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
+import { constantTimeEqualUtf8 } from "@utils/crypto"
 import { type Context, Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
@@ -382,7 +383,10 @@ async function authenticateClient(
     throw new OAuthError("invalid_client", "This client must authenticate", 401)
   }
 
-  const secretHash = encodeHexLowerCase(await sha256Utf8(clientSecret))
+  // Through the same function that stored it. Hashing inline here is what broke this:
+  // `oauth-clients.ts` stores `sha256$<hex>` and this compared a bare `<hex>`, so no
+  // confidential client could ever authenticate.
+  const secretHash = await hashClientSecret(clientSecret)
   const secrets = await db
     .selectFrom("oauthClientSecret")
     .select("secretHash")
