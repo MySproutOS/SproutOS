@@ -35,12 +35,33 @@ vi.mock("@website/lib/auth", () => ({
 }))
 
 const linked = vi.fn<(...args: unknown[]) => void>()
-const installations = { value: [] as { id: number; account: { login: string; type: string } }[] }
+
+/** What `GET /app/installations/{id}` will answer, or `undefined` to make it 404. */
+const installation = {
+  value: undefined as
+    | { id: number; account: { id: number; login: string; type: string } }
+    | undefined,
+}
+/** Whether `GET /user/memberships/orgs/{org}` succeeds. */
+const orgMembership = { value: true }
 const credential = { value: undefined as { kind: string; token: string } | undefined }
 
 vi.mock("@lib/github", () => ({
+  appJwt: (token: string) => ({ kind: "app", token }),
+  envAppJwtSigner: () => () => "signed.app.jwt",
   createGitHubClient: () => ({
-    request: () => Promise.resolve({ data: { installations: installations.value } }),
+    request: ({ path }: { path: string }) => {
+      if (path.startsWith("/app/installations/")) {
+        if (installation.value === undefined) return Promise.reject(new Error("404"))
+        return Promise.resolve({ data: installation.value })
+      }
+      if (path.startsWith("/user/memberships/orgs/")) {
+        return orgMembership.value
+          ? Promise.resolve({ data: {} })
+          : Promise.reject(new Error("403"))
+      }
+      return Promise.reject(new Error(`unexpected path ${path}`))
+    },
   }),
   linkInstallation: (...args: unknown[]) => {
     linked(...args)
@@ -55,18 +76,21 @@ vi.mock("@lib/dao", () => ({
 
 vi.mock("@sproutos/db", () => ({
   db: {
-    selectFrom: () => ({
+    selectFrom: (table: string) => ({
       select: () => ({
         where: function () {
           return this
         },
-        executeTakeFirst: () => Promise.resolve(membership.value),
+        executeTakeFirst: () =>
+          Promise.resolve(table === "account" ? githubAccount.value : membership.value),
       }),
     }),
   },
 }))
 
 const membership = { value: undefined as { id: string } | undefined }
+/** The caller's linked GitHub identity, as `account.provider_account_id` holds it. */
+const githubAccount = { value: undefined as { providerAccountId: string } | undefined }
 
 import { GET } from "./route"
 
@@ -83,7 +107,9 @@ beforeEach(() => {
   session.value = { user: { id: "user-1" } }
   membership.value = { id: "member-1" }
   credential.value = { kind: "user", token: "gho_x" }
-  installations.value = [{ id: 42, account: { login: "acme", type: "Organization" } }]
+  installation.value = { id: 42, account: { id: 777, login: "acme", type: "Organization" } }
+  orgMembership.value = true
+  githubAccount.value = { providerAccountId: "777" }
   linked.mockClear()
 })
 
@@ -108,9 +134,45 @@ describe("the GitHub App setup callback", () => {
     The one that matters. GitHub is the authority on which installations a person administers, so an
     id that is not in their list is somebody else's — and guessing one is a matter of counting.
   */
-  it("refuses an installation GitHub does not list for this user", async () => {
+  it("refuses an installation GitHub does not know about", async () => {
+    installation.value = undefined
     const response = await GET(
       new Request("https://sproutos.me/github/setup?installation_id=999&setup_action=install"),
+    )
+    expect(outcome(response)).toBe("forbidden")
+    expect(linked).not.toHaveBeenCalled()
+  })
+
+  it("refuses an organization installation the caller does not belong to", async () => {
+    orgMembership.value = false
+    const response = await GET(
+      new Request("https://sproutos.me/github/setup?installation_id=42&setup_action=install"),
+    )
+    expect(outcome(response)).toBe("orgscope")
+    expect(linked).not.toHaveBeenCalled()
+  })
+
+  it("links a personal installation to the account that owns it", async () => {
+    installation.value = { id: 42, account: { id: 777, login: "andrew", type: "User" } }
+    const response = await GET(
+      new Request("https://sproutos.me/github/setup?installation_id=42&setup_action=install"),
+    )
+    expect(outcome(response)).toBe("installed")
+    expect(linked).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      expect.objectContaining({ accountType: "User", login: "andrew" }),
+    )
+  })
+
+  /*
+    A login can be given up and taken by somebody else, so the claim is checked on GitHub's numeric
+    id. Same login, different account, must not link.
+  */
+  it("refuses a personal installation belonging to a different GitHub account", async () => {
+    installation.value = { id: 42, account: { id: 999, login: "andrew", type: "User" } }
+    const response = await GET(
+      new Request("https://sproutos.me/github/setup?installation_id=42&setup_action=install"),
     )
     expect(outcome(response)).toBe("forbidden")
     expect(linked).not.toHaveBeenCalled()

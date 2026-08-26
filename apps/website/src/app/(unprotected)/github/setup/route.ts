@@ -1,5 +1,11 @@
 import { fetchOrganization } from "@lib/dao"
-import { createGitHubClient, linkInstallation, userGitHubIdentity } from "@lib/github"
+import {
+  appJwt,
+  createGitHubClient,
+  envAppJwtSigner,
+  linkInstallation,
+  userGitHubIdentity,
+} from "@lib/github"
 import { db } from "@sproutos/db"
 import { getCurrentSession } from "@website/lib/auth"
 import { cookies } from "next/headers"
@@ -7,10 +13,10 @@ import { INSTALL_ORG_COOKIE } from "../install/route"
 
 /** Where GitHub sends somebody after they install the App — the App's "Setup URL". */
 
-/** What `GET /user/installations` returns, narrowed to the fields stored. */
-type UserInstallation = {
+/** What `GET /app/installations/{id}` returns, narrowed to the fields stored. */
+type Installation = {
   id: number
-  account?: { login?: string; type?: string } | null
+  account?: { id?: number; login?: string; type?: string } | null
   repository_selection?: string
   permissions?: Record<string, string>
   suspended_at?: string | null
@@ -24,6 +30,23 @@ function back(path: string, status: string): Response {
 }
 
 export async function GET(request: Request) {
+  /*
+    Nothing here is allowed to 500.
+
+    GitHub delivers `installation_id` exactly once, to this URL, and an error page is where that
+    fact goes to die — the person is left with an App that is installed on GitHub, invisible here,
+    and no way to replay the redirect. Failing onto the settings page at least says so and leaves
+    "Install on an account" in reach, which starts the whole flow again.
+  */
+  try {
+    return await handle(request)
+  } catch (error) {
+    console.error("[github] setup callback failed", error)
+    return back("/", "failed")
+  }
+}
+
+async function handle(request: Request) {
   const params = new URL(request.url).searchParams
   const cookieStore = await cookies()
   const orgSlug = cookieStore.get(INSTALL_ORG_COOKIE)?.value ?? null
@@ -70,40 +93,91 @@ export async function GET(request: Request) {
   if (member === undefined) return back("/", "forbidden")
 
   /*
-    GitHub decides whether this person may link this installation, because only GitHub knows.
+    Whether this person may claim this installation, asked of GitHub.
 
-    The tempting check is to compare the installation's account login to the user's own, which is
-    right for a personal account and wrong for every organization — the whole point of installing on
-    an organization is that it is not you. `GET /user/installations` is the question actually being
-    asked: it returns exactly the installations this token's owner may administer, so an id that
-    comes back is an id they are entitled to attach here, and one that does not is refused without
-    the platform having to model GitHub's permission rules a second time.
+    The obvious call is `GET /user/installations`, and it is the wrong one: it needs a
+    *user-to-server* token minted by the GitHub App, and the token on the session comes from the
+    OAuth App. Two identities, by design (ADR 0005) — sign-in is the OAuth App's job and
+    installations are the GitHub App's — so that endpoint answers "You must authenticate with an
+    access token authorized to a GitHub App" no matter who is signed in. It could only ever 500,
+    which is exactly what it did.
 
-    Without it this route would take an `installation_id` from a query string and write it against
-    whatever organization the caller is a member of — which is to say, anybody could claim anybody
-    else's installation by guessing a small integer.
+    The App's own JWT can read the installation, so the question is turned around: ask GitHub who
+    this installation belongs to, then check the caller against that. Without some form of this the
+    route would take an `installation_id` from a query string and write it against the caller's
+    organization — and an installation id is a small integer, so anybody could claim a stranger's
+    repositories by counting.
   */
-  const credential = await userGitHubIdentity(db, session.user.id)
-  if (credential === undefined) return back(settings, "reconnect")
+  const client = createGitHubClient()
 
-  const response = await createGitHubClient().request<{ installations: UserInstallation[] }>({
-    method: "GET",
-    path: "/user/installations?per_page=100",
-    credential: credential,
-  })
+  let installation: Installation
+  try {
+    const response = await client.request<Installation>({
+      method: "GET",
+      path: `/app/installations/${installationId}`,
+      credential: appJwt(envAppJwtSigner()()),
+    })
+    installation = response.data
+  } catch {
+    // A 404 here is the ordinary refusal: no such installation, or not this App's.
+    return back(settings, "forbidden")
+  }
 
-  const match = response.data.installations.find(
-    (entry: UserInstallation) => entry.id === installationId,
-  )
-  if (match === undefined) return back(settings, "forbidden")
+  const account = installation.account ?? {}
+
+  if (account.type === "Organization") {
+    /*
+      An organization installation is claimed by proving membership of that organization.
+
+      GitHub already required owner rights to perform the install, so this is not the primary
+      control — it is what stops somebody who is *not* that owner from claiming the result
+      afterwards. `read:org` is in `GITHUB_REPOSITORY_SCOPES` but not in the identity scopes, so a
+      caller who has only ever signed in is sent to step up rather than refused: the grant exists,
+      they simply have not been asked for it yet.
+    */
+    const credential = await userGitHubIdentity(db, session.user.id)
+    if (credential === undefined) return back(settings, "reconnect")
+
+    try {
+      await client.request({
+        method: "GET",
+        path: `/user/memberships/orgs/${account.login ?? ""}`,
+        credential,
+      })
+    } catch {
+      return back(settings, "orgscope")
+    }
+  } else {
+    /*
+      A personal installation is claimed by being that person.
+
+      Compared on GitHub's numeric id rather than the login, because a login can be changed by its
+      owner and then reused by somebody else — matching on it would hand the new holder of a
+      recycled name a claim on the old holder's installation.
+    */
+    const linkedAccount = await db
+      .selectFrom("account")
+      .select("providerAccountId")
+      .where("userId", "=", session.user.id)
+      .where("provider", "=", "github")
+      .executeTakeFirst()
+
+    if (
+      linkedAccount === undefined ||
+      account.id === undefined ||
+      String(account.id) !== linkedAccount.providerAccountId
+    ) {
+      return back(settings, "forbidden")
+    }
+  }
 
   await linkInstallation(db, organization.id, {
-    id: match.id,
-    login: match.account?.login ?? "",
-    accountType: match.account?.type ?? "User",
-    repositorySelection: match.repository_selection ?? "selected",
-    permissions: match.permissions ?? {},
-    suspended: match.suspended_at != null,
+    id: installation.id,
+    login: account.login ?? "",
+    accountType: account.type ?? "User",
+    repositorySelection: installation.repository_selection ?? "selected",
+    permissions: installation.permissions ?? {},
+    suspended: installation.suspended_at != null,
   })
 
   return back(settings, "installed")

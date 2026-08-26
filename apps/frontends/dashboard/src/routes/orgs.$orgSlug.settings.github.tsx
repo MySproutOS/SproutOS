@@ -32,6 +32,11 @@ const OUTCOMES: Record<string, { tone: "ok" | "warn"; message: string }> = {
     tone: "warn",
     message: "Your GitHub sign-in has expired. Sign in with GitHub again, then install the App.",
   },
+  orgscope: {
+    tone: "warn",
+    message:
+      "SproutOS could not confirm you belong to that GitHub organization. Sign in again to grant organization access, then install the App.",
+  },
   failed: {
     tone: "warn",
     message: "GitHub did not say which installation was created, so there was nothing to link.",
