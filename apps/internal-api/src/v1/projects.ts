@@ -38,6 +38,7 @@ import { createGitHubClient, getRepositoryById, organizationGitHubCredential } f
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
+import { v7 } from "uuid"
 import type { DB } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
@@ -472,6 +473,79 @@ async function resolveOwnRepository(
   })
 }
 
+/**
+ * The group a repository's projects live in, creating it if this is the first one.
+ *
+ * Returns the group's id, or `null` if one could not be made — which is deliberately not an error.
+ * A customer creating a project cares about the project; failing the request because its container
+ * could not be created would turn a presentation detail into an outage. The project is created
+ * ungrouped and can be moved later.
+ */
+async function ensureRepositoryGroup(
+  database: typeof db,
+  input: { organizationId: string; productionBranch: string | null; repositoryId: string },
+): Promise<string | null> {
+  try {
+    const existing = await database
+      .selectFrom("project")
+      .select(["id"])
+      .where("organizationId", "=", input.organizationId)
+      .where("repositoryId", "=", input.repositoryId)
+      .where("isGroup", "=", true)
+      .where("deletedAt", "is", null)
+      .orderBy("createdAt", "asc")
+      .executeTakeFirst()
+
+    /*
+      The *first* group, not the only one.
+
+      "This new group concept doesn't mean there can only be one group per repository" — so a second
+      group is legal and someone may well make one. What must not happen is a new project picking an
+      arbitrary group when several exist, so this takes the oldest, deterministically, and a
+      customer who wants the other one moves it.
+    */
+    if (existing !== undefined) return existing.id
+
+    const repository = await database
+      .selectFrom("repository")
+      .select(["name"])
+      .where("id", "=", input.repositoryId)
+      .executeTakeFirst()
+    if (repository === undefined) return null
+
+    const slug = await allocateProjectSlug(database, input.organizationId, repository.name)
+    const created = await database
+      .insertInto("project")
+      .values({
+        id: v7(),
+        isGroup: true,
+        name: repository.name,
+        organizationId: input.organizationId,
+        // A group has no build target. `.` and the repository's own branch are what the partial
+        // unique index excludes groups from, so these are recorded rather than meaningful.
+        productionBranch: input.productionBranch ?? "main",
+        repositoryId: input.repositoryId,
+        rootDir: ".",
+        slug,
+        state: "ready",
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow()
+
+    return created.id
+  } catch (cause) {
+    console.error(
+      JSON.stringify({
+        error: String(cause),
+        level: "error",
+        message: "could not create the repository's group; the project will be ungrouped",
+        repositoryId: input.repositoryId,
+      }),
+    )
+    return null
+  }
+}
+
 const app = new Hono()
   .use(authMiddleware)
   .get(
@@ -680,6 +754,40 @@ const app = new Hono()
       const rootDir = json.rootDir ?? listingRootDir ?? "."
       const dockerfilePath = json.dockerfilePath ?? listingDockerfilePath ?? "Dockerfile"
 
+      /*
+        A repository starts as a group, and the deployable project goes inside it.
+
+        "Start all repositories as groups, and the AI or user via UI can determine creating new
+        projects." A repository is the thing a customer connects; what deploys out of it is a
+        decision they may make more than once, and a monorepo makes that the normal case rather than
+        the exception.
+
+        The group is created *around* the project rather than instead of it. Returning a group from
+        "create a project" would mean the store's one-click deploy produced something that deploys
+        nothing, and a customer watching for their app would watch forever. So the response is still
+        the deployable project — the group is the container it arrives in.
+
+        Only for the first project on a repository, and only when the caller did not decide for
+        itself: a second project joins the group that is already there, and an explicit
+        `parentProjectId` or `isGroup` is an answer we should not overrule.
+      */
+      let parentProjectId = json.parentProjectId ?? null
+      if (json.isGroup !== true && parentProjectId === null && plan.mode === "existing") {
+        /*
+          Only where the repository already exists.
+
+          A fork has no `repository` row until provisioning creates one, and a group needs one —
+          `project.repository_id` is NOT NULL because a group *is* the repository root. Connecting a
+          repository you already have is also the case the requirement is about: a monorepo, with
+          more than one deployable in it.
+        */
+        parentProjectId = await ensureRepositoryGroup(db, {
+          organizationId: organization.id,
+          productionBranch,
+          repositoryId: plan.id,
+        })
+      }
+
       // A group builds nothing, so it has no target to conflict over.
       if (plan.mode === "existing" && json.isGroup !== true) {
         const conflict = await fetchProject(db).findConflictingTarget({
@@ -749,7 +857,7 @@ const app = new Hono()
         slug,
         storeListingId,
         isGroup: json.isGroup ?? false,
-        parentProjectId: json.parentProjectId ?? null,
+        parentProjectId,
       })
 
       /*

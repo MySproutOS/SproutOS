@@ -383,10 +383,21 @@ describe.skipIf(!reachable)("project routes", () => {
         `/v1/orgs/${orgA}/projects?repositoryId=${repositoryId}`,
         alice,
       )
-      const ids = (filtered.json.data as Json[]).map((row) => row.id)
-      expect(ids).toHaveLength(2)
+      /*
+        Three rows, not two: both projects and the group they live in.
+
+        A repository starts as a group and its projects go inside it, so a listing filtered to one
+        repository shows the container as well as its contents — which is what the switcher and the
+        group page render. `liveProjectCount` above stays 2 because that number answers a different
+        question: how many *deployable* projects use this repository, which decides whether deleting
+        one releases it.
+      */
+      const rows = filtered.json.data as Json[]
+      const ids = rows.map((row) => row.id)
+      expect(ids).toHaveLength(3)
       expect(ids).toContain(forkedProjectId)
       expect(ids).toContain(sharedProjectId)
+      expect(rows.filter((row) => row.isGroup === true)).toHaveLength(1)
     })
 
     /**

@@ -208,17 +208,42 @@ export function provisionProject(db: Kysely<DB>) {
       const project = await crudProject(tx).softDelete(input.organizationId, input.projectId)
       if (project === undefined) return null
 
+      /*
+        Deployable siblings, not every row.
+
+        A repository now starts as a group with its projects inside it, so counting groups here
+        would mean the last project's deletion still found one sibling — the container — and the
+        repository could never be released. The group would outlive everything it contained and hold
+        a repository nobody uses.
+      */
       const siblings = await tx
         .selectFrom("project")
         .select((eb) => eb.fn.countAll<string>().as("count"))
         .where("repositoryId", "=", project.repositoryId)
         .where("deletedAt", "is", null)
+        .where("isGroup", "=", false)
         .executeTakeFirst()
 
       const remaining = siblings ? Number(siblings.count) : 0
       const repositoryReleased = remaining === 0
 
       if (repositoryReleased) {
+        /*
+          The empty groups go with it.
+
+          A group with no projects is not something anyone asked for — it is the residue of the last
+          one being deleted. Soft-deleted rather than removed, like everything else here, so an
+          audit row that references it still resolves. `ON DELETE RESTRICT` on `parent_project_id`
+          is untouched by this: a soft delete is an UPDATE.
+        */
+        await tx
+          .updateTable("project")
+          .set({ deletedAt: new Date(), state: "deleting" })
+          .where("repositoryId", "=", project.repositoryId)
+          .where("isGroup", "=", true)
+          .where("deletedAt", "is", null)
+          .execute()
+
         await crudRepository(tx).softDelete(project.repositoryId)
       }
 

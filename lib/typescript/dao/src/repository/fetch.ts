@@ -66,12 +66,24 @@ export function fetchRepository(db: Kysely<DB>) {
    * TASK 21: two projects may be two directories or two branches of one repository, so a
    * repository is only detachable once the last of them is gone.
    */
+  /**
+   * How many *deployable* projects this repository has.
+   *
+   * Groups are excluded. This number answers "is anything else using this repository", which decides
+   * whether deleting a project also deletes the repository and how the UI describes what is at
+   * stake — and a group is a container, not a use. Counting it means a repository with one app in a
+   * group reads as two projects, and deleting that app would look like it leaves something behind.
+   *
+   * The same exclusion `findConflictingTarget` and `project_repository_target_live_key` already
+   * make, for the same reason: a group has no build target.
+   */
   async function countLiveProjects(id: string): Promise<number> {
     const row = await db
       .selectFrom("project")
       .select((eb) => eb.fn.countAll<string>().as("count"))
       .where("repositoryId", "=", id)
       .where("deletedAt", "is", null)
+      .where("isGroup", "=", false)
       .executeTakeFirst()
 
     return row ? Number(row.count) : 0
