@@ -1,4 +1,5 @@
 import { LambdaClient } from "@aws-sdk/client-lambda"
+import { LOG_EXTENSION_ENABLED } from "@utils/feature-flags"
 import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
 import {
@@ -267,9 +268,17 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       environment: { ...environment, SPROUTOS_DEPLOYMENT_ID: deploymentId },
       // Unset in development, where there is no layer to attach and no Kafka to ship to. A
       // deployment without it runs and produces no logs, which is why it is set from one place.
-      ...(process.env.LOG_EXTENSION_LAYER_ARN === undefined
-        ? {}
-        : { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }),
+      /*
+        The flag, not just the variable.
+
+        `LOG_EXTENSION_ENABLED` is off because the published layer crashes the function it is
+        attached to — see `@utils/feature-flags`. Gated here rather than by unsetting the variable,
+        so the reason travels with the code instead of living in an instance's environment where
+        the next person to set it has no idea what they are turning back on.
+      */
+      ...(LOG_EXTENSION_ENABLED && process.env.LOG_EXTENSION_LAYER_ARN !== undefined
+        ? { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }
+        : {}),
       ...(adapterLayerArn === undefined ? {} : { webAdapterLayerArn: adapterLayerArn }),
     })
 

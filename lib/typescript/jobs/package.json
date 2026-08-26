@@ -27,6 +27,7 @@
     "@lib/services": "workspace:*",
     "@lib/workflows": "workspace:*",
     "@sproutos/db": "workspace:*",
+    "@utils/feature-flags": "workspace:*",
     "ioredis": "^6.0.0",
     "kysely": "catalog:",
     "uuid": "catalog:"

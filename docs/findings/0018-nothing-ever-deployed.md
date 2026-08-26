@@ -186,3 +186,36 @@ architecture.
 
 `Architectures` cannot be changed by `UpdateFunctionConfiguration`, so a function published before
 this has to be deleted to move.
+
+## The observability killed the thing it observed
+
+With the architecture corrected the extension finally _ran_, and killed the function anyway:
+
+```
+Error: KAFKA_BROKERS is not set; the extension has nowhere to send logs
+INIT_REPORT Phase: invoke  Status: error  Error Type: Extension.Crash
+```
+
+The layer in production is a build old enough to want `KAFKA_BROKERS`. The platform stopped setting
+it when logs moved to the router's token endpoint — `publish.ts` still carries the comment
+explaining that change — and nothing rebuilt or republished the layer, because **nothing in this
+repository builds or publishes it**. `services/log-extension` is a crate; the artifact in the
+account was uploaded by hand and its contents are a fact only AWS knows.
+
+That is the deeper problem. The layer's _architecture_ was wrong and its _code_ was months stale,
+and neither was visible from the source tree, because the source tree does not produce it.
+
+Two faults, and only one is the staleness:
+
+- `Sink::connect()` was fatal at startup. `send_batch` five lines away already says why it must not
+  be — "an extension that exits takes the customer's function down with it, and losing a log line is
+  not worth an outage of their application" — and that rule was applied to sending and not to
+  starting, where it matters more: a send failure loses a line, a startup failure loses every
+  invocation. Fixed; a sink that cannot be built now drops lines and says so.
+- The extension is attached to every customer function by default, so a bad build of it is a
+  platform-wide outage rather than a degraded feature. It is now behind `LOG_EXTENSION_ENABLED`,
+  off, with the two conditions for turning it back on written next to the flag — the second of which
+  is that something builds and publishes the layer, which is still not true.
+
+The rule this leaves: **an observability component must fail quieter than the thing it observes.**
+An extension that can crash the application is not monitoring it, it is a dependency of it.

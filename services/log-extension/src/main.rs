@@ -70,7 +70,27 @@ async fn main() -> anyhow::Result<()> {
     runtime::subscribe(&client, &base, &extension_id).await?;
     tracing::info!("subscribed to telemetry");
 
-    let sink = log_extension::sink::Sink::connect()?;
+    /*
+      A sink we could not build is not a reason to take the application down.
+
+      `send_batch` already says this — "an extension that exits takes the customer's function down
+      with it, and losing a log line is not worth an outage of their application" — and applied that
+      rule only to sending. Startup was fatal, so a missing variable crashed the function on **every
+      invocation**, reported as `Extension.Crash` with the cause in the extension's own log and
+      nothing in the customer's.
+
+      That is not hypothetical: the layer attached to every customer function in production is a
+      build old enough to want `KAFKA_BROKERS`, and the first application ever to reach an
+      invocation was killed by it. An observability component must fail quieter than the thing it
+      observes.
+    */
+    let sink = match log_extension::sink::Sink::connect() {
+        Ok(sink) => Some(sink),
+        Err(cause) => {
+            tracing::error!(%cause, "logs will be dropped; the extension is not configured");
+            None
+        }
+    };
 
     loop {
         /*
@@ -86,7 +106,8 @@ async fn main() -> anyhow::Result<()> {
             batch.push(message);
         }
         if !batch.is_empty()
-            && let Err(cause) = send_batch(&sink, &batch).await
+            && let Some(sink) = sink.as_ref()
+            && let Err(cause) = send_batch(sink, &batch).await
         {
             // Not fatal. An extension that exits takes the customer's function down with it, and
             // losing a log line is not worth an outage of their application.
@@ -101,8 +122,10 @@ async fn main() -> anyhow::Result<()> {
             while let Ok(message) = rx.try_recv() {
                 final_batch.push(message);
             }
-            if !final_batch.is_empty() {
-                let _ = send_batch(&sink, &final_batch).await;
+            if !final_batch.is_empty()
+                && let Some(sink) = sink.as_ref()
+            {
+                let _ = send_batch(sink, &final_batch).await;
             }
             tracing::info!("shutting down");
             return Ok(());
