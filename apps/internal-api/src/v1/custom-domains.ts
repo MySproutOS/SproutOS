@@ -377,6 +377,19 @@ const routes = app
         const requested = await acm().send(
           new RequestCertificateCommand({
             DomainName: hostname,
+            /*
+              An apex gets `www` too, on the same certificate.
+
+              Almost nobody who points `example.com` at us wants `www.example.com` to be a
+              certificate error, and the two share one validation — ACM validates the alternative
+              name through the same zone, so this costs the customer no extra record. Without it the
+              apex works, `www` fails a TLS handshake, and the failure looks like a platform fault
+              rather than a certificate that was never asked for.
+
+              Only for an apex: adding `www.www.example.com` for a subdomain would be nonsense, and
+              ACM would ask for a validation record nobody will publish.
+            */
+            ...(isApex ? { SubjectAlternativeNames: [`www.${hostname}`] } : {}),
             ValidationMethod: "DNS",
             Tags: [
               { Key: "sproutos:project", Value: projectId },
@@ -628,6 +641,18 @@ const routes = app
             deploymentId: live.deploymentId,
           }
           await publishRoute(platformValkey(), domain.hostname, route)
+          /*
+            And `www`, for an apex, because the certificate covers it.
+
+            A route the certificate allows but nothing resolves is a 404 for a hostname the customer
+            reasonably expects to work — they pointed `www` at us and we issued a certificate for
+            it. Published unconditionally for an apex rather than only when a `www` CNAME is
+            observed: DNS is theirs to change at any time, and a route with nobody pointing at it
+            costs one Valkey key.
+          */
+          if (domain.isApex) {
+            await publishRoute(platformValkey(), `www.${domain.hostname}`, route)
+          }
         }
       }
 
@@ -678,6 +703,15 @@ const routes = app
         way to discover a domain was removed.
       */
       await withdrawRoute(platformValkey(), domain.hostname)
+      /*
+        And the `www` route the apex published, or removing a domain leaves half of it serving.
+
+        Withdrawn unconditionally for an apex, matching how it was published: a key that is not
+        there is a no-op, and the alternative is remembering whether `www` ever resolved.
+      */
+      if (domain.isApex) {
+        await withdrawRoute(platformValkey(), `www.${domain.hostname}`)
+      }
 
       /*
         Here a missing listener ARN *is* survivable, unlike on verify.

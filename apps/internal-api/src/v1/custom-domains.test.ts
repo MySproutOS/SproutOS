@@ -100,3 +100,19 @@ describe("proof of zone control", () => {
     expect(await hasValidationCname(null, null)).toBe(false)
   })
 })
+
+describe("the www alternative name", () => {
+  it("is asked for on an apex and not on a subdomain", () => {
+    /*
+      Almost nobody who points `example.com` at us wants `www.example.com` to be a certificate
+      error, and the two share one validation — so the alternative name costs the customer no extra
+      record. Asserted through `looksLikeApex`, which is the input that decides it: a subdomain
+      would otherwise get `www.app.example.com`, which is nonsense and would make ACM ask for a
+      validation record nobody will publish.
+    */
+    expect(looksLikeApex("textscam.com")).toBe(true)
+    expect(looksLikeApex("example.co.uk")).toBe(true)
+    expect(looksLikeApex("readit.demo.sproutos.run")).toBe(false)
+    expect(looksLikeApex("app.example.com")).toBe(false)
+  })
+})
