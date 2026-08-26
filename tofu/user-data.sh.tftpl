@@ -148,6 +148,14 @@ LAMBDA_EXECUTION_ROLE_ARN=${lambda_execution_role_arn}
 # fallback named a bucket that exists in no account.
 TENANT_STATIC_BUCKET=${tenant_static_bucket}
 
+# Where a customer's build archive is uploaded to and where Lambda reads it from.
+#
+# The same omission `tenant-static.tf` describes for the assets bucket, one line down and left
+# behind when that one was fixed: `deploy.ts` and `publish.ts` fall back to `sproutos-dev-artifacts`,
+# a bucket that exists in no account, so the API signed a PUT for somewhere that is not there and
+# the deploy action failed with a bare `curl: (22) ... 404` from S3.
+SERVICE_BUILD_BUCKET=${artifacts_bucket}
+
 # Runtime logs. An empty `CLICKHOUSE_URL` is a feature flag rather than an error: the observability
 # client reads it as "not configured" and the logs UI is simply absent. Reached through Traefik on
 # the OVH box, whose IP allowlist holds this deployment's NAT egress address — which is why there is

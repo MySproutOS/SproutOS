@@ -21,7 +21,21 @@
  *
  * The check is deliberately about *reachability*, not values. It cannot know whether
  * `SERVICE_VALKEY_PUBLIC_HOST` points at a live Valkey; it can know that nothing would ever set it.
+ *
+ * ## The direction that was missing
+ *
+ * The three lists above were compared **to each other and to nothing else**, while the sentence at
+ * the top of this file claims the check is about what the code reads. It never read the code. So a
+ * variable the application reads and no list provides was invisible — which is exactly what
+ * happened to `SERVICE_BUILD_BUCKET`: `deploy.ts` signs an upload URL for
+ * `process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"`, nothing set it in production, and
+ * every customer deploy failed on a presigned PUT to a bucket that exists in no account. The
+ * assets bucket one line above it had already been fixed for the identical reason.
+ *
+ * A fallback is what makes this silent. Without one the application would crash at boot; with one it
+ * runs, looks healthy, and is wrong somewhere only a real request reaches.
  */
+import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 
 const putSecrets = readFileSync("bin/put-app-secrets.sh", "utf8")
@@ -96,6 +110,75 @@ function writtenDirectly() {
   return keys
 }
 
+/**
+ * Every `process.env.NAME` the deployed TypeScript actually reads.
+ *
+ * `git grep` rather than a directory walk, so nothing in `node_modules` or a build output counts —
+ * a bundled dependency's own environment variables are not this platform's configuration, and
+ * including them buries the real names.
+ *
+ * @returns {Set<string>}
+ */
+function readByCode() {
+  const out = execFileSync(
+    "git",
+    [
+      "grep",
+      "-hoE",
+      String.raw`process\.env\.[A-Z][A-Z0-9_]*`,
+      "--",
+      "apps",
+      "lib",
+      "packages",
+      // Tests invent names (`GREETING`, `SOME_UNRELATED_THING`) to exercise the readers. They are
+      // not configuration, and left in they are most of the output — which is how a report stops
+      // being read.
+      ":!*.test.ts",
+      ":!*.test.tsx",
+      ":!*.test.mts",
+    ],
+    { encoding: "utf8" },
+  )
+  /** @type {Set<string>} */
+  const keys = new Set()
+  for (const line of out.split("\n")) {
+    const name = line.trim().replace("process.env.", "")
+    // `process.env[`NEXT_PUBLIC_${x}`]` matches as far as the interpolation, leaving a prefix that
+    // is not a variable name.
+    if (name !== "" && !name.endsWith("_")) keys.add(name)
+  }
+  return keys
+}
+
+/**
+ * Names that come from somewhere other than this platform's configuration.
+ *
+ * The runtime sets some (`NODE_ENV`, `AWS_REGION`, the Lambda and GitHub Actions variables);
+ * developers set others locally and production deliberately leaves them unset, which is a
+ * meaningful state rather than a gap. Listed explicitly, because the whole value of this direction
+ * is that an unrecognised name is reported — a wildcard would quietly absorb the next real one.
+ */
+const NOT_OUR_CONFIGURATION = new Set([
+  "NODE_ENV",
+  "PORT",
+  "HOSTNAME",
+  "HOME",
+  "PATH",
+  "CI",
+  "TZ",
+  "AWS_REGION",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_LAMBDA_FUNCTION_NAME",
+  "AWS_LAMBDA_EXEC_WRAPPER",
+  "AWS_LWA_PORT",
+  "GITHUB_ACTIONS",
+  "GITHUB_OUTPUT",
+  "GITHUB_TOKEN",
+  "VITEST",
+])
+
 const inParameterStore = parameterStoreKeys()
 const requested = requestedAtBoot()
 const direct = writtenDirectly()
@@ -138,6 +221,23 @@ for (const key of [...inParameterStore].sort((a, b) => a.localeCompare(b))) {
         `asks for it, so no instance ever reads it.`,
     )
   }
+}
+
+/*
+  The third direction: read by the application, provided by nothing.
+
+  A warning rather than a failure, because "provided by nothing" is not always wrong — a feature can
+  be deliberately off in production, and `webAdapterLayerArn`'s override is an example of a name
+  that should stay unset. What it must not be is *unnoticed*, which is what it was.
+*/
+const read = readByCode()
+for (const key of [...read].sort((a, b) => a.localeCompare(b))) {
+  if (NOT_OUR_CONFIGURATION.has(key)) continue
+  if (requested.has(key) || direct.has(key) || inParameterStore.has(key)) continue
+  warnings.push(
+    `${key} is read by the application and no list provides it. If the code has a fallback, ` +
+      `production is silently running on the fallback.`,
+  )
 }
 
 /*

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 
 import { runtimeForPreset } from "./runtimes"
 import {
+  DEFAULT_WEB_ADAPTER_LAYER_VERSION,
   startupScript,
   WEB_ADAPTER_HANDLER,
   webAdapterEnv,
@@ -14,11 +15,13 @@ describe("webAdapterLayerArn", () => {
     delete process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION
   })
 
-  it("is undefined when nothing is configured", () => {
-    // The property that matters: absent configuration must be distinguishable, so the publish can
-    // refuse. Returning a plausible-looking ARN would publish a function that fails every
-    // invocation with `/opt/bootstrap: not found`.
-    expect(webAdapterLayerArn("us-east-1")).toBeUndefined()
+  it("falls back to the pinned version when nothing is configured", () => {
+    // The control-plane deploy does not run `tofu apply`, so a variable added to user-data reaches
+    // instances only on the next infrastructure change. A publish path that depends on one is a
+    // publish path that refuses every web deployment until somebody notices.
+    expect(webAdapterLayerArn("us-east-1")).toBe(
+      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
+    )
   })
 
   it("composes AWS's public layer ARN from the version and the region", () => {
@@ -37,12 +40,14 @@ describe("webAdapterLayerArn", () => {
     expect(webAdapterLayerArn("us-east-1")).toBe("arn:aws:lambda:us-east-1:111:layer:Mine:3")
   })
 
-  it("treats an empty string as unset", () => {
+  it("treats an empty override as unset rather than as a request for an empty layer", () => {
     // An unset Terraform variable arrives as `VAR=` rather than as an absent name, so the empty
     // string is the shape this actually sees when nobody configured it.
     process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION = ""
     process.env.LAMBDA_WEB_ADAPTER_LAYER_ARN = ""
-    expect(webAdapterLayerArn("us-east-1")).toBeUndefined()
+    expect(webAdapterLayerArn("us-east-1")).toBe(
+      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
+    )
   })
 })
 

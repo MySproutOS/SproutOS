@@ -40,6 +40,7 @@ export {
   type MigrateResult,
 } from "./migrate"
 export {
+  DEFAULT_WEB_ADAPTER_LAYER_VERSION,
   startupScript,
   WEB_ADAPTER_HANDLER,
   WEB_ADAPTER_PORT,

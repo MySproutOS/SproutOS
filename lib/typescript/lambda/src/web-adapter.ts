@@ -40,20 +40,38 @@ export const WEB_ADAPTER_PORT = 8080
 export const WEB_ADAPTER_HANDLER = "run.sh"
 
 /**
+ * The layer version this platform publishes against. `29` is the adapter's `1.1.0`.
+ *
+ * **Pinned in code rather than in configuration**, and the difference is not stylistic. The first
+ * version of this read the environment and refused to publish when nothing was set — which is the
+ * right shape for a credential and the wrong one for a constant, because the control-plane deploy
+ * does not run `tofu apply`. The variable would have reached instances only on the next
+ * infrastructure change, and until then every web deployment would have been refused for want of a
+ * public number that has one correct value.
+ *
+ * Here it is a code change with a diff and a review, which is what moving every customer function
+ * to a new adapter build deserves. The environment still overrides it, for a region or an
+ * experiment that needs something else.
+ */
+export const DEFAULT_WEB_ADAPTER_LAYER_VERSION = "29"
+
+/**
  * AWS's published account for the adapter layer. Not ours, and not a secret.
  *
- * The version is pinned through the environment rather than hardcoded: layer versions advance, a
- * stale one is a silent old adapter, and a wrong one fails at publish with an AWS error naming the
- * ARN — which is the good failure. Absent, adapted deployments are refused rather than published
- * without the layer, because a function with the wrapper variable set and no `/opt/bootstrap` boots
- * into an error every invocation.
+ * Returns `undefined` only when an override is explicitly set to something unusable, so the publish
+ * can refuse: a function with the wrapper variable set and no `/opt/bootstrap` fails on every
+ * invocation, and the alias would already have moved by the time anyone saw it.
  */
 export function webAdapterLayerArn(region: string): string | undefined {
   const explicit = process.env.LAMBDA_WEB_ADAPTER_LAYER_ARN
   if (explicit !== undefined && explicit !== "") return explicit
 
-  const version = process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION
-  if (version === undefined || version === "") return undefined
+  // An override present but blank is "unset", not "no layer": an unset Terraform variable arrives
+  // as `VAR=` rather than as an absent name, so `??` would take the empty string and compose an ARN
+  // ending in a colon.
+  const configured = process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION
+  const version =
+    configured === undefined || configured === "" ? DEFAULT_WEB_ADAPTER_LAYER_VERSION : configured
 
   // `X86` rather than `Arm64`: `publishFunction` does not set `Architectures`, so Lambda uses its
   // default. A layer for the other architecture fails at publish, which is loud — but the two must
