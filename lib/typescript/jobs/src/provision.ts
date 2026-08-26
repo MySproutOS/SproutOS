@@ -12,7 +12,12 @@ import {
   organizationGitHubCredential,
   userGitHubCredential,
 } from "@lib/github"
-import { crudDeployment, crudStoreListing, crudStoreListingEvent } from "@lib/dao"
+import {
+  crudDeployment,
+  crudStoreListing,
+  crudStoreListingEvent,
+  isPendingGithubRepoId,
+} from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 import { v7 } from "uuid"
@@ -192,7 +197,24 @@ export async function runProvision(
     if (credential === undefined) throw new NoUsableCredentialError()
 
     const client = github?.client ?? createGitHubClient()
-    const created = await createOnGitHub(client, credential, job.kind, repository)
+
+    /*
+      A repository that already exists is read, not created.
+
+      TASK 21's "use a repository you own" writes no new `repository` row — it points a project at
+      one already there — and it queues the same `provision` job as everything else. This line
+      created unconditionally, so that path asked GitHub to make a repository the customer already
+      had, and GitHub answered 422 "name already exists on this account". The whole third way of
+      starting a project failed on its first step, every time.
+
+      Told apart by the sign of `github_repo_id`, which is what `pendingGithubRepoId` exists to
+      encode: negative while the row is a placeholder waiting on GitHub, and GitHub's own positive
+      id once it is real. A boolean column would have been a second source of truth for something
+      the id already says.
+    */
+    const created = isPendingGithubRepoId(repository.githubRepoId)
+      ? await createOnGitHub(client, credential, job.kind, repository)
+      : await getRepository(client, credential, repository.ownerLogin, repository.name)
 
     await db
       .updateTable("repository")

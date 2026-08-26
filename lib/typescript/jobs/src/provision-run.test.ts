@@ -72,6 +72,75 @@ function fakeGitHub(sha: string) {
   return { client, credential: { kind: "user", token: "gho_test" } as const, seen }
 }
 
+/**
+ * A project pointed at a repository the customer already has.
+ *
+ * TASK 21's third way of starting a project: no new `repository` row, no creation on GitHub, and
+ * the same `provision` job as everything else. The `github_repo_id` is positive because GitHub
+ * assigned it — which is the only thing telling this apart from a placeholder awaiting creation.
+ */
+async function seedExistingRepository() {
+  const userId = v7()
+  const orgId = v7()
+  const repoId = v7()
+  const projectId = v7()
+  const suffix = repoId.replaceAll("-", "").slice(-12)
+
+  await db
+    .insertInto("user")
+    .values({ id: userId, email: `ex-${userId}@test.invalid`, name: "Ex" })
+    .execute()
+  created.push({ table: "user", id: userId })
+  await db
+    .insertInto("organization")
+    .values({
+      id: orgId,
+      name: "Ex Org",
+      slug: `ex${suffix}`,
+      kind: "personal",
+      ownerUserId: userId,
+    })
+    .execute()
+  created.push({ table: "organization", id: orgId })
+  await db
+    .insertInto("repository")
+    .values({
+      id: repoId,
+      organizationId: orgId,
+      // Positive: GitHub already assigned it. `pendingGithubRepoId` uses the negative half.
+      githubRepoId: 424242,
+      ownerLogin: "acme",
+      name: "astro-blog-starter",
+      provenance: "imported",
+    })
+    .execute()
+  created.push({ table: "repository", id: repoId })
+  await db
+    .insertInto("project")
+    .values({
+      id: projectId,
+      organizationId: orgId,
+      repositoryId: repoId,
+      name: "Existing",
+      slug: `ex${suffix.slice(0, 6)}`,
+      state: "creating",
+    })
+    .execute()
+  created.push({ table: "project", id: projectId })
+
+  const job = await crudProjectJob(db).create({
+    id: v7(),
+    organizationId: orgId,
+    projectId,
+    repositoryId: repoId,
+    kind: "provision",
+    steps: JSON.stringify(initialSteps("provision")),
+  })
+  created.push({ table: "projectJob", id: job.id })
+
+  return { userId, orgId, projectId, repoId, projectJobId: job.id }
+}
+
 async function seed() {
   const userId = v7()
   const orgId = v7()
@@ -132,6 +201,19 @@ async function seed() {
 
 afterAll(async () => {
   if (!reachable) return
+
+  /*
+    Deployments first, and by project rather than by id.
+
+    Provisioning creates them as a side effect, so they are not in `created` — and `deployment`
+    references `project`, so deleting the project first fails on the foreign key and takes the whole
+    teardown with it. Every row after it in the list then survives the run and leaks into the next.
+  */
+  const projectIds = created.filter((row) => row.table === "project").map((row) => row.id)
+  if (projectIds.length > 0) {
+    await db.deleteFrom("deployment").where("projectId", "in", projectIds).execute()
+  }
+
   for (const row of [...created].reverse()) {
     await db.deleteFrom(row.table).where("id", "=", row.id).execute()
   }
@@ -324,3 +406,51 @@ async function installCount(listingId: string): Promise<number> {
     .executeTakeFirstOrThrow()
   return row.installCount
 }
+
+/*
+  The third way of starting a project asked GitHub to create a repository the customer already had.
+
+  `provisionProject` writes no `repository` row for `mode: "existing"` — it points a project at one
+  that is already there — and queues the same `provision` job. Provisioning created unconditionally,
+  so GitHub answered 422 "name already exists on this account" and the step failed on its first
+  call, every time. Nothing distinguished the two cases except the sign of `github_repo_id`, which
+  nothing consulted.
+*/
+describe.runIf(reachable)("provisioning onto a repository that already exists", () => {
+  it("reads the repository instead of trying to create it", async () => {
+    const sha = "0f1e2d3c4b5a69788796a5b4c3d2e1f001234567"
+    const { userId, projectJobId } = await seedExistingRepository()
+    const github = fakeGitHub(sha)
+
+    await runProvision(db, { projectJobId, userId }, github)
+
+    // The creation endpoints, either of which is the 422 this guards against.
+    expect(github.seen).not.toContain("/user/repos")
+    expect(github.seen.some((path) => /^\/orgs\/[^/]+\/repos$/.test(path))).toBe(false)
+
+    // And it did read the one that exists.
+    expect(github.seen).toContain("/repos/acme/astro-blog-starter")
+  })
+
+  it("still queues the production deployment", async () => {
+    const sha = "1122334455667788990011223344556677889900"
+    const { userId, projectId } = await (async () => {
+      const seeded = await seedExistingRepository()
+      await runProvision(
+        db,
+        { projectJobId: seeded.projectJobId, userId: seeded.userId },
+        fakeGitHub(sha),
+      )
+      return seeded
+    })()
+
+    const deployment = await db
+      .selectFrom("deployment")
+      .select(["gitSha", "status"])
+      .where("projectId", "=", projectId)
+      .executeTakeFirst()
+
+    expect(deployment).toMatchObject({ gitSha: sha, status: "queued" })
+    expect(userId).toBeDefined()
+  })
+})
