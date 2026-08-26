@@ -712,8 +712,17 @@ resource "aws_iam_policy" "application" {
           Decrypt only, and only through S3: `kms:ViaService` means this cannot be used to read
           anything else the key protects, which includes the database's master password.
         */
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt"]
+        Effect = "Allow"
+        /*
+          `GenerateDataKey` as well as `Decrypt`, because two of the buckets this key protects are
+          *written* to: a PUT into an SSE-KMS bucket needs a data key, and without this S3 answers
+          `AccessDenied` on PutObject while the thing refused is KMS — the same displaced error this
+          comment already describes for reads. It applies to the assets bucket too, which has been
+          grantable-but-unwritable since it was created and never exercised.
+
+          Not a decrypt capability: a data key can be created without being able to read anything.
+        */
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = aws_kms_key.secrets.arn
         Condition = {
           # Three services, because the same key protects the release in S3, the database password in
@@ -753,6 +762,21 @@ resource "aws_iam_policy" "application" {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject"]
         Resource = "${aws_s3_bucket.tenant_static.arn}/static/*"
+      },
+      {
+        /*
+          Tenant build archives — the other half of the same deploy, which had no grant at all.
+
+          The comment above applies unchanged: a presigned URL carries the signer's authority, so
+          without this the URL is generated happily and the customer's PUT is refused by S3 with a
+          bare 403 in their CI log. `GetObject` as well as `PutObject` because `publishFunction`
+          hands Lambda the bucket and key and Lambda reads it as us.
+
+          A separate bucket from `artifacts` on purpose — see `tenant-builds.tf`.
+        */
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
+        Resource = "${aws_s3_bucket.tenant_builds.arn}/builds/*"
       },
       {
         Effect   = "Allow"
@@ -852,6 +876,7 @@ resource "aws_launch_template" "service" {
     spa_asset_origin           = aws_cloudfront_distribution.spa.domain_name
     lambda_execution_role_arn  = aws_iam_role.lambda_execution.arn
     tenant_static_bucket       = aws_s3_bucket.tenant_static.id
+    tenant_builds_bucket       = aws_s3_bucket.tenant_builds.id
     database_endpoint          = aws_db_instance.control_plane.endpoint
     database_name              = aws_db_instance.control_plane.db_name
 

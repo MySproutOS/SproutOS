@@ -154,7 +154,11 @@ TENANT_STATIC_BUCKET=${tenant_static_bucket}
 # behind when that one was fixed: `deploy.ts` and `publish.ts` fall back to `sproutos-dev-artifacts`,
 # a bucket that exists in no account, so the API signed a PUT for somewhere that is not there and
 # the deploy action failed with a bare `curl: (22) ... 404` from S3.
-SERVICE_BUILD_BUCKET=${artifacts_bucket}
+#
+# Its own bucket rather than the platform's artifacts bucket: that one holds the release this
+# instance boots from and the Postgres split's TLS certificate, and accepting customer uploads into
+# it would mean granting this role a write on both. See `tenant-builds.tf`.
+SERVICE_BUILD_BUCKET=${tenant_builds_bucket}
 
 # Runtime logs. An empty `CLICKHOUSE_URL` is a feature flag rather than an error: the observability
 # client reads it as "not configured" and the logs UI is simply absent. Reached through Traefik on
