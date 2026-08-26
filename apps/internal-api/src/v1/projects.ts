@@ -22,6 +22,7 @@ import {
   fetchProjectFile,
   fetchProjectJob,
   fetchProjectUpdateSuggestion,
+  crudRepository,
   fetchRepository,
   fetchStoreListing,
   fetchUser,
@@ -33,6 +34,7 @@ import {
   provisionProject,
   type RepositoryPlan,
 } from "@lib/dao"
+import { createGitHubClient, getRepositoryById, organizationGitHubCredential } from "@lib/github"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -382,6 +384,62 @@ async function resolveSuggestion(
   })
 }
 
+/**
+ * The repository behind "use a repository you own".
+ *
+ * Two ways in, because there are two kinds of caller. Something that already holds one of this
+ * platform's `repository` rows names it by id. The dashboard's picker does not: it lists what the
+ * organization's installation can reach, and a customer's own repositories are not rows here until
+ * they are used. It sent GitHub's numeric id in the `repositoryId` field, which is validated as a
+ * UUID — so every attempt failed at the validator, and the third way of starting a project was
+ * unreachable from the interface built for it.
+ *
+ * The import is authorized by the read itself. The lookup uses the organization's *installation*
+ * credential, which can only see repositories the customer granted the App — so a successful read
+ * is proof this organization may use it. Resolving a name the browser supplied would be trusting
+ * the browser for exactly the thing that must not be trusted.
+ */
+async function resolveOwnRepository(
+  organizationId: string,
+  source: { repositoryId?: string; githubRepoId?: string },
+): Promise<{ id: string; defaultBranch: string } | undefined> {
+  if (source.repositoryId !== undefined) {
+    return await fetchRepository(db).getInOrganization(organizationId, source.repositoryId, [
+      "id",
+      "defaultBranch",
+    ])
+  }
+
+  const githubRepoId = source.githubRepoId
+  if (githubRepoId === undefined) return undefined
+
+  const known = await fetchRepository(db).getByGithubRepoId(organizationId, githubRepoId, [
+    "id",
+    "defaultBranch",
+  ])
+  if (known) return known
+
+  const credential = await organizationGitHubCredential(db, organizationId)
+  if (credential === undefined) return undefined
+
+  const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)
+
+  /*
+    `provenance: "imported"` and a real `github_repo_id`, so provisioning reads it rather than
+    trying to create it — the placeholder ids `createPending` writes are negative for that reason.
+  */
+  return await crudRepository(db).create({
+    organizationId,
+    githubRepoId: String(upstream.id),
+    ownerLogin: upstream.ownerLogin,
+    name: upstream.name,
+    defaultBranch: upstream.defaultBranch,
+    private: upstream.private,
+    isFork: upstream.fork,
+    provenance: "imported",
+  })
+}
+
 const app = new Hono()
   .use(authMiddleware)
   .get(
@@ -503,12 +561,8 @@ const app = new Hono()
       let listingDockerfilePath: string | null = null
 
       if (source.type === "repository") {
-        const repository = await fetchRepository(db).getInOrganization(
-          organization.id,
-          source.repositoryId,
-          ["id", "defaultBranch"],
-        )
-        if (!repository) return throwNotFound(c, "Repository not found")
+        const repository = await resolveOwnRepository(organization.id, source)
+        if (repository === undefined) return throwNotFound(c, "Repository not found")
 
         plan = { id: repository.id, mode: "existing" }
         jobKind = "provision"

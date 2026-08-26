@@ -76,7 +76,17 @@ const ProjectSource = Type.Union([
   }),
   Type.Object({
     type: Type.Literal("repository"),
-    repositoryId: UUID7String,
+    /**
+     * A repository this platform already has a row for.
+     *
+     * Optional now, because the dashboard's picker lists what the *installation* can reach and most
+     * of those have no row here — a customer's existing repositories are not imported until they
+     * are used. Sending this id was the only way to name one, so the picker sent GitHub's numeric
+     * id in its place and every request failed validation before reaching a handler.
+     */
+    repositoryId: Type.Optional(UUID7String),
+    /** GitHub's own id, which is what the picker actually knows. Imported on first use. */
+    githubRepoId: Type.Optional(Type.String({ pattern: "^[0-9]+$", maxLength: 20 })),
   }),
 ])
 

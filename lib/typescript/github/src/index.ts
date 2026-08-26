@@ -35,6 +35,7 @@ export {
   generateFromTemplate,
   getBranchHeadSha,
   getRepository,
+  getRepositoryById,
   type InstallationRepositoryPage,
   listInstallationRepositories,
   toRepository,

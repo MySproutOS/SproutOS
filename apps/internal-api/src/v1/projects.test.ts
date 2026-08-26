@@ -295,6 +295,73 @@ describe.skipIf(!reachable)("project routes", () => {
       expect((response.json.job as Json).kind).toBe("provision")
     })
 
+    /*
+      The picker's handle, not this platform's.
+
+      `POST /projects` accepted only a `repository` row id, and the dashboard's picker lists what the
+      *installation* can reach — entries that mostly have no row here. It sent GitHub's numeric id in
+      the `repositoryId` field, which is validated as a UUID, so every request failed at the
+      validator with a message about a malformed id. The third way of starting a project was
+      unreachable from the interface built for it, and nothing failed loudly enough to say so.
+    */
+    it("accepts GitHub's own repository id and resolves it to the existing row", async () => {
+      /*
+        The fixture, briefly given an id GitHub would have assigned.
+
+        It is still a placeholder otherwise — `createPending` writes the negative half of the range
+        until GitHub answers — and a placeholder is correctly refused here, because there is nothing
+        on GitHub to start a project from yet. Borrowing the row rather than adding one keeps the
+        organization's repository count what the surrounding tests assert it to be.
+      */
+      const original = await db
+        .selectFrom("repository")
+        .select(["githubRepoId"])
+        .where("id", "=", repositoryId)
+        .executeTakeFirstOrThrow()
+
+      const githubRepoId = "880123456"
+      await db
+        .updateTable("repository")
+        .set({ githubRepoId })
+        .where("id", "=", repositoryId)
+        .execute()
+
+      let createdProjectId: string | undefined
+
+      try {
+        const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+          name: "By GitHub Id",
+          rootDir: "apps/byid",
+          source: { type: "repository", githubRepoId },
+        })
+
+        expect(response.status).toBe(201)
+
+        const project = response.json.project as Json
+        createdProjectId = project.id as string
+        expect(project.repositoryId).toBe(repositoryId)
+      } finally {
+        /*
+          Put back exactly what was borrowed.
+
+          The surrounding tests count projects on this repository and repositories in this
+          organization, so a project left behind here fails three of them somewhere further down —
+          in assertions that say nothing about GitHub ids and give no hint where the extra row came
+          from.
+        */
+        if (createdProjectId !== undefined) {
+          await db.deleteFrom("projectJob").where("projectId", "=", createdProjectId).execute()
+          await db.deleteFrom("project").where("id", "=", createdProjectId).execute()
+        }
+
+        await db
+          .updateTable("repository")
+          .set({ githubRepoId: original.githubRepoId })
+          .where("id", "=", repositoryId)
+          .execute()
+      }
+    })
+
     it("writes no second repository row for the shared repository", async () => {
       const rows = await db
         .selectFrom("repository")

@@ -202,6 +202,29 @@ export async function generateFromTemplate(
   return toRepository(response.data)
 }
 
+/**
+ * A repository by GitHub's own numeric id.
+ *
+ * The dashboard's repository picker lists what an installation can reach, and the only stable
+ * handle those entries carry is this id — a name is a thing people rename. Looking it up with the
+ * organization's *installation* credential is also the authorization check: the token can only see
+ * repositories the customer granted the App, so a successful read is proof the organization may use
+ * it. Resolving by a name the browser sent would trust the browser for that.
+ */
+export async function getRepositoryById(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  githubRepoId: string,
+): Promise<GitHubRepository> {
+  const response = await client.request<RawRepository>({
+    method: "GET",
+    path: `/repositories/${encodeURIComponent(githubRepoId)}`,
+    credential,
+  })
+
+  return toRepository(response.data)
+}
+
 export async function getRepository(
   client: GitHubClient,
   credential: GitHubCredential,

@@ -987,7 +987,8 @@ export type PostV1OrgsByOrgSlugProjectsData = {
         }
       | {
           type: "repository"
-          repositoryId: string
+          repositoryId?: string
+          githubRepoId?: string
         }
   }
   path: {

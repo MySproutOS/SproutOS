@@ -131,7 +131,15 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const [name, setName] = useState("")
   const [repositoryName, setRepositoryName] = useState("")
   const [listingId, setListingId] = useState<string | null>(null)
-  const [repositoryId, setRepositoryId] = useState<string | null>(null)
+  /*
+    GitHub's numeric id, not one of this platform's row ids.
+
+    It used to be sent as `repositoryId`, which the API validates as a UUID — so every attempt to
+    start a project from a repository you already own failed at the validator, and the third card
+    could never have worked. The picker lists what the *installation* can reach, and most of those
+    have no row here at all, so GitHub's id is the only handle it has. The API imports on first use.
+  */
+  const [githubRepoId, setGithubRepoId] = useState<string | null>(null)
   const [touchedRepoName, setTouchedRepoName] = useState(false)
   const [owner, setOwner] = useState<string | null>(null)
   const [templateRef, setTemplateRef] = useState("")
@@ -219,7 +227,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
     name.trim().length > 0 &&
     (source !== "store" || listingId !== null) &&
     (source !== "template" || template !== null) &&
-    (source !== "repository" || repositoryId !== null) &&
+    (source !== "repository" || githubRepoId !== null) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
   return (
@@ -242,7 +250,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                       ...(effectiveOwner === null ? {} : { ownerLogin: effectiveOwner }),
                     }
                   : source === "repository"
-                    ? { type: "repository", repositoryId: repositoryId! }
+                    ? { type: "repository", githubRepoId: githubRepoId! }
                     : {
                         /*
                           `blank` with a template is the copy, and `blank` without one is the empty
@@ -367,9 +375,9 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
           ) : (
             <select
               id="np-repo"
-              value={repositoryId ?? ""}
+              value={githubRepoId ?? ""}
               onChange={(event) => {
-                setRepositoryId(event.target.value === "" ? null : event.target.value)
+                setGithubRepoId(event.target.value === "" ? null : event.target.value)
               }}
               className="h-9 rounded-md border border-border bg-background px-2.5 text-[13px] text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/20"
             >
@@ -497,7 +505,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      setRepositoryId(existingRepositoryId)
+                      setGithubRepoId(existingRepositoryId)
                       setSource("repository")
                     }}
                   >
