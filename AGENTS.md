@@ -75,16 +75,23 @@ paying for a GC and an event-loop hop.
   idea. Both splits are optional, so the router starts without a tenant Valkey or an OpenSearch.
 - `services/pg-proxy` — Postgres wire proxy: tenant auth, routing into the tenant's database, and a
   `SET ROLE` that drops the proxy's own privilege before the session is spliced. Speaks SCRAM,
-  checked against RFC 7677's vector. **Built and tested, deliberately not deployed** — managed Neon
-  wakes its own endpoints and pools connections, so only tenant-credential mapping remains. ADR 0027
-  records the decision and what would bring it back.
+  checked against RFC 7677's vector. **A library, run as the router's fourth listener** — managed
+  Neon wakes its own endpoints and pools connections, so what remains is tenant-credential mapping
+  and the suspension check, which is the whole reason a customer never holds a Neon credential. ADR
+  0027 records why it was once undeployed and why the answer changed.
 - `services/log-extension` — a Lambda extension, shipped as a layer and attached to every customer
   function. Subscribes to the Telemetry API and produces to Kafka, which ClickHouse consumes. Not a
   CloudWatch subscription filter: CloudWatch charges $0.50/GB before a line reaches us, and the
   Telemetry API delivers the billing metrics as JSON fields rather than as text to be parsed out of
   a `REPORT` line. The price is that this is our code inside the customer's execution environment.
-- `services/valkey-proxy`, `services/search-proxy` — the libraries the router runs. Their binaries
-  still build and are useful for driving one split in isolation; nothing deploys them.
+- `services/valkey-proxy`, `services/search-proxy` — the libraries the router runs, alongside
+  `pg-proxy`. Their binaries still build and are useful for driving one split in isolation; nothing
+  deploys them.
+- `lib/rust/service-credentials` — the one place a tenant's secret is checked, shared by all three
+  splits so they cannot come to disagree about who a credential belongs to. It opens the **second**
+  connection each proxy makes — to the control-plane Postgres, not to the proxy's own upstream — and
+  that connection must be TLS: `rds.force_ssl` is `1` on the control plane, and the check is fatal
+  at boot, so a proxy that gets this wrong stops the router. See `docs/findings/0016`.
 - `services/storage-proxy` — S3 tenant-split proxy. Verifies a tenant's SigV4 signature against a
   secret _derived_ from one root key, checks the bucket in the path is theirs, and re-signs with the
   platform's credential. A customer never holds a cloud credential. Replaced a per-tenant IAM user,

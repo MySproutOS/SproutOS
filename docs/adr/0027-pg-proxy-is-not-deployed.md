@@ -1,6 +1,8 @@
 # 27. `pg-proxy` is built, tested, and not deployed
 
-**Status:** accepted, and reversible in one commit
+**Status:** superseded on 2026-08-26 by the amendment at the end of this file — the proxy is
+deployed, as a listener on the router rather than as a service
+**Original status:** accepted, and reversible in one commit
 **Date:** 2026-08-24
 **Supersedes in part:** [0026](0026-aws-only-lambda-and-two-rust-proxies.md), which named two Rust binaries
 
@@ -72,3 +74,33 @@ already there.
 Whether SproutOS uses managed Neon at all. That is settled in
 [0025](0025-self-hosted-neon.md) and needs a `NEON_API_KEY`, which is not something this repository
 can obtain for itself.
+
+---
+
+## Amendment, 2026-08-26: it came back, and it was cheaper than this ADR assumed
+
+"What would bring it back" listed three triggers. None of them fired. What changed was the price.
+
+This ADR reasoned about deployment as though the only shape available were the one `compute.tf`
+already had: an Auto Scaling group, a target group, a listener rule, and a `services/` entry in the
+deploy workflow, for a fourth process. Weighed against one surviving argument, that was a fair call.
+
+But [0026](0026-aws-only-lambda-and-two-rust-proxies.md) had already made the other shape available
+and this ADR did not notice, even while citing it. `valkey-proxy` and `search-proxy` are libraries
+compiled into the router precisely because three deployments doing the same thing — identify a
+tenant, rewrite, forward — is three sets of scaling and health checks for one idea. `pg-proxy` was
+written the same way, with everything in a library and a thin `main` on top. As
+`listeners::postgres` it is a port and an environment variable, gated on its upstream exactly as the
+other two are, returning `None` where a deployment has none.
+
+So the decision this ADR took was right about the argument and wrong about the alternatives. The
+surviving reason — **a customer must never hold a Neon credential**, because a customer who holds
+one can reach their database after we suspend them — was always sufficient to justify a port. It was
+only insufficient against a fourth Auto Scaling group.
+
+The binary stays too, on the same footing as `valkey-proxy`'s and `search-proxy`'s: useful for
+driving one protocol in isolation, and nothing deploys it.
+
+**What this does not change.** (2) and (3) are still gone. Managed Neon wakes its own endpoints —
+measured at 0.24 seconds to disable one — and ships PgBouncer in front of every endpoint. The
+listener does tenant authentication and suspension enforcement, and nothing else.

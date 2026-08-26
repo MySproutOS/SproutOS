@@ -52,6 +52,7 @@ this platform's constraints, and none announces itself.
 | [0013](0013-the-boundary-you-cannot-test.md)       | The boundary you cannot test               | Running the real client      |
 | [0014](0014-everything-was-running.md)             | Everything was running                     | One request from outside     |
 | [0015](0015-the-databases-the-product-sells.md)    | The databases the product sells            | Asking prod for one          |
+| [0016](0016-one-layer-under-the-one-we-checked.md) | One layer under the one we checked         | Trying to close 0015         |
 
 ## Running it on more than one cloud
 

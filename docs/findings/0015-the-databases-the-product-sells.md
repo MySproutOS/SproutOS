@@ -111,5 +111,21 @@ Not "do the database drivers work" — they do, and always did. It is **"has any
 deployment for a database?"** Nothing had. The first time anyone did, all three answered 500, and
 every check that existed was green while they did it.
 
-Related: [[0008-the-tenant-data-plane]], [[0011-the-platform-was-free]],
-[[0013-the-boundary-you-cannot-test]], [[0014-everything-was-running]].
+## What happened when this was acted on
+
+Two of the three closed. Elasticsearch has an address in front of `search-proxy` and OpenSearch is
+published behind two locks; Postgres has `pg-proxy` back, as the router's fourth listener rather
+than the fourth deployment this entry assumed it would have to be — see the amendment to ADR 0027.
+Valkey did not: the queue has its password and no transport, for a reason worth reading before
+trying again.
+
+The plan above was also not sufficient, in a way this entry could not have known and could have
+looked for. "Give the router `DATABASE_URL` and the split starts" would have stopped the router: the
+credential store all three splits share opened its pool with `NoTls`, and the control plane refuses
+an unencrypted connection. The valkey paragraph here had _just_ been rewritten for exactly that class
+of mismatch and examined one of the proxy's two connections. [[0016-one-layer-under-the-one-we-checked]]
+is that, written down.
+
+Related: [[0016-one-layer-under-the-one-we-checked]], [[0008-the-tenant-data-plane]],
+[[0011-the-platform-was-free]], [[0013-the-boundary-you-cannot-test]],
+[[0014-everything-was-running]].
