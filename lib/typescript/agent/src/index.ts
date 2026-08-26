@@ -40,3 +40,13 @@ export {
 } from "./tools"
 export { changedFiles, commitAndPush, type CommitInput, type CommitResult } from "./commit"
 export { installSproutosSkill, type SkillInput } from "./skill"
+export {
+  codexProviderFor,
+  harnessFor,
+  HARNESSES,
+  OPENAI_PROVIDER,
+  OPENROUTER_PROVIDER,
+  PLATFORM_FALLBACK_MODEL,
+  type CodexProvider,
+  type Harness,
+} from "./harness"
