@@ -53,6 +53,7 @@ this platform's constraints, and none announces itself.
 | [0014](0014-everything-was-running.md)             | Everything was running                     | One request from outside     |
 | [0015](0015-the-databases-the-product-sells.md)    | The databases the product sells            | Asking prod for one          |
 | [0016](0016-one-layer-under-the-one-we-checked.md) | One layer under the one we checked         | Trying to close 0015         |
+| [0017](0017-every-site-expired-after-a-day.md)     | Every site expired after a day             | Reading a TTL nobody renewed |
 
 ## Running it on more than one cloud
 

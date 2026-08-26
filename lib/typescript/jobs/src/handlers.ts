@@ -7,6 +7,7 @@ import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 import { PUBLISH_KINDS, publishRelease } from "./publish"
+import { REFRESH_ROUTES_KIND, refreshRoutes } from "./refresh-routes"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import {
   destroySandbox,
@@ -64,6 +65,7 @@ export const JOB_KINDS = {
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   publishRelease: PUBLISH_KINDS.release,
+  refreshRoutes: REFRESH_ROUTES_KIND,
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
@@ -227,6 +229,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.publishRelease]: publishRelease(),
+  [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
   [JOB_KINDS.tearDownProject]: tearDownProject(),
@@ -251,6 +254,20 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Hourly, against a 24-hour TTL.
+
+      Deliberately far inside the window rather than close to it. Route keys are written once at
+      deploy and expire in a day; before this job existed nothing rewrote them, so every tenant site
+      stopped resolving 24 hours after its last deploy — the router has no fallback and a miss is a
+      404. Hourly means twenty-three consecutive failures before a customer notices, which is enough
+      slack that a transient Valkey problem is not an outage.
+    */
+    kind: JOB_KINDS.refreshRoutes,
+    idempotencyKey: `${JOB_KINDS.refreshRoutes}:${hour}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

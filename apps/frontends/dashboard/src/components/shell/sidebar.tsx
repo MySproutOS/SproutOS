@@ -33,6 +33,7 @@ import {
   useOrganizations,
 } from "@frontends/dashboard/data/organizations"
 import { useSidebar } from "@frontends/dashboard/components/shell/sidebar-context"
+import { ProjectSwitcher } from "@frontends/dashboard/components/shell/project-switcher"
 
 type NavLinkProps = LinkProps & { icon: LucideIcon; label: string }
 
@@ -198,6 +199,17 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
     <>
       <div className="border-b border-sidebar-border p-3">
         <TeamSwitcher orgSlug={orgSlug} />
+        {/*
+          The project switcher sits under the team switcher, as the reference dashboard has it.
+
+          Hidden when the sidebar is collapsed rather than squeezed into an icon: it is a
+          find-as-you-type list, and there is no useful 32-pixel representation of one.
+        */}
+        {collapsed ? null : (
+          <div className="mt-1.5">
+            <ProjectSwitcher orgSlug={orgSlug} />
+          </div>
+        )}
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2.5">
