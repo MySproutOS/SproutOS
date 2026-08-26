@@ -1,3 +1,4 @@
+import { parse } from "yaml"
 import { describe, expect, it } from "vitest"
 import { presetFor, workflowFor } from "./deploy-workflow"
 
@@ -10,6 +11,34 @@ const base = {
 }
 
 describe("the generated deploy workflow", () => {
+  /*
+    Parsed, not string-matched.
+
+    `toContain("id-token: write")` passes on a file whose indentation is wrong, which is the way a
+    generated YAML file actually breaks — GitHub rejects the workflow and the customer sees a syntax
+    error in a file they did not write. Parsing is the only assertion that catches that.
+  */
+  it("is valid YAML with the structure GitHub expects", () => {
+    const document = parse(workflowFor(base)) as {
+      name: string
+      on: { push: { branches: string[] } }
+      permissions: Record<string, string>
+      jobs: { deploy: { steps: { uses?: string; with?: Record<string, string> }[] } }
+    }
+
+    expect(document.permissions).toMatchObject({ contents: "read", "id-token": "write" })
+    expect(document.on.push.branches).toEqual(["main"])
+
+    const step = document.jobs.deploy.steps.find((s) =>
+      String(s.uses ?? "").includes("sproutos-deploy-action"),
+    )
+    expect(step?.with).toMatchObject({
+      preset: "next",
+      directory: "apps/website/.next/standalone",
+      project: "reddit-clone-web",
+    })
+  })
+
   /*
     The one that costs an afternoon when it is missing.
 

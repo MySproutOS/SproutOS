@@ -75,6 +75,7 @@
     "@vercel/config": "^0.6.1",
     "esbuild": "^0.25.0",
     "tsx": "^4.23.12",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "yaml": "^2.9.0"
   }
 }
