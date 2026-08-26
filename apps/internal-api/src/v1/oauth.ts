@@ -16,7 +16,7 @@ import { type Context, Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
-import { v7 } from "uuid"
+import { validate as validateUUID, v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { ACTIONS } from "../rbac"
 import { auditContext } from "../utils/request-context"
@@ -150,6 +150,8 @@ const app = new Hono()
         if (body.codeChallenge === "") {
           throw new OAuthError("invalid_request", "code_challenge is required")
         }
+
+        assertClientIdShape(body.clientId)
 
         const client = await db
           .selectFrom("oauthClient")
@@ -355,6 +357,25 @@ const app = new Hono()
   )
 
 /**
+ * A client id off the wire, checked for shape before it reaches Postgres.
+ *
+ * `oauth_client.id` is a uuid column, so a lookup with anything else raises `invalid_input_syntax`
+ * inside the driver rather than returning no rows. That escaped as `server_error` with a 500,
+ * which is wrong three times over: it is a 500 for a request that is simply malformed, it is
+ * reachable unauthenticated by anyone who can spell the endpoint, and it tells that caller
+ * something — an unknown-but-well-formed id answers `invalid_client`, so the two responses
+ * separate "not a uuid" from "not a client".
+ *
+ * The same error a genuinely unknown client gets, therefore, and for the same reason the rest of
+ * this file is careful about: an error that distinguishes cases is an oracle for enumerating them.
+ */
+function assertClientIdShape(clientId: string, status: 400 | 401 = 400): void {
+  if (!validateUUID(clientId)) {
+    throw new OAuthError("invalid_client", "Unknown client", status)
+  }
+}
+
+/**
  * Client authentication.
  *
  * A public client has no secret — that is what "public" means, and OAuth 2.1 relies on PKCE rather
@@ -366,6 +387,8 @@ async function authenticateClient(
   clientSecret: string | undefined,
   options: { requireSecret?: boolean } = {},
 ): Promise<void> {
+  assertClientIdShape(clientId, 401)
+
   const client = await db
     .selectFrom("oauthClient")
     .select(["id", "clientType", "status"])
