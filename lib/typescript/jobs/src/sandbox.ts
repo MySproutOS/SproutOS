@@ -6,6 +6,7 @@ import {
 } from "@lib/agent"
 import { crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
+import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
 import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
 import type { DB } from "@sproutos/db"
@@ -290,6 +291,70 @@ async function bootstrap(
   }
 }
 
+/**
+ * The dev database a sandbox works against, and the environment variable that names it.
+ *
+ * A coding agent with a checkout and no database can read code and cannot run it: no dev server, no
+ * migration, no test that touches a row. This branches the project's Postgres — copy-on-write, so a
+ * copy of a hundred gigabytes is instant and costs only what the agent changes — and hands back a
+ * `DATABASE_URL` pointing at `pg-proxy` with a credential that can reach the branch and nothing
+ * else. Production is one connection away and unreachable, which is the point.
+ *
+ * Returns nothing rather than throwing when the project has no database. Most projects do not, and
+ * a sandbox without one is the normal case, not a failure.
+ *
+ * The service is looked up for the *group* as well as the project: a group holds the databases its
+ * children share, and a sandbox is scoped to the group — see `sandboxScopeFor`.
+ */
+async function devDatabase(
+  db: Kysely<DB>,
+  input: { projectId: string; organizationId: string; sandboxId: string },
+): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
+  const service = await db
+    .selectFrom("backendService")
+    .select(["id"])
+    .where("kind", "=", "postgres")
+    .where("status", "=", "active")
+    .where("deletedAt", "is", null)
+    .where((eb) =>
+      eb.or([
+        eb("projectId", "=", input.projectId),
+        eb(
+          "projectId",
+          "in",
+          eb
+            .selectFrom("project")
+            .select("parentProjectId")
+            .where("id", "=", input.projectId)
+            .where("parentProjectId", "is not", null)
+            .$castTo<string>(),
+        ),
+      ]),
+    )
+    .orderBy("createdAt", "asc")
+    .executeTakeFirst()
+
+  if (service === undefined) return undefined
+
+  try {
+    const branch = await createDevBranch(db, neonPostgresConfigFromEnv(), {
+      backendServiceId: service.id,
+      organizationId: input.organizationId,
+      label: input.sandboxId.slice(-12),
+    })
+    return { databaseBranchId: branch.databaseBranchId, env: { DATABASE_URL: branch.uri } }
+  } catch (cause) {
+    /*
+      A sandbox with no dev database is worth having; a provision that failed because Neon was busy
+      is not. Logged rather than raised, and the sandbox comes up without `DATABASE_URL` — which the
+      agent discovers immediately and can say, instead of the customer waiting for a container that
+      never arrives.
+    */
+    console.warn(`[jobs] sandbox ${input.sandboxId} has no dev database: ${String(cause)}`)
+    return undefined
+  }
+}
+
 type SandboxPayload = { sandboxId?: string }
 
 function driver(): SandboxDriver {
@@ -334,6 +399,20 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
     if (sandbox.externalId !== null) return
 
     try {
+      /*
+        The branch is created before the container, because it is the part that can fail.
+
+        A container that comes up and then finds it has no database has already cost the customer
+        the wait; a branch that fails while nothing has been created costs a log line. The reverse
+        order also leaks: a create that succeeds and a branch that throws leaves a running sandbox
+        nobody recorded.
+      */
+      const database = await devDatabase(db, {
+        organizationId: sandbox.organizationId,
+        projectId: sandbox.projectId,
+        sandboxId: sandbox.id,
+      })
+
       const created = await makeDriver().create({
         sandboxId: sandbox.id,
         organizationId: sandbox.organizationId,
@@ -346,10 +425,12 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           diskGib: sandbox.diskGib,
         },
         idleTimeoutS: sandbox.idleTimeoutS,
+        ...(database === undefined ? {} : { env: database.env }),
       })
 
       await crudSandbox(db).update(sandbox.id, {
         externalId: created.externalId,
+        ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
         state: "running",
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
@@ -434,7 +515,7 @@ export function destroySandbox(makeDriver: () => SandboxDriver = driver): JobHan
 
     const sandbox = await db
       .selectFrom("sandbox")
-      .select(["id", "externalId"])
+      .select(["id", "externalId", "databaseBranchId"])
       .where("id", "=", sandboxId)
       .executeTakeFirst()
 
@@ -448,6 +529,21 @@ export function destroySandbox(makeDriver: () => SandboxDriver = driver): JobHan
       } catch (error) {
         if (!(error instanceof SandboxNotFoundError)) throw error
       }
+    }
+
+    /*
+      The dev branch goes with the sandbox.
+
+      A branch outlives the row that points at it unless something deletes it, and then it is
+      storage nobody is looking at, on a bill nobody can attribute — the same shape as the orphaned
+      sandbox the unique index does not prevent. `dropDevBranch` refuses a protected branch, so the
+      worst case of a wrong id here is a failed job rather than a deleted production database.
+
+      Failing the job on error is deliberate. Dropping the row while the branch survives is exactly
+      how the reference is lost.
+    */
+    if (sandbox.databaseBranchId !== null) {
+      await dropDevBranch(db, neonPostgresConfigFromEnv(), sandbox.databaseBranchId)
     }
 
     await crudSandbox(db).remove(sandbox.id)

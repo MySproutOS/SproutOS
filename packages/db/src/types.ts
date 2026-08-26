@@ -899,6 +899,7 @@ export interface Sandbox {
   alwaysOn: Generated<boolean>
   cpu: Generated<number>
   createdAt: Generated<Timestamp>
+  databaseBranchId: string | null
   diskGib: Generated<number>
   externalId: string | null
   hostname: string | null

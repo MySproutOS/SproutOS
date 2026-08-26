@@ -224,7 +224,13 @@ describe.skipIf(!reachable)("valkey driver", () => {
           lastFour: "cond",
         })
         .execute(),
-    ).rejects.toThrow(/service_credential_live_username_purpose_key/)
+      /*
+      The index is named for what it now keys on: username, purpose, and the branch. A credential
+      with no branch — every credential a customer holds — coalesces to a fixed uuid, so the
+      invariant this test was written for is exactly as strict as it was; what changed is that a
+      sandbox's branch-scoped credential can also exist. See `sandbox_dev_branch`.
+    */
+    ).rejects.toThrow(/service_credential_live_username_purpose_branch_key/)
   })
 
   /*

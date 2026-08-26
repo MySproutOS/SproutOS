@@ -14,6 +14,12 @@ export {
 } from "./object-storage"
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
+  createDevBranch,
+  DevBranchUnavailableError,
+  dropDevBranch,
+  type DevBranch,
+} from "./dev-branch"
+export {
   rolePasswordContext,
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
