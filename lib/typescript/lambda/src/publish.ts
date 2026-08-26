@@ -2,6 +2,7 @@ import {
   CreateAliasCommand,
   CreateFunctionCommand,
   GetAliasCommand,
+  DeleteFunctionCommand,
   GetFunctionCommand,
   LambdaClient,
   PublishVersionCommand,
@@ -103,7 +104,20 @@ export async function publishFunction(
   input: PublishInput,
 ): Promise<PublishResult> {
   const name = functionName(input.projectId)
-  const exists = await functionExists(client, name)
+  const inspected = await inspectFunction(client, name)
+
+  /*
+    A function on the wrong architecture is replaced, not updated.
+
+    Deleting loses the version history, and therefore the ability to roll back to a release
+    published before the move. That is the honest trade: those versions cannot run — they carry a
+    layer built for the other machine — so keeping them would preserve a rollback target that fails
+    at init. Once every function is on this architecture, this branch never runs again.
+  */
+  if (inspected.exists && !inspected.architectureMatches) {
+    await client.send(new DeleteFunctionCommand({ FunctionName: name }))
+  }
+  const exists = inspected.exists && inspected.architectureMatches
   /*
     One list, computed once, used by both branches.
 
@@ -285,12 +299,30 @@ function logEnv(projectId: string): Record<string, string> {
   }
 }
 
-async function functionExists(client: LambdaClient, name: string): Promise<boolean> {
+/**
+ * Whether the function is there, and whether it is on the architecture we publish.
+ *
+ * The second half exists because the first answer alone is not enough to decide between create and
+ * update. `Architectures` is fixed at creation — `UpdateFunctionConfiguration` does not accept it —
+ * so a function created before this platform chose an architecture would be updated in place
+ * forever and stay on the wrong one, attaching layers built for the other machine and crashing at
+ * init on every invocation. Answering "yes it exists" there is technically true and operationally a
+ * dead end.
+ */
+async function inspectFunction(
+  client: LambdaClient,
+  name: string,
+): Promise<{ exists: boolean; architectureMatches: boolean }> {
   try {
-    await client.send(new GetFunctionCommand({ FunctionName: name }))
-    return true
+    const found = await client.send(new GetFunctionCommand({ FunctionName: name }))
+    const architectures = found.Configuration?.Architectures ?? []
+    return {
+      architectureMatches: architectures.includes(LAMBDA_ARCHITECTURE),
+      exists: true,
+    }
   } catch (cause) {
-    if (cause instanceof ResourceNotFoundException) return false
+    if (cause instanceof ResourceNotFoundException)
+      return { architectureMatches: true, exists: false }
     throw cause
   }
 }
