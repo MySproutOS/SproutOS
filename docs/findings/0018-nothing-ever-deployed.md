@@ -132,3 +132,22 @@ Not a review. A deploy. `bin/check-app-config.mjs` now reads the application as 
 configuration lists, which closes the `SERVICE_BUILD_BUCKET` shape — but no static check would have
 found an IAM statement that is absent rather than wrong. The only thing that finds an ungranted
 permission is exercising it, and until this week nothing in this repository ever had.
+
+## The asset path that goes nowhere
+
+One more of the same family, found by reading forward rather than by a failure. The deploy action
+uploads a customer's static assets to `static/<project_id>/<digest>.zip` and names the key in the
+release; `POST /deploy/release` accepts `static_key` in its schema and **never reads it**. Nothing
+records it on the deployment, nothing unpacks the archive, and nothing serves from that bucket — the
+only CloudFront distribution in `tofu/` fronts the platform's own SPAs.
+
+Next's standalone output _excludes_ `.next/static` and `public/` because it assumes a CDN. So a Next
+site deployed here would have answered 200 for every page and 404 for every stylesheet, script and
+font: correct HTML, unstyled site. `resolve-preset.sh` opens by describing exactly this failure and
+calling it invisible to a health check and to `curl /` — and then the upload it introduced had
+nowhere to go.
+
+For now the action copies both directories into the archive, which is Next's own documented
+instruction and needs no CDN. The separate upload stays, because serving assets from Lambda is the
+wrong long-run answer — but "wrong long-run answer" beats "the site has no CSS", and the difference
+between the two was one unread field.
