@@ -48,16 +48,23 @@ const errorResponse = {
  * than a second set of endpoints with their own shapes.
  */
 /**
- * The environment variable a given kind of service is conventionally read from.
+ * The environment variables a given kind of service is conventionally read from.
  *
  * Absent from this map means "no convention we are confident about", and nothing is written — a
  * guessed name is worse than none, because a customer who finds `OBJECT_STORAGE_URL` in their
  * settings will reasonably assume their code is meant to read it.
+ *
+ * **Valkey gets two names, and that is not hedging.** A Valkey service speaks the Redis protocol,
+ * so the ecosystem reads `REDIS_URL` — BullMQ, ioredis and everything built on them — while code
+ * written against Valkey by name reads `VALKEY_URL`. Both are correct, they carry the same value,
+ * and picking one means the other half of the ecosystem silently falls back to `localhost:6379`.
+ * That is exactly what happened here: the first API deployed on this platform started, connected to
+ * nothing, and failed with `ECONNREFUSED 127.0.0.1:6379` — a default, not an error.
  */
-const CONNECTION_ENV_KEY: Record<string, string> = {
-  postgres: "DATABASE_URL",
-  valkey: "REDIS_URL",
-  elasticsearch: "ELASTICSEARCH_URL",
+const CONNECTION_ENV_KEYS: Record<string, string[]> = {
+  postgres: ["DATABASE_URL"],
+  valkey: ["REDIS_URL", "VALKEY_URL"],
+  elasticsearch: ["ELASTICSEARCH_URL"],
 }
 
 /**
@@ -81,31 +88,35 @@ async function injectConnectionUri(input: {
   projectId: string | null
 }): Promise<void> {
   if (input.projectId === null) return
-  const key = CONNECTION_ENV_KEY[input.kind]
-  if (key === undefined) return
+  const keys = CONNECTION_ENV_KEYS[input.kind]
+  if (keys === undefined) return
 
-  try {
-    const sealed = await sealEnvVarValue(input.projectId, key, input.connectionUri)
-    await crudProjectEnvVar(db).upsert({
-      isSecret: true,
-      key,
-      projectId: input.projectId,
-      // Every environment: a preview deployment that cannot reach the database is a preview that
-      // proves nothing. A branch-scoped URI replaces this when the ephemeral-environment work
-      // lands.
-      target: "all",
-      value: sealed,
-    })
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        error: String(error),
+  for (const key of keys) {
+    try {
+      const sealed = await sealEnvVarValue(input.projectId, key, input.connectionUri)
+      await crudProjectEnvVar(db).upsert({
+        isSecret: true,
         key,
-        level: "error",
-        message: "could not write the connection URI into the project environment",
         projectId: input.projectId,
-      }),
-    )
+        // Every environment: a preview deployment that cannot reach the database is a preview that
+        // proves nothing. A branch-scoped URI replaces this when the ephemeral-environment work
+        // lands.
+        target: "all",
+        value: sealed,
+      })
+    } catch (error) {
+      // One failing name must not stop the others: a project that got `REDIS_URL` and not
+      // `VALKEY_URL` is degraded, and a project that got neither is broken.
+      console.error(
+        JSON.stringify({
+          error: String(error),
+          key,
+          level: "error",
+          message: "could not write the connection URI into the project environment",
+          projectId: input.projectId,
+        }),
+      )
+    }
   }
 }
 
