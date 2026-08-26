@@ -134,8 +134,18 @@ function AgentChat() {
               </EmptyStateIcon>
               <EmptyStateTitle>Describe the change you want</EmptyStateTitle>
               <EmptyStateDescription>
+                {/*
+                  Says what actually happens now.
+
+                  It read "leaves as a pull request — nothing is pushed to your branch", which was
+                  true of a commit path that did not exist: the agent's edits died with the
+                  temporary checkout. They are pushed to a `sproutos/agent-…` branch, and your own
+                  branch is still untouched — which is the part that mattered and is worth keeping
+                  accurate rather than reassuring.
+                */}
                 The agent works in a checkout of this project's repository. It reads and edits
-                files, and its work leaves as a pull request — nothing is pushed to your branch.
+                files, and anything it changes is pushed to a new `sproutos/agent-…` branch — never
+                to your production branch.
               </EmptyStateDescription>
             </EmptyState>
           )}
