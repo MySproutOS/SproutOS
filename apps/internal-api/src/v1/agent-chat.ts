@@ -32,7 +32,7 @@ import {
   userGitHubCredential,
 } from "@lib/github"
 import { srnFor } from "@lib/srn"
-import { daytonaConfigFromEnv, daytonaDriver } from "@lib/sandbox"
+import { sandboxDriverFromEnv } from "@lib/sandbox"
 import { sealForProxy } from "@lib/proxy-secret"
 import { db } from "@sproutos/db"
 import { randomUUID } from "node:crypto"
@@ -326,7 +326,7 @@ const app = new Hono()
             })
 
             const { exitCode } = await runSandboxTurn({
-              driver: daytonaDriver(daytonaConfigFromEnv()),
+              driver: sandboxDriverFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
               model: credential.model,

@@ -1,8 +1,7 @@
 import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
 import { enqueue, SANDBOX_KINDS } from "@lib/jobs"
 import {
-  daytonaConfigFromEnv,
-  daytonaDriver,
+  sandboxDriverFromEnv,
   SandboxNotFoundError,
   SandboxUnavailableError,
   WORKSPACE_DIR,
@@ -72,7 +71,7 @@ const DEFAULT_PREVIEW_PORT = 3000
  * the generator's process never exited and timed out at three minutes.
  */
 function driver(): SandboxDriver {
-  return daytonaDriver(daytonaConfigFromEnv())
+  return sandboxDriverFromEnv()
 }
 
 function serialize(row: Selectable<DB["sandbox"]>) {

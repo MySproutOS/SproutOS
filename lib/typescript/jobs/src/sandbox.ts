@@ -6,7 +6,7 @@ import {
 } from "@lib/agent"
 import { crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
-import { daytonaConfigFromEnv, daytonaDriver, SandboxNotFoundError } from "@lib/sandbox"
+import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
@@ -293,7 +293,7 @@ async function bootstrap(
 type SandboxPayload = { sandboxId?: string }
 
 function driver(): SandboxDriver {
-  return daytonaDriver(daytonaConfigFromEnv())
+  return sandboxDriverFromEnv()
 }
 
 /** Create the sandbox at the provider and record what it gave back. */

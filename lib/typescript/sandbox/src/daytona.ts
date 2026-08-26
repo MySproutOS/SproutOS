@@ -273,7 +273,9 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
         */
         let timer: NodeJS.Timeout | undefined
         const deadline = new Promise<"timeout">((resolve) => {
-          timer = setTimeout(() =>{  resolve("timeout"); }, timeoutMs)
+          timer = setTimeout(() => {
+            resolve("timeout")
+          }, timeoutMs)
         })
         const outcome = await Promise.race([collecting.then(() => "done" as const), deadline])
         if (timer !== undefined) clearTimeout(timer)

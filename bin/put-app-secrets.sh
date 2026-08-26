@@ -54,6 +54,10 @@ KEYS=(
   # default — the platform has never had one of these set, which is why no sandbox has ever
   # existed. `SANDBOX_DAYTONA_SNAPSHOT` names the image carrying the agent binaries; a wrong one
   # produces a sandbox that starts cleanly with no agent in it and reports no error.
+  # Which of the two drivers runs sandboxes: `daytona` in production, `docker` for a developer with
+  # no account. Deliberately not defaulted in code — inferring `docker` from a missing Daytona key
+  # would let a rotation that lost the key quietly move customer code onto the control-plane box.
+  SANDBOX_DRIVER
   SANDBOX_DAYTONA_API_KEY
   SANDBOX_DAYTONA_SNAPSHOT
   SANDBOX_DAYTONA_API_URL

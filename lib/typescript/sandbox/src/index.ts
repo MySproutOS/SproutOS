@@ -21,3 +21,10 @@ export {
   type SandboxResources,
   type TreeEntry,
 } from "./types"
+export { dockerConfigFromEnv, dockerDriver, type DockerConfig } from "./docker"
+export {
+  SANDBOX_DRIVERS,
+  sandboxDriverFromEnv,
+  sandboxDriverName,
+  type SandboxDriverName,
+} from "./select"
