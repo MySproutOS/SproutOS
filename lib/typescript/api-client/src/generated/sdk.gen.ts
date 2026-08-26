@@ -176,6 +176,8 @@ import type {
   GetV1OrgsByOrgSlugOauthClientsData,
   GetV1OrgsByOrgSlugOauthClientsErrors,
   GetV1OrgsByOrgSlugOauthClientsResponses,
+  GetV1OrgsByOrgSlugOauthGrantsData,
+  GetV1OrgsByOrgSlugOauthGrantsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -366,6 +368,9 @@ import type {
   PostV1OrgsByOrgSlugOauthClientsData,
   PostV1OrgsByOrgSlugOauthClientsErrors,
   PostV1OrgsByOrgSlugOauthClientsResponses,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -2567,6 +2572,40 @@ export const deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId = <
     DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/oauth-clients/{clientId}/secrets/{secretId}", ...options })
+
+/**
+ * Applications this user has authorized, and what each one created
+ */
+export const getV1OrgsByOrgSlugOauthGrants = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugOauthGrantsData, ThrowOnError>,
+): RequestResult<GetV1OrgsByOrgSlugOauthGrantsResponses, unknown, ThrowOnError> =>
+  (options.client ?? client).get<GetV1OrgsByOrgSlugOauthGrantsResponses, unknown, ThrowOnError>({
+    url: "/v1/orgs/{orgSlug}/oauth-grants",
+    ...options,
+  })
+
+/**
+ * Withdraws consent, and disposes of every database the application created
+ */
+export const postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses,
+    PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/oauth-grants/{grantId}/revoke",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
 
 /**
  * Lists the store categories

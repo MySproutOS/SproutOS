@@ -4829,6 +4829,96 @@ export type DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponse
   200: unknown
 }
 
+export type GetV1OrgsByOrgSlugOauthGrantsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-grants"
+}
+
+export type GetV1OrgsByOrgSlugOauthGrantsResponses = {
+  /**
+   * Grants
+   */
+  200: {
+    data: Array<{
+      id: string
+      clientId: string
+      clientName: string
+      clientHomepage: string | null
+      firstParty: boolean
+      scopes: Array<string>
+      createdAt: string
+      services: Array<{
+        id: string
+        name: string
+        kind: string
+        status: string
+        createdAt: string
+      }>
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugOauthGrantsResponse =
+  GetV1OrgsByOrgSlugOauthGrantsResponses[keyof GetV1OrgsByOrgSlugOauthGrantsResponses]
+
+export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData = {
+  body?: {
+    services: Array<{
+      id: string
+      action: "keep" | "delete"
+    }>
+  }
+  path: {
+    orgSlug: string
+    grantId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/oauth-grants/{grantId}/revoke"
+}
+
+export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors = {
+  /**
+   * A database the application created was not accounted for
+   */
+  400: ErrorResponseT
+  /**
+   * No such grant for this user
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError =
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors[keyof PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors]
+
+export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses = {
+  /**
+   * Revoked. Kept databases carry a new URI, shown once
+   */
+  200: {
+    kept: Array<{
+      id: string
+      name: string
+      kind: string
+      /**
+       * Shown once. It cannot be retrieved again.
+       */
+      connectionUri: string
+    }>
+    deleted: Array<{
+      id: string
+      name: string
+      kind: string
+    }>
+  }
+}
+
+export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse =
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses[keyof PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses]
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never

@@ -40,12 +40,27 @@ function SettingsLayout() {
         <Link to="/orgs/$orgSlug/settings/api-keys" params={{ orgSlug }} className={tabClassName}>
           API keys
         </Link>
+        {/*
+          Two OAuth tabs, because they are two different relationships and conflating them is how a
+          person looking for "the app I signed into" ends up on a developer screen.
+
+          "OAuth apps" is what you *publish* — clients you own, with secrets and redirect URIs.
+          "Connected" is what you have *authorized* — somebody else's application acting for you,
+          which is the one with a revoke button.
+        */}
         <Link
           to="/orgs/$orgSlug/settings/oauth-clients"
           params={{ orgSlug }}
           className={tabClassName}
         >
           OAuth apps
+        </Link>
+        <Link
+          to="/orgs/$orgSlug/settings/connected-apps"
+          params={{ orgSlug }}
+          className={tabClassName}
+        >
+          Connected
         </Link>
       </div>
       <Outlet />

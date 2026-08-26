@@ -48,6 +48,7 @@ import {
   getV1OrgsByOrgSlugOauthClients,
   getV1OrgsByOrgSlugOauthClientsByClientId,
   getV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
+  getV1OrgsByOrgSlugOauthGrants,
   getV1OrgsByOrgSlugProjects,
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
@@ -115,6 +116,7 @@ import {
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugOauthClients,
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
+  postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke,
   postV1OrgsByOrgSlugProjects,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
@@ -251,6 +253,8 @@ import type {
   GetV1OrgsByOrgSlugOauthClientsData,
   GetV1OrgsByOrgSlugOauthClientsError,
   GetV1OrgsByOrgSlugOauthClientsResponse,
+  GetV1OrgsByOrgSlugOauthGrantsData,
+  GetV1OrgsByOrgSlugOauthGrantsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -429,6 +433,9 @@ import type {
   PostV1OrgsByOrgSlugOauthClientsData,
   PostV1OrgsByOrgSlugOauthClientsError,
   PostV1OrgsByOrgSlugOauthClientsResponse,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -3896,6 +3903,61 @@ export const deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdMutatio
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugOauthGrantsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugOauthGrantsData>,
+) => createQueryKey("getV1OrgsByOrgSlugOauthGrants", options)
+
+/**
+ * Applications this user has authorized, and what each one created
+ */
+export const getV1OrgsByOrgSlugOauthGrantsOptions = (
+  options: Options<GetV1OrgsByOrgSlugOauthGrantsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugOauthGrantsResponse,
+    DefaultError,
+    GetV1OrgsByOrgSlugOauthGrantsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugOauthGrantsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugOauthGrants({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugOauthGrantsQueryKey(options),
+  })
+
+/**
+ * Withdraws consent, and disposes of every database the application created
+ */
+export const postV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+  PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
+  Options<PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+    PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
+    Options<PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke({
         ...options,
         ...fnOptions,
         throwOnError: true,
