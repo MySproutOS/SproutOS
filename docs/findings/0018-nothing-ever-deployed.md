@@ -76,3 +76,25 @@ Not "does the deploy path have tests" — it did. It is: _what would have to be 
 to succeed?_ Answering that requires naming the artifact, the entry point inside it, and the string
 Lambda is given, in one sentence. Nobody had written that sentence down, so nobody noticed that its
 three halves came from three places that had never met.
+
+## Addendum, same day: the action nobody could use
+
+Driving the first real deploy found a sixth thing of the same shape.
+`MySproutOS/sproutos-deploy-action` — the action every customer workflow is told to call, the one
+the generated YAML names, the one this repository carries as a submodule — **is a private
+repository**. A workflow in any other organization fails before its first step:
+
+```
+##[error]Unable to resolve action `mysproutos/sproutos-deploy-action`, not found
+```
+
+Not "authentication failed" and not "permission denied": _not found_, because a private repository is
+invisible rather than forbidden. So the error a customer sees says the action does not exist.
+
+It has never been noticed because the only workflows that use it live in this organization, where it
+resolves. A marketplace action in a private repository is not an action anyone can use, and the
+generated workflow route hands out a file that cannot run.
+
+Recording it here rather than fixing it silently: making a repository public is not reversible in the
+way that matters — the history becomes fetchable and indexable — so it is a decision, not a
+correction.
