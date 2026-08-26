@@ -1,4 +1,5 @@
 import {
+  DeleteFunctionCommand,
   CreateFunctionCommand,
   GetFunctionCommand,
   InvokeCommand,
@@ -9,6 +10,8 @@ import {
   waitUntilFunctionUpdatedV2,
   type Runtime,
 } from "@aws-sdk/client-lambda"
+import type { Architecture } from "@aws-sdk/client-lambda"
+import { LAMBDA_ARCHITECTURE } from "./web-adapter"
 
 /**
  * Running a project's migrations, to completion, before its new code serves traffic.
@@ -72,7 +75,7 @@ export async function runMigration(
   const name = migrationFunctionName(input.projectId)
   const timeout = Math.min(input.timeoutS ?? MIGRATION_TIMEOUT_S, MIGRATION_TIMEOUT_S)
 
-  const exists = await functionExists(client, name)
+  const exists = await functionExists(client, name, LAMBDA_ARCHITECTURE)
 
   if (exists) {
     await client.send(
@@ -102,6 +105,15 @@ export async function runMigration(
       new CreateFunctionCommand({
         FunctionName: name,
         Role: input.roleArn,
+        /*
+          The same architecture the application runs on, stated for the same reason.
+
+          `publishFunction` was corrected and this was not — which is the exact pattern
+          `docs/findings/0018` closes on: every fix in that list already existed somewhere,
+          applied to something adjacent. A migrator with a compiled dependency built for the
+          runner's machine would fail here in a way that has nothing to do with migrations.
+        */
+        Architectures: [LAMBDA_ARCHITECTURE],
         Handler: input.handler,
         Runtime: input.runtime,
         MemorySize: MIGRATION_MEMORY_MB,
@@ -148,9 +160,25 @@ function trim(text: string): string {
   return `${text.slice(0, MAX_OUTPUT)}\n…truncated (${text.length - MAX_OUTPUT} more characters)`
 }
 
-async function functionExists(client: LambdaClient, name: string): Promise<boolean> {
+/**
+ * Whether the migrator exists *and* is on the architecture we publish.
+ *
+ * A function created before this platform chose one cannot be moved: `UpdateFunctionConfiguration`
+ * does not accept `Architectures`. Answering "yes it exists" would update it in place forever on
+ * the wrong machine. Deleting a migrator costs nothing — it holds no alias and no version anyone
+ * rolls back to; it is republished from the archive on every run.
+ */
+async function functionExists(
+  client: LambdaClient,
+  name: string,
+  architecture: Architecture,
+): Promise<boolean> {
   try {
-    await client.send(new GetFunctionCommand({ FunctionName: name }))
+    const found = await client.send(new GetFunctionCommand({ FunctionName: name }))
+    if (!(found.Configuration?.Architectures ?? []).includes(architecture)) {
+      await client.send(new DeleteFunctionCommand({ FunctionName: name }))
+      return false
+    }
     return true
   } catch (cause) {
     if (cause instanceof ResourceNotFoundException) return false

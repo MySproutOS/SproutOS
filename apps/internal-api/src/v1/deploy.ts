@@ -3,7 +3,16 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment, fetchDeployment } from "@lib/dao"
 import { enqueue, enqueueSigning, PUBLISH_KINDS } from "@lib/jobs"
-import { isSupportedRuntime, runtimeForPreset, SUPPORTED_RUNTIMES } from "@lib/lambda"
+import { LambdaClient } from "@aws-sdk/client-lambda"
+import { environmentFor } from "@lib/jobs"
+import {
+  DEFAULT_HANDLER,
+  DEFAULT_RUNTIME,
+  isSupportedRuntime,
+  runMigration,
+  runtimeForPreset,
+  SUPPORTED_RUNTIMES,
+} from "@lib/lambda"
 import { verifyGitHubOidcToken } from "@lib/oauth"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -141,6 +150,20 @@ const releaseRequest = Type.Object({
   migration_handler: Type.Optional(Type.String({ minLength: 1 })),
   /** The commit subject, so a deployment list reads like a history rather than a list of shas. */
   message: Type.Optional(Type.String({ maxLength: 500 })),
+})
+
+/** A migration run on its own, uploaded through `/deploy/upload-url` like any other archive. */
+const migrateRequest = Type.Object({
+  migration_key: Type.String({ minLength: 1 }),
+  migration_handler: Type.Optional(Type.String({ minLength: 1 })),
+  runtime: Type.Optional(Type.String({ minLength: 1 })),
+})
+
+const migrateResponse = Type.Object({
+  /** Whether the migrator itself succeeded. The call succeeds either way. */
+  ok: Type.Boolean(),
+  /** What the migrator printed, trimmed. The only thing worth showing whoever ran it. */
+  output: Type.String(),
 })
 const releaseResponse = Type.Object({
   deployment_id: Type.String(),
@@ -513,6 +536,85 @@ const deploy: Hono = new Hono()
       }
 
       return c.json({ deployment_id: deployment.id })
+    },
+  )
+  /**
+   * Run a migration on its own, without a deploy.
+   *
+   * `deploy.release` already runs one before the alias moves, which is the ordering that matters for
+   * a release. This is the other case Andrew asked for: a migration invoked from an API call, so a
+   * team whose CI is not this action — or whose schema change ships on its own schedule — can still
+   * use the runner rather than opening a psql session against the tenant proxy.
+   *
+   * Synchronous, and the outcome is the response. Lambda's fifteen-minute ceiling is the timeout and
+   * it is named in the failure, because a migration that exceeds it needs a different tool and
+   * finding that out mid-migration is the worst possible moment.
+   *
+   * **Not retried, here or anywhere.** Re-running a partially applied schema change is how a
+   * recoverable failure becomes an unrecoverable one. The migrator owns idempotency; this reports
+   * what it reported.
+   */
+  .post(
+    "/deploy/migrate",
+    describeRoute({
+      description: "Run an uploaded migrator against the project's database, and wait for it",
+      responses: {
+        200: {
+          description: "The migrator ran. `ok` says whether it succeeded",
+          content: { "application/json": { schema: resolver(migrateResponse) } },
+        },
+        401: { description: "Missing or expired deploy token" },
+      },
+    }),
+    validator("json", migrateRequest),
+    async (c) => {
+      const authorized = bearer(c.req.header("Authorization"))
+      if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+
+      const json = c.req.valid("json")
+
+      if (json.runtime !== undefined && !isSupportedRuntime(json.runtime)) {
+        return c.json(
+          {
+            message: `\`runtime\` must be one of ${SUPPORTED_RUNTIMES.join(", ")} — got \`${json.runtime}\`.`,
+          },
+          400,
+        )
+      }
+
+      const project = await db
+        .selectFrom("project")
+        .select(["id", "organizationId"])
+        .where("id", "=", authorized.projectId)
+        .where("deletedAt", "is", null)
+        .executeTakeFirst()
+      if (project === undefined) return c.json({ message: "That project no longer exists" }, 404)
+
+      /*
+        The project's own environment, which is where `DATABASE_URL` lives.
+
+        Read through the same path a deploy uses rather than accepting one from the caller: a
+        migration endpoint that took a connection string would let anyone holding a deploy token
+        point this project's migrator at a database it has no business touching.
+      */
+      const environment = await environmentFor(db, project.id, "production")
+
+      const result = await runMigration(new LambdaClient({}), {
+        projectId: project.id,
+        bucket: process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
+        key: json.migration_key,
+        handler: json.migration_handler ?? DEFAULT_HANDLER,
+        runtime:
+          json.runtime !== undefined && isSupportedRuntime(json.runtime)
+            ? json.runtime
+            : DEFAULT_RUNTIME,
+        roleArn: process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+        environment,
+      })
+
+      // 200 either way: the call succeeded and the migrator's verdict is the payload. A 500 here
+      // would say the platform failed, which is a different thing from the migration failing.
+      return c.json({ ok: result.ok, output: result.output })
     },
   )
 
