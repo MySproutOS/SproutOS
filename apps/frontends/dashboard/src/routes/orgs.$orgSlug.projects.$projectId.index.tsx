@@ -5,6 +5,7 @@ import {
   BotIcon,
   ExternalLinkIcon,
   KeyRoundIcon,
+  MonitorPlayIcon,
   ScrollTextIcon,
   SlidersHorizontalIcon,
 } from "lucide-react"
@@ -80,6 +81,16 @@ function ProjectDetail() {
         >
           <ScrollTextIcon />
           Logs
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          render={
+            <Link to="/orgs/$orgSlug/projects/$projectId/preview" params={{ orgSlug, projectId }} />
+          }
+        >
+          <MonitorPlayIcon />
+          Preview
         </Button>
         <Button
           size="sm"
