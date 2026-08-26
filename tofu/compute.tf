@@ -630,8 +630,8 @@ resource "aws_launch_template" "service" {
     # another.
     node_version = var.node_version
 
-    # Read at boot by the website instances only, to compose `DATABASE_URL`. The ARN is not a
-    # secret; what it names is, and reading it needs the instance role.
+    # Read at boot by both services now, to compose `DATABASE_URL`. The ARN is not a secret; what
+    # it names is, and reading it needs the instance role — which is the same role for both.
     database_secret_arn        = aws_db_instance.control_plane.master_user_secret[0].secret_arn
     application_parameter_path = local.application_parameter_path
     envelope_kms_key_arn       = aws_kms_key.envelope.arn
@@ -640,6 +640,12 @@ resource "aws_launch_template" "service" {
     tenant_static_bucket       = aws_s3_bucket.tenant_static.id
     database_endpoint          = aws_db_instance.control_plane.endpoint
     database_name              = aws_db_instance.control_plane.db_name
+
+    # The backend the router's search split forwards to, on the OVH box behind its Traefik. Derived
+    # rather than written down twice: `dns.tf` creates the record from the same variable, so the
+    # name the instance is told and the name that resolves cannot drift apart.
+    opensearch_subdomain = var.opensearch_subdomain
+    control_plane_domain = var.control_plane_domain
   }))
 
   metadata_options {

@@ -39,6 +39,48 @@ services:
     ports:
       - "127.0.0.1:9200:9200"
 
+    # Reachable from AWS, because `search-proxy` — the thing that makes this multi-tenant — runs in
+    # the router there. Bound to `127.0.0.1` and nothing else until now, which meant the search
+    # split could not have worked in production: `SERVICE_SEARCH_PUBLIC_HOST` had no valid value.
+    #
+    # The port stays on loopback; what is published is a Traefik route on 443, exactly as ClickHouse
+    # is, joining the network the forum's Traefik watches so neither this file nor that repository
+    # has to know about the other.
+    networks:
+      - default
+      - forum_default
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: forum_default
+      traefik.http.routers.opensearch.entrypoints: websecure
+      traefik.http.routers.opensearch.rule: Host(`opensearch.sproutos.me`)
+      traefik.http.routers.opensearch.tls.certresolver: le
+      traefik.http.services.opensearch.loadbalancer.server.port: "9200"
+      # Two locks, and here the second one is not optional — it is the *only* one that works.
+      #
+      # ClickHouse can lean on an allowlist because ClickHouse also has a user and a password.
+      # OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` and authenticates nobody, so an
+      # allowlist alone would be one lock on nothing: tenant Lambdas egress through the same NAT
+      # address the allowlist has to admit, which would let every tenant read every other tenant's
+      # index by talking to this directly and skipping the proxy entirely.
+      #
+      # So the door gets a password of its own, held only by `search-proxy`, presented as
+      # `SEARCH_PROXY_UPSTREAM_AUTHORIZATION`. The tenant's own `Authorization` header is stripped
+      # before this one is set — see `services/search-proxy/src/lib.rs`.
+      traefik.http.routers.opensearch.middlewares: opensearch-allowlist,opensearch-auth
+      # **Every `$` in the bcrypt hash must be doubled in `.env`.** Compose interpolates the value it
+      # reads from there, so `$2y$05$Kq…` has `$05` and `$Kq…` taken as variable references and
+      # substituted with nothing — leaving `u:$2y` on the label. Traefik then rejects every
+      # credential, and the truncation is visible nowhere: `docker compose config` prints the
+      # mangled value with its own `$$` escaping on top, which reads like the correct answer.
+      # Measured: `.env` holding `u:$2y$05$abcdefgHIJKLmnop` produced the label `u:$2y$05`.
+      traefik.http.middlewares.opensearch-auth.basicauth.users: ${SEARCH_BASICAUTH_USERS:?set SEARCH_BASICAUTH_USERS}
+      # Same two families and the same reasoning as ClickHouse below — except that this name has no
+      # AAAA record for the reason `tofu/dns.tf` gives, so in practice only the first line is ever
+      # matched. It is kept because the day Docker IPv6 is enabled on this host is the day the
+      # record comes back, and an allowlist that quietly did not cover it would fail closed at 3am.
+      traefik.http.middlewares.opensearch-allowlist.ipallowlist.sourcerange: "54.160.27.183/32,2600:1f18:2936:ae00::/56"
+
   # --- Tenant queues -----------------------------------------------------------
   #
   # Two processes, not one with two databases. `maxmemory-policy` is per-process and `SELECT n`
@@ -62,10 +104,40 @@ services:
       - "yes"
       - --appendfsync
       - everysec
+      # The second lock. See the Traefik labels below for why one is not enough, and
+      # `services/valkey-proxy/src/upstream.rs` for the half that holds the key.
+      - --requirepass
+      - ${VALKEY_QUEUE_PASSWORD:?set VALKEY_QUEUE_PASSWORD}
     volumes:
       - /srv/sproutos/valkey-queue:/data
     ports:
       - "127.0.0.1:6379:6379"
+
+    # **Not reachable from AWS, and this is where that stopped.**
+    #
+    # The obvious route was a Traefik TCP router on `websecure`: RESP is not HTTP, but Traefik
+    # multiplexes TCP and HTTP on one entrypoint by SNI, so it would have shared 443 with the forum
+    # and needed no entrypoint added — which matters, because entrypoints are command-line flags and
+    # those live in the forum's repository.
+    #
+    # It was tried, and it took the whole host's certificate renewal down with it. A TCP router with
+    # TLS on an entrypoint stops Traefik answering the `acme-tls/1` ALPN there, so Let's Encrypt's
+    # `tls-alpn-01` challenge fails for **every** domain on 443, not only the new one:
+    #
+    #     Cannot negotiate ALPN protocol "acme-tls/1" for tls-alpn-01 challenge
+    #
+    # Measured both ways. With the TCP router present, `opensearch.sproutos.me` failed five
+    # authorizations and hit Let's Encrypt's rate limit; with it removed and nothing else changed,
+    # the certificate issued within ninety seconds. The forum's own `s3.forum` and `static.forum`
+    # names were failing the same way at the same time.
+    #
+    # The trap is the shape, not the outage. An existing certificate keeps working, so the cost is
+    # invisible until a renewal sixty days later takes out the forum, ClickHouse and search at once,
+    # for a change nobody would connect to it.
+    #
+    # `requirepass` above is set regardless. It is the lock that has to hold whatever the transport
+    # turns out to be, and setting it now means the day this is published is not also the day it
+    # first gets a password.
 
   valkey-cache:
     container_name: sproutos_valkey_cache

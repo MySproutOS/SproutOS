@@ -213,3 +213,38 @@ resource "aws_route53_record" "clickhouse_ipv4" {
   So this name is IPv4-only. Our AWS egress has IPv4 through the NAT, which is the path that
   preserves the source. If Docker IPv6 is ever enabled on that host, this record can come back.
 */
+
+/*
+  The two tenant datastores on the same box, published for the same reason and with the same
+  restriction.
+
+  `opensearch` is what `search-proxy` connects onward to; `valkey` is what the Valkey split connects
+  onward to. Neither is a customer-facing address — a customer is given the *router*, and these are
+  the backends behind it. That distinction is the whole tenancy model: `docs/findings/0015` records
+  a `SERVICE_POSTGRES_PUBLIC_HOST` observed handing a real caller the backend's own address, which
+  is a URI that works and bypasses every check the platform makes.
+
+  IPv4 only, for the reason written out above. Both are allowlisted by source address, and on this
+  host an IPv6 connection arrives wearing the bridge gateway's address instead of the client's — so
+  an AAAA record here would turn a working control into one that refuses the platform and admits
+  anyone who reaches it over IPv6.
+
+  There is no wildcard problem to worry about even though `*.sproutos.me` exists and points at the
+  ALB: an exact record beats a wildcard in Route 53, which is why these have to be written down
+  rather than left to resolve.
+*/
+resource "aws_route53_record" "opensearch_ipv4" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.opensearch_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+  ttl     = 300
+  records = [var.ovh_host_ipv4]
+}
+
+resource "aws_route53_record" "tenant_valkey_ipv4" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+  ttl     = 300
+  records = [var.ovh_host_ipv4]
+}

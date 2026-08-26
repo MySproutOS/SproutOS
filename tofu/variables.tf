@@ -280,3 +280,15 @@ variable "clickhouse_subdomain" {
   type        = string
   default     = "clickhouse"
 }
+
+variable "opensearch_subdomain" {
+  description = "Where the router's search split reaches OpenSearch. Resolves to the OVH host, behind its Traefik."
+  type        = string
+  default     = "opensearch"
+}
+
+variable "tenant_valkey_subdomain" {
+  description = "Where the router's Valkey split reaches the tenant queue. Resolves to the OVH host, behind a Traefik TCP router that terminates TLS."
+  type        = string
+  default     = "valkey"
+}
