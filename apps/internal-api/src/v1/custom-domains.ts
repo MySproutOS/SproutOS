@@ -432,14 +432,36 @@ const routes = app
         certificate is a connection the browser refuses before we ever see it.
       */
       const listenerArn = process.env.TENANT_LISTENER_ARN
-      if (listenerArn !== undefined && listenerArn !== "") {
-        await elb().send(
-          new AddListenerCertificatesCommand({
-            ListenerArn: listenerArn,
-            Certificates: [{ CertificateArn: domain.acmCertificateArn ?? "" }],
-          }),
-        )
+      if (listenerArn === undefined || listenerArn === "") {
+        /*
+          Refused, not skipped.
+
+          This was `if (set) { attach }`, which on a deployment missing the variable marked the
+          domain `active` having attached nothing — so the hostname routed, TLS failed, and the
+          dashboard said it was working. A customer would see a browser security warning on a domain
+          the platform had just told them was live.
+        */
+        await db
+          .updateTable("customDomain")
+          .set({
+            status: "failed",
+            statusReason:
+              "This deployment cannot attach certificates (TENANT_LISTENER_ARN is not set), so the " +
+              "domain would not serve HTTPS. Nothing was changed.",
+            updatedAt: new Date(),
+          })
+          .where("id", "=", domainId)
+          .execute()
+
+        return c.json(present({ ...domain, status: "failed" }))
       }
+
+      await elb().send(
+        new AddListenerCertificatesCommand({
+          ListenerArn: listenerArn,
+          Certificates: [{ CertificateArn: domain.acmCertificateArn ?? "" }],
+        }),
+      )
 
       /*
         The route is copied from the project's live deployment.
@@ -529,6 +551,13 @@ const routes = app
       */
       await withdrawRoute(platformValkey(), domain.hostname)
 
+      /*
+        Here a missing listener ARN *is* survivable, unlike on verify.
+
+        The customer's request has already been honoured — the route was withdrawn above, so the
+        domain has stopped serving. What remains is releasing a certificate, which is a cost rather
+        than a correctness problem.
+      */
       const listenerArn = process.env.TENANT_LISTENER_ARN
       if (listenerArn !== undefined && listenerArn !== "" && domain.acmCertificateArn !== null) {
         try {

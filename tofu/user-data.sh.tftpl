@@ -78,6 +78,16 @@ VALKEY_URL=${valkey_url}
 # Conflating them meant a tenant hostname was one wildcard away from the apex that authenticates
 # our own users.
 TENANT_DOMAIN=${tenant_domain}
+
+# The HTTPS listener a customer domain's certificate is attached to.
+#
+# Read by the custom-domain route when a domain verifies. Absent, that route refuses to mark the
+# domain active — see its comment — rather than activating one that cannot serve HTTPS.
+TENANT_LISTENER_ARN=${tenant_listener_arn}
+
+# The account, for reconstructing a project's Lambda alias ARN when republishing routes. Not a
+# secret; it is in every ARN this instance already holds.
+AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
 PORT=8080
 API_PORT=3001

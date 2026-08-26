@@ -613,6 +613,45 @@ resource "aws_iam_policy" "application" {
         Resource = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*"
       },
       {
+        /*
+          Certificates for customer domains, issued while a customer waits.
+
+          Not in this file as resources, deliberately: a customer adding a domain cannot wait for an
+          apply, so the API requests the certificate itself. `tofu` owns the platform's own two
+          certificates and nothing else.
+
+          `RequestCertificate` takes no resource — a certificate that does not exist yet has no ARN
+          to scope to — so the grant is on the action and the tag conditions are what tie an issued
+          certificate back to the project that asked for it. `DeleteCertificate` is here because a
+          domain removed has to release its certificate or the account accumulates them forever.
+        */
+        Effect = "Allow"
+        Action = [
+          "acm:RequestCertificate",
+          "acm:DescribeCertificate",
+          "acm:DeleteCertificate",
+          "acm:AddTagsToCertificate",
+          "acm:ListCertificates",
+        ]
+        Resource = "*"
+      },
+      {
+        /*
+          Attaching and detaching those certificates on the one listener.
+
+          Scoped to this listener rather than `*`: the only thing the application has any business
+          doing to a load balancer is adding a customer's certificate to the listener customers are
+          served from, and a wildcard here would let a compromised API detach the platform's own.
+        */
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:AddListenerCertificates",
+          "elasticloadbalancing:RemoveListenerCertificates",
+          "elasticloadbalancing:DescribeListenerCertificates",
+        ]
+        Resource = aws_lb_listener.https.arn
+      },
+      {
         # The release the instance boots from, and the pointer that names it.
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
@@ -789,6 +828,14 @@ resource "aws_launch_template" "service" {
     aws_region       = var.aws_region
     valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
     tenant_domain    = var.tenant_domain
+
+    # Where a customer domain's certificate is attached.
+    #
+    # The API refuses to activate a domain without this rather than skipping the attachment: a
+    # domain marked live with no certificate routes traffic and then fails TLS, which a visitor sees
+    # as a security warning on a hostname we just told the customer was working.
+    tenant_listener_arn = aws_lb_listener.https.arn
+    aws_account_id      = var.aws_account_id
 
     # Kept in step with `.config/mise.toml` and the deploy workflow by hand, because three places
     # is already one too many. A mismatch means the release was built on one Node and runs on
