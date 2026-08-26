@@ -18,6 +18,8 @@
  * credentials.
  */
 
+import { ServiceNotConfiguredError } from "./types"
+
 export type NeonConfig = {
   apiKey: string
   /** `https://console.neon.tech/api/v2`. */
@@ -27,18 +29,27 @@ export type NeonConfig = {
   regionId: string
 }
 
+/*
+  `ServiceNotConfiguredError`, not `Error`.
+
+  These two threw a plain `Error`, and the route only turns `ServiceNotConfiguredError` into a 503
+  naming the variable — so a missing `NEON_ORG_ID` came back as a bare `500 Internal Server Error`
+  with no body. That is precisely the answer `docs/findings/0015` was written about, still being
+  given, by the one driver whose errors were not the shared type.
+
+  The reason it survived is that the two other Postgres paths *do* use it, so the class looked
+  adopted. Being right in most places is how a diagnostic gets trusted while it is quietly not
+  firing in the one place somebody is standing.
+*/
 export function neonApiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): NeonConfig {
   const apiKey = env.NEON_API_KEY
   if (apiKey === undefined || apiKey === "") {
-    throw new Error(
-      "NEON_API_KEY is not set. It is an org-wide key with admin access to every project, so " +
-        "there is no safe default and no read-only fallback worth inventing.",
-    )
+    throw new ServiceNotConfiguredError("NEON_API_KEY", "postgres")
   }
 
   const orgId = env.NEON_ORG_ID
   if (orgId === undefined || orgId === "") {
-    throw new Error("NEON_ORG_ID is not set; projects would be created outside the organization")
+    throw new ServiceNotConfiguredError("NEON_ORG_ID", "postgres")
   }
 
   return {

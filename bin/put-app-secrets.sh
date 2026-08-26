@@ -63,6 +63,9 @@ KEYS=(
   # Managed Neon's API key, which creates a project per customer database. Nothing in this
   # repository can obtain it; without it `kind: postgres` answers 503 naming this.
   NEON_API_KEY
+  # The organization projects are created in. Not a credential, but it travels with the key and is
+  # useless without it, so it lives on the same path rather than in the launch template.
+  NEON_ORG_ID
   # The tenant queue on the OVH box, as one `rediss://` URI carrying its password. The router's
   # split forwards to it; the control plane reads tenant queue state straight from it, because an
   # internal caller has no tenant to be separated from and could not authenticate to the proxy
