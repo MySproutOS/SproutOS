@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest"
 import { buildCreateParams, daytonaConfigFromEnv, type DaytonaConfig } from "./daytona"
 import type { CreateSandboxInput } from "./types"
 
-const config: DaytonaConfig = { apiKey: "k", snapshot: "sproutos/agent:1" }
+const config: DaytonaConfig = {
+  apiKey: "k",
+  organizationId: "org",
+  snapshot: "sproutos/agent:1",
+}
 
 const input: CreateSandboxInput = {
   sandboxId: "01930000-0000-7000-8000-000000000001",
@@ -15,16 +19,16 @@ const input: CreateSandboxInput = {
 }
 
 describe("buildCreateParams", () => {
-  /*
-    The resources workaround. `CreateSandboxFromSnapshotParams` does not declare `resources`, but
-    `Daytona.create` reads them at runtime and the REST call takes them flat. If that ever stops
-    being true, sandboxes come back at the provider's default size — which does not fail, it just
-    bills a different number than `sandbox.meter` charges for. This is the assertion that notices.
-  */
-  it("sends resources alongside a snapshot", () => {
+  it("uses the snapshot's fixed resources instead of sending an invalid override", () => {
     const params = buildCreateParams(config, input)
     expect(params.snapshot).toBe("sproutos/agent:1")
-    expect(params.resources).toEqual({ cpu: 2, memory: 4, disk: 10 })
+    expect(params).not.toHaveProperty("resources")
+  })
+
+  it("refuses to bill a size different from the snapshot's actual size", () => {
+    expect(() =>
+      buildCreateParams(config, { ...input, resources: { ...input.resources, cpu: 4 } }),
+    ).toThrow(/fixed at 2 CPU/)
   })
 
   it("carries attribution on the labels metering reads", () => {
@@ -43,11 +47,13 @@ describe("buildCreateParams", () => {
   })
 
   it("blocks link-local and private egress", () => {
-    const list = buildCreateParams(config, input).networkAllowList ?? ""
+    const params = buildCreateParams(config, input)
+    const list = params.domainAllowList ?? ""
     expect(list).not.toBe("")
-    expect(list.split(",")).not.toContain("169.254.0.0/16")
-    expect(list.split(",")).not.toContain("10.0.0.0/8")
-    expect(list.split(",")).toContain("1.0.0.0/8")
+    expect(params.networkAllowList).toBeUndefined()
+    expect(list.split(",")).toContain("*.github.com")
+    expect(list.split(",")).toContain("*.sproutos.me")
+    expect(list.split(",")).toHaveLength(20)
   })
 
   describe("autostop backstop", () => {
@@ -77,9 +83,18 @@ describe("buildCreateParams", () => {
 
 describe("daytonaConfigFromEnv", () => {
   it("refuses a missing api key", () => {
-    expect(() => daytonaConfigFromEnv({ SANDBOX_DAYTONA_SNAPSHOT: "s" })).toThrow(
-      /SANDBOX_DAYTONA_API_KEY/,
-    )
+    expect(() =>
+      daytonaConfigFromEnv({
+        DAYTONA_ORGANIZATION_ID: "org",
+        SANDBOX_DAYTONA_SNAPSHOT: "s",
+      }),
+    ).toThrow(/DAYTONA_API_KEY/)
+  })
+
+  it("refuses a missing organization", () => {
+    expect(() =>
+      daytonaConfigFromEnv({ DAYTONA_API_KEY: "k", SANDBOX_DAYTONA_SNAPSHOT: "s" }),
+    ).toThrow(/DAYTONA_ORGANIZATION_ID/)
   })
 
   /*
@@ -87,19 +102,27 @@ describe("daytonaConfigFromEnv", () => {
     agent, and reports no error. The failure would present as the chat doing nothing.
   */
   it("refuses a missing snapshot", () => {
-    expect(() => daytonaConfigFromEnv({ SANDBOX_DAYTONA_API_KEY: "k" })).toThrow(
-      /SANDBOX_DAYTONA_SNAPSHOT/,
-    )
+    expect(() =>
+      daytonaConfigFromEnv({ DAYTONA_API_KEY: "k", DAYTONA_ORGANIZATION_ID: "org" }),
+    ).toThrow(/SANDBOX_DAYTONA_SNAPSHOT/)
   })
 
   it("treats an empty string as unset", () => {
     expect(() =>
-      daytonaConfigFromEnv({ SANDBOX_DAYTONA_API_KEY: "", SANDBOX_DAYTONA_SNAPSHOT: "s" }),
-    ).toThrow(/SANDBOX_DAYTONA_API_KEY/)
+      daytonaConfigFromEnv({
+        DAYTONA_API_KEY: "",
+        DAYTONA_ORGANIZATION_ID: "org",
+        SANDBOX_DAYTONA_SNAPSHOT: "s",
+      }),
+    ).toThrow(/DAYTONA_API_KEY/)
   })
 
   it("omits optional fields rather than passing empty ones through", () => {
-    const c = daytonaConfigFromEnv({ SANDBOX_DAYTONA_API_KEY: "k", SANDBOX_DAYTONA_SNAPSHOT: "s" })
-    expect(c).toEqual({ apiKey: "k", snapshot: "s" })
+    const c = daytonaConfigFromEnv({
+      DAYTONA_API_KEY: "k",
+      DAYTONA_ORGANIZATION_ID: "org",
+      SANDBOX_DAYTONA_SNAPSHOT: "s",
+    })
+    expect(c).toEqual({ apiKey: "k", organizationId: "org", snapshot: "s" })
   })
 })

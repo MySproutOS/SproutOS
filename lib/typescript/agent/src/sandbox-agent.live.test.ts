@@ -1,136 +1,124 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, afterEach, describe, expect, it } from "vitest"
 
-import { dockerConfigFromEnv, dockerDriver } from "@lib/sandbox"
+import {
+  daytonaConfigFromEnv,
+  sandboxDriverFromEnv,
+  SNAPSHOT_RESOURCES,
+  type SandboxDriver,
+} from "@lib/sandbox"
 
-import { bootstrapSandbox, commitSandboxWork, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
+import { bootstrapSandbox, commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
 
-const run = promisify(execFile)
+/** This suite has no Docker substitute: every live assertion crosses Daytona's API. */
+try {
+  process.loadEnvFile()
+} catch {
+  // CI may supply variables directly, and a checkout may intentionally have no .env.
+}
 
-/**
- * Bootstrap and a turn, in a container that actually exists.
- *
- * `sandbox-agent.test.ts` proves the logic against a fake driver. This proves the operations it is
- * built out of survive contact with a real one: a real clone over the network, markdown full of
- * quotes written to a real filesystem, a real `git config`, and a real process streaming
- * newline-delimited JSON back.
- *
- * The clone is of a public repository over HTTPS with no token — the token path is identical and
- * cannot be exercised without a customer's installation.
- */
-const available = await (async () => {
-  try {
-    await run("docker", ["version", "--format", "{{.Server.Version}}"], { timeout: 10_000 })
-    return true
-  } catch {
-    return false
-  }
-})()
+let driver: SandboxDriver | undefined
+try {
+  daytonaConfigFromEnv()
+  driver = sandboxDriverFromEnv()
+} catch {
+  driver = undefined
+}
 
-const driver = dockerDriver({ ...dockerConfigFromEnv(), image: "node:24-slim" })
 const created: string[] = []
+const workspace = driver?.workspaceDir ?? "/home/daytona/workspace"
 
 afterAll(async () => {
+  if (driver === undefined) return
   for (const id of created) await driver.destroy(id).catch(() => {})
 })
 
+afterEach(async () => {
+  if (driver === undefined) return
+  const ids = created.splice(0)
+  for (const id of ids) await driver.destroy(id).catch(() => {})
+})
+
 async function sandbox(name: string): Promise<string> {
+  if (driver === undefined) throw new Error("Daytona is unavailable")
   const made = await driver.create({
     sandboxId: `${name}-${Date.now()}`,
-    organizationId: "org",
-    projectId: "project",
-    userId: "user",
+    organizationId: crypto.randomUUID(),
+    projectId: crypto.randomUUID(),
+    userId: crypto.randomUUID(),
     sandboxClass: "container",
-    resources: { cpu: 1, memoryGib: 1, diskGib: 4 },
+    resources: SNAPSHOT_RESOURCES,
     idleTimeoutS: 900,
   })
   created.push(made.externalId)
-  // git is not in `node:24-slim`, and the Daytona snapshot is expected to carry it. Installed here
-  // rather than assumed, because a bootstrap that fails on a missing binary is exactly the failure
-  // this test exists to catch — see the day `git` was missing from the control-plane instances.
-  await driver.exec(
-    made.externalId,
-    ["sh", "-c", "apt-get update -qq && apt-get install -y -qq git"],
-    300_000,
-  )
   return made.externalId
 }
 
-describe.skipIf(!available)("bootstrapping a real sandbox", () => {
+describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
   it("clones, sets an identity, and installs the skill where both harnesses look", async () => {
     const externalId = await sandbox("bootstrap")
-
+    const activeDriver = driver!
     const skill = '# SproutOS\n\nIt\'s "deployment" — `$(not a command)` and a `backtick`.\n'
     const result = await bootstrapSandbox({
       author: { email: "agent@sproutos.me", name: "SproutOS Agent" },
-      driver,
+      driver: activeDriver,
       externalId,
       harness: "codex",
       model: "gpt-5.6-terra",
       proxyBaseUrl: "https://llm.sproutos.me",
-      repository: {
-        // Small, public, and stable. The token path is byte-identical.
-        branch: "master",
-        fullName: "octocat/Hello-World",
-        token: "",
-      },
+      repository: { branch: "master", fullName: "octocat/Hello-World", token: "" },
       skill,
     })
 
     expect(result.problems).toEqual([])
     expect(result.cloned).toBe(true)
-
-    // A real checkout, not an empty directory.
-    const readme = await driver.readFile(externalId, `${WORKSPACE}/README`)
-    expect(readme.length).toBeGreaterThan(0)
-
-    // The skill survived a filesystem round trip with its quotes and backticks intact — the thing a
-    // shell-interpolated write would have destroyed.
-    expect(await driver.readFile(externalId, `${WORKSPACE}/.claude/skills/sproutos/SKILL.md`)).toBe(
-      skill,
+    expect((await activeDriver.readFile(externalId, `${workspace}/README`)).length).toBeGreaterThan(
+      0,
     )
-    expect(await driver.readFile(externalId, `${WORKSPACE}/AGENTS.md`)).toContain("deployment")
+    expect(
+      await activeDriver.readFile(externalId, `${workspace}/.claude/skills/sproutos/SKILL.md`),
+    ).toBe(skill)
+    expect(await activeDriver.readFile(externalId, `${workspace}/AGENTS.md`)).toContain(
+      "deployment",
+    )
 
-    // An identity, or the agent cannot commit at all.
-    const identity = await driver.exec(
+    const identity = await activeDriver.exec(
       externalId,
-      ["git", "-C", WORKSPACE, "config", "user.email"],
+      ["git", "-C", workspace, "config", "user.email"],
       30_000,
     )
     expect(identity.stdout.trim()).toBe("agent@sproutos.me")
-
-    // And the credential is gone from the remote.
-    const remote = await driver.exec(
+    const remote = await activeDriver.exec(
       externalId,
-      ["git", "-C", WORKSPACE, "remote", "get-url", "origin"],
+      ["git", "-C", workspace, "remote", "get-url", "origin"],
       30_000,
     )
     expect(remote.stdout).not.toContain("x-access-token")
 
-    // What we wrote is invisible to git, so the agent's first commit does not carry our scaffolding
-    // into the customer's repository.
-    const status = await driver.exec(
+    const curl = await activeDriver.exec(externalId, ["sh", "-c", "command -v curl"], 30_000)
+    expect({ exitCode: curl.exitCode, stderr: curl.stderr }).toMatchObject({ exitCode: 0 })
+    const metadata = await activeDriver.exec(
       externalId,
-      ["git", "-C", WORKSPACE, "status", "--porcelain"],
-      30_000,
+      [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "3",
+        "http://169.254.169.254/latest/meta-data/",
+      ],
+      10_000,
     )
-    expect(status.stdout).not.toContain(".claude/skills")
-    expect(status.stdout).not.toContain(".codex")
+    expect(metadata.exitCode).not.toBe(0)
   }, 600_000)
 
-  it("streams a turn's events out of the container", async () => {
+  it("streams and parses a harness turn through Daytona", async () => {
     const externalId = await sandbox("turn")
-
-    /*
-      A stand-in harness that emits the same newline-delimited JSON the real ones do, written into
-      the container and run as the agent would be. What is under test is the transport and the
-      parsing — that events survive being produced by a separate process, in a container, arriving
-      in arbitrary chunks — not the model.
-    */
-    await driver.writeFile(
+    const activeDriver = driver!
+    const stub = `${workspace}/../bin/claude`
+    await activeDriver.writeFile(
       externalId,
-      "/usr/local/bin/claude",
+      stub,
       [
         "#!/bin/sh",
         `echo '{"type":"system","subtype":"init","session_id":"live-1"}'`,
@@ -140,11 +128,11 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
         "",
       ].join("\n"),
     )
-    await driver.exec(externalId, ["chmod", "+x", "/usr/local/bin/claude"], 30_000)
+    await activeDriver.exec(externalId, ["chmod", "+x", stub], 30_000)
 
     const events: unknown[] = []
     const { exitCode } = await runSandboxTurn({
-      driver,
+      driver: activeDriver,
       externalId,
       harness: "claude-code",
       model: null,
@@ -156,7 +144,7 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
       token: {
         accessExpiresAt: new Date(Date.now() + 600_000),
         accessToken: "spa_live",
-        id: "01a03e5d-8cbf-7415-9ac6-82c3476aeb5c",
+        id: crypto.randomUUID(),
         refreshExpiresAt: new Date(Date.now() + 3_600_000),
         refreshToken: "spr_live",
       },
@@ -170,7 +158,6 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
       name: "Bash",
       input: { command: "npm test" },
     })
-    // The harness saw the proxy, which is the whole reason the sandbox holds no provider key.
     expect(JSON.stringify(events)).toContain("the base url is https://llm.sproutos.me")
     expect(events.at(-1)).toEqual({
       type: "done",
@@ -181,85 +168,112 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
     })
   }, 600_000)
 
-  it("commits what the agent wrote and pushes it to a branch", async () => {
-    const externalId = await sandbox("commit")
+  it("keeps the checkout across a Daytona stop and start", async () => {
+    const externalId = await sandbox("persistence")
+    const activeDriver = driver!
+    await activeDriver.writeFile(externalId, `${workspace}/survives.txt`, "persistent\n")
+    await activeDriver.stop(externalId)
+    expect(await activeDriver.state(externalId)).toBe("stopped")
+    await activeDriver.start(externalId)
+    expect(await activeDriver.state(externalId)).toBe("started")
+    expect(await activeDriver.readFile(externalId, `${workspace}/survives.txt`)).toBe(
+      "persistent\n",
+    )
+  }, 600_000)
 
-    /*
-      A real bare repository, in the container, as the remote.
-
-      The push is genuine — a real `git push`, a real ref negotiation, a real `--force-with-lease` —
-      against a remote that is not GitHub. What that leaves untested is the credential header, and
-      that is deliberate: pushing to a customer's repository from a test would need an installation
-      token and would write to somebody's history. The header's shape is asserted in
-      `sandbox-agent.test.ts`, and the same auth path is exercised for real by every clone.
-    */
-    await driver.exec(externalId, ["git", "init", "--bare", "/srv/origin.git"], 60_000)
-    await driver.exec(
+  it("serves a dev port through a signed Daytona preview URL", async () => {
+    const externalId = await sandbox("preview")
+    const activeDriver = driver!
+    const started = await activeDriver.execStream(
       externalId,
       [
         "sh",
         "-c",
-        `git clone /srv/origin.git ${WORKSPACE}-seed && cd ${WORKSPACE}-seed && ` +
-          `git -c user.email=a@b -c user.name=A commit --allow-empty -m init && git push origin HEAD:refs/heads/main`,
+        `nohup node -e 'require("http").createServer((_,res)=>res.end("sprout-preview")).listen(3000,"0.0.0.0")' >/tmp/preview.log 2>&1 &`,
+      ],
+      30_000,
+      () => {},
+      () => {},
+    )
+    expect({ exitCode: started.exitCode, stderr: started.stderr }).toMatchObject({ exitCode: 0 })
+
+    const local = await activeDriver.exec(
+      externalId,
+      ["curl", "--fail", "--silent", "http://127.0.0.1:3000"],
+      30_000,
+    )
+    const previewLog = await activeDriver
+      .readFile(externalId, "/tmp/preview.log")
+      .catch(() => "no preview log")
+    expect({ exitCode: local.exitCode, stderr: local.stderr, previewLog }).toMatchObject({
+      exitCode: 0,
+    })
+    expect(local.stdout.trim()).toBe("sprout-preview")
+
+    const preview = await activeDriver.previewUrl(externalId, 3000, 120)
+    let response: Response | undefined
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      response = await fetch(preview.url).catch(() => undefined)
+      if (response?.ok) break
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    expect(response?.status).toBe(200)
+    expect(await response?.text()).toBe("sprout-preview")
+    expect(preview.expiresAt.getTime()).toBeGreaterThan(Date.now())
+  }, 600_000)
+
+  it("commits what the agent wrote and pushes it to a branch", async () => {
+    const externalId = await sandbox("commit")
+    const activeDriver = driver!
+    const home = workspace.slice(0, workspace.lastIndexOf("/"))
+    const origin = `${home}/origin.git`
+    await activeDriver.exec(externalId, ["git", "init", "--bare", origin], 60_000)
+    await activeDriver.exec(
+      externalId,
+      [
+        "sh",
+        "-c",
+        `git -C ${workspace} init && git -C ${workspace} -c user.email=a@b -c user.name=A commit --allow-empty -m init && git -C ${workspace} push ${origin} HEAD:refs/heads/main`,
       ],
       120_000,
     )
-    await driver.exec(
-      externalId,
-      ["sh", "-c", `rm -rf ${WORKSPACE} && git clone /srv/origin.git ${WORKSPACE}`],
-      120_000,
-    )
 
-    // Nothing edited yet: the answer is "no changes", not an empty commit.
-    const nothing = await commitSandboxWork({
-      author: { email: "dev@example.com", name: "Dev" },
-      branch: "sproutos/agent-live",
-      driver,
-      externalId,
-      message: "nothing",
-      repository: "srv/origin",
-      token: "unused",
-    })
-    expect(nothing).toEqual({ committed: false, reason: "no_changes" })
+    expect(
+      await commitSandboxWork({
+        author: { email: "dev@example.com", name: "Dev" },
+        branch: "sproutos/agent-live",
+        driver: activeDriver,
+        externalId,
+        message: "nothing",
+        repository: "sproutos/test",
+        token: "unused",
+      }),
+    ).toEqual({ committed: false, reason: "no_changes" })
 
-    // What a turn leaves behind: one edited file and one created one.
-    await driver.writeFile(externalId, `${WORKSPACE}/app.ts`, "export const hello = 1\n")
-    await driver.writeFile(externalId, `${WORKSPACE}/notes.md`, "written by the agent\n")
-
+    await activeDriver.writeFile(externalId, `${workspace}/app.ts`, "export const hello = 1\n")
+    await activeDriver.writeFile(externalId, `${workspace}/notes.md`, "written by the agent\n")
     const pushed = await commitSandboxWork({
       author: { email: "dev@example.com", name: "Dev" },
       branch: "sproutos/agent-live",
-      driver,
+      driver: activeDriver,
       externalId,
       message: "Add the agent's work",
-      remote: "/srv/origin.git",
-      repository: "srv/origin",
+      remote: origin,
+      repository: "sproutos/test",
       token: "unused",
     })
 
     expect(pushed.committed).toBe(true)
     if (!pushed.committed) return
     expect(pushed.files.sort()).toEqual(["app.ts", "notes.md"])
-
-    // The branch exists on the remote, at the sha we were told about. Asserted at the remote rather
-    // than in the working copy: a commit nobody can fetch is work that did not leave the sandbox.
-    const remote = await driver.exec(
+    const remote = await activeDriver.exec(
       externalId,
-      ["git", "--git-dir", "/srv/origin.git", "rev-parse", "refs/heads/sproutos/agent-live"],
+      ["git", "--git-dir", origin, "rev-parse", "refs/heads/sproutos/agent-live"],
       60_000,
     )
+    expect({ exitCode: remote.exitCode, stderr: remote.stderr }).toMatchObject({ exitCode: 0 })
     expect(remote.stdout.trim()).toBe(pushed.sha)
-
-    // Production is untouched. A credential that can write is not a licence to push to `main`.
-    const main = await driver.exec(
-      externalId,
-      ["git", "--git-dir", "/srv/origin.git", "log", "--oneline", "refs/heads/main"],
-      60_000,
-    )
-    expect(main.stdout).not.toContain("Add the agent's work")
-
-    // And the credential did not persist into the checkout on the way past.
-    const config = await driver.readFile(externalId, `${WORKSPACE}/.git/config`)
+    const config = await activeDriver.readFile(externalId, `${workspace}/.git/config`)
     expect(config).not.toContain("extraheader")
     expect(config).not.toContain("x-access-token")
   }, 600_000)

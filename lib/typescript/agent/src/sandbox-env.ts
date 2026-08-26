@@ -25,7 +25,7 @@ export function sandboxAgentEnv(input: {
   /** Where the router's LLM proxy answers, from inside the sandbox. */
   proxyBaseUrl: string
   token: MintedProxyToken
-  /** Where the agent exchanges its refresh token, so a long turn does not die at 15 minutes. */
+  /** Reserved for a future harness wrapper; stock Claude Code and Codex do not consume it. */
   refreshUrl: string
   model?: string | null
   /**
@@ -39,11 +39,8 @@ export function sandboxAgentEnv(input: {
 }): Record<string, string> {
   const env: Record<string, string> = {
     /*
-      The refresh half, so the agent can keep itself alive.
-
-      Without these a turn stops at the access token's expiry — fifteen minutes — which is shorter
-      than plenty of legitimate work. The agent is expected to exchange the refresh token when a
-      call comes back 401; the token is useless to anyone who cannot also reach our API.
+      The refresh half is exposed for a future wrapper and for explicit token clients. The stock
+      harnesses do not know this protocol; access tokens therefore outlive the bounded turn.
     */
     SPROUTOS_AGENT_REFRESH_TOKEN: input.token.refreshToken,
     SPROUTOS_AGENT_REFRESH_URL: input.refreshUrl,

@@ -57,6 +57,7 @@ this platform's constraints, and none announces itself.
 | [0018](0018-nothing-ever-deployed.md)                | Nothing ever deployed                      | Driving the production path   |
 | [0019](0019-a-sandbox-would-have-stopped-billing.md) | One sandbox would have stopped billing     | Metering a real sandbox       |
 | [0020](0020-metering-had-an-expiry-date.md)          | Metering had an expiry date                | Following the partition clock |
+| [0021](0021-the-interface-was-not-the-provider.md)   | The interface was not the provider         | Running on Daytona            |
 
 ## Running it on more than one cloud
 

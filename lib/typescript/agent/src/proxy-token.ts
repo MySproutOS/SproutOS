@@ -17,12 +17,14 @@ import { v7 } from "uuid"
  */
 
 /**
- * Fifteen minutes.
+ * Thirty-five minutes.
  *
- * Short enough that a leaked access token is worth little, long enough that the refresh path is not
- * on the hot path of every model call. The agent refreshes; the window is not the length of a turn.
+ * A sandbox turn is bounded at thirty minutes. Claude Code and Codex are stock processes: neither
+ * calls SproutOS's refresh endpoint between its own upstream requests, so a fifteen-minute token
+ * made a legitimate long turn fail halfway through. Five minutes of margin covers startup and the
+ * final push without making the access token a session credential.
  */
-export const ACCESS_TTL_MS = 15 * 60 * 1000
+export const ACCESS_TTL_MS = 35 * 60 * 1000
 
 /**
  * Twelve hours.

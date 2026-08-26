@@ -51,16 +51,13 @@ KEYS=(
   CLICKHOUSE_PASSWORD
   # Signs metering batches. Unset, the ingest route answers 401 by design and no usage is recorded.
   METERING_INGEST_HMAC_KEY
-  # Where the coding agent runs. Sandboxes are rented, so without a key there is nowhere for an
+  # Sandboxes are rented, so without a key there is nowhere for an
   # agent to work and `daytonaConfigFromEnv` refuses at the first create rather than inventing a
   # default — the platform has never had one of these set, which is why no sandbox has ever
   # existed. `SANDBOX_DAYTONA_SNAPSHOT` names the image carrying the agent binaries; a wrong one
   # produces a sandbox that starts cleanly with no agent in it and reports no error.
-  # Which of the two drivers runs sandboxes: `daytona` in production, `docker` for a developer with
-  # no account. Deliberately not defaulted in code — inferring `docker` from a missing Daytona key
-  # would let a rotation that lost the key quietly move customer code onto the control-plane box.
-  SANDBOX_DRIVER
-  SANDBOX_DAYTONA_API_KEY
+  DAYTONA_API_KEY
+  DAYTONA_ORGANIZATION_ID
   SANDBOX_DAYTONA_SNAPSHOT
   SANDBOX_DAYTONA_API_URL
   SANDBOX_DAYTONA_TARGET
@@ -68,6 +65,8 @@ KEYS=(
   # with. Both halves must hold the same value or every agent turn fails to authenticate — see
   # `@lib/proxy-secret`, and the fixtures both implementations assert against.
   LLM_PROXY_SECRET
+  # Platform-credit turns terminate at the router. This key is never injected into a sandbox.
+  OPENAI_KEY
   # Not derived from OpenTofu because nothing in this repository publishes the layer — the three
   # versions in the account were published by hand. Pinning it in the launch template would make it
   # silently stale on the next publish; here a person updates it in the same motion.

@@ -134,6 +134,7 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # no listener rule, no target group, no `LLM_PROXY_LISTEN`. Set here so the value comes from the
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
+METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/events
 
 # Separate topics because their failure policies differ: runtime logs may be dropped to protect a
 # customer's request, while usage ingest acknowledges only after Kafka has replicated the event.
@@ -430,7 +431,8 @@ if [ "$SERVICE" = "website" ]; then
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
     KAFKA_BROKERS KAFKA_USAGE_EVENT_SASL_USERNAME KAFKA_USAGE_EVENT_SASL_PASSWORD \
-    SANDBOX_DRIVER SANDBOX_DAYTONA_API_KEY SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
+    SANDBOX_DRIVER DAYTONA_API_KEY DAYTONA_ORGANIZATION_ID \
+    SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
     SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
     SERVICE_VALKEY_ADMIN_URL"
@@ -445,7 +447,7 @@ if [ "$SERVICE" = "router" ]; then
   # and requires a password. It was withheld until that was true: the split starts when this is set
   # and `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does
   # not disable a feature — it stops the router, which is the front door.
-  write_app_secrets "LLM_PROXY_SECRET LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
+  write_app_secrets "LLM_PROXY_SECRET OPENAI_KEY METERING_INGEST_HMAC_KEY LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
     SEARCH_PROXY_UPSTREAM_AUTHORIZATION VALKEY_PROXY_BACKEND"
 fi
 

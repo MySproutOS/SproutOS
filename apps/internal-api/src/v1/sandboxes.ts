@@ -67,7 +67,7 @@ const DEFAULT_PREVIEW_PORT = 3000
  *
  * A driver constructed while this module is imported reads configuration that a process may not
  * have — the OpenAPI generator, for one, imports every route and would then fail to start wherever
- * `SANDBOX_DAYTONA_API_KEY` is absent. `2249bad` records the same bug with a Redis client, where
+ * `DAYTONA_API_KEY` is absent. `2249bad` records the same bug with a Redis client, where
  * the generator's process never exited and timed out at three minutes.
  */
 function driver(): SandboxDriver {
@@ -208,10 +208,10 @@ const app = new Hono()
         if (existing.state === "stopped" || existing.state === "failed") {
           await crudSandbox(db).update(existing.id, { state: "starting" })
           await enqueue(db, {
-            kind: existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.stop,
+            kind: existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start,
             organizationId: organization.id,
             payload: { sandboxId: existing.id },
-            idempotencyKey: `${SANDBOX_KINDS.provision}:${existing.id}:${Date.now()}`,
+            idempotencyKey: `${existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start}:${existing.id}:${Date.now()}`,
             maxAttempts: 3,
           })
         }

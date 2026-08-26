@@ -38,7 +38,7 @@
  * ## And the syntax it first missed
  *
  * The first version matched `process.env.NAME` and nothing else. `daytonaConfigFromEnv` takes
- * `env: NodeJS.ProcessEnv = process.env` and reads `env.SANDBOX_DAYTONA_API_KEY` — done that way
+ * `env: NodeJS.ProcessEnv = process.env` and reads `env.DAYTONA_API_KEY` — done that way
  * precisely so it can be tested — so the check reported the configuration clean while the key that
  * decides whether a sandbox can exist at all was provided by nothing, anywhere. A check that knows
  * one spelling is a check that is confident about the code it happens to recognise.
