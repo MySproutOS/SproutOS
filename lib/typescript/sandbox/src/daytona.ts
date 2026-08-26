@@ -1,11 +1,6 @@
-import {
-  Daytona,
-  type CreateSandboxFromSnapshotParams,
-  type Resources,
-  type Sandbox,
-} from "@daytonaio/sdk"
+import { Daytona, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytona/sdk"
 import { quoteArgv } from "./argv"
-import { EGRESS_ALLOW_LIST } from "./egress"
+import { EGRESS_DOMAIN_ALLOW_LIST } from "./egress"
 import {
   SandboxNotFoundError,
   SandboxUnavailableError,
@@ -19,25 +14,20 @@ import {
 
 export const PROVIDER = "daytona"
 
-/**
- * The port the desktop's browser-facing VNC bridge listens on inside the sandbox.
- *
- * `computerUse.start()` brings up Xvfb, a window manager, an X11 VNC server and noVNC; noVNC is the
- * only one of the four a browser can talk to, and it is reached through an ordinary preview link
- * like any other port. Naming it here keeps the number out of three call sites.
- */
-export const NOVNC_PORT = 6080
-
 /** Where the customer's repository is checked out, and the only path that survives a stop. */
 export const WORKSPACE_DIR = "/home/daytona/workspace"
 
+/** Daytona snapshots have a fixed machine size; these values must match `build-snapshot.ts`. */
+export const SNAPSHOT_RESOURCES = { cpu: 2, memoryGib: 4, diskGib: 10 } as const
+
 export type DaytonaConfig = {
   apiKey: string
+  organizationId: string
   apiUrl?: string
   /** The region the sandbox is created in. Sandbox lifespan limits are configured per region. */
   target?: string
   /**
-   * The snapshot every sandbox starts from: the agent runtime, the toolchains, the desktop.
+   * The snapshot every sandbox starts from: the agent runtime and toolchains.
    *
    * Deliberately not defaulted. A wrong snapshot does not fail — it produces a sandbox with no
    * agent in it, and the symptom is the chat silently doing nothing rather than an error.
@@ -46,11 +36,19 @@ export type DaytonaConfig = {
 }
 
 export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): DaytonaConfig {
-  const apiKey = env.SANDBOX_DAYTONA_API_KEY
+  const apiKey = env.DAYTONA_API_KEY
   if (apiKey === undefined || apiKey === "") {
     throw new Error(
-      "SANDBOX_DAYTONA_API_KEY is not set. Sandboxes are rented; without a key there is nowhere " +
+      "DAYTONA_API_KEY is not set. Sandboxes are rented; without a key there is nowhere " +
         "for the coding agent to run, and no default is meaningful.",
+    )
+  }
+
+  const organizationId = env.DAYTONA_ORGANIZATION_ID
+  if (organizationId === undefined || organizationId === "") {
+    throw new Error(
+      "DAYTONA_ORGANIZATION_ID is not set. Daytona API keys are themselves organization-scoped; " +
+        "this value makes the intended billed account explicit for snapshot operations.",
     )
   }
 
@@ -65,23 +63,12 @@ export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Dayt
 
   return {
     apiKey,
+    organizationId,
     snapshot,
     ...(env.SANDBOX_DAYTONA_API_URL ? { apiUrl: env.SANDBOX_DAYTONA_API_URL } : {}),
     ...(env.SANDBOX_DAYTONA_TARGET ? { target: env.SANDBOX_DAYTONA_TARGET } : {}),
   }
 }
-
-/**
- * `create` accepts resources alongside a snapshot; its published type does not.
- *
- * `Daytona.create` reads them with `if ('resources' in params)` and forwards `cpu`, `memory` and
- * `disk` to the REST call, which takes them as flat fields regardless of whether a snapshot was
- * named — but the SDK declares `resources` only on the from-image overload. Widening it here is
- * narrower than casting the whole parameter object to `any`: if the runtime behaviour ever changes
- * to match the declaration, sandboxes come back at the provider's default size, which
- * `daytona.test.ts` asserts against.
- */
-type CreateWithResources = CreateSandboxFromSnapshotParams & { resources?: Resources }
 
 /**
  * Sandboxes rented from Daytona Cloud.
@@ -95,22 +82,30 @@ type CreateWithResources = CreateSandboxFromSnapshotParams & { resources?: Resou
 /**
  * The exact parameters a create sends, as a pure function.
  *
- * Separated from {@link daytonaDriver} so the properties that matter — that resources survive
- * alongside a snapshot, that attribution is present, that the preview is not public, that the
- * autostop backstop is never accidentally disabled — are checkable without a network call or a
- * mocked client. Every one of them fails silently in production: a sandbox still starts.
+ * Separated from {@link daytonaDriver} so the properties that matter — that the billed size agrees
+ * with the snapshot's immutable size, that attribution is present, that the preview is not public,
+ * and that the autostop backstop is never accidentally disabled — are checkable without a network
+ * call or a mocked client.
  */
 export function buildCreateParams(
   config: DaytonaConfig,
   input: CreateSandboxInput,
-): CreateWithResources {
+): CreateSandboxFromSnapshotParams {
+  const requested = input.resources
+  if (
+    requested.cpu !== SNAPSHOT_RESOURCES.cpu ||
+    requested.memoryGib !== SNAPSHOT_RESOURCES.memoryGib ||
+    requested.diskGib !== SNAPSHOT_RESOURCES.diskGib
+  ) {
+    throw new Error(
+      `Daytona snapshot resources are fixed at ${SNAPSHOT_RESOURCES.cpu} CPU, ` +
+        `${SNAPSHOT_RESOURCES.memoryGib} GiB memory and ${SNAPSHOT_RESOURCES.diskGib} GiB disk; ` +
+        `the sandbox row requested ${requested.cpu}/${requested.memoryGib}/${requested.diskGib}`,
+    )
+  }
+
   return {
     snapshot: config.snapshot,
-    resources: {
-      cpu: input.resources.cpu,
-      memory: input.resources.memoryGib,
-      disk: input.resources.diskGib,
-    },
     /*
     Attribution, and the reason `organizationId` is required rather than optional.
 
@@ -135,7 +130,7 @@ export function buildCreateParams(
     Egress. See `egress.ts` — this is finding 0009's network policy written as an allow list,
     and the property it exists for is that 169.254.169.254 is not in it.
     */
-    networkAllowList: EGRESS_ALLOW_LIST,
+    domainAllowList: EGRESS_DOMAIN_ALLOW_LIST,
     // Never public. A preview is reached with a signed, short-lived URL; `public` would make a
     // customer's work-in-progress readable by anyone who guesses the sandbox id.
     public: false,
@@ -144,10 +139,12 @@ export function buildCreateParams(
 
 export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
   let client: Daytona | undefined
+  const persistentSessions = new Map<string, Set<string>>()
 
   function sdk(): Daytona {
     client ??= new Daytona({
       apiKey: config.apiKey,
+      organizationId: config.organizationId,
       ...(config.apiUrl ? { apiUrl: config.apiUrl } : {}),
       ...(config.target ? { target: config.target } : {}),
     })
@@ -174,7 +171,8 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
   }
 
   async function create(input: CreateSandboxInput): Promise<CreatedSandbox> {
-    const sandbox = await call(() => sdk().create(buildCreateParams(config, input)))
+    const params = buildCreateParams(config, input)
+    const sandbox = await call(() => sdk().create(params))
     return { externalId: sandbox.id }
   }
 
@@ -236,6 +234,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
     const sessionId = `stream-${crypto.randomUUID()}`
 
     return await call(async () => {
+      let keepSession = false
       await sandbox.process.createSession(sessionId)
       try {
         const started = await sandbox.process.executeSessionCommand(sessionId, {
@@ -285,11 +284,36 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
         }
 
         const finished = await sandbox.process.getSessionCommand(sessionId, commandId)
-        return { stdout, stderr, exitCode: finished.exitCode ?? -1 }
+        /*
+          Keep the session after a completed agent turn.
+
+          Daytona ties descendants to the process session: deleting it kills even a `nohup` dev
+          server the agent intentionally left behind. A preview that disappears when the answer
+          finishes is not a preview. Sessions are tracked and removed when the sandbox stops or is
+          destroyed, which is the lifecycle boundary that should kill those processes.
+        */
+        const exitCode = finished.exitCode ?? -1
+        keepSession = exitCode === 0
+        return { stdout, stderr, exitCode }
       } finally {
-        await sandbox.process.deleteSession(sessionId).catch(() => {})
+        if (keepSession) {
+          const sessions = persistentSessions.get(externalId) ?? new Set<string>()
+          sessions.add(sessionId)
+          persistentSessions.set(externalId, sessions)
+        } else {
+          await sandbox.process.deleteSession(sessionId).catch(() => {})
+        }
       }
     })
+  }
+
+  async function deletePersistentSessions(externalId: string, sandbox: Sandbox): Promise<void> {
+    const sessions = persistentSessions.get(externalId)
+    if (sessions === undefined) return
+    persistentSessions.delete(externalId)
+    await Promise.all(
+      [...sessions].map((sessionId) => sandbox.process.deleteSession(sessionId).catch(() => {})),
+    )
   }
 
   async function readFile(externalId: string, path: string): Promise<string> {
@@ -335,13 +359,20 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
 
   return {
     provider: PROVIDER,
+    workspaceDir: WORKSPACE_DIR,
     create,
+    state: async (externalId) => {
+      const sandbox = await get(externalId)
+      await call(() => sandbox.refreshData())
+      return sandbox.state ?? "unknown"
+    },
     start: async (externalId) => {
       const sandbox = await get(externalId)
       await call(() => sandbox.start())
     },
     stop: async (externalId) => {
       const sandbox = await get(externalId)
+      await deletePersistentSessions(externalId, sandbox)
       await call(() => sandbox.stop())
     },
     destroy: async (externalId) => {
@@ -355,6 +386,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
       */
       try {
         const sandbox = await get(externalId)
+        await deletePersistentSessions(externalId, sandbox)
         await call(() => sandbox.delete())
       } catch (error) {
         if (error instanceof SandboxNotFoundError) return
@@ -367,16 +399,32 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
     writeFile,
     tree,
     previewUrl,
-    startDisplay: async (externalId) => {
-      const sandbox = await get(externalId)
-      await call(() => sandbox.computerUse.start())
-    },
-    displayUrl: async (externalId, expiresInS) => previewUrl(externalId, NOVNC_PORT, expiresInS),
     touch: async (externalId) => {
       const sandbox = await get(externalId)
       await call(() => sandbox.refreshActivity())
     },
   }
+}
+
+let processDriver: SandboxDriver | undefined
+let processDriverConfig: string | undefined
+
+/**
+ * Daytona is the production sandbox. There is intentionally no local fallback.
+ *
+ * One driver per process is also one Daytona SDK event connection per process. Constructing a
+ * driver for every route call leaks a persistent provider socket even after the operation ends.
+ */
+export function sandboxDriverFromEnv(env: NodeJS.ProcessEnv = process.env): SandboxDriver {
+  const config = daytonaConfigFromEnv(env)
+  const key = JSON.stringify(config)
+  if (processDriver === undefined) {
+    processDriver = daytonaDriver(config)
+    processDriverConfig = key
+  } else if (processDriverConfig !== key) {
+    throw new Error("Daytona configuration changed after the process driver was initialized")
+  }
+  return processDriver
 }
 
 /** A 404 from the provider, however its client happens to have wrapped it. */

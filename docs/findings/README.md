@@ -35,25 +35,28 @@ this platform's constraints, and none announces itself.
 
 ## The records
 
-| #                                                  | Title                                      | Found by                     |
-| -------------------------------------------------- | ------------------------------------------ | ---------------------------- |
-| [0001](0001-checks-that-do-not-check.md)           | Checks that could not fail                 | Breaking things deliberately |
-| [0002](0002-images-that-had-never-run.md)          | Every image was broken                     | Building and running them    |
-| [0003](0003-manifests-never-applied.md)            | Manifests that had never met an API server | `kubectl apply`              |
-| [0004](0004-defaults-that-do-not-fit.md)           | Upstream defaults that do not survive here | Running Knative and GKE      |
-| [0005](0005-the-product-was-never-in-the-image.md) | The product was never in the image         | Pointing a real domain at it |
-| [0006](0006-features-with-no-executor.md)          | Features with no executor                  | Clicking the buttons         |
-| [0007](0007-the-last-mile.md)                      | The last mile                              | Using the features in order  |
-| [0008](0008-the-tenant-data-plane.md)              | The tenant data plane                      | Connecting through the proxy |
-| [0009](0009-somewhere-to-run-untrusted-code.md)    | Somewhere to run untrusted code            | Running a customer's node    |
-| [0010](0010-the-day-the-database-went-away.md)     | The day the database went away             | Rebuilding from empty        |
-| [0011](0011-the-platform-was-free.md)              | The platform was free                      | Asking what anything cost    |
-| [0012](0012-the-last-mile-of-the-last-mile.md)     | The last mile of the last mile             | Driving the live site        |
-| [0013](0013-the-boundary-you-cannot-test.md)       | The boundary you cannot test               | Running the real client      |
-| [0014](0014-everything-was-running.md)             | Everything was running                     | One request from outside     |
-| [0015](0015-the-databases-the-product-sells.md)    | The databases the product sells            | Asking prod for one          |
-| [0016](0016-one-layer-under-the-one-we-checked.md) | One layer under the one we checked         | Trying to close 0015         |
-| [0017](0017-every-site-expired-after-a-day.md)     | Every site expired after a day             | Reading a TTL nobody renewed |
+| #                                                    | Title                                      | Found by                     |
+| ---------------------------------------------------- | ------------------------------------------ | ---------------------------- |
+| [0001](0001-checks-that-do-not-check.md)             | Checks that could not fail                 | Breaking things deliberately |
+| [0002](0002-images-that-had-never-run.md)            | Every image was broken                     | Building and running them    |
+| [0003](0003-manifests-never-applied.md)              | Manifests that had never met an API server | `kubectl apply`              |
+| [0004](0004-defaults-that-do-not-fit.md)             | Upstream defaults that do not survive here | Running Knative and GKE      |
+| [0005](0005-the-product-was-never-in-the-image.md)   | The product was never in the image         | Pointing a real domain at it |
+| [0006](0006-features-with-no-executor.md)            | Features with no executor                  | Clicking the buttons         |
+| [0007](0007-the-last-mile.md)                        | The last mile                              | Using the features in order  |
+| [0008](0008-the-tenant-data-plane.md)                | The tenant data plane                      | Connecting through the proxy |
+| [0009](0009-somewhere-to-run-untrusted-code.md)      | Somewhere to run untrusted code            | Running a customer's node    |
+| [0010](0010-the-day-the-database-went-away.md)       | The day the database went away             | Rebuilding from empty        |
+| [0011](0011-the-platform-was-free.md)                | The platform was free                      | Asking what anything cost    |
+| [0012](0012-the-last-mile-of-the-last-mile.md)       | The last mile of the last mile             | Driving the live site        |
+| [0013](0013-the-boundary-you-cannot-test.md)         | The boundary you cannot test               | Running the real client      |
+| [0014](0014-everything-was-running.md)               | Everything was running                     | One request from outside     |
+| [0015](0015-the-databases-the-product-sells.md)      | The databases the product sells            | Asking prod for one          |
+| [0016](0016-one-layer-under-the-one-we-checked.md)   | One layer under the one we checked         | Trying to close 0015         |
+| [0017](0017-every-site-expired-after-a-day.md)       | Every site expired after a day             | Reading a TTL nobody renewed |
+| [0018](0018-nothing-ever-deployed.md)                | Nothing ever deployed                      | Inspecting the live account  |
+| [0019](0019-a-sandbox-would-have-stopped-billing.md) | One sandbox stopped all billing            | Metering a real sandbox      |
+| [0020](0020-the-interface-was-not-the-provider.md)   | The interface was not the provider         | Running on Daytona           |
 
 ## Running it on more than one cloud
 

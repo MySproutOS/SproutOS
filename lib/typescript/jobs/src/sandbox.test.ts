@@ -8,6 +8,7 @@ import {
   PROVIDER_COST_MICRO_USD_PER_SECOND,
   reapSandboxes,
   SANDBOX_KINDS,
+  startSandbox,
 } from "./sandbox"
 
 /**
@@ -316,5 +317,40 @@ describe("reapSandboxes", () => {
     const targets = queued.map((row) => (row.payload as { sandboxId?: string }).sandboxId)
     expect(targets).toContain(idle.id)
     expect(targets).not.toContain(alwaysOn.id)
+  })
+})
+
+describe("startSandbox", () => {
+  it("starts the provider and begins a fresh metering interval", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: "daytona-start-test",
+      provider: "daytona",
+      state: "starting",
+      meteredThrough: new Date(Date.now() - 60_000),
+    })
+    const started: string[] = []
+
+    await startSandbox(
+      () =>
+        ({
+          start: (externalId: string) => {
+            started.push(externalId)
+            return Promise.resolve()
+          },
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.start, payload: { sandboxId: sandbox.id } } as never, context)
+
+    expect(started).toEqual(["daytona-start-test"])
+    const row = await db
+      .selectFrom("sandbox")
+      .select(["state", "meteredThrough"])
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("running")
+    expect(row.meteredThrough?.getTime()).toBeGreaterThan(Date.now() - 10_000)
   })
 })

@@ -30,9 +30,6 @@ import type { MintedProxyToken } from "./proxy-token"
  * own repository.
  */
 
-/** Where the checkout lives inside the sandbox. Matches the driver's own default. */
-export const WORKSPACE = "/workspace"
-
 /** Long enough for `npm install` on a cold sandbox, short enough that a hang is not forever. */
 const BOOTSTRAP_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -80,6 +77,7 @@ export type BootstrapResult = {
  */
 export async function bootstrapSandbox(input: BootstrapInput): Promise<BootstrapResult> {
   const { driver, externalId } = input
+  const workspace = driver.workspaceDir
   const problems: string[] = []
 
   const run = async (argv: string[], what: string): Promise<boolean> => {
@@ -108,7 +106,7 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   */
   const cloneUrl = `https://x-access-token:${input.repository.token}@github.com/${input.repository.fullName}.git`
   const cloned = await run(
-    ["git", "clone", "--depth", "50", "--branch", input.repository.branch, cloneUrl, WORKSPACE],
+    ["git", "clone", "--depth", "50", "--branch", input.repository.branch, cloneUrl, workspace],
     "cloning the repository",
   )
 
@@ -117,7 +115,7 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
       [
         "git",
         "-C",
-        WORKSPACE,
+        workspace,
         "remote",
         "set-url",
         "origin",
@@ -126,11 +124,11 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
       "removing the clone credential",
     )
     await run(
-      ["git", "-C", WORKSPACE, "config", "user.name", input.author.name],
+      ["git", "-C", workspace, "config", "user.name", input.author.name],
       "setting the commit author",
     )
     await run(
-      ["git", "-C", WORKSPACE, "config", "user.email", input.author.email],
+      ["git", "-C", workspace, "config", "user.email", input.author.email],
       "setting the commit email",
     )
   }
@@ -145,11 +143,11 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   await write(
     driver,
     externalId,
-    `${WORKSPACE}/.claude/skills/sproutos/SKILL.md`,
+    `${workspace}/.claude/skills/sproutos/SKILL.md`,
     input.skill,
     problems,
   )
-  await write(driver, externalId, `${WORKSPACE}/AGENTS.md`, agentsPointer(input.skill), problems)
+  await write(driver, externalId, `${workspace}/AGENTS.md`, agentsPointer(input.skill), problems)
 
   /*
     Kept out of the customer's commits.
@@ -161,7 +159,7 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   await write(
     driver,
     externalId,
-    `${WORKSPACE}/.git/info/exclude`,
+    `${workspace}/.git/info/exclude`,
     ["/.claude/skills/sproutos/", "/.codex/", ""].join("\n"),
     problems,
   )
@@ -255,13 +253,14 @@ const COMMIT_TIMEOUT_MS = 5 * 60 * 1000
  * Two transports, one contract; the alternative is two chat clients.
  */
 export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: number }> {
+  const workspace = input.driver.workspaceDir
   const env = sandboxAgentEnv({
     harness: input.harness,
     model: input.model,
     proxyBaseUrl: input.proxyBaseUrl,
     refreshUrl: input.refreshUrl,
     token: input.token,
-    workspace: WORKSPACE,
+    workspace,
   })
 
   /*
@@ -272,7 +271,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     `git add -A` from the customer's own repository.
   */
   const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
-  argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model))
+  argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model, workspace))
 
   /*
     A heartbeat for as long as the turn runs.
@@ -381,8 +380,9 @@ export type SandboxCommitResult =
 
 export async function commitSandboxWork(input: SandboxCommitInput): Promise<SandboxCommitResult> {
   const { driver, externalId } = input
+  const workspace = driver.workspaceDir
   const git = (...argv: string[]) =>
-    driver.exec(externalId, ["git", "-C", WORKSPACE, ...argv], COMMIT_TIMEOUT_MS)
+    driver.exec(externalId, ["git", "-C", workspace, ...argv], COMMIT_TIMEOUT_MS)
 
   const status = await git("status", "--porcelain")
   if (status.exitCode !== 0) {
@@ -411,7 +411,7 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
     [
       "git",
       "-C",
-      WORKSPACE,
+      workspace,
       "-c",
       `user.name=${input.author.name}`,
       "-c",
@@ -444,7 +444,7 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
       ),
       "git",
       "-C",
-      WORKSPACE,
+      workspace,
       "push",
       url,
       `HEAD:refs/heads/${input.branch}`,
@@ -479,6 +479,7 @@ function harnessArgv(
   prompt: string,
   proxyBaseUrl: string,
   model: string | null,
+  workspace: string,
 ): string[] {
   switch (harness) {
     case "claude-code":
@@ -525,7 +526,7 @@ function harnessArgv(
         // clone that actually went wrong.
         "--skip-git-repo-check",
         "--cd",
-        WORKSPACE,
+        workspace,
         ...codexOverrides({ model: model ?? PLATFORM_FALLBACK_MODEL, proxyBaseUrl }),
         prompt,
       ]

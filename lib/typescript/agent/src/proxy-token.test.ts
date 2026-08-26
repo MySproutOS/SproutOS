@@ -130,10 +130,10 @@ describe("refreshProxyToken", () => {
 })
 
 describe("the lifetimes", () => {
-  it("are short enough to matter", () => {
+  it("cover one bounded turn without becoming session credentials", () => {
     // Stated as a test rather than a comment: these are the blast radius of a leak, and a future
     // change that quietly makes the access token last a day should have to argue with something.
-    expect(ACCESS_TTL_MS).toBeLessThanOrEqual(30 * 60 * 1000)
+    expect(ACCESS_TTL_MS).toBe(35 * 60 * 1000)
     expect(REFRESH_TTL_MS).toBeLessThanOrEqual(24 * 60 * 60 * 1000)
   })
 })

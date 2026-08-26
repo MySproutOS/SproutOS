@@ -16,6 +16,7 @@ import {
   reapSandboxes,
   SANDBOX_KINDS,
   scheduleSandboxJobs,
+  startSandbox,
   stopSandbox,
 } from "./sandbox"
 import { enqueue } from "./queue"
@@ -71,6 +72,7 @@ export const JOB_KINDS = {
   workflowRun: WORKFLOW_RUN_KIND,
   tearDownProject: TEARDOWN_KIND,
   provisionSandbox: SANDBOX_KINDS.provision,
+  startSandbox: SANDBOX_KINDS.start,
   stopSandbox: SANDBOX_KINDS.stop,
   destroySandbox: SANDBOX_KINDS.destroy,
   reapSandboxes: SANDBOX_KINDS.reap,
@@ -235,6 +237,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.provisionSandbox]: provisionSandbox(),
+  [JOB_KINDS.startSandbox]: startSandbox(),
   [JOB_KINDS.stopSandbox]: stopSandbox(),
   [JOB_KINDS.destroySandbox]: destroySandbox(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,

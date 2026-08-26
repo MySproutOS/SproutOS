@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentEvent } from "./runner"
-import { bootstrapSandbox, commitSandboxWork, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
+import { bootstrapSandbox, commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
+
+const WORKSPACE = "/home/daytona/workspace"
 
 function fakeDriver(
   options: {
@@ -16,6 +18,7 @@ function fakeDriver(
   const commands: string[][] = []
   const files: Record<string, string> = {}
   const driver = {
+    workspaceDir: WORKSPACE,
     exec: (_id: string, argv: string[]) => {
       commands.push(argv)
       const line = argv.join(" ")

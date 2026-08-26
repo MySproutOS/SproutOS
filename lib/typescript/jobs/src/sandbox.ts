@@ -17,6 +17,7 @@ import type { JobHandler } from "./worker"
 
 export const SANDBOX_KINDS = {
   provision: "sandbox.provision",
+  start: "sandbox.start",
   stop: "sandbox.stop",
   destroy: "sandbox.destroy",
   reap: "sandbox.reap",
@@ -461,6 +462,38 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
         )
       }
+    } catch (error) {
+      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      throw error
+    }
+  }
+}
+
+/** Start a stopped provider sandbox without replacing its persistent workspace. */
+export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+  return async (job, { db }) => {
+    const { sandboxId } = job.payload as SandboxPayload
+    if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
+
+    const sandbox = await db
+      .selectFrom("sandbox")
+      .select(["id", "externalId", "state"])
+      .where("id", "=", sandboxId)
+      .executeTakeFirst()
+
+    if (sandbox === undefined || sandbox.state === "running") return
+    if (sandbox.externalId === null) {
+      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      throw new Error(`sandbox ${sandbox.id} has no provider id to start`)
+    }
+
+    try {
+      await makeDriver().start(sandbox.externalId)
+      await crudSandbox(db).update(sandbox.id, {
+        state: "running",
+        // A stopped interval is not billable. Restarting begins a new interval at Postgres's clock.
+        meteredThrough: sql<Date>`now()` as unknown as Date,
+      })
     } catch (error) {
       await crudSandbox(db).update(sandbox.id, { state: "failed" })
       throw error

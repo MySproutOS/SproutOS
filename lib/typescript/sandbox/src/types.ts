@@ -98,7 +98,11 @@ export type PreviewLink = {
 export type SandboxDriver = {
   /** Matches `sandbox.provider`. */
   provider: string
+  /** The persistent checkout root inside this provider's sandbox. */
+  workspaceDir: string
   create: (input: CreateSandboxInput) => Promise<CreatedSandbox>
+  /** Read the provider's current state rather than trusting the control-plane row. */
+  state: (externalId: string) => Promise<string>
   start: (externalId: string) => Promise<void>
   stop: (externalId: string) => Promise<void>
   destroy: (externalId: string) => Promise<void>
@@ -134,9 +138,6 @@ export type SandboxDriver = {
   writeFile: (externalId: string, path: string, content: string) => Promise<void>
   tree: (externalId: string, path?: string) => Promise<TreeEntry[]>
   previewUrl: (externalId: string, port: number, expiresInS: number) => Promise<PreviewLink>
-  /** Bring up the desktop: X server, window manager, and a VNC bridge for the browser. */
-  startDisplay: (externalId: string) => Promise<void>
-  displayUrl: (externalId: string, expiresInS: number) => Promise<PreviewLink>
   /** Tell the provider it is still in use, so its own autostop does not fire under an active user. */
   touch: (externalId: string) => Promise<void>
 }
