@@ -6,6 +6,7 @@ import {
   ExternalLinkIcon,
   KeyRoundIcon,
   MonitorPlayIcon,
+  RocketIcon,
   ScrollTextIcon,
   SlidersHorizontalIcon,
 } from "lucide-react"
@@ -71,6 +72,19 @@ function ProjectDetail() {
         >
           <KeyRoundIcon />
           Variables
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          render={
+            <Link
+              to="/orgs/$orgSlug/projects/$projectId/deployments"
+              params={{ orgSlug, projectId }}
+            />
+          }
+        >
+          <RocketIcon />
+          Deployments
         </Button>
         <Button
           variant="ghost"
