@@ -608,9 +608,77 @@ resource "aws_iam_policy" "application" {
     Version = "2012-10-17"
     Statement = [
       {
+        Effect = "Allow"
+        Action = ["lambda:InvokeFunction"]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*",
+          # The migration runner, invoked synchronously before a release takes traffic.
+          "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-migrate-*",
+        ]
+      },
+      {
+        /*
+          Publishing a customer's function, which nothing was allowed to do.
+
+          ADR 0026 made Lambda the customer compute, and the only Lambda permission this role ever
+          had was `InvokeFunction` — so `publishFunction` could call a function it could not create.
+          Every deployment in the account is `error`, which is why an `AccessDenied` here was never
+          seen by anyone.
+
+          Scoped to the two name prefixes `functionName()` and `runMigration()` build, so this
+          cannot touch a platform function; `GetFunction` is included because `functionExists`
+          decides between create and update by asking, and a denied read would look like "not
+          there" and route every deploy into a create that then fails.
+        */
+        Effect = "Allow"
+        Action = [
+          "lambda:CreateFunction",
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+          "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration",
+          "lambda:PublishVersion",
+          "lambda:CreateAlias",
+          "lambda:GetAlias",
+          "lambda:UpdateAlias",
+          "lambda:DeleteFunction",
+          "lambda:TagResource",
+        ]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*",
+          "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-migrate-*",
+        ]
+      },
+      {
+        /*
+          Attaching a layer requires permission to read its version.
+
+          Two layers: the log extension, in this account, and AWS's public Lambda Web Adapter in
+          753240598075. Both are addressed by ARN at publish time and neither is a wildcard.
+        */
+        Effect = "Allow"
+        Action = ["lambda:GetLayerVersion"]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:layer:*",
+          "arn:aws:lambda:${var.aws_region}:753240598075:layer:LambdaAdapterLayer*",
+        ]
+      },
+      {
+        /*
+          Giving the customer's function its execution role.
+
+          `CreateFunction` fails without `iam:PassRole`, and the error names the role rather than
+          the missing permission. Scoped to the one role and conditioned on the service that may
+          receive it, so this cannot be used to hand that role to anything but Lambda.
+        */
         Effect   = "Allow"
-        Action   = ["lambda:InvokeFunction"]
-        Resource = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:function:sproutos-app-*"
+        Action   = ["iam:PassRole"]
+        Resource = aws_iam_role.lambda_execution.arn
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "lambda.amazonaws.com"
+          }
+        }
       },
       {
         /*
