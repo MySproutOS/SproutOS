@@ -122,6 +122,20 @@ export interface AgentJobRun {
   updatedAt: Generated<Timestamp>
 }
 
+export interface AgentProxyToken {
+  accessExpiresAt: Timestamp
+  accessTokenHash: string
+  agentCredentialId: string | null
+  createdAt: Generated<Timestamp>
+  id: string
+  organizationId: string
+  projectId: string | null
+  refreshExpiresAt: Timestamp
+  refreshTokenHash: string
+  revokedAt: Timestamp | null
+  updatedAt: Generated<Timestamp>
+}
+
 export interface AgentSession {
   archivedAt: Timestamp | null
   branchName: string | null
@@ -1270,6 +1284,7 @@ export interface DB {
   agentEvent: AgentEvent
   agentJob: AgentJob
   agentJobRun: AgentJobRun
+  agentProxyToken: AgentProxyToken
   agentSession: AgentSession
   agentSessionEntry: AgentSessionEntry
   agentTurn: AgentTurn

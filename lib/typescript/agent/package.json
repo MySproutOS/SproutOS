@@ -19,6 +19,7 @@
     "@lib/dao": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@sproutos/db": "workspace:*",
+    "@utils/crypto": "workspace:*",
     "kysely": "catalog:",
     "openai": "catalog:",
     "uuid": "catalog:"

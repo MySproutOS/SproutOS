@@ -47,6 +47,8 @@ import {
   autoUpdateDefaultFor,
   fetchAgentCredential,
 } from "./agentCredential/fetch"
+import { type AgentProxyTokenInsert, crudAgentProxyToken } from "./agentProxyToken/crud"
+import { fetchAgentProxyToken } from "./agentProxyToken/fetch"
 import { fetchGithubInstallation } from "./githubInstallation/fetch"
 import { crudProject } from "./project/crud"
 import { fetchProject } from "./project/fetch"
@@ -125,7 +127,10 @@ export {
   autoUpdateDefaultFor,
   CreateAgentCredential,
   crudAgentConfig,
+  type AgentProxyTokenInsert,
   crudAgentCredential,
+  crudAgentProxyToken,
+  fetchAgentProxyToken,
   crudAgentSession,
   crudAccount,
   crudAuditLog,

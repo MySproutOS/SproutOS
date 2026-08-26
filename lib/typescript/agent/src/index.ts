@@ -50,3 +50,4 @@ export {
   type CodexProvider,
   type Harness,
 } from "./harness"
+export * from "./proxy-token"
