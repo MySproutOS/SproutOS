@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vitest"
 
 import { dockerConfigFromEnv, dockerDriver } from "@lib/sandbox"
 
-import { bootstrapSandbox, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
+import { bootstrapSandbox, commitSandboxWork, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
 
 const run = promisify(execFile)
 
@@ -179,5 +179,88 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
       numTurns: 2,
       durationMs: 1200,
     })
+  }, 600_000)
+
+  it("commits what the agent wrote and pushes it to a branch", async () => {
+    const externalId = await sandbox("commit")
+
+    /*
+      A real bare repository, in the container, as the remote.
+
+      The push is genuine — a real `git push`, a real ref negotiation, a real `--force-with-lease` —
+      against a remote that is not GitHub. What that leaves untested is the credential header, and
+      that is deliberate: pushing to a customer's repository from a test would need an installation
+      token and would write to somebody's history. The header's shape is asserted in
+      `sandbox-agent.test.ts`, and the same auth path is exercised for real by every clone.
+    */
+    await driver.exec(externalId, ["git", "init", "--bare", "/srv/origin.git"], 60_000)
+    await driver.exec(
+      externalId,
+      [
+        "sh",
+        "-c",
+        `git clone /srv/origin.git ${WORKSPACE}-seed && cd ${WORKSPACE}-seed && ` +
+          `git -c user.email=a@b -c user.name=A commit --allow-empty -m init && git push origin HEAD:refs/heads/main`,
+      ],
+      120_000,
+    )
+    await driver.exec(
+      externalId,
+      ["sh", "-c", `rm -rf ${WORKSPACE} && git clone /srv/origin.git ${WORKSPACE}`],
+      120_000,
+    )
+
+    // Nothing edited yet: the answer is "no changes", not an empty commit.
+    const nothing = await commitSandboxWork({
+      author: { email: "dev@example.com", name: "Dev" },
+      branch: "sproutos/agent-live",
+      driver,
+      externalId,
+      message: "nothing",
+      repository: "srv/origin",
+      token: "unused",
+    })
+    expect(nothing).toEqual({ committed: false, reason: "no_changes" })
+
+    // What a turn leaves behind: one edited file and one created one.
+    await driver.writeFile(externalId, `${WORKSPACE}/app.ts`, "export const hello = 1\n")
+    await driver.writeFile(externalId, `${WORKSPACE}/notes.md`, "written by the agent\n")
+
+    const pushed = await commitSandboxWork({
+      author: { email: "dev@example.com", name: "Dev" },
+      branch: "sproutos/agent-live",
+      driver,
+      externalId,
+      message: "Add the agent's work",
+      remote: "/srv/origin.git",
+      repository: "srv/origin",
+      token: "unused",
+    })
+
+    expect(pushed.committed).toBe(true)
+    if (!pushed.committed) return
+    expect(pushed.files.sort()).toEqual(["app.ts", "notes.md"])
+
+    // The branch exists on the remote, at the sha we were told about. Asserted at the remote rather
+    // than in the working copy: a commit nobody can fetch is work that did not leave the sandbox.
+    const remote = await driver.exec(
+      externalId,
+      ["git", "--git-dir", "/srv/origin.git", "rev-parse", "refs/heads/sproutos/agent-live"],
+      60_000,
+    )
+    expect(remote.stdout.trim()).toBe(pushed.sha)
+
+    // Production is untouched. A credential that can write is not a licence to push to `main`.
+    const main = await driver.exec(
+      externalId,
+      ["git", "--git-dir", "/srv/origin.git", "log", "--oneline", "refs/heads/main"],
+      60_000,
+    )
+    expect(main.stdout).not.toContain("Add the agent's work")
+
+    // And the credential did not persist into the checkout on the way past.
+    const config = await driver.readFile(externalId, `${WORKSPACE}/.git/config`)
+    expect(config).not.toContain("extraheader")
+    expect(config).not.toContain("x-access-token")
   }, 600_000)
 })

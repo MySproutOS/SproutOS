@@ -244,6 +244,9 @@ export type TurnInput = {
  */
 const HEARTBEAT_MS = 5 * 60 * 1000
 
+/** Long enough for a push over a slow link, short enough that a hung git does not hold a turn. */
+const COMMIT_TIMEOUT_MS = 5 * 60 * 1000
+
 /**
  * Run one turn in the sandbox and stream what it does.
  *
@@ -323,6 +326,151 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
   } finally {
     beating = false
     clearInterval(heartbeat)
+  }
+}
+
+/**
+ * Get the agent's work out of the sandbox and onto a branch.
+ *
+ * The sandbox commits, which the control-plane path deliberately does not — and the difference is
+ * not a change of mind, it is a change of machine. `commit.ts` keeps the commit out of the agent's
+ * hands because there the agent shares a process with the control-plane database URL, the envelope
+ * KMS key and the GitHub App's own credentials. Here it shares nothing: the container holds a proxy
+ * token and a branch-scoped database credential, and neither is worth taking.
+ *
+ * The push credential is an installation token: an hour long, scoped to the repositories the
+ * customer granted, and never written down. It goes in `GIT_CONFIG_*` for one command rather than
+ * into the URL, because a URL with a credential in it *persists* — `git push <url>` leaves it in
+ * the reflog, and a remote set from it leaves it in `.git/config`, where it outlives the token's
+ * usefulness by exactly nothing and its secrecy by an hour. `bootstrapSandbox` strips the clone's
+ * credential for the same reason.
+ *
+ * What is not claimed: that the agent cannot see it. It is one `ps` away in a container the model
+ * runs commands in, and that is accepted — it is an hourly token for the repository the agent is
+ * already editing, which is the one thing it is *for*. The boundary that matters is that it cannot
+ * reach anything else and cannot outlive the hour.
+ *
+ * `no_changes` rather than an error when nothing was edited. A turn that answered a question
+ * without touching a file is the common case.
+ */
+export type SandboxCommitInput = {
+  driver: SandboxDriver
+  externalId: string
+  /** `owner/repo`. */
+  repository: string
+  host?: string
+  /** A GitHub App installation token with `contents: write`. */
+  token: string
+  /**
+   * Where to push, when it is not `https://<host>/<repository>.git`.
+   *
+   * Exists so the push can be exercised against a repository that is not GitHub — the live test
+   * pushes to a bare repo in the container, which makes the ref negotiation and the lease real
+   * without writing to anybody's history. No production caller passes it.
+   */
+  remote?: string
+  /** Never the production branch unless the caller means it. */
+  branch: string
+  message: string
+  author: { name: string; email: string }
+}
+
+export type SandboxCommitResult =
+  | { committed: false; reason: "no_changes" }
+  | { committed: true; sha: string; branch: string; files: string[] }
+
+export async function commitSandboxWork(input: SandboxCommitInput): Promise<SandboxCommitResult> {
+  const { driver, externalId } = input
+  const git = (...argv: string[]) =>
+    driver.exec(externalId, ["git", "-C", WORKSPACE, ...argv], COMMIT_TIMEOUT_MS)
+
+  const status = await git("status", "--porcelain")
+  if (status.exitCode !== 0) {
+    throw new Error(`the sandbox has no usable checkout: ${status.stderr.trim() || "git failed"}`)
+  }
+
+  const files = status.stdout
+    .split("\n")
+    .map((line) => line.slice(3).trim())
+    .filter((line) => line !== "")
+  if (files.length === 0) return { committed: false, reason: "no_changes" }
+
+  const added = await git("add", "-A")
+  if (added.exitCode !== 0) throw new Error(`staging failed: ${added.stderr.trim()}`)
+
+  /*
+    Identity on the command, even though the bootstrap already configured it.
+
+    The bootstrap's `git config` can have failed — it is one of the steps that reports a problem
+    rather than failing the provision — and `git commit` refuses outright without an identity. A
+    commit that fails here loses the turn's work, so it does not depend on an earlier step having
+    gone well.
+  */
+  const committed = await driver.exec(
+    externalId,
+    [
+      "git",
+      "-C",
+      WORKSPACE,
+      "-c",
+      `user.name=${input.author.name}`,
+      "-c",
+      `user.email=${input.author.email}`,
+      "commit",
+      "-m",
+      input.message,
+    ],
+    COMMIT_TIMEOUT_MS,
+  )
+  if (committed.exitCode !== 0) throw new Error(`the commit failed: ${committed.stderr.trim()}`)
+
+  const head = await git("rev-parse", "HEAD")
+  if (head.exitCode !== 0) throw new Error(`could not read HEAD: ${head.stderr.trim()}`)
+
+  /*
+    `HEAD:refs/heads/<branch>`, so whatever the local branch is called does not matter — the clone
+    is off the production branch and its local name is that.
+
+    `--force-with-lease` rather than `--force`: the branch belongs to this session, and the lease is
+    what stops a push racing another turn from silently discarding it.
+  */
+  const url = input.remote ?? `https://${input.host ?? "github.com"}/${input.repository}.git`
+  const pushed = await driver.exec(
+    externalId,
+    [
+      "env",
+      ...Object.entries(sandboxGitAuthEnv(url, input.token)).map(
+        ([key, value]) => `${key}=${value}`,
+      ),
+      "git",
+      "-C",
+      WORKSPACE,
+      "push",
+      url,
+      `HEAD:refs/heads/${input.branch}`,
+      "--force-with-lease",
+    ],
+    COMMIT_TIMEOUT_MS,
+  )
+  if (pushed.exitCode !== 0) throw new Error(`the push failed: ${pushed.stderr.trim()}`)
+
+  return { committed: true, sha: head.stdout.trim(), branch: input.branch, files }
+}
+
+/**
+ * The credential, in git's config-through-the-environment form.
+ *
+ * Mirrors `gitAuthEnv` deliberately — the same shape on both machines, so the property that the
+ * token never reaches the URL is one idea rather than two. `http.<url>.extraheader` is scoped to
+ * this remote, so a redirect elsewhere does not carry the header with it.
+ */
+export function sandboxGitAuthEnv(url: string, token: string): Record<string, string> {
+  const authorization = `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`
+  return {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `http.${url}.extraheader`,
+    GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
   }
 }
 

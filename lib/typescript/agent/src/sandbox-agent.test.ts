@@ -1,14 +1,30 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentEvent } from "./runner"
-import { bootstrapSandbox, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
+import { bootstrapSandbox, commitSandboxWork, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
 
-function fakeDriver(options: { stdout?: string[]; execExit?: number } = {}) {
+function fakeDriver(
+  options: {
+    stdout?: string[]
+    execExit?: number
+    /** Canned stdout, keyed by a substring of the command. */
+    results?: Record<string, string>
+    /** Commands that should come back non-zero, keyed the same way, with their stderr. */
+    failures?: Record<string, string>
+  } = {},
+) {
   const commands: string[][] = []
   const files: Record<string, string> = {}
   const driver = {
     exec: (_id: string, argv: string[]) => {
       commands.push(argv)
+      const line = argv.join(" ")
+      for (const [needle, stderr] of Object.entries(options.failures ?? {})) {
+        if (line.includes(needle)) return Promise.resolve({ stdout: "", stderr, exitCode: 1 })
+      }
+      for (const [needle, stdout] of Object.entries(options.results ?? {})) {
+        if (line.includes(needle)) return Promise.resolve({ stdout, stderr: "", exitCode: 0 })
+      }
       return Promise.resolve({ stdout: "", stderr: "", exitCode: options.execExit ?? 0 })
     },
     execStream: (
@@ -281,5 +297,73 @@ describe("a turn that was refused its tools", () => {
 
     const codex = await turn("codex", [])
     expect(codex.commands.at(-1)).toContain("--dangerously-bypass-approvals-and-sandbox")
+  })
+})
+
+describe("commitSandboxWork", () => {
+  const base = {
+    author: { email: "dev@example.com", name: "Dev" },
+    branch: "sproutos/agent-abc",
+    externalId: "sb",
+    message: "Add a thing",
+    repository: "octocat/Hello-World",
+    token: "ghs_installation",
+  }
+
+  it("says nothing changed rather than making an empty commit", async () => {
+    // The common case: a turn that answered a question without touching a file. A caller that had
+    // to catch an exception to find that out would eventually catch a real failure with it.
+    const { commands, driver } = fakeDriver()
+    const result = await commitSandboxWork({ ...base, driver })
+
+    expect(result).toEqual({ committed: false, reason: "no_changes" })
+    // Nothing was staged, committed or pushed on the way to that answer.
+    expect(commands.map((argv) => argv.join(" ")).join("\n")).not.toContain("commit")
+  })
+
+  it("keeps the credential out of the URL, and pushes to an explicit ref", async () => {
+    const { commands, driver } = fakeDriver({
+      results: {
+        "status --porcelain": " M src/app.ts\n?? README.md\n",
+        "rev-parse HEAD": "abc123\n",
+      },
+    })
+
+    const result = await commitSandboxWork({ ...base, driver })
+    expect(result).toEqual({
+      committed: true,
+      sha: "abc123",
+      branch: "sproutos/agent-abc",
+      files: ["src/app.ts", "README.md"],
+    })
+
+    const push = commands.find((argv) => argv.includes("push"))!
+    /*
+      The URL carries no credential. `git push <url>` with one in it leaves it in the reflog, and a
+      remote set from it leaves it in `.git/config` — both outlive the push by an hour of validity.
+    */
+    expect(push).toContain("https://github.com/octocat/Hello-World.git")
+    expect(push.join(" ")).not.toContain("x-access-token")
+    expect(push.join(" ")).not.toContain("ghs_installation@")
+    // The clone is off the production branch, so the local branch is called that. An explicit ref
+    // is what lets the agent's work land somewhere else without a checkout dance.
+    expect(push).toContain("HEAD:refs/heads/sproutos/agent-abc")
+    expect(push).toContain("--force-with-lease")
+
+    // An identity on the command itself: `git commit` refuses without one, and the bootstrap's
+    // `git config` is a step that is allowed to have failed.
+    const commit = commands.find((argv) => argv.includes("commit"))!
+    expect(commit.join(" ")).toContain("user.email=dev@example.com")
+  })
+
+  it("reports which step failed, not just that something did", async () => {
+    // "the push failed" and "the commit failed" send a person to different places. A single generic
+    // error sends them to neither.
+    const { driver } = fakeDriver({
+      results: { "status --porcelain": " M a.ts\n" },
+      failures: { push: "remote: Permission to octocat/Hello-World.git denied" },
+    })
+
+    await expect(commitSandboxWork({ ...base, driver })).rejects.toThrow(/the push failed/)
   })
 })
