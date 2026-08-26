@@ -5,6 +5,7 @@ import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import customDomains from "./custom-domains"
+import regions from "./regions"
 import metering from "./metering"
 import deploy from "./deploy"
 import android from "./android"
@@ -136,6 +137,11 @@ const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)
 app.route("/invites", invites)
 app.route("/orgs", orgs)
+/*
+  Not under `/orgs`. A region is a property of the platform, not of a tenant — every organization is
+  offered the same set, and scoping it would imply otherwise.
+*/
+app.route("/regions", regions)
 app.route("/store", store)
 app.route("/user", user)
 app.route("/", unauthenticated)

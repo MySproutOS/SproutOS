@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   getV1OrgsByOrgSlugProjectsByProjectIdOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdQueryKey,
   getV1OrgsByOrgSlugProjectsOptions,
+  getV1OrgsByOrgSlugProjectsQueryKey,
+  getV1RegionsOptions,
+  patchV1OrgsByOrgSlugProjectsByProjectIdMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
@@ -12,18 +16,27 @@ export type Project = {
   /** The owner's chosen emoji. Project data, not chrome — UI icons are lucide. */
   glyph: string
   repo: string
+  /** `owner/name` on GitHub, so the card can link to it rather than just print it. */
+  repoUrl: string
   status: ProjectStatus
   /** Micro-USD. Never a float: see `@lib/billing`. */
   costMicros: bigint
   updatedLabel: string
   region: string
   hasUpstreamUpdate: boolean
+  /** Holds other projects and deploys nothing itself. */
+  isGroup: boolean
+  /** The group this belongs to, if any. */
+  parentProjectId: string | null
+  /** Where it is reachable. Null when it has never had a successful deployment. */
+  url: string | null
+  /** Which deployment is serving. Not the newest — a rollback makes those differ. */
+  liveDeploymentId: string | null
 }
 
 export type ProjectDetail = Project & {
   description: string
-  /** Null until the project has deployed. A project with no deployment has no URL. */
-  url: string | null
+  hostname: string | null
   runtime: string
   autoUpdateForks: boolean
   createdLabel: string
@@ -108,11 +121,16 @@ export function useProjects(orgSlug: string) {
         */
       glyph: (project.name.trim()[0] ?? "·").toUpperCase(),
       repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
+      repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
       status: STATE_TO_STATUS[project.state] ?? "building",
       costMicros: BigInt(project.costMicroUsd),
       updatedLabel: relativeLabel(project.updatedAt),
       region: project.region ?? "—",
       hasUpstreamUpdate: project.hasUpstreamUpdate,
+      isGroup: project.isGroup,
+      parentProjectId: project.parentProjectId ?? null,
+      url: project.url ?? null,
+      liveDeploymentId: project.liveDeploymentId ?? null,
     })),
   }
 }
@@ -139,6 +157,7 @@ export function useProject(orgSlug: string, projectId: string) {
             name: project.name,
             glyph: (project.name.trim()[0] ?? "\u00b7").toUpperCase(),
             repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
+            repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
             status: STATE_TO_STATUS[project.state] ?? "building",
             costMicros: BigInt(project.costMicroUsd),
             updatedLabel: relativeLabel(project.updatedAt),
@@ -150,10 +169,57 @@ export function useProject(orgSlug: string, projectId: string) {
               listing's blurb belongs to the listing, not to the fork.
             */
             description: project.stateReason ?? "",
-            url: null,
+            /*
+              From the server now, not hardcoded null.
+
+              This was `url: null` unconditionally, which is why every project read "Not deployed
+              yet" forever — including the ones that had deployed and were serving. The API reports
+              the *live* deployment's URL, so a failed deploy does not change where a project says
+              it is reachable.
+            */
+            url: project.url ?? null,
+            hostname: project.hostname ?? null,
+            isGroup: project.isGroup,
+            parentProjectId: project.parentProjectId ?? null,
+            liveDeploymentId: project.liveDeploymentId ?? null,
             runtime: project.kind,
             autoUpdateForks: project.autoUpdateEnabled,
             createdLabel: relativeLabel(project.createdAt),
           } satisfies ProjectDetail),
   }
+}
+
+/**
+ * Rename, re-region, and re-parent a project.
+ *
+ * The Modify screen had a "Save changes" button with no handler and no mutation behind it, so every
+ * edit made there was silently discarded. A form that quietly throws away input is worse than no
+ * form: the person believes they changed something.
+ *
+ * **Renaming changes the name, not the repository and not the hostname.** `project` carries both a
+ * `name` and a `slug`, and the tenant hostname derives from the slug — so a rename is free, and the
+ * repository on GitHub is untouched.
+ */
+export function useUpdateProject(orgSlug: string) {
+  const client = useQueryClient()
+  const mutation = patchV1OrgsByOrgSlugProjectsByProjectIdMutation()
+
+  return useMutation({
+    ...mutation,
+    onSuccess: async (_result, variables) => {
+      await client.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugProjectsQueryKey({ path: { orgSlug } }),
+      })
+      await client.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugProjectsByProjectIdQueryKey({
+          path: { orgSlug, projectId: variables.path.projectId },
+        }),
+      })
+    },
+  })
+}
+
+/** The regions a project's services may be placed in. Served from the database, not hardcoded. */
+export function useRegions() {
+  return useQuery(getV1RegionsOptions())
 }

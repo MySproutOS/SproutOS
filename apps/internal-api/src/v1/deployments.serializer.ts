@@ -21,6 +21,24 @@ export const deploymentSchemaResponse = Type.Object({
   gitRef: Nullable(Type.String()),
   prNumber: Nullable(Type.Integer()),
   url: Nullable(Type.String()),
+  /** The host this deployment serves on. Stored, not derived — see the Lambda migration. */
+  hostname: Nullable(Type.String()),
+  /** The Lambda version this release published. The rollback target. */
+  lambdaVersion: Nullable(Type.String()),
+  /** `skipped` when the project has no migrator, which is not the same as nobody having run one. */
+  migrationStatus: Nullable(Type.String()),
+  /** What the migrator printed. The only useful thing to show when a deploy stops here. */
+  migrationOutput: Nullable(Type.String()),
+  /*
+    Who released this — null for a deploy that came through CI.
+
+    The GitHub Action authenticates as the *repository* over OIDC; there is no user in the exchange.
+    Null means "CI did it" and the UI shows the repository, rather than attributing it to whoever
+    happens to be looking.
+  */
+  createdByUserId: Nullable(UUID7String),
+  /** The commit subject, so a list reads like a history rather than a column of shas. */
+  gitMessage: Nullable(Type.String()),
   // The image and the revision are the platform's own identifiers rather than the customer's, but
   // they are the first thing anyone asks for when a deploy misbehaves.
   imageUri: Nullable(Type.String()),

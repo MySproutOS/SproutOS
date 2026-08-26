@@ -228,6 +228,7 @@ const PROJECT_FIELDS = [
   "agentCredentialId",
   "isGroup",
   "parentProjectId",
+  "liveDeploymentId",
   "createdAt",
   "updatedAt",
 ] as const

@@ -948,6 +948,11 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       costMicroUsd: string
       region: string | null
       hasUpstreamUpdate: boolean
+      isGroup: boolean
+      parentProjectId: string | null
+      url: string | null
+      hostname: string | null
+      liveDeploymentId: string | null
     }>
     nextCursor: string | null
   }
@@ -969,6 +974,8 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
+    isGroup?: boolean
+    parentProjectId?: string | null
     source:
       | {
           type: "store"
@@ -1049,6 +1056,11 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       costMicroUsd: string
       region: string | null
       hasUpstreamUpdate: boolean
+      isGroup: boolean
+      parentProjectId: string | null
+      url: string | null
+      hostname: string | null
+      liveDeploymentId: string | null
     }
     job: {
       id: string
@@ -1189,6 +1201,11 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     costMicroUsd: string
     region: string | null
     hasUpstreamUpdate: boolean
+    isGroup: boolean
+    parentProjectId: string | null
+    url: string | null
+    hostname: string | null
+    liveDeploymentId: string | null
     repository: {
       id: string
       githubRepoId: string | null
@@ -1222,6 +1239,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     autoUpdateEnabled?: boolean
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
+    parentProjectId?: string | null
   }
   path: {
     orgSlug: string
@@ -1281,6 +1299,11 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     costMicroUsd: string
     region: string | null
     hasUpstreamUpdate: boolean
+    isGroup: boolean
+    parentProjectId: string | null
+    url: string | null
+    hostname: string | null
+    liveDeploymentId: string | null
   }
 }
 
@@ -3140,6 +3163,12 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
       gitRef: string | null
       prNumber: number | null
       url: string | null
+      hostname: string | null
+      lambdaVersion: string | null
+      migrationStatus: string | null
+      migrationOutput: string | null
+      createdByUserId: string | null
+      gitMessage: string | null
       imageUri: string | null
       runtimeClass: string | null
       buildFailureReason: string | null
@@ -3199,6 +3228,12 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
     gitRef: string | null
     prNumber: number | null
     url: string | null
+    hostname: string | null
+    lambdaVersion: string | null
+    migrationStatus: string | null
+    migrationOutput: string | null
+    createdByUserId: string | null
+    gitMessage: string | null
     imageUri: string | null
     runtimeClass: string | null
     buildFailureReason: string | null
@@ -3248,6 +3283,12 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
     gitRef: string | null
     prNumber: number | null
     url: string | null
+    hostname: string | null
+    lambdaVersion: string | null
+    migrationStatus: string | null
+    migrationOutput: string | null
+    createdByUserId: string | null
+    gitMessage: string | null
     imageUri: string | null
     runtimeClass: string | null
     buildFailureReason: string | null
@@ -3259,6 +3300,263 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
 
 export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse =
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses[keyof GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses]
+
+export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackData = {
+  body?: never
+  path: {
+    orgSlug: string
+    deploymentId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/deployments/{deploymentId}/rollback"
+}
+
+export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackErrors = {
+  /**
+   * This deployment cannot be rolled back to
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks deployment:write
+   */
+  403: ErrorResponseT
+  /**
+   * No such deployment in this organization
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackError =
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackErrors[keyof PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackErrors]
+
+export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses = {
+  /**
+   * Rolled back
+   */
+  200: {
+    id: string
+    projectId: string
+    kind: string
+    status: string
+    gitSha: string
+    gitRef: string | null
+    prNumber: number | null
+    url: string | null
+    hostname: string | null
+    lambdaVersion: string | null
+    migrationStatus: string | null
+    migrationOutput: string | null
+    createdByUserId: string | null
+    gitMessage: string | null
+    imageUri: string | null
+    runtimeClass: string | null
+    buildFailureReason: string | null
+    failureReason: string | null
+    createdAt: string
+    updatedAt: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponse =
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses[keyof PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
+  /**
+   * Domains
+   */
+  200: {
+    data: Array<{
+      id: string
+      hostname: string
+      status: string
+      statusReason: string | null
+      isApex: boolean
+      verifiedAt: Date | null
+      createdAt: Date
+      instructions: {
+        verification: {
+          type: "TXT"
+          name: string
+          value: string
+        }
+        certificate: {
+          type: "CNAME"
+          name: string
+          value: string
+        } | null
+        traffic: {
+          type: "A" | "CNAME"
+          name: string
+          value: string
+          note: string
+        }
+      }
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData = {
+  body?: {
+    hostname: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsErrors = {
+  /**
+   * A group cannot serve a domain
+   */
+  400: ErrorResponseT
+  /**
+   * That hostname is already claimed
+   */
+  409: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
+  /**
+   * Added, pending verification
+   */
+  201: {
+    id: string
+    hostname: string
+    status: string
+    statusReason: string | null
+    isApex: boolean
+    verifiedAt: Date | null
+    createdAt: Date
+    instructions: {
+      verification: {
+        type: "TXT"
+        name: string
+        value: string
+      }
+      certificate: {
+        type: "CNAME"
+        name: string
+        value: string
+      } | null
+      traffic: {
+        type: "A" | "CNAME"
+        name: string
+        value: string
+        note: string
+      }
+    }
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    domainId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}/verify"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors = {
+  /**
+   * No such domain on this project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses = {
+  /**
+   * The domain's state after checking
+   */
+  200: {
+    id: string
+    hostname: string
+    status: string
+    statusReason: string | null
+    isApex: boolean
+    verifiedAt: Date | null
+    createdAt: Date
+    instructions: {
+      verification: {
+        type: "TXT"
+        name: string
+        value: string
+      }
+      certificate: {
+        type: "CNAME"
+        name: string
+        value: string
+      } | null
+      traffic: {
+        type: "A" | "CNAME"
+        name: string
+        value: string
+        note: string
+      }
+    }
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    domainId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}"
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors = {
+  /**
+   * No such domain on this project
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses = {
+  /**
+   * Removed
+   */
+  204: void
+}
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
   body?: never
@@ -4978,6 +5276,28 @@ export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses = {
 export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse =
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses[keyof PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses]
 
+export type GetV1RegionsData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/regions"
+}
+
+export type GetV1RegionsResponses = {
+  /**
+   * Active regions
+   */
+  200: {
+    data: Array<{
+      code: string
+      displayName: string
+      provider: string
+    }>
+  }
+}
+
+export type GetV1RegionsResponse = GetV1RegionsResponses[keyof GetV1RegionsResponses]
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never
@@ -5729,6 +6049,7 @@ export type PostV1InternalMeteringEventsResponse =
 export type PostV1InternalPgResolveData = {
   body?: {
     backend_service_id: string
+    database_branch_id?: string
   }
   path?: never
   query?: never
@@ -5761,6 +6082,7 @@ export type PostV1InternalPgResolveResponse =
 export type PostV1DeployTokenData = {
   body?: {
     oidc_token: string
+    project?: string
   }
   path?: never
   query?: never
@@ -5861,6 +6183,11 @@ export type PostV1DeployReleaseData = {
     environment: string
     commit: string
     ref: string
+    runtime?: string
+    handler?: string
+    migration_key?: string
+    migration_handler?: string
+    message?: string
   }
   path?: never
   query?: never

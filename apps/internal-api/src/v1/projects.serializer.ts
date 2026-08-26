@@ -198,6 +198,14 @@ const projectEntry = Type.Object({
   */
   url: Nullable(Type.String()),
   hostname: Nullable(Type.String()),
+  /*
+    Which deployment is serving right now.
+
+    Not derivable from the deployment list: after a rollback the live release is an *older* row, so
+    "the newest ready production deployment" is exactly the wrong answer at the one moment it
+    matters most.
+  */
+  liveDeploymentId: Nullable(UUID7String),
 })
 
 export const projectSchemaEntryResponse = projectEntry

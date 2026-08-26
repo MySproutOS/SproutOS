@@ -1,6 +1,6 @@
 import { formatMicroUsd } from "@lib/billing/money"
 import { Link } from "@tanstack/react-router"
-import { EllipsisVerticalIcon, RefreshCcwIcon } from "lucide-react"
+import { ExternalLinkIcon, EllipsisVerticalIcon, RefreshCcwIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
 import { Money } from "@ui/base/ui/money"
@@ -43,13 +43,40 @@ export function ProjectRow({ orgSlug, project }: { orgSlug: string; project: Pro
           >
             {project.name}
           </Link>
-          <Badge variant={STATUS_VARIANTS[project.status]}>
-            {PROJECT_STATUS_LABELS[project.status]}
-          </Badge>
+          {/*
+            A group has no deploy state to report.
+
+            Showing "Ready" beside a group would answer a question nobody asked and imply it is
+            serving something. What matters about a group is that it is one.
+          */}
+          {project.isGroup ? (
+            <Badge variant="outline">Group</Badge>
+          ) : (
+            <Badge variant={STATUS_VARIANTS[project.status]}>
+              {PROJECT_STATUS_LABELS[project.status]}
+            </Badge>
+          )}
         </div>
-        <span className="tnum truncate font-mono text-[11.5px] text-muted-foreground">
-          {project.repo}
-        </span>
+        {/*
+          A link, not a label.
+
+          This was a bare `<span>`, so the one piece of text on the card that names somewhere you
+          would actually want to go was the one thing you could not click. `stopPropagation` keeps
+          it from also following the card's own link to the project.
+        */}
+        <a
+          href={project.repoUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => {
+            event.stopPropagation()
+          }}
+          className="tnum inline-flex w-fit max-w-full items-center gap-1 truncate font-mono text-[11.5px] text-muted-foreground hover:text-leaf hover:underline"
+        >
+          <span className="truncate">{project.repo}</span>
+          <ExternalLinkIcon className="size-3 shrink-0" aria-hidden="true" />
+          <span className="sr-only">Open on GitHub</span>
+        </a>
       </div>
 
       <div className="hidden w-[108px] shrink-0 flex-col items-end gap-[3px] sm:flex">

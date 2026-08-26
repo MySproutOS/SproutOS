@@ -12,6 +12,7 @@ import type {
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse,
@@ -48,6 +49,8 @@ import type {
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
@@ -403,6 +406,40 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   data.createdAt = new Date(data.createdAt)
   return data
 }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.verifiedAt) {
+      item.verifiedAt = new Date(item.verifiedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse> => {
+  if (data.verifiedAt) {
+    data.verifiedAt = new Date(data.verifiedAt)
+  }
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse> => {
+    if (data.verifiedAt) {
+      data.verifiedAt = new Date(data.verifiedAt)
+    }
+    data.createdAt = new Date(data.createdAt)
+    return data
+  }
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdResponseTransformer = async (
   data: any,

@@ -18,6 +18,7 @@ import {
   deleteV1OrgsByOrgSlugMembersByMemberId,
   deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId,
   deleteV1OrgsByOrgSlugProjectsByProjectId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox,
@@ -53,6 +54,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  getV1OrgsByOrgSlugProjectsByProjectIdDomains,
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdFiles,
   getV1OrgsByOrgSlugProjectsByProjectIdJobs,
@@ -77,6 +79,7 @@ import {
   getV1OrgsByOrgSlugStoreListings,
   getV1OrgsByOrgSlugWorkflowRuns,
   getV1OrgsByOrgSlugWorkflows,
+  getV1Regions,
   getV1StoreCategories,
   getV1StoreFeatured,
   getV1StoreListings,
@@ -114,6 +117,7 @@ import {
   postV1OrgsByOrgSlugAnalyses,
   postV1OrgsByOrgSlugApiKeys,
   postV1OrgsByOrgSlugBillingTopup,
+  postV1OrgsByOrgSlugDeploymentsByDeploymentIdRollback,
   postV1OrgsByOrgSlugInvites,
   postV1OrgsByOrgSlugOauthClients,
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
@@ -121,6 +125,8 @@ import {
   postV1OrgsByOrgSlugProjects,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  postV1OrgsByOrgSlugProjectsByProjectIdDomains,
+  postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerify,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
@@ -170,6 +176,9 @@ import type {
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdError,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdError,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdResponse,
@@ -263,6 +272,8 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvError,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
@@ -344,6 +355,8 @@ import type {
   GetV1OrgsData,
   GetV1OrgsError,
   GetV1OrgsResponse,
+  GetV1RegionsData,
+  GetV1RegionsResponse,
   GetV1StoreCategoriesData,
   GetV1StoreCategoriesResponse,
   GetV1StoreFeaturedData,
@@ -428,6 +441,9 @@ import type {
   PostV1OrgsByOrgSlugBillingTopupData,
   PostV1OrgsByOrgSlugBillingTopupError,
   PostV1OrgsByOrgSlugBillingTopupResponse,
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackData,
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackError,
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponse,
   PostV1OrgsByOrgSlugInvitesData,
   PostV1OrgsByOrgSlugInvitesError,
   PostV1OrgsByOrgSlugInvitesResponse,
@@ -446,6 +462,12 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealError,
   PostV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdRevealResponse,
@@ -2786,6 +2808,142 @@ export const getV1OrgsByOrgSlugDeploymentsByDeploymentIdOptions = (
     queryKey: getV1OrgsByOrgSlugDeploymentsByDeploymentIdQueryKey(options),
   })
 
+/**
+ * Point the project's live alias back at this deployment. No build, no upload.
+ */
+export const postV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponse,
+  PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackError,
+  Options<PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponse,
+    PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackError,
+    Options<PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugDeploymentsByDeploymentIdRollback({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdDomains", options)
+
+/**
+ * The custom domains attached to a project, and what to publish for each
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
+    DefaultError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdDomainsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdDomains({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdDomainsQueryKey(options),
+  })
+
+/**
+ * Attach a hostname to a project. Returns the records to publish.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDomains({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Check the published records and, if they are right, start serving the domain
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerify({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Stop serving a domain and release its certificate
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdMutation = (
+  options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData>>,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
+  Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
 ) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowId", options)
@@ -4051,6 +4209,31 @@ export const postV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeMutation = (
   }
   return mutationOptions
 }
+
+export const getV1RegionsQueryKey = (options?: Options<GetV1RegionsData>) =>
+  createQueryKey("getV1Regions", options)
+
+/**
+ * The regions a project's services can be placed in
+ */
+export const getV1RegionsOptions = (options?: Options<GetV1RegionsData>) =>
+  queryOptions<
+    GetV1RegionsResponse,
+    DefaultError,
+    GetV1RegionsResponse,
+    ReturnType<typeof getV1RegionsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1Regions({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1RegionsQueryKey(options),
+  })
 
 export const getV1StoreCategoriesQueryKey = (options?: Options<GetV1StoreCategoriesData>) =>
   createQueryKey("getV1StoreCategories", options)

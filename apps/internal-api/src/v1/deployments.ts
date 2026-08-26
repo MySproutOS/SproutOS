@@ -1,4 +1,12 @@
 import { crudAuditLog, crudDeployment, fetchDeployment } from "@lib/dao"
+import {
+  functionName,
+  pointAlias,
+  publishLiveDeployment,
+  publishRoute,
+  type Route,
+} from "@lib/lambda"
+import { Redis } from "ioredis"
 import { PUBLISH_KINDS, enqueue } from "@lib/jobs"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -22,6 +30,19 @@ const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
 }
 
+/*
+  Built on first use, never at import.
+
+  A `new Redis(...)` at module scope opens a connection as a side effect of importing the route
+  registry, which is what kept the OpenAPI generator's process alive until it timed out — the same
+  trap `publish.ts` documents.
+*/
+let valkeyClient: Redis | undefined
+function rollbackValkey(): Redis {
+  valkeyClient ??= new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
+  return valkeyClient
+}
+
 type DeploymentRow = {
   id: string
   projectId: string
@@ -31,6 +52,12 @@ type DeploymentRow = {
   gitRef: string | null
   prNumber: number | null
   url: string | null
+  hostname: string | null
+  lambdaVersion: string | null
+  migrationStatus: string | null
+  migrationOutput: string | null
+  createdByUserId: string | null
+  gitMessage: string | null
   imageUri: string | null
   /** Left over from the cluster, which chose a runtime class per workload. Lambda has none. */
   runtimeClass: string | null
@@ -50,6 +77,12 @@ function present(row: DeploymentRow, buildFailureReason: string | null = null) {
     gitRef: row.gitRef,
     prNumber: row.prNumber,
     url: row.url,
+    hostname: row.hostname,
+    lambdaVersion: row.lambdaVersion,
+    migrationStatus: row.migrationStatus,
+    migrationOutput: row.migrationOutput,
+    createdByUserId: row.createdByUserId,
+    gitMessage: row.gitMessage,
     imageUri: row.imageUri,
     runtimeClass: row.runtimeClass,
     /*
@@ -177,6 +210,12 @@ const app = new Hono()
           "gitRef",
           "prNumber",
           "url",
+          "hostname",
+          "lambdaVersion",
+          "migrationStatus",
+          "migrationOutput",
+          "createdByUserId",
+          "gitMessage",
           "imageUri",
           "runtimeClass",
           "failureReason",
@@ -268,6 +307,118 @@ const app = new Hono()
       })
 
       return c.json(present(deployment), 202)
+    },
+  )
+
+  .post(
+    "/:orgSlug/deployments/:deploymentId/rollback",
+    describeRoute({
+      description: "Point the project's live alias back at this deployment. No build, no upload.",
+      responses: {
+        200: {
+          description: "Rolled back",
+          content: { "application/json": { schema: resolver(deploymentSchemaResponse) } },
+        },
+        400: { description: "This deployment cannot be rolled back to", ...errorResponse },
+        403: { description: "Caller lacks deployment:write", ...errorResponse },
+        404: { description: "No such deployment in this organization", ...errorResponse },
+      },
+    }),
+    requirePermission("deployment:write"),
+    async (c) => {
+      const found = await fetchDeployment(db).withProject(c.req.param("deploymentId"))
+      if (found === undefined) return throwNotFound(c, "Deployment not found")
+
+      const { deployment, project } = found
+      if (project.organizationId !== c.var.organization.id) {
+        return throwNotFound(c, "Deployment not found")
+      }
+
+      /*
+        Three guards, each for a different way this would otherwise fail after the alias moved.
+
+        No `lambda_version` means there is nothing to point at — the deploy never got as far as
+        publishing one. A preview has its own hostname and pointing production at it would serve a
+        pull request to customers. A deployment that is not `ready` never served, so "rolling back"
+        to it would be a first release wearing the word rollback.
+      */
+      if (deployment.lambdaVersion === null) {
+        return throwBadRequest(
+          c,
+          "That deployment never published a version, so there is nothing to roll back to.",
+        )
+      }
+      if (deployment.kind !== "production") {
+        return throwBadRequest(c, "Only a production deployment can serve production traffic.")
+      }
+      if (deployment.status !== "ready") {
+        return throwBadRequest(
+          c,
+          `That deployment is ${deployment.status}, so it has never served traffic.`,
+        )
+      }
+
+      const hostname = deployment.hostname
+      if (hostname === null) {
+        return throwBadRequest(c, "That deployment has no hostname recorded.")
+      }
+
+      /*
+        The alias move is the rollback. `pointAlias` is one API call and the old version was never
+        deleted, which is what makes this instant rather than a rebuild.
+      */
+      const { LambdaClient } = await import("@aws-sdk/client-lambda")
+      const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? "us-east-1" })
+      const aliasArn = await pointAlias(lambda, functionName(project.id), deployment.lambdaVersion)
+
+      /*
+        Then the route, so the router resolves this deployment rather than the one it replaced.
+
+        Republished rather than left alone: the route's value carries `deploymentId`, which is what
+        attributes a request's cost and its logs. Leaving the old value would bill this traffic to
+        the release that is no longer serving.
+      */
+      const valkey = rollbackValkey()
+      const route: Route = {
+        arn: aliasArn,
+        projectId: project.id,
+        organizationId: project.organizationId,
+        deploymentId: deployment.id,
+      }
+      await publishRoute(valkey, hostname, route)
+
+      const domains = await db
+        .selectFrom("customDomain")
+        .select("hostname")
+        .where("projectId", "=", project.id)
+        .where("status", "=", "active")
+        .where("deletedAt", "is", null)
+        .execute()
+
+      for (const domain of domains) {
+        // eslint-disable-next-line no-await-in-loop -- a handful per project, same as `publish.ts`.
+        await publishRoute(valkey, domain.hostname, route)
+      }
+
+      await publishLiveDeployment(valkey, project.id, deployment.id)
+
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deployment.id, updatedAt: new Date() })
+        .where("id", "=", project.id)
+        .execute()
+
+      await crudAuditLog(db).record({
+        organizationId: c.var.organization.id,
+        actorUserId: c.var.user.id,
+        action: "deployment:write",
+        resourceSrn: srnFor("compute", c.var.organization.id, "deployment", deployment.id),
+        after: { rolledBackTo: deployment.id, lambdaVersion: deployment.lambdaVersion },
+        ...auditContext(c),
+      })
+
+      const reasons = await buildFailureReasons([deployment.id])
+      return c.json(present(deployment, reasons.get(deployment.id) ?? null))
     },
   )
 

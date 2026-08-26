@@ -16,6 +16,7 @@ import { Skeleton, SkeletonText } from "@ui/base/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
+import { ProductionDeployment } from "@frontends/dashboard/components/projects/production-deployment"
 import { PROJECT_STATUS_LABELS, useProject } from "@frontends/dashboard/data/projects"
 import { useRecentJobs } from "@frontends/dashboard/data/workflows"
 
@@ -125,7 +126,20 @@ function ProjectDetail() {
                   {data.description}
                 </p>
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-                  <Fact label="Repository" value={data.repo} mono />
+                  <div className="flex flex-col gap-1">
+                    <dt className="eyebrow text-[10px]">Repository</dt>
+                    <dd>
+                      <a
+                        href={data.repoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="tnum inline-flex items-center gap-1 font-mono text-[13px] hover:text-leaf hover:underline"
+                      >
+                        {data.repo}
+                        <ExternalLinkIcon className="size-3" aria-hidden="true" />
+                      </a>
+                    </dd>
+                  </div>
                   <Fact label="Region" value={data.region} mono />
                   <Fact label="Runtime" value={data.runtime} mono />
                   <div className="flex flex-col gap-1">
@@ -135,21 +149,21 @@ function ProjectDetail() {
                     </dd>
                   </div>
                 </dl>
-                {/*
-                  No link until the project has deployed. A project that has never deployed has no
-                  URL, and a button pointing at a guessed one is a 404 with our name on it.
-                */}
-                {data.url === null ? (
-                  <p className="font-mono text-xs text-muted-foreground">Not deployed yet</p>
-                ) : (
-                  <div>
-                    <Button variant="outline" size="sm" render={<a href={data.url}>{data.url}</a>}>
-                      <ExternalLinkIcon />
-                    </Button>
-                  </div>
-                )}
               </CardContent>
             </Card>
+
+            {/*
+              What is actually serving, or how to make something serve.
+
+              This replaces a `data.url === null ? "Not deployed yet" : <link>` branch whose
+              condition was hardcoded to null in the data layer — so it read "Not deployed yet" for
+              every project forever, including ones that were serving.
+            */}
+            <ProductionDeployment
+              orgSlug={orgSlug}
+              project={data}
+              liveDeploymentId={data.liveDeploymentId}
+            />
 
             <section className="flex flex-col gap-2.5">
               <h2 className="eyebrow">Recent jobs</h2>

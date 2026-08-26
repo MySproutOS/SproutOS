@@ -28,14 +28,11 @@ import { Switch } from "@ui/base/ui/switch"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
-import { useProject } from "@frontends/dashboard/data/projects"
+import { useProject, useRegions, useUpdateProject } from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/modify")({
   component: ModifyProject,
 })
-
-const REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-2"]
-const REGION_ITEMS = REGIONS.map((region) => ({ label: region, value: region }))
 
 function ModifyProject() {
   const { orgSlug, projectId } = Route.useParams()
@@ -73,6 +70,8 @@ function ModifyProject() {
         {data !== undefined && (
           <ModifyForm
             key={data.id}
+            orgSlug={orgSlug}
+            projectId={data.id}
             name={data.name}
             description={data.description}
             region={data.region}
@@ -85,11 +84,15 @@ function ModifyProject() {
 }
 
 function ModifyForm({
+  orgSlug,
+  projectId,
   name: initialName,
   description: initialDescription,
   region: initialRegion,
   autoUpdateForks: initialAutoUpdate,
 }: {
+  orgSlug: string
+  projectId: string
   name: string
   description: string
   region: string
@@ -99,8 +102,47 @@ function ModifyForm({
   const [description, setDescription] = useState(initialDescription)
   const [region, setRegion] = useState(initialRegion)
   const [autoUpdate, setAutoUpdate] = useState(initialAutoUpdate)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  /*
+    The regions the platform actually serves, from the database.
+
+    This screen used to offer a hardcoded four, of which one (`ap-southeast-2`) is not seeded at all
+    and two are seeded inactive — so three of the four choices would have failed, and the form could
+    not save either way. Serving the active set means activating a region is a row update rather
+    than a release.
+  */
+  const regions = useRegions()
+  const update = useUpdateProject(orgSlug)
+
+  const available = regions.data?.data ?? []
+  const regionItems = available.map((row) => ({ label: row.code, value: row.code }))
 
   const nameIsValid = /^[a-z0-9-]+$/.test(name.trim().toLowerCase().replaceAll(" ", "-"))
+
+  function save() {
+    setError(null)
+    setSaved(false)
+    update.mutate(
+      {
+        path: { orgSlug, projectId },
+        body: {
+          name: name.trim(),
+          ...(region === initialRegion || region === "—" ? {} : { region }),
+          autoUpdateEnabled: autoUpdate,
+        },
+      },
+      {
+        onSuccess: () => {
+          setSaved(true)
+        },
+        onError: (cause) => {
+          setError(cause instanceof Error ? cause.message : "That did not save. Try again.")
+        },
+      },
+    )
+  }
 
   return (
     <div className="flex max-w-2xl flex-col gap-4">
@@ -108,7 +150,8 @@ function ModifyForm({
         <CardHeader>
           <CardTitle>General</CardTitle>
           <CardDescription>
-            Renaming a project does not change its URL until the next deploy.
+            Renaming changes what this project is called here. It does not rename the repository on
+            GitHub, and it does not change the hostname the project is served on.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -147,7 +190,7 @@ function ModifyForm({
             <div className="flex flex-col gap-1.5">
               <Label>Region</Label>
               <Select
-                items={REGION_ITEMS}
+                items={regionItems}
                 value={region}
                 onValueChange={(value: string | null) => {
                   if (value !== null) setRegion(value)
@@ -157,9 +200,12 @@ function ModifyForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {REGIONS.map((candidate) => (
-                    <SelectItem key={candidate} value={candidate}>
-                      <span className="tnum font-mono">{candidate}</span>
+                  {available.map((candidate) => (
+                    <SelectItem key={candidate.code} value={candidate.code}>
+                      <span className="tnum font-mono">{candidate.code}</span>
+                      <span className="ml-2 text-[11px] text-muted-foreground">
+                        {candidate.displayName}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -177,8 +223,14 @@ function ModifyForm({
             </div>
           </div>
         </CardContent>
-        <CardFooter className="justify-end">
-          <Button disabled={!nameIsValid}>Save changes</Button>
+        <CardFooter className="justify-end gap-3">
+          {error === null ? null : <span className="text-xs text-destructive">{error}</span>}
+          {saved && error === null ? (
+            <span className="text-xs text-muted-foreground">Saved.</span>
+          ) : null}
+          <Button disabled={!nameIsValid || update.isPending} onClick={save}>
+            {update.isPending ? "Saving…" : "Save changes"}
+          </Button>
         </CardFooter>
       </Card>
 
