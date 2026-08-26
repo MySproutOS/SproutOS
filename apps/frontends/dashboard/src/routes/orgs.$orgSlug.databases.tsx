@@ -35,6 +35,7 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   type BackendService,
+  FIRST_AVAILABLE_KIND,
   KIND_AVAILABLE,
   KIND_LABELS,
   SERVICE_KINDS,
@@ -348,7 +349,14 @@ function ConnectionDialog({
 function CreateDialog({ orgSlug }: { orgSlug: string }) {
   const { createService, isPending } = useCreateBackendService(orgSlug)
   const [name, setName] = useState("")
-  const [kind, setKind] = useState<ServiceKind>("postgres")
+  /*
+    The first engine this deployment can actually deliver, rather than a hard-coded `postgres`.
+
+    Naming one directly means the dialog opens on a disabled option the moment that engine stops
+    being available — which is what happened to `postgres`, so the Create button was disabled on
+    open and the reason for it was a line of small grey text below the select.
+  */
+  const [kind, setKind] = useState<ServiceKind>(FIRST_AVAILABLE_KIND)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [uri, setUri] = useState<string | null>(null)
@@ -428,7 +436,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
                 }))}
                 value={kind}
                 onValueChange={(next) => {
-                  setKind(next ?? "postgres")
+                  setKind(next ?? FIRST_AVAILABLE_KIND)
                 }}
               >
                 <SelectTrigger>
@@ -447,7 +455,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
               </Select>
               {!KIND_AVAILABLE[kind] && (
                 <p className="text-xs text-muted-foreground">
-                  {KIND_LABELS[kind]} is not available yet. Postgres is.
+                  {KIND_LABELS[kind]} is not available on this deployment yet.
                 </p>
               )}
             </div>

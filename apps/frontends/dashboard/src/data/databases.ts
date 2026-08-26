@@ -29,19 +29,44 @@ export const KIND_LABELS: Record<ServiceKind, string> = {
 }
 
 /*
-  Valkey and Elasticsearch are `false` and it is not a product decision.
+  Which engines this deployment can actually hand out, and none of it is a product decision.
 
-  Both, and OpenSearch, are bound to `127.0.0.1` on the OVH host — unreachable from AWS, where the
-  control plane runs. The tenant splits that would front them are the part ADR 0026 lists as not
-  yet built. Provisioning either would succeed at the control plane and hand a customer a
-  connection string to a port nothing can open.
+  **This duplicates something only the server knows, and it was wrong in both directions.** Every
+  driver refuses with `ServiceNotConfiguredError` when its own variables are missing, and the route
+  turns that into a 503 naming the variable — so the deployment is already the authority here and
+  this list is a second copy of the answer, maintained by hand, in a different repository layer.
+  It should become something the API reports; until it does, it is at least written down that it is
+  a copy.
+
+  Both directions, measured against production rather than assumed:
+
+  - `elasticsearch` was `false` because OpenSearch was bound to `127.0.0.1` on the OVH host and the
+    split in front of it had no address. Both are now true: the cluster is published behind an
+    allowlist and a password, and `search.<domain>` reaches `search-proxy` on the router.
+  - `postgres` was `true` and has never worked. It needs `SERVICE_POSTGRES_PUBLIC_HOST`, which is
+    the address of the Postgres listener, and `NEON_API_KEY`, which nothing in this repository can
+    obtain. Every Postgres service in the list is in `error` for that reason, which is what a `true`
+    here buys: a customer allowed to ask for something that cannot be delivered.
+
+  `object_storage` is genuinely not wired to a bucket yet.
 */
 export const KIND_AVAILABLE: Record<ServiceKind, boolean> = {
-  postgres: true,
+  postgres: false,
   valkey: false,
-  elasticsearch: false,
+  elasticsearch: true,
   object_storage: false,
 }
+
+/**
+ * What the new-database dialog opens on.
+ *
+ * Derived rather than named, so that a deployment which cannot offer the first engine in the list
+ * opens on one it can, instead of on a disabled option with the explanation in small grey text.
+ * Falls back to the first kind when nothing is available at all — the dialog is then honest about
+ * every option, which is the right outcome and not one worth a second code path.
+ */
+export const FIRST_AVAILABLE_KIND: ServiceKind =
+  SERVICE_KINDS.find((kind) => KIND_AVAILABLE[kind]) ?? SERVICE_KINDS[0]
 
 export type BackendService = {
   id: string
