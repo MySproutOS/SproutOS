@@ -27,9 +27,18 @@ created or that exists elsewhere, and that no step carries from one to the other
 anything is attempted. `SERVICE_POSTGRES_PROVIDER` is unset too, so the choice falls to `sprout`
 rather than the `neon` the architecture intends.
 
-**Valkey.** A platform Valkey exists in AWS and is `available` with TLS on. The router already
-carries the tenant split — `valkey-proxy` as a library, gated on `VALKEY_PROXY_BACKEND`. Neither
-half knows about the other: the variable is unset, so the split never starts.
+**Valkey.** A platform Valkey exists in AWS and is `available`. The router already carries the
+tenant split — `valkey-proxy` as a library, gated on `VALKEY_PROXY_BACKEND`, which is unset.
+
+That reads like two halves nobody connected, and it was written up that way before the two halves
+were actually compared. They do not fit. The ElastiCache has `TransitEncryptionEnabled: true` and
+therefore *requires* TLS; `valkey-proxy` opens its upstream with a plain `TcpStream::connect` and
+contains no TLS at all. Setting the variable would not start a working split, it would start one
+that cannot reach its backend.
+
+Nor is that instance the right home regardless: the platform Valkey holds `route:<host>` and
+`credit:<organizationId>` — the router's own control-plane state. Tenant data does not belong in it,
+whatever the transport.
 
 **OpenSearch.** Bound to `127.0.0.1` on the OVH box and unreachable from AWS.
 
@@ -68,6 +77,14 @@ That reports the gap. It does not close it, and closing it is **not symmetric**:
   egress through the same NAT the allowlist admits — so every tenant could read every other tenant's
   index. `search-proxy` exists for this. It has to be the boundary before OpenSearch is exposed at
   all.
+
+## A note on how this entry was written
+
+The valkey paragraph above was wrong in its first draft, in the direction this directory exists to
+warn about: it said the two halves merely needed connecting, because the ElastiCache was `available`
+and the proxy was present and that looked like enough. It took reading what the proxy actually opens
+— `TcpStream::connect`, no TLS — against what the instance actually demands to see that they do not
+fit. Both facts were a grep away the whole time.
 
 ## The question worth asking
 
