@@ -143,15 +143,28 @@ app
         where it ships to every user and is therefore not a secret at all. The absence is what forces
         PKCE, which is the thing that actually protects a public client.
       */
-      let secret: { id: string; secret: string; lastFour: string } | undefined
+      /*
+        The secret itself, not an object wrapping it.
+
+        `oauthClientsSchemaCreateResponse` declares `secret` as an optional *string*, and this
+        returned `{ id, secret, lastFour }`. The response therefore did not match its own contract:
+        the generated client typed the field as a string, the dashboard put it straight into a
+        `<pre>`, and React refused to render an object as a child — error #31, on the one screen
+        that shows a value which can never be retrieved again.
+
+        The wrapper carried nothing the caller needed. `lastFour` is the last four characters of the
+        string beside it, and the secret's row id is of no use to somebody who has just been handed
+        the secret; both are on the list endpoint for every secret a client has.
+      */
+      let secret: string | undefined
       if (body.clientType === "confidential") {
         const value = generateClientSecret()
-        const created = await crudOauthClient(db).addSecret({
+        await crudOauthClient(db).addSecret({
           oauthClientId: id,
           secretHash: await hashClientSecret(value),
           lastFour: value.slice(-4),
         })
-        secret = { id: created.id, secret: value, lastFour: value.slice(-4) }
+        secret = value
       }
 
       const row = await fetchOauthClient(db).getInOrganization(c.var.organization.id, id, [

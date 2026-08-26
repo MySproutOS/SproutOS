@@ -194,7 +194,12 @@ function CreateClientDialog({ orgSlug }: { orgSlug: string }) {
                 },
                 {
                   onSuccess: (created) => {
-                    // A confidential client's first secret comes back with it and never again.
+                    /*
+                      A string. The API used to answer with `{ id, secret, lastFour }` while its
+                      schema declared a string, so this put an object into the `<pre>` below and
+                      React refused to render it — error #31, on the one screen showing a value
+                      that can never be fetched again. The handler matches its contract now.
+                    */
                     setSecret(created.secret ?? null)
                     if (created.secret === undefined) setOpen(false)
                   },

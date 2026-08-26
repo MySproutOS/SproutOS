@@ -88,9 +88,18 @@ describe.skipIf(!up)("oauth client registration", () => {
     const created = await call("POST", `/v1/orgs/${orgSlug}/oauth-clients`, owner!, confidential)
     expect(created.status).toBe(201)
 
-    const secret = created.json.secret as Json | undefined
+    /*
+      A string, which is what `oauthClientsSchemaCreateResponse` declares.
+
+      This asserted an object — `{ id, secret, lastFour }` — which is what the handler used to
+      return in contradiction of its own schema, and is why the dashboard threw React error #31
+      trying to render it. Asserting the shape the code happened to produce, rather than the shape
+      the contract promises, is what let the two disagree.
+    */
+    const secret = created.json.secret
     expect(secret, "a confidential client must be given a secret on creation").toBeDefined()
-    expect(String(secret!.secret)).toMatch(/^client_secret_/)
+    expect(typeof secret).toBe("string")
+    expect(String(secret)).toMatch(/^client_secret_/)
 
     const id = String(created.json.id)
 
@@ -99,12 +108,12 @@ describe.skipIf(!up)("oauth client registration", () => {
     expect(listed.status).toBe(200)
     const items = listed.json.items as Json[]
     expect(items).toHaveLength(1)
-    expect(items[0].lastFour).toBe(secret!.lastFour)
-    expect(JSON.stringify(listed.json)).not.toContain(String(secret!.secret))
+    expect(items[0].lastFour).toBe(String(secret).slice(-4))
+    expect(JSON.stringify(listed.json)).not.toContain(String(secret))
 
     // And it is not recoverable from the client itself either.
     const fetched = await call("GET", `/v1/orgs/${orgSlug}/oauth-clients/${id}`, owner!)
-    expect(JSON.stringify(fetched.json)).not.toContain(String(secret!.secret))
+    expect(JSON.stringify(fetched.json)).not.toContain(String(secret))
   })
 
   it("only stores a hash, so the database cannot impersonate the client", async () => {
@@ -112,7 +121,7 @@ describe.skipIf(!up)("oauth client registration", () => {
       ...confidential,
       name: "Hash check",
     })
-    const secret = String((created.json.secret as Json).secret)
+    const secret = String(created.json.secret)
 
     const row = await db
       .selectFrom("oauthClientSecret")
@@ -146,7 +155,7 @@ describe.skipIf(!up)("oauth client registration", () => {
       redirectUris: ["https://example.com/callback"],
     })
     expect(created.status).toBe(201)
-    const secret = String((created.json.secret as Json).secret)
+    const secret = String(created.json.secret)
 
     const response = await app.request("/v1/oauth/token", {
       method: "POST",
