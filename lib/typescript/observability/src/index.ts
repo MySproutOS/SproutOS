@@ -17,7 +17,16 @@ export {
   type LogLine,
   type LogQuery,
 } from "./query"
-export { ensureSchema } from "./schema"
+export {
+  ensureSchema,
+  kafkaConfigured,
+  USAGE_EVENT_MATERIALIZED_VIEW,
+  USAGE_EVENT_QUEUE_TABLE,
+  USAGE_EVENT_RAW_TABLE,
+  usageEventMaterializedViewDdl,
+  usageEventQueueDdl,
+  usageEventRawDdl,
+} from "./schema"
 export {
   generateIngestKey,
   hashIngestKey,
@@ -43,4 +52,3 @@ export {
 } from "./runtime-logs"
 export { gbSeconds, type UsageEvent, usageFrom, usageFromBatch } from "./lambda-usage"
 export { connectProducer, encode, type LogProducer, topic } from "./producer"
-export { kafkaConfigured } from "./schema"

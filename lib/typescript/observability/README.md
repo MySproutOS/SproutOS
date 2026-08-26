@@ -33,6 +33,19 @@ Resource attributes are denormalized onto every record. Logs are read by time ra
 TTL, so a join to a resource table would make every query pay for normalization that nothing ever
 updates.
 
+### Raw metering is at least once
+
+`usage_event_queue` consumes normalized, one-event-per-message `JSONEachRow` records from Kafka and
+`usage_event_mv` writes them into `usage_event_raw`. The producer supplies a stable lowercase
+SHA-256 `event_id` and uses `ingested_at` in epoch milliseconds as the deterministic `version`, so
+replaying an unacknowledged Kafka block names the same logical event and version.
+
+The destination is `ReplacingMergeTree(version)`, which removes retries during background merges.
+That is eventual storage compaction, not a query-time uniqueness guarantee. **Every financial read
+must deduplicate** with `FINAL` or group by `event_id` and select values with
+`argMax(value, version)`. A plain `SELECT` can see two copies and must never feed a charge or an
+invoice.
+
 ## Two things the parser gets right that are easy to get wrong
 
 **`timeUnixNano` is a string, and has to stay one.** 2^53 nanoseconds ran out in 1970 plus a hundred
