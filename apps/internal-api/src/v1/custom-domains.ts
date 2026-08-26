@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { resolveTxt } from "node:dns/promises"
+import { resolve4, resolveTxt } from "node:dns/promises"
 import {
   ACMClient,
   DeleteCertificateCommand,
@@ -132,7 +132,37 @@ type DomainRow = {
   createdAt: Date
 }
 
-function present(row: DomainRow) {
+/**
+ * The addresses an apex A record has to name.
+ *
+ * Resolved live rather than read from configuration. `TENANT_INGRESS_IPS` was the source and
+ * **nothing has ever set it**, so every apex domain was handed an A record with an empty value —
+ * an instruction that cannot be followed, in the one place a customer has no second guess. It was
+ * one of the names `bin/check-app-config.mjs` reported the first time that check read the
+ * application instead of only the three configuration lists.
+ *
+ * Configuration was the wrong shape for it anyway: these are a load balancer's addresses and AWS
+ * changes them. A value pinned in user-data is correct until it silently is not, and the symptom
+ * would be a customer's apex resolving to an address that answers nothing.
+ *
+ * On failure the list is empty and `note` says so, rather than inventing an address.
+ */
+async function ingressAddresses(): Promise<string[]> {
+  const configured = process.env.TENANT_INGRESS_IPS
+  if (configured !== undefined && configured !== "") {
+    return configured.split(",").map((value) => value.trim())
+  }
+  try {
+    return await resolve4(ingressHost())
+  } catch (cause) {
+    console.error("[domains] could not resolve the ingress host", cause)
+    return []
+  }
+}
+
+async function present(row: DomainRow) {
+  const addresses = row.isApex ? await ingressAddresses() : []
+
   return {
     id: row.id,
     hostname: row.hostname,
@@ -159,10 +189,14 @@ function present(row: DomainRow) {
         ? {
             type: "A" as const,
             name: row.hostname,
-            value: process.env.TENANT_INGRESS_IPS ?? "",
+            value: addresses.join(", "),
             note:
-              "An apex cannot hold a CNAME, so this must be an A record — or an ALIAS/ANAME if " +
-              "your DNS provider offers one, which is preferable because our addresses can change.",
+              addresses.length === 0
+                ? "We could not resolve our own ingress addresses just now. Reload this page; if it " +
+                  "keeps happening, this is a problem on our side and not with your domain."
+                : "An apex cannot hold a CNAME, so this must be an A record — one per address " +
+                  "above. If your DNS provider offers ALIAS or ANAME, use that instead: these " +
+                  "addresses belong to a load balancer and can change.",
           }
         : {
             type: "CNAME" as const,
@@ -352,7 +386,7 @@ const routes = app
         ...auditContext(c),
       })
 
-      return c.json(present(row), 201)
+      return c.json(await present(row), 201)
     },
   )
   .post(
@@ -417,7 +451,7 @@ const routes = app
           .execute()
 
         const after = { ...domain, status: "verifying" }
-        return c.json(present(after))
+        return c.json(await present(after))
       }
 
       // Step 2 — has the certificate issued?
@@ -447,7 +481,7 @@ const routes = app
           .where("id", "=", domainId)
           .execute()
 
-        return c.json(present({ ...domain, status: "issuing", verifiedAt: new Date() }))
+        return c.json(await present({ ...domain, status: "issuing", verifiedAt: new Date() }))
       }
 
       /*
@@ -480,7 +514,7 @@ const routes = app
           .where("id", "=", domainId)
           .execute()
 
-        return c.json(present({ ...domain, status: "failed" }))
+        return c.json(await present({ ...domain, status: "failed" }))
       }
 
       await elb().send(
@@ -541,7 +575,7 @@ const routes = app
         .where("id", "=", domainId)
         .execute()
 
-      return c.json(present({ ...domain, status: "active", verifiedAt: new Date() }))
+      return c.json(await present({ ...domain, status: "active", verifiedAt: new Date() }))
     },
   )
   .delete(
