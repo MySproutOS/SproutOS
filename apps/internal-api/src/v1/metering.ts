@@ -106,7 +106,7 @@ export async function closeMeteringSinks(): Promise<void> {
  *
  * The route verifies, validates and normalizes, then waits for Kafka's replica acknowledgements.
  * ClickHouse stores the immutable raw record; a later job imports absolute rollups into Postgres
- * for rating. Valkey is only the rebuildable low-latency projection.
+ * for rating. The same retry-stable event id updates Valkey's low-latency projection.
  */
 const app = new Hono().post(
   "/metering/events",
@@ -152,10 +152,8 @@ const app = new Hono().post(
     // Which organizations actually exist.
     //
     // A pod's labels can name an organization that has since been deleted, or a label can simply be
-    // wrong. Inserting anyway violates `usage_event_organization_id_fkey` and returns a 500 — which
-    // the agent retries forever, so one stale pod label stalls that node's entire usage stream
-    // behind a batch that can never succeed. Observed exactly that way with a real batch from a real
-    // node.
+    // wrong. Publishing anyway creates durable usage nobody can attribute, and retrying one stale
+    // pod label can stall that node's entire usage stream behind a batch that can never succeed.
     //
     // Dropped rather than rejected: the rest of the batch is good, and usage for an organization
     // that no longer exists cannot be billed to anybody in any case.
@@ -171,8 +169,7 @@ const app = new Hono().post(
       ).map((row) => row.id),
     )
 
-    // And which projects. A project label can be stale for the same reasons, and the same insert
-    // fails on `usage_event_project_id_fkey` instead.
+    // And which projects. A project label can be stale for the same reasons.
     //
     // The remedy is different, though, and the difference is the point. An unknown *organization*
     // means there is nobody to bill, so the event is dropped. An unknown *project* means the
@@ -234,13 +231,11 @@ const app = new Hono().post(
     // Kafka is the durable acceptance boundary. If it cannot replicate the records, this throws
     // and the emitter receives a non-2xx so it keeps its own buffered copy.
     await sinks.publish(events)
-    try {
-      await sinks.project(events)
-    } catch (error) {
-      // Valkey is a rebuildable low-latency view, never the authority. Rejecting an event Kafka has
-      // already acknowledged would cause a retry and would still not repair this projection.
-      console.warn("[metering] active Valkey projection failed", error)
-    }
+    // Do not acknowledge until the live projection also lands. A Valkey failure makes the emitter
+    // retry: Kafka receives the same event id and ClickHouse replaces it, while Valkey's event-id
+    // guard makes the projection idempotent. This repairs the live view without making it the
+    // financial authority or allowing its outage to interrupt tenant traffic.
+    await sinks.project(events)
 
     return c.json(
       {

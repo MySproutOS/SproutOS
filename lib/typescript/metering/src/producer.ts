@@ -255,10 +255,11 @@ export async function connectUsageEventProducer(
   }
 
   return {
-    send: async (events) =>{ 
+    send: async (events) => {
       await sendEncoded(
         events.map((event) => ({ eventId: event.eventId, value: encodeUsageEvent(event) })),
-      ); },
+      )
+    },
     sendEncoded,
     disconnect: () => producer.disconnect(),
   }

@@ -58,7 +58,7 @@ engine = Kafka
 settings
   kafka_broker_list = 'kafka:9092',
   kafka_topic_list = 'usage-events',
-  kafka_group_name = 'clickhouse-usage-event-v1',
+  kafka_group_name = 'clickhouse-sproutos-usage-event-v1',
   kafka_format = 'JSONEachRow',
   kafka_max_block_size = 65536;
 

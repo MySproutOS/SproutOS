@@ -236,18 +236,23 @@ describe.skipIf(!reachable)("metering ingest", () => {
     }
   })
 
-  it("acknowledges durable usage when the rebuildable Valkey projection fails", async () => {
+  it("makes the emitter retry until the Valkey projection succeeds", async () => {
     const batch = batchOf([{}])
     setMeteringSinksForTest({
       publish: testSinks.publish,
       project: () => Promise.reject(new Error("Valkey unavailable")),
     })
     try {
-      expect((await post(batch)).status).toBe(202)
+      expect((await post(batch)).status).toBe(500)
       expect(storedFor(batch.events[0].externalId)).toHaveLength(1)
     } finally {
       setMeteringSinksForTest(testSinks)
     }
+
+    expect((await post(batch)).status).toBe(202)
+    const retries = storedFor(batch.events[0].externalId)
+    expect(retries).toHaveLength(2)
+    expect(retries[0]?.eventId).toBe(retries[1]?.eventId)
   })
 
   it("does not bill twice for a replayed batch", async () => {
@@ -374,10 +379,11 @@ describe.skipIf(!reachable)("metering ingest", () => {
     async () => {
       process.env.KAFKA_BROKERS_HOST = kafkaBroker
       const topic = process.env.KAFKA_USAGE_EVENT_TOPIC ?? "usage-events"
-      await clickhouse().command({ query: usageEventRawDdl() })
-      await clickhouse().command({ query: usageEventStoredAtDdl() })
-      await clickhouse().command({ query: usageEventQueueDdl("kafka:9092", topic) })
-      await clickhouse().command({ query: usageEventMaterializedViewDdl() })
+      const database = process.env.CLICKHOUSE_DATABASE ?? "observability"
+      await clickhouse().command({ query: usageEventRawDdl(database) })
+      await clickhouse().command({ query: usageEventStoredAtDdl(database) })
+      await clickhouse().command({ query: usageEventQueueDdl("kafka:9092", topic, database) })
+      await clickhouse().command({ query: usageEventMaterializedViewDdl(database) })
 
       const batch = batchOf([{ dimension: "site_request", quantity: 7 }])
       const event = batch.events[0]

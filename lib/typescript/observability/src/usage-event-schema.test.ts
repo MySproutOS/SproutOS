@@ -69,6 +69,7 @@ describe("the raw usage-event schema", () => {
       expect(ddl).toContain(field)
     }
     expect(ddl).toContain("kafka_format = 'JSONEachRow'")
+    expect(ddl).toContain("kafka_group_name = 'clickhouse-default-usage-event-v1'")
   })
 
   it("refuses configuration strings that could escape the Kafka settings", () => {

@@ -74,7 +74,7 @@ configure_producer "$USAGE_TOPIC" "$USAGE_USERNAME" "$USAGE_PASSWORD"
 if [ "${CLICKHOUSE_USAGE_KAFKA_SECURITY_PROTOCOL:-plaintext}" = "sasl_ssl" ]; then
   CONSUMER_USERNAME="${CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME:?set CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME in $ENV_FILE}"
   CONSUMER_PASSWORD="${CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD:?set CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD in $ENV_FILE}"
-  CONSUMER_GROUP="clickhouse-usage-event-v1"
+  CONSUMER_GROUP="clickhouse-sproutos-usage-event-v1"
 
   docker exec "$CONTAINER" /opt/kafka/bin/kafka-configs.sh \
     --bootstrap-server "$BROKER" \

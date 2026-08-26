@@ -249,6 +249,7 @@ export function usageEventStoredAtDdl(database = ""): string {
 export function usageEventQueueDdl(brokers: string, topic: string, database = ""): string {
   validateKafkaLocation(brokers, topic, "KAFKA_USAGE_EVENT_TOPIC")
   const table = qualified(database, USAGE_EVENT_QUEUE_TABLE)
+  const consumerNamespace = database === "" ? "default" : database
 
   return `
 create table if not exists ${table} (
@@ -275,7 +276,7 @@ engine = Kafka
 settings
   kafka_broker_list = '${brokers}',
   kafka_topic_list = '${topic}',
-  kafka_group_name = 'clickhouse-usage-event-v1',
+  kafka_group_name = 'clickhouse-${consumerNamespace}-usage-event-v1',
   kafka_format = 'JSONEachRow',
   kafka_max_block_size = 65536
 `.trim()
@@ -320,12 +321,13 @@ export function kafkaConfigured(): boolean {
 
 export async function ensureSchema(): Promise<void> {
   const client = clickhouse()
+  const database = process.env.CLICKHOUSE_DATABASE ?? "observability"
   await client.command({ query: LOG_RECORD_DDL })
   await client.command({ query: BODY_INDEX_DDL })
   await client.command({ query: RUNTIME_LOG_DDL })
   await client.command({ query: RUNTIME_MESSAGE_INDEX_DDL })
-  await client.command({ query: usageEventRawDdl() })
-  await client.command({ query: usageEventStoredAtDdl() })
+  await client.command({ query: usageEventRawDdl(database) })
+  await client.command({ query: usageEventStoredAtDdl(database) })
 
   /*
     The consumer, only where there is a broker to consume from.
@@ -347,7 +349,8 @@ export async function ensureSchema(): Promise<void> {
     query: usageEventQueueDdl(
       process.env.KAFKA_BROKERS ?? "",
       process.env.KAFKA_USAGE_EVENT_TOPIC ?? "usage-events",
+      database,
     ),
   })
-  await client.command({ query: usageEventMaterializedViewDdl() })
+  await client.command({ query: usageEventMaterializedViewDdl(database) })
 }
