@@ -50,6 +50,8 @@ this platform's constraints, and none announces itself.
 | [0011](0011-the-platform-was-free.md)              | The platform was free                      | Asking what anything cost    |
 | [0012](0012-the-last-mile-of-the-last-mile.md)     | The last mile of the last mile             | Driving the live site        |
 | [0013](0013-the-boundary-you-cannot-test.md)       | The boundary you cannot test               | Running the real client      |
+| [0014](0014-everything-was-running.md)             | Everything was running                     | One request from outside     |
+| [0015](0015-the-databases-the-product-sells.md)    | The databases the product sells            | Asking prod for one          |
 
 ## Running it on more than one cloud
 
