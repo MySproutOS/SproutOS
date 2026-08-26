@@ -287,3 +287,87 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
         }
     })))
 }
+
+/// Start the LLM proxy, if this deployment has one.
+///
+/// Returns `None` when `LLM_PROXY_LISTEN` is unset. Like the other splits it is optional: a router
+/// running to work on request routing needs no model provider anywhere, and a deployment that has
+/// not been given a proxy secret should say so rather than bind a port that answers 401 to
+/// everything.
+///
+/// **The secret is checked at boot, not on the first agent turn.** A router with a missing or
+/// malformed `LLM_PROXY_SECRET` cannot open any session, so every turn would fail — better to stop
+/// the deploy than to serve traffic while one split silently cannot work.
+pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+    let Ok(listen) = std::env::var("LLM_PROXY_LISTEN") else {
+        return Ok(None);
+    };
+
+    let key = sproutos_llm_proxy::seal::key_from_env()
+        .context("the LLM proxy cannot open sandbox credentials")?;
+
+    let pool_size: usize = std::env::var("LLM_PROXY_DB_POOL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(4);
+
+    let store = sproutos_llm_proxy::store::SessionStore::connect(
+        database_url,
+        pool_size,
+        key,
+        std::env::var("OPENAI_KEY").ok().filter(|it| !it.is_empty()),
+    )?;
+    store
+        .check()
+        .await
+        .context("the LLM proxy cannot reach the control-plane database")?;
+
+    /*
+      Metering is optional here and loud about it.
+
+      A proxy that forwards model traffic and bills nothing is worse than one that refuses to start,
+      *in production* — but in development there is no ingest endpoint and no HMAC key, and
+      requiring them would mean nobody can run the router locally. So it starts, and says on every
+      turn that the turn is not billed.
+    */
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|it| !it.is_empty());
+    let metering_key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|it| !it.is_empty())
+        .map(|it| it.into_bytes());
+    if ingest_url.is_none() || metering_key.is_none() {
+        tracing::warn!("the LLM proxy is running without metering; model usage will not be billed");
+    }
+
+    let state = Arc::new(sproutos_llm_proxy::serve::ProxyState {
+        store,
+        /*
+          No timeout on this client, deliberately.
+
+          An agent turn legitimately streams for minutes, and reqwest's default would cut it. The
+          bound that matters is the upstream's own, and a customer whose model call is genuinely
+          stuck is better served by their own client giving up than by us truncating a response
+          mid-token.
+        */
+        http: reqwest::Client::builder().build()?,
+        ingest_url,
+        metering_key,
+    });
+
+    let app = AxumRouter::new()
+        .fallback(any(sproutos_llm_proxy::serve::handle))
+        .with_state(state);
+
+    let listener = TcpListener::bind(&listen)
+        .await
+        .with_context(|| format!("the LLM proxy could not bind {listen}"))?;
+    tracing::info!(%listen, "LLM proxy listening");
+
+    Ok(Some(tokio::spawn(async move {
+        if let Err(cause) = axum::serve(listener, app).await {
+            tracing::error!(%cause, "the LLM proxy stopped serving");
+        }
+    })))
+}

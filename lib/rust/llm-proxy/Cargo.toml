@@ -9,8 +9,22 @@ repository.workspace = true
 [dependencies]
 aes-gcm = "0.10"
 anyhow.workspace = true
+axum.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures-util = "0.3"
+# `stream` on top of the workspace features: this is the only caller that reads a response as it
+# arrives rather than as one buffer, which is the difference between an agent watching tokens
+# appear and one watching nothing for a minute.
+reqwest = { workspace = true, features = ["stream"] }
 base64.workspace = true
+bytes.workspace = true
+deadpool-postgres.workspace = true
 serde.workspace = true
 sproutos-metering-proto.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+sproutos-service-credentials.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true

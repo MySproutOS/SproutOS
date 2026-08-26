@@ -50,6 +50,7 @@ pg-proxy = { path = "../pg-proxy" }
 search-proxy = { path = "../search-proxy" }
 serde.workspace = true
 serde_json.workspace = true
+sproutos-llm-proxy.workspace = true
 sproutos-service-credentials.workspace = true
 valkey-proxy = { path = "../valkey-proxy" }
 thiserror.workspace = true
