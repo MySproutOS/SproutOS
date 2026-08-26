@@ -41,7 +41,7 @@ rather than merely resolved.
 | [0014](0014-one-metering-pipeline.md)                    | One metering pipeline; money never rides the telemetry path                | Metering path       |
 | [0015](0015-store-table-is-store-listing.md)             | The store table is `store_listing`                                         | Store table name    |
 | [0016](0016-one-rbac-action-catalogue.md)                | One RBAC action catalogue, colon separators only, SRN resources everywhere | RBAC grammar        |
-| [0017](0017-soft-delete-on-billing-referenced-tables.md) | Soft delete (`deleted_at`) on anything `usage_event` references            | Delete semantics    |
+| [0017](0017-soft-delete-on-billing-referenced-tables.md) | Soft delete (`deleted_at`) on anything billing history references          | Delete semantics    |
 | [0018](0018-domains.md)                                  | `sproutos.dev` is the control plane; `sprout.run` is tenant traffic        | Domains             |
 
 ## Adding a record
@@ -55,6 +55,7 @@ The consolidated schema that these decisions produce is in [`../schema/TABLES.md
 | [0021](0021-builds-run-in-their-own-namespace.md) | Builds run in `sproutos-builds`, never a tenant namespace | Build isolation |
 | [0022](0022-tenant-hostnames-carry-a-discriminator.md) | Tenant hostnames carry a project discriminator (amends 0018) | Hostname collisions |
 | [0023](0023-metering-attribution-from-the-api-server.md) | Metering attribution is listed from the API server (amends 0014) | Usage attribution |
+| [0028](0028-kafka-clickhouse-metering.md) | Kafka and ClickHouse are the durable raw metering path (supersedes 0014 storage) | Metering path |
 
 ## Later records
 

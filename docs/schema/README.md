@@ -47,8 +47,8 @@ turned out to be wrong.
    circular FK or a dangling reference, and it is part of the verification pass on every phase.
 
 5. **Add a row to [`TABLES.md`](TABLES.md)** — the summary table, the area section, and the
-   ordering list. If the new table is referenced by `usage_event`, it needs `deleted_at` and its
-   inbound billing FKs are `ON DELETE RESTRICT`
+   ordering list. If durable billing or audit history references the new table, it needs
+   `deleted_at` and its inbound history FKs are `ON DELETE RESTRICT`
    ([ADR 0017](../adr/0017-soft-delete-on-billing-referenced-tables.md)).
 
 ## snake_case in migrations, camelCase in code

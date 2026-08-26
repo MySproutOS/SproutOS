@@ -169,9 +169,9 @@ rounds the **product** to whole micro-USD at the hour boundary, never per event.
 
 ## Soft delete and partial uniques
 
-Anything `usage_event` references is soft-deleted, per
+Anything durable billing or audit history references is soft-deleted, per
 [ADR 0017](../../docs/adr/0017-soft-delete-on-billing-referenced-tables.md). A hard delete would
-destroy the billing history that justifies charges already made.
+destroy the history that justifies charges already made.
 
 `deleted_at timestamptz NULL` on: `user`, `organization`, `project`, `repository`,
 `github_installation`, `store_listing`, `agent_credential`, `backend_service`, `database_instance`,
@@ -236,26 +236,12 @@ The `compacted_at` flag makes the checkpoint commit-ordered by construction. The
 fold in a row it can actually see, and a late-committing transaction's row simply stays uncompacted
 until the next pass. `seq` survives for stable pagination of the ledger UI, and for nothing else.
 
-## Partitioning
+## Raw metering storage
 
-`usage_event` is the only partitioned table, `RANGE` on `occurred_at`, daily partitions. At one-minute
-windows and 10k pods it is projected at roughly 14M rows/day.
-
-It is created with a raw `sql` statement, because the Kysely schema builder has no `PARTITION BY`. Two
-consequences follow from Postgres's rules, and both are load-bearing:
-
-- **The primary key is `(id, occurred_at)`**, not `id`. A partitioned table's unique constraints must
-  include every partition-key column.
-- **Idempotency is `UNIQUE (source, external_id, occurred_at)`**, for the same reason.
-  `external_id` is `{node_id}:{pod_uid}:{window_start}` and `occurred_at` is derived
-  deterministically from the same window, so a re-sent batch still collides and is absorbed. Do not
-  let a caller supply `occurred_at` independently of `external_id`, or the constraint stops working.
-
-The init migration creates partitions for yesterday through seven days out, UTC-aligned. **A
-`background_job` type must create tomorrow's partition and detach expired ones.** If it stops
-running, inserts fail outright — this needs an alert, not just a schedule. Never index
-`organization_id` alone; the indexes are `(organization_id, occurred_at)`,
-`(project_id, occurred_at)`, and BRIN on `occurred_at`.
+Postgres no longer stores raw usage. The init migration's daily `usage_event` partitions had a
+fixed creation window and therefore an expiry date. ADR 0028 moved acknowledged raw events to
+Kafka and ClickHouse; Postgres now holds only `metering_outbox`, `metering_import_state`, absolute
+`usage_rollup` grains, and ledger state.
 
 ## Seeds
 

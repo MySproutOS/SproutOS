@@ -1,6 +1,6 @@
 # 0014. One metering pipeline; money never rides the telemetry path
 
-- Status: Accepted
+- Status: Superseded by [0028](0028-kafka-clickhouse-metering.md)
 - Date: 2026-08-20
 
 ## Context
@@ -58,6 +58,13 @@ billing.
   provisioned-memory, and websocket-connection-seconds dimensions, which the compute design measured
   but had nowhere to land.
 - One environment variable, `METERING_INGEST_HMAC_KEY`. Kinesis leaves the billing path entirely.
+
+## Superseded, 2026-08-26
+
+The decision to keep money off the lossy observability path still stands. The Postgres
+`usage_event` implementation does not: its daily partitions were created only once by the initial
+migration, so the accepted pipeline had a built-in end date. ADR 0028 preserves the signed ingest
+contract and replaces the raw store with Kafka and ClickHouse.
 
 ## Alternatives considered
 
