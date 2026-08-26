@@ -17,6 +17,7 @@
     "seed:run": "kysely seed:run --cwd src"
   },
   "dependencies": {
+    "@lib/observability": "workspace:*",
     "@sproutos/db": "workspace:*",
     "kysely": "catalog:"
   },

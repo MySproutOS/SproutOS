@@ -149,6 +149,27 @@ SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
 # which is a URI that works and answers to nobody. This is why the code refuses to default it.
 SERVICE_SEARCH_PUBLIC_HOST=${search_subdomain}.${control_plane_domain}
 SERVICE_SEARCH_PUBLIC_PORT=443
+
+# The Postgres split, behind the tenant network load balancer. Same rule as search: this is the
+# proxy, never the database.
+SERVICE_POSTGRES_PUBLIC_HOST=${postgres_subdomain}.${control_plane_domain}
+SERVICE_POSTGRES_PUBLIC_PORT=5432
+
+# **`neon`, stated rather than left to the default, and this is a safety interlock.**
+#
+# The default is `sprout`, which means "a role and a database on a shared cluster" and takes its
+# admin connection from `SERVICE_POSTGRES_ADMIN_URL ?? DATABASE_URL`. `DATABASE_URL` here is the
+# *control plane*. So with the public host set and the provider left alone, provisioning a customer
+# database would not fail — it would succeed, by creating a real database and a real role inside the
+# RDS instance that holds every organization, session and credit ledger on the platform.
+#
+# That is the failure this repository keeps writing down: not an error, a working result that is
+# wrong. `sproutPostgresConfigFromEnv` already refuses to default the *public host* for the same
+# class of reason, and this is the other half of it.
+#
+# `neon` has no such fallback. Without `NEON_API_KEY` it refuses, the route answers 503 naming the
+# variable, and the missing thing is named rather than silently substituted.
+SERVICE_POSTGRES_PROVIDER=neon
 ENVFILE
 
 # The database URL, composed here from the secret RDS manages rather than written into the launch

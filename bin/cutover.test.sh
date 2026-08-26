@@ -43,6 +43,8 @@ case "$2" in
           *-api-green) echo "arn:api-green" ;;
           *-search-blue) echo "arn:search-blue" ;;
           *-search-green) echo "arn:search-green" ;;
+          *-pg-blue) echo "arn:pg-blue" ;;
+          *-pg-green) echo "arn:pg-green" ;;
           *-blue) echo "arn:blue" ;;
           *-green) echo "arn:green" ;;
         esac
@@ -90,6 +92,7 @@ run() {
   # a subshell, so an `unset` here dies with it, while `SEARCH_RULE_ARN=… out=$(run router)` assigns
   # in the parent and outlives the case that wrote it. See the `unset` before the no-rule case.
   if [ -n "${SEARCH_RULE_ARN:-}" ]; then export SEARCH_RULE_ARN; fi
+  if [ -n "${PG_LISTENER_ARN:-}" ]; then export PG_LISTENER_ARN; fi
   bash "$HERE/cutover.sh" "$@" 2>&1
 }
 
@@ -174,6 +177,35 @@ unset SEARCH_RULE_ARN
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router); status=$?
 check "moves the router alone when there is no search rule" "0" "$status"
 check "and touches no rule" "0" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+
+# The Postgres split is a *listener* on a second load balancer, not a rule on the first — so the
+# extras list has to carry both kinds at once. If this moved only the rule, a release would leave
+# every customer's database pointed at the colour the router had just drained, and both the router
+# and search would look correct while it did.
+#
+# Three modify calls: the search rule, the Postgres listener, and the router's own listener.
+unset SEARCH_RULE_ARN
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule PG_LISTENER_ARN=arn:pg-listener \
+  out=$(run router)
+check "moves the search rule" "1" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+check "and the postgres listener" "1" \
+  "$(grep -c 'modify-listener --listener-arn arn:pg-listener' "$STUB_CALLS")"
+check "and the router's own listener" "1" \
+  "$(grep -c 'modify-listener --listener-arn arn:listener' "$STUB_CALLS")"
+check "postgres goes to the same colour as the router" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:pg-green","Weight":100' "$STUB_CALLS")"
+
+# The front door moves last. Everything a customer reaches through the *other* balancer should
+# already be on the new colour by the time traffic arrives — and when an extra fails, the listener
+# must not have been touched at all, which is what kept an `AccessDenied` from becoming an outage.
+# Its line number equals the number of calls made, i.e. it is the last one. The first version of
+# this asserted `1` and failed with `3` — the code was right and the check was written backwards,
+# which is the direction worth catching early.
+check "the router's listener is written after the extras" \
+  "$(wc -l < "$STUB_CALLS" | tr -d ' ')" \
+  "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
+
+unset SEARCH_RULE_ARN PG_LISTENER_ARN
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"

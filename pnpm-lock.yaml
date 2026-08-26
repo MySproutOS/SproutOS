@@ -183,6 +183,9 @@ importers:
 
   apps/dbmigrator:
     dependencies:
+      '@lib/observability':
+        specifier: workspace:*
+        version: link:../../lib/typescript/observability
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../packages/db

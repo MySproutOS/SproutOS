@@ -104,14 +104,49 @@ services:
       - "yes"
       - --appendfsync
       - everysec
-      # The second lock. See the Traefik labels below for why one is not enough, and
-      # `services/valkey-proxy/src/upstream.rs` for the half that holds the key.
+      # The second lock. `services/valkey-proxy/src/upstream.rs` holds the key: the proxy presents
+      # this with `AUTH` on every backend connection, and the tenant's own credential — which is a
+      # SproutOS one the queue has never heard of — is consumed and answered by the proxy itself.
       - --requirepass
       - ${VALKEY_QUEUE_PASSWORD:?set VALKEY_QUEUE_PASSWORD}
+      # TLS terminated here, by Valkey, on its own port.
+      #
+      # The obvious route was a Traefik TCP router on the shared `websecure` entrypoint — Traefik
+      # multiplexes TCP and HTTP by SNI, so it would have needed no new port and no change to the
+      # forum's repository, which owns the entrypoint flags. It was tried and it took the whole
+      # host's certificate renewal down: a TCP router with TLS stops Traefik answering the
+      # `acme-tls/1` ALPN, so `tls-alpn-01` fails for **every** domain on 443. Measured both ways —
+      # with it, `opensearch.sproutos.me` burned five authorizations and hit the rate limit; without
+      # it, the certificate issued in ninety seconds.
+      #
+      # The trap is that an existing certificate keeps working, so the damage is invisible for sixty
+      # days and then takes out the forum, ClickHouse and search together.
+      #
+      # So: certbot holds a certificate for this name via DNS-01 (no port contention, unlike the
+      # `--standalone` that had quietly been failing for Kafka), a renewal hook copies it here, and
+      # Traefik never sees this traffic.
+      - --tls-port
+      - "6379"
+      # Plaintext off entirely. There is no local client — the forum has its own Valkey — so a
+      # loopback plaintext port would exist only to be forgotten about.
+      - --port
+      - "0"
+      - --tls-cert-file
+      - /tls/fullchain.pem
+      - --tls-key-file
+      - /tls/privkey.pem
+      # No client certificates. The proxy authenticates with `AUTH`, and requiring a client cert
+      # would mean a second credential to rotate that proves the same thing.
+      - --tls-auth-clients
+      - "no"
     volumes:
       - /srv/sproutos/valkey-queue:/data
+      - /srv/sproutos/valkey-tls:/tls:ro
     ports:
-      - "127.0.0.1:6379:6379"
+      # Published to every interface, unlike everything else here except Kafka — and for the same
+      # reason it is safe: the two locks above are on the connection itself rather than on who may
+      # reach the port. The router in AWS has no fixed address to allowlist.
+      - "6379:6379"
 
     # **Not reachable from AWS, and this is where that stopped.**
     #

@@ -758,6 +758,7 @@ resource "aws_launch_template" "service" {
     # name the instance is told and the name that resolves cannot drift apart.
     opensearch_subdomain = var.opensearch_subdomain
     search_subdomain     = var.search_subdomain
+    postgres_subdomain   = var.postgres_subdomain
     control_plane_domain = var.control_plane_domain
   }))
 
@@ -837,6 +838,10 @@ resource "aws_autoscaling_group" "router" {
   target_group_arns = [
     aws_lb_target_group.router[each.key].arn,
     aws_lb_target_group.search[each.key].arn,
+    # The Postgres and Valkey splits, on the tenant network load balancer rather than the ALB —
+    # see `nlb.tf`. Neither speaks HTTP, which is the whole reason there is a second balancer.
+    aws_lb_target_group.postgres[each.key].arn,
+    aws_lb_target_group.valkey[each.key].arn,
   ]
 
   min_size         = 0

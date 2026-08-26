@@ -83,7 +83,7 @@ command_id=$(aws ssm send-command \
   --instance-ids "$instance" \
   --document-name AWS-RunShellScript \
   --comment "migrate ${GITHUB_SHA:-manual}" \
-  --parameters 'commands=["set -a; . /etc/sproutos/env; set +a; cd /opt/sproutos/api && node migrate.mjs && node seed.mjs"]' \
+  --parameters 'commands=["set -a; . /etc/sproutos/env; set +a; cd /opt/sproutos/api && node migrate.mjs && node seed.mjs && node clickhouse.mjs"]' \
   --query 'Command.CommandId' --output text)
 
 echo "command $command_id"

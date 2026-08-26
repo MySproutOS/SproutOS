@@ -44,23 +44,27 @@ esac
 # `RULE_ARN` decides the colour and is read back to confirm the move; `ALSO_MOVE` follows it
 # without a vote. For the website that second rule is the API's, which has its own target groups on
 # its own port but is never a different colour.
+# `EXTRAS` is a list of `kind|short|arn`, moved to whatever colour the primary decides.
+#
+# `kind` is `rule` or `listener`, because the two take different AWS calls and the router now has
+# one of each: the search split is a *rule* on the application load balancer, and the Postgres split
+# is the whole *listener* on the network load balancer beside it. `short` names its target groups,
+# which are `$NAME_PREFIX-$short-$colour`.
+#
+# Every extra is optional. An estate with no OpenSearch behind it has no search rule, and one with
+# no tenant load balancer has no Postgres listener; a cutover there should move the router rather
+# than refuse, so an unset variable drops out of the list.
 if [ "$SERVICE" = "website" ]; then
   : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set}"
   : "${API_RULE_ARN:?API_RULE_ARN is not set}"
   RULE_ARN="$WEBSITE_RULE_ARN"
-  ALSO_MOVE="$API_RULE_ARN"
-  ALSO_SHORT=api
+  EXTRAS="rule|api|$API_RULE_ARN"
   short=web
 else
   RULE_ARN=""
-  # The search split, which rides the router's instances on port 9200 and is a listener rule
-  # because the router itself is the listener's default.
-  #
-  # Optional, and deliberately so: an estate with no `search.<domain>` rule is one where
-  # `SEARCH_PROXY_UPSTREAM` is unset and the split never starts, and a cutover there should move
-  # the router rather than refuse. Set the variable and it moves with it.
-  ALSO_MOVE="${SEARCH_RULE_ARN:-}"
-  ALSO_SHORT=search
+  EXTRAS=""
+  [ -n "${SEARCH_RULE_ARN:-}" ] && EXTRAS="$EXTRAS rule|search|$SEARCH_RULE_ARN"
+  [ -n "${PG_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|pg|$PG_LISTENER_ARN"
   short=router
 fi
 
@@ -154,17 +158,43 @@ if [ -n "$DRY_RUN" ]; then
   exit 0
 fi
 
-other_arn=$([ "$target_arn" = "$blue" ] && echo "$green" || echo "$blue")
+# The extras first, so that if anything fails it is something not yet serving that is wrong.
+#
+# What a browser hits is moved last. A moment of the API, search or Postgres on the new colour while
+# the front door is still on the old is the harmless order — and it is not hypothetical: the first
+# cutover carrying a search rule hit `AccessDenied` on `ModifyRule` because the deploy role's grant
+# enumerates rule ARNs and nobody had added the new one. Traffic never moved, because this ran
+# before the listener did.
+other_colour=$([ "$TARGET" = blue ] && echo green || echo blue)
 
-# The second rule first, so that if anything fails it is the one not yet serving that is wrong.
-# The website rule is what a browser hits; the API rule is what the website's own calls hit, and a
-# moment of the API on the new colour while the site is still on the old is the harmless order.
-if [ -n "$ALSO_MOVE" ]; then
-  also_target=$(group_arn_of "$ALSO_SHORT" "$TARGET")
-  also_other=$(group_arn_of "$ALSO_SHORT" "$([ "$TARGET" = blue ] && echo green || echo blue)")
-  aws elbv2 modify-rule --rule-arn "$ALSO_MOVE" \
-    --actions "$(forward_action "$also_target" "$also_other")" >/dev/null
-fi
+for extra in $EXTRAS; do
+  kind=${extra%%|*}
+  rest=${extra#*|}
+  extra_short=${rest%%|*}
+  extra_arn=${rest#*|}
+
+  extra_target=$(group_arn_of "$extra_short" "$TARGET")
+  extra_other=$(group_arn_of "$extra_short" "$other_colour")
+
+  case "$kind" in
+    rule)
+      aws elbv2 modify-rule --rule-arn "$extra_arn" \
+        --actions "$(forward_action "$extra_target" "$extra_other")" >/dev/null
+      ;;
+    listener)
+      aws elbv2 modify-listener --listener-arn "$extra_arn" \
+        --default-actions "$(forward_action "$extra_target" "$extra_other")" >/dev/null
+      ;;
+    *)
+      echo "unknown extra kind: $kind" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# The primary, last. `other_colour` is derived once above and reused, so the extras and the front
+# door cannot disagree about which way round they are going.
+other_arn=$([ "$other_colour" = blue ] && echo "$blue" || echo "$green")
 
 if [ -n "$RULE_ARN" ]; then
   aws elbv2 modify-rule --rule-arn "$RULE_ARN" \

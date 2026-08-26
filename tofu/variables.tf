@@ -288,13 +288,25 @@ variable "opensearch_subdomain" {
 }
 
 variable "tenant_valkey_subdomain" {
-  description = "Where the router's Valkey split reaches the tenant queue. Resolves to the OVH host, behind a Traefik TCP router that terminates TLS."
+  description = "The customer-facing address of the Valkey split, in front of `valkey-proxy`. Never the queue itself."
   type        = string
   default     = "valkey"
+}
+
+variable "tenant_queue_subdomain" {
+  description = "Where the router's Valkey split reaches the tenant queue on the OVH host. Valkey terminates its own TLS there."
+  type        = string
+  default     = "queue"
 }
 
 variable "search_subdomain" {
   description = "The customer-facing address of the search split, in front of `search-proxy`. Never the cluster itself."
   type        = string
   default     = "search"
+}
+
+variable "postgres_subdomain" {
+  description = "The customer-facing address of the Postgres split, in front of `pg-proxy`. Never a Neon host."
+  type        = string
+  default     = "postgres"
 }

@@ -233,6 +233,26 @@ resource "aws_route53_record" "clickhouse_ipv4" {
   ALB: an exact record beats a wildcard in Route 53, which is why these have to be written down
   rather than left to resolve.
 */
+/*
+  `valkey.<domain>`, the customer-facing address of the Valkey split.
+
+  It briefly pointed at the OVH host, for a Traefik TCP route that was removed — see the queue
+  service in `ovh/docker-compose.yaml` for why. It is an alias to the tenant load balancer now, and
+  the backend it eventually reaches is `queue.<domain>`, which is a different name on purpose: one
+  is the proxy a customer is given, the other is the queue behind it.
+*/
+resource "aws_route53_record" "tenant_valkey" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
+    evaluate_target_health = false
+  }
+}
+
 resource "aws_route53_record" "opensearch_ipv4" {
   zone_id = data.aws_route53_zone.main.zone_id
   name    = "${var.opensearch_subdomain}.${var.control_plane_domain}"
@@ -241,9 +261,21 @@ resource "aws_route53_record" "opensearch_ipv4" {
   records = [var.ovh_host_ipv4]
 }
 
-resource "aws_route53_record" "tenant_valkey_ipv4" {
+/*
+  The tenant queue on the OVH box, which the router's Valkey split connects onward to.
+
+  A backend name, not a customer-facing one — the customer is given the *proxy*, at
+  `${var.tenant_valkey_subdomain}.${var.control_plane_domain}`, which resolves to the tenant load
+  balancer. Same split as `opensearch` and `search`.
+
+  Unlike ClickHouse and OpenSearch this is not behind Traefik and has no IP allowlist, so it takes
+  an IPv6 record as happily as an IPv4 one — the reason those two are IPv4-only is that Traefik
+  cannot see a client's real address over IPv6 on this host, and nothing here is deciding anything
+  from the source address. What stands in front of it is Valkey's own TLS and `requirepass`.
+*/
+resource "aws_route53_record" "tenant_queue_ipv4" {
   zone_id = data.aws_route53_zone.main.zone_id
-  name    = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}"
+  name    = "${var.tenant_queue_subdomain}.${var.control_plane_domain}"
   type    = "A"
   ttl     = 300
   records = [var.ovh_host_ipv4]

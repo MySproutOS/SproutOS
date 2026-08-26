@@ -111,6 +111,45 @@ docker restart sproutos_kafka >/dev/null
 HOOK
 sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/kafka-keystore.sh
 
+# The same problem for the tenant queue, and the same shape of answer.
+#
+# Valkey terminates its own TLS rather than sitting behind Traefik. That is not a preference: a
+# Traefik **TCP** router with TLS on the shared `websecure` entrypoint stops Traefik answering the
+# `acme-tls/1` ALPN, which breaks Let's Encrypt's `tls-alpn-01` challenge for *every* domain on 443
+# — the forum included. Measured, both ways, on this host. So the queue gets a certificate of its
+# own on a port of its own, and Traefik never sees it.
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/valkey-tls.sh >/dev/null <<'HOOK'
+#!/usr/bin/env bash
+# Put the renewed certificate where the queue's container can read it, then restart it.
+set -euo pipefail
+
+[ "${RENEWED_LINEAGE:-}" = "/etc/letsencrypt/live/queue.sproutos.me" ] || exit 0
+
+DEST=/srv/sproutos/valkey-tls
+install -d -m 0755 "$DEST"
+
+# Copied rather than symlinked: `live/` is a symlink into `archive/`, and a container that mounts
+# `live/` sees a dangling link because `archive/` is outside the bind mount. That failure is a
+# Valkey which starts, cannot read its key, and exits — on a renewal, months from now.
+install -m 0644 "$RENEWED_LINEAGE/fullchain.pem" "$DEST/fullchain.pem"
+
+# Owned by the uid Valkey actually runs as, not by root.
+#
+# `docker exec` lands as root, so a root-owned `0600` key looks readable when you check it by hand.
+# The server does not run as root — the image's entrypoint drops to `valkey`, uid 999 — so it reads
+# the key as 999 and gets `error:8000000D:system library::Permission denied`, then exits, then
+# restarts, forever. Which is what happened.
+install -m 0600 "$RENEWED_LINEAGE/privkey.pem" "$DEST/privkey.pem"
+# `chown` and not `install -o 999`: this host has no user with that id, and GNU install resolves the
+# argument against the *host's* passwd file — "invalid user: '999'" — while the id only means
+# anything inside the container. `chown` takes the number as a number.
+chown 999:1000 "$DEST/privkey.pem"
+
+# Valkey reads its certificate at startup and has no signal to reload one.
+docker restart sproutos_valkey_queue >/dev/null
+HOOK
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/valkey-tls.sh
+
 echo
 echo "host prepared. Copy the compose file and start:"
 echo "  scp ovh/docker-compose.yaml ovh/.env ubuntu@<host>:/opt/sproutos/"

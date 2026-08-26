@@ -33,8 +33,20 @@ const errorResponse = {
 /** The default window a log page opens on. Long enough to see a deploy, short enough to be fast. */
 const DEFAULT_WINDOW_MS = 60 * 60 * 1000
 
+/*
+  Where a customer points their OTLP exporter.
+
+  `NEXT_PUBLIC_API_URL`, which is what every other reader of the API's own address uses — the
+  OpenAPI server URL in `index.ts`, `apiBase()` in `oauth.ts`, and the generated client. This read
+  `PUBLIC_API_URL`, a name nothing sets and nothing else reads, so it always took the fallback and
+  the Ingest key dialog offered `http://localhost:3001/v1/otlp` to a customer in production.
+
+  The fallback is the tell: a variable that is *usually* wrong fails loudly on the first request,
+  and a variable with a plausible localhost default fails by handing someone an address that is
+  syntactically fine and points at their own machine.
+*/
 function ingestEndpoint(): string {
-  const base = process.env.PUBLIC_API_URL ?? "http://localhost:3001"
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
   return `${base.replace(/\/$/, "")}/v1/otlp`
 }
 

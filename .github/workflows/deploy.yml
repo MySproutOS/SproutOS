@@ -226,6 +226,14 @@ jobs:
               --platform=node --format=esm --target=node24 \
               --outdir="$staging/api/seeds"
 
+            # ClickHouse's schema, which had no delivery path at all.
+            #
+            # `ensureSchema()` was called from two places and both were tests, so `log_record`
+            # existed on every developer's machine and on no deployment. The log viewer answered
+            # "Unknown table expression identifier 'log_record'" — a table that is in the repository
+            # and was never carried to the machine that needed it.
+            (cd apps/dbmigrator && node ../internal-api/build.mjs src/clickhouse-entry.ts "$staging/api/clickhouse.mjs")
+
             # `wait -n` then exit, rather than backgrounding and returning: systemd's unit is
             # `Type=simple` with one `ExecStart`, so this script *is* the service. Returning while
             # children ran would have systemd call the service dead and restart it in a loop;
