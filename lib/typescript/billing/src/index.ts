@@ -18,6 +18,7 @@ export {
   releaseHold,
   type SettleHold,
   settleHold,
+  settleHoldWithin,
 } from "./holds"
 export {
   ceilDiv,
