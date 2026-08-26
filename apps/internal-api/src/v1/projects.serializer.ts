@@ -149,6 +149,18 @@ export const projectSchemaUpdateRequest = Type.Object({
   autoUpdateMode: Type.Optional(AutoUpdateMode),
   /** Move this project into a group, or out of one with `null`. */
   parentProjectId: Type.Optional(Nullable(UUID7String)),
+  /**
+   * Turn this project into a logical grouping, or back.
+   *
+   * Requested by the agent as often as by a person — "mark this as a grouping and generate the
+   * projects it needs" is one of the things it is expected to do — which is why it lives on the
+   * ordinary update route rather than behind a separate admin action.
+   *
+   * Refused once the project has deployed. A group holds other projects and serves nothing, so
+   * converting one that is serving traffic would silently take a live site down; that is a
+   * migration somebody should perform deliberately, not a flag flip.
+   */
+  isGroup: Type.Optional(Type.Boolean()),
 })
 
 const projectEntry = Type.Object({

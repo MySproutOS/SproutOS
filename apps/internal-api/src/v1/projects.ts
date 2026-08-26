@@ -310,6 +310,8 @@ function serializeProject(
     repositoryId: project.repositoryId,
     storeListingId: project.storeListingId,
     agentCredentialId: project.agentCredentialId,
+    isGroup: project.isGroup,
+    parentProjectId: project.parentProjectId,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     repositoryOwnerLogin: repository.ownerLogin,
@@ -338,6 +340,9 @@ async function serializeOneProject(
     costMicroUsd: enriched?.costMicroUsd ?? "0",
     region: enriched?.region ?? null,
     hasUpstreamUpdate: enriched?.hasUpstreamUpdate ?? false,
+    url: enriched?.url ?? null,
+    hostname: enriched?.hostname ?? null,
+    liveDeploymentId: project.liveDeploymentId,
   }
 }
 
@@ -675,7 +680,8 @@ const app = new Hono()
       const rootDir = json.rootDir ?? listingRootDir ?? "."
       const dockerfilePath = json.dockerfilePath ?? listingDockerfilePath ?? "Dockerfile"
 
-      if (plan.mode === "existing") {
+      // A group builds nothing, so it has no target to conflict over.
+      if (plan.mode === "existing" && json.isGroup !== true) {
         const conflict = await fetchProject(db).findConflictingTarget({
           organizationId: organization.id,
           productionBranch,
@@ -982,6 +988,56 @@ const app = new Hono()
       }
 
       /*
+        Converting to a group is refused once anything has served.
+
+        A group deploys nothing, so flipping a live project would take its site down with no
+        deployment event to explain it — the hostname would simply stop being republished. A project
+        that has only ever failed to deploy has nothing to lose, which is the common case for one
+        being reorganised.
+      */
+      if (json.isGroup === true) {
+        const serving = await db
+          .selectFrom("deployment")
+          .select("id")
+          .where("projectId", "=", projectId)
+          .where("status", "=", "ready")
+          .where("deletedAt", "is", null)
+          .executeTakeFirst()
+
+        if (serving !== undefined) {
+          return throwBadRequest(
+            c,
+            "This project has deployed, so it cannot become a group — a group serves no traffic " +
+              "and converting it would take the site down. Create a group and move its projects " +
+              "into it instead.",
+            ErrorCode.ValidationFailed,
+            { target: "isGroup" },
+          )
+        }
+      }
+
+      /*
+        A group cannot itself sit inside a group, for now.
+
+        One level is what the switcher renders and what the requirement describes. Nesting is not
+        forbidden by the schema — `parent_project_id` is a plain self-reference — so this is the only
+        thing stopping a tree, and it is here rather than in the database because the restriction is
+        a product decision that may well be relaxed.
+      */
+      if (
+        json.isGroup === true &&
+        json.parentProjectId !== undefined &&
+        json.parentProjectId !== null
+      ) {
+        return throwBadRequest(
+          c,
+          "A group cannot be placed inside another group.",
+          ErrorCode.ValidationFailed,
+          { target: "parentProjectId" },
+        )
+      }
+
+      /*
         A parent must exist, be a group, and not be the project itself.
 
         Checked here rather than left to the foreign key, which only knows the row exists. A project
@@ -1039,6 +1095,7 @@ const app = new Hono()
           ...(json.autoUpdateMode === undefined ? {} : { autoUpdateMode: json.autoUpdateMode }),
           ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
           ...(json.parentProjectId === undefined ? {} : { parentProjectId: json.parentProjectId }),
+          ...(json.isGroup === undefined ? {} : { isGroup: json.isGroup }),
         })
 
         if (row === undefined) return undefined

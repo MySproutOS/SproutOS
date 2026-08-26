@@ -1342,4 +1342,191 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(detail.json.hasUpstreamUpdate).toBe(fromList?.hasUpstreamUpdate)
     })
   })
+
+  /*
+    Last in the file, deliberately.
+
+    These tests add a repository and several projects to organization A, and earlier suites assert
+    exact counts of both — "the repository list holds exactly one row", "the repository is kept while
+    one project still uses it". Running here means those assertions see the fixture they were written
+    against.
+  */
+  describe("groups", () => {
+    let groupId = ""
+    let childId = ""
+    /*
+      Its own repository, not the shared fixture.
+
+      These tests add several projects, and the delete suite below counts how many live on the
+      repository it is working with — sharing one made this file order-dependent in a way whose
+      symptom was an unrelated test asserting `5` where it wanted `1`.
+    */
+    let groupRepositoryId = ""
+
+    beforeAll(async () => {
+      groupRepositoryId = v7()
+      await db
+        .insertInto("repository")
+        .values({
+          id: groupRepositoryId,
+          organizationId: orgAId,
+          githubRepoId: BigInt("991001"),
+          ownerLogin: "acme",
+          name: "grouped-repo",
+          provenance: "new",
+        })
+        .execute()
+    })
+
+    it("creates a group, which is ready immediately and provisions nothing", async () => {
+      const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Reddit Clone",
+        isGroup: true,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+
+      expect(response.status).toBe(201)
+      const project = response.json.project as Json
+      groupId = project.id as string
+
+      expect(project.isGroup).toBe(true)
+      /*
+        `ready`, not `creating`.
+
+        There is no repository to fork and no artifact to publish, so a group left in `creating`
+        would wait forever on a job with no work to do.
+      */
+      expect(project.state).toBe("ready")
+    })
+
+    it("allows a second group on the same repository", async () => {
+      // The index predicate exists for exactly this. A group's rootDir is `.` by definition, so
+      // without excluding groups the second one collides with the first.
+      const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Reddit Clone Staging",
+        isGroup: true,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+
+      expect(response.status).toBe(201)
+      expect((response.json.project as Json).isGroup).toBe(true)
+    })
+
+    /*
+      A group at the repository root must not block a project that builds from it.
+
+      This is what `findConflictingTarget`'s `is_group = false` filter buys, and nothing else covers
+      it: the create route short-circuits that query for groups, so removing the filter breaks only
+      this direction — an ordinary project refused because a *group* already "occupies" `.`.
+    */
+    it("lets a deployable project build from the root a group already sits at", async () => {
+      const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Root Build",
+        rootDir: ".",
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+
+      expect(response.status).toBe(201)
+      expect((response.json.project as Json).rootDir).toBe(".")
+      expect((response.json.project as Json).isGroup).toBe(false)
+    })
+
+    it("places a project inside a group", async () => {
+      /*
+        A project made here, not the shared fixture.
+
+        The delete suite runs before this one and soft-deletes what it works with, so reaching for a
+        project another describe created makes this depend on whether that one got as far as
+        deleting it.
+      */
+      const created = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Grouped Child",
+        rootDir: "apps/child",
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      childId = (created.json.project as Json).id as string
+
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${childId}`, alice, {
+        parentProjectId: groupId,
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.json.parentProjectId).toBe(groupId)
+    })
+
+    it("refuses a parent that is not a group", async () => {
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${groupId}`, alice, {
+        parentProjectId: childId,
+      })
+
+      expect(response.status).toBe(400)
+      expect(JSON.stringify(response.json)).toContain("not a group")
+    })
+
+    it("refuses a project as its own group", async () => {
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${groupId}`, alice, {
+        parentProjectId: groupId,
+      })
+
+      expect(response.status).toBe(400)
+    })
+
+    it("converts a project that has never served into a group", async () => {
+      const created = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Never Deployed",
+        rootDir: "apps/never",
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      const id = (created.json.project as Json).id as string
+
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${id}`, alice, {
+        isGroup: true,
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.json.isGroup).toBe(true)
+    })
+
+    /*
+      The guard that matters.
+
+      A group serves nothing, so converting a project that *is* serving would take the site down
+      with no deployment event to explain it — the hostname would simply stop being republished.
+    */
+    it("refuses to convert a project that has deployed", async () => {
+      const created = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Has Served",
+        rootDir: "apps/served",
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      const id = (created.json.project as Json).id as string
+
+      await db
+        .insertInto("deployment")
+        .values({
+          id: v7(),
+          projectId: id,
+          kind: "production",
+          gitSha: "a".repeat(40),
+          status: "ready",
+        })
+        .execute()
+
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${id}`, alice, {
+        isGroup: true,
+      })
+
+      expect(response.status).toBe(400)
+      expect(JSON.stringify(response.json)).toContain("take the site down")
+    })
+
+    it("refuses to nest a group inside a group", async () => {
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${groupId}`, alice, {
+        isGroup: true,
+        parentProjectId: groupId,
+      })
+
+      expect(response.status).toBe(400)
+    })
+  })
 })

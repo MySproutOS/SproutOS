@@ -88,6 +88,16 @@ export function fetchProject(db: Kysely<DB>) {
       .where("rootDir", "=", input.rootDir)
       .where("productionBranch", "=", input.productionBranch)
       .where("deletedAt", "is", null)
+      /*
+        Groups are not build targets, so they cannot conflict with one.
+
+        This mirrors `project_repository_target_live_key`, which excludes them for the same reason:
+        a group's `root_dir` is `.` by definition, so without this the first group on a repository
+        blocks every later group *and* any project that builds from the repository root. Two places
+        express one rule, and they have to agree — the index is what makes it true under a race, and
+        this is what makes the error a sentence rather than a constraint violation.
+      */
+      .where("isGroup", "=", false)
       .executeTakeFirst()
   }
 
