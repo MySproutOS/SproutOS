@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { looksLikeApex, verificationName } from "./custom-domains"
+import {
+  hasValidationCname,
+  hasVerificationTxt,
+  looksLikeApex,
+  verificationName,
+} from "./custom-domains"
 
 /**
  * The apex heuristic decides which record a customer is told to create, and it is the one place
@@ -67,5 +72,31 @@ describe("the domain list", () => {
 
     const right = await Promise.all(rows.map((row) => presenter(row)))
     expect(right.map((row) => row.hostname)).toEqual(["one.example.com", "two.example.com"])
+  })
+})
+
+describe("proof of zone control", () => {
+  it("accepts the certificate CNAME as well as the TXT, and neither when absent", async () => {
+    /*
+      Both records prove the same thing: a name we chose, at a value we chose, inside the customer's
+      zone. Requiring both is asking twice, and a customer who published one gets a puzzle about
+      which of the two they missed rather than a working domain.
+
+      Asserted against a name that cannot resolve, because the property under test is that a missing
+      record is `false` rather than a throw — the two DNS helpers each swallow NXDOMAIN and SERVFAIL
+      alike, since distinguishing them tells a customer about their resolver rather than their
+      record.
+    */
+    const nowhere = `absent-${Date.now()}.invalid`
+    expect(await hasVerificationTxt(nowhere, "sproutos-domain-verification=x")).toBe(false)
+    expect(await hasValidationCname(`_x.${nowhere}`, "target.acm-validations.aws.")).toBe(false)
+  })
+
+  it("treats an unrequested certificate as no proof at all", async () => {
+    // A domain row with no certificate has nothing to check. Returning `true` for "nothing to
+    // compare" is the shape of bug that turns a proof into a formality.
+    expect(await hasValidationCname(null, "value")).toBe(false)
+    expect(await hasValidationCname("_x.example.com", null)).toBe(false)
+    expect(await hasValidationCname(null, null)).toBe(false)
   })
 })

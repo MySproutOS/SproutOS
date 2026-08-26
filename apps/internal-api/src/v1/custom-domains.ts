@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { resolve4, resolveTxt } from "node:dns/promises"
+import { resolve4, resolveCname, resolveTxt } from "node:dns/promises"
 import {
   ACMClient,
   DeleteCertificateCommand,
@@ -108,6 +108,48 @@ export function looksLikeApex(hostname: string): boolean {
 
   const MULTI_LABEL_SUFFIXES = new Set(["co.uk", "com.au", "co.nz", "co.jp", "com.br", "co.za"])
   return labels.length === 3 && MULTI_LABEL_SUFFIXES.has(labels.slice(-2).join("."))
+}
+
+/**
+ * Whether our own challenge TXT is published.
+ *
+ * `resolveTxt` returns arrays of strings because a TXT record can be split into 255-byte chunks;
+ * they are joined before comparison, or a token that crossed the boundary would never match. Ours
+ * is short enough that it will not, which is exactly the kind of assumption that stops being true
+ * after someone changes the token format.
+ */
+export async function hasVerificationTxt(hostname: string, token: string): Promise<boolean> {
+  try {
+    const records = await resolveTxt(verificationName(hostname))
+    return records.some((chunks) => chunks.join("") === token)
+  } catch {
+    // NXDOMAIN and SERVFAIL are both "not proven yet". Distinguishing them would tell the customer
+    // about their resolver rather than about their record.
+    return false
+  }
+}
+
+/**
+ * Whether the certificate's validation CNAME is published, right now.
+ *
+ * Checked live rather than inferred from the certificate's status — see the note at the call site
+ * about ACM's 72-hour validation reuse, which is why `ISSUED` alone is not proof in a shared
+ * account.
+ */
+export async function hasValidationCname(
+  name: string | null,
+  value: string | null,
+): Promise<boolean> {
+  if (name === null || value === null) return false
+  try {
+    const records = await resolveCname(name.replace(/\.$/, ""))
+    // Trailing dots are optional in what ACM reports and in what a resolver returns, so both sides
+    // are normalised. Comparing raw strings works until a provider adds one.
+    const expected = value.replace(/\.$/, "").toLowerCase()
+    return records.some((record) => record.replace(/\.$/, "").toLowerCase() === expected)
+  } catch {
+    return false
+  }
 }
 
 /** The name the verification TXT is published at. */
@@ -437,12 +479,28 @@ const routes = app
         match. Ours is short enough that it will not, which is exactly the kind of assumption that
         stops being true after someone changes the token format.
       */
-      let verified = false
-      try {
-        const records = await resolveTxt(verificationName(domain.hostname))
-        verified = records.some((chunks) => chunks.join("") === domain.verificationToken)
-      } catch {
-        verified = false
+      let verified = await hasVerificationTxt(domain.hostname, domain.verificationToken)
+
+      /*
+        The second proof, which is not a weaker one.
+
+        A customer adding a domain is asked to publish two records that both prove the same thing:
+        our TXT challenge, and the CNAME that validates the certificate we requested for them. Both
+        are names *we* chose, at values *we* chose, inside their zone — which is what proof of
+        control means. Requiring both is asking twice.
+
+        So either satisfies this step, and a customer who published only the certificate record gets
+        a working domain instead of a puzzle about which of two records they missed.
+
+        **What is deliberately not accepted is the certificate merely being `ISSUED`.** ACM reuses a
+        successful domain validation for 72 hours across the whole account, so a second certificate
+        for the same hostname can issue without anybody publishing anything — and this account is
+        shared by every tenant. Accepting `ISSUED` would let one organization claim a domain another
+        had recently validated. Resolving the record ourselves, now, closes that: reuse does not put
+        a record in a stranger's zone.
+      */
+      if (!verified) {
+        verified = await hasValidationCname(domain.acmValidationName, domain.acmValidationValue)
       }
 
       if (!verified) {
@@ -451,8 +509,9 @@ const routes = app
           .set({
             status: "verifying",
             statusReason:
-              `No matching TXT record at ${verificationName(domain.hostname)} yet. ` +
-              `DNS changes can take a few minutes to publish.`,
+              `No proof of control yet. Publish either the TXT record at ` +
+              `${verificationName(domain.hostname)}, or the certificate CNAME — either one is ` +
+              `enough. DNS changes can take a few minutes.`,
             updatedAt: new Date(),
           })
           .where("id", "=", domainId)
