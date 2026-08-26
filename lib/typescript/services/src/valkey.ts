@@ -8,6 +8,7 @@ import {
   type ProvisionResult,
   ServiceNotProvisionedError,
   type ServiceDriver,
+  ServiceNotConfiguredError,
 } from "./types"
 
 /**
@@ -41,7 +42,7 @@ export function valkeyServiceConfigFromEnv(
 ): ValkeyServiceConfig {
   const host = env.SERVICE_VALKEY_PUBLIC_HOST
   if (host === undefined || host === "") {
-    throw new Error("SERVICE_VALKEY_PUBLIC_HOST is not set")
+    throw new ServiceNotConfiguredError("SERVICE_VALKEY_PUBLIC_HOST", "valkey")
   }
   return {
     publicHost: host,

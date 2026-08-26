@@ -49,6 +49,7 @@ export {
   type ProvisionResult,
   type ServiceDriver,
   ServiceKindUnavailableError,
+  ServiceNotConfiguredError,
   type ServiceKind,
   ServiceNotProvisionedError,
   type ServiceStatus,

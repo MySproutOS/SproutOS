@@ -12,6 +12,7 @@ import {
   type ProvisionResult,
   ServiceNotProvisionedError,
   type ServiceDriver,
+  ServiceNotConfiguredError,
 } from "./types"
 
 /**
@@ -42,7 +43,7 @@ export function sproutPostgresConfigFromEnv(
 ): SproutPostgresConfig {
   const adminUrl = env.SERVICE_POSTGRES_ADMIN_URL ?? env.DATABASE_URL
   if (adminUrl === undefined || adminUrl === "") {
-    throw new Error("SERVICE_POSTGRES_ADMIN_URL is not set")
+    throw new ServiceNotConfiguredError("SERVICE_POSTGRES_ADMIN_URL", "postgres")
   }
 
   const parsed = new URL(adminUrl)

@@ -1,6 +1,7 @@
 import { crudAuditLog } from "@lib/dao"
 import {
   ServiceKindUnavailableError,
+  ServiceNotConfiguredError,
   ServiceNotProvisionedError,
   neonPostgresDriverFromEnv,
   objectStorageDriverFromEnv,
@@ -24,7 +25,8 @@ import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
 import { auditContext } from "../utils/request-context"
 import {
   servicesSchemaConnectionResponse,
@@ -264,6 +266,31 @@ const app = new Hono()
         if (error instanceof ServiceKindUnavailableError) {
           return throwBadRequest(c, `${String(body.kind)} services are not available yet`)
         }
+
+        /*
+          Misconfigured is not crashed, and the customer should not be told it is.
+
+          The `*ConfigFromEnv` functions threw a bare `Error` naming the missing variable, this
+          `throw` rethrew it, and the customer received `500 Internal Server Error` with no body —
+          for postgres, valkey and elasticsearch alike, which is every database this product sells.
+          A 500 says "we broke, try again"; the truth was "this deployment was never told where its
+          databases live", and no amount of retrying fixes that.
+
+          503 rather than 500, because the condition is temporary in the only sense that matters: it
+          ends when an operator sets the value. The variable is named in the message deliberately —
+          the only person who can act on this is reading logs or a support ticket, and "postgres is
+          unavailable" would send them looking at a database rather than at Parameter Store.
+        */
+        if (error instanceof ServiceNotConfiguredError) {
+          console.error(`[services] ${error.message}`)
+          return throwError(
+            c,
+            503,
+            ErrorCode.ServiceUnavailable,
+            `${String(body.kind)} services are not configured on this deployment (${error.variable} is not set). This is a platform configuration problem, not a problem with your project.`,
+          )
+        }
+
         throw error
       }
     },

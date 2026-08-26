@@ -8,6 +8,7 @@ import {
   type ProvisionResult,
   ServiceNotProvisionedError,
   type ServiceDriver,
+  ServiceNotConfiguredError,
 } from "./types"
 import { SecretNotRecoverableError } from "./valkey"
 
@@ -39,7 +40,7 @@ export function searchServiceConfigFromEnv(
 ): SearchServiceConfig {
   const host = env.SERVICE_SEARCH_PUBLIC_HOST
   if (host === undefined || host === "") {
-    throw new Error("SERVICE_SEARCH_PUBLIC_HOST is not set")
+    throw new ServiceNotConfiguredError("SERVICE_SEARCH_PUBLIC_HOST", "elasticsearch")
   }
   return {
     publicHost: host,

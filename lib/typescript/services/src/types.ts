@@ -70,6 +70,32 @@ export class ServiceKindUnavailableError extends Error {
   }
 }
 
+/**
+ * The deployment has no configuration for this kind of service.
+ *
+ * Distinct from [[ServiceKindUnavailableError]], which means the platform does not offer the kind at
+ * all. This one means it does, and *this* installation was never told where to reach it — a
+ * difference the customer cannot act on either way, but the operator very much can.
+ *
+ * It exists because the alternative was a bare `Error`. `sproutPostgresConfigFromEnv` and its
+ * siblings threw one naming the variable, the route rethrew it, and the customer received
+ * `500 Internal Server Error` with no body — for postgres, valkey and elasticsearch alike, which is
+ * every database this product sells. Nothing distinguished "we are misconfigured" from "we crashed",
+ * so nothing could report the first as the operational problem it is.
+ */
+export class ServiceNotConfiguredError extends Error {
+  override readonly name = "ServiceNotConfiguredError"
+
+  constructor(
+    readonly variable: string,
+    readonly kind?: string,
+  ) {
+    super(
+      `${variable} is not set, so ${kind ?? "this"} services cannot be provisioned by this deployment`,
+    )
+  }
+}
+
 export class ServiceNotProvisionedError extends Error {
   override readonly name = "ServiceNotProvisionedError"
 
