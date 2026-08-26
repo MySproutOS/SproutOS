@@ -191,6 +191,101 @@ if (process.argv.includes("--live")) {
   }
 }
 
+/*
+  The fourth list, which is the one that actually reaches a machine.
+
+  Everything above compares the repository against itself and against Parameter Store. None of it
+  can see the gap that has now caused two separate outages: `tofu/user-data.sh.tftpl` is rendered
+  into a **launch template**, and the Deploy workflow does not run `tofu apply`. So a change to what
+  an instance reads is real in git, real in Parameter Store, and absent from every instance until
+  somebody remembers the apply.
+
+  It has failed both ways. Once loudly and then invisibly — `CreateLaunchTemplateVersion` refused a
+  boot script over 16384 bytes, so no new version was created and instances kept booting the last
+  one that fit, while `plan` reported the drift as an ordinary pending change. Once quietly —
+  `NEON_ORG_ID` was added to every list here, this check passed, and the live instance did not have
+  it, so Postgres kept answering the same error.
+
+  So this reads the deployed template and asks whether the names the repository expects are in it.
+  Not the values: those are secrets and this prints its findings. Gzipped since the script outgrew
+  the 16 KB limit, which `Buffer`/`gunzipSync` handle without the value ever being logged.
+*/
+if (process.argv.includes("--live")) {
+  const { execFileSync } = await import("node:child_process")
+  const { gunzipSync } = await import("node:zlib")
+
+  const expected = new Set([...requested, ...direct])
+
+  for (const service of ["website", "router"]) {
+    let deployed
+    try {
+      /*
+        Found by prefix, not by name.
+
+        OpenTofu creates these with `name_prefix`, so the real names carry a generated suffix —
+        `sproutos-website-2026082501450195980000000f`. Asking for `sproutos-website` returns
+        `InvalidLaunchTemplateName.NotFoundException`, which this used to do: the check reported
+        that it could not read the template and passed. Caught only by deliberately breaking it,
+        which is the whole reason to.
+      */
+      const listed = execFileSync(
+        "aws",
+        [
+          "ec2",
+          "describe-launch-templates",
+          "--query",
+          `LaunchTemplates[?starts_with(LaunchTemplateName, '${process.env.NAME_PREFIX ?? "sproutos"}-${service}-')].LaunchTemplateId | [0]`,
+          "--output",
+          "text",
+        ],
+        { encoding: "utf8" },
+      ).trim()
+
+      if (listed === "" || listed === "None") throw new Error(`no launch template for ${service}`)
+
+      const encoded = execFileSync(
+        "aws",
+        [
+          "ec2",
+          "describe-launch-template-versions",
+          "--launch-template-id",
+          listed,
+          "--versions",
+          "$Latest",
+          "--query",
+          "LaunchTemplateVersions[0].LaunchTemplateData.UserData",
+          "--output",
+          "text",
+        ],
+        { encoding: "utf8" },
+      ).trim()
+
+      const bytes = Buffer.from(encoded, "base64")
+      // Gzipped since the script passed 16 KB; tolerate either form rather than assuming.
+      deployed =
+        bytes[0] === 0x1f && bytes[1] === 0x8b ? gunzipSync(bytes).toString() : bytes.toString()
+    } catch {
+      warnings.push(
+        `could not read the ${service} launch template, so nothing here checked what its instances ` +
+          `actually boot with.`,
+      )
+      continue
+    }
+
+    for (const key of [...expected].sort((a, b) => a.localeCompare(b))) {
+      // The name has to appear somewhere in the rendered script — in a `write_app_secrets` list or
+      // as an assignment. Absent means the template predates the change that added it.
+      if (!deployed.includes(key)) {
+        problems.push(
+          `${key} is expected by the repository but is not in the deployed ${service} launch ` +
+            `template. Run \`tofu apply\` — the Deploy workflow does not, so instances will keep ` +
+            `booting without it.`,
+        )
+      }
+    }
+  }
+}
+
 if (warnings.length > 0) {
   console.warn("Stored and never read:\n")
   for (const warning of warnings) console.warn(`  - ${warning}`)
