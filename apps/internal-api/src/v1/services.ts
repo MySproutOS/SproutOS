@@ -1,4 +1,5 @@
-import { crudAuditLog } from "@lib/dao"
+import { crudAuditLog, crudProjectEnvVar } from "@lib/dao"
+import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
   ServiceNotConfiguredError,
@@ -46,6 +47,68 @@ const errorResponse = {
  * One driver interface behind these routes, so adding Valkey and Elasticsearch is a driver rather
  * than a second set of endpoints with their own shapes.
  */
+/**
+ * The environment variable a given kind of service is conventionally read from.
+ *
+ * Absent from this map means "no convention we are confident about", and nothing is written — a
+ * guessed name is worse than none, because a customer who finds `OBJECT_STORAGE_URL` in their
+ * settings will reasonably assume their code is meant to read it.
+ */
+const CONNECTION_ENV_KEY: Record<string, string> = {
+  postgres: "DATABASE_URL",
+  valkey: "REDIS_URL",
+  elasticsearch: "ELASTICSEARCH_URL",
+}
+
+/**
+ * Put the connection URI where the application will actually find it.
+ *
+ * Provisioning a database wrote nothing into `project_env_var`; `teardown.ts` deleted them and
+ * nothing created them. So "deploy an app with a database" meant provisioning it, copying the URI
+ * out of the one response that ever contains it, and pasting it back into the project's settings by
+ * hand — and getting that wrong looks exactly like the application being broken.
+ *
+ * **This is the only moment the URI exists.** `service_credential` stores a hash, deliberately, so
+ * `connectionUri` cannot rebuild the credential half later and does not pretend to.
+ *
+ * Not fatal on failure, and marked `is_secret`. A provision that succeeded must not be reported as
+ * failed because a convenience did not land — the customer holds the URI either way, and the
+ * response still carries it.
+ */
+async function injectConnectionUri(input: {
+  connectionUri: string
+  kind: string
+  projectId: string | null
+}): Promise<void> {
+  if (input.projectId === null) return
+  const key = CONNECTION_ENV_KEY[input.kind]
+  if (key === undefined) return
+
+  try {
+    const sealed = await sealEnvVarValue(input.projectId, key, input.connectionUri)
+    await crudProjectEnvVar(db).upsert({
+      isSecret: true,
+      key,
+      projectId: input.projectId,
+      // Every environment: a preview deployment that cannot reach the database is a preview that
+      // proves nothing. A branch-scoped URI replaces this when the ephemeral-environment work
+      // lands.
+      target: "all",
+      value: sealed,
+    })
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        error: String(error),
+        key,
+        level: "error",
+        message: "could not write the connection URI into the project environment",
+        projectId: input.projectId,
+      }),
+    )
+  }
+}
+
 export function driverFor(kind: string) {
   /*
     All three kinds, because all three drivers exist.
@@ -289,6 +352,15 @@ const app = new Hono()
         if (body.kind === "valkey") {
           await captureQueueSecret(organization.id, backendServiceId, result.connectionUri)
         }
+
+        // The URI exists exactly once, here. If it is not written into the project's environment
+        // now, it cannot be later — `connectionUri` rebuilds what it can, but the credential half
+        // is stored as a hash on purpose.
+        await injectConnectionUri({
+          connectionUri: result.connectionUri,
+          kind: body.kind,
+          projectId: body.projectId ?? null,
+        })
 
         await crudAuditLog(db).record({
           organizationId: organization.id,
