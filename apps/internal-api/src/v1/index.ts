@@ -15,6 +15,7 @@ import githubRepos from "./github-repos"
 import members, { invites } from "./members"
 import oauth from "./oauth"
 import oauthClients from "./oauth-clients"
+import oauthGrants from "./oauth-grants"
 import organizations from "./organizations"
 import projects from "./projects"
 import sandboxes from "./sandboxes"
@@ -70,6 +71,8 @@ orgs.route("/", apiKeys)
 // Registering an application against our own OAuth provider. Org-scoped and authenticated, unlike
 // `/oauth/*` below, which is the provider itself and authenticates the client rather than a session.
 orgs.route("/", oauthClients)
+// Applications this user authorized, which is the other side of the clients they publish.
+orgs.route("/", oauthGrants)
 
 /**
  * Unauthenticated by design.

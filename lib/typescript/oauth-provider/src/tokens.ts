@@ -341,6 +341,15 @@ export type IntrospectedToken = {
   active: boolean
   userId?: string
   oauthClientId?: string
+  /**
+   * The grant this token was issued under.
+   *
+   * Carried so that anything the token creates can be attributed to it — a database provisioned by
+   * an application belongs to that application's grant, and revoking the grant must be able to find
+   * the credential it minted. Without this the application and the user hold the same secret and
+   * neither can be revoked without the other.
+   */
+  oauthGrantId?: string
   organizationId?: string
   scopes?: string[]
   expiresAt?: Date
@@ -356,6 +365,7 @@ export async function introspect(db: Kysely<DB>, token: string): Promise<Introsp
       "oauthAccessToken.scopes as scopes",
       "oauthAccessToken.expiresAt as expiresAt",
       "oauthAccessToken.revokedAt as revokedAt",
+      "oauthAccessToken.oauthGrantId as oauthGrantId",
       "oauthGrant.organizationId as organizationId",
       "oauthGrant.revokedAt as grantRevokedAt",
     ])
@@ -370,6 +380,7 @@ export async function introspect(db: Kysely<DB>, token: string): Promise<Introsp
     active: true,
     userId: row.userId,
     oauthClientId: row.oauthClientId,
+    oauthGrantId: row.oauthGrantId,
     organizationId: row.organizationId,
     scopes: row.scopes,
     expiresAt: row.expiresAt,

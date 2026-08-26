@@ -89,7 +89,10 @@ export async function authenticateBearer(c: Context): Promise<BearerResult | nul
   if (
     !introspected.active ||
     introspected.userId === undefined ||
-    introspected.oauthClientId === undefined
+    introspected.oauthClientId === undefined ||
+    // Refused rather than defaulted. A token with no grant cannot have anything it creates
+    // attributed to one, so it could mint a credential that revoking consent would never find.
+    introspected.oauthGrantId === undefined
   ) {
     invalidToken(c)
   }
@@ -103,6 +106,7 @@ export async function authenticateBearer(c: Context): Promise<BearerResult | nul
       kind: "oauth",
       scopes: introspected.scopes ?? [],
       oauthClientId: introspected.oauthClientId,
+      oauthGrantId: introspected.oauthGrantId,
     },
   }
 }

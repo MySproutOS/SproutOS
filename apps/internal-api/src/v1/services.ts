@@ -22,7 +22,7 @@ import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
 import { v7 } from "uuid"
-import { authMiddleware } from "../middleware"
+import { type AuthContext, authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
@@ -46,7 +46,7 @@ const errorResponse = {
  * One driver interface behind these routes, so adding Valkey and Elasticsearch is a driver rather
  * than a second set of endpoints with their own shapes.
  */
-function driverFor(kind: string) {
+export function driverFor(kind: string) {
   /*
     All three kinds, because all three drivers exist.
 
@@ -94,6 +94,49 @@ function driverFor(kind: string) {
   // Named rather than 500ing, because "not yet" is a different answer from "something broke" and
   // the customer can act on one of them.
   throw new ServiceKindUnavailableError(kind)
+}
+
+/**
+ * Record which OAuth grant created a service, and which grant owns its credential.
+ *
+ * A no-op for a person at a browser — `auth.kind` is `session` and the credential is theirs, which
+ * is what a null `oauth_grant_id` means.
+ *
+ * For an application it is the thing that makes consent revocable. Without it the application and
+ * the user hold the same secret: revoking the application's access cannot revoke its database
+ * access without breaking the user's own URI, and rotating to force the issue breaks every other
+ * consumer, because rotation revokes every live credential on the service.
+ *
+ * Done here rather than inside each driver. Four drivers mint credentials and threading a grant id
+ * through all four signatures is four places for it to be forgotten — this is one, on the path
+ * every kind already takes.
+ */
+async function attributeToGrant(auth: AuthContext, backendServiceId: string): Promise<void> {
+  // The value, not the `Context` it came from: Hono's context is invariant in its variables, so a
+  // helper typed on a narrower one cannot accept a route's wider one — and typing it as a bare
+  // `Context` makes `auth` an `any`, which turns the `kind` check below into no check at all.
+  if (auth.kind !== "oauth") return
+
+  await db
+    .updateTable("backendService")
+    .set({ createdByOauthGrantId: auth.oauthGrantId })
+    .where("id", "=", backendServiceId)
+    .execute()
+
+  /*
+    Only the live credential, and only the one with no grant yet.
+
+    A rotation performed by an application should attribute the *new* secret to it and leave the
+    revoked ones as the historical record of who held what. Matching on `revoked_at is null` is
+    what keeps a rotation from rewriting the past.
+  */
+  await db
+    .updateTable("serviceCredential")
+    .set({ oauthGrantId: auth.oauthGrantId })
+    .where("backendServiceId", "=", backendServiceId)
+    .where("revokedAt", "is", null)
+    .where("oauthGrantId", "is", null)
+    .execute()
 }
 
 const app = new Hono()
@@ -226,6 +269,9 @@ const app = new Hono()
           .set({ status: "active", updatedAt: new Date() })
           .where("id", "=", backendServiceId)
           .execute()
+
+        // Attributed to the grant that asked for it, if an application did.
+        await attributeToGrant(c.var.auth, backendServiceId)
 
         /*
           Capture the queue's URI now, because this is the only moment it exists.
@@ -363,6 +409,11 @@ const app = new Hono()
 
       try {
         const connectionUri = await driverFor(service.kind).rotateCredentials(serviceId)
+
+        // The replacement belongs to whoever rotated it. An application rotating its own credential
+        // keeps it revocable; a user rotating takes ownership, which is how they take a database
+        // back from an application without deleting it.
+        await attributeToGrant(c.var.auth, serviceId)
 
         /*
           Rotation is also how a queue provisioned before workers existed gets a Secret.

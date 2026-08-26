@@ -228,6 +228,7 @@ export interface AuditLog {
 
 export interface BackendService {
   createdAt: Generated<Timestamp>
+  createdByOauthGrantId: string | null
   deletedAt: Timestamp | null
   id: string
   kind: string
@@ -902,6 +903,7 @@ export interface ServiceCredential {
   id: string
   lastFour: string
   lastUsedAt: Timestamp | null
+  oauthGrantId: string | null
   purpose: Generated<string>
   revokedAt: Timestamp | null
   secretHash: string

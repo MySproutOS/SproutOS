@@ -70,7 +70,14 @@ export async function getSession<E extends Env>(
  */
 export type AuthContext =
   | { kind: "session"; scopes: null }
-  | { kind: "oauth"; scopes: string[]; oauthClientId: string }
+  /*
+    `oauthGrantId` alongside the client id, because they answer different questions.
+
+    The client is *which application*; the grant is *this user's authorization of it*, which is the
+    thing that gets revoked. A credential minted under a token is attributed to the grant so that
+    withdrawing consent can find it — see the `oauth_grant_scoped_credentials` migration.
+  */
+  | { kind: "oauth"; scopes: string[]; oauthClientId: string; oauthGrantId: string }
   | { kind: "api_key"; scopes: string[]; apiKeyId: string }
 
 export const authMiddleware = createMiddleware<{
