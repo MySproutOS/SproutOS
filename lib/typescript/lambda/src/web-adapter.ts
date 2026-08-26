@@ -56,6 +56,28 @@ export const WEB_ADAPTER_HANDLER = "run.sh"
 export const DEFAULT_WEB_ADAPTER_LAYER_VERSION = "29"
 
 /**
+ * The architecture every customer function is published on.
+ *
+ * **Stated once, because it was never stated at all.** `publishFunction` did not set
+ * `Architectures`, so Lambda used its default of `x86_64` — while the log extension layer, the only
+ * one this platform builds, is `aarch64-unknown-linux-musl` (`AGENTS.md` names that target) and was
+ * published declaring `arm64`. Lambda attached it anyway and every invocation died on
+ * `/opt/extensions/log-extension: cannot execute binary file`, reported as `Extension.Crash` — a
+ * failure in the customer's function with no cause anywhere in the customer's code.
+ *
+ * `arm64` rather than rebuilding the extension: Graviton is cheaper per millisecond for identical
+ * work, and it is the architecture the one binary we ship is already built for. The cost is that a
+ * build produced on a GitHub `ubuntu-latest` runner is an x86-64 machine's output, so a project with
+ * a compiled native dependency would ship the wrong `.node` file. The deploy action checks for that
+ * and refuses, because the alternative is a module-not-found at runtime that names a file rather
+ * than an architecture.
+ *
+ * **Not changeable in place.** `UpdateFunctionConfiguration` does not accept `Architectures`, so a
+ * function created before this has to be deleted to move.
+ */
+export const LAMBDA_ARCHITECTURE = "arm64" as const
+
+/**
  * AWS's published account for the adapter layer. Not ours, and not a secret.
  *
  * Returns `undefined` only when an override is explicitly set to something unusable, so the publish
@@ -73,10 +95,9 @@ export function webAdapterLayerArn(region: string): string | undefined {
   const version =
     configured === undefined || configured === "" ? DEFAULT_WEB_ADAPTER_LAYER_VERSION : configured
 
-  // `X86` rather than `Arm64`: `publishFunction` does not set `Architectures`, so Lambda uses its
-  // default. A layer for the other architecture fails at publish, which is loud — but the two must
-  // be changed together, so they are named in one place.
-  return `arn:aws:lambda:${region}:753240598075:layer:LambdaAdapterLayerX86:${version}`
+  // `Arm64`, matching `LAMBDA_ARCHITECTURE`. The two must move together — an adapter built for the
+  // other architecture is the same `cannot execute binary file` this platform already shipped once.
+  return `arn:aws:lambda:${region}:753240598075:layer:LambdaAdapterLayerArm64:${version}`
 }
 
 /**

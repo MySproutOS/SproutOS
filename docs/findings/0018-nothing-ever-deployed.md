@@ -151,3 +151,38 @@ For now the action copies both directories into the archive, which is Next's own
 instruction and needs no CDN. The separate upload stays, because serving assets from Lambda is the
 wrong long-run answer — but "wrong long-run answer" beats "the site has no CSS", and the difference
 between the two was one unread field.
+
+## `cannot execute binary file`
+
+The first function to publish and take traffic returned the router's error page. The chain to that
+point was entirely sound — DNS, TLS, the route lookup, the alias, the invoke — and the function
+itself died at init:
+
+```
+/opt/extensions/log-extension: /opt/extensions/log-extension: cannot execute binary file
+INIT_REPORT Phase: init  Status: error  Error Type: Extension.Crash
+```
+
+`publishFunction` never set `Architectures`, so Lambda used its default of `x86_64`. The log
+extension is built for `aarch64-unknown-linux-musl` — `AGENTS.md` names that target — and its layer
+declares `arm64`. Lambda attached it to an x86_64 function without complaint and crashed every
+invocation, reported as the _customer's_ function failing.
+
+**The extension has therefore never run.** It has been attached to every publish since it was
+written, and every one of those functions was the wrong architecture — which nobody could see,
+because no function ever served a request.
+
+Nothing in this repository builds or publishes that layer. `services/log-extension` is a crate; the
+layer in the account was published by hand, once, and its architecture is a fact only AWS knows.
+That is the same class as the certificate made by hand earlier in the week, and it is why the
+architecture is now a named constant next to the code that publishes with it, rather than a default
+nobody chose.
+
+arm64 is the choice, not x86_64: Graviton is cheaper for identical work, and it is what the one
+binary this platform ships is already built for. The cost is that a build produced on a GitHub
+`ubuntu-latest` runner is x86-64 output, so the deploy action now refuses an archive containing
+x86-64 `.node` files and names them — a module-not-found at runtime names a file, never an
+architecture.
+
+`Architectures` cannot be changed by `UpdateFunctionConfiguration`, so a function published before
+this has to be deleted to move.

@@ -13,7 +13,7 @@ import {
   waitUntilFunctionUpdatedV2,
 } from "@aws-sdk/client-lambda"
 import { mintProjectToken } from "./project-token"
-import { webAdapterEnv } from "./web-adapter"
+import { LAMBDA_ARCHITECTURE, webAdapterEnv } from "./web-adapter"
 
 /**
  * Putting a customer's build on Lambda.
@@ -149,6 +149,14 @@ export async function publishFunction(
       new CreateFunctionCommand({
         FunctionName: name,
         Role: input.roleArn,
+        /*
+          Set explicitly, because not setting it is also a choice and it was the wrong one.
+
+          Lambda defaults to `x86_64`; the log extension attached to every customer function is an
+          `aarch64` binary. Every invocation died on `cannot execute binary file` as an
+          `Extension.Crash`, which reads as the customer's application failing.
+        */
+        Architectures: [LAMBDA_ARCHITECTURE],
         Handler: input.handler,
         Runtime: input.runtime,
         MemorySize: input.memoryMb,

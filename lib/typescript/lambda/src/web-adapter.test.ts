@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { runtimeForPreset } from "./runtimes"
 import {
   DEFAULT_WEB_ADAPTER_LAYER_VERSION,
+  LAMBDA_ARCHITECTURE,
   startupScript,
   WEB_ADAPTER_HANDLER,
   webAdapterEnv,
@@ -20,17 +21,17 @@ describe("webAdapterLayerArn", () => {
     // instances only on the next infrastructure change. A publish path that depends on one is a
     // publish path that refuses every web deployment until somebody notices.
     expect(webAdapterLayerArn("us-east-1")).toBe(
-      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
+      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
     )
   })
 
   it("composes AWS's public layer ARN from the version and the region", () => {
     process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION = "29"
     expect(webAdapterLayerArn("us-east-1")).toBe(
-      "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:29",
+      "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:29",
     )
     expect(webAdapterLayerArn("eu-west-1")).toBe(
-      "arn:aws:lambda:eu-west-1:753240598075:layer:LambdaAdapterLayerX86:29",
+      "arn:aws:lambda:eu-west-1:753240598075:layer:LambdaAdapterLayerArm64:29",
     )
   })
 
@@ -46,8 +47,18 @@ describe("webAdapterLayerArn", () => {
     process.env.LAMBDA_WEB_ADAPTER_LAYER_VERSION = ""
     process.env.LAMBDA_WEB_ADAPTER_LAYER_ARN = ""
     expect(webAdapterLayerArn("us-east-1")).toBe(
-      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
+      `arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:${DEFAULT_WEB_ADAPTER_LAYER_VERSION}`,
     )
+  })
+})
+
+describe("LAMBDA_ARCHITECTURE", () => {
+  it("matches the adapter layer that is attached", () => {
+    // The two are one decision. A layer for the other architecture is `cannot execute binary file`
+    // at init, reported as the customer's function crashing — which is how the log extension spent
+    // its entire existence.
+    const arn = webAdapterLayerArn("us-east-1")
+    expect(arn).toContain(LAMBDA_ARCHITECTURE === "arm64" ? "Arm64" : "X86")
   })
 })
 

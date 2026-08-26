@@ -41,6 +41,7 @@ export {
 } from "./migrate"
 export {
   DEFAULT_WEB_ADAPTER_LAYER_VERSION,
+  LAMBDA_ARCHITECTURE,
   startupScript,
   WEB_ADAPTER_HANDLER,
   WEB_ADAPTER_PORT,
