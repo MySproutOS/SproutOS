@@ -905,6 +905,10 @@ importers:
         version: 26.2.0
 
   lib/typescript/metering:
+    dependencies:
+      kafkajs:
+        specifier: ^2.2.4
+        version: 2.2.4
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

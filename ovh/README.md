@@ -50,6 +50,8 @@ be both.
 ```sh
 ./bootstrap.sh              # host preparation: docker, sysctls, swap, directories
 docker compose up -d        # on the host, from /opt/sproutos
+./bootstrap-kafka.sh        # topics, SCRAM verifier, and producer-only ACLs
 ```
 
-Nothing here is done by hand. If a step is missing from `bootstrap.sh`, that is the bug.
+Nothing here is an undocumented command: host preparation and broker provisioning live in these
+scripts. If a step is missing from them, that is the bug.

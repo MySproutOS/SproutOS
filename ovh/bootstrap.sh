@@ -152,5 +152,5 @@ sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/valkey-tls.sh
 
 echo
 echo "host prepared. Copy the compose file and start:"
-echo "  scp ovh/docker-compose.yaml ovh/.env ubuntu@<host>:/opt/sproutos/"
-echo "  ssh ubuntu@<host> 'cd /opt/sproutos && docker compose up -d'"
+echo "  scp ovh/docker-compose.yaml ovh/.env ovh/bootstrap-kafka.sh ubuntu@<host>:/opt/sproutos/"
+echo "  ssh ubuntu@<host> 'cd /opt/sproutos && docker compose up -d && ./bootstrap-kafka.sh'"

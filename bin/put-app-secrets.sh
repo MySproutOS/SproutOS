@@ -43,6 +43,8 @@ KEYS=(
   KAFKA_BROKERS
   KAFKA_SASL_USERNAME
   KAFKA_SASL_PASSWORD
+  KAFKA_USAGE_EVENT_SASL_USERNAME
+  KAFKA_USAGE_EVENT_SASL_PASSWORD
   OVH_CLICKHOUSE_PASSWORD
   # Runtime logs. Only the password is a secret; the URL, user and database are plain text in the
   # launch template, because a hostname is not a credential.
