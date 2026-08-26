@@ -30,6 +30,13 @@ pre-commit:
       glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc,md}"
       run: pnpm exec oxfmt --config oxfmt.config.mts {staged_files}
       stage_fixed: true
+    # CI runs `tofu fmt -check -recursive` and fails the whole run on a misaligned `=`. That is a
+    # formatting nit that stops a deploy, and it had to be found from a red CI run rather than here
+    # — which is the same argument the oxfmt hook above already makes.
+    tofu-fmt:
+      glob: "*.tf"
+      run: tofu fmt {staged_files}
+      stage_fixed: true
     tflint:
       glob: "tofu/*.tf"
       run: cd tofu && tflint
