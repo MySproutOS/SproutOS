@@ -38,3 +38,5 @@ export {
   CONTROL_PLANE_DISALLOWED_TOOLS,
   disallowedTools,
 } from "./tools"
+export { changedFiles, commitAndPush, type CommitInput, type CommitResult } from "./commit"
+export { installSproutosSkill, type SkillInput } from "./skill"

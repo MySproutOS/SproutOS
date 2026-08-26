@@ -10,5 +10,17 @@
     ],
     "deny": []
   },
-  "enabledMcpjsonServers": ["context7", "postgres-main"]
+  "enabledMcpjsonServers": ["context7", "postgres-main"],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-direction.sh"
+          }
+        ]
+      }
+    ]
+  }
 }

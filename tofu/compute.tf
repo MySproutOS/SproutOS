@@ -497,6 +497,42 @@ resource "aws_acm_certificate" "tenant" {
   tags = { Name = "${var.name_prefix}-cert" }
 }
 
+/*
+  The tenant domain's own certificate.
+
+  Separate from the one above because they cover different names and, more to the point, because a
+  tenant hostname and the apex that authenticates our users should not be vouched for by the same
+  certificate. `*.sproutos.run` is one label, same as the control plane's wildcard and for the same
+  reason — which is why a preview host is `pr-42--myapp` and not `pr-42.myapp`.
+
+  This is the *default* certificate for tenant traffic. Customer domains are not here: they arrive
+  at runtime, one `aws_lb_listener_certificate` equivalent per domain added through the API, because
+  a customer adding a domain cannot wait for an apply.
+*/
+resource "aws_acm_certificate" "tenant_apps" {
+  domain_name               = var.tenant_domain
+  subject_alternative_names = ["*.${var.tenant_domain}"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "${var.name_prefix}-tenant-cert" }
+}
+
+/*
+  Attached to the listener rather than replacing its default.
+
+  A listener has one default certificate and any number of additional ones chosen by SNI. The
+  control plane's stays the default: it is what an unmatched request gets, and answering a stray
+  connection with the tenant certificate would name a domain the visitor did not ask for.
+*/
+resource "aws_lb_listener_certificate" "tenant_apps" {
+  listener_arn    = aws_lb_listener.https.arn
+  certificate_arn = aws_acm_certificate_validation.tenant_apps.certificate_arn
+}
+
 # ---------------------------------------------------------------------------
 # The instances
 # ---------------------------------------------------------------------------
@@ -752,7 +788,7 @@ resource "aws_launch_template" "service" {
     artifacts_bucket = aws_s3_bucket.artifacts.bucket
     aws_region       = var.aws_region
     valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
-    tenant_domain    = var.control_plane_domain
+    tenant_domain    = var.tenant_domain
 
     # Kept in step with `.config/mise.toml` and the deploy workflow by hand, because three places
     # is already one too many. A mismatch means the release was built on one Node and runs on

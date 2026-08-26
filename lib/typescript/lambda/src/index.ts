@@ -24,3 +24,11 @@ export { publishQueue, type QueueBinding, readQueue, withdrawQueue } from "./que
 export { type DeploymentSpec, hostLabel, type ProjectSpec } from "./hosts"
 
 export { mintProjectToken } from "./project-token"
+export {
+  DEFAULT_HANDLER,
+  DEFAULT_RUNTIME,
+  isSupportedRuntime,
+  runtimeForPreset,
+  SUPPORTED_RUNTIMES,
+  type SupportedRuntime,
+} from "./runtimes"

@@ -46,9 +46,24 @@ pub enum StoreError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Authentication {
     /// The secret matched a live credential.
-    Ok(Box<TenantIdentity>),
+    Ok(Box<AuthenticatedTenant>),
     /// No live credential, or the wrong secret. Deliberately one variant: see [`CredentialStore::authenticate`].
     Denied,
+}
+
+/// A tenant that authenticated, and which slice of their data the credential reaches.
+///
+/// The identity comes from the username and says *which service*. The branch comes from the
+/// credential row and says *which branch of it* — null for an ordinary credential, which means the
+/// primary branch and is what every credential meant before ephemeral environments existed.
+///
+/// These are deliberately one value rather than two returns. A caller that had to remember to ask
+/// for the branch separately is a caller that will one day forget, and forgetting means an
+/// ephemeral credential silently connecting to production.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthenticatedTenant {
+    pub identity: TenantIdentity,
+    pub database_branch_id: Option<uuid::Uuid>,
 }
 
 /// A live object-storage credential and what it belongs to.
@@ -134,7 +149,7 @@ impl CredentialStore {
           not a permission check on another.
         */
         let statement = "
-            select c.id, c.secret_hash
+            select c.id, c.secret_hash, c.database_branch_id
               from service_credential c
               join backend_service s on s.id = c.backend_service_id
               join organization o on o.id = s.organization_id
@@ -172,13 +187,14 @@ impl CredentialStore {
           service's credentials a secret is closest to — a small leak, and the cost of not having it
           is one hash comparison against a list that is two long.
         */
-        let mut matched: Option<uuid::Uuid> = None;
+        let mut matched: Option<(uuid::Uuid, Option<uuid::Uuid>)> = None;
         for row in &rows {
             let credential_id: uuid::Uuid = row.get(0);
             let stored: &str = row.get(1);
+            let branch_id: Option<uuid::Uuid> = row.get(2);
 
             match verify_secret(secret, stored) {
-                Ok(true) => matched = matched.or(Some(credential_id)),
+                Ok(true) => matched = matched.or(Some((credential_id, branch_id))),
                 Ok(false) => {}
                 // A hash we cannot read is our fault, not the client's. Reporting it as a wrong
                 // password would send an operator chasing the tenant instead of the row.
@@ -192,9 +208,12 @@ impl CredentialStore {
         }
 
         match matched {
-            Some(credential_id) => {
+            Some((credential_id, database_branch_id)) => {
                 self.stamp_used(credential_id).await;
-                Ok(Authentication::Ok(Box::new(identity)))
+                Ok(Authentication::Ok(Box::new(AuthenticatedTenant {
+                    identity,
+                    database_branch_id,
+                })))
             }
             None => Ok(Authentication::Denied),
         }

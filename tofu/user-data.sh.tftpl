@@ -71,6 +71,12 @@ echo "$RELEASE" > /etc/sproutos/release
 cat > /etc/sproutos/env <<ENVFILE
 AWS_REGION=$REGION
 VALKEY_URL=${valkey_url}
+# Where *customer* applications are served from — not where the control plane lives.
+#
+# These were one value, which worked only because they were the same domain. They are different
+# things: this one appears in hostnames we hand to strangers, the other scopes our session cookie.
+# Conflating them meant a tenant hostname was one wildcard away from the apex that authenticates
+# our own users.
 TENANT_DOMAIN=${tenant_domain}
 ROUTER_PORT=8080
 PORT=8080
@@ -81,8 +87,8 @@ API_PORT=3001
 # from, and it is read through `requireEnv` — absent, the login route throws before it reaches
 # GitHub. It has to be the *one* host the OAuth App has registered, because GitHub compares the
 # redirect it is sent against the one on the application.
-NEXT_PUBLIC_HOST_URL=https://${tenant_domain}
-NEXT_PUBLIC_API_URL=https://api.${tenant_domain}
+NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
+NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 
 # The key `@lib/envelope` wraps data keys with.
 #
@@ -123,9 +129,9 @@ CLICKHOUSE_URL=https://clickhouse.sproutos.me
 CLICKHOUSE_USER=sproutos
 CLICKHOUSE_DATABASE=sproutos
 
-# The leading dot is what lets `api.${tenant_domain}` read the session cookie the apex sets, and is
+# The leading dot is what lets `api.${control_plane_domain}` read the session cookie the apex sets, and is
 # why the API answers CORS with `credentials: true`.
-SESSION_COOKIE_DOMAIN=.${tenant_domain}
+SESSION_COOKIE_DOMAIN=.${control_plane_domain}
 
 # The cluster itself, for the one caller that legitimately names every tenant's indices: the reaper
 # that deletes them when a service is deleted.
@@ -235,7 +241,7 @@ fi
 # connection, so refusing to make the connection is the only thing that stops a suspended database
 # from costing money. Plain text because it names an internal address and carries no credential.
 if [ "$SERVICE" = "router" ]; then
-  echo "PG_PROXY_RESOLVE_URL=https://api.${tenant_domain}/v1/internal/pg/resolve" >> /etc/sproutos/env
+  echo "PG_PROXY_RESOLVE_URL=https://api.${control_plane_domain}/v1/internal/pg/resolve" >> /etc/sproutos/env
 
   # The cluster the search split forwards to. The credential for it is a *secret* and arrives
   # through Parameter Store below, because this cluster authenticates nobody itself — see the

@@ -352,6 +352,24 @@ export interface CreditTransaction {
   referenceType: string | null
 }
 
+export interface CustomDomain {
+  acmCertificateArn: string | null
+  acmValidationName: string | null
+  acmValidationValue: string | null
+  createdAt: Generated<Timestamp>
+  deletedAt: Timestamp | null
+  hostname: string
+  id: string
+  isApex: Generated<boolean>
+  organizationId: string
+  projectId: string
+  status: Generated<string>
+  statusReason: string | null
+  updatedAt: Generated<Timestamp>
+  verificationToken: string
+  verifiedAt: Timestamp | null
+}
+
 export interface DatabaseBranch {
   createdAt: Generated<Timestamp>
   databaseInstanceId: string
@@ -402,11 +420,14 @@ export interface Deployment {
   clusterId: string | null
   containerConcurrency: Generated<number>
   createdAt: Generated<Timestamp>
+  createdByUserId: string | null
   deletedAt: Timestamp | null
   expiresAt: Timestamp | null
   failureReason: string | null
+  gitMessage: string | null
   gitRef: string | null
   gitSha: string
+  handler: string | null
   hostname: string | null
   id: string
   imageUri: string | null
@@ -417,6 +438,7 @@ export interface Deployment {
   memoryMb: Generated<number>
   prNumber: number | null
   projectId: string
+  runtime: string | null
   runtimeClass: string | null
   scaleMode: Generated<string>
   status: Generated<string>
@@ -682,9 +704,12 @@ export interface Project {
   deletedAt: Timestamp | null
   dockerfilePath: Generated<string>
   id: string
+  isGroup: Generated<boolean>
   kind: Generated<string>
+  liveDeploymentId: string | null
   name: string
   organizationId: string
+  parentProjectId: string | null
   productionBranch: Generated<string>
   regionId: string | null
   repositoryId: string
@@ -899,6 +924,7 @@ export interface SearchTenant {
 export interface ServiceCredential {
   backendServiceId: string
   createdAt: Generated<Timestamp>
+  databaseBranchId: string | null
   expiresAt: Timestamp | null
   id: string
   lastFour: string
@@ -1255,6 +1281,7 @@ export interface DB {
   creditHold: CreditHold
   creditLedgerEntry: CreditLedgerEntry
   creditTransaction: CreditTransaction
+  customDomain: CustomDomain
   databaseBranch: DatabaseBranch
   databaseInstance: DatabaseInstance
   databaseRole: DatabaseRole

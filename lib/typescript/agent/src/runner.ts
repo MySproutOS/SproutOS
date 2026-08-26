@@ -23,6 +23,16 @@ export type AgentEvent =
   | { type: "session"; sdkSessionId: string }
   | { type: "done"; subtype: string; isError: boolean; numTurns: number; durationMs: number }
   | { type: "error"; message: string }
+  /*
+    The agent's work left the checkout.
+
+    A separate event from `done` because it answers a different question and can fail on its own: a
+    turn can succeed, produce good edits, and still fail to push. Collapsing the two would make a
+    failed push look like a failed turn, which is the one reading that would make somebody discard
+    work that is fine.
+  */
+  | { type: "committed"; branch: string; sha: string; files: string[] }
+  | { type: "commit_failed"; message: string }
 
 export type AgentRunInput = {
   organizationId: string

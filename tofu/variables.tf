@@ -30,6 +30,24 @@ variable "control_plane_domain" {
   default     = "sproutos.dev"
 }
 
+/*
+  Where tenant applications are served from.
+
+  Separate from `control_plane_domain` on purpose, per ADR 0018. Everything — the control plane,
+  the API, the forum, and every customer site — currently shares one apex, which means a customer
+  hostname and our own sign-in page are one wildcard apart. A tenant domain of its own is the
+  boundary: cookies scoped to the control plane cannot be read from a tenant site, and a tenant
+  certificate cannot vouch for `api.<control plane>`.
+
+  ADR 0018 writes this as `sprout.run`. The domain actually registered is **`sproutos.run`**, and
+  the ADR is amended rather than the code made to match a domain nobody owns.
+*/
+variable "tenant_domain" {
+  description = "Domain tenant applications are served from"
+  type        = string
+  default     = "sproutos.run"
+}
+
 variable "aws_region" {
   description = "Region everything is deployed into"
   type        = string

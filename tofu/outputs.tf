@@ -134,3 +134,21 @@ output "forum_static_host" {
   description = "Where the forum's assets are served from."
   value       = local.forum_static_host
 }
+
+/*
+  The name servers to set at the registrar for the tenant domain.
+
+  Delegation is the one step of this that OpenTofu cannot do: the domain is registered at Namecheap,
+  and nothing in AWS can reach across and change a registrar's records. So the zone is created here,
+  its name servers are read from here, and a human — or a browser session acting for one — sets them
+  there. Until that is done this zone is authoritative for a domain nobody is asking it about.
+*/
+output "tenant_zone_name_servers" {
+  description = "Set these as the custom DNS servers for the tenant domain at the registrar"
+  value       = aws_route53_zone.tenant.name_servers
+}
+
+output "tenant_zone_id" {
+  description = "Hosted zone id for the tenant domain"
+  value       = aws_route53_zone.tenant.zone_id
+}

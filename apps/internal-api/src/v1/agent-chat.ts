@@ -2,6 +2,8 @@ import type { AgentEvent } from "@lib/agent"
 import {
   AgentNotConfiguredError,
   checkout,
+  commitAndPush,
+  installSproutosSkill,
   type PlatformMessage,
   resolveAgentCredential,
   runAgentTurn,
@@ -275,6 +277,22 @@ const app = new Hono()
             token: repository.credential.token,
           })
 
+          /*
+            What SproutOS is, written where the SDK will look for it.
+
+            `runAgentTurn` reads project settings out of the checkout, so this is available to the
+            model without spending a system prompt on it — and only read when the task turns out to
+            be about deployment. It is excluded from git inside `installSproutosSkill`, because the
+            commit step below stages everything and nobody asked us to put our scaffolding in their
+            repository.
+          */
+          await installSproutosSkill({
+            workspace,
+            apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me",
+            tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
+            projectSlug: repository.projectSlug,
+          })
+
           const outcome = await runAgentTurn(
             db,
             {
@@ -302,6 +320,44 @@ const app = new Hono()
             durationMs: outcome.durationMs,
           })
           await sessions.setStatus(sessionId, outcome.isError ? "failed" : "idle")
+
+          /*
+            The agent's edits leave the checkout, or they are lost.
+
+            The workspace is deleted in the `finally` below, so anything the model wrote has minutes
+            to live. It goes out on a branch rather than the production branch: the platform holds a
+            credential that can write, and using it to push straight to `main` on a customer's
+            repository would make every agent turn an unreviewed commit.
+
+            Not fatal. A turn that produced good work and then failed to push should report the push
+            failure, not discard the answer the customer already watched being written.
+          */
+          if (!outcome.isError) {
+            try {
+              const pushed = await commitAndPush({
+                workspace,
+                owner: repository.ownerLogin,
+                repo: repository.name,
+                token: repository.credential.token,
+                branch: `sproutos/agent-${sessionId.slice(-12)}`,
+                message: `${prompt.split("\n")[0]?.slice(0, 72) ?? "Agent changes"}\n\nWritten by the SproutOS agent.`,
+              })
+
+              if (pushed.committed) {
+                await emit({
+                  type: "committed",
+                  branch: pushed.branch,
+                  sha: pushed.sha,
+                  files: pushed.files,
+                })
+              }
+            } catch (cause) {
+              await emit({
+                type: "commit_failed",
+                message: cause instanceof Error ? cause.message : "the push failed",
+              })
+            }
+          }
 
           await emit({
             type: "done",
@@ -427,10 +483,19 @@ async function repositoryFor(
   projectId: string,
   userId: string,
 ): Promise<
-  { ownerLogin: string; name: string; defaultBranch: string; credential: GitHubCredential } | string
+  | {
+      ownerLogin: string
+      name: string
+      defaultBranch: string
+      /** Carried so the injected skill can name this project in its workflow snippet. */
+      projectSlug: string
+      credential: GitHubCredential
+    }
+  | string
 > {
   const project = await fetchProject(db).getInOrganization(organizationId, projectId, [
     "repositoryId",
+    "slug",
   ])
   if (project === undefined) return "Project not found"
 
@@ -452,6 +517,7 @@ async function repositoryFor(
     const installationId = Number(installation.installationId)
     return {
       ...repository,
+      projectSlug: project.slug,
       credential: {
         kind: "installation",
         installationId,
@@ -463,7 +529,7 @@ async function repositoryFor(
   }
 
   const user = await userGitHubCredential(db, userId)
-  if (user !== undefined) return { ...repository, credential: user }
+  if (user !== undefined) return { ...repository, projectSlug: project.slug, credential: user }
 
   return (
     "The agent cannot read this repository. Install the SproutOS GitHub App on this organization, " +

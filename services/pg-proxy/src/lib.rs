@@ -32,8 +32,8 @@ pub mod scram;
 
 use std::sync::Arc;
 
-use sproutos_service_credentials::{Authentication, CredentialStore};
-use sproutos_tenant_auth::{ResourceKind, TenantIdentity};
+use sproutos_service_credentials::{AuthenticatedTenant, Authentication, CredentialStore};
+use sproutos_tenant_auth::ResourceKind;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -95,9 +95,9 @@ pub async fn authenticate(
     store: &CredentialStore,
     username: &str,
     password: &str,
-) -> Result<TenantIdentity, SessionError> {
-    let identity = match store.authenticate(username, password.as_bytes()).await {
-        Ok(Authentication::Ok(identity)) => *identity,
+) -> Result<AuthenticatedTenant, SessionError> {
+    let tenant = match store.authenticate(username, password.as_bytes()).await {
+        Ok(Authentication::Ok(tenant)) => *tenant,
         Ok(Authentication::Denied) => return Err(SessionError::Unauthenticated),
         Err(error) => return Err(SessionError::Backend(error.to_string())),
     };
@@ -110,11 +110,11 @@ pub async fn authenticate(
         Valkey secret, which they legitimately hold, from being presented to Postgres and routed to
         a database derived from the same resource id.
     */
-    if identity.resource_kind != ResourceKind::Database {
+    if tenant.identity.resource_kind != ResourceKind::Database {
         return Err(SessionError::Username(username.to_owned()));
     }
 
-    Ok(identity)
+    Ok(tenant)
 }
 
 /// Handle one client connection from the first byte to the last.
@@ -244,8 +244,8 @@ pub async fn serve_connection(
         }
     };
 
-    let database = routing::database_for(&identity);
-    let role = routing::role_for(&identity);
+    let database = routing::database_for(&identity.identity);
+    let role = routing::role_for(&identity.identity);
 
     // Both are derived from a UUID and cannot contain anything that needs escaping. Checked anyway,
     // because `role` reaches `SET ROLE`, which cannot be parameterized.
@@ -299,7 +299,13 @@ pub async fn serve_connection(
         there is no other tenant on the far side of this connection to be separated from.
     */
     let (backend, database, role) = match &resolver {
-        Some(resolver) => match resolver.resolve(&identity.resource_id.to_string()).await? {
+        Some(resolver) => match resolver
+            .resolve(
+                &identity.identity.resource_id.to_string(),
+                identity.database_branch_id,
+            )
+            .await?
+        {
             Some(resolved) => (
                 resolved.as_backend_config(),
                 resolved.database.clone(),

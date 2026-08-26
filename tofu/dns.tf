@@ -12,6 +12,30 @@ data "aws_route53_zone" "main" {
   private_zone = false
 }
 
+/*
+  The tenant zone, which *is* created here — unlike the one above.
+
+  The comment at the top of this file explains why `sproutos.me` is a data source: it was delegated
+  to Route 53 by hand, so a resource would create a second zone with different name servers and the
+  delegation would still point at the first.
+
+  `sproutos.run` is the opposite situation and needs the opposite shape. Nothing has been delegated
+  yet, so there is no zone to adopt — one has to exist before Namecheap can be pointed at anything.
+  The order is: create this, read its name servers, set them at the registrar, and only then let
+  ACM try to validate. A certificate requested before delegation resolves sits in
+  `PENDING_VALIDATION` until it times out, because the validation record is published somewhere the
+  world is not yet asking.
+*/
+resource "aws_route53_zone" "tenant" {
+  name = "${var.tenant_domain}."
+
+  comment = "Tenant applications. Delegated from Namecheap; see ADR 0018."
+
+  tags = {
+    Name = var.tenant_domain
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Certificate validation
 # ---------------------------------------------------------------------------
@@ -351,4 +375,78 @@ resource "aws_iam_user_policy" "certbot" {
       },
     ]
   })
+}
+
+
+# ---------------------------------------------------------------------------
+# The tenant domain
+# ---------------------------------------------------------------------------
+
+/*
+  Validation for the tenant certificate, in the tenant zone.
+
+  Same de-duplication as the control plane's above: ACM returns one option per name, and for
+  `sproutos.run` plus `*.sproutos.run` both are frequently the same record.
+*/
+resource "aws_route53_record" "tenant_apps_certificate_validation" {
+  for_each = {
+    for option in aws_acm_certificate.tenant_apps.domain_validation_options :
+    option.domain_name => {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }...
+  }
+
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = each.value[0].name
+  type    = each.value[0].type
+  records = [each.value[0].value]
+  ttl     = 60
+
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "tenant_apps" {
+  certificate_arn         = aws_acm_certificate.tenant_apps.arn
+  validation_record_fqdns = [for record in aws_route53_record.tenant_apps_certificate_validation : record.fqdn]
+}
+
+/*
+  Every tenant hostname, and the apex.
+
+  The apex is here so the domain resolves to something rather than NXDOMAIN — it lands on the
+  router, which answers 404 for a host with no route, which is the honest answer for a bare tenant
+  domain nobody has claimed.
+*/
+locals {
+  tenant_alb_names = toset([var.tenant_domain, "*.${var.tenant_domain}"])
+}
+
+resource "aws_route53_record" "tenant_alb_ipv4" {
+  for_each = local.tenant_alb_names
+
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = each.value
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "tenant_alb_ipv6" {
+  for_each = local.tenant_alb_names
+
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = each.value
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = false
+  }
 }

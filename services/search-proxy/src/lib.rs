@@ -132,7 +132,7 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
 
     let identity: TenantIdentity =
         match proxy.store.authenticate(&username, secret.as_bytes()).await {
-            Ok(Authentication::Ok(identity)) => *identity,
+            Ok(Authentication::Ok(tenant)) => tenant.identity,
             // One answer for "no such tenant" and "wrong secret", because two answers let anyone
             // enumerate which tenants exist.
             Ok(Authentication::Denied) => {

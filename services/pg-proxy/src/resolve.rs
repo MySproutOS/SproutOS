@@ -65,6 +65,9 @@ pub fn resolve_config_from_env() -> Option<ResolveConfig> {
 #[derive(Serialize)]
 struct ResolveRequest<'a> {
     backend_service_id: &'a str,
+    /// Omitted for an ordinary credential, which the control plane reads as "the primary branch".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database_branch_id: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -74,6 +77,19 @@ pub struct ResolvedBackend {
     pub database: String,
     pub role: String,
     pub password: String,
+}
+
+/// The key one resolved backend is remembered under.
+///
+/// Extracted so the property that matters can be asserted directly: a branch credential and an
+/// ordinary one for the same service must never share an entry. Inlined, that invariant was a
+/// `format!` in the middle of a function that only runs against a live control plane, which is to
+/// say it was untested.
+fn cache_key(backend_service_id: &str, database_branch_id: Option<uuid::Uuid>) -> String {
+    match database_branch_id {
+        Some(branch) => format!("{backend_service_id}:{branch}"),
+        None => backend_service_id.to_owned(),
+    }
 }
 
 struct CacheEntry {
@@ -106,8 +122,21 @@ impl Resolver {
     pub async fn resolve(
         &self,
         backend_service_id: &str,
+        database_branch_id: Option<uuid::Uuid>,
     ) -> Result<Option<ResolvedBackend>, SessionError> {
-        if let Some(entry) = self.cache.read().await.get(backend_service_id)
+        /*
+          **The branch is part of the cache key, not just the request.**
+
+          This cache was keyed on the service alone, which was correct while a service had exactly
+          one reachable backend. It stops being correct the moment a credential can name a branch:
+          a developer connecting to their ephemeral branch would be handed whatever backend the last
+          lookup for that service cached — the primary — and would read and write production while
+          believing they were on a branch. That is a data leak that leaves no trace, because every
+          component involved behaves exactly as designed.
+        */
+        let cache_key = cache_key(backend_service_id, database_branch_id);
+
+        if let Some(entry) = self.cache.read().await.get(&cache_key)
             && entry.fetched.elapsed() < CACHE_TTL
         {
             return Ok(entry.backend.clone());
@@ -117,7 +146,10 @@ impl Resolver {
             .client
             .post(&self.config.url)
             .timeout(RESOLVE_TIMEOUT)
-            .json(&ResolveRequest { backend_service_id })
+            .json(&ResolveRequest {
+                backend_service_id,
+                database_branch_id: database_branch_id.map(|id| id.to_string()),
+            })
             .send()
             .await
             .map_err(|error| {
@@ -147,7 +179,7 @@ impl Resolver {
         };
 
         self.cache.write().await.insert(
-            backend_service_id.to_owned(),
+            cache_key,
             CacheEntry {
                 backend: backend.clone(),
                 fetched: Instant::now(),
@@ -190,6 +222,36 @@ mod tests {
 
         unsafe { std::env::set_var("PG_PROXY_RESOLVE_URL", "http://api/v1/internal/pg/resolve") };
         assert!(resolve_config_from_env().is_some());
+    }
+
+    /// A branch credential must not be served the primary's cached backend.
+    ///
+    /// This is the whole reason the branch is in the key. Without it a developer on an ephemeral
+    /// branch reads and writes production, every component behaves as designed, and nothing logs
+    /// anything unusual.
+    #[test]
+    fn branch_and_primary_do_not_share_a_cache_entry() {
+        let service = "6f1c3a2e-0000-7000-8000-000000000001";
+        let branch = uuid::Uuid::parse_str("6f1c3a2e-0000-7000-8000-0000000000bb").unwrap();
+
+        assert_ne!(cache_key(service, None), cache_key(service, Some(branch)));
+    }
+
+    /// Two different branches of one service are also distinct.
+    #[test]
+    fn two_branches_do_not_share_a_cache_entry() {
+        let service = "6f1c3a2e-0000-7000-8000-000000000001";
+        let one = uuid::Uuid::parse_str("6f1c3a2e-0000-7000-8000-0000000000b1").unwrap();
+        let two = uuid::Uuid::parse_str("6f1c3a2e-0000-7000-8000-0000000000b2").unwrap();
+
+        assert_ne!(cache_key(service, Some(one)), cache_key(service, Some(two)));
+    }
+
+    /// No branch keeps the key it always had, so existing entries are not invalidated.
+    #[test]
+    fn primary_key_is_the_bare_service_id() {
+        let service = "6f1c3a2e-0000-7000-8000-000000000001";
+        assert_eq!(cache_key(service, None), service);
         unsafe { std::env::remove_var("PG_PROXY_RESOLVE_URL") };
     }
 

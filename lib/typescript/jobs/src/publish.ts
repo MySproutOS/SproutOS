@@ -2,7 +2,10 @@ import { LambdaClient } from "@aws-sdk/client-lambda"
 import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
 import {
+  DEFAULT_HANDLER,
+  DEFAULT_RUNTIME,
   hostLabel,
+  isSupportedRuntime,
   publishFunction,
   publishLiveDeployment,
   publishRoute,
@@ -171,8 +174,20 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       projectId: project.id,
       bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
       key: deployment.artifactKey,
-      handler: "index.handler",
-      runtime: "nodejs22.x",
+      /*
+        From the deployment row, not a constant.
+
+        These were hardcoded, which pinned every customer to one Node version and gave every
+        project the same entry point. The row carries what the release asked for; the fallbacks are
+        for rows written before the columns existed, and `isSupportedRuntime` guards against a value
+        that was valid when it was stored and has since left the allowlist — Lambda would reject it
+        anyway, and doing so here says which field was wrong.
+      */
+      handler: deployment.handler ?? DEFAULT_HANDLER,
+      runtime:
+        deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
+          ? deployment.runtime
+          : DEFAULT_RUNTIME,
       memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
       timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
       roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
@@ -209,5 +224,22 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       hostname,
       lambdaVersion: published.version,
     })
+
+    /*
+      And durably, on the project.
+
+      `publishLiveDeployment` above writes `live:<project id>` into Valkey with a 24-hour expiry,
+      which is a cache and cannot answer "what is serving right now" for a screen or for a rollback
+      — the key may simply be gone. Production only: a preview is a real deployment at a real
+      hostname, and pointing the project's live deployment at one would make a pull request look
+      like the thing customers are hitting.
+    */
+    if (deployment.kind === "production") {
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
+        .where("id", "=", project.id)
+        .execute()
+    }
   }
 }

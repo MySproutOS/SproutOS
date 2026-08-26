@@ -240,9 +240,9 @@ async fn authenticate(
                     };
 
                     match store.authenticate(&username, &secret).await {
-                        Ok(Authentication::Ok(identity)) => {
+                        Ok(Authentication::Ok(tenant)) => {
                             client.write_all(&simple_string("OK")).await?;
-                            return Ok(Some(*identity));
+                            return Ok(Some(tenant.identity));
                         }
                         // One message for "no such tenant" and for "wrong secret". Distinguishing
                         // them would let anyone enumerate which tenants exist, one AUTH at a time.

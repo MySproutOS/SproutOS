@@ -31,6 +31,15 @@ import { validator } from "../utils/validator"
 
 const resolveRequest = Type.Object({
   backend_service_id: Type.String({ format: "uuid" }),
+  /*
+    Which branch, when the credential names one.
+
+    Absent means the primary branch, which is what every credential meant before branch credentials
+    existed. The proxy reads this off `service_credential.database_branch_id` — it is not something
+    a customer sends, and a branch belonging to another service is refused below rather than
+    trusted, because "the proxy asked for it" is not authorization.
+  */
+  database_branch_id: Type.Optional(Type.String({ format: "uuid" })),
 })
 
 const resolveResponse = Type.Object({
@@ -56,7 +65,7 @@ const pgResolve: Hono = new Hono().post(
   }),
   validator("json", resolveRequest),
   async (c) => {
-    const { backend_service_id } = c.req.valid("json")
+    const { backend_service_id, database_branch_id } = c.req.valid("json")
 
     /*
       One query, joined through to the organization.
@@ -83,7 +92,19 @@ const pgResolve: Hono = new Hono().post(
       ])
       .where("databaseInstance.backendServiceId", "=", backend_service_id)
       .where("databaseInstance.deletedAt", "is", null)
-      .where("databaseBranch.kind", "=", "primary")
+      /*
+        The named branch, or the primary.
+
+        Both arms stay joined through `database_instance.backend_service_id`, so a branch id
+        belonging to a *different* service resolves to no row rather than to that service's
+        database. That is the whole authorization check and it is one `where` clause: the branch is
+        only reachable if it lives under the service the credential authenticated for.
+      */
+      .where((eb) =>
+        database_branch_id === undefined
+          ? eb("databaseBranch.kind", "=", "primary")
+          : eb("databaseBranch.id", "=", database_branch_id),
+      )
       .where("backendService.status", "=", "active")
       .where("backendService.deletedAt", "is", null)
       .where("organization.deletedAt", "is", null)

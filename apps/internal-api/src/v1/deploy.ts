@@ -3,6 +3,7 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment, fetchDeployment } from "@lib/dao"
 import { enqueue, enqueueSigning, PUBLISH_KINDS } from "@lib/jobs"
+import { isSupportedRuntime, runtimeForPreset, SUPPORTED_RUNTIMES } from "@lib/lambda"
 import { verifyGitHubOidcToken } from "@lib/oauth"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -75,7 +76,18 @@ export function readDeployToken(
   return { projectId }
 }
 
-const tokenRequest = Type.Object({ oidc_token: Type.String({ minLength: 1 }) })
+const tokenRequest = Type.Object({
+  oidc_token: Type.String({ minLength: 1 }),
+  /*
+    Which project in that repository, by slug or id.
+
+    Optional for the single-project case, which is most of them, and **required the moment a
+    repository holds more than one** — see the exchange below for why guessing is not an option.
+    This is not a security input: the repository still comes from the verified OIDC claim, and a
+    project named here that belongs to a different repository is refused.
+  */
+  project: Type.Optional(Type.String({ minLength: 1 })),
+})
 const tokenResponse = Type.Object({ token: Type.String(), expires_in: Type.Integer() })
 
 const uploadRequest = Type.Object({
@@ -109,6 +121,17 @@ const releaseRequest = Type.Object({
   environment: Type.String({ minLength: 1 }),
   commit: Type.String({ minLength: 1 }),
   ref: Type.String(),
+  /*
+    What this build runs on.
+
+    Optional, defaulting from the preset, so an older action keeps deploying — the action ships from
+    its own repository and customers pin versions, so a required field here would break every
+    workflow that has not upgraded.
+  */
+  runtime: Type.Optional(Type.String({ minLength: 1 })),
+  handler: Type.Optional(Type.String({ minLength: 1 })),
+  /** The commit subject, so a deployment list reads like a history rather than a list of shas. */
+  message: Type.Optional(Type.String({ maxLength: 500 })),
 })
 const releaseResponse = Type.Object({
   deployment_id: Type.String(),
@@ -162,17 +185,98 @@ const deploy: Hono = new Hono()
       // concatenated into a column that does not exist.
       const [owner, name] = claims.repository.split("/") as [string, string]
 
-      const project = await db
+      /*
+        **Every** project in that repository, not the first one.
+
+        This used to be `executeTakeFirst()` with no `orderBy` and no `limit`, which is a silent
+        arbitrary pick the moment a repository holds more than one project — and it already could,
+        because `project_repository_target_live_key` is keyed on `root_dir` precisely so a monorepo
+        can deploy its web app and its API separately. Groups made that the normal case rather than
+        the unlucky one: a group and all of its children share a `repository_id`.
+
+        A wrong pick here is not a failed deploy, which would at least be visible. It is a
+        *successful* deploy of the right code onto the wrong service, and every call after this one
+        takes the project from the token, so nothing downstream can notice.
+      */
+      const candidates = await db
         .selectFrom("project")
         .innerJoin("repository", "repository.id", "project.repositoryId")
-        .select(["project.id as id"])
+        .select([
+          "project.id as id",
+          "project.slug as slug",
+          "project.isGroup as isGroup",
+          "project.rootDir as rootDir",
+        ])
         .where("repository.ownerLogin", "=", owner)
         .where("repository.name", "=", name)
         .where("project.deletedAt", "is", null)
-        .executeTakeFirst()
+        .orderBy("project.createdAt", "asc")
+        .execute()
+
+      if (candidates.length === 0) {
+        return c.json({ message: `No SproutOS project is connected to ${claims.repository}` }, 404)
+      }
+
+      // A group holds children; it has no root directory to build and no function to publish.
+      const deployable = candidates.filter((row) => !row.isGroup)
+      const requested = c.req.valid("json").project
+
+      let project: (typeof candidates)[number] | undefined
+
+      if (requested === undefined) {
+        /*
+          Refuse the ambiguity rather than resolve it.
+
+          Picking one would be indistinguishable from working, right up until somebody notices the
+          API has been serving the website's build for a week. The error names the candidates so the
+          fix is to copy one into the workflow, not to go reading the database.
+        */
+        if (deployable.length > 1) {
+          return c.json(
+            {
+              message:
+                `${claims.repository} has ${deployable.length} deployable projects ` +
+                `(${deployable.map((row) => row.slug).join(", ")}). ` +
+                `Set the \`project\` input on the deploy action to say which one this workflow deploys.`,
+            },
+            400,
+          )
+        }
+        project = deployable[0]
+      } else {
+        project = deployable.find((row) => row.slug === requested || row.id === requested)
+      }
 
       if (project === undefined) {
-        return c.json({ message: `No SproutOS project is connected to ${claims.repository}` }, 404)
+        /*
+          Distinguish "that is a group" from "no such project".
+
+          Naming a group is a plausible mistake — it is the thing the repository is called in the
+          UI — and "no project connected to this repository" would be actively misleading, because
+          one is connected and the caller just named its parent.
+        */
+        const group = candidates.find(
+          (row) => row.isGroup && (row.slug === requested || row.id === requested),
+        )
+        if (group !== undefined) {
+          return c.json(
+            {
+              message:
+                `\`${requested}\` is a project group, which holds other projects and does not ` +
+                `deploy on its own. Name one of its projects instead.`,
+            },
+            400,
+          )
+        }
+        return c.json(
+          {
+            message:
+              requested === undefined
+                ? `No deployable SproutOS project is connected to ${claims.repository}`
+                : `${claims.repository} has no deployable project called \`${requested}\``,
+          },
+          404,
+        )
       }
 
       const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS
@@ -294,7 +398,42 @@ const deploy: Hono = new Hono()
 
       const json = c.req.valid("json")
 
+      /*
+        Resolve the runtime here, not at publish time.
+
+        Validated against Lambda's own set so a typo is a 400 that names the field, rather than a
+        deploy that queues, runs, and dies inside `UpdateFunctionConfiguration` with an AWS error
+        that does not say which value it disliked.
+      */
+      const defaults = runtimeForPreset(json.preset)
+      if (json.runtime !== undefined && !isSupportedRuntime(json.runtime)) {
+        return c.json(
+          {
+            message: `\`runtime\` must be one of ${SUPPORTED_RUNTIMES.join(", ")} — got \`${json.runtime}\`.`,
+          },
+          400,
+        )
+      }
+
       const deployment = await crudDeployment(db).create({
+        /*
+          Copied onto the row, not read from the project later.
+
+          A deployment is a historical fact — the same reasoning `scale_mode` and `runtime_class`
+          already carry. It is also what makes rollback correct: republishing an old version has to
+          use the runtime that version was built for, not whatever the project names today.
+        */
+        runtime: json.runtime ?? defaults.runtime,
+        handler: json.handler ?? defaults.handler,
+        gitMessage: json.message ?? null,
+        /*
+          Null, and deliberately so.
+
+          This request authenticated as a *repository* through GitHub OIDC; there is no user in the
+          exchange. Attributing it to one would be a fabrication on the very field that exists to
+          say who shipped it, so CI deploys have no author and the UI shows the repository.
+        */
+        createdByUserId: null,
         projectId: authorized.projectId,
         // `preview` for anything that is not production, so a branch build cannot take a
         // production hostname by naming itself one.
