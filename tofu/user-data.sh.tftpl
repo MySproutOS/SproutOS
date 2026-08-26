@@ -106,6 +106,12 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
+# The LLM proxy's port, matching `aws_lb_target_group.llm`. Unset, `listeners::llm` returns without
+# binding — which is the right behaviour for a router that has no proxy secret, and the wrong one
+# here: it would start, pass its own health check on the other listeners, and answer nothing on this
+# target group. The load balancer would then report the target unhealthy rather than the feature
+# missing.
+LLM_PROXY_LISTEN=0.0.0.0:8788
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
@@ -116,6 +122,15 @@ API_PORT=3001
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
 NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
+
+# Where a sandbox reaches the LLM proxy. Read by the chat route and by sandbox provisioning, and it
+# goes into the sandbox's environment — so it has to be the address as seen from *outside* this VPC,
+# which is the load balancer, not the router's own port.
+#
+# There is a default in the code (`https://llm.sproutos.me`) and it was a hostname nothing served:
+# no listener rule, no target group, no `LLM_PROXY_LISTEN`. Set here so the value comes from the
+# deployment that owns the domain rather than from a constant that happened to be written first.
+LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
 
 # The key `@lib/envelope` wraps data keys with.
 #
