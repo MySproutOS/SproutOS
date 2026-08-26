@@ -119,12 +119,23 @@ pub async fn authenticate(
 
 /// Handle one client connection from the first byte to the last.
 pub async fn serve_connection(
-    mut client: TcpStream,
+    client: TcpStream,
     store: Arc<CredentialStore>,
     backend: BackendConfig,
     cancels: cancel::Registry,
     resolver: Option<resolve::Resolver>,
+    /*
+        Present where this deployment has a certificate, absent where it does not.
+
+        Optional on purpose. `sslmode=disable` never sends `SSLRequest`, so a client that does not
+        want TLS is unaffected either way, and a deployment with no certificate keeps answering `N`
+        and behaves exactly as it did. What it must not do is claim TLS it cannot perform: saying
+        `S` and failing the handshake leaves a client waiting for a ServerHello that never comes.
+    */
+    tls: Option<tokio_rustls::TlsAcceptor>,
 ) -> Result<(), SessionError> {
+    let mut client = backend::client_tls::ClientStream::Plain(client);
+
     let parameters = loop {
         match protocol::read_startup(&mut client).await? {
             Startup::Ssl => {
@@ -137,8 +148,49 @@ pub async fn serve_connection(
                     worse than saying no, because the client would wait for a ServerHello that never
                     comes.
                 */
-                client.write_all(b"N").await?;
-                client.flush().await?;
+                /*
+                    `S` where there is a certificate to present, `N` where there is not.
+
+                    Answering `N` was the only option while this had no TLS at all, and its cost was
+                    not the rows — it was the credential. The password is requested with
+                    `AuthenticationCleartextPassword`, so on a plaintext socket the customer's
+                    database password crosses the public internet on every connection, and anybody
+                    on the path can then connect as them.
+
+                    No load balancer can fix this from in front. Postgres negotiates TLS *inside*
+                    its own protocol, so there is no handshake at the head of the connection for a
+                    listener to terminate — which is why the Valkey split gets a TLS listener and
+                    this one gets raw TCP.
+                */
+                match &tls {
+                    Some(acceptor) => {
+                        client.write_all(b"S").await?;
+                        client.flush().await?;
+
+                        let plain = match client {
+                            backend::client_tls::ClientStream::Plain(socket) => socket,
+                            // A second `SSLRequest` on an established session. Postgres has no such
+                            // thing, so this is a client that is confused or probing; either way
+                            // the answer is to stop.
+                            backend::client_tls::ClientStream::Tls(_) => {
+                                return Err(SessionError::Backend(
+                                    "the client asked to start TLS twice".to_owned(),
+                                ));
+                            }
+                        };
+
+                        let session = acceptor.accept(plain).await.map_err(|error| {
+                            SessionError::Backend(format!(
+                                "the client TLS handshake failed: {error}"
+                            ))
+                        })?;
+                        client = backend::client_tls::ClientStream::Tls(Box::new(session));
+                    }
+                    None => {
+                        client.write_all(b"N").await?;
+                        client.flush().await?;
+                    }
+                }
             }
             Startup::Cancel {
                 process_id,
@@ -301,7 +353,8 @@ pub async fn serve_connection(
         .await?;
     send_ready_for_query(&mut client).await?;
 
-    let (mut client_read, mut client_write) = client.into_split();
+    // `tokio::io::split`, not `TcpStream::into_split`: the client may be a TLS session now.
+    let (mut client_read, mut client_write) = tokio::io::split(client);
     // `tokio::io::split`, not the borrowed `TcpStream::split`: the backend may now be a TLS
     // session rather than a socket, so the halves come from the generic split.
     let (mut server_read, mut server_write) = tokio::io::split(server);

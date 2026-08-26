@@ -584,6 +584,23 @@ resource "aws_iam_policy" "application" {
       },
       {
         /*
+          The server certificate the Postgres split presents to tenants.
+
+          S3 rather than Parameter Store because a certificate chain does not fit: the standard tier
+          caps a value at 4096 characters and a Let's Encrypt fullchain is about 4800. The advanced
+          tier would take it, and is billed per parameter per month for a file that is public by
+          construction — every client that connects is handed a copy of it.
+
+          Its private key is the secret half and is *not* here. That lives in Parameter Store as a
+          SecureString and reaches the process through `LoadCredential`, so the two halves never sit
+          in the same store and a read of this prefix yields nothing that can impersonate anything.
+        */
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${aws_s3_bucket.artifacts.arn}/tls/*"
+      },
+      {
+        /*
           The database password, which exists only in Secrets Manager.
 
           `manage_master_user_password` keeps it out of `terraform.tfstate`; the consequence is that

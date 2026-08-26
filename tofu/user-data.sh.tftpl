@@ -241,6 +241,56 @@ if [ "$SERVICE" = "router" ]; then
   # through Parameter Store below, because this cluster authenticates nobody itself — see the
   # OpenSearch labels in `ovh/docker-compose.yaml`.
   echo "SEARCH_PROXY_UPSTREAM=https://${opensearch_subdomain}.${control_plane_domain}" >> /etc/sproutos/env
+
+  # Optional TLS on the tenant Postgres port.
+  #
+  # Optional in the sense the protocol means it: a client sends `SSLRequest` before anything else
+  # and the server answers `S` or `N`. With a certificate here the answer is `S` and `sslmode=require`
+  # works; without one it is `N` and `sslmode=disable` still connects. Nothing is refused either way
+  # — Supabase makes the same call, and a tenant whose client cannot do TLS is not a tenant we want
+  # to lock out of their own database.
+  #
+  # This is also why there is no TLS listener on the load balancer for 5432. Postgres negotiates TLS
+  # *inside* its own protocol rather than by port, so an NLB cannot terminate it; the certificate has
+  # to be here, on the process that speaks the protocol.
+  #
+  # The two halves come from different places on purpose — see the `tls/*` statement in `compute.tf`.
+  if aws s3 cp "s3://$BUCKET/tls/postgres-fullchain.pem" /etc/sproutos/pg-tls-fullchain.pem \
+       --region "$REGION" >/dev/null 2>&1 &&
+     aws ssm get-parameter --name "${application_parameter_path}/PG_PROXY_TLS_KEY" \
+       --with-decryption --query 'Parameter.Value' --output text \
+       --region "$REGION" > /etc/sproutos/pg-tls-privkey.pem 2>/dev/null &&
+     [ -s /etc/sproutos/pg-tls-privkey.pem ]; then
+
+    chmod 0600 /etc/sproutos/pg-tls-fullchain.pem /etc/sproutos/pg-tls-privkey.pem
+
+    # An expired certificate is refused by every client, so an instance that booted with one is a
+    # Postgres port that has silently stopped accepting `sslmode=require` — which looks like a
+    # broken proxy and is a lapsed renewal. Kafka's certificate expired and went unnoticed for a
+    # month precisely because nothing checked; this is the check.
+    if openssl x509 -in /etc/sproutos/pg-tls-fullchain.pem -noout -checkend 0 >/dev/null 2>&1; then
+      install -d -m 0755 /etc/systemd/system/sproutos.service.d
+      # `LoadCredential` rather than a readable file: the unit runs as a `DynamicUser` with a uid
+      # allocated at start, so there is nothing to chown the key to. systemd reads it as root and
+      # drops a copy into a per-service directory only that uid can open.
+      cat > /etc/systemd/system/sproutos.service.d/pg-tls.conf <<'PGTLS'
+[Service]
+LoadCredential=pg-tls-cert:/etc/sproutos/pg-tls-fullchain.pem
+LoadCredential=pg-tls-key:/etc/sproutos/pg-tls-privkey.pem
+Environment=PG_PROXY_TLS_CERT_FILE=%d/pg-tls-cert
+Environment=PG_PROXY_TLS_KEY_FILE=%d/pg-tls-key
+PGTLS
+      echo "postgres TLS enabled, expires $(openssl x509 -in /etc/sproutos/pg-tls-fullchain.pem -noout -enddate)"
+    else
+      # Left unset rather than failing the boot. A lapsed certificate should cost `sslmode=require`,
+      # not the whole front door.
+      echo "postgres TLS certificate has expired; serving the port without TLS" >&2
+      rm -f /etc/sproutos/pg-tls-fullchain.pem /etc/sproutos/pg-tls-privkey.pem
+    fi
+  else
+    rm -f /etc/sproutos/pg-tls-fullchain.pem /etc/sproutos/pg-tls-privkey.pem
+    echo "no postgres TLS material; the port will answer N to SSLRequest" >&2
+  fi
 fi
 
 

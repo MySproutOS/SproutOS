@@ -578,3 +578,117 @@ mod tests {
         assert!(hashed[3..].chars().all(|c| c.is_ascii_hexdigit()));
     }
 }
+
+/// The client half of TLS: what this proxy presents when a customer asks for it.
+///
+/// Optional, deliberately. `sslmode=disable` never sends `SSLRequest` at all, so a client that does
+/// not want TLS is unaffected either way — and a deployment with no certificate configured keeps
+/// answering `N` and working exactly as before. Managed Postgres services differ on this; Supabase
+/// leaves it to the client too.
+///
+/// What it is *not* is a reason to leave TLS unavailable. Without a certificate here, `pg-proxy`
+/// asks for the password with `AuthenticationCleartextPassword` over a plaintext socket, so the
+/// credential itself crosses the internet in the clear on every connection — not merely the rows.
+pub mod client_tls {
+    use std::io;
+    use std::sync::Arc;
+
+    use tokio::net::TcpStream;
+    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::rustls::ServerConfig;
+    use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    /// Where the certificate and key are read from, if this deployment has them.
+    const CERT_VARIABLE: &str = "PG_PROXY_TLS_CERT_FILE";
+    const KEY_VARIABLE: &str = "PG_PROXY_TLS_KEY_FILE";
+
+    /// Build an acceptor, or `None` where no certificate is configured.
+    ///
+    /// Built once at startup rather than per connection: parsing a PEM and building a
+    /// `ServerConfig` on every `SSLRequest` would put that work on the connection path, which for a
+    /// serverless application is every invocation.
+    ///
+    /// A configured-but-unreadable certificate is an error rather than a silent fallback to `N`.
+    /// Falling back would mean a deployment that believes it offers TLS and does not, which is the
+    /// worst of the three states — the other two are at least legible from the outside.
+    pub fn acceptor() -> anyhow::Result<Option<TlsAcceptor>> {
+        let (Ok(cert_path), Ok(key_path)) =
+            (std::env::var(CERT_VARIABLE), std::env::var(KEY_VARIABLE))
+        else {
+            return Ok(None);
+        };
+        if cert_path.is_empty() || key_path.is_empty() {
+            return Ok(None);
+        }
+
+        let certs: Vec<CertificateDer<'static>> =
+            rustls_pemfile::certs(&mut io::BufReader::new(std::fs::File::open(&cert_path)?))
+                .collect::<Result<_, _>>()?;
+        anyhow::ensure!(!certs.is_empty(), "{cert_path} contains no certificate");
+
+        let key: PrivateKeyDer<'static> =
+            rustls_pemfile::private_key(&mut io::BufReader::new(std::fs::File::open(&key_path)?))?
+                .ok_or_else(|| anyhow::anyhow!("{key_path} contains no private key"))?;
+
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+
+        Ok(Some(TlsAcceptor::from(Arc::new(config))))
+    }
+
+    /// The client socket, plain or upgraded.
+    #[derive(Debug)]
+    pub enum ClientStream {
+        Plain(TcpStream),
+        Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+    }
+
+    impl tokio::io::AsyncRead for ClientStream {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            match self.get_mut() {
+                ClientStream::Plain(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+                ClientStream::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_read(cx, buf),
+            }
+        }
+    }
+
+    impl tokio::io::AsyncWrite for ClientStream {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<io::Result<usize>> {
+            match self.get_mut() {
+                ClientStream::Plain(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+                ClientStream::Tls(stream) => {
+                    std::pin::Pin::new(stream.as_mut()).poll_write(cx, buf)
+                }
+            }
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            match self.get_mut() {
+                ClientStream::Plain(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+                ClientStream::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_flush(cx),
+            }
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            match self.get_mut() {
+                ClientStream::Plain(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+                ClientStream::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_shutdown(cx),
+            }
+        }
+    }
+}

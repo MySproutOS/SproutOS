@@ -301,7 +301,9 @@ async fn start_proxy(url: &str) -> SocketAddr {
             tokio::spawn(async move {
                 // Printed, not discarded. A proxy that refuses a connection for a reason the test
                 // cannot see turns every failure into "Closed", which says nothing.
-                if let Err(cause) = serve_connection(client, store, backend, cancels, None).await {
+                if let Err(cause) =
+                    serve_connection(client, store, backend, cancels, None, None).await
+                {
                     eprintln!("pg-proxy session ended: {cause}");
                 }
             });

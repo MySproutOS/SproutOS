@@ -224,6 +224,11 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
     // session it cancels, so the mapping cannot live in either one.
     let cancels = pg_proxy::cancel::Registry::new();
 
+    // The certificate the Postgres split presents to customers, if this deployment has one. Absent
+    // is a working configuration — see `serve_connection`.
+    let tls = pg_proxy::backend::client_tls::acceptor()?;
+    tracing::info!(tls = tls.is_some(), "postgres split client TLS");
+
     let resolver = match resolve {
         Some(config) => {
             tracing::info!(url = %config.url, "per-tenant backend resolution enabled");
@@ -259,11 +264,13 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
                     let backend = backend.clone();
                     let cancels = cancels.clone();
                     let resolver = resolver.clone();
+                    let tls = tls.clone();
 
                     tokio::spawn(async move {
-                        if let Err(cause) =
-                            pg_proxy::serve_connection(client, store, backend, cancels, resolver)
-                                .await
+                        if let Err(cause) = pg_proxy::serve_connection(
+                            client, store, backend, cancels, resolver, tls,
+                        )
+                        .await
                         {
                             // Info, not error: a refused password is a normal event on a public
                             // endpoint, and logging it at error level trains people to ignore the

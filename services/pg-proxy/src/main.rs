@@ -62,6 +62,18 @@ async fn main() -> anyhow::Result<()> {
     let cancels = cancel::Registry::new();
 
     /*
+        The certificate this proxy presents, if it has one.
+
+        Built once here rather than per connection: parsing a PEM on every `SSLRequest` puts that
+        work on the connection path, which for a serverless application is every invocation. A
+        configured-but-unreadable certificate stops the process instead of silently answering `N`,
+        because a deployment that believes it offers TLS and does not is worse than either honest
+        state.
+    */
+    let tls = pg_proxy::backend::client_tls::acceptor()?;
+    info!(tls = tls.is_some(), "client TLS");
+
+    /*
         Per-tenant backend resolution, when this deployment has Neon behind it.
 
         `None` is the ordinary case during the rollout and the proxy behaves exactly as before: a
@@ -94,9 +106,12 @@ async fn main() -> anyhow::Result<()> {
         let cancels = cancels.clone();
         // Cloned per connection, like the others: the task outlives this iteration.
         let resolver = resolver.clone();
+        let tls = tls.clone();
 
         tokio::spawn(async move {
-            if let Err(cause) = serve_connection(client, store, backend, cancels, resolver).await {
+            if let Err(cause) =
+                serve_connection(client, store, backend, cancels, resolver, tls).await
+            {
                 // Info, not error: a refused password is a normal event on a public endpoint, and
                 // logging it at error level trains people to ignore the level.
                 info!(%peer, %cause, "session ended");
