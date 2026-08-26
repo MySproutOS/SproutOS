@@ -26,6 +26,7 @@ export {
   usageEventMaterializedViewDdl,
   usageEventQueueDdl,
   usageEventRawDdl,
+  usageEventStoredAtDdl,
 } from "./schema"
 export {
   generateIngestKey,
@@ -52,3 +53,8 @@ export {
 } from "./runtime-logs"
 export { gbSeconds, type UsageEvent, usageFrom, usageFromBatch } from "./lambda-usage"
 export { connectProducer, encode, type LogProducer, topic } from "./producer"
+export {
+  clickhouseUsageWatermark,
+  usageRollupsChangedBetween,
+  type ClickHouseUsageRollup,
+} from "./usage-rollups"

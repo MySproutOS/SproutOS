@@ -1,5 +1,17 @@
-import { BATCH_SIZE, chargeUsage, expireHolds, formatMicroUsd, rollUpUsage } from "@lib/billing"
-import { observabilityConfigured } from "@lib/observability"
+import {
+  applyImportedUsageRollups,
+  BATCH_SIZE,
+  chargeUsage,
+  expireHolds,
+  formatMicroUsd,
+  importedUsageCursor,
+  rollUpUsage,
+} from "@lib/billing"
+import {
+  clickhouseUsageWatermark,
+  observabilityConfigured,
+  usageRollupsChangedBetween,
+} from "@lib/observability"
 import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
 import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 import { TEARDOWN_KIND, tearDownProject } from "./teardown"
@@ -58,6 +70,7 @@ function tenMinuteWindow(now: Date): string {
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   rollUpUsage: "billing.roll_up_usage",
+  importUsage: "billing.import_clickhouse_usage",
   chargeUsage: "billing.charge_usage",
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
@@ -113,6 +126,22 @@ const rollUpUsageJob: JobHandler = async (_job, { db }) => {
     if (result.events < BATCH_SIZE) break
   }
   if (events > 0) console.info(`[jobs] rolled up ${events} usage events`)
+}
+
+/**
+ * Make Postgres's billable rollups an absolute projection of deduplicated ClickHouse events.
+ *
+ * The cutoff comes from ClickHouse before the query. Messages stored afterward therefore compare
+ * above this cursor on the next run even if the API and ClickHouse clocks disagree. Cursor and
+ * rollups commit together in Postgres, so a retry recomputes the same absolute values.
+ */
+const importUsageJob: JobHandler = async (_job, { db }) => {
+  if (!observabilityConfigured()) return
+  const since = (await importedUsageCursor(db)) ?? new Date(0)
+  const until = await clickhouseUsageWatermark()
+  const rows = await usageRollupsChangedBetween(since, until)
+  await applyImportedUsageRollups(db, rows, until)
+  if (rows.length > 0) console.info(`[jobs] imported ${rows.length} ClickHouse usage rollups`)
 }
 
 /**
@@ -220,6 +249,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   ...GITHUB_EVENT_HANDLERS,
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
+  [JOB_KINDS.importUsage]: importUsageJob,
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
@@ -274,22 +304,20 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     /*
       Every ten minutes, not hourly.
 
-      This is the only thing standing between a metered event and a number a customer can see, so
-      the interval is how stale the dashboard's cost figure is allowed to be. Hourly would mean a
-      project that has been running all afternoon shows an hour-old total, which reads as the
-      metering being broken.
+      This imports absolute, deduplicated ClickHouse totals into the Postgres rows the dashboard
+      and charge job read. The interval is how stale the visible cost figure is allowed to be.
     */
-    kind: JOB_KINDS.rollUpUsage,
-    idempotencyKey: `${JOB_KINDS.rollUpUsage}:${tenMinuteWindow(now)}`,
+    kind: JOB_KINDS.importUsage,
+    idempotencyKey: `${JOB_KINDS.importUsage}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
   })
   await enqueue(db, {
     /*
       Every ten minutes too, right behind the rollup.
 
-      The two are separate jobs because they fail differently: rolling up is arithmetic over rows
-      this platform wrote, and charging moves balances. A rollup retried ten times must not post ten
-      charges, and keeping them apart is what makes each retry policy sane on its own.
+      The two are separate jobs because they fail differently: importing is absolute arithmetic
+      over ClickHouse rows, and charging moves balances. An import retried ten times must not post
+      ten charges, and keeping them apart is what makes each retry policy sane on its own.
 
       Ordering between them is latency, not correctness. `chargeUsage` claims grains whose quantity
       exceeds what has already been charged, so a grain the rollup writes after the charge has run

@@ -3,7 +3,12 @@ import { join } from "node:path"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import { clickhouse, observabilityConfigured } from "./client"
-import { usageEventMaterializedViewDdl, usageEventQueueDdl, usageEventRawDdl } from "./schema"
+import {
+  usageEventMaterializedViewDdl,
+  usageEventQueueDdl,
+  usageEventRawDdl,
+  usageEventStoredAtDdl,
+} from "./schema"
 
 const reachable = await (async () => {
   if (!observabilityConfigured()) return false
@@ -30,6 +35,7 @@ describe("the raw usage-event schema", () => {
     const installed = file.slice(start)
     const runtime = [
       usageEventRawDdl("sproutos"),
+      usageEventStoredAtDdl("sproutos"),
       usageEventQueueDdl("kafka:9092", "usage-events", "sproutos"),
       usageEventMaterializedViewDdl("sproutos"),
     ].join(";\n\n")
