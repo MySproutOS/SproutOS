@@ -62,6 +62,7 @@ async fn services_up(url: &str) -> bool {
 async fn start_proxy(url: &str) -> SocketAddr {
     let store = Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let proxy = Arc::new(Proxy {
+        upstream_authorization: None,
         store,
         upstream: upstream(),
         client: reqwest::Client::new(),

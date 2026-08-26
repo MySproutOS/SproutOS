@@ -124,6 +124,7 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
     let proxy = Arc::new(search_proxy::Proxy {
         store,
         upstream: upstream.clone(),
+        upstream_authorization: std::env::var("SEARCH_PROXY_UPSTREAM_AUTHORIZATION").ok(),
         client: reqwest::Client::builder()
             // The tenant's own timeout is what should govern a slow query; this only bounds a
             // cluster that has stopped answering at all.
@@ -143,6 +144,130 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
     Ok(Some(tokio::spawn(async move {
         if let Err(cause) = axum::serve(listener, app).await {
             tracing::error!(%cause, "the search split stopped serving");
+        }
+    })))
+}
+
+/// Start the Postgres split, if this deployment has one.
+///
+/// The fourth listener, and the last one that was still a separate binary. `pg-proxy` was written
+/// the same way the other two were — everything in a library, a thin `main` on top — so this is the
+/// same move ADR 0026 made for Valkey and search, arriving a release later.
+///
+/// [ADR 0027] recorded `pg-proxy` as built, tested and deliberately not deployed, on the reasoning
+/// that managed Neon wakes its own endpoints and pools its own connections. Two of the three
+/// arguments for the proxy did die with that. The third did not, and it is the one that decides
+/// whether the product can sell a database at all: **a customer must never hold a Neon credential**,
+/// because a customer who holds one can reach their database after we suspend them. `neon-postgres.ts`
+/// seals Neon's password under KMS for exactly that reason, and this is the only thing that opens it.
+///
+/// What changed is not that answer but its price. Deploying the proxy used to mean an Auto Scaling
+/// group, a target group and a listener rule for a fourth process; as a listener on the router it is
+/// a port and an environment variable.
+///
+/// Started when there is something to connect onward to — either a shared cluster
+/// (`PG_PROXY_BACKEND_PASSWORD`) or the control plane's per-tenant resolver
+/// (`PG_PROXY_RESOLVE_URL`). Neither, and this returns `None` exactly as the other two do.
+pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+    let resolve = pg_proxy::resolve::resolve_config_from_env();
+    let backend_password = std::env::var("PG_PROXY_BACKEND_PASSWORD").ok();
+
+    if resolve.is_none() && backend_password.is_none() {
+        return Ok(None);
+    }
+
+    let listen = std::env::var("PG_PROXY_LISTEN").unwrap_or_else(|_| "0.0.0.0:5432".into());
+
+    let pool_size: usize = std::env::var("PG_PROXY_DB_POOL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(4);
+
+    let store = Arc::new(sproutos_service_credentials::CredentialStore::connect(
+        database_url,
+        pool_size,
+    )?);
+    store
+        .check()
+        .await
+        .context("the Postgres split cannot reach the control-plane database")?;
+
+    /*
+      The shared cluster, which under Neon is the thing nothing should ever fall through to.
+
+      A tenant whose service the resolver does not know — suspended, deleted, or never Neon in the
+      first place — lands here. With no `PG_PROXY_BACKEND_PASSWORD` that is an empty password and a
+      refused connection, and refusing is the correct outcome: suspension is only enforceable at the
+      point of connection, and a fall-through that succeeded would be the enforcement point quietly
+      not existing.
+    */
+    let backend = pg_proxy::BackendConfig {
+        host: std::env::var("PG_PROXY_BACKEND_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        port: std::env::var("PG_PROXY_BACKEND_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(5432),
+        user: std::env::var("PG_PROXY_BACKEND_USER").unwrap_or_else(|_| "postgres".into()),
+        password: backend_password.unwrap_or_default(),
+    };
+
+    // One registry for the process: a `CancelRequest` arrives on a different connection from the
+    // session it cancels, so the mapping cannot live in either one.
+    let cancels = pg_proxy::cancel::Registry::new();
+
+    let resolver = match resolve {
+        Some(config) => {
+            tracing::info!(url = %config.url, "per-tenant backend resolution enabled");
+            Some(pg_proxy::resolve::Resolver::new(
+                reqwest::Client::new(),
+                config,
+            ))
+        }
+        None => {
+            tracing::info!(
+                "no resolver configured; routing every connection to the shared cluster"
+            );
+            None
+        }
+    };
+
+    let listener = TcpListener::bind(&listen)
+        .await
+        .with_context(|| format!("could not bind {listen} for the Postgres split"))?;
+    tracing::info!(%listen, backend = %format!("{}:{}", backend.host, backend.port), "postgres split listening");
+
+    Ok(Some(tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((client, peer)) => {
+                    // Nagle off: the wire protocol is request/response and a 40ms delayed ACK on a
+                    // small packet is 40ms added to every query a tenant runs.
+                    if let Err(cause) = client.set_nodelay(true) {
+                        tracing::debug!(%peer, %cause, "could not disable Nagle");
+                    }
+
+                    let store = Arc::clone(&store);
+                    let backend = backend.clone();
+                    let cancels = cancels.clone();
+                    let resolver = resolver.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(cause) =
+                            pg_proxy::serve_connection(client, store, backend, cancels, resolver)
+                                .await
+                        {
+                            // Info, not error: a refused password is a normal event on a public
+                            // endpoint, and logging it at error level trains people to ignore the
+                            // level.
+                            tracing::info!(%peer, %cause, "session ended");
+                        }
+                    });
+                }
+                Err(cause) => {
+                    tracing::error!(%cause, "the Postgres split stopped accepting");
+                    return;
+                }
+            }
         }
     })))
 }

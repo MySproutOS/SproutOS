@@ -124,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         [
             router::listeners::valkey(&database_url).await?,
             router::listeners::search(&database_url).await?,
+            router::listeners::postgres(&database_url).await?,
         ]
         .into_iter()
         .flatten()

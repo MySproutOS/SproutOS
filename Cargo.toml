@@ -51,6 +51,10 @@ pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 # that can only open a plain socket cannot reach it at all — see `services/valkey-proxy/src/upstream.rs`.
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-pki-types = "1"
+rustls-pemfile = "2"
+# The `MakeTlsConnect` bridge between tokio-postgres and rustls. The control-plane RDS runs with
+# `rds.force_ssl = 1`, so every proxy that reads `service_credential` needs one.
+tokio-postgres-rustls = "0.13"
 webpki-roots = "0.26"
 
 [profile.release]

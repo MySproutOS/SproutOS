@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let proxy = Arc::new(Proxy {
         store,
         upstream: upstream.clone(),
+        upstream_authorization: std::env::var("SEARCH_PROXY_UPSTREAM_AUTHORIZATION").ok(),
         client: reqwest::Client::builder()
             // The tenant's own timeout is what should govern a slow query; this only bounds a
             // cluster that has stopped answering at all.

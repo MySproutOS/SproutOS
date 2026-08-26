@@ -45,6 +45,23 @@ pub struct Proxy {
     pub store: Arc<CredentialStore>,
     pub upstream: String,
     pub client: reqwest::Client,
+    /*
+      What this proxy presents to the cluster, when the cluster asks for anything.
+
+      OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` because *this* is meant to be its security
+      boundary — which is true right up to the moment the cluster has to be reachable across a
+      network. Then "the proxy is the boundary" needs the cluster to be unreachable by anything
+      else, and an IP allowlist cannot provide that here: the platform's tenant functions egress
+      through the same NAT address the allowlist would have to admit.
+
+      So the cluster gets a second lock, and this is the key to it. `None` where the upstream is
+      genuinely private — a loopback port, or a compose network — because a credential nothing
+      checks is a credential to rotate for no reason.
+
+      Compare the ClickHouse route on the same host, whose comment puts it exactly: "Two locks, not
+      one. ClickHouse's own user and password still apply; this restricts *who may reach the door*."
+    */
+    pub upstream_authorization: Option<String>,
 }
 
 /// Headers that must not be forwarded upstream.
@@ -196,6 +213,18 @@ async fn forward(
             continue;
         }
         request = request.header(name, value);
+    }
+
+    /*
+      Set after the loop, never inside it.
+
+      `authorization` is stripped above because it is the *tenant's*, and this replaces it with the
+      proxy's own. Ordering is the whole safety property: if this were applied first the tenant's
+      header would overwrite it on the next iteration, and the request would reach the cluster
+      carrying a credential the cluster has never heard of — which fails closed, but only by luck.
+    */
+    if let Some(authorization) = &proxy.upstream_authorization {
+        request = request.header("authorization", authorization);
     }
 
     let response = match request.send().await {

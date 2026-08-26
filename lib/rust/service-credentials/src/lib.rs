@@ -22,8 +22,7 @@ use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use sproutos_tenant_auth::{MAX_USERNAME_LEN, SecretError, TenantIdentity, verify_secret};
-use tokio_postgres::NoTls;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 /// How long a credential lookup may take before the connection attempt is abandoned.
 ///
@@ -75,7 +74,7 @@ impl CredentialStore {
         let config: tokio_postgres::Config = normalise_url(url).parse()?;
         let manager = Manager::from_config(
             config,
-            NoTls,
+            tls_connector()?,
             ManagerConfig {
                 recycling_method: RecyclingMethod::Fast,
             },
@@ -328,6 +327,95 @@ pub fn normalise_url(url: &str) -> String {
     }
 }
 
+/// Where a private certificate authority is read from, when the database has one.
+///
+/// `PGSSLROOTCERT` is libpq's own name for this and `psql` on the same host already honours it,
+/// which is worth more than a name of our own: somebody debugging a refused connection reaches for
+/// `psql` first, and a variable both tools read means the two agree about what they trust.
+const CA_FILE_VARIABLE: &str = "PGSSLROOTCERT";
+
+/// Where `user-data.sh.tftpl` puts Amazon's RDS bundle, used when nothing names a file.
+const DEFAULT_CA_FILE: &str = "/etc/sproutos/rds-ca.pem";
+
+/*
+  TLS, and why this is not `NoTls`.
+
+  It was `NoTls`, and that was not a simplification — it was a proxy that could not connect to the
+  control plane at all. The RDS instance runs on `default.postgres17`, where **`rds.force_ssl` is
+  `1`**, so an unencrypted connection is refused by the server before authentication. Every proxy
+  built on this store would have exited at boot, and `check()` is deliberately fatal, so the router
+  carrying these listeners would have exited with it. The front door, taken down by a credential
+  lookup that never happened.
+
+  It was invisible because nothing had connected: the proxies run against the compose Postgres in
+  tests, which has no such setting, and the deployment had never been given `DATABASE_URL` for the
+  splits to start with. Precisely the shape `docs/findings/0015` describes — and the same mistake it
+  records making about `valkey-proxy`'s missing TLS, one crate over.
+
+  ## Which roots
+
+  Webpki's bundle **and** a private CA file, not one or the other. RDS certificates chain to
+  "Amazon RDS Root 2019 CA", which is not a public root and is in no browser's store; a webpki-only
+  trust anchor fails every RDS handshake. Equally, a bundle-only store would fail against a Postgres
+  fronted by an ordinary public certificate. Loading both costs one file read at startup.
+
+  A named file that cannot be read is fatal. A *default* file that is not there is not: the default
+  is a guess about the host, and a developer running this against compose has no RDS bundle and
+  should not be made to invent one.
+*/
+fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
+    use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+
+    let mut roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    let named = std::env::var(CA_FILE_VARIABLE)
+        .ok()
+        .filter(|v| !v.is_empty());
+    let path = named.clone().unwrap_or_else(|| DEFAULT_CA_FILE.to_owned());
+
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let mut added = 0usize;
+            for certificate in rustls_pemfile::certs(&mut bytes.as_slice()) {
+                roots.add(certificate?)?;
+                added += 1;
+            }
+            info!(path, added, "loaded private certificate authorities");
+        }
+        Err(cause) if named.is_some() => {
+            return Err(anyhow::anyhow!(
+                "{CA_FILE_VARIABLE} names {path}, which cannot be read: {cause}"
+            ));
+        }
+        Err(_) => {
+            info!(
+                path,
+                "no private certificate authority; using the public roots only"
+            );
+        }
+    }
+
+    /*
+      An explicit provider rather than the process default.
+
+      `ClientConfig::builder()` reads a process-wide provider and **panics** when two are compiled
+      in and none has been installed — and two are, in the router: the AWS SDK brings `aws-lc-rs`
+      and this graph brings `ring`. The router installs one in `main` before anything serves, but a
+      library that only works when its caller remembered to do that is a library with a trap in it.
+      Naming the provider here makes this correct in every binary that links it.
+    */
+    let config = ClientConfig::builder_with_provider(std::sync::Arc::new(
+        tokio_rustls::rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
+
 /// Logs a lookup failure once, in the one place that has the context to describe it.
 pub fn report(cause: &StoreError) {
     match cause {
@@ -342,7 +430,40 @@ pub fn report(cause: &StoreError) {
 
 #[cfg(test)]
 mod tests {
-    use super::normalise_url;
+    use super::{CA_FILE_VARIABLE, normalise_url, tls_connector};
+
+    /*
+      One test, and it is about the failure rather than the success.
+
+      A connector that builds proves very little — the interesting property is that a *named* CA
+      file which cannot be read stops the process instead of quietly falling back to the public
+      roots. Falling back would produce a proxy that starts, reports healthy, and fails every RDS
+      handshake with a certificate error naming nothing that led to it.
+
+      `PGSSLROOTCERT` is process-global, so this restores it rather than assuming it was unset.
+    */
+    #[test]
+    fn a_named_certificate_authority_that_is_missing_is_fatal() {
+        let previous = std::env::var(CA_FILE_VARIABLE).ok();
+
+        // SAFETY: single-threaded test, and the variable is restored below.
+        unsafe { std::env::set_var(CA_FILE_VARIABLE, "/nonexistent/rds-ca.pem") };
+        let refused = tls_connector();
+
+        unsafe {
+            match &previous {
+                Some(value) => std::env::set_var(CA_FILE_VARIABLE, value),
+                None => std::env::remove_var(CA_FILE_VARIABLE),
+            }
+        }
+
+        // `MakeRustlsConnect` is not `Debug`, so `expect_err` is unavailable.
+        let Err(cause) = refused else {
+            panic!("a named CA file that cannot be read must fail")
+        };
+        let cause = cause.to_string();
+        assert!(cause.contains("/nonexistent/rds-ca.pem"), "{cause}");
+    }
 
     #[test]
     fn drops_the_schema_parameter_tokio_postgres_refuses() {
