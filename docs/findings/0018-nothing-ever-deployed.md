@@ -98,3 +98,37 @@ generated workflow route hands out a file that cannot run.
 Recording it here rather than fixing it silently: making a repository public is not reversible in the
 way that matters — the history becomes fetchable and indexable — so it is a decision, not a
 correction.
+
+## The chain underneath, found one link at a time
+
+The adapter made the code correct. Driving a real deploy through it then found that **nothing on
+the path from a customer's CI to a running function had ever been granted**. Each link failed in the
+customer's log as a bare number:
+
+| What the customer saw                    | What was actually missing                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| `Unable to resolve action ... not found` | the action's repository is private                                      |
+| `curl: (22) ... 404`                     | `SERVICE_BUILD_BUCKET` unset; the fallback names a bucket in no account |
+| `curl: (22) ... 403`                     | the instance role has no `s3:PutObject` on that bucket at all           |
+| (would have been) `AccessDenied`         | no `lambda:CreateFunction`, no `PublishVersion`, no `iam:PassRole`      |
+
+Four links, one path, none of them exercised. The shape repeats inside the repository too: the grant
+for the _assets_ bucket exists in `compute.tf` with a comment explaining exactly why it must — "a
+presigned URL carries the signer's authority" — and the **build archive, the other half of the same
+deploy, has no grant at all**. `tenant-static.tf` opens by describing the missing-bucket bug for the
+assets bucket, fixed, one line above the identical bug in its neighbour.
+
+The assets grant would not have worked either: `kms:GenerateDataKey` was absent, so a PUT into that
+SSE-KMS bucket would have been refused by KMS and reported by S3 as `AccessDenied` on PutObject —
+the displaced error the comment three statements above already warns about for reads.
+
+So the recurring failure is not "somebody forgot a permission". It is that **each fix was made where
+the symptom appeared and never applied to its neighbour**, and nothing walked the path end to end
+because the path terminated in a failure that had a different, plausible explanation.
+
+## What would have caught it
+
+Not a review. A deploy. `bin/check-app-config.mjs` now reads the application as well as the three
+configuration lists, which closes the `SERVICE_BUILD_BUCKET` shape — but no static check would have
+found an IAM statement that is absent rather than wrong. The only thing that finds an ungranted
+permission is exercising it, and until this week nothing in this repository ever had.
