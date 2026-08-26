@@ -477,6 +477,9 @@ jobs:
           # that silently moved only half of a deployment would point the API at the colour the
           # website had just drained.
           API_RULE_ARN: ${{ vars.API_RULE_ARN }}
+          # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
+          # moves the router alone rather than refusing.
+          SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}
           SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
@@ -537,3 +540,6 @@ jobs:
           # that silently moved only half of a deployment would point the API at the colour the
           # website had just drained.
           API_RULE_ARN: ${{ vars.API_RULE_ARN }}
+          # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
+          # moves the router alone rather than refusing.
+          SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}

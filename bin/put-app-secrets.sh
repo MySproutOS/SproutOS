@@ -53,6 +53,16 @@ KEYS=(
   # versions in the account were published by hand. Pinning it in the launch template would make it
   # silently stale on the next publish; here a person updates it in the same motion.
   LOG_EXTENSION_LAYER_ARN
+  # The basic-auth credential in front of OpenSearch on the OVH box, which authenticates nobody
+  # itself. `SEARCH_PROXY_UPSTREAM_AUTHORIZATION` is what the router's search split presents;
+  # `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD` are the same credential for the reaper, which
+  # goes straight to the cluster because an internal caller has no tenant to be separated from.
+  SEARCH_PROXY_UPSTREAM_AUTHORIZATION
+  SEARCH_ADMIN_USER
+  SEARCH_ADMIN_PASSWORD
+  # Managed Neon's API key, which creates a project per customer database. Nothing in this
+  # repository can obtain it; without it `kind: postgres` answers 503 naming this.
+  NEON_API_KEY
 )
 
 payload=$(

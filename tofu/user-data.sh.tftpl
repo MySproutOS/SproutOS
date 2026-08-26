@@ -140,6 +140,15 @@ SESSION_COOKIE_DOMAIN=.${tenant_domain}
 # The credential is `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD`: the cluster authenticates nobody
 # itself, so what this is presenting to is the Traefik basic-auth in front of it.
 SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
+
+# What a customer is handed when they provision an Elasticsearch service: the router's search split
+# behind the load balancer, on 443, never the cluster.
+#
+# The distinction is the entire tenancy model rather than a preference. `docs/findings/0015` records
+# `SERVICE_POSTGRES_PUBLIC_HOST` once observed returning the backend's own address to a real caller,
+# which is a URI that works and answers to nobody. This is why the code refuses to default it.
+SERVICE_SEARCH_PUBLIC_HOST=${search_subdomain}.${control_plane_domain}
+SERVICE_SEARCH_PUBLIC_PORT=443
 ENVFILE
 
 # The database URL, composed here from the secret RDS manages rather than written into the launch
@@ -274,7 +283,7 @@ if [ "$SERVICE" = "website" ]; then
     STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
-    SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD SERVICE_VALKEY_ADMIN_URL NEON_API_KEY"
+    SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY"
 fi
 
 # The router verifies the per-project log token the extension presents and holds the Kafka
@@ -282,8 +291,12 @@ fi
 # functions — the router recomputes the token from it, so a mismatch rejects every log line with a
 # 401 and the pipeline goes quiet without erroring anywhere a person would look.
 if [ "$SERVICE" = "router" ]; then
+  # `VALKEY_PROXY_BACKEND` is deliberately not here yet. The Valkey split starts when it is set and
+  # `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does not
+  # disable a feature — it stops the router, which is the front door. The queue on the OVH box has
+  # its password and is waiting for a transport; see the comment on it in `ovh/docker-compose.yaml`.
   write_app_secrets "LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
-    VALKEY_PROXY_BACKEND SEARCH_PROXY_UPSTREAM_AUTHORIZATION"
+    SEARCH_PROXY_UPSTREAM_AUTHORIZATION"
 fi
 
 chmod 0640 /etc/sproutos/env

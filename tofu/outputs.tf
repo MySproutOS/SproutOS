@@ -96,6 +96,13 @@ output "api_rule_arn" {
   value       = aws_lb_listener_rule.api.arn
 }
 
+# The search split's rule, so the cutover moves it with the router. Without it a release leaves
+# every customer's search service on the colour the router just drained, and the router looks fine.
+output "search_rule_arn" {
+  description = "Listener rule for search.<domain>. Set as the SEARCH_RULE_ARN repository variable."
+  value       = aws_lb_listener_rule.search.arn
+}
+
 output "forum_static_bucket" {
   description = "Bucket the forum's assets are published to."
   value       = one(aws_s3_bucket.forum_static[*].bucket)

@@ -292,3 +292,9 @@ variable "tenant_valkey_subdomain" {
   type        = string
   default     = "valkey"
 }
+
+variable "search_subdomain" {
+  description = "The customer-facing address of the search split, in front of `search-proxy`. Never the cluster itself."
+  type        = string
+  default     = "search"
+}

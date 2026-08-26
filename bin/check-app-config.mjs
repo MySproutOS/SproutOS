@@ -47,7 +47,17 @@ function parameterStoreKeys() {
   if (block === null || block[1] === undefined) {
     throw new Error("bin/put-app-secrets.sh no longer declares KEYS=( ... )")
   }
-  return new Set(envNames(block[1]))
+  /*
+    Comments stripped before the names are read.
+
+    `envNames` keeps any run of capitals, and the first letter of an English sentence is a run of
+    capitals of length one — so every `# Runtime logs…`, `# Only the password…`, `# Unset, the
+    ingest route…` contributed a one-letter key, and the word "URL" in prose contributed `URL`.
+    Nine invented names appeared under "Stored and never read", which is how a real one stops being
+    read: a report that is mostly noise is a report nobody finishes.
+  */
+  const declarations = block[1].replaceAll(/#[^\n]*/g, "")
+  return new Set(envNames(declarations))
 }
 
 /**

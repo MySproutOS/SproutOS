@@ -41,6 +41,8 @@ case "$2" in
         case "${!j}" in
           *-api-blue) echo "arn:api-blue" ;;
           *-api-green) echo "arn:api-green" ;;
+          *-search-blue) echo "arn:search-blue" ;;
+          *-search-green) echo "arn:search-green" ;;
           *-blue) echo "arn:blue" ;;
           *-green) echo "arn:green" ;;
         esac
@@ -78,6 +80,16 @@ run() {
   # it left the script comparing an empty string — which errors, and an error in a `[` test reads as
   # false, so every health check passed without checking anything.
   export STUB_HEALTHY
+  # `SEARCH_RULE_ARN` the same way, and for the same reason the comment above gives: a variable
+  # merely *set* on the `run` line is a shell variable, and `cutover.sh` runs in a child process
+  # that never sees it. Set-and-not-exported is how the search rule silently stopped being moved —
+  # the first version of these two checks failed for exactly that, which is the one useful thing a
+  # test can do before the code it guards is wrong.
+  #
+  # Clearing it has to happen in the *caller*, not here: `out=$(run router)` puts this function in
+  # a subshell, so an `unset` here dies with it, while `SEARCH_RULE_ARN=… out=$(run router)` assigns
+  # in the parent and outlives the case that wrote it. See the `unset` before the no-rule case.
+  if [ -n "${SEARCH_RULE_ARN:-}" ]; then export SEARCH_RULE_ARN; fi
   bash "$HERE/cutover.sh" "$@" 2>&1
 }
 
@@ -142,6 +154,26 @@ check "sends the api rule to the same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:api-green","Weight":100' "$STUB_CALLS")"
 check "and the apex with it" "1" \
   "$(grep -c '"TargetGroupArn":"arn:green","Weight":100' "$STUB_CALLS")"
+
+# The router is the listener's default *and* a rule for `search.<domain>` on port 9200. If the
+# cutover moved only the listener, a release would leave every customer's search service pointed at
+# the colour the router had just drained — and the router itself would look fine, which is the
+# failure that takes longest to find.
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule out=$(run router)
+check "moves the listener for the router" "1" "$(grep -c 'modify-listener' "$STUB_CALLS")"
+check "and the search rule with it" "1" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+check "to the same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:search-green","Weight":100' "$STUB_CALLS")"
+
+# Without the variable there is no search rule to move, which is the state of an estate that has no
+# OpenSearch behind it. That must move the router rather than refuse.
+#
+# Unset in the parent, because the case above assigned it there. Leaving it would make this check
+# exercise the same path as the one above and pass for the wrong reason — which it did.
+unset SEARCH_RULE_ARN
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router); status=$?
+check "moves the router alone when there is no search rule" "0" "$status"
+check "and touches no rule" "0" "$(grep -c 'modify-rule' "$STUB_CALLS")"
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"

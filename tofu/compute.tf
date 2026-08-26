@@ -93,6 +93,18 @@ resource "aws_vpc_security_group_ingress_rule" "service_api_from_alb" {
   ip_protocol                  = "tcp"
 }
 
+# The search split's port, reachable from the load balancer and from nothing else. Without this the
+# target group's health check times out, every target is unhealthy, and `search.sproutos.me` answers
+# 503 — with the rule, the listener and the process all present and correct.
+resource "aws_vpc_security_group_ingress_rule" "service_search_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 9200
+  to_port                      = 9200
+  description                  = "search split from the load balancer"
+}
+
 resource "aws_vpc_security_group_egress_rule" "service_out" {
   security_group_id = aws_security_group.service.id
   description       = "Outbound, for AWS APIs and the OVH backends"
@@ -360,6 +372,89 @@ resource "aws_lb_listener_rule" "api" {
   condition {
     host_header {
       values = ["api.${var.control_plane_domain}"]
+    }
+  }
+
+  # As above: the cutover owns these weights, and changing the shape of this block needs `-replace`.
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+/*
+  `search.sproutos.me`, to the router's search split on the same instances.
+
+  This is what a customer is given when they provision an Elasticsearch service, and it is the whole
+  reason `SERVICE_SEARCH_PUBLIC_HOST` can now have a value: until there was an address in front of
+  `search-proxy`, the only honest answer was the 503 the route already gives, because the alternative
+  — naming the cluster itself — hands out a URI that works and bypasses every tenancy check the
+  platform makes.
+
+  The same shape as `api.`: one deployment, a second port, its own target groups, moved with the
+  router rather than separately. `bin/cutover.sh` moves both, for the reason written there — a
+  disagreement between them means search is pointed at the colour the router just drained.
+
+  Priority 80, ahead of `api.` at 90 and the website at 100. Each condition is a single exact host
+  so the order cannot currently matter; it is ordered anyway, because "cannot currently matter" is
+  a property of the conditions and not of the rules, and widening one later should not be able to
+  silently reroute search.
+*/
+resource "aws_lb_target_group" "search" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-search-${each.key}"
+  port     = 9200
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  /*
+    401, not 200, and not `/healthz`.
+
+    `search-proxy` is a catch-all: every path belongs to the tenant's cluster, so there is no path
+    it can reserve for a health check without taking that path away from every customer. What it
+    always does, on any path, is refuse a request carrying no credential — so the refusal *is* the
+    signal, and it is a strictly better one than a 200 would be. A 200 here would mean something
+    answered; a 401 means the thing that answered checks credentials.
+
+    That this can be the check at all rests on `CredentialStore::check()` being fatal at boot: a
+    search split that cannot reach the control plane takes the whole router down rather than
+    starting and refusing everybody, so a healthy router is a working search split.
+  */
+  health_check {
+    path                = "/"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "401"
+  }
+
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-search-${each.key}" }
+}
+
+resource "aws_lb_listener_rule" "search" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 80
+
+  action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.search["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.search["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["${var.search_subdomain}.${var.control_plane_domain}"]
     }
   }
 
@@ -645,6 +740,7 @@ resource "aws_launch_template" "service" {
     # rather than written down twice: `dns.tf` creates the record from the same variable, so the
     # name the instance is told and the name that resolves cannot drift apart.
     opensearch_subdomain = var.opensearch_subdomain
+    search_subdomain     = var.search_subdomain
     control_plane_domain = var.control_plane_domain
   }))
 

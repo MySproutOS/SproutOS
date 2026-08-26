@@ -10,10 +10,11 @@
 # Usage: cutover.sh <service> [--to blue|green] [--dry-run]
 #   service   website | router
 #
-# `website` moves two rules, not one. The apex and `api.<domain>` are different ports on the *same
-# instances* from the *same release tarball*, so they are one deployment with two target groups.
-# Moving them separately would be two commands that can disagree — and a disagreement means the API
-# is pointed at the colour the website just drained.
+# Neither service moves one thing. `website` is the apex plus `api.<domain>`; `router` is the
+# listener's default action plus `search.<domain>`. In both cases those are different ports on the
+# *same instances* from the *same release tarball*, so they are one deployment with two target
+# groups. Moving them separately would be two commands that can disagree — and a disagreement means
+# the API is pointed at the colour the website just drained, or search is.
 set -euo pipefail
 
 SERVICE="${1:-}"
@@ -52,8 +53,14 @@ if [ "$SERVICE" = "website" ]; then
   short=web
 else
   RULE_ARN=""
-  ALSO_MOVE=""
-  ALSO_SHORT=""
+  # The search split, which rides the router's instances on port 9200 and is a listener rule
+  # because the router itself is the listener's default.
+  #
+  # Optional, and deliberately so: an estate with no `search.<domain>` rule is one where
+  # `SEARCH_PROXY_UPSTREAM` is unset and the split never starts, and a cutover there should move
+  # the router rather than refuse. Set the variable and it moves with it.
+  ALSO_MOVE="${SEARCH_RULE_ARN:-}"
+  ALSO_SHORT=search
   short=router
 fi
 
