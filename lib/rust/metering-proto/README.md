@@ -31,8 +31,8 @@ The rule for emitters: **`external_id` must be a pure function of the measuremen
 attempt. Derive it from the emitter, the subject, the dimension and the measurement window:
 
 ```text
-metering-agent:<pod-uid>:site_vcpu_second:<window-start-unix-seconds>
-pg-proxy:<database-id>:db_compute_second:<window-start-unix-seconds>
+metering-agent:<pod-uid>:site_gib_second:<window-start-unix-seconds>
+pg-proxy:<database-id>:db_compute_cu_second:<window-start-unix-seconds>
 valkey-proxy:<queue-id>:valkey_queue_byte_second:<window-start-unix-seconds>
 ```
 

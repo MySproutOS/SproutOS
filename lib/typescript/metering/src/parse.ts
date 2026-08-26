@@ -1,4 +1,5 @@
 import type { UsageBatch, UsageEvent } from "./canonical"
+import { isBillableDimension } from "./dimensions"
 
 /**
  * Turn the wire JSON into a batch, or say why not.
@@ -48,7 +49,7 @@ function eventFrom(value: unknown): UsageEvent | string {
   if (projectId !== null && projectId !== undefined && typeof projectId !== "string") {
     return "project_id must be a string or null"
   }
-  if (typeof dimension !== "string") return "dimension must be a string"
+  if (!isBillableDimension(dimension)) return "dimension must be a current billable dimension"
   // `Number.isFinite` rather than `typeof === "number"`: NaN and the infinities are numbers, they
   // round-trip through JSON as `null`, and they bill as garbage.
   if (typeof quantity !== "number" || !Number.isFinite(quantity)) {
