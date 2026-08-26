@@ -28,3 +28,9 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# The end-to-end test seeds and cleans its own rows, and talks plain TCP to the compose Postgres —
+# the production path goes through `SessionStore`, which requires TLS.
+tokio-postgres.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
