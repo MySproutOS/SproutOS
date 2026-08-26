@@ -29,10 +29,10 @@ async fn main() -> anyhow::Result<()> {
       `aws-lc-rs` because the AWS SDK is the heavier user of TLS here and it is that crate's own
       default; the choice matters far less than making one.
 
-      The result is ignored deliberately: `install_default` fails only if a provider is already
-      installed, and this is the first thing `main` does.
+      Shared with the tests, which are separate processes that link the library rather than this
+      function — and which panicked on their first TLS call for exactly this reason.
     */
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    router::install_crypto_provider();
 
     let valkey_url = std::env::var("VALKEY_URL").context("VALKEY_URL is not set")?;
     let client = redis::Client::open(valkey_url).context("VALKEY_URL is not a Valkey URL")?;

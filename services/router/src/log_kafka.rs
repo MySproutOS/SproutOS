@@ -31,6 +31,12 @@ pub struct KafkaProducer {
     partitions: Vec<PartitionClient>,
 }
 
+/// How long a connection may take before it is a misconfiguration rather than a slow network.
+///
+/// Generous for a handshake and short beside a deploy: the thing being caught is a client waiting
+/// forever, not a broker taking its time.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl KafkaProducer {
     /// Connect once, and open a client for every partition.
     ///
@@ -82,7 +88,29 @@ impl KafkaProducer {
                 )));
         }
 
-        let client = builder.build().await.context("could not reach Kafka")?;
+        /*
+          Bounded, because the failure it replaces is a hang.
+
+          `build()` negotiates a connection and has no timeout of its own. Point a TLS-and-SASL
+          client at a plaintext listener — a broker configured one way and a `KAFKA_SASL_USERNAME`
+          set the other — and the ClientHello sits in the broker's receive buffer as a 369 MB
+          length prefix; the broker closes the connection and the client waits for a handshake that
+          will never arrive. Observed here for ten minutes, against a local broker, with the cause
+          visible only in the broker's own log as `InvalidReceiveException`.
+
+          A router that cannot reach Kafka should fail its health check and say why. A router that
+          hangs at boot is an Auto Scaling group replacing instances with no error anywhere.
+        */
+        let client = tokio::time::timeout(CONNECT_TIMEOUT, builder.build())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Kafka did not complete a connection within {}s. If `KAFKA_SASL_USERNAME` is \
+                     set, this client speaks TLS — check the broker is not a plaintext listener.",
+                    CONNECT_TIMEOUT.as_secs()
+                )
+            })?
+            .context("could not reach Kafka")?;
 
         let mut partitions = Vec::with_capacity(partition_count.max(1) as usize);
         for index in 0..partition_count.max(1) {

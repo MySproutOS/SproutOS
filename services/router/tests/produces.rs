@@ -24,6 +24,11 @@ async fn kafka_up() -> bool {
 
 #[tokio::test]
 async fn produces_rows_clickhouse_accepts() {
+    // A test binary is its own process, and rustls picks its cipher suites per process. Without
+    // this the first HTTPS call panics — so this test failed whenever Kafka was reachable, and
+    // passed only by skipping.
+    router::install_crypto_provider();
+
     if !kafka_up().await {
         // Keyed on "a job promised this service", not on "this is CI" — a different claim. Kafka
         // needs no token, so the workflow provides it and sets the flag; a skip here is therefore a
