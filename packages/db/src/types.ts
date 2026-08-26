@@ -436,6 +436,11 @@ export interface Deployment {
   lambdaVersion: string | null
   maxDurationS: Generated<number>
   memoryMb: Generated<number>
+  migrationArtifactKey: string | null
+  migrationFinishedAt: Timestamp | null
+  migrationHandler: string | null
+  migrationOutput: string | null
+  migrationStatus: string | null
   prNumber: number | null
   projectId: string
   runtime: string | null

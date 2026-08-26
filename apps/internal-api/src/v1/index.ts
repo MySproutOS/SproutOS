@@ -4,6 +4,7 @@ import agent from "./agent"
 import agentChat from "./agent-chat"
 import analysis from "./analysis"
 import deployments from "./deployments"
+import customDomains from "./custom-domains"
 import metering from "./metering"
 import deploy from "./deploy"
 import android from "./android"
@@ -60,6 +61,7 @@ orgs.route("/", agentChat)
 orgs.route("/", services)
 orgs.route("/", analysis)
 orgs.route("/", deployments)
+orgs.route("/", customDomains)
 orgs.route("/", workflows)
 // The store catalogue itself is public (TASK 4); only moderation is org-scoped, and it lives here
 // so the organization whose grants apply is named in the path rather than inferred from

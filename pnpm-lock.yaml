@@ -9,6 +9,12 @@ catalogs:
     '@anthropic-ai/claude-agent-sdk':
       specifier: ^0.3.237
       version: 0.3.237
+    '@aws-sdk/client-acm':
+      specifier: ^3.1114.0
+      version: 3.1118.0
+    '@aws-sdk/client-elastic-load-balancing-v2':
+      specifier: ^3.1114.0
+      version: 3.1118.0
     '@aws-sdk/client-kms':
       specifier: ^3.1114.0
       version: 3.1114.0
@@ -372,6 +378,12 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 'catalog:'
         version: 0.3.237(@anthropic-ai/sdk@0.120.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+      '@aws-sdk/client-acm':
+        specifier: 'catalog:'
+        version: 3.1118.0
+      '@aws-sdk/client-elastic-load-balancing-v2':
+        specifier: 'catalog:'
+        version: 3.1118.0
       '@aws-sdk/client-kms':
         specifier: 'catalog:'
         version: 3.1114.0
@@ -1248,6 +1260,14 @@ packages:
 
   '@aws-sdk/checksums@3.1000.29':
     resolution: {integrity: sha512-Dtu0gr4dnATZAPwEYbpCsG+MpLM7OAliy2gTepEFQwl1vZ6DL3QMH2FveMa3HLvPsOdhJsPRB3KtxVhph9T75A==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-acm@3.1118.0':
+    resolution: {integrity: sha512-8R4HOhd1kmx6Q2sQMHtzuu21J85ojoaLW+U62x23IF7Zx7PAdljsZ1+vMd743XSgsC23zpaONVw5iBeLmZRezQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-elastic-load-balancing-v2@3.1118.0':
+    resolution: {integrity: sha512-z9WsdQt4/h+U78A+KvN34Aael0o3pL1t7aGqzBL3chHxsKjFRXV30WPoHemPX3jsVFAQLdTiXTP9oksuZ2wi6A==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-kms@3.1114.0':
@@ -5727,6 +5747,28 @@ snapshots:
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
+  '@aws-sdk/client-acm@3.1118.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.9
+      '@aws-sdk/credential-provider-node': 3.972.81
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
+      '@smithy/fetch-http-handler': 5.7.2
+      '@smithy/node-http-handler': 4.11.3
+      '@smithy/types': 4.17.2
+      tslib: 2.8.1
+
+  '@aws-sdk/client-elastic-load-balancing-v2@3.1118.0':
+    dependencies:
+      '@aws-sdk/core': 3.977.9
+      '@aws-sdk/credential-provider-node': 3.972.81
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
+      '@smithy/fetch-http-handler': 5.7.2
+      '@smithy/node-http-handler': 4.11.3
+      '@smithy/types': 4.17.2
+      tslib: 2.8.1
+
   '@aws-sdk/client-kms@3.1114.0':
     dependencies:
       '@aws-sdk/core': 3.977.8
@@ -5855,10 +5897,10 @@ snapshots:
 
   '@aws-sdk/credential-provider-login@3.972.76':
     dependencies:
-      '@aws-sdk/core': 3.977.8
+      '@aws-sdk/core': 3.977.9
       '@aws-sdk/nested-clients': 3.997.43
-      '@aws-sdk/types': 3.974.4
-      '@smithy/core': 3.33.2
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
@@ -5974,12 +6016,12 @@ snapshots:
 
   '@aws-sdk/nested-clients@3.997.43':
     dependencies:
-      '@aws-sdk/core': 3.977.8
+      '@aws-sdk/core': 3.977.9
       '@aws-sdk/signature-v4-multi-region': 3.996.45
-      '@aws-sdk/types': 3.974.4
-      '@smithy/core': 3.33.2
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
       '@smithy/fetch-http-handler': 5.7.2
-      '@smithy/node-http-handler': 4.11.2
+      '@smithy/node-http-handler': 4.11.3
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 
@@ -6005,7 +6047,7 @@ snapshots:
 
   '@aws-sdk/signature-v4-multi-region@3.996.45':
     dependencies:
-      '@aws-sdk/types': 3.974.4
+      '@aws-sdk/types': 3.974.5
       '@smithy/signature-v4': 5.7.2
       '@smithy/types': 4.17.2
       tslib: 2.8.1
@@ -6019,10 +6061,10 @@ snapshots:
 
   '@aws-sdk/token-providers@3.1111.0':
     dependencies:
-      '@aws-sdk/core': 3.977.8
+      '@aws-sdk/core': 3.977.9
       '@aws-sdk/nested-clients': 3.997.43
-      '@aws-sdk/types': 3.974.4
-      '@smithy/core': 3.33.2
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.33.3
       '@smithy/types': 4.17.2
       tslib: 2.8.1
 

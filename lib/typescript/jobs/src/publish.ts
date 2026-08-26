@@ -7,6 +7,7 @@ import {
   hostLabel,
   isSupportedRuntime,
   publishFunction,
+  runMigration,
   publishLiveDeployment,
   publishRoute,
   type Route,
@@ -170,6 +171,56 @@ export function publishRelease(options?: PublishOptions): JobHandler {
     const environment = await environmentFor(db, project.id, deployment.kind)
     const hostname = hostnameFor(project, deployment)
 
+    /*
+      Migrations, before anything serves.
+
+      `DEPLOYMENT_DOCTRINE` has promised this since it was written — "migrations run as part of the
+      deploy, before the new version takes traffic" — and nothing implemented it. Ordered here, not
+      after the publish, because the entire value is the ordering: code that ships ahead of its
+      schema is the failure this prevents, and running the migration afterwards would prevent
+      nothing while looking identical in a log.
+
+      On failure the function is never published and the route is never touched, so the previous
+      release keeps serving. That is the same reasoning `publishRoute` follows at the end of this
+      handler, applied one step earlier.
+
+      **Not retried.** The job runner would otherwise re-run a partially applied schema change,
+      which is how a recoverable failure becomes an unrecoverable one. The deployment is marked
+      failed and a human decides.
+    */
+    if (deployment.migrationArtifactKey !== null) {
+      await crudDeployment(db).update(deploymentId, { migrationStatus: "running" })
+
+      const result = await runMigration(clients.lambda, {
+        projectId: project.id,
+        bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
+        key: deployment.migrationArtifactKey,
+        handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
+        runtime:
+          deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
+            ? deployment.runtime
+            : DEFAULT_RUNTIME,
+        roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+        environment,
+      })
+
+      await crudDeployment(db).update(deploymentId, {
+        migrationStatus: result.ok ? "succeeded" : "failed",
+        migrationOutput: result.output,
+        migrationFinishedAt: new Date(),
+      })
+
+      if (!result.ok) {
+        await crudDeployment(db).update(deploymentId, {
+          status: "error",
+          failureReason:
+            "The database migration failed, so this release was not published and the previous " +
+            "one is still serving. The migrator's output is on this deployment.",
+        })
+        return
+      }
+    }
+
     const published = await publishFunction(clients.lambda, {
       projectId: project.id,
       bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
@@ -214,6 +265,33 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       deploymentId,
     }
     await publishRoute(clients.valkey, hostname, route)
+
+    /*
+      And every custom domain pointing at this project.
+
+      A customer's own hostname is not derived from the project — it is a row they added and
+      verified — so it has to be published explicitly, and republished on every release because the
+      route carries the deployment's ARN. Skipping this would leave the custom domain resolving to
+      the *previous* release indefinitely, which is worse than it not working: the site would be up,
+      serving code from whenever the domain was last attached, and nothing would look broken.
+
+      Only `active` domains. A pending one has not proved it controls the zone yet, and publishing a
+      route for it would let anyone claim a hostname by typing it into a form.
+    */
+    const domains = await db
+      .selectFrom("customDomain")
+      .select("hostname")
+      .where("projectId", "=", project.id)
+      .where("status", "=", "active")
+      .where("deletedAt", "is", null)
+      .execute()
+
+    for (const domain of domains) {
+      // eslint-disable-next-line no-await-in-loop -- a project has a handful of domains, and the
+      // ordering matters no more here than it does for the project's own route above.
+      await publishRoute(clients.valkey, domain.hostname, route)
+    }
+
     // And by project id, which is the only thing the log shipper has: a CloudWatch log group is
     // named after the project, never after the hostname.
     await publishLiveDeployment(clients.valkey, project.id, deploymentId)

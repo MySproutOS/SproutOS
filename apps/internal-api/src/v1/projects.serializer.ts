@@ -113,6 +113,16 @@ export const projectSchemaCreateRequest = Type.Object({
   scaleMode: Type.Optional(ScaleMode),
   autoUpdateMode: Type.Optional(AutoUpdateMode),
   idempotencyKey: Type.Optional(Type.String({ minLength: 8, maxLength: 128 })),
+  /**
+   * Create this as a logical grouping rather than something deployable.
+   *
+   * A group holds other projects and deploys nothing itself, so the UI shows it no deploy control
+   * and the deploy-token exchange refuses it by name. Everything else about it is an ordinary
+   * project — it is one row in one table, and `is_group` is the whole difference.
+   */
+  isGroup: Type.Optional(Type.Boolean()),
+  /** The group this project belongs to. */
+  parentProjectId: Type.Optional(Nullable(UUID7String)),
   source: ProjectSource,
 })
 
@@ -137,6 +147,8 @@ export const projectSchemaUpdateRequest = Type.Object({
    */
   scaleMode: Type.Optional(ScaleMode),
   autoUpdateMode: Type.Optional(AutoUpdateMode),
+  /** Move this project into a group, or out of one with `null`. */
+  parentProjectId: Type.Optional(Nullable(UUID7String)),
 })
 
 const projectEntry = Type.Object({
@@ -172,6 +184,20 @@ const projectEntry = Type.Object({
   region: Nullable(Type.String()),
   /** Whether the upstream this was forked from has moved ahead (TASK 17). */
   hasUpstreamUpdate: Type.Boolean(),
+  /** Holds other projects; deploys nothing itself. */
+  isGroup: Type.Boolean(),
+  /** The group this belongs to, if any. */
+  parentProjectId: Nullable(UUID7String),
+  /*
+    Where this project is actually reachable, and on what hostname.
+
+    Both were absent, which is why the dashboard hardcoded `url: null` and every project read "Not
+    deployed yet" forever — including ones that had deployed and were serving. They come from the
+    project's live deployment rather than from its most recent one: a failed deploy does not change
+    where a project is reachable, and showing the newest row's URL would say it did.
+  */
+  url: Nullable(Type.String()),
+  hostname: Nullable(Type.String()),
 })
 
 export const projectSchemaEntryResponse = projectEntry

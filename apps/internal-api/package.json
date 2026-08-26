@@ -23,6 +23,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "catalog:",
+    "@aws-sdk/client-acm": "catalog:",
+    "@aws-sdk/client-elastic-load-balancing-v2": "catalog:",
     "@aws-sdk/client-kms": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
     "@aws-sdk/client-s3": "catalog:",

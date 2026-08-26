@@ -130,6 +130,15 @@ const releaseRequest = Type.Object({
   */
   runtime: Type.Optional(Type.String({ minLength: 1 })),
   handler: Type.Optional(Type.String({ minLength: 1 })),
+  /*
+    The migrator's build, uploaded like the application's.
+
+    Absent means no migration step, which is correct for a static site and for a project whose
+    schema is managed elsewhere — and is recorded as `skipped` rather than silently nothing, so
+    "this project has no migrations" and "somebody forgot" do not look the same on the deployment.
+  */
+  migration_key: Type.Optional(Type.String({ minLength: 1 })),
+  migration_handler: Type.Optional(Type.String({ minLength: 1 })),
   /** The commit subject, so a deployment list reads like a history rather than a list of shas. */
   message: Type.Optional(Type.String({ maxLength: 500 })),
 })
@@ -426,6 +435,9 @@ const deploy: Hono = new Hono()
         runtime: json.runtime ?? defaults.runtime,
         handler: json.handler ?? defaults.handler,
         gitMessage: json.message ?? null,
+        migrationArtifactKey: json.migration_key ?? null,
+        migrationHandler: json.migration_handler ?? null,
+        migrationStatus: json.migration_key === undefined ? "skipped" : "pending",
         /*
           Null, and deliberately so.
 

@@ -49,6 +49,15 @@ export type ProvisionProjectInput = {
   storeListingId: string | null
   repository: RepositoryPlan
   jobKind: ProjectJobKind
+  /**
+   * Create this as a logical grouping.
+   *
+   * A group is `state: "ready"` from the moment it exists, because there is nothing to provision —
+   * no repository to fork, no build, no function. Leaving it `creating` like a deployable project
+   * would leave it permanently mid-provision, waiting on a job that has no work to do.
+   */
+  isGroup?: boolean
+  parentProjectId?: string | null
   idempotencyKey?: string | null
   audit?: AuditContext
 }
@@ -138,9 +147,12 @@ export function provisionProject(db: Kysely<DB>) {
         dockerfilePath: input.dockerfilePath,
         ...(input.scaleMode === undefined ? {} : { scaleMode: input.scaleMode }),
         productionBranch: input.productionBranch,
-        state: "creating",
+        // See `isGroup` above: a group has nothing to provision, so `creating` would never end.
+        state: input.isGroup === true ? "ready" : "creating",
         autoUpdateEnabled: input.autoUpdateEnabled,
         autoUpdateMode: input.autoUpdateMode,
+        isGroup: input.isGroup ?? false,
+        parentProjectId: input.parentProjectId ?? null,
       })
 
       const job = await crudProjectJob(tx).create({

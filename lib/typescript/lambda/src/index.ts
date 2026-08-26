@@ -32,3 +32,10 @@ export {
   SUPPORTED_RUNTIMES,
   type SupportedRuntime,
 } from "./runtimes"
+export {
+  MIGRATION_TIMEOUT_S,
+  migrationFunctionName,
+  runMigration,
+  type MigrateInput,
+  type MigrateResult,
+} from "./migrate"

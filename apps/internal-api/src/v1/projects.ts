@@ -117,7 +117,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   if (rows.length === 0) return []
   const projectIds = rows.map((row) => row.id)
 
-  const [rated, regions, behind] = await Promise.all([
+  const [rated, regions, behind, live] = await Promise.all([
     /*
       Rated at read time against the price book in force, never stored. A stored cost is wrong the
       moment a rate changes, and wrong in a way nobody can reconstruct.
@@ -162,6 +162,27 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .orderBy("repositoryId")
       .orderBy("createdAt", "desc")
       .execute(),
+
+    /*
+      Where each project is actually reachable.
+
+      From `project.live_deployment_id`, not from the newest deployment row. A deploy that failed
+      does not move a project's URL, and reading the most recent row would claim it did — the
+      customer would be shown a hostname belonging to a release that never served.
+
+      One query for the page, same as the other three.
+    */
+    db
+      .selectFrom("project")
+      .innerJoin("deployment", "deployment.id", "project.liveDeploymentId")
+      .select([
+        "project.id as projectId",
+        "deployment.url as url",
+        "deployment.hostname as hostname",
+      ])
+      .where("project.id", "in", projectIds)
+      .where("deployment.deletedAt", "is", null)
+      .execute(),
   ])
 
   // First region wins, matching the `order by created_at` above: a project's first service is the
@@ -173,6 +194,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     }
   }
   const behindByRepository = new Map(behind.map((row) => [row.repositoryId, row.behindBy]))
+  const liveByProject = new Map(live.map((row) => [row.projectId, row]))
 
   return rows.map((row) => ({
     ...row,
@@ -183,6 +205,8 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     costMicroUsd: (rated.get(row.id)?.total ?? 0n).toString(),
     region: regionByProject.get(row.id) ?? null,
     hasUpstreamUpdate: (behindByRepository.get(row.repositoryId) ?? 0) > 0,
+    url: liveByProject.get(row.id)?.url ?? null,
+    hostname: liveByProject.get(row.id)?.hostname ?? null,
   }))
 }
 
@@ -202,6 +226,8 @@ const PROJECT_FIELDS = [
   "repositoryId",
   "storeListingId",
   "agentCredentialId",
+  "isGroup",
+  "parentProjectId",
   "createdAt",
   "updatedAt",
 ] as const
@@ -715,6 +741,8 @@ const app = new Hono()
         rootDir,
         slug,
         storeListingId,
+        isGroup: json.isGroup ?? false,
+        parentProjectId: json.parentProjectId ?? null,
       })
 
       /*
@@ -727,15 +755,25 @@ const app = new Hono()
 
         Keyed on the `project_job` id, so a duplicate enqueue collides rather than forking twice.
       */
-      await enqueue(db, {
-        kind: JOB_KINDS.provisionProject,
-        idempotencyKey: `${JOB_KINDS.provisionProject}:${provisioned.job.id}`,
-        payload: { projectJobId: provisioned.job.id, userId: user.id },
-        // Three, not the default. The failures here are GitHub's 5xx and secondary rate limits,
-        // which pass; a missing scope fails on the first attempt and would fail identically on the
-        // tenth, so a larger number would only delay the error a customer needs to see.
-        maxAttempts: 3,
-      })
+      /*
+        A group is not provisioned.
+
+        There is no repository to fork, nothing to build, and no function to publish — the row *is*
+        the whole object. Enqueuing the job anyway would run a fork against a repository that
+        already exists and then mark a first deploy that has no artifact, which is the exact failure
+        `provision.ts` produces today for anything with no build.
+      */
+      if (json.isGroup !== true) {
+        await enqueue(db, {
+          kind: JOB_KINDS.provisionProject,
+          idempotencyKey: `${JOB_KINDS.provisionProject}:${provisioned.job.id}`,
+          payload: { projectJobId: provisioned.job.id, userId: user.id },
+          // Three, not the default. The failures here are GitHub's 5xx and secondary rate limits,
+          // which pass; a missing scope fails on the first attempt and would fail identically on the
+          // tenth, so a larger number would only delay the error a customer needs to see.
+          maxAttempts: 3,
+        })
+      }
 
       /*
         Ask GitHub whether the App is already installed on the account this repository will live on.
@@ -942,6 +980,46 @@ const app = new Hono()
         }
       }
 
+      /*
+        A parent must exist, be a group, and not be the project itself.
+
+        Checked here rather than left to the foreign key, which only knows the row exists. A project
+        parented to a *deployable* project would render as a child in the switcher under something
+        that also deploys, and a project parented to itself makes the tree infinite — neither is
+        expressible as a constraint the database could have caught.
+      */
+      if (json.parentProjectId !== undefined && json.parentProjectId !== null) {
+        if (json.parentProjectId === projectId) {
+          return throwBadRequest(
+            c,
+            "A project cannot be its own group",
+            ErrorCode.ValidationFailed,
+            {
+              target: "parentProjectId",
+            },
+          )
+        }
+
+        const parent = await fetchProject(db).getInOrganization(
+          organization.id,
+          json.parentProjectId,
+          ["id", "isGroup"],
+        )
+        if (parent === undefined) {
+          return throwBadRequest(c, "Group not found", ErrorCode.ValidationFailed, {
+            target: "parentProjectId",
+          })
+        }
+        if (!parent.isGroup) {
+          return throwBadRequest(
+            c,
+            "That project is not a group. Only a group can hold other projects.",
+            ErrorCode.ValidationFailed,
+            { target: "parentProjectId" },
+          )
+        }
+      }
+
       const updated = await db.transaction().execute(async (tx) => {
         const row = await crudProject(tx).update(organization.id, projectId, {
           ...(json.name === undefined ? {} : { name: json.name }),
@@ -959,6 +1037,7 @@ const app = new Hono()
             : { autoUpdateEnabled: json.autoUpdateEnabled }),
           ...(json.autoUpdateMode === undefined ? {} : { autoUpdateMode: json.autoUpdateMode }),
           ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
+          ...(json.parentProjectId === undefined ? {} : { parentProjectId: json.parentProjectId }),
         })
 
         if (row === undefined) return undefined
