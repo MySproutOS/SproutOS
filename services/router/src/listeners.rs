@@ -71,7 +71,12 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
     let listener = TcpListener::bind(&listen)
         .await
         .with_context(|| format!("could not bind {listen} for the Valkey split"))?;
-    tracing::info!(%listen, backend = %backend, "valkey split listening");
+    // Redacted, because `backend` is a URI whose userinfo is the password. See `redacted`.
+    tracing::info!(
+        %listen,
+        backend = %valkey_proxy::upstream::redacted(&backend),
+        "valkey split listening"
+    );
 
     Ok(Some(tokio::spawn(async move {
         loop {

@@ -145,6 +145,31 @@ pub fn parse_backend(raw: &str) -> Result<Backend> {
     })
 }
 
+/// The backend address with any credential removed, for logging.
+///
+/// `VALKEY_PROXY_BACKEND` is a URI and the password lives in its userinfo, so anything that prints
+/// the raw value prints the password. The startup line did exactly that — one `INFO` per boot, into
+/// journald and from there into whatever collects it, containing the credential for every tenant's
+/// queue.
+///
+/// Returns the address alone. An unparseable value yields `<unparseable>` rather than the input,
+/// because the one case where the string is not shaped as expected is the case where guessing which
+/// part of it is secret is least safe.
+pub fn redacted(raw: &str) -> String {
+    match parse_backend(raw) {
+        Ok(backend) => {
+            let scheme = if backend.tls { "rediss" } else { "redis" };
+            let credential = if backend.credentials.is_some() {
+                "***@"
+            } else {
+                ""
+            };
+            format!("{scheme}://{credential}{}", backend.address)
+        }
+        Err(_) => "<unparseable>".to_owned(),
+    }
+}
+
 /// A connected upstream, which is either a plain socket or a TLS session over one.
 ///
 /// An enum rather than a boxed `dyn AsyncRead + AsyncWrite`: this sits on every tenant command, and
@@ -514,6 +539,36 @@ mod tests {
         assert!(cause.contains("WRONGPASS"), "{cause}");
         // The password is the one thing that must never reach a log line.
         assert!(!cause.contains("wrong@"), "{cause}");
+    }
+
+    /*
+      The log line must not carry the credential.
+
+      This is asserted rather than reviewed because it is invisible in normal operation: the log is
+      correct-looking either way, and the only difference is whether a secret is in it. The startup
+      line printed the raw `VALKEY_PROXY_BACKEND` and therefore the password, once per boot.
+    */
+    #[test]
+    fn the_redacted_form_keeps_the_address_and_drops_the_secret() {
+        let shown = redacted("rediss://:hunter2@queue.example.com:6379");
+
+        assert_eq!(shown, "rediss://***@queue.example.com:6379");
+        assert!(!shown.contains("hunter2"));
+    }
+
+    /// Nothing to redact is still shown in full — an address is not a secret.
+    #[test]
+    fn an_address_without_a_credential_is_shown_whole() {
+        assert_eq!(
+            redacted("cache.example.com:6379"),
+            "redis://cache.example.com:6379"
+        );
+    }
+
+    /// A value that does not parse is not echoed. If the shape is unknown, so is which part is secret.
+    #[test]
+    fn an_unparseable_backend_is_not_echoed() {
+        assert_eq!(redacted(""), "<unparseable>");
     }
 
     /// A password may contain an `@`. Splitting at the first one would leave it in the host.
