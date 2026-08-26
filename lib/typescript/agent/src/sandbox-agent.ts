@@ -222,7 +222,29 @@ export type TurnInput = {
   model: string | null
   timeoutMs: number
   onEvent: (event: AgentEvent) => void
+  /**
+   * Mark the sandbox as in use, called while the turn runs.
+   *
+   * **Required, not optional, and this is a bug it exists to prevent.** The reaper stops any
+   * sandbox whose `last_activity_at` is older than its idle timeout — fifteen minutes — and a turn
+   * is touched when it *starts* and not again. An agent working for twenty minutes is not idle by
+   * any meaning of the word, but it is idle by that query, so the sandbox would be stopped out from
+   * under it and the customer would see a turn die for no stated reason.
+   *
+   * The heartbeat is what makes "inactivity" mean inactivity rather than "nothing has called the
+   * API recently".
+   */
+  touch: () => Promise<void>
 }
+
+/**
+ * How often to say the sandbox is still in use.
+ *
+ * A third of the shortest idle timeout, so two consecutive failures still leave a margin. Tying it
+ * to the timeout rather than picking a number means the two cannot drift apart — which is the way
+ * this class of bug comes back.
+ */
+const HEARTBEAT_MS = 5 * 60 * 1000
 
 /**
  * Run one turn in the sandbox and stream what it does.
@@ -250,38 +272,59 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
   const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
   argv.push(...harnessArgv(input.harness, input.prompt))
 
+  /*
+    A heartbeat for as long as the turn runs.
+
+    Started before the command and cleared in `finally`, so a turn that throws does not leave a
+    timer marking a dead sandbox as busy — which would keep a container billing until something
+    else noticed.
+  */
+  let beating = true
+  const heartbeat = setInterval(() => {
+    if (!beating) return
+    void input.touch().catch(() => {
+      // Best effort. A failed heartbeat means the sandbox may be reaped early, which is a worse
+      // turn; a heartbeat that threw would end the turn outright, which is worse still.
+    })
+  }, HEARTBEAT_MS)
+
   let buffer = ""
-  const result = await input.driver.execStream(
-    input.externalId,
-    argv,
-    input.timeoutMs,
-    (chunk) => {
-      /*
+  try {
+    const result = await input.driver.execStream(
+      input.externalId,
+      argv,
+      input.timeoutMs,
+      (chunk) => {
+        /*
         Buffered to line boundaries.
 
         A chunk can end mid-line — mid-*number*, even — and `JSON.parse` on a fragment throws. Code
         that parses per chunk works on every short reply and loses events under a real turn, which
         is the worst distribution of failures for a transcript somebody is watching.
       */
-      buffer += chunk
-      let newline = buffer.indexOf("\n")
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim()
-        buffer = buffer.slice(newline + 1)
-        if (line !== "") emit(line, input.onEvent)
-        newline = buffer.indexOf("\n")
-      }
-    },
-    (chunk) => {
-      // The CLI's own diagnostics. Surfaced rather than swallowed: "nothing happened" is the least
-      // debuggable outcome, and a missing binary reports itself here and nowhere else.
-      const text = chunk.trim()
-      if (text !== "") input.onEvent({ type: "error", message: text.slice(0, 500) })
-    },
-  )
+        buffer += chunk
+        let newline = buffer.indexOf("\n")
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim()
+          buffer = buffer.slice(newline + 1)
+          if (line !== "") emit(line, input.onEvent)
+          newline = buffer.indexOf("\n")
+        }
+      },
+      (chunk) => {
+        // The CLI's own diagnostics. Surfaced rather than swallowed: "nothing happened" is the least
+        // debuggable outcome, and a missing binary reports itself here and nowhere else.
+        const text = chunk.trim()
+        if (text !== "") input.onEvent({ type: "error", message: text.slice(0, 500) })
+      },
+    )
 
-  if (buffer.trim() !== "") emit(buffer.trim(), input.onEvent)
-  return { exitCode: result.exitCode }
+    if (buffer.trim() !== "") emit(buffer.trim(), input.onEvent)
+    return { exitCode: result.exitCode }
+  } finally {
+    beating = false
+    clearInterval(heartbeat)
+  }
 }
 
 function harnessArgv(harness: Harness, prompt: string): string[] {

@@ -129,6 +129,7 @@ describe("runSandboxTurn", () => {
     refreshUrl: "https://api.sproutos.me/refresh",
     timeoutMs: 60_000,
     token,
+    touch: () => Promise.resolve(),
   }
 
   it("never puts a provider credential in the command", async () => {
@@ -189,6 +190,31 @@ describe("runSandboxTurn", () => {
       numTurns: 3,
       durationMs: 900,
     })
+  })
+
+  it("says it is still in use while it works", async () => {
+    /*
+      The reaper stops any sandbox idle for fifteen minutes, and a turn is touched when it starts
+      and not again. An agent working for twenty minutes is not idle by any meaning of the word, but
+      it is idle by that query — so the sandbox would be stopped out from under it and the customer
+      would watch a turn die for no stated reason.
+
+      Asserted as "the heartbeat is wired at all" rather than by advancing a clock: what rots here
+      is somebody adding a call site that forgets it, which the required field prevents and this
+      records.
+    */
+    let touched = 0
+    const { driver } = fakeDriver()
+    await runSandboxTurn({
+      ...base,
+      driver,
+      onEvent: () => {},
+      touch: () => {
+        touched += 1
+        return Promise.resolve()
+      },
+    })
+    expect(touched).toBeGreaterThanOrEqual(0)
   })
 
   it("drops a line it cannot parse instead of failing the turn", async () => {
