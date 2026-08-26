@@ -553,6 +553,21 @@ resource "aws_iam_policy" "application" {
         ]
       },
       {
+        /*
+          Tenant static assets, which this role signs uploads for rather than uploading itself.
+
+          A presigned URL carries the *signer's* authority — the deploy action holds no AWS
+          credential of its own — so without this the URL is generated happily and the tenant's PUT
+          is refused by S3 with the signer named nowhere the tenant can see.
+
+          Scoped to the `static/` prefix: the same bucket is shared by every project, and the key
+          prefix is the tenancy boundary that `deploy.ts` builds from the deploy token.
+        */
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
+        Resource = "${aws_s3_bucket.tenant_static.arn}/static/*"
+      },
+      {
         Effect   = "Allow"
         Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = aws_kms_key.envelope.arn
@@ -621,6 +636,8 @@ resource "aws_launch_template" "service" {
     application_parameter_path = local.application_parameter_path
     envelope_kms_key_arn       = aws_kms_key.envelope.arn
     spa_asset_origin           = aws_cloudfront_distribution.spa.domain_name
+    lambda_execution_role_arn  = aws_iam_role.lambda_execution.arn
+    tenant_static_bucket       = aws_s3_bucket.tenant_static.id
     database_endpoint          = aws_db_instance.control_plane.endpoint
     database_name              = aws_db_instance.control_plane.db_name
   }))

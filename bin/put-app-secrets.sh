@@ -44,6 +44,15 @@ KEYS=(
   KAFKA_SASL_USERNAME
   KAFKA_SASL_PASSWORD
   OVH_CLICKHOUSE_PASSWORD
+  # Runtime logs. Only the password is a secret; the URL, user and database are plain text in the
+  # launch template, because a hostname is not a credential.
+  CLICKHOUSE_PASSWORD
+  # Signs metering batches. Unset, the ingest route answers 401 by design and no usage is recorded.
+  METERING_INGEST_HMAC_KEY
+  # Not derived from OpenTofu because nothing in this repository publishes the layer — the three
+  # versions in the account were published by hand. Pinning it in the launch template would make it
+  # silently stale on the next publish; here a person updates it in the same motion.
+  LOG_EXTENSION_LAYER_ARN
 )
 
 payload=$(
