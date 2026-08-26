@@ -7,6 +7,7 @@
  * usage nobody is charged for.
  */
 import { createHmac, timingSafeEqual } from "node:crypto"
+import type { BillableDimension } from "./dimensions"
 
 /** Prefixed to the canonical form so a signature over one kind of payload cannot be replayed as another. */
 export const CANONICAL_DOMAIN = "sproutos.metering.v1"
@@ -18,7 +19,7 @@ export type UsageEvent = {
   externalId: string
   organizationId: string
   projectId: string | null
-  dimension: string
+  dimension: BillableDimension
   quantity: number
   occurredAt: number
   attributes: Record<string, string>
@@ -105,7 +106,7 @@ export function jsonString(value: string): string {
 export function canonical(batch: UsageBatch): string {
   const events = batch.events.map((event) => {
     const attributes = Object.keys(event.attributes)
-      .sort()
+      .toSorted()
       .map((key) => `${jsonString(key)}:${jsonString(event.attributes[key] ?? "")}`)
       .join(",")
 
