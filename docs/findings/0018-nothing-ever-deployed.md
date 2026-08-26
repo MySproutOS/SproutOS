@@ -219,3 +219,42 @@ Two faults, and only one is the staleness:
 
 The rule this leaves: **an observability component must fail quieter than the thing it observes.**
 An extension that can crash the application is not monitoring it, it is a dependency of it.
+
+## What it took to serve one request, end to end
+
+The list, in the order each was hit, because the shape matters more than any single item:
+
+| #   | Failure the customer would see         | What it actually was                                                   |
+| --- | -------------------------------------- | ---------------------------------------------------------------------- |
+| 1   | `Unable to resolve action … not found` | the deploy action's repository is private                              |
+| 2   | `curl: (22) … 404`                     | `SERVICE_BUILD_BUCKET` unset; fallback names a bucket in no account    |
+| 3   | `curl: (22) … 403`                     | the instance role had no `s3:PutObject` on that bucket                 |
+| 4   | (never reached) `AccessDenied`         | no `lambda:CreateFunction`, `PublishVersion` or `iam:PassRole`         |
+| 5   | `Runtime.HandlerNotFound`              | the presets build a web server; we published `index.handler`           |
+| 6   | `Extension.Crash`                      | the log extension is `aarch64`; functions defaulted to `x86_64`        |
+| 7   | `Extension.Crash`                      | that layer is a build old enough to want `KAFKA_BROKERS`, and it exits |
+| 8   | `Cannot find module 'next'`            | symlinked directories not descended into: a 234 KB archive             |
+| 9   | `Cannot find module '@swc/helpers/…'`  | dereferencing them instead, which destroys pnpm's resolution           |
+| 10  | `app is not ready after 28000ms`       | the app read `API_PORT`; the adapter waits on `PORT`                   |
+| 11  | `ECONNREFUSED 127.0.0.1:6379`          | Valkey wrote `REDIS_URL`; that app reads `VALKEY_URL`                  |
+| 12  | `ECONNREFUSED 127.0.0.1:5432`          | two children of a group cannot share one database                      |
+
+Twelve, and **not one of them was a bug in the code that was written**. Every piece was
+individually correct: the publish logic, the packaging, the IAM policy file, the extension, the
+presets. What was wrong was the joins between them, and every join was invisible from either side.
+
+Three properties made them invisible together:
+
+- **A default where configuration should have been.** `sproutos-dev-artifacts`, `x86_64`,
+  `localhost:6379`, `3001`. A default cannot fail loudly, because it is indistinguishable from a
+  choice.
+- **An artifact nothing in the tree produces.** The extension layer's architecture and its code had
+  both drifted, and no amount of reading this repository could reveal either.
+- **A neighbour already fixed.** The assets bucket had the grant; the build bucket did not. The
+  assets bucket's missing-bucket bug is written down at the top of `tenant-static.tf`, one line
+  above the identical bug in its sibling.
+
+The last one is the one to watch for. Every fix in this list already existed somewhere in the
+repository, applied to something adjacent, with a comment explaining why it was necessary. The
+question that finds these is not "is this correct" but **"what else is like this, and did the fix
+reach it?"**
