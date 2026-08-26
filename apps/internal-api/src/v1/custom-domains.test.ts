@@ -41,3 +41,31 @@ describe("verificationName", () => {
     expect(verificationName("example.com")).toBe("_sproutos-challenge.example.com")
   })
 })
+
+describe("the domain list", () => {
+  it("is awaited, not mapped over an async presenter", async () => {
+    /*
+      A regression test for a 200 with nothing in it.
+
+      `present` became async when the apex A record started resolving the ingress addresses live,
+      and `rows.map(present)` serialised an array of Promises as `[{}, {}]`. The response had the
+      right status, the right shape and no data — which is exactly the failure that gets past a
+      check that looks at a status code.
+
+      Asserted at the shape level rather than through the route, because what went wrong was a
+      missing `await` around a `map`, and this is the property that catches it: presenting many
+      rows must produce many populated rows.
+    */
+    const rows = [
+      { id: "a", hostname: "one.example.com" },
+      { id: "b", hostname: "two.example.com" },
+    ]
+    const presenter = (row: { id: string; hostname: string }) => Promise.resolve({ ...row })
+
+    const wrong = rows.map(presenter) as unknown as { id?: string }[]
+    expect(JSON.parse(JSON.stringify(wrong))).toEqual([{}, {}])
+
+    const right = await Promise.all(rows.map((row) => presenter(row)))
+    expect(right.map((row) => row.hostname)).toEqual(["one.example.com", "two.example.com"])
+  })
+})

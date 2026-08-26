@@ -242,7 +242,15 @@ const routes = app
         .orderBy("createdAt", "asc")
         .execute()
 
-      return c.json({ data: rows.map(present) })
+      /*
+        Awaited, not mapped.
+
+        `present` became async when the apex A record started resolving the ingress addresses live.
+        `rows.map(present)` then serialised an array of Promises as `[{}, {}]` — a 200 with the
+        right shape and no data in it, which is the failure mode that gets past every check that
+        looks at a status code. Found by reading a domain list that had two domains in it.
+      */
+      return c.json({ data: await Promise.all(rows.map((row) => present(row))) })
     },
   )
   .post(
