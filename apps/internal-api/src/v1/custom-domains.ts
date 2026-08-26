@@ -12,6 +12,7 @@ import {
   RemoveListenerCertificatesCommand,
 } from "@aws-sdk/client-elastic-load-balancing-v2"
 import { crudAuditLog } from "@lib/dao"
+import { CUSTOM_DOMAINS_DISABLED_REASON, CUSTOM_DOMAINS_ENABLED } from "@utils/feature-flags"
 import { publishRoute, type Route, withdrawRoute } from "@lib/lambda"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -53,6 +54,17 @@ import {
  * Verification and issuance are checked on demand rather than polled, because both are things the
  * *customer* has to act on and the natural moment to look is when they come back and press the
  * button.
+ *
+ * ## This is behind a flag, and the flag is off
+ *
+ * Not because it does not work — it was verified end to end against a real domain — but because it
+ * does not scale past an AWS limit: **an ALB listener carries 25 certificates**, and one per customer
+ * domain runs the platform out at a customer count that is not a business. `CUSTOM_DOMAINS_ENABLED`
+ * in `@utils/feature-flags` carries the full reasoning and what has to exist before it goes on: our
+ * own TLS termination at the edge, holding certificates itself and selecting on SNI.
+ *
+ * Reading and deleting stay open while it is off. A domain added before the flag flipped is still
+ * attached and still serving, and hiding it would leave somebody unable to remove it.
  */
 
 const errorResponse = {
@@ -215,6 +227,17 @@ const routes = app
     requirePermission("project:update", paramResource("project", "project", "projectId")),
     validator("json", customDomainSchemaCreateRequest),
     async (c) => {
+      /*
+        Refused while the flag is off — see `@utils/feature-flags` for why.
+
+        The listing below is deliberately *not* gated: a domain added before the flag went off is
+        still real, still attached, and hiding it would leave a customer unable to see or remove
+        something that is serving their traffic.
+      */
+      if (!CUSTOM_DOMAINS_ENABLED) {
+        return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
+      }
+
       const projectId = c.req.param("projectId")
       const hostname = c.req.valid("json").hostname.toLowerCase()
 
@@ -347,6 +370,10 @@ const routes = app
     requirePermission("project:update", paramResource("project", "project", "projectId")),
     validator("param", domainParam),
     async (c) => {
+      if (!CUSTOM_DOMAINS_ENABLED) {
+        return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
+      }
+
       const { projectId, domainId } = c.req.valid("param")
 
       const domain = await db

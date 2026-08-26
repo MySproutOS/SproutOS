@@ -471,6 +471,9 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/crypto
+      '@utils/feature-flags':
+        specifier: workspace:*
+        version: link:../../lib/typescript/utils/feature-flags
       '@utils/numbers':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/numbers
@@ -1140,6 +1143,8 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
+
+  lib/typescript/utils/feature-flags: {}
 
   lib/typescript/utils/numbers: {}
 

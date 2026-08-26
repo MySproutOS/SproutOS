@@ -54,6 +54,7 @@
     "@sproutos/db": "workspace:*",
     "@utils/cookies": "workspace:*",
     "@utils/crypto": "workspace:*",
+    "@utils/feature-flags": "workspace:*",
     "@utils/numbers": "workspace:*",
     "bullmq": "^6.1.2",
     "dotenv": "^17.4.2",

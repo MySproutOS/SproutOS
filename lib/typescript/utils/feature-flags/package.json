@@ -1,0 +1,23 @@
+{
+  "name": "@utils/feature-flags",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hard-coded switches for capabilities the platform is not ready to offer everyone",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "exports": [
+    {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts"
+    }
+  ],
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "config": {}
+}
