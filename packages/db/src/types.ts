@@ -529,6 +529,19 @@ export interface MemberRole {
   roleId: string
 }
 
+export interface MeteringImportState {
+  consumer: string
+  cursor: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
+export interface MeteringOutbox {
+  createdAt: Generated<Timestamp>
+  eventId: string
+  id: string
+  payload: Json
+}
+
 export interface Node {
   allocatableCpuMillis: Generated<Int8>
   allocatableMemoryBytes: Generated<Int8>
@@ -1167,6 +1180,7 @@ export interface UsageRollup {
   chargedQuantity: Generated<Numeric>
   createdAt: Generated<Timestamp>
   dimension: string
+  externallyChargedQuantity: Generated<Numeric>
   id: string
   organizationId: string
   projectId: string | null
@@ -1316,6 +1330,8 @@ export interface DB {
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission
   memberRole: MemberRole
+  meteringImportState: MeteringImportState
+  meteringOutbox: MeteringOutbox
   node: Node
   oauthAccessToken: OauthAccessToken
   oauthAuthorizationCode: OauthAuthorizationCode

@@ -57,6 +57,12 @@ export {
   type RollupResult,
 } from "./rollup"
 export {
+  applyImportedUsageRollups,
+  CLICKHOUSE_METERING_CONSUMER,
+  importedUsageCursor,
+  type ImportedUsageRollup,
+} from "./import-rollups"
+export {
   CHARGE_BATCH_SIZE,
   CHARGED_BUCKET,
   assertSingleGrain,

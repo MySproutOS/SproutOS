@@ -3,6 +3,11 @@ import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { acquirePlatformJobLock, releasePlatformJobLock } from "./test-lock"
+import {
+  applyImportedUsageRollups,
+  CLICKHOUSE_METERING_CONSUMER,
+  importedUsageCursor,
+} from "./import-rollups"
 import { LATE_ARRIVAL_GRACE_MS, rollUpUsage } from "./rollup"
 
 /*
@@ -116,6 +121,10 @@ afterAll(async () => {
 
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
+    await tx
+      .deleteFrom("meteringImportState")
+      .where("consumer", "=", CLICKHOUSE_METERING_CONSUMER)
+      .execute()
     await tx.deleteFrom("usageRollup").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("usageEvent").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -245,6 +254,58 @@ describe("rollUpUsage", () => {
       .where("projectId", "is", null)
       .executeTakeFirstOrThrow()
     expect(Number(rows.n)).toBe(1)
+  })
+
+  it("imports absolute totals without erasing ordinary or repeating external charges", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const bucketStart = new Date("2035-01-01T03:00:00.000Z")
+    const firstCursor = new Date("2035-01-01T04:00:00.000Z")
+    const grain = {
+      organizationId,
+      projectId,
+      dimension: "ai_input_token",
+      bucket: "hour" as const,
+      bucketStart,
+    }
+
+    await applyImportedUsageRollups(
+      db,
+      [{ ...grain, quantity: "10", externallyChargedQuantity: "4" }],
+      firstCursor,
+    )
+    await db
+      .updateTable("usageRollup")
+      // Three more units were charged by the ordinary charge job.
+      .set({ chargedQuantity: "7" })
+      .where("organizationId", "=", organizationId)
+      .where("projectId", "=", projectId)
+      .where("dimension", "=", grain.dimension)
+      .where("bucket", "=", grain.bucket)
+      .where("bucketStart", "=", bucketStart)
+      .execute()
+
+    const secondCursor = new Date("2035-01-01T05:00:00.000Z")
+    const second = [{ ...grain, quantity: "15", externallyChargedQuantity: "6" }]
+    await applyImportedUsageRollups(db, second, secondCursor)
+    await applyImportedUsageRollups(db, second, secondCursor)
+
+    const row = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity", "externallyChargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("projectId", "=", projectId)
+      .where("dimension", "=", grain.dimension)
+      .where("bucket", "=", grain.bucket)
+      .where("bucketStart", "=", bucketStart)
+      .executeTakeFirstOrThrow()
+
+    expect(Number(row.quantity)).toBe(15)
+    expect(Number(row.externallyChargedQuantity)).toBe(6)
+    // Seven already charged plus only the two-unit increase in externally settled usage.
+    expect(Number(row.chargedQuantity)).toBe(9)
+    expect(await importedUsageCursor(db)).toEqual(secondCursor)
   })
 
   /*
