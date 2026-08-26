@@ -11,26 +11,43 @@ export const observabilitySchemaLogQuery = Type.Object({
   since: Type.Optional(Type.String()),
   until: Type.Optional(Type.String()),
   search: Type.Optional(Type.String({ maxLength: 500 })),
-  /** OTel severity number: 9 INFO, 13 WARN, 17 ERROR. */
-  minSeverity: Type.Optional(Type.String()),
-  service: Type.Optional(Type.String({ maxLength: 200 })),
-  traceId: Type.Optional(Type.String({ maxLength: 64 })),
+  /**
+   * One of the levels `levelOf()` derives from a runtime line: `platform`, `trace`, `debug`,
+   * `info`, `warn`, `error`, `fatal`. An exact match rather than a minimum, because these come
+   * from parsing the customer's own output and there is no ordering to be confident about.
+   */
+  level: Type.Optional(Type.String({ maxLength: 16 })),
+  /** Narrow to one invocation. Lambda's request id, as it appears on the runtime's own lines. */
+  requestId: Type.Optional(Type.String({ maxLength: 64 })),
   limit: Type.Optional(Type.String()),
   /** A `nextBefore` from a previous page. */
   before: Type.Optional(Type.String({ maxLength: 32 })),
 })
 
+/*
+  A line as the platform observed it, which is what a customer means by "my logs".
+
+  This was the OpenTelemetry log model — `severityNumber`, `traceId`, `spanId`, `scopeName`,
+  `attributes` — and it described `log_record`, the table a customer's own OTel exporter writes
+  into. Almost nobody has one, so the page showed "Nothing sent yet" while `runtime_log` held the
+  output of their function, collected automatically and expiring in three days unseen.
+
+  The fields here are Lambda's own. `durationMs` and the rest are null on ordinary output and
+  populated on the `REPORT` line that closes each invocation, which is where a per-request cost
+  and a cold start become visible.
+*/
 export const observabilitySchemaLogLine = Type.Object({
   timestamp: Type.String(),
   cursor: Type.String(),
-  severityNumber: Type.Integer(),
-  severityText: Type.String(),
-  body: Type.String(),
-  serviceName: Type.String(),
-  scopeName: Type.String(),
-  traceId: Type.String(),
-  spanId: Type.String(),
-  attributes: Type.Record(Type.String(), Type.String()),
+  level: Type.String(),
+  message: Type.String(),
+  requestId: Type.String(),
+  deploymentId: Type.String(),
+  durationMs: Nullable(Type.Number()),
+  billedMs: Nullable(Type.Integer()),
+  memoryMb: Nullable(Type.Integer()),
+  initMs: Nullable(Type.Number()),
+  coldStart: Nullable(Type.Boolean()),
 })
 
 export const observabilitySchemaLogsResponse = Type.Object({

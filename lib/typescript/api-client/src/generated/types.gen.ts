@@ -4289,9 +4289,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsData = {
     since?: string
     until?: string
     search?: string
-    minSeverity?: string
-    service?: string
-    traceId?: string
+    level?: string
+    requestId?: string
     limit?: string
     before?: string
   }
@@ -4320,16 +4319,15 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsResponses = {
     lines: Array<{
       timestamp: string
       cursor: string
-      severityNumber: number
-      severityText: string
-      body: string
-      serviceName: string
-      scopeName: string
-      traceId: string
-      spanId: string
-      attributes: {
-        [key: string]: unknown | string
-      }
+      level: string
+      message: string
+      requestId: string
+      deploymentId: string
+      durationMs: number | null
+      billedMs: number | null
+      memoryMb: number | null
+      initMs: number | null
+      coldStart: boolean | null
     }>
     nextBefore: string | null
   }

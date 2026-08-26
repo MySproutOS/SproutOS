@@ -1,5 +1,10 @@
 /* oxlint-disable no-await-in-loop */
-import { closeClickhouse, ensureSchema, observabilityConfigured } from "@lib/observability"
+import {
+  closeClickhouse,
+  ensureSchema,
+  observabilityConfigured,
+  writeRuntimeLogs,
+} from "@lib/observability"
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -207,41 +212,54 @@ describe.skipIf(!up)("TASK 34: observability", () => {
     expect(fetched.json.endpoint).toContain("/v1/otlp")
   })
 
-  it("accepts a batch and returns it on a search", async ({ skip }) => {
+  it("accepts an OTLP batch", async ({ skip }) => {
     if (!up) skip()
-    const marker = `probe-${v7()}`
-    const sent = await sendLogs(myKey, marker)
+    const sent = await sendLogs(myKey, `probe-${v7()}`)
     expect(sent.status).toBe(200)
     // An empty object, not a partial success: nothing was rejected.
     expect(sent.json).toEqual({})
-
-    const found = await call(
-      "GET",
-      `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs?search=${marker}`,
-      actor(),
-    )
-    expect(found.status).toBe(200)
-    const lines = found.json.lines as Json[]
-    expect(lines).toHaveLength(1)
-    expect(lines[0]?.body).toBe(marker)
-    expect(lines[0]?.severityText).toBe("ERROR")
-    expect(lines[0]?.serviceName).toBe("checkout")
   })
 
-  it("keeps one project's logs out of another's search", async ({ skip }) => {
+  /*
+    The search reads `runtime_log`, so this seeds `runtime_log`.
+
+    It used to send OTLP and search for it back, which stopped testing anything the moment the
+    viewer moved to the table the platform fills by itself — the assertion would have been a search
+    over an empty table returning nothing, passing only where it expected nothing. The property is
+    the same and it is the one worth keeping: two projects, one organization, one caller entitled to
+    both, and nothing but the project scoping separating identical text.
+  */
+  it("keeps one project's runtime logs out of another's search", async ({ skip }) => {
     if (!up) skip()
-    // The same text from both projects, in one organization, read by one caller who is entitled to
-    // both. Nothing but the project scoping separates them.
     const marker = `shared-${v7()}`
-    await sendLogs(myKey, `${marker} from mine`)
-    await sendLogs(theirKey, `${marker} from theirs`)
+    const now = new Date()
+
+    await writeRuntimeLogs([
+      {
+        ts: now,
+        projectId: myProject().id,
+        deploymentId: v7(),
+        requestId: v7(),
+        level: "info",
+        message: `${marker} from mine`,
+      },
+      {
+        ts: now,
+        projectId: theirProject().id,
+        deploymentId: v7(),
+        requestId: v7(),
+        level: "info",
+        message: `${marker} from theirs`,
+      },
+    ])
 
     const ours = await call(
       "GET",
       `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs?search=${marker}`,
       actor(),
     )
-    expect((ours.json.lines as Json[]).map((line) => line.body)).toEqual([`${marker} from mine`])
+    expect(ours.status).toBe(200)
+    expect((ours.json.lines as Json[]).map((line) => line.message)).toEqual([`${marker} from mine`])
   })
 
   it("refuses a batch with no key, a wrong key, or the wrong content type", async ({ skip }) => {

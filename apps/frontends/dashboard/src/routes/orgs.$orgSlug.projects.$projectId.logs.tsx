@@ -26,8 +26,9 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   DEFAULT_FILTERS,
-  SEVERITY_LEVELS,
+  LOG_LEVELS,
   formatBytes,
+  invocationSummary,
   logTime,
   severityTone,
   useLogs,
@@ -56,7 +57,7 @@ const WINDOWS = [
   "__all" — three dropdowns nobody can make sense of. Passing a render function is explicit about
   the mapping rather than relying on Base UI matching an `items` array against the current value.
 */
-const SEVERITY_LABELS = new Map(SEVERITY_LEVELS.map((level) => [String(level.value), level.label]))
+const LEVEL_LABELS = new Map(LOG_LEVELS.map((level) => [level.value, level.label]))
 const WINDOW_LABELS = new Map(WINDOWS.map((window) => [String(window.value), window.label]))
 
 function labelFor(labels: Map<string, string>, value: unknown): string {
@@ -129,17 +130,17 @@ function ProjectLogs() {
           </div>
 
           <Select
-            value={String(filters.minSeverity)}
+            value={filters.level}
             onValueChange={(value) => {
-              setFilters((current) => ({ ...current, minSeverity: Number(value ?? 0) }))
+              setFilters((current) => ({ ...current, level: value === null ? "" : String(value) }))
             }}
           >
             <SelectTrigger className="w-[13rem]">
-              <SelectValue>{(value) => labelFor(SEVERITY_LABELS, value)}</SelectValue>
+              <SelectValue>{(value) => labelFor(LEVEL_LABELS, value)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {SEVERITY_LEVELS.map((level) => (
-                <SelectItem key={level.value} value={String(level.value)}>
+              {LOG_LEVELS.map((level) => (
+                <SelectItem key={level.value} value={level.value}>
                   {level.label}
                 </SelectItem>
               ))}
@@ -164,31 +165,14 @@ function ProjectLogs() {
             </SelectContent>
           </Select>
 
-          {(stream.data?.services ?? []).length > 0 ? (
-            <Select
-              value={filters.service === "" ? "__all" : filters.service}
-              onValueChange={(value) => {
-                setFilters((current) => ({
-                  ...current,
-                  service: value === "__all" || value === null ? "" : String(value),
-                }))
-              }}
-            >
-              <SelectTrigger className="w-[11rem]">
-                <SelectValue>
-                  {(value) => (value === "__all" ? "All services" : String(value))}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">All services</SelectItem>
-                {(stream.data?.services ?? []).map((service) => (
-                  <SelectItem key={service} value={service}>
-                    {service}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
+          {/*
+            No service filter.
+
+            `service_name` is an OpenTelemetry field and belongs to `log_record`, the table a
+            customer's own exporter writes into. These lines are one function's output — there is
+            no second service to pick between — so the dropdown was markup that could never render
+            for the data this page now shows.
+          */}
 
           <Button type="submit" size="sm">
             Search
@@ -234,22 +218,36 @@ function ProjectLogs() {
               <ul className="divide-y divide-border">
                 {lines.map((line) => (
                   <li
-                    key={`${line.cursor}-${line.body.slice(0, 24)}`}
+                    key={`${line.cursor}-${line.message.slice(0, 24)}`}
                     className="flex gap-3 px-3 py-1.5 font-mono text-xs"
                   >
                     <span className="shrink-0 tabular-nums text-muted-foreground">
                       {logTime(line.timestamp)}
                     </span>
                     <span
-                      className={`w-14 shrink-0 uppercase ${TONE_CLASS[severityTone(line.severityNumber)]}`}
+                      className={`w-14 shrink-0 uppercase ${TONE_CLASS[severityTone(line.level)]}`}
                     >
-                      {line.severityText === "" ? "—" : line.severityText}
+                      {line.level === "" ? "—" : line.level}
                     </span>
-                    {line.serviceName === "" ? null : (
-                      <span className="shrink-0 text-muted-foreground">{line.serviceName}</span>
-                    )}
+                    {/*
+                      The last eight characters of the request id, not the whole thing.
+
+                      A full uuid is 36 characters of noise on every row; the tail is enough to see
+                      that two lines belong to the same invocation, which is the only thing this
+                      column is read for. Blank where Lambda did not attach one — see
+                      `requestIdOf`, which leaves it empty rather than inventing a placeholder that
+                      would group unrelated lines together.
+                    */}
+                    <span className="w-20 shrink-0 text-muted-foreground">
+                      {line.requestId === "" ? "" : line.requestId.slice(-8)}
+                    </span>
                     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                      {line.body}
+                      {line.message}
+                      {invocationSummary(line) === null ? null : (
+                        <span className="ml-2 text-muted-foreground">
+                          {invocationSummary(line)}
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}

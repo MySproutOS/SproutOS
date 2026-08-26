@@ -9,52 +9,72 @@ import {
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 /**
- * OpenTelemetry severity numbers, in the bands the spec defines.
+ * The levels `levelOf()` derives from a runtime line.
  *
- * The *number* is what is filtered on, not the text, because the text is whatever the customer's
- * logger emitted — `warn`, `WARNING`, `W` — and a filter matching strings would miss most of it.
+ * Exact matches rather than a severity floor. These are parsed out of whatever the customer's
+ * program printed, so "error and above" would be asserting an ordering over strings we inferred —
+ * and `platform` has no place in such an ordering at all: it is Lambda's own `START`/`END`/`REPORT`
+ * bookkeeping, which a reader wants to isolate or hide, never to threshold.
  */
-export const SEVERITY_LEVELS = [
-  { value: 0, label: "All levels" },
-  { value: 5, label: "Debug and above" },
-  { value: 9, label: "Info and above" },
-  { value: 13, label: "Warning and above" },
-  { value: 17, label: "Errors only" },
+export const LOG_LEVELS = [
+  { value: "", label: "All levels" },
+  { value: "error", label: "Errors" },
+  { value: "warn", label: "Warnings" },
+  { value: "info", label: "Info" },
+  { value: "debug", label: "Debug" },
+  { value: "platform", label: "Platform" },
 ] as const
 
+/** One line as the platform observed it. The nullable fields are populated on `REPORT` only. */
 export type LogLine = {
   timestamp: string
   cursor: string
-  severityNumber: number
-  severityText: string
-  body: string
-  serviceName: string
-  scopeName: string
-  traceId: string
-  spanId: string
-  attributes: Record<string, string>
+  level: string
+  message: string
+  requestId: string
+  deploymentId: string
+  durationMs: number | null
+  billedMs: number | null
+  memoryMb: number | null
+  initMs: number | null
+  coldStart: boolean | null
 }
 
 export type LogFilters = {
   search: string
-  minSeverity: number
-  service: string
+  level: string
   windowMinutes: number
 }
 
 export const DEFAULT_FILTERS: LogFilters = {
   search: "",
-  minSeverity: 0,
-  service: "",
+  level: "",
   windowMinutes: 60,
 }
 
-/** The tone a severity gets in the list. `--husk` is money only, so nothing here is amber. */
-export function severityTone(severityNumber: number): "error" | "warn" | "info" | "debug" {
-  if (severityNumber >= 17) return "error"
-  if (severityNumber >= 13) return "warn"
-  if (severityNumber >= 9) return "info"
-  return "debug"
+/** The tone a level gets in the list. `--husk` is money only, so nothing here is amber. */
+export function severityTone(level: string): "error" | "warn" | "info" | "debug" {
+  if (level === "error" || level === "fatal") return "error"
+  if (level === "warn") return "warn"
+  if (level === "platform" || level === "debug" || level === "trace") return "debug"
+  return "info"
+}
+
+/**
+ * The trailing detail on a `REPORT` line, or nothing.
+ *
+ * Duration and memory are what a reader scans for after "did it work" — and `billedMs` is the one
+ * that maps to what the invocation cost, which is why it is shown rather than left in the message
+ * text it was parsed out of.
+ */
+export function invocationSummary(line: LogLine): string | null {
+  if (line.durationMs === null && line.billedMs === null && line.memoryMb === null) return null
+  const parts: string[] = []
+  if (line.durationMs !== null) parts.push(`${line.durationMs.toFixed(1)} ms`)
+  if (line.billedMs !== null) parts.push(`billed ${line.billedMs} ms`)
+  if (line.memoryMb !== null) parts.push(`${line.memoryMb} MB`)
+  if (line.coldStart === true) parts.push("cold start")
+  return parts.join(" · ")
 }
 
 const TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -104,8 +124,7 @@ export function useLogs(orgSlug: string, projectId: string, filters: LogFilters)
           until,
           limit: "100",
           ...(filters.search === "" ? {} : { search: filters.search }),
-          ...(filters.minSeverity === 0 ? {} : { minSeverity: String(filters.minSeverity) }),
-          ...(filters.service === "" ? {} : { service: filters.service }),
+          ...(filters.level === "" ? {} : { level: filters.level }),
           ...(pageParam === undefined ? {} : { before: pageParam }),
         },
         throwOnError: true,
@@ -116,7 +135,7 @@ export function useLogs(orgSlug: string, projectId: string, filters: LogFilters)
   })
 }
 
-/** A project's ingest endpoint, retention, usage, and the services it has sent from. */
+/** A project's retention, usage, and — if it sends OTLP as well — its ingest endpoint. */
 export function useObservabilityStream(orgSlug: string, projectId: string) {
   return useQuery(
     getV1OrgsByOrgSlugProjectsByProjectIdObservabilityOptions({ path: { orgSlug, projectId } }),

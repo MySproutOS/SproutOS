@@ -1,4 +1,5 @@
 import { clickhouse } from "./client"
+import { RUNTIME_LOG_RETENTION_DAYS } from "./runtime-logs"
 
 /**
  * The log table.
@@ -93,7 +94,7 @@ create table if not exists runtime_log (
 engine = MergeTree
 partition by toDate(ts)
 order by (project_id, ts, request_id)
-ttl toDateTime(ts) + interval 3 day delete
+ttl toDateTime(ts) + toIntervalDay(${RUNTIME_LOG_RETENTION_DAYS}) delete
 settings index_granularity = 8192, ttl_only_drop_parts = 1
 `
 

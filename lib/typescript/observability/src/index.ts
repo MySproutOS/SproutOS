@@ -33,6 +33,8 @@ export {
   parseReport,
   projectIdFromLogGroup,
   queryRuntimeLogs,
+  RUNTIME_LOG_RETENTION_DAYS,
+  runtimeUsage,
   requestIdOf,
   type RuntimeLog,
   type RuntimeLogQuery,

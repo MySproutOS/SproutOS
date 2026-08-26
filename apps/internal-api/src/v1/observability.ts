@@ -3,8 +3,9 @@ import {
   MAX_LIMIT,
   observabilityConfigured,
   projectServices,
-  projectUsage,
-  searchLogs,
+  queryRuntimeLogs,
+  RUNTIME_LOG_RETENTION_DAYS,
+  runtimeUsage,
   type RetentionDays,
 } from "@lib/observability"
 import { db } from "@sproutos/db"
@@ -111,26 +112,55 @@ observability
       const project = await ownedProject(c.var.organization.id, projectId)
       if (project === undefined) return throwNotFound(c, "Project not found")
 
-      const until = query.until ?? new Date().toISOString()
+      const limit = Number(query.limit)
+      const pageSize = Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : 100
+
+      /*
+        `before` is a timestamp, not an opaque id.
+
+        Paging by `ts` is exact enough here because the page asks for strictly older rows than the
+        last one it holds, and `runtime_log` is ordered by `(project_id, ts, request_id)` — so this
+        is a seek rather than a scan. Two lines in the same millisecond can straddle a page
+        boundary; that is a duplicate at worst, never a gap, and a viewer showing one line twice is
+        a much smaller problem than one silently dropping it.
+      */
+      const until = query.before ?? query.until ?? new Date().toISOString()
       const since = query.since ?? new Date(Date.now() - DEFAULT_WINDOW_MS).toISOString()
 
-      const minSeverity = Number(query.minSeverity)
-      const limit = Number(query.limit)
-
       try {
-        const result = await searchLogs({
+        const rows = await queryRuntimeLogs({
           projectId,
-          since,
-          until,
-          limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : 100,
-          ...(query.search === undefined ? {} : { search: query.search }),
-          ...(Number.isFinite(minSeverity) && minSeverity > 0 ? { minSeverity } : {}),
-          ...(query.service === undefined ? {} : { service: query.service }),
-          ...(query.traceId === undefined ? {} : { traceId: query.traceId }),
-          ...(query.before === undefined ? {} : { before: query.before }),
+          since: new Date(since),
+          until: new Date(until),
+          limit: pageSize,
+          ...(query.search === undefined || query.search === "" ? {} : { search: query.search }),
+          ...(query.level === undefined || query.level === "" ? {} : { level: query.level }),
         })
 
-        return c.json(result)
+        const lines = rows.map((row) => ({
+          timestamp: row.ts.toISOString(),
+          cursor: row.ts.toISOString(),
+          level: row.level,
+          message: row.message,
+          requestId: row.requestId,
+          deploymentId: row.deploymentId,
+          durationMs: row.durationMs ?? null,
+          billedMs: row.billedMs ?? null,
+          memoryMb: row.memoryMb ?? null,
+          initMs: row.initMs ?? null,
+          coldStart: row.coldStart ?? null,
+        }))
+
+        /*
+          A full page implies there may be more; a short one is the end.
+
+          Not a count query. "Is there another page" costs a second scan to answer exactly, and the
+          only consequence of guessing high is one more request that comes back empty.
+        */
+        const nextBefore =
+          lines.length < pageSize ? null : (lines[lines.length - 1]?.cursor ?? null)
+
+        return c.json({ lines, nextBefore })
       } catch (error) {
         return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
       }
@@ -163,7 +193,17 @@ observability
         .where("projectId", "=", projectId)
         .executeTakeFirst()
 
-      const retentionDays = Number(stream?.retentionDays ?? 7)
+      /*
+        Three days, and not the stream's retention.
+
+        The viewer shows `runtime_log`, whose TTL is fixed for everyone —
+        `RUNTIME_LOG_RETENTION_DAYS`, the same constant the DDL is built from. `observability_stream`
+        carries a *per-project* retention, but that governs `log_record`, which is the table a
+        customer's own OpenTelemetry exporter writes into. Reporting the stream's number under a
+        list of runtime lines told people their logs were kept 7 days when the table drops them
+        after 3.
+      */
+      const retentionDays = RUNTIME_LOG_RETENTION_DAYS
       const since = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString()
 
       /*
@@ -174,13 +214,16 @@ observability
         is absent would make the one screen that explains how to send logs the screen you cannot
         open until logs are already working.
       */
-      let usage: Awaited<ReturnType<typeof projectUsage>> = { records: 0, bytes: 0 }
+      let usage: Awaited<ReturnType<typeof runtimeUsage>> = { records: 0, bytes: 0 }
       let services: Awaited<ReturnType<typeof projectServices>> = []
 
       if (observabilityConfigured()) {
         try {
           ;[usage, services] = await Promise.all([
-            projectUsage(projectId, since),
+            runtimeUsage(projectId, since),
+            // Still `log_record`'s, and empty unless the project actually sends OTLP. Runtime lines
+            // have no service name — they are one function's output — so this dropdown simply does
+            // not appear for them, which is the right behaviour rather than a gap.
             projectServices(projectId, since),
           ])
         } catch (error) {

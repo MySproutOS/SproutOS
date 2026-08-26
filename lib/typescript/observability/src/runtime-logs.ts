@@ -164,6 +164,44 @@ export async function writeRuntimeLogs(rows: RuntimeLog[]): Promise<void> {
   })
 }
 
+/**
+ * How long runtime logs are kept, for everyone.
+ *
+ * Fixed rather than per-project, unlike `log_record`: these are lines Lambda emitted whether the
+ * customer asked or not, so there is no plan to price them against. Exported because the DDL, the
+ * API's reply and the viewer's "kept N days" all have to agree, and three copies of a number is
+ * how they stop agreeing.
+ *
+ * A fourth copy still exists in `ovh/clickhouse-init/01-runtime-logs.sql`, which seeds a fresh box
+ * before any of this code runs. That one cannot import anything.
+ */
+export const RUNTIME_LOG_RETENTION_DAYS = 3
+
+/**
+ * How much a project has logged in a window, for the viewer's header.
+ *
+ * `length(message)` rather than the whole row: this is the number a customer recognises as "my
+ * logs", and it should not move because we added a column.
+ */
+export async function runtimeUsage(
+  projectId: string,
+  since: string,
+): Promise<{ records: number; bytes: number }> {
+  const result = await clickhouse().query({
+    query: `
+      select count() as records, sum(length(message)) as bytes
+      from runtime_log
+      where project_id = {projectId: UUID}
+        and ts >= parseDateTime64BestEffort({since: String}, 3)
+    `,
+    query_params: { projectId, since },
+    format: "JSONEachRow",
+  })
+
+  const [row] = await result.json<{ records: string; bytes: string | null }>()
+  return { records: Number(row?.records ?? 0), bytes: Number(row?.bytes ?? 0) }
+}
+
 export type RuntimeLogQuery = {
   projectId: string
   since?: Date
