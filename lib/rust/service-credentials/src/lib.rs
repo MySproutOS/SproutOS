@@ -382,7 +382,10 @@ const DEFAULT_CA_FILE: &str = "/etc/sproutos/rds-ca.pem";
   is a guess about the host, and a developer running this against compose has no RDS bundle and
   should not be made to invent one.
 */
-fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
+/// Public because the router's LLM proxy opens its own control-plane pool and needs the same TLS
+/// story: `rds.force_ssl` is `1`, and a second copy of this reasoning would be a second place to
+/// get the root store wrong.
+pub fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
     use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
     let mut roots = RootCertStore {
