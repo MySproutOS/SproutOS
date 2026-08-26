@@ -96,3 +96,23 @@ describe("codexConfig", () => {
     expect(codexConfig({ model: "m", proxyBaseUrl: "u" })).toContain('wire_api = "responses"')
   })
 })
+
+describe("what the harness needs to be able to act at all", () => {
+  it("tells Claude Code that something else is the boundary", () => {
+    // The CLI refuses `--dangerously-skip-permissions` as root, and a container's default user is
+    // root. Without this every edit is denied and the turn still reports success — which is how the
+    // first sandbox turn ever run announced a file it had not written.
+    expect(sandboxAgentEnv({ ...base, harness: "claude-code" }).IS_SANDBOX).toBe("1")
+  })
+
+  it("points Codex at the config the bootstrap actually wrote", () => {
+    // Codex reads `$CODEX_HOME/config.toml`, never the working directory. The file naming our proxy
+    // is written into the checkout, so without this Codex would look in `~/.codex`, find nothing,
+    // and try to reach OpenAI directly with no key.
+    expect(sandboxAgentEnv({ ...base, harness: "codex" }).CODEX_HOME).toBe("/workspace/.codex")
+    expect(
+      sandboxAgentEnv({ ...base, harness: "codex", workspace: "/home/daytona/workspace" })
+        .CODEX_HOME,
+    ).toBe("/home/daytona/workspace/.codex")
+  })
+})

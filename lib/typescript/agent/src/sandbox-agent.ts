@@ -260,6 +260,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     proxyBaseUrl: input.proxyBaseUrl,
     refreshUrl: input.refreshUrl,
     token: input.token,
+    workspace: WORKSPACE,
   })
 
   /*
@@ -330,11 +331,49 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
 function harnessArgv(harness: Harness, prompt: string): string[] {
   switch (harness) {
     case "claude-code":
-      // `--verbose` is required alongside `stream-json` for the CLI to emit tool events rather than
-      // only the final message — without it the transcript is a single block of text at the end.
-      return ["claude", "--print", "--output-format", "stream-json", "--verbose", prompt]
+      /*
+        `--dangerously-skip-permissions`, and it is not a shortcut.
+
+        Without it a `--print` turn has nobody to ask, so every edit is *denied* — and the denial
+        does not fail the turn: the CLI reports `subtype: "success"`, `is_error: false`, and lists
+        the refusals in `permission_denials`, which nothing was reading. The first real turn ever
+        taken in a sandbox ended with the agent saying it had written a file, no file, and a
+        successful exit code. Every sandbox turn would have done that.
+
+        The flag is safe here for the reason the sandbox exists: the boundary is the sandbox, not
+        the prompt. An agent that can be talked out of an edit is not more contained — the machine
+        it runs on is disposable and holds no credential worth taking, which is the whole design.
+
+        `--verbose` is required alongside `stream-json` for the CLI to emit tool events rather than
+        only the final message — without it the transcript is a single block of text at the end.
+      */
+      return [
+        "claude",
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+        prompt,
+      ]
     case "codex":
-      return ["codex", "exec", "--json", "--cd", WORKSPACE, prompt]
+      /*
+        Codex's spelling of the same thing, described by its own help as "intended solely for
+        running in environments that are externally sandboxed". That is this environment.
+
+        Its own sandbox is refused rather than layered: seccomp inside a container the platform
+        already owns buys nothing and breaks installs in ways that read as the model failing.
+      */
+      return [
+        "codex",
+        "exec",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--cd",
+        WORKSPACE,
+        prompt,
+      ]
   }
 }
 
@@ -368,10 +407,32 @@ function emit(line: string, onEvent: (event: AgentEvent) => void): void {
   }
 
   if (type === "result" || type === "turn.completed") {
+    /*
+      A turn that was refused its tools did not succeed, whatever it says.
+
+      Claude Code reports a denied edit as `subtype: "success"` with `is_error: false` and the
+      refusals listed in `permission_denials`. Read literally, the transcript then shows the agent
+      announcing a change that does not exist — which is precisely what the first sandbox turn ever
+      run did. `--dangerously-skip-permissions` is why that no longer happens; this is why it could
+      never happen quietly again if it did.
+    */
+    const denials = Array.isArray(parsed.permission_denials) ? parsed.permission_denials : []
+    if (denials.length > 0) {
+      const names = denials
+        .map((denial) => (denial as Record<string, unknown>).tool_name)
+        .filter((name): name is string => typeof name === "string")
+      onEvent({
+        type: "error",
+        message:
+          `the agent was refused ${denials.length} tool call(s) — ${names.join(", ")} — so any ` +
+          "change it describes was not made",
+      })
+    }
+
     onEvent({
       type: "done",
       subtype: typeof parsed.subtype === "string" ? parsed.subtype : "success",
-      isError: parsed.is_error === true,
+      isError: parsed.is_error === true || denials.length > 0,
       numTurns: typeof parsed.num_turns === "number" ? parsed.num_turns : 1,
       durationMs: typeof parsed.duration_ms === "number" ? parsed.duration_ms : 0,
     })

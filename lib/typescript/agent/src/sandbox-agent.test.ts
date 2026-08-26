@@ -225,3 +225,61 @@ describe("runSandboxTurn", () => {
     expect(events).toEqual([])
   })
 })
+
+describe("a turn that was refused its tools", () => {
+  const refused = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    num_turns: 2,
+    duration_ms: 900,
+    result: "Wrote SANDBOX_PROOF.md.",
+    permission_denials: [
+      { tool_name: "Write", tool_use_id: "toolu_1", tool_input: { file_path: "/workspace/a" } },
+      { tool_name: "Bash", tool_use_id: "toolu_2", tool_input: { command: "npm test" } },
+    ],
+  })
+
+  async function turn(harness: "claude-code" | "codex", stdout: string[]) {
+    const events: AgentEvent[] = []
+    const { commands, driver } = fakeDriver({ stdout })
+    await runSandboxTurn({
+      driver,
+      externalId: "sandbox",
+      harness,
+      model: null,
+      onEvent: (event) => events.push(event),
+      prompt: "write a file",
+      proxyBaseUrl: "https://llm.sproutos.me",
+      refreshUrl: "https://api.sproutos.me/refresh",
+      timeoutMs: 60_000,
+      token,
+      touch: () => Promise.resolve(),
+    })
+    return { commands, events }
+  }
+
+  it("is reported as an error, whatever the harness calls it", async () => {
+    /*
+      That line is exactly what Claude Code emits when a `--print` turn has nobody to grant
+      permission: a success, no error, and the refusals in a field nothing was reading. Taken at
+      face value the transcript shows an agent describing a change that does not exist — which is
+      what the first sandbox turn ever run actually did.
+    */
+    const { events } = await turn("claude-code", [`${refused}\n`])
+
+    const error = events.find((event) => event.type === "error")
+    expect(error).toBeDefined()
+    expect((error as { message: string }).message).toContain("Write, Bash")
+    expect(events.at(-1)).toMatchObject({ type: "done", isError: true })
+  })
+
+  it("asks for the permission that stops it happening", async () => {
+    // Both harnesses, because the failure is identical and only the spelling differs.
+    const claude = await turn("claude-code", [])
+    expect(claude.commands.at(-1)).toContain("--dangerously-skip-permissions")
+
+    const codex = await turn("codex", [])
+    expect(codex.commands.at(-1)).toContain("--dangerously-bypass-approvals-and-sandbox")
+  })
+})

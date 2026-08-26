@@ -28,6 +28,14 @@ export function sandboxAgentEnv(input: {
   /** Where the agent exchanges its refresh token, so a long turn does not die at 15 minutes. */
   refreshUrl: string
   model?: string | null
+  /**
+   * The checkout, which is also where Codex's configuration lives.
+   *
+   * Passed in rather than imported, because the constant belongs to `sandbox-agent` and importing
+   * it here would close a cycle. Defaulted to the same value it always has, so a caller cannot
+   * silently point Codex at a directory the bootstrap never wrote.
+   */
+  workspace?: string
 }): Record<string, string> {
   const env: Record<string, string> = {
     /*
@@ -57,6 +65,16 @@ export function sandboxAgentEnv(input: {
       */
       env.ANTHROPIC_BASE_URL = input.proxyBaseUrl
       env.ANTHROPIC_AUTH_TOKEN = input.token.accessToken
+      /*
+        Claude Code refuses `--dangerously-skip-permissions` when it is running as root, and a
+        container's default user is root. `IS_SANDBOX` is the CLI's own escape hatch for the case
+        where something else is the boundary — which is what a sandbox is.
+
+        Set here rather than only where a driver happens to run as root: a snapshot that changes its
+        user should not change whether the agent can edit anything, and the variable is harmless
+        when it does not apply.
+      */
+      env.IS_SANDBOX = "1"
       break
     case "codex":
       /*
@@ -67,6 +85,15 @@ export function sandboxAgentEnv(input: {
         OpenRouter, it is talking to us.
       */
       env.SPROUTOS_PROXY_KEY = input.token.accessToken
+      /*
+        Where Codex reads `config.toml` from — and it is not the working directory.
+
+        `codexConfig` is written to `<workspace>/.codex/config.toml`, and Codex looks in
+        `$CODEX_HOME` (default `~/.codex`). Without this the file naming our proxy is written
+        somewhere Codex never opens, so it would fall back to talking to OpenAI directly, with no
+        key, and the failure reads as the model being unreachable rather than as a path.
+      */
+      env.CODEX_HOME = `${input.workspace ?? "/workspace"}/.codex`
       break
   }
 
