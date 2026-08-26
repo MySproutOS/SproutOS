@@ -65,6 +65,7 @@ else
   EXTRAS=""
   [ -n "${SEARCH_RULE_ARN:-}" ] && EXTRAS="$EXTRAS rule|search|$SEARCH_RULE_ARN"
   [ -n "${PG_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|pg|$PG_LISTENER_ARN"
+  [ -n "${VALKEY_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|valkey|$VALKEY_LISTENER_ARN"
   short=router
 fi
 

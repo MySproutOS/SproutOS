@@ -63,6 +63,12 @@ KEYS=(
   # Managed Neon's API key, which creates a project per customer database. Nothing in this
   # repository can obtain it; without it `kind: postgres` answers 503 naming this.
   NEON_API_KEY
+  # The tenant queue on the OVH box, as one `rediss://` URI carrying its password. The router's
+  # split forwards to it; the control plane reads tenant queue state straight from it, because an
+  # internal caller has no tenant to be separated from and could not authenticate to the proxy
+  # anyway — the tenant's secret is stored as a one-way hash.
+  VALKEY_PROXY_BACKEND
+  SERVICE_VALKEY_ADMIN_URL
 )
 
 payload=$(

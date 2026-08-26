@@ -18,8 +18,10 @@
 # and Cost Explorer has shown no `Credit` record in three months.
 
 resource "aws_security_group" "tenant_nlb" {
-  name        = "${var.name_prefix}-tenant-nlb"
-  description = "The tenant data plane's load balancer"
+  name = "${var.name_prefix}-tenant-nlb"
+  # No apostrophe. AWS restricts security group descriptions to a character set that excludes it,
+  # and rejects the whole `CreateSecurityGroup` call — after the rest of the apply has run.
+  description = "Tenant data plane load balancer"
   vpc_id      = aws_vpc.main.id
   tags        = { Name = "${var.name_prefix}-tenant-nlb" }
 }

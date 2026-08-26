@@ -756,10 +756,11 @@ resource "aws_launch_template" "service" {
     # The backend the router's search split forwards to, on the OVH box behind its Traefik. Derived
     # rather than written down twice: `dns.tf` creates the record from the same variable, so the
     # name the instance is told and the name that resolves cannot drift apart.
-    opensearch_subdomain = var.opensearch_subdomain
-    search_subdomain     = var.search_subdomain
-    postgres_subdomain   = var.postgres_subdomain
-    control_plane_domain = var.control_plane_domain
+    opensearch_subdomain    = var.opensearch_subdomain
+    search_subdomain        = var.search_subdomain
+    postgres_subdomain      = var.postgres_subdomain
+    tenant_valkey_subdomain = var.tenant_valkey_subdomain
+    control_plane_domain    = var.control_plane_domain
   }))
 
   metadata_options {

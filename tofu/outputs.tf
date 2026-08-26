@@ -103,6 +103,18 @@ output "search_rule_arn" {
   value       = aws_lb_listener_rule.search.arn
 }
 
+# The tenant balancer's listeners, so the cutover moves them with the router. Without these a
+# release leaves every customer's database and queue on the colour the router just drained.
+output "pg_listener_arn" {
+  description = "Postgres listener on the tenant NLB. Set as the PG_LISTENER_ARN repository variable."
+  value       = aws_lb_listener.postgres.arn
+}
+
+output "valkey_listener_arn" {
+  description = "Valkey listener on the tenant NLB. Set as the VALKEY_LISTENER_ARN repository variable."
+  value       = aws_lb_listener.valkey.arn
+}
+
 output "forum_static_bucket" {
   description = "Bucket the forum's assets are published to."
   value       = one(aws_s3_bucket.forum_static[*].bucket)

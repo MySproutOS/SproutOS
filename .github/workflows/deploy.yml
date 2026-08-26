@@ -488,6 +488,10 @@ jobs:
           # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
           # moves the router alone rather than refusing.
           SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}
+          # The tenant load balancer's two listeners. Optional in the same way: an estate without
+          # it has neither, and the cutover moves the router alone.
+          PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
+          VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}
           SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
@@ -551,3 +555,7 @@ jobs:
           # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
           # moves the router alone rather than refusing.
           SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}
+          # The tenant load balancer's two listeners. Optional in the same way: an estate without
+          # it has neither, and the cutover moves the router alone.
+          PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
+          VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}

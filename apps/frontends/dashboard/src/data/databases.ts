@@ -51,8 +51,8 @@ export const KIND_LABELS: Record<ServiceKind, string> = {
   `object_storage` is genuinely not wired to a bucket yet.
 */
 export const KIND_AVAILABLE: Record<ServiceKind, boolean> = {
-  postgres: false,
-  valkey: false,
+  postgres: true,
+  valkey: true,
   elasticsearch: true,
   object_storage: false,
 }

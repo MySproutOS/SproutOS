@@ -45,6 +45,8 @@ case "$2" in
           *-search-green) echo "arn:search-green" ;;
           *-pg-blue) echo "arn:pg-blue" ;;
           *-pg-green) echo "arn:pg-green" ;;
+          *-valkey-blue) echo "arn:valkey-blue" ;;
+          *-valkey-green) echo "arn:valkey-green" ;;
           *-blue) echo "arn:blue" ;;
           *-green) echo "arn:green" ;;
         esac
@@ -93,6 +95,7 @@ run() {
   # in the parent and outlives the case that wrote it. See the `unset` before the no-rule case.
   if [ -n "${SEARCH_RULE_ARN:-}" ]; then export SEARCH_RULE_ARN; fi
   if [ -n "${PG_LISTENER_ARN:-}" ]; then export PG_LISTENER_ARN; fi
+  if [ -n "${VALKEY_LISTENER_ARN:-}" ]; then export VALKEY_LISTENER_ARN; fi
   bash "$HERE/cutover.sh" "$@" 2>&1
 }
 
@@ -205,7 +208,18 @@ check "the router's listener is written after the extras" \
   "$(wc -l < "$STUB_CALLS" | tr -d ' ')" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
+# All four at once, which is what a real router release now moves: the ALB listener it is the
+# default of, the search rule beside it, and two listeners on the tenant balancer.
 unset SEARCH_RULE_ARN PG_LISTENER_ARN
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule \
+  PG_LISTENER_ARN=arn:pg-listener VALKEY_LISTENER_ARN=arn:valkey-listener out=$(run router)
+check "moves all four" "4" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
+check "valkey among them, same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:valkey-green","Weight":100' "$STUB_CALLS")"
+check "and the front door still last" "4" \
+  "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
+
+unset SEARCH_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"
