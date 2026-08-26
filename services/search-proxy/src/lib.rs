@@ -8,10 +8,12 @@
 //! client at this as though it were their own cluster; it authenticates them, rewrites every index
 //! name they mention into their own namespace, and forwards to the shared cluster.
 //!
-//! **This proxy is the security boundary, not a convenience.** Document- and field-level security
-//! are not in OpenSearch's open-source tier, so there is nothing inside the cluster that would stop
-//! a tenant naming another tenant's index. Everything that keeps them apart is in `naming.rs`,
-//! `routes.rs` and `body.rs`.
+//! This proxy authenticates and namespaces every supported request, but it is not yet a complete
+//! isolation boundary by itself. OpenSearch's Apache-2.0 Security plugin supports index-pattern
+//! roles; until per-tenant roles are enabled underneath this proxy, a search-body construct not
+//! represented in `routes.rs` or `body.rs` could still name another index. The proxy remains
+//! necessary for namespacing, its narrow route surface, and metering; the server-side role is what
+//! will make a missed body shape fail closed.
 //!
 //! Rust because it sits in front of every search request a tenant makes, and because the rewriting
 //! is byte work on bodies that can be megabytes.
@@ -28,11 +30,11 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use sproutos_service_credentials::{Authentication, CredentialStore, report};
-use sproutos_tenant_auth::TenantIdentity;
+use sproutos_tenant_auth::{ResourceKind, TenantIdentity};
 use tracing::warn;
 
-use crate::body::{rewrite_ndjson, strip_prefix_from_response};
-use crate::routes::{Plan, RouteError, plan};
+use crate::body::{rewrite_mget, rewrite_ndjson, strip_prefix_from_response};
+use crate::routes::{Plan, RouteError, plan, validate_query};
 
 /// The largest body this proxy will hold.
 ///
@@ -71,6 +73,7 @@ pub struct Proxy {
 /// resolve the wrong virtual host; the rest are hop-by-hop and belong to this connection.
 const STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "authorization",
+    "accept-encoding",
     "host",
     "connection",
     "proxy-authorization",
@@ -91,6 +94,10 @@ const STRIPPED_RESPONSE_HEADERS: &[&str] = &[
     "transfer-encoding",
     "content-encoding",
 ];
+
+fn strip_request_header(name: &HeaderName) -> bool {
+    STRIPPED_REQUEST_HEADERS.contains(&name.as_str())
+}
 
 fn error(status: StatusCode, message: &str) -> Response {
     // OpenSearch's own error shape, so a client's error handling works unchanged rather than
@@ -150,7 +157,14 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
 
     let prefix = naming::prefix_for(&identity);
 
-    let planned = match plan(&prefix, parts.uri.path()) {
+    // The username grammar and credential store are shared by every tenant split. A valid queue
+    // credential must not become a search credential merely because it authenticates successfully.
+    if identity.resource_kind != ResourceKind::SearchIndex {
+        warn!(tenant = %identity, "credential belongs to a different resource kind");
+        return error(StatusCode::UNAUTHORIZED, "Invalid username or password");
+    }
+
+    let planned = match plan(&prefix, &parts.method, parts.uri.path()) {
         Ok(planned) => planned,
         Err(RouteError::Refused(endpoint)) => {
             warn!(tenant = %identity, endpoint, "refused");
@@ -162,7 +176,16 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         Err(RouteError::Index(cause)) => {
             return error(StatusCode::BAD_REQUEST, &cause.to_string());
         }
+        Err(
+            cause @ (RouteError::Query(_) | RouteError::DuplicateQuery(_) | RouteError::Encoding),
+        ) => {
+            return error(StatusCode::BAD_REQUEST, &cause.to_string());
+        }
     };
+
+    if let Err(cause) = validate_query(parts.uri.query()) {
+        return error(StatusCode::BAD_REQUEST, &cause.to_string());
+    }
 
     // Read the body *after* authentication, so an unauthenticated caller never makes us hold 64 MiB.
     let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
@@ -178,6 +201,13 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
     let (path, forwarded) = match planned {
         Plan::Path(path) => (path, bytes),
         Plan::PathAndNdjson(path) => match rewrite_ndjson(&prefix, &bytes) {
+            Ok(rewritten) => (path, Bytes::from(rewritten)),
+            Err(cause) => return error(StatusCode::BAD_REQUEST, &cause.to_string()),
+        },
+        Plan::PathAndMget {
+            path,
+            index_in_path,
+        } => match rewrite_mget(&prefix, &bytes, index_in_path) {
             Ok(rewritten) => (path, Bytes::from(rewritten)),
             Err(cause) => return error(StatusCode::BAD_REQUEST, &cause.to_string()),
         },
@@ -209,7 +239,7 @@ async fn forward(
 
     let mut request = proxy.client.request(method.clone(), &target).body(body);
     for (name, value) in headers {
-        if STRIPPED_REQUEST_HEADERS.contains(&name.as_str()) {
+        if strip_request_header(name) {
             continue;
         }
         request = request.header(name, value);
@@ -276,4 +306,17 @@ async fn forward(
                 "Could not build a response",
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upstream_compression_is_disabled_before_response_rewriting() {
+        assert!(strip_request_header(&HeaderName::from_static(
+            "accept-encoding"
+        )));
+        assert!(!strip_request_header(&HeaderName::from_static("accept")));
+    }
 }

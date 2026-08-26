@@ -91,6 +91,10 @@ struct Tenant {
 
 /// Provisions a tenant in the control-plane database.
 async fn provision(url: &str) -> Tenant {
+    provision_kind(url, ResourceKind::SearchIndex).await
+}
+
+async fn provision_kind(url: &str, resource_kind: ResourceKind) -> Tenant {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
         .expect("connect to postgres");
@@ -137,7 +141,7 @@ async fn provision(url: &str) -> Tenant {
         .await
         .expect("insert backend_service");
 
-    let identity = TenantIdentity::new(organization_id, ResourceKind::SearchIndex, service_id);
+    let identity = TenantIdentity::new(organization_id, resource_kind, service_id);
     let username = identity.username();
     let secret = generate_secret();
 
@@ -162,6 +166,103 @@ async fn provision(url: &str) -> Tenant {
         identity,
         fixtures: vec![user_id, organization_id],
     }
+}
+
+#[tokio::test]
+async fn mget_cannot_name_another_tenants_index_and_refuses_unknown_fields() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let a = provision(&url).await;
+    let b = provision(&url).await;
+    let index = unique_index("mget-private");
+    let (status, response) = as_tenant(
+        address,
+        &a,
+        reqwest::Method::POST,
+        &format!("/{index}/_doc/1?refresh=true"),
+        Some(("application/json", r#"{"owner":"tenant a secret"}"#.into())),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {response}");
+
+    let victim = format!("{}{index}", prefix_for(&a.identity));
+    let body = format!(r#"{{"docs":[{{"_index":"{victim}","_id":"1"}}]}}"#);
+    let (status, response) = as_tenant(
+        address,
+        &b,
+        reqwest::Method::POST,
+        "/_mget",
+        Some(("application/json", body)),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {response}");
+    assert!(
+        !response.contains("tenant a secret"),
+        "cross-tenant read: {response}"
+    );
+
+    let (status, _) = as_tenant(
+        address,
+        &b,
+        reqwest::Method::POST,
+        "/_mget",
+        Some((
+            "application/json",
+            r#"{"docs":[{"_index":"products","_id":"1","index":"victim"}]}"#.into(),
+        )),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    cleanup(&url, &[&a, &b]).await;
+}
+
+#[tokio::test]
+async fn query_parameters_cannot_override_the_scoped_path_or_body() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision(&url).await;
+    for path in [
+        "/_bulk?index=victim",
+        "/_bulk?source=%7B%7D&source_content_type=application%2Fx-ndjson",
+        "/products/_search?not_reviewed=true",
+        "/products/_search?pretty=true&pretty=false",
+    ] {
+        let (status, body) = as_tenant(
+            address,
+            &tenant,
+            reqwest::Method::POST,
+            path,
+            Some(("application/x-ndjson", "{}\n".into())),
+        )
+        .await;
+        assert_eq!(status, 400, "{path} returned {status}: {body}");
+    }
+
+    cleanup(&url, &[&tenant]).await;
+}
+
+#[tokio::test]
+async fn a_queue_credential_cannot_open_the_search_proxy() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision_kind(&url, ResourceKind::Queue).await;
+    let (status, body) = as_tenant(address, &tenant, reqwest::Method::GET, "/_search", None).await;
+    assert_eq!(status, 401, "a queue credential reached OpenSearch: {body}");
+
+    cleanup(&url, &[&tenant]).await;
 }
 
 async fn cleanup(url: &str, tenants: &[&Tenant]) {

@@ -7,15 +7,18 @@ OpenSearch client at this as though it were their own cluster.
 > Elasticsearch database shares resources with others. We manage the database ourselves in EC2
 > instances.
 
-## This proxy _is_ the security boundary
+## Namespacing now; server-enforced isolation still required
 
-Document- and field-level security are **not in OpenSearch's open-source tier**. That is not a gap
-being worked around — it is the reason this service exists. Without them, "tenant-split" has to mean
-split by index name, and something has to guarantee a tenant can only ever name its own.
+OpenSearch's Apache-2.0 Security plugin supports per-role index patterns. The proxy closes the known
+path, query-string and body escapes, but request inspection cannot prove that every current and
+future search-body construct is unable to name an index. Complete isolation therefore requires a
+per-tenant OpenSearch role underneath this proxy; that role is separate work and is not claimed by
+the request hardening here.
 
-Everything that keeps tenants apart is in three files: `naming.rs` decides what a legal index name
-is and how it is prefixed, `routes.rs` decides which requests are allowed through at all, and
-`body.rs` rewrites the index names that appear inside bodies rather than paths.
+The proxy still has three necessary jobs: `naming.rs` decides what a legal index name is and how it
+is prefixed, `routes.rs` decides which requests are allowed through at all, and `body.rs` rewrites
+the documented index names that appear inside bodies rather than paths. It is also the place every
+request crosses for metering.
 
 ## OpenSearch, not Elasticsearch
 
@@ -71,6 +74,16 @@ tracking gets out of step the moment a body is malformed, and a wrongly-parsed a
 cross-tenant write. The trade is that a _document_ containing its own `_index` field would be
 rewritten; there is a test that names this explicitly, and it is the direction the trade should
 fall.
+
+`_mget` is ordinary JSON rather than NDJSON. Its root object and `docs` descriptors are validated
+against the documented shape, and every `docs[]._index` is namespaced. A bare `/_mget` requires an
+index on every descriptor; the `ids` shorthand is accepted only when the index is already in the
+path.
+
+Query parameters are also allowlisted. In particular, `index`, `source` and
+`source_content_type` are refused rather than allowed to override a path or smuggle a body past the
+rewriter. Duplicate parameter names are refused after decoding, so two spellings cannot rely on
+different first-value/last-value behavior in the proxy and OpenSearch.
 
 ## Responses
 

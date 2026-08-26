@@ -2816,6 +2816,7 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
+ "percent-encoding",
  "reqwest",
  "serde_json",
  "sproutos-service-credentials",
