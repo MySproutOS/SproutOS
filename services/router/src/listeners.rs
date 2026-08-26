@@ -341,6 +341,31 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
         tracing::warn!("the LLM proxy is running without metering; model usage will not be billed");
     }
 
+    let metering = match (ingest_url, metering_key) {
+        (Some(ingest_url), Some(metering_key)) => {
+            let directory = std::env::var("LLM_PROXY_METERING_SPOOL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::var("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join("llm-metering")
+                });
+            let spool = sproutos_llm_proxy::spool::MeteringSpool::open(
+                directory,
+                sproutos_llm_proxy::spool::SpoolLimits::default(),
+            )
+            .context("the LLM proxy cannot open its durable metering spool")?;
+            spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+                reqwest::Client::builder().build()?,
+                ingest_url,
+                metering_key,
+            ));
+            Some(spool)
+        }
+        _ => None,
+    };
+
     let state = Arc::new(sproutos_llm_proxy::serve::ProxyState {
         store,
         /*
@@ -352,8 +377,7 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
           mid-token.
         */
         http: reqwest::Client::builder().build()?,
-        ingest_url,
-        metering_key,
+        metering,
     });
 
     let app = AxumRouter::new()

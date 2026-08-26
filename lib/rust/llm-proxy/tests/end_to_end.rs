@@ -17,9 +17,12 @@
 //! `DATABASE_URL` is unset rather than failing: a developer with no compose stack should not have a
 //! red suite, but they should know why this one did not run.
 
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::Router;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
@@ -27,6 +30,7 @@ use axum::routing::{any, post};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sproutos_llm_proxy::serve::{ProxyState, handle};
+use sproutos_llm_proxy::spool::{DeliveryConfig, MeteringSpool, SpoolLimits};
 use sproutos_llm_proxy::store::{SessionStore, hex_sha256};
 
 /// The key both halves share. Fixed here so the sealed value in the row is reproducible.
@@ -51,17 +55,32 @@ async fn stub_provider(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
 
-    // An Anthropic-shaped stream: input on `message_start`, output on `message_delta`, split across
-    // chunks the way a real one arrives.
-    let body = concat!(
+    // An Anthropic-shaped stream, split and delayed so the test can abandon after input while the
+    // proxy continues draining the provider to terminal output usage.
+    let first = concat!(
         "event: message_start\n",
         r#"data: {"type":"message_start","message":{"usage":{"input_tokens":41,"cache_read_input_tokens":7}}}"#,
         "\n\n",
+    );
+    let second = concat!(
         "event: message_delta\n",
         r#"data: {"type":"message_delta","usage":{"input_tokens":41,"output_tokens":58}}"#,
         "\n\ndata: [DONE]\n\n",
     );
-    ([("content-type", "text/event-stream")], body)
+    let stream = futures_util::stream::unfold(0_u8, move |part| async move {
+        match part {
+            0 => Some((Ok::<_, Infallible>(Bytes::from_static(first.as_bytes())), 1)),
+            1 => {
+                tokio::time::sleep(Duration::from_millis(75)).await;
+                Some((Ok(Bytes::from_static(second.as_bytes())), 2))
+            }
+            _ => None,
+        }
+    });
+    (
+        [("content-type", "text/event-stream")],
+        Body::from_stream(stream),
+    )
 }
 
 async fn stub_ingest(State(captured): State<Arc<Captured>>, body: String) -> impl IntoResponse {
@@ -100,11 +119,18 @@ async fn proxies_bills_and_never_leaks_the_credential() {
     let access_token = format!("spa_e2e_{}", std::process::id());
     let fixture = Fixture::create(&database_url, &access_token, &provider_url).await;
 
+    let spool_dir = std::env::temp_dir().join(format!("sproutos-llm-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&spool_dir);
+    let spool = MeteringSpool::open(&spool_dir, SpoolLimits::default()).unwrap();
+    let delivery = spool.spawn_delivery(DeliveryConfig::new(
+        reqwest::Client::new(),
+        ingest_url,
+        b"test-metering-key".to_vec(),
+    ));
     let state = Arc::new(ProxyState {
         store: SessionStore::connect(&database_url, 2, PROXY_KEY.to_vec(), None).unwrap(),
         http: reqwest::Client::builder().build().unwrap(),
-        ingest_url: Some(ingest_url),
-        metering_key: Some(b"test-metering-key".to_vec()),
+        metering: Some(spool),
     });
 
     let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -122,12 +148,19 @@ async fn proxies_bills_and_never_leaks_the_credential() {
         .expect("the proxy should answer");
 
     assert_eq!(response.status(), 200);
-    let body = response.text().await.unwrap();
-    // The stream reached the caller unchanged. Counting must not consume it.
+    let mut body = response.bytes_stream();
+    let first = futures_util::StreamExt::next(&mut body)
+        .await
+        .expect("the provider should start the stream")
+        .unwrap();
+    // The first provider chunk reached the caller unchanged. Drop before terminal usage arrives:
+    // the proxy must keep draining upstream, or output tokens become free on disconnect.
     assert!(
-        body.contains("message_delta"),
-        "the body was not forwarded: {body}"
+        String::from_utf8_lossy(&first).contains("message_start"),
+        "the first body chunk was not forwarded: {}",
+        String::from_utf8_lossy(&first)
     );
+    drop(body);
 
     /*
       The credential swap, which is the reason this component exists.
@@ -138,11 +171,11 @@ async fn proxies_bills_and_never_leaks_the_credential() {
     let seen = captured.upstream_auth.lock().unwrap().clone();
     assert_eq!(seen.as_deref(), Some(UPSTREAM_SECRET));
     assert!(
-        !body.contains(UPSTREAM_SECRET),
+        !String::from_utf8_lossy(&first).contains(UPSTREAM_SECRET),
         "the upstream key was echoed to the caller"
     );
 
-    // Billing happens on drop, and the post is spawned — so it lands just after the response does.
+    // Billing is durably spooled on drop, then delivered in the background just after the response.
     let mut batches = Vec::new();
     for _ in 0..40 {
         batches = captured.batches.lock().unwrap().clone();
@@ -166,7 +199,11 @@ async fn proxies_bills_and_never_leaks_the_credential() {
             .map(|event| event["quantity"].as_f64().unwrap())
     };
     assert_eq!(quantity("ai_input_token"), Some(41.0));
-    assert_eq!(quantity("ai_output_token"), Some(58.0));
+    assert_eq!(
+        quantity("ai_output_token"),
+        Some(58.0),
+        "terminal usage must still be counted after the downstream disconnects"
+    );
     assert_eq!(quantity("ai_cache_read_token"), Some(7.0));
 
     // The sandbox's token must not appear in the ledger either — it is a credential, and
@@ -175,6 +212,8 @@ async fn proxies_bills_and_never_leaks_the_credential() {
     assert!(!batch.contains(UPSTREAM_SECRET));
 
     fixture.clean(&database_url).await;
+    delivery.abort();
+    let _ = std::fs::remove_dir_all(spool_dir);
 }
 
 /// The rows this test needs, and their removal.

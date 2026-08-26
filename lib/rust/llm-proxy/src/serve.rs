@@ -14,6 +14,7 @@
 //! provider key. That is the whole reason this exists.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -23,6 +24,7 @@ use futures_util::StreamExt as _;
 
 use crate::meter;
 use crate::session::Session;
+use crate::spool::{MeteringSpool, SpoolReservation};
 use crate::store::{SessionStore, StoreError};
 use crate::usage::UsageAccumulator;
 
@@ -47,13 +49,17 @@ const HOP_BY_HOP: &[&str] = &[
     "content-length",
 ];
 
+/// Stop retaining an abandoned provider connection eventually, even if the provider never ends.
+/// Normal connected streams have no proxy timeout; this bound starts only after the client leaves.
+pub const ABANDONED_STREAM_DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
+const RESPONSE_BUFFER_CHUNKS: usize = 8;
+
 pub struct ProxyState {
     pub store: SessionStore,
     pub http: reqwest::Client,
-    /// Where signed usage batches go. Absent means metering is off, which is a development
+    /// The durable queue for usage. Absent means metering is off, which is a development
     /// configuration and is logged loudly rather than assumed.
-    pub ingest_url: Option<String>,
-    pub metering_key: Option<Vec<u8>>,
+    pub metering: Option<MeteringSpool>,
 }
 
 /// Handle one proxied request.
@@ -149,6 +155,25 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
         crate::store::hex_sha256(&String::from_utf8_lossy(&bytes))
     ));
 
+    /*
+      Reserve before asking the provider to do billable work.
+
+      A full spool is backpressure, not permission to make an unrecorded model call. Reserving here
+      also means an abandoned response owns capacity until its reporter records what was observed.
+    */
+    let reservation = match state.metering.as_ref().map(MeteringSpool::reserve) {
+        Some(Ok(reservation)) => Some(reservation),
+        Some(Err(cause)) => {
+            tracing::error!(%cause, "metering spool cannot accept another model turn");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The model proxy is temporarily at metering capacity. Retry this turn.",
+            )
+                .into_response();
+        }
+        None => None,
+    };
+
     let upstream = state
         .http
         .request(parts.method.clone(), &url)
@@ -185,44 +210,90 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
       turn — the customer would watch nothing happen for a minute and then get everything at once.
       So the bytes pass through and the accumulator sees them on the way.
     */
-    let reporter = Arc::new(UsageReporter::new(Arc::clone(&state), session, request_id));
-    let for_stream = Arc::clone(&reporter);
-
-    let stream = upstream.bytes_stream().map(move |chunk| {
-        if let Ok(bytes) = &chunk {
-            for_stream.observe(&String::from_utf8_lossy(bytes));
-        }
-        chunk
-    });
+    let reporter = UsageReporter::new(session, request_id, reservation);
+    let upstream_stream = upstream.bytes_stream();
+    let stream = drain_to_client(upstream_stream, reporter, ABANDONED_STREAM_DRAIN_TIMEOUT);
 
     let mut response = Response::new(Body::from_stream(stream));
     *response.status_mut() = status;
     *response.headers_mut() = response_headers;
-    /*
-      The reporter is carried by the response's extensions so it is dropped when the response is —
-      whether that is a clean end or a client that hung up. `Drop` is what makes the abandoned
-      stream billable, and attaching it here rather than awaiting the stream is what makes that
-      true without holding a task open per request.
-    */
-    response.extensions_mut().insert(reporter);
     response
 }
 
-/// Emits usage when it is dropped, however the response ended.
+fn drain_to_client<S, E>(
+    upstream_stream: S,
+    reporter: UsageReporter,
+    abandoned_timeout: Duration,
+) -> impl futures_util::Stream<Item = Result<bytes::Bytes, E>>
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, E>> + Send + 'static,
+    E: Send + 'static,
+{
+    let (sender, receiver) = tokio::sync::mpsc::channel(RESPONSE_BUFFER_CHUNKS);
+    tokio::spawn(async move {
+        let mut upstream_stream = Box::pin(upstream_stream);
+        let mut client_connected = true;
+        let mut abandoned_deadline = None;
+        loop {
+            let next = if client_connected {
+                tokio::select! {
+                    () = sender.closed() => {
+                        client_connected = false;
+                        abandoned_deadline = Some(tokio::time::Instant::now() + abandoned_timeout);
+                        continue;
+                    }
+                    next = upstream_stream.next() => next,
+                }
+            } else {
+                match tokio::time::timeout_at(
+                    abandoned_deadline.expect("an abandoned stream has a deadline"),
+                    upstream_stream.next(),
+                )
+                .await
+                {
+                    Ok(next) => next,
+                    Err(_) => {
+                        tracing::error!(
+                            timeout_seconds = abandoned_timeout.as_secs(),
+                            "the provider never finished an abandoned stream; billing what was observed"
+                        );
+                        break;
+                    }
+                }
+            };
+
+            let Some(chunk) = next else { break };
+            if let Ok(bytes) = &chunk {
+                reporter.observe(&String::from_utf8_lossy(bytes));
+            }
+            if client_connected && sender.send(chunk).await.is_err() {
+                client_connected = false;
+                abandoned_deadline = Some(tokio::time::Instant::now() + abandoned_timeout);
+            }
+        }
+        // The reporter drops here, after terminal usage or the explicit abandoned-stream bound.
+    });
+
+    futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|chunk| (chunk, receiver))
+    })
+}
+
+/// Persists usage when the provider drain ends, whether or not the downstream client stayed.
 pub struct UsageReporter {
-    state: Arc<ProxyState>,
     session: Session,
     request_id: String,
     accumulator: std::sync::Mutex<UsageAccumulator>,
+    reservation: Option<SpoolReservation>,
 }
 
 impl UsageReporter {
-    fn new(state: Arc<ProxyState>, session: Session, request_id: String) -> Self {
+    fn new(session: Session, request_id: String, reservation: Option<SpoolReservation>) -> Self {
         Self {
-            state,
             session,
             request_id,
             accumulator: std::sync::Mutex::new(UsageAccumulator::new()),
+            reservation,
         }
     }
 
@@ -258,36 +329,18 @@ impl Drop for UsageReporter {
             }
         };
 
-        let (Some(url), Some(key)) = (
-            self.state.ingest_url.clone(),
-            self.state.metering_key.clone(),
-        ) else {
+        let Some(reservation) = self.reservation.take() else {
             tracing::warn!(
                 organization = %self.session.organization_id,
                 "metering is not configured; this turn is not billed"
             );
             return;
         };
-
-        let http = self.state.http.clone();
-        // Spawned because `Drop` cannot await. The task outlives the response by design: the point
-        // is to bill a turn whose client has already gone.
-        tokio::spawn(async move {
-            let signature = sproutos_metering_proto::sign(&batch, &key);
-            let sent = http
-                .post(&url)
-                .header("x-metering-signature", signature)
-                .json(&batch)
-                .send()
-                .await;
-            match sent {
-                Ok(response) if response.status().is_success() => {}
-                Ok(response) => {
-                    tracing::error!(status = %response.status(), "metering ingest refused a batch");
-                }
-                Err(cause) => tracing::error!(%cause, "could not post a usage batch"),
-            }
-        });
+        if let Err(cause) = reservation.commit(&batch) {
+            // Drop cannot return an error to the already-finished response. This must be loud: it
+            // means capacity was reserved but the host could not durably record spent work.
+            tracing::error!(%cause, "could not commit a billable turn to the metering spool");
+        }
     }
 }
 
@@ -309,6 +362,11 @@ fn unauthorized(message: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
+    use crate::session::Upstream;
+    use crate::spool::SpoolLimits;
+
     use super::*;
 
     #[test]
@@ -340,5 +398,83 @@ mod tests {
         assert!(HOP_BY_HOP.contains(&"authorization"));
         assert!(HOP_BY_HOP.contains(&"x-api-key"));
         assert!(HOP_BY_HOP.contains(&"host"));
+    }
+
+    #[tokio::test]
+    async fn abandoning_the_client_still_drains_terminal_provider_usage() {
+        let directory = std::env::temp_dir().join(format!(
+            "sproutos-llm-abandoned-stream-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let spool = MeteringSpool::open(&directory, SpoolLimits::default()).unwrap();
+        let reporter = UsageReporter::new(
+            Session {
+                token_id: "01a03e5d-8cbf-7415-9ac6-82c3476aeb5c".into(),
+                organization_id: "01a03b00-0000-7000-8000-00000000beef".into(),
+                project_id: None,
+                upstream: Upstream::Anthropic,
+                base_url: "https://api.anthropic.com".into(),
+                secret: "not-used".into(),
+            },
+            "request-1".into(),
+            Some(spool.reserve().unwrap()),
+        );
+        let provider = futures_util::stream::unfold(0_u8, |part| async move {
+            match part {
+                0 => Some((
+                    Ok::<_, Infallible>(bytes::Bytes::from_static(
+                        concat!(
+                            "data: ",
+                            r#"{"type":"message_start","message":{"usage":{"input_tokens":41}}}"#,
+                            "\n\n"
+                        )
+                        .as_bytes(),
+                    )),
+                    1,
+                )),
+                1 => {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    Some((
+                        Ok(bytes::Bytes::from_static(
+                            concat!(
+                                "data: ",
+                                r#"{"type":"message_delta","usage":{"output_tokens":58}}"#,
+                                "\n\ndata: [DONE]\n\n"
+                            )
+                            .as_bytes(),
+                        )),
+                        2,
+                    ))
+                }
+                _ => None,
+            }
+        });
+        let mut client = Box::pin(drain_to_client(provider, reporter, Duration::from_secs(1)));
+        let first = client.next().await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("message_start"));
+        drop(client);
+
+        for _ in 0..100 {
+            if spool.pending_records() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(spool.pending_records(), 1);
+        let path = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().and_then(|it| it.to_str()) == Some("json"))
+            .unwrap();
+        let batch: sproutos_metering_proto::UsageBatch =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let output = batch
+            .events
+            .iter()
+            .find(|event| event.dimension == sproutos_metering_proto::UsageDimension::AiOutputToken)
+            .expect("terminal output usage should be retained after abandonment");
+        assert_eq!(output.quantity, 58.0);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

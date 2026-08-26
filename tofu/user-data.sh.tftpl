@@ -112,6 +112,9 @@ ROUTER_PORT=8080
 # target group. The load balancer would then report the target unhealthy rather than the feature
 # missing.
 LLM_PROXY_LISTEN=0.0.0.0:8788
+# systemd creates and owns `/var/lib/sproutos` through `StateDirectory=sproutos` below. Metering
+# records live there so a router process or service restart cannot erase an unacknowledged bill.
+LLM_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/llm-metering
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
