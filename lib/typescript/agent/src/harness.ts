@@ -113,9 +113,22 @@ export function codexProviderFor(kind: AgentCredentialKind): CodexProvider | und
  * Lives beside `harnessFor` because the two answer halves of one question and were, briefly, in two
  * files that could disagree about the same credential.
  */
-export function upstreamKindFor(kind: AgentCredentialKind): "anthropic" | "openai" {
+export function upstreamKindFor(
+  kind: AgentCredentialKind,
+): "anthropic" | "anthropic_oauth" | "openai" {
   switch (kind) {
+    /*
+      A subscription is an OAuth token, not an API key, and Anthropic wants it as a bearer with the
+      `oauth-2025-04-20` opt-in. Sent as `x-api-key` — which is what "anthropic" means to the proxy
+      — it is a 401 that reads like an invalid key, so every turn on a customer's own Claude
+      subscription failed and the message pointed at their credential rather than at this line.
+
+      The sandbox's CLI cannot supply the difference: it is configured with `ANTHROPIC_AUTH_TOKEN`
+      and believes it is talking to an ordinary API-key endpoint. The proxy holds the credential, so
+      the proxy is what knows.
+    */
     case "claude_subscription":
+      return "anthropic_oauth"
     case "anthropic_api_key":
       return "anthropic"
     case "openai_api_key":

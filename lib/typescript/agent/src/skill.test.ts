@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { installSproutosSkill } from "./skill"
+import { installSproutosSkill, renderSproutosSkill } from "./skill"
 import type { Workspace } from "./workspace"
 
 const run = promisify(execFile)
@@ -72,5 +72,40 @@ describe("installSproutosSkill", () => {
     const exclude = await readFile(join(workspace.path, ".git/info/exclude"), "utf8")
     const occurrences = exclude.split("/.claude/skills/sproutos/").length - 1
     expect(occurrences).toBe(1)
+  })
+})
+
+describe("the sandbox's own section", () => {
+  const input = {
+    apiUrl: "https://api.sproutos.me",
+    projectSlug: "reddit-web",
+    tenantDomain: "sproutos.run",
+  }
+
+  it("tells the agent what is true of the machine it is on", () => {
+    const body = renderSproutosSkill(input)
+
+    // The three facts that change what the agent does, rather than what it knows.
+    expect(body).toContain("DATABASE_URL")
+    expect(body).toContain("0.0.0.0")
+    expect(body).toContain("committed and pushed to a branch")
+    expect(body).toContain("fifteen minutes")
+  })
+
+  it("says none of it in the control-plane checkout, where none of it is true", async () => {
+    /*
+      That checkout has no database, no port anybody can reach, and `Bash` refused outright. Telling
+      an agent there that it may start a dev server is an instruction it cannot carry out — and the
+      failure would read as the model ignoring the skill.
+    */
+    const workspace = await mkdtemp(join(tmpdir(), "skill-"))
+    try {
+      await installSproutosSkill({ ...input, workspace: { path: workspace } as never })
+      const written = await readFile(join(workspace, ".claude/skills/sproutos/SKILL.md"), "utf8")
+      expect(written).not.toContain("Where you are right now")
+      expect(written).toContain("Deploying this repository on SproutOS")
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
   })
 })

@@ -76,10 +76,45 @@ export async function installSproutosSkill(input: SkillInput): Promise<void> {
  * once and places it twice, rather than keeping a second copy of the text that drifts.
  */
 export function renderSproutosSkill(input: Omit<SkillInput, "workspace">): string {
-  return skillBody({ ...input, workspace: { path: "" } as SkillInput["workspace"] })
+  return skillBody({ ...input, sandbox: true, workspace: { path: "" } as SkillInput["workspace"] })
 }
 
-function skillBody(input: SkillInput): string {
+/**
+ * What is true of the machine the agent is on, and only there.
+ *
+ * First, before anything about deploying, because it is what changes what the agent should *do*:
+ * there is a database it can migrate against, a port a person is watching, and a commit that
+ * happens whether or not it asks for one. An agent that does not know the checkout is pushed at the
+ * end of the turn writes differently — it leaves scratch files about, or asks permission it already
+ * has.
+ *
+ * Kept out of the control-plane rendering because none of it is true there: that checkout has no
+ * database, no port anybody can reach, and a `Bash` tool that is refused outright.
+ */
+const SANDBOX_SECTION = `
+## Where you are right now
+
+You are in a SproutOS sandbox: a container of your own, with this repository checked out at
+\`/workspace\`. A shell here is a real shell — install things, run the test suite, start a dev
+server. Nothing you run reaches the platform's own infrastructure.
+
+**There is a database.** \`DATABASE_URL\` points at a *branch* of this project's Postgres, made for
+this sandbox. It is a copy: migrate it, seed it, drop a table. Production is not on the other end of
+that credential, and cannot be reached from here.
+
+**A person may be watching a port.** A dev server on 3000, 5173 or 8080 is shown to the customer as
+a live preview. Bind to \`0.0.0.0\`, not \`127.0.0.1\` — a server listening on loopback inside a
+container is invisible from outside it, which looks to the customer like a preview that never loads.
+
+**Your work is committed for you.** At the end of the turn everything in the checkout is staged,
+committed and pushed to a branch — never to the production branch. So: do not commit secrets, do not
+leave scratch files in the tree, and do not ask whether you may edit files. You may.
+
+**The sandbox stops after fifteen minutes of inactivity.** Anything not committed goes with it.
+Long-running work belongs in the turn, not in a background process you leave behind.
+`
+
+function skillBody(input: SkillInput & { sandbox?: boolean }): string {
   const project = input.projectSlug ?? "<your-project-slug>"
 
   return `---
@@ -88,7 +123,7 @@ description: How this repository is built, deployed and connected on SproutOS �
 ---
 
 # Deploying this repository on SproutOS
-
+${input.sandbox === true ? SANDBOX_SECTION : ""}
 SproutOS runs each deployable target in this repository as its own **project**. A repository with a
 web app and a separate API is one repository and two projects, grouped under a parent that holds
 them and deploys nothing itself.

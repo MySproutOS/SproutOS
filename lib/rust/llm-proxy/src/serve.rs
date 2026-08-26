@@ -108,6 +108,21 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     ) {
         headers.insert(name, value);
     }
+    /*
+      Whatever else the credential's kind requires — today, Anthropic's OAuth opt-in.
+
+      Inserted rather than appended, so a client that sent its own value for one of these does not
+      end up with two. The proxy is the side that knows what kind of credential this is; the client
+      only knows it has a token.
+    */
+    for (name, value) in session.upstream.extra_headers() {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
+        }
+    }
 
     let bytes: bytes::Bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
         Ok(bytes) => bytes,
