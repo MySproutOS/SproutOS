@@ -36,6 +36,32 @@ pub struct Backend {
     /// The host alone, for SNI and certificate verification.
     pub host: String,
     pub tls: bool,
+    /*
+      What the proxy presents to the backend, when the backend asks for anything.
+
+      This used to be dropped on the floor, with a comment saying the proxy "holds no credential of
+      its own for the backend". That was true of ElastiCache, which is reached over a private
+      network inside the VPC and authenticates nobody. It stops being true the moment the backend is
+      the Valkey on the OVH box, which is reached across the public internet — and there "the proxy
+      is the boundary" needs the backend to be unreachable by anything else, which an IP allowlist
+      cannot provide: tenant Lambdas egress through the same NAT address the allowlist admits.
+
+      So the backend gets a second lock and this is the key. `None` where the backend is genuinely
+      private, because a credential nothing checks is a credential to rotate for no reason.
+
+      Kept apart from `address` on purpose: a password inside the address string ends up in every
+      connection error that names it.
+    */
+    pub credentials: Option<Credentials>,
+}
+
+/// A username and password for the backend, from the userinfo of `VALKEY_PROXY_BACKEND`.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Credentials {
+    /// `default` where the URL gives only a password — Valkey's own name for the implicit user, and
+    /// what `requirepass` alone authenticates as.
+    pub username: String,
+    pub password: String,
 }
 
 /// The default RESP port, applied when the address names only a host.
@@ -61,9 +87,28 @@ pub fn parse_backend(raw: &str) -> Result<Backend> {
     // key prefix rather than by database — see `keyspace.rs`. Ignored rather than rejected.
     let authority = rest.split(['/', '?']).next().unwrap_or(rest);
 
-    // Credentials in the URL are not carried through: the proxy authenticates the *tenant* and
-    // holds no credential of its own for the backend.
-    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    // Split at the *last* `@`, so a password containing one still leaves a parseable host.
+    let (userinfo, authority) = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => (Some(userinfo), host),
+        None => (None, authority),
+    };
+
+    let credentials = userinfo.filter(|value| !value.is_empty()).map(|value| {
+        let (username, password) = match value.split_once(':') {
+            Some((username, password)) => (username, password),
+            // `redis://:secret@host` and `redis://secret@host` are both written in the wild. A
+            // lone field is the password, because `requirepass` is the common case.
+            None => ("", value),
+        };
+        Credentials {
+            username: if username.is_empty() {
+                "default".to_owned()
+            } else {
+                username.to_owned()
+            },
+            password: password.to_owned(),
+        }
+    });
     anyhow::ensure!(
         !authority.is_empty(),
         "the Valkey backend address has no host"
@@ -96,6 +141,7 @@ pub fn parse_backend(raw: &str) -> Result<Backend> {
         address,
         host: host.to_owned(),
         tls,
+        credentials,
     })
 }
 
@@ -109,26 +155,97 @@ pub enum Upstream {
     Tls(Box<TlsStream<TcpStream>>),
 }
 
-/// Opens the upstream named by `raw`, negotiating TLS when the scheme asks for it.
+/// Opens the upstream named by `raw`, negotiating TLS when the scheme asks for it and
+/// authenticating when the address carries a credential.
 pub async fn connect(raw: &str) -> Result<Upstream> {
     let backend = parse_backend(raw)?;
     let stream = TcpStream::connect(&backend.address)
         .await
         .with_context(|| format!("could not reach the Valkey backend at {}", backend.address))?;
 
-    if !backend.tls {
-        return Ok(Upstream::Plain(stream));
+    let mut upstream = if backend.tls {
+        let server_name = ServerName::try_from(backend.host.clone())
+            .with_context(|| format!("{} is not a valid TLS server name", backend.host))?;
+
+        let session = connector()
+            .connect(server_name, stream)
+            .await
+            .with_context(|| format!("the TLS handshake with {} failed", backend.host))?;
+
+        Upstream::Tls(Box::new(session))
+    } else {
+        Upstream::Plain(stream)
+    };
+
+    if let Some(credentials) = &backend.credentials {
+        authenticate(&mut upstream, credentials, &backend.host).await?;
     }
 
-    let server_name = ServerName::try_from(backend.host.clone())
-        .with_context(|| format!("{} is not a valid TLS server name", backend.host))?;
+    Ok(upstream)
+}
 
-    let session = connector()
-        .connect(server_name, stream)
+/*
+  `AUTH`, before the tenant's first byte reaches the backend.
+
+  Sent here rather than forwarded from the client, because the tenant's `AUTH` is a *SproutOS*
+  credential that the backend has never heard of — `lib.rs` consumes it and answers it itself. The
+  two authentications are of different things to different parties and only look alike.
+
+  The reply is read to completion rather than left in the socket. A `+OK` still sitting in the
+  buffer when the splice starts is a `+OK` the tenant's client reads as the answer to *its* first
+  command, and from then on every reply is one behind — which does not look like an authentication
+  problem at all.
+*/
+async fn authenticate(
+    upstream: &mut Upstream,
+    credentials: &Credentials,
+    host: &str,
+) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let command = format!(
+        "*3\r\n$4\r\nAUTH\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+        credentials.username.len(),
+        credentials.username,
+        credentials.password.len(),
+        credentials.password,
+    );
+
+    upstream
+        .write_all(command.as_bytes())
         .await
-        .with_context(|| format!("the TLS handshake with {} failed", backend.host))?;
+        .with_context(|| format!("could not send AUTH to the Valkey backend at {host}"))?;
+    upstream.flush().await?;
 
-    Ok(Upstream::Tls(Box::new(session)))
+    // A simple string or an error, both terminated by CRLF, and nothing else can come first.
+    let mut reply = Vec::with_capacity(64);
+    let mut byte = [0u8; 1];
+    loop {
+        let read = upstream
+            .read(&mut byte)
+            .await
+            .with_context(|| format!("the Valkey backend at {host} closed during AUTH"))?;
+        anyhow::ensure!(read == 1, "the Valkey backend at {host} closed during AUTH");
+        reply.push(byte[0]);
+        if reply.ends_with(b"\r\n") {
+            break;
+        }
+        anyhow::ensure!(
+            reply.len() < 512,
+            "the Valkey backend at {host} answered AUTH with something that is not a RESP reply"
+        );
+    }
+
+    // The password is never in the error. It is in `command`, three lines up, and an error that
+    // echoed the reply verbatim would still be safe — but one that echoed the *request* would not,
+    // and that is the mistake this comment exists to stop somebody making later.
+    anyhow::ensure!(
+        reply.starts_with(b"+"),
+        "the Valkey backend at {host} refused the proxy's credential: {}",
+        String::from_utf8_lossy(&reply).trim_end().to_owned()
+    );
+
+    Ok(())
 }
 
 /// Built once. Assembling a root store per connection would parse the whole bundle each time.
@@ -262,17 +379,150 @@ mod tests {
     }
 
     /*
-      The proxy authenticates the tenant and holds no credential of its own for the backend, so
-      anything before an `@` is dropped rather than carried. Keeping it would put a password in
-      `address` and from there into every connection error that names it.
+      The credential is kept, and kept *out of* the address.
+
+      It used to be dropped entirely, which was right while the only backend was an ElastiCache
+      inside the VPC that authenticates nobody. A backend reached across the public internet needs a
+      second lock, and this is the key to it.
+
+      The address must still not carry it: a password inside `address` ends up in every connection
+      error that names the backend, and those get logged.
     */
     #[test]
-    fn credentials_in_the_url_are_not_carried_into_the_address() {
+    fn a_credential_is_kept_apart_from_the_address() {
         let backend = parse_backend("rediss://someone:hunter2@cache.example.com:6379").unwrap();
 
         assert_eq!(backend.address, "cache.example.com:6379");
         assert!(!backend.address.contains("hunter2"));
         assert!(!backend.host.contains("hunter2"));
+
+        let credentials = backend.credentials.expect("the credential is carried");
+        assert_eq!(credentials.username, "someone");
+        assert_eq!(credentials.password, "hunter2");
+    }
+
+    /*
+      `requirepass` authenticates as the implicit user, which Valkey calls `default`. Both spellings
+      of a password-only URL appear in the wild and both mean that.
+    */
+    #[test]
+    fn a_password_alone_authenticates_as_default() {
+        for url in [
+            "redis://:hunter2@cache.example.com",
+            "redis://hunter2@cache.example.com",
+        ] {
+            let credentials = parse_backend(url).unwrap().credentials.expect(url);
+            assert_eq!(credentials.username, "default", "{url}");
+            assert_eq!(credentials.password, "hunter2", "{url}");
+        }
+    }
+
+    /*
+      No userinfo means no `AUTH` is sent at all, rather than an empty one.
+
+      An `AUTH  ` against a backend with no password is an error reply, and `connect` treats an
+      error reply as fatal — so getting this wrong would break every existing deployment, all of
+      which point at a backend that authenticates nobody.
+    */
+    #[test]
+    fn an_address_without_a_credential_sends_no_auth() {
+        assert!(
+            parse_backend("rediss://cache.example.com:6379")
+                .unwrap()
+                .credentials
+                .is_none()
+        );
+        assert!(
+            parse_backend("cache.example.com:6379")
+                .unwrap()
+                .credentials
+                .is_none()
+        );
+    }
+
+    /*
+      The handshake itself, against a server that only speaks the two lines this cares about.
+
+      `parse_backend` tests say what is *carried*; this says what goes on the wire and what is taken
+      off it. Both matter and only one of them was ever the bug: an `AUTH` whose `+OK` is left in
+      the socket is a proxy that works perfectly except that every reply the tenant reads is one
+      behind, which presents as data corruption rather than as an authentication problem.
+    */
+    #[tokio::test]
+    async fn auth_is_sent_as_resp_and_its_reply_is_consumed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let mut seen = vec![0u8; 64];
+            let read = socket.read(&mut seen).await.unwrap();
+            seen.truncate(read);
+
+            socket.write_all(b"+OK\r\n").await.unwrap();
+            // A byte the tenant's session must receive, to prove the `+OK` above was not left for
+            // it to read as the answer to its own first command.
+            socket.write_all(b"+SECOND\r\n").await.unwrap();
+            socket.flush().await.unwrap();
+
+            seen
+        });
+
+        let mut upstream = connect(&format!("redis://someone:hunter2@127.0.0.1:{port}"))
+            .await
+            .expect("the backend accepted the credential");
+
+        let sent = server.await.unwrap();
+        assert_eq!(
+            sent,
+            b"*3\r\n$4\r\nAUTH\r\n$7\r\nsomeone\r\n$7\r\nhunter2\r\n",
+            "got {:?}",
+            String::from_utf8_lossy(&sent)
+        );
+
+        let mut next = [0u8; 9];
+        upstream.read_exact(&mut next).await.unwrap();
+        assert_eq!(&next, b"+SECOND\r\n");
+    }
+
+    /// A backend that refuses the credential fails the connection rather than splicing a session
+    /// onto a socket that will error on its first real command.
+    #[tokio::test]
+    async fn a_refused_credential_fails_the_connection() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket
+                .write_all(b"-WRONGPASS invalid username-password pair\r\n")
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        let refused = connect(&format!("redis://:wrong@127.0.0.1:{port}")).await;
+        let cause = refused
+            .expect_err("a refused credential must fail")
+            .to_string();
+
+        assert!(cause.contains("WRONGPASS"), "{cause}");
+        // The password is the one thing that must never reach a log line.
+        assert!(!cause.contains("wrong@"), "{cause}");
+    }
+
+    /// A password may contain an `@`. Splitting at the first one would leave it in the host.
+    #[test]
+    fn the_split_is_at_the_last_at_sign() {
+        let backend = parse_backend("redis://user:pa@ss@cache.example.com:6379").unwrap();
+
+        assert_eq!(backend.host, "cache.example.com");
+        assert_eq!(backend.credentials.unwrap().password, "pa@ss");
     }
 
     /*
