@@ -80,18 +80,18 @@ export function sandboxAgentEnv(input: {
       /*
         Codex reads its provider from `config.toml` and the key from whatever `env_key` names.
 
-        `codexConfig` below writes that file with `base_url` pointing here, so the variable name is
-        ours to choose and is the same for every provider — the sandbox is not talking to OpenAI or
-        OpenRouter, it is talking to us.
+        `codexOverrides` below passes that provider on the command line with `base_url` pointing
+        here, so the variable name is ours to choose and is the same for every provider — the
+        sandbox is not talking to OpenAI or OpenRouter, it is talking to us.
       */
       env.SPROUTOS_PROXY_KEY = input.token.accessToken
       /*
         Where Codex reads `config.toml` from — and it is not the working directory.
 
-        `codexConfig` is written to `<workspace>/.codex/config.toml`, and Codex looks in
-        `$CODEX_HOME` (default `~/.codex`). Without this the file naming our proxy is written
-        somewhere Codex never opens, so it would fall back to talking to OpenAI directly, with no
-        key, and the failure reads as the model being unreachable rather than as a path.
+        Codex keeps its own state — session files, and the trust entry it writes for a directory
+        it has been told to act in — under `$CODEX_HOME`, default `~/.codex`. Pointing it into the
+        workspace keeps that beside the checkout, where `.git/info/exclude` already hides it, rather
+        than in a home directory that a driver may or may not persist.
       */
       env.CODEX_HOME = `${input.workspace ?? "/workspace"}/.codex`
       break
@@ -101,27 +101,42 @@ export function sandboxAgentEnv(input: {
 }
 
 /**
- * The `config.toml` a Codex sandbox runs with.
+ * How a Codex sandbox is told to talk to us: command-line overrides, not a file.
  *
- * Written rather than templated from the customer's provider, because from the sandbox's point of
- * view there is only one provider: ours. The real provider is chosen at token-mint time and lives
- * on the token row, which is what lets a customer switch from OpenAI to OpenRouter without anything
- * inside the sandbox changing.
+ * It was a file — `$CODEX_HOME/config.toml` — until Codex was watched doing this to it:
  *
- * `wire_api = "responses"` because that is what both our upstreams' OpenAI-compatible surfaces
- * implement, and what the proxy's usage parser expects to see `response.completed` on.
+ *   [projects."/workspace"]
+ *   trust_level = "trusted"
+ *
+ * Codex writes that file itself, and the write replaced everything in it, provider and all. The
+ * next turn went to `wss://api.openai.com` with no key. A configuration file the tool being
+ * configured also owns is not configuration; it is a suggestion.
+ *
+ * `-c` overrides are passed per invocation, so nothing can rewrite them between turns.
+ *
+ * The base URL is the proxy's **root**, with no `/v1`. Codex posts to `<base_url>/responses`, the
+ * proxy forwards the path onto the session's upstream base — which for OpenAI already ends in
+ * `/v1` — and the two halves compose to `/v1/responses`. Putting `/v1` on both ends produces
+ * `/v1/v1/responses`, which is a 404 from the provider on every single turn.
  */
-export function codexConfig(input: { proxyBaseUrl: string; model: string }): string {
-  return `# Written by SproutOS. The endpoint below is SproutOS's proxy, not a model provider:
-# the sandbox never holds a provider credential.
-[model_providers.sproutos]
-name = "sproutos"
-base_url = "${input.proxyBaseUrl}"
-env_key = "SPROUTOS_PROXY_KEY"
+export function codexOverrides(input: { proxyBaseUrl: string; model: string }): string[] {
+  const provider =
+    `{name="sproutos",base_url="${input.proxyBaseUrl.replace(/\/+$/, "")}",` +
+    `env_key="SPROUTOS_PROXY_KEY",wire_api="responses"}`
 
-[settings]
-model_provider = "sproutos"
-model = "${input.model}"
-wire_api = "responses"
-`
+  return [
+    "-c",
+    `model_provider="sproutos"`,
+    "-c",
+    `model_providers.sproutos=${provider}`,
+    "-c",
+    `model="${input.model}"`,
+    /*
+      Codex prefers a WebSocket transport, built from the same base URL. The proxy speaks HTTP, so
+      leaving this on costs five failed connections and about ten seconds of retries at the start of
+      every turn before Codex falls back — visible to the customer as an agent that sits there.
+    */
+    "-c",
+    "features.responses_websocket=false",
+  ]
 }

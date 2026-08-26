@@ -95,17 +95,17 @@ describe("bootstrapSandbox", () => {
     expect(exclude).toContain("/.codex/")
   })
 
-  it("writes a Codex config only for Codex", async () => {
-    const claude = fakeDriver()
-    await bootstrapSandbox({ ...base, driver: claude.driver, externalId: "sb" })
-    expect(claude.files[`${WORKSPACE}/.codex/config.toml`]).toBeUndefined()
-
-    const codex = fakeDriver()
-    await bootstrapSandbox({ ...base, driver: codex.driver, externalId: "sb", harness: "codex" })
-    const config = codex.files[`${WORKSPACE}/.codex/config.toml`] ?? ""
-    expect(config).toContain('base_url = "https://llm.sproutos.me"')
-    // The sandbox talks to us, never to a provider.
-    expect(config).not.toContain("api.openai.com")
+  it("writes no Codex config at all, for either harness", async () => {
+    /*
+      It used to write one, and Codex overwrote the file with its own trust entry on the first turn
+      — taking the provider with it, so the next turn went to `wss://api.openai.com` with no key.
+      The settings are passed per invocation now; see `codexOverrides`.
+    */
+    for (const harness of ["claude-code", "codex"] as const) {
+      const { driver, files } = fakeDriver()
+      await bootstrapSandbox({ ...base, driver, externalId: "sb", harness })
+      expect(files[`${WORKSPACE}/.codex/config.toml`]).toBeUndefined()
+    }
   })
 
   it("reports a partial bootstrap rather than throwing", async () => {

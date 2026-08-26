@@ -1,8 +1,8 @@
 import type { SandboxDriver } from "@lib/sandbox"
 
-import type { Harness } from "./harness"
+import { PLATFORM_FALLBACK_MODEL, type Harness } from "./harness"
 import type { AgentEvent } from "./runner"
-import { codexConfig, sandboxAgentEnv } from "./sandbox-env"
+import { codexOverrides, sandboxAgentEnv } from "./sandbox-env"
 import type { MintedProxyToken } from "./proxy-token"
 
 /**
@@ -166,15 +166,13 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     problems,
   )
 
-  if (input.harness === "codex") {
-    await write(
-      driver,
-      externalId,
-      `${WORKSPACE}/.codex/config.toml`,
-      codexConfig({ model: input.model ?? "gpt-5.6-terra", proxyBaseUrl: input.proxyBaseUrl }),
-      problems,
-    )
-  }
+  /*
+    Codex needs no file written here.
+
+    It used to get one, and Codex overwrote it with its own trust entry on the first turn — see
+    `codexOverrides`, which passes the same settings on every invocation instead. What Codex reads
+    from the checkout is `AGENTS.md`, written above.
+  */
 
   return { cloned, problems }
 }
@@ -271,7 +269,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     `git add -A` from the customer's own repository.
   */
   const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
-  argv.push(...harnessArgv(input.harness, input.prompt))
+  argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model))
 
   /*
     A heartbeat for as long as the turn runs.
@@ -328,7 +326,12 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
   }
 }
 
-function harnessArgv(harness: Harness, prompt: string): string[] {
+function harnessArgv(
+  harness: Harness,
+  prompt: string,
+  proxyBaseUrl: string,
+  model: string | null,
+): string[] {
   switch (harness) {
     case "claude-code":
       /*
@@ -369,9 +372,13 @@ function harnessArgv(harness: Harness, prompt: string): string[] {
         "exec",
         "--json",
         "--dangerously-bypass-approvals-and-sandbox",
+        // The workspace is a checkout, so this is belt and braces — but a bootstrap whose clone
+        // failed would otherwise fail again here, with an error about git rather than about the
+        // clone that actually went wrong.
         "--skip-git-repo-check",
         "--cd",
         WORKSPACE,
+        ...codexOverrides({ model: model ?? PLATFORM_FALLBACK_MODEL, proxyBaseUrl }),
         prompt,
       ]
   }

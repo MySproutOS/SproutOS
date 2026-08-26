@@ -92,11 +92,6 @@ describe.skipIf(!available)("bootstrapping a real sandbox", () => {
     )
     expect(await driver.readFile(externalId, `${WORKSPACE}/AGENTS.md`)).toContain("deployment")
 
-    // Codex reads this and nothing else.
-    expect(await driver.readFile(externalId, `${WORKSPACE}/.codex/config.toml`)).toContain(
-      "llm.sproutos.me",
-    )
-
     // An identity, or the agent cannot commit at all.
     const identity = await driver.exec(
       externalId,
