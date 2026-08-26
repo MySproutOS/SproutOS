@@ -32,7 +32,7 @@ tenant split — `valkey-proxy` as a library, gated on `VALKEY_PROXY_BACKEND`, w
 
 That reads like two halves nobody connected, and it was written up that way before the two halves
 were actually compared. They do not fit. The ElastiCache has `TransitEncryptionEnabled: true` and
-therefore *requires* TLS; `valkey-proxy` opens its upstream with a plain `TcpStream::connect` and
+therefore _requires_ TLS; `valkey-proxy` opens its upstream with a plain `TcpStream::connect` and
 contains no TLS at all. Setting the variable would not start a working split, it would start one
 that cannot reach its backend.
 

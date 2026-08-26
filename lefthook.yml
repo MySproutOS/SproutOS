@@ -23,7 +23,11 @@ pre-commit:
         exit "$status"
       stage_fixed: true
     oxfmt:
-      glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"
+      # Markdown included, because CI's `oxfmt --check` runs over the whole tree and this glob did
+      # not. An ADR or a finding could therefore be committed unformatted, pass every hook, and fail
+      # the format job — which then blocks the deploy of whatever else was in flight. Observed
+      # exactly that way: a docs-only commit failed CI, and the two commits behind it did not deploy.
+      glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc,md}"
       run: pnpm exec oxfmt --config oxfmt.config.mts {staged_files}
       stage_fixed: true
     tflint:
