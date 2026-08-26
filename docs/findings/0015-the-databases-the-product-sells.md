@@ -23,9 +23,13 @@ routes exist and are documented in the OpenAPI schema. `tofu plan` is clean. The
 Three different things, sharing one shape: **something the application requires, that OpenTofu
 created or that exists elsewhere, and that no step carries from one to the other.**
 
-**Postgres.** `SERVICE_POSTGRES_ADMIN_URL` is unset, so `sproutPostgresConfigFromEnv` throws before
-anything is attempted. `SERVICE_POSTGRES_PROVIDER` is unset too, so the choice falls to `sprout`
-rather than the `neon` the architecture intends.
+**Postgres.** Not what it looks like. `SERVICE_POSTGRES_ADMIN_URL` is unset, but the config falls
+back to `DATABASE_URL`, which every website instance has — so the admin connection was never the
+problem. What it refuses on is `SERVICE_POSTGRES_PUBLIC_HOST`: **the address of `pg-proxy`**, which
+ADR 0027 records as built, tested and deliberately not deployed. The refusal is correct and the
+comment says why — defaulting that to the backend hands a customer a URI that bypasses the tenant
+boundary, and it was once observed returning `postgres.platform-db.svc.cluster.local` to a real
+caller. There is no valid value to set, because the thing it names does not run.
 
 **Valkey.** A platform Valkey exists in AWS and is `available`. The router already carries the
 tenant split — `valkey-proxy` as a library, gated on `VALKEY_PROXY_BACKEND`, which is unset.
@@ -41,6 +45,21 @@ Nor is that instance the right home regardless: the platform Valkey holds `route
 whatever the transport.
 
 **OpenSearch.** Bound to `127.0.0.1` on the OVH box and unreachable from AWS.
+
+## They are one blocker, not three
+
+Written out, the three stop being separate. Every one of them is the tenant boundary missing:
+
+- Postgres wants the address of `pg-proxy`, which is not deployed.
+- Valkey wants a tenant instance behind the router's Valkey split, which is not enabled.
+- Elasticsearch wants OpenSearch behind `search-proxy`, which is not enabled, and must not be
+  exposed without it.
+
+That is `docs/findings/0008` — the tenant data plane — arriving from the other direction. It reads
+as three missing parameters, and no parameter can be set to a valid value for any of them, because
+what is missing is the process each one would point at. Two of the three are closer than that
+sounds: ADR 0026 has the router carrying the Valkey and search splits as libraries already, so they
+are a configuration away rather than a service away. `pg-proxy` is the one that is genuinely absent.
 
 ## Why it could not be caught
 
