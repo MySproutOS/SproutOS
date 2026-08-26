@@ -1,4 +1,5 @@
 import type { Runtime } from "@aws-sdk/client-lambda"
+import { WEB_ADAPTER_HANDLER } from "./web-adapter"
 
 /**
  * Which Lambda runtimes a customer may ask for, and what runs their code by default.
@@ -44,12 +45,40 @@ export const DEFAULT_HANDLER = "index.handler"
  * preset falls back rather than failing: presets are added in the action's repository, which ships
  * separately, and a new one must not be a deploy that cannot start.
  */
-const PRESET_DEFAULTS: Record<string, { runtime: SupportedRuntime; handler: string }> = {
-  next: { runtime: "nodejs22.x", handler: "index.handler" },
-  hono: { runtime: "nodejs22.x", handler: "index.handler" },
-  static: { runtime: "nodejs22.x", handler: "index.handler" },
+const PRESET_DEFAULTS: Record<string, PresetRuntime> = {
+  /*
+    `next` and `hono` are web servers, not handlers.
+
+    This is the correction to the thing that made every deployment in production fail: the presets
+    collect `.next/standalone` and `dist`, both of which contain a program that *listens on a port*,
+    and they were published claiming to export `index.handler`. Nothing exports it, so the function
+    could only ever answer `Runtime.HandlerNotFound`. See `web-adapter.ts` for why the answer is an
+    adapter rather than making every customer write a Lambda entry point.
+  */
+  next: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
+  hono: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
+  /*
+    `static` is the exception and stays a handler.
+
+    A static build has no server to adapt; the function's whole job is to serve files out of the
+    archive, which is a handler this platform provides rather than one the customer wrote.
+  */
+  static: { runtime: "nodejs22.x", handler: DEFAULT_HANDLER, webAdapter: false },
 }
 
-export function runtimeForPreset(preset: string): { runtime: SupportedRuntime; handler: string } {
-  return PRESET_DEFAULTS[preset] ?? { runtime: DEFAULT_RUNTIME, handler: DEFAULT_HANDLER }
+export type PresetRuntime = {
+  runtime: SupportedRuntime
+  handler: string
+  /** Whether the build is an HTTP server needing the Lambda Web Adapter. */
+  webAdapter: boolean
+}
+
+export function runtimeForPreset(preset: string): PresetRuntime {
+  return (
+    PRESET_DEFAULTS[preset] ?? {
+      runtime: DEFAULT_RUNTIME,
+      handler: DEFAULT_HANDLER,
+      webAdapter: false,
+    }
+  )
 }

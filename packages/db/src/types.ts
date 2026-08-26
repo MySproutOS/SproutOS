@@ -449,6 +449,7 @@ export interface Deployment {
   status: Generated<string>
   updatedAt: Generated<Timestamp>
   url: string | null
+  webAdapter: Generated<boolean>
 }
 
 export interface DeploymentBuild {

@@ -13,6 +13,7 @@ import {
   waitUntilFunctionUpdatedV2,
 } from "@aws-sdk/client-lambda"
 import { mintProjectToken } from "./project-token"
+import { webAdapterEnv } from "./web-adapter"
 
 /**
  * Putting a customer's build on Lambda.
@@ -72,6 +73,15 @@ export type PublishInput = {
    * how "must be attached" stops being an operational hazard.
    */
   logExtensionLayerArn?: string
+  /**
+   * The Lambda Web Adapter's layer ARN, when this build is an HTTP server rather than a handler.
+   *
+   * Set for the `next` and `hono` presets, which produce a server that listens on a port. Absent,
+   * the function is published as an ordinary handler — so this is the one switch between the two
+   * conventions, and both halves of it (the layer and the `AWS_LAMBDA_EXEC_WRAPPER` variable it
+   * needs) are applied together here rather than by two callers who could disagree.
+   */
+  webAdapterLayerArn?: string
 }
 
 export type PublishResult = {
@@ -94,6 +104,16 @@ export async function publishFunction(
 ): Promise<PublishResult> {
   const name = functionName(input.projectId)
   const exists = await functionExists(client, name)
+  /*
+    One list, computed once, used by both branches.
+
+    The update branch sends `Layers: []` when there is nothing to attach — Lambda treats an omitted
+    `Layers` as "leave them alone", so a project that once had a layer would keep it forever after
+    the reason for it went away.
+  */
+  const layers = [input.logExtensionLayerArn, input.webAdapterLayerArn].filter(
+    (arn): arn is string => arn !== undefined,
+  )
 
   if (exists) {
     await client.send(
@@ -120,7 +140,7 @@ export async function publishFunction(
         MemorySize: input.memoryMb,
         Timeout: input.timeoutS,
         Environment: { Variables: withTelemetryEnv(input) },
-        Layers: input.logExtensionLayerArn === undefined ? [] : [input.logExtensionLayerArn],
+        Layers: layers,
       }),
     )
     await waitUntilFunctionUpdatedV2({ client, maxWaitTime: 120 }, { FunctionName: name })
@@ -135,9 +155,7 @@ export async function publishFunction(
         Timeout: input.timeoutS,
         Code: { S3Bucket: input.bucket, S3Key: input.key },
         Environment: { Variables: withTelemetryEnv(input) },
-        ...(input.logExtensionLayerArn === undefined
-          ? {}
-          : { Layers: [input.logExtensionLayerArn] }),
+        ...(layers.length === 0 ? {} : { Layers: layers }),
       }),
     )
     await waitUntilFunctionUpdatedV2({ client, maxWaitTime: 120 }, { FunctionName: name })
@@ -207,6 +225,15 @@ function withTelemetryEnv(input: PublishInput): Record<string, string> {
     SPROUTOS_PROJECT_ID: input.projectId,
     ...(input.deploymentId === undefined ? {} : { SPROUTOS_DEPLOYMENT_ID: input.deploymentId }),
     ...logEnv(input.projectId),
+    /*
+      Last, so it wins over a customer's own `PORT`.
+
+      The adapter and the server have to agree on one number. A customer who sets `PORT` in their
+      project settings is describing where their server listens locally; honouring it here would
+      leave the adapter forwarding to the wrong port and every invocation timing out with nothing in
+      the log to say why.
+    */
+    ...(input.webAdapterLayerArn === undefined ? {} : webAdapterEnv()),
   }
 }
 

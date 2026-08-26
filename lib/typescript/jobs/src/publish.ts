@@ -7,6 +7,7 @@ import {
   hostLabel,
   isSupportedRuntime,
   publishFunction,
+  webAdapterLayerArn,
   runMigration,
   publishLiveDeployment,
   publishRoute,
@@ -221,6 +222,27 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       }
     }
 
+    /*
+      Refuse rather than publish an adapted build without its adapter.
+
+      A function carrying `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap` and no `/opt/bootstrap` fails on
+      every invocation, and the alias would already have moved by the time anyone saw it. The
+      opposite order — publish and hope — is how this subsystem got into a state where every
+      deployment in the account was `error` and nothing said which field was missing.
+    */
+    const adapterLayerArn = deployment.webAdapter
+      ? webAdapterLayerArn(process.env.AWS_REGION ?? "us-east-1")
+      : undefined
+    if (deployment.webAdapter && adapterLayerArn === undefined) {
+      await crudDeployment(db).update(deploymentId, {
+        status: "error",
+        failureReason:
+          "This build is a web server and needs the Lambda Web Adapter layer, which is not " +
+          "configured. Set LAMBDA_WEB_ADAPTER_LAYER_VERSION on the control plane.",
+      })
+      return
+    }
+
     const published = await publishFunction(clients.lambda, {
       projectId: project.id,
       bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
@@ -248,6 +270,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       ...(process.env.LOG_EXTENSION_LAYER_ARN === undefined
         ? {}
         : { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }),
+      ...(adapterLayerArn === undefined ? {} : { webAdapterLayerArn: adapterLayerArn }),
     })
 
     /*

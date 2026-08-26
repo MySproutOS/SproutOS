@@ -92,6 +92,16 @@ TENANT_DOMAIN=${tenant_domain}
 # domain active — see its comment — rather than activating one that cannot serve HTTPS.
 TENANT_LISTENER_ARN=${tenant_listener_arn}
 
+# The Lambda Web Adapter layer version, for customer builds that are HTTP servers.
+#
+# A version number rather than a full ARN because the account (753240598075) is AWS's own and the
+# region is this one; `webAdapterLayerArn` composes them. Pinned rather than tracking latest: a
+# layer version is the adapter's *code*, and every customer function published after a bump would
+# silently move to it.
+#
+# Not a secret — it is a public layer, and every published function's configuration names it.
+LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
+
 # The account, for reconstructing a project's Lambda alias ARN when republishing routes. Not a
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}

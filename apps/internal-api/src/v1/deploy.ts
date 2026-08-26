@@ -434,6 +434,19 @@ const deploy: Hono = new Hono()
         */
         runtime: json.runtime ?? defaults.runtime,
         handler: json.handler ?? defaults.handler,
+        /*
+          Derived from the preset, never from the request.
+
+          The adapter is a property of what the build *is*, and the preset is the action's own
+          statement of that. Letting a caller set it independently of the handler would allow the
+          one combination that fails silently — the wrapper set with no server to wrap, or a server
+          published as a handler, which is the state every deployment in this account was in.
+
+          An explicit `handler` overrides the preset's, so a customer who supplies their own Lambda
+          entry point on a `next` build gets it — and then the adapter would be wrong, which is why
+          it is off in that case.
+        */
+        webAdapter: defaults.webAdapter && json.handler === undefined,
         gitMessage: json.message ?? null,
         migrationArtifactKey: json.migration_key ?? null,
         migrationHandler: json.migration_handler ?? null,

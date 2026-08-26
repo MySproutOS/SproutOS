@@ -39,3 +39,10 @@ export {
   type MigrateInput,
   type MigrateResult,
 } from "./migrate"
+export {
+  startupScript,
+  WEB_ADAPTER_HANDLER,
+  WEB_ADAPTER_PORT,
+  webAdapterEnv,
+  webAdapterLayerArn,
+} from "./web-adapter"

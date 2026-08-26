@@ -835,6 +835,8 @@ resource "aws_launch_template" "service" {
     # domain marked live with no certificate routes traffic and then fails TLS, which a visitor sees
     # as a security warning on a hostname we just told the customer was working.
     tenant_listener_arn = aws_lb_listener.https.arn
+
+    lambda_web_adapter_layer_version = var.lambda_web_adapter_layer_version
     aws_account_id      = var.aws_account_id
 
     # Kept in step with `.config/mise.toml` and the deploy workflow by hand, because three places

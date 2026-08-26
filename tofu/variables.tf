@@ -328,3 +328,23 @@ variable "postgres_subdomain" {
   type        = string
   default     = "postgres"
 }
+
+/*
+  Which version of AWS's Lambda Web Adapter layer customer functions are published with.
+
+  The adapter is what lets an ordinary HTTP server — a Next.js standalone build, a Hono `dist` —
+  run on Lambda without the customer writing a Lambda handler. See
+  `lib/typescript/lambda/src/web-adapter.ts` for why that is the shape rather than requiring an
+  exported handler.
+
+  A number, not an ARN: the layer is published by AWS's own account (753240598075) into every
+  region, and the ARN is composed from this and the region. Pinned deliberately — this is the
+  adapter's code, and "latest" would move every function published after a bump.
+
+  29 is `1.1.0`, the newest version AWS shares publicly at the time of writing.
+*/
+variable "lambda_web_adapter_layer_version" {
+  description = "AWS Lambda Web Adapter layer version customer web-server builds are published with."
+  type        = string
+  default     = "29"
+}
