@@ -1,9 +1,18 @@
-import { parseBatch, verify } from "@lib/metering"
+import {
+  applyActiveUsage,
+  connectUsageEventProducer,
+  decimalQuantity,
+  parseBatch,
+  usageEventRecord,
+  verify,
+  type UsageEventProducer,
+  type UsageEventRecord,
+} from "@lib/metering"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
-import { v7 } from "uuid"
+import { Redis } from "ioredis"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwUnauthenticated } from "../utils/http-exception"
 import { meteringSchemaResponse } from "./metering.serializer"
@@ -14,11 +23,57 @@ const errorResponse = {
 
 const SIGNATURE_HEADER = "x-metering-signature"
 
-/** How far out of step with this clock a batch may be and still be accepted. */
-const MAX_SKEW_MS = 24 * 60 * 60 * 1000
+/** Future skew is invalid; an old event may be a durable buffer finally recovering. */
+const MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000
+
+export type MeteringSinks = {
+  publish: (events: UsageEventRecord[]) => Promise<void>
+  project: (events: UsageEventRecord[]) => Promise<void>
+}
+
+let producer: Promise<UsageEventProducer> | undefined
+let valkey: Redis | undefined
+let sinkOverride: MeteringSinks | undefined
+
+function defaultSinks(): MeteringSinks {
+  return {
+    publish: async (events) => {
+      producer ??= connectUsageEventProducer()
+      await (await producer).send(events)
+    },
+    project: async (events) => {
+      valkey ??= new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
+      await Promise.all(
+        events.map(async (event) => {
+          await applyActiveUsage(valkey!, {
+            eventId: event.eventId,
+            organizationId: event.organizationId,
+            projectId: event.projectId,
+            dimension: event.dimension,
+            quantity: event.quantity,
+            occurredAt: event.occurredAt,
+          })
+        }),
+      )
+    },
+  }
+}
+
+/** Replace external sinks in route tests; passing no value restores production behavior. */
+export function setMeteringSinksForTest(sinks?: MeteringSinks): void {
+  sinkOverride = sinks
+}
+
+export async function closeMeteringSinks(): Promise<void> {
+  const connected = producer === undefined ? undefined : await producer.catch(() => undefined)
+  await connected?.disconnect()
+  producer = undefined
+  if (valkey !== undefined) await valkey.quit()
+  valkey = undefined
+}
 
 /**
- * Usage ingest (ADR 0014).
+ * Usage ingest (ADR 0028, superseding ADR 0014's Postgres raw store).
  *
  * The other end of the pipeline the metering agent posts into. Every node runs an agent; each signs
  * a batch with a shared key and posts it here.
@@ -27,10 +82,9 @@ const MAX_SKEW_MS = 24 * 60 * 60 * 1000
  * person — there is no session to present, and the HMAC is what makes the batch trustworthy. It is
  * the same shape as the GitHub and Stripe webhook handlers next door.
  *
- * The route is deliberately dumb: verify, validate, insert. Rating happens later against
- * `price_book`, from a job that reads `rated_at IS NULL`, because money should not be computed on
- * the path that accepts data — an ingest that fails because a price is missing loses the usage as
- * well as the charge.
+ * The route verifies, validates and normalizes, then waits for Kafka's replica acknowledgements.
+ * ClickHouse stores the immutable raw record; a later job imports absolute rollups into Postgres
+ * for rating. Valkey is only the rebuildable low-latency projection.
  */
 const app = new Hono().post(
   "/metering/events",
@@ -126,42 +180,49 @@ const app = new Hono().post(
           )
 
     const now = Date.now()
-    const rows = parsed.batch.events
+    const events = parsed.batch.events
       .filter((event) => known.has(event.organizationId))
       // A batch buffered through a long outage is still worth having; one dated next year is a
-      // clock that is wrong, and accepting it would put usage in a partition nobody reads.
-      .filter((event) => Math.abs(now - event.occurredAt) <= MAX_SKEW_MS)
-      .map((event) => ({
-        id: v7(),
-        organizationId: event.organizationId,
-        projectId:
-          event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null,
-        // The agent meters pods; every event it sends is a site's compute.
-        resourceType: "site",
-        dimension: event.dimension,
-        quantity: event.quantity.toString(),
-        occurredAt: new Date(event.occurredAt),
-        nodeId: event.attributes.node ?? null,
-        source: parsed.batch.source,
-        externalId: event.externalId,
-      }))
+      // clock that is wrong. Old events remain valid because ClickHouse partitions them by event
+      // time and discovers affected grains by its separate storage timestamp.
+      .filter((event) => event.occurredAt <= now + MAX_FUTURE_SKEW_MS)
+      .map((event) =>
+        usageEventRecord({
+          organizationId: event.organizationId,
+          projectId:
+            event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null,
+          // The agent meters pods; every event it sends is a site's compute.
+          resourceType: "site",
+          resourceId: null,
+          dimension: event.dimension,
+          quantity: decimalQuantity(event.quantity),
+          occurredAt: new Date(event.occurredAt),
+          windowStart: null,
+          windowEnd: null,
+          nodeId: event.attributes.node ?? null,
+          podUid: event.attributes.pod_uid ?? null,
+          source: parsed.batch.source,
+          externalId: event.externalId,
+          chargedExternally: false,
+          attributes: event.attributes,
+        }),
+      )
 
-    if (rows.length > 0) {
-      await db
-        .insertInto("usageEvent")
-        .values(rows)
-        // The agent retries a batch it could not confirm, and a retried batch is the same events
-        // again. `(source, external_id, occurred_at)` is unique, so a replay inserts nothing rather
-        // than billing twice.
-        .onConflict((builder) =>
-          builder.columns(["source", "externalId", "occurredAt"]).doNothing(),
-        )
-        .execute()
+    const sinks = sinkOverride ?? defaultSinks()
+    // Kafka is the durable acceptance boundary. If it cannot replicate the records, this throws
+    // and the emitter receives a non-2xx so it keeps its own buffered copy.
+    await sinks.publish(events)
+    try {
+      await sinks.project(events)
+    } catch (error) {
+      // Valkey is a rebuildable low-latency view, never the authority. Rejecting an event Kafka has
+      // already acknowledged would cause a retry and would still not repair this projection.
+      console.warn("[metering] active Valkey projection failed", error)
     }
 
     return c.json(
       {
-        accepted: rows.length,
+        accepted: events.length,
         received: parsed.batch.events.length,
         unknownOrganizations: named.filter((id) => !known.has(id)).length,
         unknownProjects: namedProjects.filter((id) => !knownProjects.has(id)).length,

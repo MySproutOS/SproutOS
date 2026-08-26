@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import { Kafka, Partitioners, type KafkaConfig, type Producer, type ProducerConfig } from "kafkajs"
+import type { BillableDimension } from "./dimensions"
 
 /** The dedicated durable buffer for raw, post-validation metering events. */
 export const DEFAULT_USAGE_EVENT_TOPIC = "usage-events"
@@ -22,7 +23,7 @@ export type UsageEventRecord = {
   projectId: string | null
   resourceType: string
   resourceId: string | null
-  dimension: string
+  dimension: BillableDimension
   quantity: string
   occurredAt: Date
   windowStart: Date | null
@@ -170,11 +171,13 @@ export type UsageEventKafkaConfig = {
 export function usageEventKafkaConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): UsageEventKafkaConfig {
-  const brokers = (env.KAFKA_BROKERS ?? "")
+  // Host-run API development reaches Docker through the published listener; containers and
+  // production use KAFKA_BROKERS directly.
+  const brokers = (env.KAFKA_BROKERS_HOST ?? env.KAFKA_BROKERS ?? "")
     .split(",")
     .map((broker) => broker.trim())
     .filter(Boolean)
-  if (brokers.length === 0) throw new Error("KAFKA_BROKERS is not set")
+  if (brokers.length === 0) throw new Error("KAFKA_BROKERS_HOST or KAFKA_BROKERS is not set")
   if (brokers.some((broker) => !/^[A-Za-z0-9._-]+:\d+$/.test(broker))) {
     throw new Error(`KAFKA_BROKERS is not a host:port list: ${JSON.stringify(brokers)}`)
   }

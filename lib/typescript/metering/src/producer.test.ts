@@ -19,7 +19,7 @@ function record() {
     projectId: "01990000-0000-7000-8000-000000000002",
     resourceType: "site",
     resourceId: null,
-    dimension: "compute_gib_s",
+    dimension: "site_gib_second",
     quantity: decimalQuantity(1e-7),
     occurredAt,
     windowStart: new Date("2026-08-26T12:34:00.000Z"),
@@ -92,9 +92,12 @@ describe("usage event identity and wire format", () => {
 describe("usage event Kafka configuration", () => {
   it("uses plaintext only for local Kafka", () => {
     expect(
-      usageEventKafkaConfigFromEnv({ KAFKA_BROKERS: " kafka:9092, localhost:29092 " }),
+      usageEventKafkaConfigFromEnv({
+        KAFKA_BROKERS: "kafka:9092",
+        KAFKA_BROKERS_HOST: " localhost:29092 ",
+      }),
     ).toEqual({
-      brokers: ["kafka:9092", "localhost:29092"],
+      brokers: ["localhost:29092"],
       topic: "usage-events",
       clientId: "sproutos-usage-events",
       ssl: false,
