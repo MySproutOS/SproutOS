@@ -5,6 +5,7 @@ members = [
   "lib/rust/metering-proto",
   "lib/rust/tenant-auth",
   "lib/rust/s3-sigv4",
+  "lib/rust/llm-proxy",
   "services/log-extension",
   "services/pg-proxy",
   "services/router",
@@ -23,6 +24,7 @@ repository = "https://github.com/Andrew-Chen-Wang/sproutos"
 sproutos-srn = { path = "lib/rust/srn" }
 sproutos-metering-proto = { path = "lib/rust/metering-proto" }
 sproutos-tenant-auth = { path = "lib/rust/tenant-auth" }
+sproutos-llm-proxy = { path = "lib/rust/llm-proxy" }
 sproutos-service-credentials = { path = "lib/rust/service-credentials" }
 sproutos-s3-sigv4 = { path = "lib/rust/s3-sigv4" }
 

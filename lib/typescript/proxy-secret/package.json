@@ -1,0 +1,15 @@
+{
+  "name": "@lib/proxy-secret",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

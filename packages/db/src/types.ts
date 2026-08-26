@@ -134,6 +134,9 @@ export interface AgentProxyToken {
   refreshTokenHash: string
   revokedAt: Timestamp | null
   updatedAt: Generated<Timestamp>
+  upstreamBaseUrl: string | null
+  upstreamKind: string | null
+  upstreamSecret: string | null
 }
 
 export interface AgentSession {

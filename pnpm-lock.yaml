@@ -964,6 +964,12 @@ importers:
         specifier: 'catalog:'
         version: 26.2.0
 
+  lib/typescript/proxy-secret:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+
   lib/typescript/queue:
     dependencies:
       '@lib/services':

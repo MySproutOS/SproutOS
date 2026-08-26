@@ -1,0 +1,15 @@
+[package]
+name = "sproutos-llm-proxy"
+description = "Opening the seal between the control plane and the LLM proxy, and counting tokens out of a model response"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aes-gcm = "0.10"
+anyhow.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
