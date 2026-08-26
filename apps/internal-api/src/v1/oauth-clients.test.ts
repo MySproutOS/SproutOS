@@ -124,6 +124,75 @@ describe.skipIf(!up)("oauth client registration", () => {
     expect(row.secretHash).not.toContain(secret)
   })
 
+  /*
+    The secret a client is handed must authenticate it at the token endpoint.
+
+    That sounds too obvious to test, and it is exactly what shipped broken: registration stored
+    `sha256$<hex>` while `authenticateClient` compared a bare `<hex>`, so every confidential client
+    got `invalid_client` no matter what it presented. Both files read correctly on their own — the
+    mismatch only exists between them, which is why neither file's tests caught it. The suites here
+    stopped at "a hash is stored", and the OAuth suite only ever exercised public clients, which
+    return before the comparison because they have no secret.
+
+    So the assertion has to cross the seam: mint through the real route, present through the real
+    token endpoint. The grant is deliberately junk, because the grant is not what is under test —
+    `invalid_grant` means client authentication *passed* and the exchange got as far as looking the
+    code up, which is the whole claim. Before the fix this failed with `invalid_client`.
+  */
+  it("issues a secret that actually authenticates at the token endpoint", async () => {
+    const created = await call("POST", `/v1/orgs/${orgSlug}/oauth-clients`, owner!, {
+      ...confidential,
+      name: "Token endpoint round trip",
+      redirectUris: ["https://example.com/callback"],
+    })
+    expect(created.status).toBe(201)
+    const secret = String((created.json.secret as Json).secret)
+
+    const response = await app.request("/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: String(created.json.id),
+        client_secret: secret,
+        code: "not-a-real-authorization-code",
+        redirect_uri: "https://example.com/callback",
+        code_verifier: "x".repeat(43),
+      }),
+    })
+    const body = (await response.json()) as Json
+
+    expect(body.error, `client authentication failed: ${JSON.stringify(body)}`).not.toBe(
+      "invalid_client",
+    )
+    expect(body.error).toBe("invalid_grant")
+  })
+
+  // The other half of the seam, asserted directly: a wrong secret must still be refused. A fix
+  // that made the comparison always succeed would satisfy the test above on its own.
+  it("refuses a secret that was never issued", async () => {
+    const created = await call("POST", `/v1/orgs/${orgSlug}/oauth-clients`, owner!, {
+      ...confidential,
+      name: "Wrong secret",
+    })
+
+    const response = await app.request("/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: String(created.json.id),
+        client_secret: "client_secret_this-was-never-issued-to-anyone",
+        code: "not-a-real-authorization-code",
+        redirect_uri: "https://example.com/callback",
+        code_verifier: "x".repeat(43),
+      }),
+    })
+
+    expect(response.status).toBe(401)
+    expect(((await response.json()) as Json).error).toBe("invalid_client")
+  })
+
   it("gives a public client no secret at all", async () => {
     const created = await call("POST", `/v1/orgs/${orgSlug}/oauth-clients`, owner!, {
       name: "A single-page app",

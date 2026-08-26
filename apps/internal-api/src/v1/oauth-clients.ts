@@ -1,6 +1,6 @@
 import { crudOauthClient, fetchOauthClient } from "@lib/dao"
+import { generateClientSecret, hashClientSecret } from "@lib/oauth-provider"
 import { db } from "@sproutos/db"
-import { encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
@@ -43,23 +43,6 @@ const errorResponse = {
  */
 const app: Hono = new Hono()
 app.use(authMiddleware)
-
-/** `client_secret_` and 32 bytes from the CSPRNG. Only its hash is ever stored. */
-function generateSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32))
-  return `client_secret_${Buffer.from(bytes).toString("base64url")}`
-}
-
-/**
- * Plain SHA-256, the same choice `@lib/api-keys` documents.
- *
- * This is 256 bits nobody chose, so there is nothing for a work factor to make expensive, and it is
- * verified once per token request — a path where Argon2's memory cost would be a denial-of-service
- * lever rather than a defence.
- */
-async function hashSecret(secret: string): Promise<string> {
-  return `sha256$${encodeHexLowerCase(await sha256Utf8(secret))}`
-}
 
 async function present(row: {
   id: string
@@ -162,10 +145,10 @@ app
       */
       let secret: { id: string; secret: string; lastFour: string } | undefined
       if (body.clientType === "confidential") {
-        const value = generateSecret()
+        const value = generateClientSecret()
         const created = await crudOauthClient(db).addSecret({
           oauthClientId: id,
-          secretHash: await hashSecret(value),
+          secretHash: await hashClientSecret(value),
           lastFour: value.slice(-4),
         })
         secret = { id: created.id, secret: value, lastFour: value.slice(-4) }
@@ -334,10 +317,10 @@ app
         the first. A rotate-in-place endpoint would break every running instance of their app at the
         moment they clicked it.
       */
-      const value = generateSecret()
+      const value = generateClientSecret()
       const created = await crudOauthClient(db).addSecret({
         oauthClientId: clientId,
-        secretHash: await hashSecret(value),
+        secretHash: await hashClientSecret(value),
         lastFour: value.slice(-4),
       })
 

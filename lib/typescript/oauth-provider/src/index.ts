@@ -1,3 +1,4 @@
+export { generateClientSecret, hashClientSecret } from "./client-secret"
 export { OAuthError, type OAuthErrorCode } from "./errors"
 export { verifyPkce } from "./pkce"
 export { assertRegisteredRedirect, assertValidRedirectRegistration } from "./redirect"
