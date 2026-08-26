@@ -49,7 +49,7 @@ describe("toTokenUsage", () => {
 
   it("never reports a negative input count", () => {
     // Defensive: a provider reporting more cached than prompt tokens would otherwise produce a
-    // negative quantity, and usage_event.quantity is a numeric a statement sums.
+    // negative quantity, and durable usage quantity is a decimal a statement sums.
     expect(
       toTokenUsage(
         usage({

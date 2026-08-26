@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { acquirePlatformJobLock, releasePlatformJobLock } from "./test-lock"
 import { assertSingleGrain, CHARGED_BUCKET, chargeUsage, MultipleGrainsError } from "./charge"
+import { applyImportedUsageRollups, type ImportedUsageBucket } from "./import-rollups"
 import { availableBalance, post } from "./ledger"
-import { rollUpUsage, LATE_ARRIVAL_GRACE_MS } from "./rollup"
 
 /**
  * Against the docker-compose Postgres, for the reason `rollup.test.ts` gives: every property worth
@@ -18,27 +18,42 @@ let ownerUserId: string
 let projectId: string
 let repositoryId: string
 
-/** Outside the rollup's late-arrival grace, without depending on how long the suite takes. */
-const CLOSED = new Date(Date.now() - LATE_ARRIVAL_GRACE_MS - 60_000)
+/** A closed billing window, without depending on how long the suite takes. */
+const CLOSED = new Date(Date.now() - 10 * 60_000)
 
-let seq = 0
-async function event(quantity: string, at: Date = CLOSED): Promise<void> {
-  const id = v7()
-  seq += 1
-  await db
-    .insertInto("usageEvent")
-    .values({
-      id,
+const imported = new Map<string, { quantity: number; externallyCharged: number }>()
+
+async function event(
+  quantity: string,
+  options: { dimension?: string; chargedExternally?: boolean } = {},
+): Promise<void> {
+  const dimension = options.dimension ?? "site_gib_second"
+  const previous = imported.get(dimension) ?? { quantity: 0, externallyCharged: 0 }
+  const next = {
+    quantity: previous.quantity + Number(quantity),
+    externallyCharged:
+      previous.externallyCharged + (options.chargedExternally === true ? Number(quantity) : 0),
+  }
+  imported.set(dimension, next)
+
+  const starts: Record<ImportedUsageBucket, Date> = {
+    minute: new Date(CLOSED.toISOString().slice(0, 16) + ":00.000Z"),
+    hour: new Date(CLOSED.toISOString().slice(0, 13) + ":00:00.000Z"),
+    day: new Date(CLOSED.toISOString().slice(0, 10) + "T00:00:00.000Z"),
+  }
+  await applyImportedUsageRollups(
+    db,
+    (["minute", "hour", "day"] as const).map((bucket) => ({
       organizationId,
       projectId,
-      resourceType: "site",
-      dimension: "site_gib_second",
-      quantity,
-      occurredAt: at,
-      source: "metering-agent",
-      externalId: `charge-test-${id}-${seq}`,
-    })
-    .execute()
+      dimension,
+      bucket,
+      bucketStart: starts[bucket],
+      quantity: String(next.quantity),
+      externallyChargedQuantity: String(next.externallyCharged),
+    })),
+    new Date(),
+  )
 }
 
 beforeAll(async () => {
@@ -133,7 +148,6 @@ afterAll(async () => {
     await tx.deleteFrom("creditTransaction").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("creditAccount").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("usageRollup").where("organizationId", "=", organizationId).execute()
-    await tx.deleteFrom("usageEvent").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("repository").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("organization").where("id", "=", organizationId).execute()
@@ -161,10 +175,10 @@ async function chargedHere(run: () => Promise<unknown>): Promise<bigint> {
 /*
   The bug this guard exists for produces no error of its own.
 
-  `rollUpUsage` writes the same usage at minute, hour and day grain. A charge that summed across
-  buckets would bill everything three times, and everything downstream would agree with itself: the
-  arithmetic is consistent, the ledger balances, the statement adds up. The only wrong number is the
-  one the customer pays.
+  The ClickHouse importer writes the same usage at minute, hour and day grain. A charge that summed
+  across buckets would bill everything three times, and everything downstream would agree with
+  itself: the arithmetic is consistent, the ledger balances, the statement adds up. The only wrong
+  number is the one the customer pays.
 */
 describe("charging exactly one grain", () => {
   it("accepts the hour bucket", () => {
@@ -201,7 +215,6 @@ describe("chargeUsage", () => {
 
     await event("100")
     await event("50")
-    await rollUpUsage(db)
 
     const charged = await chargedHere(() => chargeUsage(db))
     expect(charged).toBeGreaterThan(0n)
@@ -240,9 +253,9 @@ describe("chargeUsage", () => {
   /*
     Usage that arrives after its hour was charged.
 
-    `rollUpUsage` upserts, so a late event adds to a grain that has already been billed. The metering
-    agent has a retry buffer, so an event delayed past the rollup's five-minute grace by a restart or
-    a partition is ordinary rather than exceptional.
+    The importer replaces a grain with a larger absolute ClickHouse total when late usage arrives.
+    The metering agent has a retry buffer, so an event delayed by a restart or partition is ordinary
+    rather than exceptional.
 
     Two separate bugs lived here and this case found both. The claim looked for
     `rated_transaction_id is null`, so a topped-up grain was never looked at again and the addition
@@ -256,13 +269,11 @@ describe("chargeUsage", () => {
     if (!reachable) skip()
 
     await event("40")
-    await rollUpUsage(db)
     const first = await chargedHere(() => chargeUsage(db))
     expect(first).toBeGreaterThan(0n)
 
     // The late arrival, into the same hour.
     await event("40")
-    await rollUpUsage(db)
     const second = await chargedHere(() => chargeUsage(db))
 
     // The same quantity as the first charge, so the same money — not the grain's new total, and
@@ -291,26 +302,7 @@ describe("chargeUsage", () => {
 
     const before = await availableBalance(db, organizationId)
 
-    const id = v7()
-    seq += 1
-    await db
-      .insertInto("usageEvent")
-      .values({
-        id,
-        organizationId,
-        projectId,
-        resourceType: "agent",
-        dimension: "ai_input_token",
-        quantity: "1000",
-        occurredAt: CLOSED,
-        source: "agent",
-        externalId: `charge-test-agent-${id}-${seq}`,
-        // What the agent sets: the hold already took the money.
-        chargedExternally: true,
-      })
-      .execute()
-
-    await rollUpUsage(db)
+    await event("1000", { dimension: "ai_input_token", chargedExternally: true })
 
     const grain = await db
       .selectFrom("usageRollup")
@@ -355,7 +347,6 @@ describe("chargeUsage", () => {
     expect(await availableBalance(db, organizationId)).toBe(0n)
 
     await event("250")
-    await rollUpUsage(db)
     expect(await chargedHere(() => chargeUsage(db))).toBeGreaterThan(0n)
     expect(await availableBalance(db, organizationId)).toBeLessThan(0n)
   })

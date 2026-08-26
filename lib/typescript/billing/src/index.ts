@@ -50,14 +50,6 @@ export {
   type RatedUsage,
 } from "./usage"
 export {
-  BATCH_SIZE,
-  BUCKETS,
-  LATE_ARRIVAL_GRACE_MS,
-  rollUpUsage,
-  type Bucket,
-  type RollupResult,
-} from "./rollup"
-export {
   applyImportedUsageRollups,
   CLICKHOUSE_METERING_CONSUMER,
   importedUsageCursor,

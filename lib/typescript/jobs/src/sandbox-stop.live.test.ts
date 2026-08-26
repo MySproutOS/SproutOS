@@ -78,7 +78,9 @@ afterAll(async () => {
   if (!reachable || !organizationId) return
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
-    await tx.deleteFrom("usageEvent").where("organizationId", "=", organizationId).execute()
+    await sql`delete from metering_outbox where payload ->> 'organization_id' = ${organizationId}`.execute(
+      tx,
+    )
     await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -165,11 +167,11 @@ describe("an idle sandbox is actually turned off", () => {
     // between the last run and the stop would be unbillable with nothing left to notice it.
     expect(row.meteredThrough).not.toBeNull()
 
-    const usage = await db
-      .selectFrom("usageEvent")
-      .select(["quantity"])
-      .where("organizationId", "=", organizationId)
-      .execute()
-    expect(usage.length).toBeGreaterThan(0)
+    const usage = await sql<{ payload: string }>`
+      select payload::text as payload
+      from metering_outbox
+      where payload ->> 'organization_id' = ${organizationId}
+    `.execute(db)
+    expect(usage.rows.length).toBeGreaterThan(0)
   }, 300_000)
 })

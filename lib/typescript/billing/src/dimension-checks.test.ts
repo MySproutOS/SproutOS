@@ -1,15 +1,25 @@
 import { db } from "@sproutos/db"
+import { readFileSync } from "node:fs"
 import { sql } from "kysely"
 import { describe, expect, it } from "vitest"
+
+const activeDimensions = new Set(
+  (
+    JSON.parse(
+      readFileSync(
+        new URL("../../../rust/metering-proto/fixtures/billable-dimensions.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { dimensions: string[] }
+  ).dimensions,
+)
 
 /**
  * The billable dimensions are a list in four tables, and two of them were a release behind.
  *
- * `usage_event` and `price_book_item` were widened for sandbox billing; `usage_rollup` and
- * `statement_line_item` were not. The result was not "sandboxes are not billed" — `rollUpUsage` is
- * one job over every organization's unrated events, so the first metered sandbox anywhere made it
- * throw on a check constraint and **nothing on the platform was rolled up or charged** while one
- * existed. A feature nobody had used would have stopped the billing of everybody who had.
+ * The producer contract and `price_book_item` were widened for sandbox billing; `usage_rollup` and
+ * `statement_line_item` were not. The first imported sandbox grain would therefore have failed the
+ * platform-wide import and stopped every customer's billing.
  *
  * The sandbox migration's own comment says "Both tables get it" and names two. It was right about
  * the mechanism and wrong about the count. This reads the constraints out of `pg_constraint` rather
@@ -48,7 +58,7 @@ describe.runIf(reachable)("the dimension lists", () => {
       invoice is reconciled from. The reverse is the bug: a dimension the meter can write and the
       rollup refuses stops the job for every customer.
     */
-    const events = await allowed("usage_event")
+    const events = activeDimensions
 
     for (const table of ["usage_rollup", "statement_line_item"] as const) {
       const downstream = await allowed(table)
@@ -60,7 +70,7 @@ describe.runIf(reachable)("the dimension lists", () => {
   it("prices everything it meters", async () => {
     // A dimension that meters and never rates produces usage a customer can see and is never
     // charged for — the sandbox migration's own words, and the other half of the same list.
-    const events = await allowed("usage_event")
+    const events = activeDimensions
     const prices = await allowed("price_book_item")
     expect([...events].filter((dimension) => !prices.has(dimension))).toEqual([])
   })
@@ -79,7 +89,7 @@ describe.runIf(reachable)("the dimension lists", () => {
       .execute()
 
     const priced = new Set(book.map((row) => row.dimension))
-    const events = await allowed("usage_event")
+    const events = activeDimensions
     expect([...events].filter((dimension) => !priced.has(dimension))).toEqual([])
   })
 })

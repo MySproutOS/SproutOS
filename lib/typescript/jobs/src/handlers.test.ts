@@ -16,6 +16,11 @@ import { JOB_KINDS, PLATFORM_HANDLERS } from "./handlers"
  * The registry is the contract. This asserts the two halves cannot drift apart again.
  */
 describe("PLATFORM_HANDLERS", () => {
+  it("does not expose the retired Postgres raw-usage rollup kind", () => {
+    expect(Object.values(JOB_KINDS)).not.toContain("billing.roll_up_usage")
+    expect(PLATFORM_HANDLERS["billing.roll_up_usage"]).toBeUndefined()
+  })
+
   it("registers a handler for every declared job kind", () => {
     const missing = Object.entries(JOB_KINDS)
       .filter(([, kind]) => typeof PLATFORM_HANDLERS[kind] !== "function")

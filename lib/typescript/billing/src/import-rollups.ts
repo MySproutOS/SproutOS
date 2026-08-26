@@ -1,7 +1,8 @@
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { v7 } from "uuid"
-import type { Bucket } from "./rollup"
+
+export type ImportedUsageBucket = "minute" | "hour" | "day"
 
 export const CLICKHOUSE_METERING_CONSUMER = "clickhouse-usage-rollup-v1"
 
@@ -9,7 +10,7 @@ export type ImportedUsageRollup = {
   organizationId: string
   projectId: string | null
   dimension: string
-  bucket: Bucket
+  bucket: ImportedUsageBucket
   bucketStart: Date
   /** Absolute totals from deduplicated ClickHouse rows, never deltas. */
   quantity: string

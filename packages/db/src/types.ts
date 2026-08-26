@@ -1154,26 +1154,6 @@ export interface UpstreamSyncRun {
   upstreamSha: string | null
 }
 
-export interface UsageEvent {
-  chargedExternally: Generated<boolean>
-  dimension: string
-  externalId: string
-  id: string
-  ingestedAt: Generated<Timestamp>
-  nodeId: string | null
-  occurredAt: Timestamp
-  organizationId: string
-  podUid: string | null
-  projectId: string | null
-  quantity: Numeric
-  ratedAt: Timestamp | null
-  resourceId: string | null
-  resourceType: string
-  source: string
-  windowEnd: Timestamp | null
-  windowStart: Timestamp | null
-}
-
 export interface UsageRollup {
   bucket: string
   bucketStart: Timestamp
@@ -1377,7 +1357,6 @@ export interface DB {
   tenantQueue: TenantQueue
   topup: Topup
   upstreamSyncRun: UpstreamSyncRun
-  usageEvent: UsageEvent
   usageRollup: UsageRollup
   user: User
   userPreference: UserPreference

@@ -1,11 +1,9 @@
 import {
   applyImportedUsageRollups,
-  BATCH_SIZE,
   chargeUsage,
   expireHolds,
   formatMicroUsd,
   importedUsageCursor,
-  rollUpUsage,
 } from "@lib/billing"
 import {
   clickhouseUsageWatermark,
@@ -39,16 +37,6 @@ import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 
 /**
- * How many rollup batches one job run works through.
- *
- * Ten thirty-second samples per pod per node adds up: an hour of downtime on a hundred-pod cluster
- * is on the order of a million events. Draining that in one job would hold a transaction open long
- * enough to matter and would starve every other job of a worker. Twenty batches is 100,000 events
- * per run, and the ten-minute schedule catches up on the rest.
- */
-const MAX_ROLLUP_BATCHES = 20
-
-/**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
  *
  * `2026-08-21T02:5` — the hour, plus the tens digit of the minute. Crude on purpose: the recurring
@@ -70,7 +58,6 @@ function tenMinuteWindow(now: Date): string {
  */
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
-  rollUpUsage: "billing.roll_up_usage",
   importUsage: "billing.import_clickhouse_usage",
   relayMeteringOutbox: "billing.relay_metering_outbox",
   chargeUsage: "billing.charge_usage",
@@ -110,24 +97,6 @@ export const JOB_KINDS = {
 const expireCreditHolds: JobHandler = async (_job, { db }) => {
   const expired = await expireHolds(db)
   if (expired > 0) console.info(`[jobs] expired ${expired} credit holds`)
-}
-
-/**
- * Fold metered events into the rollups every cost figure is computed from.
- *
- * Runs in a loop until a batch comes back short, because one poll interval of arrears is a cost
- * figure that lags by a poll interval — and after any outage there is a backlog whose size is the
- * outage's length times the whole fleet's sampling rate. Bounded by `MAX_ROLLUP_BATCHES` so a very
- * long backlog is worked down over several runs rather than in one job that never returns.
- */
-const rollUpUsageJob: JobHandler = async (_job, { db }) => {
-  let events = 0
-  for (let batch = 0; batch < MAX_ROLLUP_BATCHES; batch += 1) {
-    const result = await rollUpUsage(db)
-    events += result.events
-    if (result.events < BATCH_SIZE) break
-  }
-  if (events > 0) console.info(`[jobs] rolled up ${events} usage events`)
 }
 
 /**
@@ -227,9 +196,9 @@ const retentionSweep: JobHandler = async (_job, { db }) => {
 /**
  * Post the ledger charges for usage that has been rolled up.
  *
- * Separate from `rollUpUsage` rather than folded into it, because the two fail differently and
- * should be retried differently: rolling up is arithmetic over rows this platform wrote, and
- * charging touches balances. A rollup that has to be retried ten times must not post ten charges.
+ * Separate from the ClickHouse importer because the two fail differently and should be retried
+ * differently: importing is absolute arithmetic over durable raw usage, and charging touches
+ * balances. An import retried ten times must not post ten charges.
  *
  * Runs after the rollup on the same schedule. `chargeUsage` claims only grains whose quantity
  * exceeds what has already been charged, so ordering between the two is a matter of latency rather
@@ -254,7 +223,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   */
   ...GITHUB_EVENT_HANDLERS,
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
-  [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
   [JOB_KINDS.importUsage]: importUsageJob,
   [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,

@@ -34,8 +34,8 @@ import type { JobHandler } from "./worker"
  *
  * ## What it does not touch
  *
- * `RETAINED_ON_DELETE` in the route — `usage_event`, `usage_rollup`, `statement_line_item`,
- * `audit_log` — and this job honours that. Those reference `project` with `ON DELETE RESTRICT` on
+ * `RETAINED_ON_DELETE` in the route — `usage_rollup`, `statement_line_item`, `audit_log` — and this
+ * job honours that. Those reference `project` with `ON DELETE RESTRICT` on
  * purpose (ADR 0017): last month's statement has to resolve its line items to a named project, so a
  * deletion must not take the evidence behind a bill with it. The project row is marked, not removed.
  *

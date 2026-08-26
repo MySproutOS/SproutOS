@@ -234,8 +234,8 @@ export function useRegions() {
  * looked exactly like a working delete: the dialog appeared, the confirmation was destructive-red,
  * and the project was still there afterwards.
  *
- * The API soft-deletes and enqueues a teardown (ADR 0017) — `usage_event` references these rows, so
- * a hard delete would destroy the billing history that justifies charges already made.
+ * The API soft-deletes and enqueues a teardown (ADR 0017) because billing grains and statements
+ * retain project references.
  */
 export function useDeleteProject(orgSlug: string) {
   const client = useQueryClient()

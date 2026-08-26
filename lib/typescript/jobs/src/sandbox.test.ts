@@ -76,7 +76,6 @@ afterAll(async () => {
     await sql`delete from metering_outbox where payload ->> 'organization_id' = ${organizationId}`.execute(
       tx,
     )
-    await tx.deleteFrom("usageEvent").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -199,13 +198,6 @@ describe("meterSandboxes", () => {
     expect(events[0]?.external_id).toContain(`${sandbox.id}:sandbox_cpu_second:`)
     expect(events[0]?.window_start).not.toBeNull()
     expect(events[0]?.window_end).not.toBeNull()
-
-    const legacyRows = await db
-      .selectFrom("usageEvent")
-      .select("id")
-      .where("resourceId", "=", sandbox.id)
-      .execute()
-    expect(legacyRows).toHaveLength(0)
 
     // ~60 seconds × the resource shape. Loose bounds: the interval is real wall-clock.
     const byDimension = new Map(events.map((row) => [row.dimension, Number(row.quantity)]))
