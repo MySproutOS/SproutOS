@@ -59,7 +59,20 @@ async function handle(request: Request) {
 
   const session = await getCurrentSession()
   if (session === null) {
-    const next = encodeURIComponent(request.url)
+    /*
+      Rebuilt on the public host, never from `request.url`.
+
+      Behind the load balancer the request arrives on the instance's own address, so `request.url`
+      is `https://0.0.0.0:8080/github/setup?...`. Handing that to `?next=` sends somebody who signed
+      in successfully to a host that does not exist — and it happens only when the session lapsed
+      during the install, which is the one case this redirect is here for. The `installation_id` is
+      spent by then, so what should be a sign-in becomes an App that is installed on GitHub and
+      invisible here.
+    */
+    const here = new URL(request.url)
+    const next = encodeURIComponent(
+      `${process.env.NEXT_PUBLIC_HOST_URL ?? ""}${here.pathname}${here.search}`,
+    )
     return new Response(null, { status: 302, headers: { Location: `/login?next=${next}` } })
   }
 

@@ -189,13 +189,27 @@ describe("the GitHub App setup callback", () => {
 
   it("sends an unauthenticated caller to sign in rather than losing the installation", async () => {
     session.value = null
+    /*
+      On the instance's own address, which is what the request looks like here.
+
+      Next.js sits behind the load balancer, so `request.url` is the internal origin and not the one
+      the browser typed. Building this Request on `sproutos.me` would test a situation that never
+      occurs in production and pass against the bug.
+    */
     const response = await GET(
-      new Request("https://sproutos.me/github/setup?installation_id=42&setup_action=install"),
+      new Request("https://0.0.0.0:8080/github/setup?installation_id=42&setup_action=install"),
     )
     const location = response.headers.get("Location") ?? ""
     expect(location).toContain("/login?next=")
     // The whole callback URL, because GitHub sends `installation_id` exactly once.
-    expect(decodeURIComponent(location)).toContain("installation_id=42")
+    const next = decodeURIComponent(location.split("next=")[1] ?? "")
+    expect(next).toContain("installation_id=42")
+    /*
+      On the public host. Behind the load balancer `request.url` names the instance
+      (`https://0.0.0.0:8080/...`), and sending somebody there after they sign in loses the
+      installation for good.
+    */
+    expect(next.startsWith("https://sproutos.me/github/setup")).toBe(true)
     expect(linked).not.toHaveBeenCalled()
   })
 
