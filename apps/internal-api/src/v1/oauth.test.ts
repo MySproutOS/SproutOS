@@ -61,3 +61,71 @@ describe("the OAuth discovery document", () => {
     expect(advertised.filter((entry) => entry.includes("/api/v1/"))).toEqual([])
   })
 })
+
+/**
+ * A malformed client id must be refused, not crash.
+ *
+ * `oauth_client.id` is a uuid column, so a lookup with anything else raises inside the driver.
+ * That surfaced as `server_error` and a 500 on both the token and introspection endpoints, neither
+ * of which requires authentication to reach — so any anonymous caller could produce a stack trace,
+ * and the 500 distinguished "not a uuid" from the `invalid_client` an unknown-but-well-formed id
+ * gets. The whole point of the flat `invalid_client` elsewhere in this file is that responses must
+ * not separate those cases.
+ *
+ * These need no database: the shape check runs before any query, which is the fix.
+ */
+describe("a client id that is not a uuid", () => {
+  async function token(clientId: string): Promise<Response> {
+    return await app.request("/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        client_secret: "client_secret_whatever",
+        code: "irrelevant",
+        redirect_uri: "https://example.com/callback",
+        code_verifier: "x".repeat(43),
+      }),
+    })
+  }
+
+  it("is invalid_client at the token endpoint, not server_error", async () => {
+    const response = await token("not-a-uuid")
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({
+      error: "invalid_client",
+      error_description: "Unknown client",
+    })
+  })
+
+  it("is invalid_client at the introspection endpoint too", async () => {
+    // No `x-client-id` header at all, which is how this was first hit: the handler reads a missing
+    // header as the empty string and takes it straight to the query.
+    const response = await app.request("/v1/oauth/introspect", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: "irrelevant" }),
+    })
+
+    expect(response.status).toBe(401)
+    expect(((await response.json()) as Record<string, string>).error).toBe("invalid_client")
+  })
+
+  /*
+    The oracle, asserted directly. A well-formed id for a client that does not exist and a
+    malformed id must be indistinguishable to the caller — otherwise the pair is an enumeration
+    tool for the id format. This one does reach the database, so it is skipped without one.
+  */
+  it.skipIf(process.env.DATABASE_URL === undefined)(
+    "is indistinguishable from a well-formed id that belongs to nobody",
+    async () => {
+      const malformed = await token("not-a-uuid")
+      const unknown = await token("00000000-0000-4000-8000-000000000000")
+
+      expect(malformed.status).toBe(unknown.status)
+      expect(await malformed.json()).toEqual(await unknown.json())
+    },
+  )
+})
