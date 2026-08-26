@@ -4,7 +4,6 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
-import { PUBLISH_KINDS } from "./publish"
 import { runProvision, STALE_AFTER_MS } from "./provision"
 
 /**
@@ -220,7 +219,19 @@ afterAll(async () => {
 })
 
 describe.runIf(reachable)("provisioning a fork", () => {
-  it("ends with a production deployment queued for the forked head", async () => {
+  /*
+    The first deploy is `skipped`, and no deployment row is written.
+
+    It used to queue one and mark the step `succeeded`. Under Knative that worked — the release
+    handler found no image and triggered a build. Since ADR 0026 a release carries an *artifact* the
+    deploy action uploaded, so the row it wrote had a null `artifact_key` and `publishRelease`
+    refused it on sight: "No build artifact was uploaded for this release", not retried.
+
+    Every project in production carried one of those. The step said `succeeded` anyway, which is the
+    lie the comment above this code congratulated itself on having removed — grown back one layer
+    down, where the step passed and the thing it stood for failed.
+  */
+  it("skips the first deploy rather than queueing one that cannot succeed", async () => {
     const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
     const { userId, orgId, projectId, projectJobId } = await seed()
     const github = fakeGitHub(sha)
@@ -229,36 +240,19 @@ describe.runIf(reachable)("provisioning a fork", () => {
 
     const deployment = await db
       .selectFrom("deployment")
-      .select(["id", "kind", "gitSha", "gitRef", "status"])
+      .select(["id"])
       .where("projectId", "=", projectId)
       .executeTakeFirst()
 
-    expect(deployment).toBeDefined()
-    created.push({ table: "deployment", id: deployment!.id })
-    expect(deployment).toMatchObject({
-      kind: "production",
-      gitSha: sha,
-      gitRef: "main",
-      status: "queued",
-    })
+    expect(deployment).toBeUndefined()
 
-    const queued = await db
-      .selectFrom("backgroundJob")
-      .select(["kind", "payload"])
-      .where("idempotencyKey", "=", `${PUBLISH_KINDS.release}:${deployment!.id}`)
-      .executeTakeFirst()
-
-    expect(queued?.kind).toBe(PUBLISH_KINDS.release)
-    expect(queued?.payload).toMatchObject({ deploymentId: deployment!.id })
-
-    // The step record has to agree with what happened, since it is the only thing the customer sees.
     const job = await db
       .selectFrom("projectJob")
       .select(["state", "steps", "progress"])
       .where("id", "=", projectJobId)
       .executeTakeFirstOrThrow()
     const steps = job.steps as ProjectJobStep[]
-    expect(steps.find((step) => step.key === "first_deploy")?.state).toBe("succeeded")
+    expect(steps.find((step) => step.key === "first_deploy")?.state).toBe("skipped")
     expect(job.state).toBe("succeeded")
 
     // The row now records the repository GitHub actually returned, not the pending placeholder.
@@ -312,12 +306,19 @@ describe.runIf(reachable)("provisioning a fork", () => {
       fakeGitHub("b".repeat(40)),
     )
 
-    const deployment = await db
-      .selectFrom("deployment")
-      .select(["id"])
-      .where("projectId", "=", seeded.projectId)
+    /*
+      Asserted on the job, not on a deployment row.
+
+      This used to read the deployment as a proxy for "provisioning finished", which stopped meaning
+      anything when provisioning stopped writing one — the deploy it queued could only ever fail.
+      The job's own state is the fact this test is about.
+    */
+    const job = await db
+      .selectFrom("projectJob")
+      .select(["state"])
+      .where("id", "=", seeded.projectJobId)
       .executeTakeFirstOrThrow()
-    created.push({ table: "deployment", id: deployment.id })
+    expect(job.state).toBe("succeeded")
 
     expect(await installCount(listingId)).toBe(before + 1)
 
@@ -357,15 +358,8 @@ describe.runIf(reachable)("a provisioning job left running by a worker that died
       fakeGitHub("c".repeat(40)),
     )
 
-    const deployment = await db
-      .selectFrom("deployment")
-      .select(["id"])
-      .where("projectId", "=", seeded.projectId)
-      .executeTakeFirst()
-
-    expect(deployment).toBeDefined()
-    created.push({ table: "deployment", id: deployment!.id })
-
+    // The job ran to completion, which is what "reclaimed" means. It used to be read off a
+    // deployment row that provisioning no longer writes.
     const job = await db
       .selectFrom("projectJob")
       .select(["state"])
@@ -432,7 +426,7 @@ describe.runIf(reachable)("provisioning onto a repository that already exists", 
     expect(github.seen).toContain("/repos/acme/astro-blog-starter")
   })
 
-  it("still queues the production deployment", async () => {
+  it("writes no deployment for a project on an existing repository either", async () => {
     const sha = "1122334455667788990011223344556677889900"
     const { userId, projectId } = await (async () => {
       const seeded = await seedExistingRepository()
@@ -450,7 +444,7 @@ describe.runIf(reachable)("provisioning onto a repository that already exists", 
       .where("projectId", "=", projectId)
       .executeTakeFirst()
 
-    expect(deployment).toMatchObject({ gitSha: sha, status: "queued" })
+    expect(deployment).toBeUndefined()
     expect(userId).toBeDefined()
   })
 })

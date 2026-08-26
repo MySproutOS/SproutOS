@@ -12,18 +12,10 @@ import {
   organizationGitHubCredential,
   userGitHubCredential,
 } from "@lib/github"
-import {
-  crudDeployment,
-  crudStoreListing,
-  crudStoreListingEvent,
-  isPendingGithubRepoId,
-} from "@lib/dao"
+import { crudStoreListing, crudStoreListingEvent, isPendingGithubRepoId } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
-import { v7 } from "uuid"
 import type { ProjectJobStep } from "@lib/dao/projectJob/crud"
-import { PUBLISH_KINDS } from "./publish"
-import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 
 /**
@@ -230,53 +222,44 @@ export async function runProvision(
     await mark(createStep, "succeeded")
 
     /*
-      The first deploy.
+      The first deploy, which this job cannot perform.
 
-      This step was `skipped`, with a comment saying the build pipeline "exists elsewhere in the
-      repository and is not wired to this job yet". That was true and it was the whole product: a
-      customer clicked "Fork this app", got a repository on GitHub, and got a project marked `ready`
-      that had never been built and was serving nothing. `deployment` held one row, from a seed.
+      The comment that used to sit here said everything downstream already worked — "`release` finds
+      no image, enqueues the build, and the build enqueues the deploy back". That was true under
+      Knative. ADR 0026 moved compute to Lambda, and a release now carries an *artifact* uploaded by
+      the deploy action before the release call. There is no build for this job to trigger.
 
-      Wiring it is two calls, because everything downstream already works — `PUBLISH_KINDS.release`
-      finds no image, enqueues the build, and the build enqueues the deploy back. What was missing
-      was only the first push.
+      So the two calls it made produced a `deployment` row with a null `artifact_key`, which
+      `publishRelease` refuses on sight — "No build artifact was uploaded for this release", not
+      retried, because retrying will not make bytes appear. Every project in production carries one:
+      six projects, six failed deployments, all with that reason.
 
-      The sha is read rather than assumed. A deployment is of a commit: it is what the build checks
-      out, what the image is tagged with, and what a rollback names, and `deployment.git_sha` is not
-      nullable. A fork is asynchronous on GitHub's side, so this can 404 for a moment after the
-      repository itself is readable; that failure belongs to the step, which is why the deploy is
-      marked `running` before the lookup rather than after it.
+      And the step was marked `succeeded` regardless. The comment above congratulated itself on
+      removing exactly that lie — a progress bar reaching 100% for work nobody did — and it had
+      grown back one layer down, where the step passed and the thing it stood for failed.
+
+      Marked `skipped` with the reason, which is the honest state: the fork exists, and deploying it
+      needs a workflow in the customer's repository that nothing here can write for them.
     */
     if (job.projectId !== null) {
-      await mark("first_deploy", "running")
+      /*
+        The head is still read, and nothing is deployed.
 
-      const branch = created.defaultBranch
-      const sha = await headShaWhenPopulated(
+        Waiting for the fork to be populated is the useful half of what this step used to do: a fork
+        is asynchronous on GitHub's side, and a repository that answers before its default branch
+        has commits is one a customer would open to find empty. Confirming the sha is how this job
+        knows the fork actually landed.
+
+        What is dropped is the deployment row that followed, which could only ever fail.
+      */
+      await headShaWhenPopulated(
         client,
         credential,
         created.ownerLogin,
         created.name,
-        branch,
+        created.defaultBranch,
       )
-
-      const deployment = await crudDeployment(db).create({
-        id: v7(),
-        projectId: job.projectId,
-        kind: "production",
-        gitSha: sha,
-        gitRef: branch,
-        prNumber: null,
-        status: "queued",
-      })
-
-      await enqueue(db, {
-        kind: PUBLISH_KINDS.release,
-        organizationId: job.organizationId,
-        payload: { deploymentId: deployment.id },
-        idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
-      })
-
-      await mark("first_deploy", "succeeded")
+      await mark("first_deploy", "skipped")
     }
 
     /*
