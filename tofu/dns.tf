@@ -248,3 +248,75 @@ resource "aws_route53_record" "tenant_valkey_ipv4" {
   ttl     = 300
   records = [var.ovh_host_ipv4]
 }
+
+/*
+  The certificate renewal on the OVH box, which could not renew.
+
+  Kafka's `EXTERNAL` listener is TLS on 9094 and its certificate comes from certbot on that host,
+  configured with `authenticator = standalone`. Standalone binds port 80, and Traefik holds port 80
+  on that machine, so every renewal since the certificate was first obtained has failed:
+
+      $ sudo certbot renew --dry-run --cert-name kafka.sproutos.me
+      Could not bind TCP port 80 because it is already in use by another process on this system
+
+  The timer runs twice a day and fails silently. The certificate expires on 2026-11-23, and on that
+  day the log extension in every customer's Lambda stops being able to complete a handshake — so the
+  runtime log pipeline stops, with nothing in the platform having changed.
+
+  `tls-alpn-01` through Traefik is not available either, for the reason `ovh/docker-compose.yaml`
+  writes out on the Valkey service: it works for a name Traefik itself serves, and Kafka is not
+  behind Traefik.
+
+  DNS-01 needs no port at all, which is why it is the answer here rather than the tidier one. This
+  user is what certbot on that host authenticates as. **No access key is created by OpenTofu** — the
+  state file is local and a key in it is a credential in a file nobody treats as one, which is the
+  same reasoning `app-secrets.tf` gives for creating no parameter.
+*/
+resource "aws_iam_user" "certbot" {
+  name = "${var.name_prefix}-certbot-dns"
+  path = "/service/"
+  tags = { Purpose = "certbot dns-01 on the OVH host" }
+}
+
+resource "aws_iam_user_policy" "certbot" {
+  name = "certbot-dns01"
+  user = aws_iam_user.certbot.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # certbot polls this after submitting a change, to know the record has propagated.
+        Sid      = "WatchTheChange"
+        Effect   = "Allow"
+        Action   = ["route53:GetChange"]
+        Resource = ["arn:aws:route53:::change/*"]
+      },
+      {
+        # The plugin looks the zone up by name rather than being told its id.
+        Sid      = "FindTheZone"
+        Effect   = "Allow"
+        Action   = ["route53:ListHostedZones"]
+        Resource = ["*"]
+      },
+      {
+        /*
+          One zone, and only this one.
+
+          The plugin writes and then deletes a `_acme-challenge` TXT record. Scoped to the zone
+          rather than to that record name because `ChangeResourceRecordSets` authorizes against the
+          hosted zone and carries no condition key for the record it is changing — so "only the
+          challenge record" is not expressible here, and pretending otherwise in a comment would be
+          worse than saying so.
+        */
+        Sid    = "WriteTheChallengeRecord"
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets",
+        ]
+        Resource = ["arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}"]
+      },
+    ]
+  })
+}

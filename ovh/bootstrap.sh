@@ -67,6 +67,50 @@ sudo chown -R 1000:1000 "$DATA_MOUNT"/sproutos/kafka
 sudo mkdir -p /opt/sproutos
 sudo chown "$USER":"$USER" /opt/sproutos
 
+echo "==> Kafka's certificate, and the renewal that has to reach it"
+#
+# Two separate things were missing and each one alone is enough to take the log pipeline down on the
+# day the certificate expires.
+#
+# **It could not renew.** The certificate was obtained with `--standalone`, which binds port 80 —
+# and Traefik holds port 80 on this host, so every renewal since has failed:
+#
+#     Could not bind TCP port 80 because it is already in use by another process on this system
+#
+# The timer runs twice a day and fails quietly, so the first visible symptom would have been the
+# expiry itself. `dns-route53` needs no port; the credential is a scoped IAM user created in
+# `tofu/dns.tf`, and it is the only thing about this host that lives in AWS.
+#
+# **Nothing carried a renewed certificate to Kafka.** Kafka reads one PEM — the private key followed
+# by the chain — from a path certbot does not write, and it reads it at startup. So even a renewal
+# that succeeded would have left the broker serving the old certificate until somebody noticed. The
+# deploy hook below is that missing step, and it belongs here rather than in anybody's head.
+sudo install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/kafka-keystore.sh >/dev/null <<'HOOK'
+#!/usr/bin/env bash
+# Rebuild the PEM Kafka reads, then restart it so the new one is loaded.
+#
+# `RENEWED_LINEAGE` is set by certbot to the `live/` directory of whichever certificate it just
+# renewed, so this fires for the Kafka one and no-ops for any other.
+set -euo pipefail
+
+[ "${RENEWED_LINEAGE:-}" = "/etc/letsencrypt/live/kafka.sproutos.me" ] || exit 0
+
+DEST=/data/sproutos/kafka-tls/keystore.pem
+install -d -m 0755 "$(dirname "$DEST")"
+
+# Written to a temporary file and moved into place, because Kafka may read this at any moment and a
+# half-written PEM is a broker that will not start.
+TMP=$(mktemp)
+cat "$RENEWED_LINEAGE/privkey.pem" "$RENEWED_LINEAGE/fullchain.pem" > "$TMP"
+chmod 0644 "$TMP"
+mv "$TMP" "$DEST"
+
+# Restart rather than reload: Kafka reads the keystore at startup and has no signal for this.
+docker restart sproutos_kafka >/dev/null
+HOOK
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/kafka-keystore.sh
+
 echo
 echo "host prepared. Copy the compose file and start:"
 echo "  scp ovh/docker-compose.yaml ovh/.env ubuntu@<host>:/opt/sproutos/"
