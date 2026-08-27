@@ -1,23 +1,40 @@
-import { LambdaClient } from "@aws-sdk/client-lambda"
+import { DeleteAliasCommand, LambdaClient } from "@aws-sdk/client-lambda"
+import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
+import { Route53Client } from "@aws-sdk/client-route-53"
+import { S3Client } from "@aws-sdk/client-s3"
 import { LOG_EXTENSION_ENABLED } from "@utils/feature-flags"
 import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
 import {
   DEFAULT_HANDLER,
   DEFAULT_RUNTIME,
+  functionName,
   hostLabel,
   isSupportedRuntime,
+  pointAlias,
   publishFunction,
   webAdapterLayerArn,
   runMigration,
   publishLiveDeployment,
   publishRoute,
+  withdrawRoute,
   type Route,
 } from "@lib/lambda"
 import type { DB } from "@sproutos/db"
 import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
+import { withProjectLock } from "./project-lock"
+import { enqueue } from "./queue"
+import {
+  deactivateStaticHost,
+  pointStaticSite,
+  publishStaticSite,
+  removeStaticDeployment,
+  removeStaticDeploymentBytes,
+  staticPlatformFromEnv,
+  type StaticPublisherClients,
+} from "./static-publish"
 
 /**
  * Putting a release live: publish the function, then publish the route.
@@ -35,6 +52,8 @@ import type { JobHandler } from "./worker"
 
 export const PUBLISH_KINDS = {
   release: "deploy.release",
+  tearDownPreview: "deploy.preview_teardown",
+  cleanUpStaticPreview: "deploy.static_preview_cleanup",
 } as const
 
 type PublishPayload = { deploymentId: string }
@@ -53,6 +72,12 @@ export type PublishOptions = {
   valkey: Redis
   bucket?: string
   roleArn?: string
+  static?: StaticPublisherClients & {
+    bucket: string
+    tenantZoneId: string
+    distributionDomain: string
+    keyValueStoreArn: string
+  }
 }
 
 /*
@@ -63,17 +88,35 @@ export type PublishOptions = {
   handler registry — which kept the OpenAPI generator's process alive until it timed out at three
   minutes, and would keep a CLI or a migration alive the same way.
 */
-let shared: { lambda: LambdaClient; valkey: Redis } | undefined
-function sharedClients(): { lambda: LambdaClient; valkey: Redis } {
+let shared:
+  | {
+      lambda: LambdaClient
+      valkey: Redis
+      static: StaticPublisherClients
+    }
+  | undefined
+function sharedClients(): {
+  lambda: LambdaClient
+  valkey: Redis
+  static: StaticPublisherClients
+} {
+  const aws = {
+    region: process.env.AWS_REGION ?? "us-east-1",
+    ...(process.env.AWS_ENDPOINT_URL === undefined
+      ? {}
+      : { endpoint: process.env.AWS_ENDPOINT_URL }),
+  }
   shared ??= {
-    lambda: new LambdaClient({
-      region: process.env.AWS_REGION ?? "us-east-1",
-      ...(process.env.AWS_ENDPOINT_URL === undefined
-        ? {}
-        : { endpoint: process.env.AWS_ENDPOINT_URL }),
-    }),
+    lambda: new LambdaClient(aws),
     // The platform's own Valkey, where the route map lives — not the tenant instance.
     valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
+    static: {
+      s3: new S3Client({ ...aws, forcePathStyle: process.env.AWS_ENDPOINT_URL !== undefined }),
+      route53: new Route53Client(aws),
+      // CloudFront KVS is global but signs against us-east-1. It is never pointed at LocalStack;
+      // static tests inject a fake because LocalStack has no KVS implementation.
+      keyValueStore: new CloudFrontKeyValueStoreClient({ region: "us-east-1" }),
+    },
   }
   return shared
 }
@@ -124,9 +167,10 @@ export function hostnameFor(
 }
 
 export function publishRelease(options?: PublishOptions): JobHandler {
-  return async (job, { db }) => {
+  return async (job, { db, keepAlive, signal }) => {
     const clients = options ?? sharedClients()
     const { deploymentId } = job.payload as PublishPayload
+    const publishSignal = AbortSignal.any([signal, AbortSignal.timeout(4 * 60_000)])
 
     const found = await fetchDeployment(db).withProject(deploymentId)
     // Deleted between enqueue and run. Nothing to publish and nothing to record it against.
@@ -135,18 +179,196 @@ export function publishRelease(options?: PublishOptions): JobHandler {
     const { deployment, project } = found
     if (deployment.status === "torn_down") return
 
-    if (deployment.artifactKey === null) {
-      // The release was recorded but the upload never landed. Not retried: the artifact is uploaded
-      // *before* the release call, so an absent key means the action did something we do not
-      // understand, and retrying will not make bytes appear.
-      await crudDeployment(db).update(deploymentId, {
-        status: "error",
-        failureReason: "No build artifact was uploaded for this release",
-      })
-      return
-    }
+    return withProjectLock(
+      db,
+      project.id,
+      async () => {
+        let compensate = async (): Promise<void> => {}
+        let servingModeClaimed = false
+        try {
+          const currentProject = await db
+            .selectFrom("project")
+            .select(["id", "deletedAt", "servingMode"])
+            .where("id", "=", project.id)
+            .executeTakeFirst()
+          if (currentProject === undefined || currentProject.deletedAt !== null) return
 
-    /*
+          const livePointer = await db
+            .selectFrom("project")
+            .select("liveDeploymentId")
+            .where("id", "=", project.id)
+            .executeTakeFirst()
+          const previousLive =
+            livePointer?.liveDeploymentId === null || livePointer?.liveDeploymentId === undefined
+              ? undefined
+              : await db
+                  .selectFrom("deployment")
+                  .select(["id", "preset", "staticDigest", "hostname", "lambdaVersion"])
+                  .where("id", "=", livePointer.liveDeploymentId)
+                  .executeTakeFirst()
+          const previousPreview =
+            deployment.kind !== "preview" || deployment.prNumber === null
+              ? undefined
+              : await db
+                  .selectFrom("deployment")
+                  .select([
+                    "id",
+                    "preset",
+                    "staticDigest",
+                    "staticArtifactKey",
+                    "hostname",
+                    "lambdaVersion",
+                  ])
+                  .where("projectId", "=", project.id)
+                  .where("kind", "=", "preview")
+                  .where("prNumber", "=", deployment.prNumber)
+                  .where("id", "!=", deploymentId)
+                  .where("status", "=", "ready")
+                  .orderBy("createdAt", "desc")
+                  .executeTakeFirst()
+          const previousServing = deployment.kind === "production" ? previousLive : previousPreview
+          const retirePreviousPreview = async () => {
+            if (previousPreview === undefined) return
+            await db.transaction().execute(async (transaction) => {
+              await crudDeployment(transaction).update(previousPreview.id, { status: "torn_down" })
+              if (previousPreview.preset === "static") {
+                await enqueue(transaction, {
+                  kind: PUBLISH_KINDS.cleanUpStaticPreview,
+                  organizationId: project.organizationId,
+                  payload: { deploymentId: previousPreview.id },
+                  maxAttempts: 12,
+                  idempotencyKey: `${PUBLISH_KINDS.cleanUpStaticPreview}:${previousPreview.id}`,
+                })
+              }
+            })
+          }
+
+          const requestedMode = deployment.preset === "static" ? "static" : "serverless"
+          const establishedMode =
+            currentProject.servingMode ??
+            (previousLive === undefined
+              ? undefined
+              : previousLive.preset === "static"
+                ? "static"
+                : "serverless")
+          if (establishedMode !== undefined && establishedMode !== requestedMode) {
+            await crudDeployment(db).update(deploymentId, {
+              status: "error",
+              failureReason:
+                "A project cannot switch between static and serverless serving modes. Create a new " +
+                "project for the other serving mode so a failed release cannot strand live traffic.",
+            })
+            return
+          }
+          let serverlessTrafficMayHaveMoved = false
+          const hostname = hostnameFor(project, deployment)
+          const aliasName =
+            deployment.kind === "production" ? "live" : `preview-${deployment.prNumber}`
+          const restoreServerlessTraffic = async () => {
+            if (!serverlessTrafficMayHaveMoved) return
+            if (deployment.kind !== "production") {
+              if (
+                previousPreview?.preset !== "static" &&
+                previousPreview?.lambdaVersion !== null &&
+                previousPreview?.lambdaVersion !== undefined &&
+                previousPreview.hostname !== null
+              ) {
+                const aliasArn = await pointAlias(
+                  clients.lambda,
+                  functionName(project.id),
+                  previousPreview.lambdaVersion,
+                  aliasName,
+                )
+                await publishRoute(clients.valkey, previousPreview.hostname, {
+                  arn: aliasArn,
+                  projectId: project.id,
+                  organizationId: project.organizationId,
+                  deploymentId: previousPreview.id,
+                })
+                await crudDeployment(db).update(previousPreview.id, { status: "ready" })
+                return
+              }
+              try {
+                await clients.lambda.send(
+                  new DeleteAliasCommand({
+                    FunctionName: functionName(project.id),
+                    Name: aliasName,
+                  }),
+                )
+              } catch (error) {
+                if (!(error instanceof Error) || error.name !== "ResourceNotFoundException")
+                  throw error
+              }
+              await withdrawRoute(clients.valkey, hostname)
+              return
+            }
+            const domains = await db
+              .selectFrom("customDomain")
+              .select("hostname")
+              .where("projectId", "=", project.id)
+              .where("status", "=", "active")
+              .where("deletedAt", "is", null)
+              .execute()
+            if (
+              previousLive?.preset !== "static" &&
+              previousLive?.lambdaVersion !== null &&
+              previousLive?.lambdaVersion !== undefined &&
+              previousLive.hostname !== null
+            ) {
+              const aliasArn = await pointAlias(
+                clients.lambda,
+                functionName(project.id),
+                previousLive.lambdaVersion,
+              )
+              const route: Route = {
+                arn: aliasArn,
+                projectId: project.id,
+                organizationId: project.organizationId,
+                deploymentId: previousLive.id,
+              }
+              await publishRoute(clients.valkey, previousLive.hostname, route)
+              for (const domain of domains)
+                await publishRoute(clients.valkey, domain.hostname, route)
+              await publishLiveDeployment(clients.valkey, project.id, previousLive.id)
+              await db
+                .updateTable("project")
+                .set({ liveDeploymentId: previousLive.id, updatedAt: new Date() })
+                .where("id", "=", project.id)
+                .execute()
+              return
+            }
+
+            try {
+              await clients.lambda.send(
+                new DeleteAliasCommand({ FunctionName: functionName(project.id), Name: aliasName }),
+              )
+            } catch (error) {
+              if (!(error instanceof Error) || error.name !== "ResourceNotFoundException")
+                throw error
+            }
+            await withdrawRoute(clients.valkey, hostname)
+            for (const domain of domains) await withdrawRoute(clients.valkey, domain.hostname)
+            await clients.valkey.del(`live:${project.id}`)
+            await db
+              .updateTable("project")
+              .set({ liveDeploymentId: null, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .execute()
+          }
+          compensate = restoreServerlessTraffic
+
+          if (deployment.preset !== "static" && deployment.artifactKey === null) {
+            // The release was recorded but the upload never landed. Not retried: the artifact is uploaded
+            // *before* the release call, so an absent key means the action did something we do not
+            // understand, and retrying will not make bytes appear.
+            await crudDeployment(db).update(deploymentId, {
+              status: "error",
+              failureReason: "No build artifact was uploaded for this release",
+            })
+            return
+          }
+
+          /*
       Config files have no home on Lambda.
 
       A Knative deployment mounted them from a Secret. A Lambda's filesystem is the contents of its
@@ -157,23 +379,148 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       being delivered looks to its owner exactly like the application being broken, and this
       repository has already shipped one deployment path where the environment went nowhere.
     */
-    const files = await fetchProjectFile(db).listSealedForProject(project.id, deployment.kind)
-    if (files.length > 0) {
-      await crudDeployment(db).update(deploymentId, {
-        status: "error",
-        failureReason:
-          `This project has ${files.length} configuration file(s), which cannot be delivered to a ` +
-          `serverless deployment. Commit them to the repository so the build includes them.`,
-      })
-      return
-    }
+          const files = await fetchProjectFile(db).listSealedForProject(project.id, deployment.kind)
+          if (files.length > 0) {
+            await crudDeployment(db).update(deploymentId, {
+              status: "error",
+              failureReason:
+                `This project has ${files.length} configuration file(s), which cannot be delivered to a ` +
+                `serverless deployment. Commit them to the repository so the build includes them.`,
+            })
+            return
+          }
 
-    await crudDeployment(db).update(deploymentId, { status: "deploying" })
+          let staticArchive: { artifactKey: string; digest: string } | undefined
+          if (deployment.preset === "static") {
+            if (deployment.staticArtifactKey === null || deployment.staticDigest === null) {
+              await crudDeployment(db).update(deploymentId, {
+                status: "error",
+                failureReason:
+                  "The static release has no complete static archive. Re-run the deploy action so it " +
+                  "uploads both the archive and its digest.",
+              })
+              return
+            }
+            staticArchive = {
+              artifactKey: deployment.staticArtifactKey,
+              digest: deployment.staticDigest,
+            }
+          }
 
-    const environment = await environmentFor(db, project.id, deployment.kind)
-    const hostname = hostnameFor(project, deployment)
+          await crudDeployment(db).update(deploymentId, { status: "deploying" })
 
-    /*
+          if (deployment.preset === "static") {
+            if (staticArchive === undefined)
+              throw new Error("Static archive validation was skipped")
+            const config = options?.static
+            const staticClients = config ?? sharedClients().static
+            const bucket = config?.bucket ?? process.env.TENANT_STATIC_BUCKET
+            const tenantZoneId = config?.tenantZoneId ?? process.env.TENANT_ZONE_ID
+            const distributionDomain =
+              config?.distributionDomain ?? process.env.TENANT_STATIC_DISTRIBUTION_DOMAIN
+            const keyValueStoreArn =
+              config?.keyValueStoreArn ?? process.env.TENANT_STATIC_KEY_VALUE_STORE_ARN
+            if (
+              bucket === undefined ||
+              tenantZoneId === undefined ||
+              distributionDomain === undefined ||
+              keyValueStoreArn === undefined
+            ) {
+              await crudDeployment(db).update(deploymentId, {
+                status: "error",
+                failureReason:
+                  "Static serving is not configured on the platform. TENANT_STATIC_BUCKET, " +
+                  "TENANT_ZONE_ID, TENANT_STATIC_DISTRIBUTION_DOMAIN, and " +
+                  "TENANT_STATIC_KEY_VALUE_STORE_ARN are all required.",
+              })
+              return
+            }
+
+            try {
+              await publishStaticSite(staticClients, {
+                bucket,
+                artifactKey: staticArchive.artifactKey,
+                digest: staticArchive.digest,
+                projectId: project.id,
+                hostname,
+                tenantZoneId,
+                distributionDomain,
+                keyValueStoreArn,
+                heartbeat: keepAlive,
+                signal: publishSignal,
+              })
+
+              if (currentProject.servingMode === null) {
+                const claimed = await db
+                  .updateTable("project")
+                  .set({ servingMode: requestedMode, updatedAt: new Date() })
+                  .where("id", "=", project.id)
+                  .where("servingMode", "is", null)
+                  .executeTakeFirst()
+                servingModeClaimed = Number(claimed.numUpdatedRows) > 0
+              }
+              if (deployment.kind === "production") {
+                await publishLiveDeployment(clients.valkey, project.id, deploymentId)
+              }
+              await crudDeployment(db).update(deploymentId, {
+                status: "ready",
+                failureReason: null,
+                url: `https://${hostname}`,
+                hostname,
+                lambdaVersion: null,
+              })
+              if (deployment.kind === "production") {
+                await db
+                  .updateTable("project")
+                  .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
+                  .where("id", "=", project.id)
+                  .execute()
+              }
+              await retirePreviousPreview()
+              return
+            } catch (error) {
+              // Put traffic back where the durable live pointer says it belongs before retrying. This is
+              // also safe when activation never happened: both operations are idempotent.
+              if (
+                previousServing?.preset === "static" &&
+                previousServing.staticDigest !== null &&
+                previousServing.hostname !== null
+              ) {
+                await pointStaticSite(staticClients, {
+                  hostname: previousServing.hostname,
+                  prefix: `${project.id}/${previousServing.staticDigest}`,
+                  tenantZoneId,
+                  distributionDomain,
+                  keyValueStoreArn,
+                })
+                if (previousServing.hostname !== hostname) {
+                  await deactivateStaticHost(staticClients, {
+                    hostname,
+                    tenantZoneId,
+                    keyValueStoreArn,
+                  })
+                }
+                if (previousPreview !== undefined) {
+                  await crudDeployment(db).update(previousPreview.id, { status: "ready" })
+                }
+              } else {
+                await deactivateStaticHost(staticClients, {
+                  hostname,
+                  tenantZoneId,
+                  keyValueStoreArn,
+                })
+              }
+              await crudDeployment(db).update(deploymentId, {
+                status: "error",
+                failureReason: error instanceof Error ? error.message : "Static publication failed",
+              })
+              throw error
+            }
+          }
+
+          const environment = await environmentFor(db, project.id, deployment.kind)
+
+          /*
       Migrations, before anything serves.
 
       `DEPLOYMENT_DOCTRINE` has promised this since it was written — "migrations run as part of the
@@ -190,40 +537,41 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       which is how a recoverable failure becomes an unrecoverable one. The deployment is marked
       failed and a human decides.
     */
-    if (deployment.migrationArtifactKey !== null) {
-      await crudDeployment(db).update(deploymentId, { migrationStatus: "running" })
+          if (deployment.migrationArtifactKey !== null) {
+            await crudDeployment(db).update(deploymentId, { migrationStatus: "running" })
 
-      const result = await runMigration(clients.lambda, {
-        projectId: project.id,
-        bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
-        key: deployment.migrationArtifactKey,
-        handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
-        runtime:
-          deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
-            ? deployment.runtime
-            : DEFAULT_RUNTIME,
-        roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
-        environment,
-      })
+            const result = await runMigration(clients.lambda, {
+              projectId: project.id,
+              bucket:
+                options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
+              key: deployment.migrationArtifactKey,
+              handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
+              runtime:
+                deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
+                  ? deployment.runtime
+                  : DEFAULT_RUNTIME,
+              roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+              environment,
+            })
 
-      await crudDeployment(db).update(deploymentId, {
-        migrationStatus: result.ok ? "succeeded" : "failed",
-        migrationOutput: result.output,
-        migrationFinishedAt: new Date(),
-      })
+            await crudDeployment(db).update(deploymentId, {
+              migrationStatus: result.ok ? "succeeded" : "failed",
+              migrationOutput: result.output,
+              migrationFinishedAt: new Date(),
+            })
 
-      if (!result.ok) {
-        await crudDeployment(db).update(deploymentId, {
-          status: "error",
-          failureReason:
-            "The database migration failed, so this release was not published and the previous " +
-            "one is still serving. The migrator's output is on this deployment.",
-        })
-        return
-      }
-    }
+            if (!result.ok) {
+              await crudDeployment(db).update(deploymentId, {
+                status: "error",
+                failureReason:
+                  "The database migration failed, so this release was not published and the previous " +
+                  "one is still serving. The migrator's output is on this deployment.",
+              })
+              return
+            }
+          }
 
-    /*
+          /*
       Refuse rather than publish an adapted build without its adapter.
 
       A function carrying `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap` and no `/opt/bootstrap` fails on
@@ -231,25 +579,26 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       opposite order — publish and hope — is how this subsystem got into a state where every
       deployment in the account was `error` and nothing said which field was missing.
     */
-    const adapterLayerArn = deployment.webAdapter
-      ? webAdapterLayerArn(process.env.AWS_REGION ?? "us-east-1")
-      : undefined
-    if (deployment.webAdapter && adapterLayerArn === undefined) {
-      await crudDeployment(db).update(deploymentId, {
-        status: "error",
-        failureReason:
-          "This build is a web server and needs the Lambda Web Adapter layer, which is not " +
-          "configured. Set LAMBDA_WEB_ADAPTER_LAYER_VERSION on the control plane.",
-      })
-      return
-    }
+          const adapterLayerArn = deployment.webAdapter
+            ? webAdapterLayerArn(process.env.AWS_REGION ?? "us-east-1")
+            : undefined
+          if (deployment.webAdapter && adapterLayerArn === undefined) {
+            await crudDeployment(db).update(deploymentId, {
+              status: "error",
+              failureReason:
+                "This build is a web server and needs the Lambda Web Adapter layer, which is not " +
+                "configured. Set LAMBDA_WEB_ADAPTER_LAYER_VERSION on the control plane.",
+            })
+            return
+          }
 
-    const published = await publishFunction(clients.lambda, {
-      projectId: project.id,
-      organizationId: project.organizationId,
-      bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
-      key: deployment.artifactKey,
-      /*
+          serverlessTrafficMayHaveMoved = true
+          const published = await publishFunction(clients.lambda, {
+            projectId: project.id,
+            organizationId: project.organizationId,
+            bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
+            key: deployment.artifactKey!,
+            /*
         From the deployment row, not a constant.
 
         These were hardcoded, which pinned every customer to one Node version and gave every
@@ -258,18 +607,19 @@ export function publishRelease(options?: PublishOptions): JobHandler {
         that was valid when it was stored and has since left the allowlist — Lambda would reject it
         anyway, and doing so here says which field was wrong.
       */
-      handler: deployment.handler ?? DEFAULT_HANDLER,
-      runtime:
-        deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
-          ? deployment.runtime
-          : DEFAULT_RUNTIME,
-      memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
-      timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
-      roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
-      environment: { ...environment, SPROUTOS_DEPLOYMENT_ID: deploymentId },
-      // Unset in development, where there is no layer to attach and no Kafka to ship to. A
-      // deployment without it runs and produces no logs, which is why it is set from one place.
-      /*
+            handler: deployment.handler ?? DEFAULT_HANDLER,
+            runtime:
+              deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
+                ? deployment.runtime
+                : DEFAULT_RUNTIME,
+            memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
+            timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
+            roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+            environment: { ...environment, SPROUTOS_DEPLOYMENT_ID: deploymentId },
+            aliasName,
+            // Unset in development, where there is no layer to attach and no Kafka to ship to. A
+            // deployment without it runs and produces no logs, which is why it is set from one place.
+            /*
         The flag, not just the variable.
 
         `LOG_EXTENSION_ENABLED` is off because the published layer crashes the function it is
@@ -277,13 +627,13 @@ export function publishRelease(options?: PublishOptions): JobHandler {
         so the reason travels with the code instead of living in an instance's environment where
         the next person to set it has no idea what they are turning back on.
       */
-      ...(LOG_EXTENSION_ENABLED && process.env.LOG_EXTENSION_LAYER_ARN !== undefined
-        ? { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }
-        : {}),
-      ...(adapterLayerArn === undefined ? {} : { webAdapterLayerArn: adapterLayerArn }),
-    })
+            ...(LOG_EXTENSION_ENABLED && process.env.LOG_EXTENSION_LAYER_ARN !== undefined
+              ? { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }
+              : {}),
+            ...(adapterLayerArn === undefined ? {} : { webAdapterLayerArn: adapterLayerArn }),
+          })
 
-    /*
+          /*
       The route last.
 
       Publishing it before the function exists would send live traffic at an ARN that resolves to
@@ -291,15 +641,15 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       ordering is the only thing making a deploy atomic from a visitor's point of view: until this
       write lands, the previous release is still serving.
     */
-    const route: Route = {
-      arn: published.aliasArn,
-      projectId: project.id,
-      organizationId: project.organizationId,
-      deploymentId,
-    }
-    await publishRoute(clients.valkey, hostname, route)
+          const route: Route = {
+            arn: published.aliasArn,
+            projectId: project.id,
+            organizationId: project.organizationId,
+            deploymentId,
+          }
+          await publishRoute(clients.valkey, hostname, route)
 
-    /*
+          /*
       And every custom domain pointing at this project.
 
       A customer's own hostname is not derived from the project — it is a row they added and
@@ -311,32 +661,41 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       Only `active` domains. A pending one has not proved it controls the zone yet, and publishing a
       route for it would let anyone claim a hostname by typing it into a form.
     */
-    const domains = await db
-      .selectFrom("customDomain")
-      .select("hostname")
-      .where("projectId", "=", project.id)
-      .where("status", "=", "active")
-      .where("deletedAt", "is", null)
-      .execute()
+          if (deployment.kind === "production") {
+            const domains = await db
+              .selectFrom("customDomain")
+              .select("hostname")
+              .where("projectId", "=", project.id)
+              .where("status", "=", "active")
+              .where("deletedAt", "is", null)
+              .execute()
 
-    for (const domain of domains) {
-      // eslint-disable-next-line no-await-in-loop -- a project has a handful of domains, and the
-      // ordering matters no more here than it does for the project's own route above.
-      await publishRoute(clients.valkey, domain.hostname, route)
-    }
+            for (const domain of domains) {
+              // eslint-disable-next-line no-await-in-loop -- a project has a handful of domains.
+              await publishRoute(clients.valkey, domain.hostname, route)
+            }
 
-    // And by project id, which is the only thing the log shipper has: a CloudWatch log group is
-    // named after the project, never after the hostname.
-    await publishLiveDeployment(clients.valkey, project.id, deploymentId)
+            await publishLiveDeployment(clients.valkey, project.id, deploymentId)
+          }
 
-    await crudDeployment(db).update(deploymentId, {
-      status: "ready",
-      url: `https://${hostname}`,
-      hostname,
-      lambdaVersion: published.version,
-    })
+          if (currentProject.servingMode === null) {
+            const claimed = await db
+              .updateTable("project")
+              .set({ servingMode: requestedMode, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .where("servingMode", "is", null)
+              .executeTakeFirst()
+            servingModeClaimed = Number(claimed.numUpdatedRows) > 0
+          }
 
-    /*
+          await crudDeployment(db).update(deploymentId, {
+            status: "ready",
+            url: `https://${hostname}`,
+            hostname,
+            lambdaVersion: published.version,
+          })
+
+          /*
       And durably, on the project.
 
       `publishLiveDeployment` above writes `live:<project id>` into Valkey with a 24-hour expiry,
@@ -345,12 +704,138 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       hostname, and pointing the project's live deployment at one would make a pull request look
       like the thing customers are hitting.
     */
-    if (deployment.kind === "production") {
-      await db
-        .updateTable("project")
-        .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
-        .where("id", "=", project.id)
-        .execute()
-    }
+          if (deployment.kind === "production") {
+            await db
+              .updateTable("project")
+              .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .execute()
+          }
+          await retirePreviousPreview()
+        } catch (error) {
+          await compensate()
+          if (servingModeClaimed) {
+            await db
+              .updateTable("project")
+              .set({ servingMode: null, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .execute()
+          }
+          await crudDeployment(db).update(deploymentId, {
+            status: "error",
+            failureReason: error instanceof Error ? error.message : "Deployment publication failed",
+          })
+          throw error
+        }
+      },
+      { keepAlive },
+    )
+  }
+}
+
+export function tearDownPreview(options?: PublishOptions): JobHandler {
+  return async (job, { db, keepAlive }) => {
+    const { deploymentId } = job.payload as PublishPayload
+    const found = await fetchDeployment(db).withProject(deploymentId)
+    if (found === undefined) return
+    const { deployment, project } = found
+    if (deployment.kind !== "preview" || deployment.status === "torn_down") return
+
+    return withProjectLock(
+      db,
+      project.id,
+      async () => {
+        const current = await fetchDeployment(db).withProject(deploymentId)
+        if (current === undefined || current.deployment.status === "torn_down") return
+        const hostname = current.deployment.hostname
+        if (hostname !== null) {
+          if (current.deployment.preset === "static") {
+            if (
+              current.deployment.staticDigest === null ||
+              current.deployment.staticArtifactKey === null
+            ) {
+              throw new Error(`Static preview ${deploymentId} has no retained archive identity`)
+            }
+            const platform = options?.static ?? staticPlatformFromEnv()
+            await removeStaticDeployment(platform, {
+              bucket: platform.bucket,
+              projectId: project.id,
+              digest: current.deployment.staticDigest,
+              artifactKey: current.deployment.staticArtifactKey,
+              hostnames: [hostname],
+              tenantZoneId: platform.tenantZoneId,
+              keyValueStoreArn: platform.keyValueStoreArn,
+            })
+          } else {
+            const clients = options ?? sharedClients()
+            try {
+              await clients.lambda.send(
+                new DeleteAliasCommand({
+                  FunctionName: functionName(project.id),
+                  Name: `preview-${current.deployment.prNumber}`,
+                }),
+              )
+            } catch (error) {
+              if (!(error instanceof Error) || error.name !== "ResourceNotFoundException")
+                throw error
+            }
+            await withdrawRoute(clients.valkey, hostname)
+          }
+        }
+        await crudDeployment(db).update(deploymentId, { status: "torn_down" })
+      },
+      { keepAlive },
+    )
+  }
+}
+
+export function cleanUpStaticPreview(options?: PublishOptions): JobHandler {
+  return async (job, { db, keepAlive }) => {
+    const { deploymentId } = job.payload as PublishPayload
+    const found = await fetchDeployment(db).withProject(deploymentId)
+    if (found === undefined) return
+    return withProjectLock(
+      db,
+      found.project.id,
+      async () => {
+        const current = await fetchDeployment(db).withProject(deploymentId)
+        if (
+          current === undefined ||
+          current.deployment.kind !== "preview" ||
+          current.deployment.preset !== "static" ||
+          current.deployment.staticDigest === null ||
+          current.deployment.staticArtifactKey === null
+        ) {
+          return
+        }
+        const stillUsed = await db
+          .selectFrom("deployment")
+          .select("id")
+          .where("projectId", "=", current.project.id)
+          .where("id", "!=", deploymentId)
+          .where("status", "in", ["queued", "building", "deploying", "ready"])
+          .where((expression) =>
+            expression.or([
+              expression("staticDigest", "=", current.deployment.staticDigest),
+              expression("staticArtifactKey", "=", current.deployment.staticArtifactKey),
+            ]),
+          )
+          .executeTakeFirst()
+        if (stillUsed !== undefined) {
+          throw new Error(
+            `Static preview bytes are still referenced by nonterminal deployment ${stillUsed.id}`,
+          )
+        }
+
+        const platform = options?.static ?? staticPlatformFromEnv()
+        await removeStaticDeploymentBytes(platform.s3, {
+          bucket: platform.bucket,
+          projectId: current.project.id,
+          digest: current.deployment.staticDigest,
+          artifactKey: current.deployment.staticArtifactKey,
+        })
+      },
+      { keepAlive },
+    )
   }
 }

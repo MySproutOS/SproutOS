@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { mintDeployToken, readDeployToken } from "./deploy"
+import {
+  mintDeployToken,
+  readDeployToken,
+  releasePreviewNumber,
+  staticReleaseError,
+} from "./deploy"
 
 /**
  * The deploy token is what the upload and release calls carry, so forging one is deploying to
@@ -54,5 +59,46 @@ describe("deploy tokens", () => {
     for (const malformed of ["", "a", "a.b", "a.b.c.d"]) {
       expect(readDeployToken(malformed, SECRET, now)).toBeUndefined()
     }
+  })
+})
+
+describe("static release identity", () => {
+  const digest = "a".repeat(64)
+
+  it("requires the archive and digest as a pair for a static preset", () => {
+    expect(staticReleaseError(PROJECT, { preset: "static" })).toMatch(/requires/)
+    expect(
+      staticReleaseError(PROJECT, {
+        preset: "static",
+        static_key: `static/${PROJECT}/${digest}.zip`,
+      }),
+    ).toMatch(/both be set/)
+  })
+
+  it("accepts only the authenticated project's content-addressed key", () => {
+    expect(
+      staticReleaseError(PROJECT, {
+        preset: "static",
+        static_key: `static/${PROJECT}/${digest}.zip`,
+        static_digest: digest,
+      }),
+    ).toBeUndefined()
+    expect(
+      staticReleaseError(PROJECT, {
+        preset: "static",
+        static_key: `static/somebody-else/${digest}.zip`,
+        static_digest: digest,
+      }),
+    ).toMatch(/does not belong/)
+  })
+})
+
+describe("CI preview identity", () => {
+  it("derives a pull request number and refuses branch-shaped previews", () => {
+    expect(releasePreviewNumber("production", "refs/heads/main")).toBeNull()
+    expect(releasePreviewNumber("preview", "refs/pull/42/merge")).toBe(42)
+    expect(releasePreviewNumber("preview", "refs/pull/42/head")).toBe(42)
+    expect(releasePreviewNumber("preview", "42/merge")).toBe(42)
+    expect(releasePreviewNumber("preview", "refs/heads/feature")).toBeUndefined()
   })
 })

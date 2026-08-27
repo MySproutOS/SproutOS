@@ -36,6 +36,9 @@ export default defineConfig({
     "lib/typescript/api-client/src/generated/**",
     "lib/typescript/api-client/src/admin-generated/**",
     "**/routeTree.gen.ts",
+    // CloudFront Functions run in AWS's restricted JavaScript runtime and import its built-in
+    // `cloudfront` module, neither of which exists in this repository's Node type environment.
+    "tofu/functions/**",
   ],
   rules: {
     "consistent-return": "off",

@@ -7,7 +7,13 @@ import {
   type Route,
 } from "@lib/lambda"
 import { Redis } from "ioredis"
-import { PUBLISH_KINDS, enqueue } from "@lib/jobs"
+import {
+  PUBLISH_KINDS,
+  enqueue,
+  pointStaticSite,
+  withProjectLock,
+  staticPlatformFromEnv,
+} from "@lib/jobs"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -53,6 +59,7 @@ type DeploymentRow = {
   prNumber: number | null
   url: string | null
   hostname: string | null
+  preset: string
   lambdaVersion: string | null
   migrationStatus: string | null
   migrationOutput: string | null
@@ -78,6 +85,7 @@ function present(row: DeploymentRow, buildFailureReason: string | null = null) {
     prNumber: row.prNumber,
     url: row.url,
     hostname: row.hostname,
+    preset: row.preset,
     lambdaVersion: row.lambdaVersion,
     migrationStatus: row.migrationStatus,
     migrationOutput: row.migrationOutput,
@@ -211,6 +219,7 @@ const app = new Hono()
           "prNumber",
           "url",
           "hostname",
+          "preset",
           "lambdaVersion",
           "migrationStatus",
           "migrationOutput",
@@ -342,12 +351,6 @@ const app = new Hono()
         pull request to customers. A deployment that is not `ready` never served, so "rolling back"
         to it would be a first release wearing the word rollback.
       */
-      if (deployment.lambdaVersion === null) {
-        return throwBadRequest(
-          c,
-          "That deployment never published a version, so there is nothing to roll back to.",
-        )
-      }
       if (deployment.kind !== "production") {
         return throwBadRequest(c, "Only a production deployment can serve production traffic.")
       }
@@ -363,62 +366,202 @@ const app = new Hono()
         return throwBadRequest(c, "That deployment has no hostname recorded.")
       }
 
-      /*
+      const valkey = rollbackValkey()
+      return withProjectLock(
+        db,
+        project.id,
+        async () => {
+          const lockedProject = await db
+            .selectFrom("project")
+            .leftJoin(
+              "deployment as liveDeployment",
+              "liveDeployment.id",
+              "project.liveDeploymentId",
+            )
+            .select([
+              "project.deletedAt",
+              "project.liveDeploymentId",
+              "liveDeployment.id as liveId",
+              "liveDeployment.preset as livePreset",
+              "liveDeployment.hostname as liveHostname",
+              "liveDeployment.staticDigest as liveStaticDigest",
+              "liveDeployment.lambdaVersion as liveLambdaVersion",
+            ])
+            .where("project.id", "=", project.id)
+            .executeTakeFirst()
+          if (lockedProject === undefined || lockedProject.deletedAt !== null) {
+            return throwNotFound(c, "Project not found")
+          }
+          if (lockedProject.liveId === null) {
+            return throwBadRequest(c, "Rollback requires a currently live production deployment.")
+          }
+          if (
+            lockedProject.liveId !== null &&
+            (lockedProject.livePreset === "static") !== (deployment.preset === "static")
+          ) {
+            return throwBadRequest(
+              c,
+              "A project cannot switch between static and serverless serving modes.",
+            )
+          }
+
+          const restorePreviousLive = async (): Promise<void> => {
+            if (
+              lockedProject.liveId === null ||
+              lockedProject.liveHostname === null ||
+              lockedProject.livePreset === null
+            ) {
+              return
+            }
+            if (lockedProject.livePreset === "static") {
+              if (lockedProject.liveStaticDigest === null) return
+              const platform = staticPlatformFromEnv()
+              await pointStaticSite(platform, {
+                hostname: lockedProject.liveHostname,
+                prefix: `${project.id}/${lockedProject.liveStaticDigest}`,
+                tenantZoneId: platform.tenantZoneId,
+                distributionDomain: platform.distributionDomain,
+                keyValueStoreArn: platform.keyValueStoreArn,
+              })
+            } else {
+              if (lockedProject.liveLambdaVersion === null) return
+              const { LambdaClient } = await import("@aws-sdk/client-lambda")
+              const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? "us-east-1" })
+              const aliasArn = await pointAlias(
+                lambda,
+                functionName(project.id),
+                lockedProject.liveLambdaVersion,
+              )
+              const route: Route = {
+                arn: aliasArn,
+                projectId: project.id,
+                organizationId: project.organizationId,
+                deploymentId: lockedProject.liveId,
+              }
+              await publishRoute(valkey, lockedProject.liveHostname, route)
+              const domains = await db
+                .selectFrom("customDomain")
+                .select("hostname")
+                .where("projectId", "=", project.id)
+                .where("status", "=", "active")
+                .where("deletedAt", "is", null)
+                .execute()
+              for (const domain of domains) await publishRoute(valkey, domain.hostname, route)
+            }
+            await publishLiveDeployment(valkey, project.id, lockedProject.liveId)
+            await db
+              .updateTable("project")
+              .set({ liveDeploymentId: lockedProject.liveId, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .execute()
+          }
+
+          let trafficCommitted = false
+          try {
+            if (deployment.preset === "static") {
+              if (deployment.staticDigest === null) {
+                return throwBadRequest(c, "That static deployment has no content digest recorded.")
+              }
+              const platform = staticPlatformFromEnv()
+              await pointStaticSite(platform, {
+                hostname,
+                prefix: `${project.id}/${deployment.staticDigest}`,
+                tenantZoneId: platform.tenantZoneId,
+                distributionDomain: platform.distributionDomain,
+                keyValueStoreArn: platform.keyValueStoreArn,
+              })
+              await publishLiveDeployment(valkey, project.id, deployment.id)
+              await db
+                .updateTable("project")
+                .set({ liveDeploymentId: deployment.id, updatedAt: new Date() })
+                .where("id", "=", project.id)
+                .execute()
+              trafficCommitted = true
+              await crudAuditLog(db).record({
+                organizationId: c.var.organization.id,
+                actorUserId: c.var.user.id,
+                action: "deployment:write",
+                resourceSrn: srnFor("compute", c.var.organization.id, "deployment", deployment.id),
+                after: { rolledBackTo: deployment.id, staticDigest: deployment.staticDigest },
+                ...auditContext(c),
+              })
+              const reasons = await buildFailureReasons([deployment.id])
+              return c.json(present(deployment, reasons.get(deployment.id) ?? null))
+            }
+
+            if (deployment.lambdaVersion === null) {
+              return throwBadRequest(
+                c,
+                "That deployment never published a version, so there is nothing to roll back to.",
+              )
+            }
+
+            /*
         The alias move is the rollback. `pointAlias` is one API call and the old version was never
         deleted, which is what makes this instant rather than a rebuild.
       */
-      const { LambdaClient } = await import("@aws-sdk/client-lambda")
-      const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? "us-east-1" })
-      const aliasArn = await pointAlias(lambda, functionName(project.id), deployment.lambdaVersion)
+            const { LambdaClient } = await import("@aws-sdk/client-lambda")
+            const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? "us-east-1" })
+            const aliasArn = await pointAlias(
+              lambda,
+              functionName(project.id),
+              deployment.lambdaVersion,
+            )
 
-      /*
+            /*
         Then the route, so the router resolves this deployment rather than the one it replaced.
 
         Republished rather than left alone: the route's value carries `deploymentId`, which is what
         attributes a request's cost and its logs. Leaving the old value would bill this traffic to
         the release that is no longer serving.
       */
-      const valkey = rollbackValkey()
-      const route: Route = {
-        arn: aliasArn,
-        projectId: project.id,
-        organizationId: project.organizationId,
-        deploymentId: deployment.id,
-      }
-      await publishRoute(valkey, hostname, route)
+            const route: Route = {
+              arn: aliasArn,
+              projectId: project.id,
+              organizationId: project.organizationId,
+              deploymentId: deployment.id,
+            }
+            await publishRoute(valkey, hostname, route)
+            const domains = await db
+              .selectFrom("customDomain")
+              .select("hostname")
+              .where("projectId", "=", project.id)
+              .where("status", "=", "active")
+              .where("deletedAt", "is", null)
+              .execute()
 
-      const domains = await db
-        .selectFrom("customDomain")
-        .select("hostname")
-        .where("projectId", "=", project.id)
-        .where("status", "=", "active")
-        .where("deletedAt", "is", null)
-        .execute()
+            for (const domain of domains) {
+              // eslint-disable-next-line no-await-in-loop -- a handful per project, same as `publish.ts`.
+              await publishRoute(valkey, domain.hostname, route)
+            }
 
-      for (const domain of domains) {
-        // eslint-disable-next-line no-await-in-loop -- a handful per project, same as `publish.ts`.
-        await publishRoute(valkey, domain.hostname, route)
-      }
+            await publishLiveDeployment(valkey, project.id, deployment.id)
 
-      await publishLiveDeployment(valkey, project.id, deployment.id)
+            await db
+              .updateTable("project")
+              .set({ liveDeploymentId: deployment.id, updatedAt: new Date() })
+              .where("id", "=", project.id)
+              .execute()
+            trafficCommitted = true
 
-      await db
-        .updateTable("project")
-        .set({ liveDeploymentId: deployment.id, updatedAt: new Date() })
-        .where("id", "=", project.id)
-        .execute()
+            await crudAuditLog(db).record({
+              organizationId: c.var.organization.id,
+              actorUserId: c.var.user.id,
+              action: "deployment:write",
+              resourceSrn: srnFor("compute", c.var.organization.id, "deployment", deployment.id),
+              after: { rolledBackTo: deployment.id, lambdaVersion: deployment.lambdaVersion },
+              ...auditContext(c),
+            })
 
-      await crudAuditLog(db).record({
-        organizationId: c.var.organization.id,
-        actorUserId: c.var.user.id,
-        action: "deployment:write",
-        resourceSrn: srnFor("compute", c.var.organization.id, "deployment", deployment.id),
-        after: { rolledBackTo: deployment.id, lambdaVersion: deployment.lambdaVersion },
-        ...auditContext(c),
-      })
-
-      const reasons = await buildFailureReasons([deployment.id])
-      return c.json(present(deployment, reasons.get(deployment.id) ?? null))
+            const reasons = await buildFailureReasons([deployment.id])
+            return c.json(present(deployment, reasons.get(deployment.id) ?? null))
+          } catch (error) {
+            if (!trafficCommitted) await restorePreviousLive()
+            throw error
+          }
+        },
+        { maxWaitMs: 30_000 },
+      )
     },
   )
 

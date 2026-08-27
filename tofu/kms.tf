@@ -49,6 +49,36 @@ resource "aws_kms_key" "secrets" {
   enable_key_rotation     = true
   deletion_window_in_days = local.key_deletion_window
   tags                    = merge(local.tags, { Name = "${var.name_prefix}-secrets" })
+
+  /*
+    Keep IAM delegation, then grant only this distribution permission to decrypt tenant static
+    objects. An S3 bucket policy is not enough for an SSE-KMS origin: CloudFront reads the object as
+    its service principal and KMS independently authorizes that decrypt.
+  */
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableIAMPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${var.aws_account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowTenantStaticCloudFrontDecrypt"
+        Effect    = "Allow"
+        Principal = { Service = "cloudfront.amazonaws.com" }
+        Action    = "kms:Decrypt"
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.tenant_static.arn
+          }
+        }
+      },
+    ]
+  })
 }
 
 resource "aws_kms_alias" "secrets" {

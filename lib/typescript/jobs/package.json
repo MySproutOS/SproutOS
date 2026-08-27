@@ -14,7 +14,11 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudfront-keyvaluestore": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
+    "@aws-sdk/client-route-53": "catalog:",
+    "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/signature-v4a": "catalog:",
     "@lib/agent": "workspace:*",
     "@lib/analyzer": "workspace:*",
     "@lib/billing": "workspace:*",
@@ -32,10 +36,13 @@
     "@utils/feature-flags": "workspace:*",
     "ioredis": "^6.0.0",
     "kysely": "catalog:",
-    "uuid": "catalog:"
+    "mime-types": "^3.0.2",
+    "uuid": "catalog:",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
-    "@aws-sdk/client-s3": "catalog:",
-    "@types/node": "catalog:"
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "catalog:",
+    "@types/yauzl": "^2.10.3"
   }
 }

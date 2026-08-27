@@ -19,6 +19,7 @@ export type Deployment = {
   gitMessage: string | null
   url: string | null
   hostname: string | null
+  preset: string
   lambdaVersion: string | null
   migrationStatus: string | null
   migrationOutput: string | null
@@ -67,6 +68,7 @@ export function useDeployments(orgSlug: string, projectId: string) {
       gitMessage: row.gitMessage ?? null,
       url: row.url ?? null,
       hostname: row.hostname ?? null,
+      preset: row.preset,
       lambdaVersion: row.lambdaVersion ?? null,
       migrationStatus: row.migrationStatus ?? null,
       migrationOutput: row.migrationOutput ?? null,
@@ -90,7 +92,7 @@ export function canRollBackTo(deployment: Deployment, liveDeploymentId: string |
   if (deployment.id === liveDeploymentId) return false
   if (deployment.kind !== "production") return false
   if (deployment.status !== "ready") return false
-  return deployment.lambdaVersion !== null
+  return deployment.preset === "static" || deployment.lambdaVersion !== null
 }
 
 /**

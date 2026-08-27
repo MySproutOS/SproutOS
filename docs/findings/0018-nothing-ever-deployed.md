@@ -152,6 +152,35 @@ instruction and needs no CDN. The separate upload stays, because serving assets 
 wrong long-run answer — but "wrong long-run answer" beats "the site has no CSS", and the difference
 between the two was one unread field.
 
+### Addendum, 2026-08-27: the static path now has a destination
+
+The gap above became blocking while executing Phase 9 of the legacy
+`read-the-readme-md-to-eventual-dusk` plan. That plan requires the dashboard and admin children to
+deploy through the `static` preset; recording a successful deployment row while no browser could
+load it would have repeated the original finding. The sandbox handoff's warning applies here too:
+an interface demonstrated against a substitute is not the production path demonstrated.
+
+This addendum is part of the audit trail requested by the legacy planning and reporting set, not a
+replacement for it. The source context is
+`/Users/andrew/.claude/plans/read-the-readme-md-to-eventual-dusk.md`,
+`/Users/andrew/.claude/plans/double-sorted-meteor.md`, `private_notes/groups.md`, and
+`private_notes/sandbox-handoff.md`. The first plan supplied the six-deployable Phase 9 matrix; the
+second and the private reports explain the surrounding sandbox, metering, and production-parity
+work that must still be verified after this static-serving prerequisite lands.
+
+The release now records the preset, archive key, and digest. The publisher verifies the uploaded
+zip's digest and safety limits, expands it into immutable `sites/<project>/<digest>/` objects, then
+atomically moves a CloudFront key-value-store pointer for the hostname and writes an exact DNS
+record. That exact record wins over the Lambda wildcard. CloudFront's viewer-request function maps
+the host through the pointer before cache lookup, so neither a failed upload nor a second tenant can
+partially replace the live tree. The serving grant includes both the S3 origin policy and the KMS
+decrypt policy; either one alone produces the same displaced S3 403 described above.
+
+The integration test deliberately asserts what the former code never did: a release row becomes
+real S3 objects and an edge pointer, no Lambda is invented, no Valkey route points at a nonexistent
+function, and the row becomes ready only after activation. The final proof remains the legacy
+plan's production Chrome pass for both SPAs after this infrastructure is applied.
+
 ## `cannot execute binary file`
 
 The first function to publish and take traffic returned the router's error page. The chain to that

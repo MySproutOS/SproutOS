@@ -79,6 +79,13 @@ export {
 } from "./workflow-run"
 export { WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU } from "./workflow-metering"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
+export {
+  deactivateStaticHost,
+  pointStaticSite,
+  staticPlatformFromEnv,
+  type StaticPlatform,
+} from "./static-publish"
+export { ProjectBusyError, withProjectLock } from "./project-lock"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 export {
   METERING_OUTBOX_BATCH_SIZE,
@@ -120,10 +127,12 @@ export {
   type SigningJob,
 } from "./apk-signing"
 export {
+  cleanUpStaticPreview,
   environmentFor,
   hostnameFor,
   PUBLISH_KINDS,
   publishRelease,
+  tearDownPreview,
   type PublishOptions,
 } from "./publish"
 export { runNodeInLambda, type NodeResult, type NodeRun } from "./lambda-node"

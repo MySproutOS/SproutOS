@@ -255,7 +255,7 @@ describe("pull request events", () => {
     pull_request: { number: 42, head: { sha, ref: "feature" } },
   })
 
-  it("creates a preview deployment when a PR opens", async ({ skip }) => {
+  it("does not invent an artifactless preview when a PR opens", async ({ skip }) => {
     if (!reachable) skip()
 
     await run(GITHUB_EVENT_KINDS.pullRequest, pr("opened", "d".repeat(40)))
@@ -267,8 +267,7 @@ describe("pull request events", () => {
       .where("gitSha", "=", "d".repeat(40))
       .executeTakeFirst()
 
-    expect(deployment?.kind).toBe("preview")
-    expect(deployment?.prNumber).toBe(42)
+    expect(deployment).toBeUndefined()
   })
 
   /*
@@ -279,15 +278,34 @@ describe("pull request events", () => {
   it("tears the preview down when the PR closes", async ({ skip }) => {
     if (!reachable) skip()
 
+    const previewId = v7()
+    await db
+      .insertInto("deployment")
+      .values({
+        id: previewId,
+        projectId,
+        kind: "preview",
+        prNumber: 42,
+        gitSha: "d".repeat(40),
+        status: "ready",
+      })
+      .execute()
+
     await run(GITHUB_EVENT_KINDS.pullRequest, pr("closed", "d".repeat(40)))
 
     const deployment = await db
       .selectFrom("deployment")
-      .select(["status"])
+      .select(["id", "status"])
       .where("projectId", "=", projectId)
       .where("prNumber", "=", 42)
       .executeTakeFirst()
-    expect(deployment?.status).toBe("torn_down")
+    expect(deployment?.status).not.toBe("torn_down")
+    const teardown = await db
+      .selectFrom("backgroundJob")
+      .select("kind")
+      .where("idempotencyKey", "=", `deploy.preview_teardown:${deployment?.id ?? "missing"}`)
+      .executeTakeFirst()
+    expect(teardown?.kind).toBe("deploy.preview_teardown")
   })
 })
 

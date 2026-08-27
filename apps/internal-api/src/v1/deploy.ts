@@ -152,6 +152,33 @@ const releaseRequest = Type.Object({
   message: Type.Optional(Type.String({ maxLength: 500 })),
 })
 
+export function staticReleaseError(
+  projectId: string,
+  input: { preset: string; static_key?: string; static_digest?: string },
+): string | undefined {
+  if ((input.static_key === undefined) !== (input.static_digest === undefined)) {
+    return "`static_key` and `static_digest` must either both be set or both be omitted."
+  }
+  if (input.preset === "static" && input.static_key === undefined) {
+    return "The `static` preset requires the static asset archive uploaded by the action."
+  }
+  if (
+    input.static_key !== undefined &&
+    input.static_key !== `static/${projectId}/${input.static_digest}.zip`
+  ) {
+    return "`static_key` does not belong to this project and digest."
+  }
+  return undefined
+}
+
+export function releasePreviewNumber(environment: string, ref: string): number | null | undefined {
+  if (environment === "production") return null
+  const match = /^(?:refs\/pull\/)?(\d+)\/(?:merge|head)$/.exec(ref)
+  if (match === null) return undefined
+  const number = Number(match[1])
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined
+}
+
 /** A migration run on its own, uploaded through `/deploy/upload-url` like any other archive. */
 const migrateRequest = Type.Object({
   migration_key: Type.String({ minLength: 1 }),
@@ -430,6 +457,21 @@ const deploy: Hono = new Hono()
 
       const json = c.req.valid("json")
 
+      const staticError = staticReleaseError(authorized.projectId, json)
+      if (staticError !== undefined) return c.json({ message: staticError }, 400)
+
+      const prNumber = releasePreviewNumber(json.environment, json.ref)
+      if (prNumber === undefined) {
+        return c.json(
+          {
+            message:
+              "A non-production release must come from refs/pull/<number>/merge (or /head), " +
+              "so its preview hostname cannot collide with production.",
+          },
+          400,
+        )
+      }
+
       /*
         Resolve the runtime here, not at publish time.
 
@@ -448,6 +490,9 @@ const deploy: Hono = new Hono()
       }
 
       const deployment = await crudDeployment(db).create({
+        preset: json.preset,
+        staticArtifactKey: json.static_key ?? null,
+        staticDigest: json.static_digest ?? null,
         /*
           Copied onto the row, not read from the project later.
 
@@ -486,6 +531,7 @@ const deploy: Hono = new Hono()
         // `preview` for anything that is not production, so a branch build cannot take a
         // production hostname by naming itself one.
         kind: json.environment === "production" ? "production" : "preview",
+        prNumber,
         gitSha: json.commit,
         gitRef: json.ref,
         status: "queued",
