@@ -299,6 +299,10 @@ resource "aws_iam_role_policy" "deploy" {
           # ordering in `cutover.sh`, which moves the *not yet serving* rule first: the listener was
           # never touched, so traffic stayed where it was.
           aws_lb_listener_rule.search.arn,
+          # Model traffic is another rule on the same ALB and moves with the router release.
+          # Omitting this ARN let fill prove the LLM target healthy, then made cutover fail with
+          # AccessDenied after search had already moved to the new colour.
+          aws_lb_listener_rule.llm.arn,
         ]
       },
     ]
