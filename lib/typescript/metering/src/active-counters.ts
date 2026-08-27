@@ -63,11 +63,13 @@ export function activeUsageKeys(event: ActiveUsageEvent): [seen: string, bucket:
 }
 
 /**
- * Apply one Kafka-acknowledged event to the rebuildable live projection.
+ * Apply one Kafka-acknowledged event to the live projection.
  *
  * The event-id marker and `HINCRBY` share one Lua invocation and one Valkey cluster hash slot. A
  * replay therefore returns `duplicate` instead of changing the counter twice. ClickHouse remains
- * authoritative: callers log projection failures but do not reject an already durable event.
+ * authoritative. Callers currently make an immediate projection failure retryable because no
+ * ClickHouse-to-Valkey rebuild exists; eviction after acknowledgement is not repaired. This is a
+ * cache writer, not evidence that prompt feedback or enforcement reads a complete view.
  */
 export async function applyActiveUsage(
   redis: Pick<Redis, "eval">,
