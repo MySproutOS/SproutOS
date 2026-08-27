@@ -28,6 +28,8 @@ export type NodeRun = {
   nodeType: string
   projectId: string
   config: Record<string, unknown>
+  /** The event/manual/cron value that started the graph. Kept separate from immutable node config. */
+  trigger?: unknown
   timeoutSeconds?: number
 }
 
@@ -45,6 +47,7 @@ export async function runNodeInLambda(client: LambdaClient, input: NodeRun): Pro
       nodeId: input.nodeId,
       nodeType: input.nodeType,
       config: input.config,
+      trigger: input.trigger ?? null,
     },
   }
 

@@ -71,6 +71,7 @@ describe("webAdapterEnv", () => {
     // The adapter reads one of these and the framework reads the other. They must be equal, and
     // asserting the pair rather than the literal is what catches a change to only one.
     expect(env.AWS_LWA_PORT).toBe(env.PORT)
+    expect(env.AWS_LWA_ERROR_STATUS_CODES).toBe("500-599")
   })
 })
 

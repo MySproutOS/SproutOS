@@ -61,6 +61,7 @@
     "@utils/feature-flags": "workspace:*",
     "@utils/numbers": "workspace:*",
     "bullmq": "^6.1.2",
+    "cron-parser": "^5.10.0",
     "dotenv": "^17.4.2",
     "hono": "catalog:",
     "hono-typebox-openapi": "^0.2.1",

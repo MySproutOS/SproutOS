@@ -111,6 +111,10 @@ export function webAdapterLayerArn(region: string): string | undefined {
 export function webAdapterEnv(): Record<string, string> {
   return {
     AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap",
+    // Without this, an adapted HTTP server can return 500 and Lambda still records the invocation
+    // as successful. Queue drains are asynchronous Lambda events, so Lambda's two built-in retries
+    // only happen when the adapter translates the response into an invocation error.
+    AWS_LWA_ERROR_STATUS_CODES: "500-599",
     AWS_LWA_PORT: String(WEB_ADAPTER_PORT),
     PORT: String(WEB_ADAPTER_PORT),
     // Bind to every interface. Next's standalone server defaults to localhost, which the adapter —
