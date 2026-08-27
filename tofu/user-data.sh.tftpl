@@ -232,6 +232,18 @@ SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
 SERVICE_SEARCH_PUBLIC_HOST=${search_subdomain}.${control_plane_domain}
 SERVICE_SEARCH_PUBLIC_PORT=443
 
+# Tenant S3 clients reach the SigV4-verifying proxy, never the physical bucket. The control plane
+# uses the physical bucket only for prefix-scoped teardown; both values come from the infrastructure
+# that owns them so neither can drift into a guessed hostname or bucket name.
+SERVICE_OBJECT_STORAGE_REGION=$REGION
+SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT=https://${storage_subdomain}.${control_plane_domain}
+SERVICE_OBJECT_STORAGE_SHARED_BUCKET=${tenant_objects_bucket}
+SERVICE_OBJECT_STORAGE_PATH_STYLE=true
+# Keep provisioning closed during the first, binary-only half of the rollout. The same explicit
+# OpenTofu flag that enrolls port 9000 in Auto Scaling health opens the control-plane driver on the
+# next website boot, so a service cannot become active while its public endpoint has no targets.
+SERVICE_OBJECT_STORAGE_ENABLED=${storage_proxy_enabled}
+
 # The Postgres split, behind the tenant network load balancer. Same rule as search: this is the
 # proxy, never the database.
 SERVICE_POSTGRES_PUBLIC_HOST=${postgres_subdomain}.${control_plane_domain}
@@ -323,6 +335,10 @@ if [ "$SERVICE" = "router" ]; then
   # through Parameter Store below, because this cluster authenticates nobody itself — see the
   # OpenSearch labels in `ovh/docker-compose.yaml`.
   echo "SEARCH_PROXY_UPSTREAM=https://${opensearch_subdomain}.${control_plane_domain}" >> /etc/sproutos/env
+  echo "STORAGE_PROXY_LISTEN=0.0.0.0:9000" >> /etc/sproutos/env
+  echo "STORAGE_PROXY_UPSTREAM=https://s3.$REGION.amazonaws.com" >> /etc/sproutos/env
+  echo "STORAGE_PROXY_REGION=$REGION" >> /etc/sproutos/env
+  echo "STORAGE_PROXY_SHARED_BUCKET=${tenant_objects_bucket}" >> /etc/sproutos/env
 
   # Optional TLS on the tenant Postgres port.
   #
@@ -448,7 +464,8 @@ if [ "$SERVICE" = "website" ]; then
     SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
     SANDBOX_DAYTONA_TARGET SANDBOX_FORWARD_PROXY_ROOT_KEY LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
-    SERVICE_VALKEY_ADMIN_URL SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_ACL_ROOT_KEY"
+    SERVICE_VALKEY_ADMIN_URL SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_ACL_ROOT_KEY \
+    SERVICE_OBJECT_STORAGE_ROOT_KEY"
 fi
 
 # The router verifies the per-project log token the extension presents and holds the Kafka
@@ -462,7 +479,7 @@ if [ "$SERVICE" = "router" ]; then
   # not disable a feature — it stops the router, which is the front door.
   write_app_secrets "LLM_PROXY_SECRET OPENAI_KEY METERING_INGEST_HMAC_KEY LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
     SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_BACKEND VALKEY_PROXY_ACL_ROOT_KEY \
-    SANDBOX_FORWARD_PROXY_ROOT_KEY"
+    SANDBOX_FORWARD_PROXY_ROOT_KEY SERVICE_OBJECT_STORAGE_ROOT_KEY"
 fi
 
 chmod 0640 /etc/sproutos/env

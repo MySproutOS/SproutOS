@@ -142,6 +142,28 @@ case "$TARGET" in
   *) echo "--to must be blue or green" >&2; exit 2 ;;
 esac
 
+# The storage rule may exist one deployment before its target groups are attached. This is the
+# rollout interlock in `compute.tf`: including an unserved target group in ELB health would make Auto
+# Scaling replace a healthy router. Do not health-gate or move the staged rule until the target
+# colour's ASG explicitly carries it.
+if [ "$SERVICE" = "router" ] && [ -n "${STORAGE_RULE_ARN:-}" ]; then
+  storage_target=$(group_arn_of storage "$TARGET")
+  storage_attached=$(aws autoscaling describe-auto-scaling-groups \
+    --auto-scaling-group-names "$NAME_PREFIX-router-$TARGET" \
+    --query "contains(AutoScalingGroups[0].TargetGroupARNs, '$storage_target')" \
+    --output text)
+  case "$storage_attached" in
+    True|true) EXTRAS="$EXTRAS rule|storage|$STORAGE_RULE_ARN" ;;
+    False|false)
+      echo "$SERVICE: storage target group is staged but not attached; leaving its rule unchanged"
+      ;;
+    *)
+      echo "$SERVICE: could not determine whether storage target group is attached (got: '$storage_attached')" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 if [ "$target_arn" = "$live" ]; then
   echo "$SERVICE is already on $TARGET; nothing to do" >&2
   exit 0

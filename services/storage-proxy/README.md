@@ -90,14 +90,22 @@ real refusals against each other.
 
 ## Configuration
 
-| Variable                                                            | Meaning                                                        |
-| ------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `STORAGE_PROXY_LISTEN`                                              | Address to bind. Default `0.0.0.0:9000`                        |
-| `STORAGE_PROXY_UPSTREAM`                                            | Where the buckets are. Required                                |
-| `STORAGE_PROXY_REGION`                                              | SigV4 region for the re-signed request                         |
-| `SERVICE_OBJECT_STORAGE_ROOT_KEY`                                   | The key every tenant secret derives from. Required, no default |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | The platform's own credential                                  |
-| `STORAGE_PROXY_DATABASE_URL`                                        | Falls back to `DATABASE_URL`                                   |
+| Variable                                  | Meaning                                                        |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `STORAGE_PROXY_LISTEN`                    | Address to bind. Default `0.0.0.0:9000`                        |
+| `STORAGE_PROXY_UPSTREAM`                  | Where the buckets are. Required                                |
+| `STORAGE_PROXY_REGION`                    | SigV4 region for the re-signed request                         |
+| `SERVICE_OBJECT_STORAGE_ROOT_KEY`         | The key every tenant secret derives from. Required, no default |
+| `STORAGE_PROXY_DATABASE_URL`              | Falls back to `DATABASE_URL`                                   |
+| `STORAGE_PROXY_MAX_BODY_BYTES`            | Per-request buffer ceiling. Default 16 MiB                     |
+| `STORAGE_PROXY_MAX_INFLIGHT_BODIES`       | Simultaneous body buffers. Default 4                           |
+| `STORAGE_PROXY_BODY_READ_TIMEOUT_SECONDS` | Maximum time to receive a body. Default 30 seconds             |
+
+The platform credential comes from the AWS SDK default credential chain. In production, use the
+EC2 instance profile, ECS task role, or another refreshable role provider; the proxy refreshes temporary credentials
+before they expire. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optional
+`AWS_SESSION_TOKEN` remain supported by that chain for local development and tests, but are not
+production configuration requirements.
 
 The database role needs `select` on `service_credential`, `backend_service` and `organization`, and
 `update` on `service_credential.last_used_at`. Nothing else.

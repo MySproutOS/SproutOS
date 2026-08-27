@@ -168,6 +168,30 @@ describe.runIf(reachable)("through the storage proxy", () => {
     return { ...created, uri: provisioned.connectionUri }
   }
 
+  it("refuses an unsigned request before admitting its oversized body", async () => {
+    /*
+      The body ceiling is 16 MiB. If the handler buffers before parsing Authorization this returns
+      EntityTooLarge after allocating the entire ceiling; a 403 proves the refusal happened from the
+      headers first. That ordering is what prevents an anonymous caller from buying 16 MiB of the
+      router's 1 GiB host on every concurrent request.
+    */
+    let outcome: string
+    try {
+      const response = await fetch(`${active!.publicEndpoint}/v-not-a-service/large`, {
+        method: "PUT",
+        body: new Uint8Array(16 * 1024 * 1024 + 1),
+      })
+
+      outcome = `response:${response.status}:${(await response.text()).includes("AccessDenied")}`
+    } catch (error) {
+      // Undici can still be writing the request body when the proxy rejects from the headers and
+      // closes the connection. EPIPE is therefore the transport-level form of the same proof: the
+      // peer refused the request before the client could finish sending the oversized body.
+      outcome = `error:${(error as { cause?: { code?: string } }).cause?.code}`
+    }
+    expect(["response:403:true", "error:EPIPE"]).toContain(outcome)
+  }, 30_000)
+
   it("lets a customer write and read their own vault", async () => {
     // The whole thing working: the AWS SDK signs with a key AWS has never heard of, the proxy
     // verifies it against a derived secret, re-signs, and LocalStack answers.

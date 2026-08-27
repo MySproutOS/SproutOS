@@ -119,14 +119,7 @@ function asCustomer(connectionUri: string) {
 /** The one bucket every tenant lives in. */
 const SHARED = "sproutos-tenants-test"
 
-/*
-  A client pointed straight at LocalStack, not through the proxy.
-
-  The driver still calls `CreateBucket` per service. Under the shared layout that bucket is never
-  written to — the proxy rewrites every request into `SHARED` — and leaving the call in place is
-  deliberate for now: removing it is a control-plane change, and this suite is about whether the
-  data path is safe. It is the loose end named in the commit.
-*/
+/* A client pointed straight at LocalStack, not through the proxy. */
 function upstream() {
   return new S3Client({
     region: config!.region,
@@ -243,6 +236,28 @@ describe.runIf(reachable)("one bucket, many tenants", () => {
 
     a.destroy()
     b.destroy()
+  }, 60_000)
+
+  it("destroys only the service prefix and revokes its credential", async () => {
+    const created = await service()
+    const driver = objectStorageDriver(db, active!, upstream())
+    const provisioned = await driver.provision({ ...created, projectId: null, name: "Disposable" })
+    const customer = asCustomer(provisioned.connectionUri)
+    const logicalBucket = bucketNameFor(created.backendServiceId)
+
+    await customer.send(
+      new PutObjectCommand({ Bucket: logicalBucket, Key: "notes/remove.md", Body: "gone" }),
+    )
+    await driver.destroy(created.backendServiceId)
+
+    const remaining = await upstream().send(
+      new ListObjectsV2Command({ Bucket: SHARED, Prefix: `${logicalBucket}/` }),
+    )
+    expect(remaining.Contents ?? []).toHaveLength(0)
+    await expect(
+      customer.send(new ListObjectsV2Command({ Bucket: logicalBucket })),
+    ).rejects.toThrow(/Access ?Denied|Forbidden|403/)
+    customer.destroy()
   }, 60_000)
 
   it("refuses a key that would climb out of the tenant's prefix", async () => {

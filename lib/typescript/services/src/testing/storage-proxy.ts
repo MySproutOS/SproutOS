@@ -93,7 +93,11 @@ export async function startStorageProxy(
 
   return {
     process: process_,
-    config: { ...config, publicEndpoint },
+    config: {
+      ...config,
+      publicEndpoint,
+      ...(sharedBucket === undefined ? {} : { sharedBucket }),
+    },
     log,
     stop: () => {
       process_.kill("SIGTERM")

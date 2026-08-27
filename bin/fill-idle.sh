@@ -143,6 +143,23 @@ for service in $SERVICES; do
     # endpoint is absent from this estate; a configured endpoint must be healthy before any of the
     # release moves.
     [ -n "${SEARCH_RULE_ARN:-}" ] && wait_shorts="$wait_shorts search"
+    if [ -n "${STORAGE_RULE_ARN:-}" ]; then
+      storage_arn=$(group_arn "$NAME_PREFIX-storage-$idle")
+      storage_attached=$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "$group" \
+        --query "contains(AutoScalingGroups[0].TargetGroupARNs, '$storage_arn')" \
+        --output text)
+      case "$storage_attached" in
+        True|true) wait_shorts="$wait_shorts storage" ;;
+        False|false)
+          echo "$service: storage target group is staged but not attached; skipping its health until enablement"
+          ;;
+        *)
+          echo "$service: could not determine whether storage target group is attached (got: '$storage_attached')" >&2
+          exit 1
+          ;;
+      esac
+    fi
     [ -n "${LLM_RULE_ARN:-}" ] && wait_shorts="$wait_shorts llm"
     [ -n "${PG_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts pg"
     [ -n "${VALKEY_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts valkey"

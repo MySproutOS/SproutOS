@@ -125,18 +125,6 @@ variable "deletion_protection" {
   default     = true
 }
 
-variable "tenant_bucket_prefix" {
-  description = <<-EOT
-    The prefix every tenant object-storage bucket carries.
-
-    `bucketNameFor` in `lib/typescript/services` produces `v-<short-id>`, and the IAM policies in
-    `storage.tf` are scoped to this prefix. Changing it in one place and not the other does not fail
-    a plan — it produces a platform that provisions buckets the proxy is not allowed to read.
-  EOT
-  type        = string
-  default     = "v-"
-}
-
 variable "service_instance_type" {
   description = "EC2 type for the website and router. t4g.micro is in the free tier for the first year (750 hours/month, which covers one instance continuously). Graviton because the router is a static Rust binary and the website is Node, both of which build for arm64."
   type        = string
@@ -321,6 +309,25 @@ variable "search_subdomain" {
   description = "The customer-facing address of the search split, in front of `search-proxy`. Never the cluster itself."
   type        = string
   default     = "search"
+}
+
+variable "storage_subdomain" {
+  description = "The customer-facing address of storage-proxy. Never the physical S3 bucket."
+  type        = string
+  default     = "storage"
+}
+
+variable "storage_proxy_enabled" {
+  description = <<-EOT
+    Rollout interlock for the storage-proxy target groups. Leave false while the launch-template
+    environment and storage-proxy binary are being deployed. Set true only after the binary is
+    healthy on the serving router release, then run bin/enable-storage-proxy.sh to require healthy
+    attached targets and reconcile the staged rule with the currently serving router colour. An
+    ELB-health-checked Auto Scaling group replaces an instance when any attached target group is
+    unhealthy, so attaching port 9000 to an old release can recycle the whole live router fleet.
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "llm_subdomain" {

@@ -3252,6 +3252,8 @@ name = "storage-proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
  "axum",
  "bytes",
  "hex",

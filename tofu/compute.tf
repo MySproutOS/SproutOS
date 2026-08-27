@@ -105,6 +105,15 @@ resource "aws_vpc_security_group_ingress_rule" "service_search_from_alb" {
   description                  = "search split from the load balancer"
 }
 
+resource "aws_vpc_security_group_ingress_rule" "service_storage_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 9000
+  to_port                      = 9000
+  description                  = "storage split from the load balancer"
+}
+
 # The LLM proxy's port, from the load balancer only. Same failure as the search split without it:
 # the health check times out, every target is unhealthy, and `llm.sproutos.me` answers 503 while the
 # rule, the listener and the process are all present and correct.
@@ -471,6 +480,62 @@ resource "aws_lb_listener_rule" "search" {
   }
 
   # As above: the cutover owns these weights, and changing the shape of this block needs `-replace`.
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+/*
+  Tenant object storage. `/healthz` is exposed only after the process has resolved its refreshable
+  AWS credential and checked the control-plane credential store during boot. Using the explicit
+  readiness path also keeps health independent of the public S3 refusal shape.
+*/
+resource "aws_lb_target_group" "storage" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-storage-${each.key}"
+  port     = 9000
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/healthz"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-storage-${each.key}" }
+}
+
+resource "aws_lb_listener_rule" "storage" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 75
+
+  action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.storage["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.storage["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["${var.storage_subdomain}.${var.control_plane_domain}"]
+    }
+  }
+
   lifecycle {
     ignore_changes = [action]
   }
@@ -892,13 +957,25 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
-        # Tenant object storage. Scoped to the `v-*` prefix, which is what makes the bucket-name
-        # check in the router a boundary rather than a formality — see `storage.tf`.
+        # Tenant object storage. Listing is limited to logical service prefixes in the one physical
+        # bucket; no instance can list another platform bucket or the bucket root.
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.tenant_objects.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["v-*", "v-*/*"]
+          }
+        }
+      },
+      {
+        # The proxy rewrites a customer's logical `v-<id>` bucket below this exact object prefix.
+        # No bucket lifecycle or policy action is granted to the public-facing instances.
         Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = [
-          "arn:aws:s3:::${var.tenant_bucket_prefix}*",
-          "arn:aws:s3:::${var.tenant_bucket_prefix}*/*",
+          "${aws_s3_bucket.tenant_objects.arn}/v-*",
+          "${aws_s3_bucket.tenant_objects.arn}/v-*/*",
         ]
       },
       {
@@ -1074,11 +1151,14 @@ resource "aws_launch_template" "service" {
     # name the instance is told and the name that resolves cannot drift apart.
     opensearch_subdomain    = var.opensearch_subdomain
     search_subdomain        = var.search_subdomain
+    storage_subdomain       = var.storage_subdomain
+    storage_proxy_enabled   = var.storage_proxy_enabled
     postgres_subdomain      = var.postgres_subdomain
     tenant_valkey_subdomain = var.tenant_valkey_subdomain
     control_plane_domain    = var.control_plane_domain
     llm_subdomain           = var.llm_subdomain
     egress_subdomain        = var.egress_subdomain
+    tenant_objects_bucket   = aws_s3_bucket.tenant_objects.id
   }))
 
   metadata_options {
@@ -1154,19 +1234,31 @@ resource "aws_autoscaling_group" "router" {
   # Adding the group without adding it here creates a target group with no targets, which the
   # console shows as a healthy-looking resource and the load balancer answers 503 from. Nothing
   # errors: `search.<domain>` simply has nowhere to send a request.
-  target_group_arns = [
-    aws_lb_target_group.router[each.key].arn,
-    aws_lb_target_group.search[each.key].arn,
-    # The LLM proxy, which is where a sandbox's model traffic goes. Missing from this list it would
-    # be a target group with no targets: healthy-looking in the console, 503 from the balancer, and
-    # nothing in any log saying why every agent turn failed.
-    aws_lb_target_group.llm[each.key].arn,
-    # The Postgres, Valkey and authenticated forward-proxy splits, on the tenant network load
-    # balancer rather than the ALB — see `nlb.tf`.
-    aws_lb_target_group.postgres[each.key].arn,
-    aws_lb_target_group.valkey[each.key].arn,
-    aws_lb_target_group.forward_proxy[each.key].arn,
-  ]
+  target_group_arns = concat(
+    [
+      aws_lb_target_group.router[each.key].arn,
+      aws_lb_target_group.search[each.key].arn,
+      # The LLM proxy, which is where a sandbox's model traffic goes. Missing from this list it would
+      # be a target group with no targets: healthy-looking in the console, 503 from the balancer, and
+      # nothing in any log saying why every agent turn failed.
+      aws_lb_target_group.llm[each.key].arn,
+      # The Postgres, Valkey and authenticated forward-proxy splits, on the tenant network load
+      # balancer rather than the ALB — see `nlb.tf`.
+      aws_lb_target_group.postgres[each.key].arn,
+      aws_lb_target_group.valkey[each.key].arn,
+      aws_lb_target_group.forward_proxy[each.key].arn,
+    ],
+    /*
+      A staged rollout, not merely an optional feature.
+
+      With ELB health checks enabled AWS requires every attached target group to report healthy. If
+      this group is attached while the serving release predates `storage-proxy`, port 9000 is down,
+      Auto Scaling replaces that otherwise-healthy router, and the replacement repeats the failure.
+      The false default lets infrastructure and the binary land first; a later explicit apply enrolls
+      storage in replacement health only after the process has been observed healthy.
+    */
+    var.storage_proxy_enabled ? [aws_lb_target_group.storage[each.key].arn] : [],
+  )
 
   min_size         = 0
   max_size         = var.service_max_count

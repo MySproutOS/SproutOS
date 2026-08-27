@@ -128,6 +128,29 @@ Until (3), the Auto Scaling groups will start instances that boot, find no relea
 their bootstrap and be replaced. That is a loop, and it bills. **Either run the deploy promptly or
 set `service_desired_count = 0` for the first apply.**
 
+### Enabling object storage for the first time
+
+Object storage has a deliberate two-apply interlock. The first apply and deploy leave
+`storage_proxy_enabled = false`, which creates the bucket, rule and target groups without enrolling
+port 9000 in Auto Scaling health. This prevents an older router release from being replaced forever
+because it cannot answer a health check for a binary it does not contain.
+
+After a router release containing `storage-proxy` is serving, add this to the real, persistent
+`terraform.tfvars` — do not pass it only as a one-off command-line variable — and apply again:
+
+```hcl
+storage_proxy_enabled = true
+```
+
+Then run `bin/enable-storage-proxy.sh`. It refuses unless both router colours are enrolled in their
+storage target groups and the live colour is healthy, and only then points the staged listener rule
+at that colour. Restore the Deploy workflow's `STORAGE_RULE_ARN` variable after the script succeeds,
+then run one more deployment so both colours and the website/API receive the enabled configuration.
+
+Leaving the value out of `terraform.tfvars` after cutover is unsafe: its rollout default is false,
+so a later ordinary apply would detach both storage target groups while the listener rule could
+remain pointed at one of them.
+
 ## Two AWS constraints worth knowing
 
 **An ALB needs at least two subnets, in two availability zones.** That is not a choice this

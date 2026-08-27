@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = "1"
 axum.workspace = true
 bytes.workspace = true
 hex.workspace = true

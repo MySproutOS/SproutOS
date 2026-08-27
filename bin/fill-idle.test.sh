@@ -54,7 +54,11 @@ case "$1 $2" in
     if [ "$arn" = "${STUB_UNHEALTHY_ARN:-}" ]; then echo 0; else echo 1; fi
     ;;
   "autoscaling describe-auto-scaling-groups")
-    if [[ "$*" == *DesiredCapacity* ]]; then echo 1; fi
+    if [[ "$*" == *TargetGroupARNs* ]]; then
+      echo "${STUB_STORAGE_ATTACHED:-True}"
+    elif [[ "$*" == *DesiredCapacity* ]]; then
+      echo 1
+    fi
     ;;
   "autoscaling set-desired-capacity"|"autoscaling terminate-instance-in-auto-scaling-group")
     echo "$*" >> "$STUB_MUTATIONS"
@@ -82,6 +86,7 @@ echo "fill-idle.sh"
 
 export SERVICES=router
 export SEARCH_RULE_ARN=arn:search-rule
+export STORAGE_RULE_ARN=arn:storage-rule
 export LLM_RULE_ARN=arn:llm-rule
 export PG_LISTENER_ARN=arn:pg-listener
 export VALKEY_LISTENER_ARN=arn:valkey-listener
@@ -89,12 +94,22 @@ export FORWARD_PROXY_LISTENER_ARN=arn:egress-listener
 
 out=$(run); status=$?
 check "accepts a router release healthy on every configured port" "0" "$status"
-check "checks all six router target groups" "6" "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
-for short in router search llm pg valkey egress; do
+check "checks all seven router target groups" "7" "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
+for short in router search storage llm pg valkey egress; do
   check "checks $short on the idle colour" "1" \
     "$(grep -c "^arn:$short-green$" "$STUB_HEALTH_CALLS")"
 done
 check "reports that every group passed" "1" "$(grep -c 'healthy target(s) in every group' <<<"$out")"
+
+# The listener rule can be created before port 9000 is enrolled in Auto Scaling health. That staged
+# state must not fail an ordinary router deploy or pretend the empty target group was checked.
+export STUB_STORAGE_ATTACHED=False
+out=$(run); status=$?
+check "accepts the staged rollout before storage is attached" "0" "$status"
+check "does not check the unattached storage target group" "0" \
+  "$(grep -c '^arn:storage-green$' "$STUB_HEALTH_CALLS")"
+check "names the staged health skip" "1" "$(grep -c 'storage target group is staged' <<<"$out")"
+unset STUB_STORAGE_ATTACHED
 
 # The primary router port remains healthy. The LLM port alone is down, which is the production
 # failure this gate must stop before cutover rather than discover from a hanging agent turn.
@@ -103,12 +118,12 @@ out=$(run); status=$?
 check "refuses when one configured router port is unhealthy" "1" "$status"
 check "reports the minimum health across the groups" "1" \
   "$(grep -c 'only 0 of 1 targets healthy' <<<"$out")"
-check "still inspected every group before refusing" "6" \
+check "still inspected every group before refusing" "7" \
   "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
 unset STUB_UNHEALTHY_ARN
 
 # Optional means absent from this estate, not silently ignored after it was configured.
-unset SEARCH_RULE_ARN LLM_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN \
+unset SEARCH_RULE_ARN STORAGE_RULE_ARN LLM_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN \
   FORWARD_PROXY_LISTENER_ARN
 out=$(run); status=$?
 check "allows an estate with only the router target group" "0" "$status"
