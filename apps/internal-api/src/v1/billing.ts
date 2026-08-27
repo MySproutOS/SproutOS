@@ -1,5 +1,5 @@
 import { balances, BelowMinimumTopupError, begin, MINIMUM_TOPUP, quote, stripe } from "@lib/billing"
-import { itemOverhead, rateTimesQuantity } from "@lib/billing/money"
+import { groupedOverhead, rateTimesQuantity } from "@lib/billing/money"
 import { startOfMonth } from "@lib/billing/usage"
 import { crudAuditLog } from "@lib/dao"
 import { db } from "@sproutos/db"
@@ -581,7 +581,7 @@ app
       const rates = new Map(items.map((item) => [item.dimension, item]))
 
       let subtotal = 0n
-      let platformOverhead = 0n
+      const feeItems: { usageCost: bigint; overheadBps: number | null }[] = []
       const lines = rows
         // Duration remains in operational metering, but is not a customer cost. Provider-backed
         // sandbox and token dimensions already account for the resources the run consumed.
@@ -593,7 +593,7 @@ app
           // Only the part SproutOS funded belongs in this page's Cost column and overhead subtotal.
           const amount = rateTimesQuantity(String(item.unitMicroUsd), row.billableQuantity)
           subtotal += amount
-          platformOverhead += itemOverhead(amount, item.overheadBps, book.overheadBps)
+          feeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
 
           const display = DIMENSION_DISPLAY[row.dimension] ?? {
             label: row.dimension,
@@ -610,6 +610,7 @@ app
         })
         // Most expensive first: a usage list is read to find out where the money went.
         .sort((a, b) => (BigInt(b.amountMicroUsd) > BigInt(a.amountMicroUsd) ? 1 : -1))
+      const platformOverhead = groupedOverhead(feeItems, book.overheadBps)
 
       const total = subtotal + platformOverhead
 

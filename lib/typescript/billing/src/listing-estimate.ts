@@ -1,7 +1,7 @@
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql, type Transaction } from "kysely"
 import { NoActivePriceBookError } from "./usage"
-import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
+import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 
 /**
  * What a store listing costs to run, from what its forks actually cost.
@@ -168,12 +168,14 @@ export async function estimateListingCosts(
 
     for (const { byDimension, days } of byProject.values()) {
       if (days === 0n) continue
-      let monthlyCost = 0n
+      let monthlyUsage = 0n
+      const feeItems: { usageCost: MicroUsd; overheadBps: number | null }[] = []
       for (const dimension of byDimension.values()) {
         const monthlyAmount = (dimension.amount * DAYS_PER_MONTH) / days
-        monthlyCost +=
-          monthlyAmount + itemOverhead(monthlyAmount, dimension.overheadBps, book.overheadBps)
+        monthlyUsage += monthlyAmount
+        feeItems.push({ usageCost: monthlyAmount, overheadBps: dimension.overheadBps })
       }
+      const monthlyCost = monthlyUsage + groupedOverhead(feeItems, book.overheadBps)
       monthly.push(monthlyCost)
     }
 

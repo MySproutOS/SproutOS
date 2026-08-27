@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely, type Transaction } from "kysely"
-import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
+import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 
 /**
  * What a project has cost so far, rated from its metered usage.
@@ -99,6 +99,7 @@ export async function rateProjectsForOrganization(
 
   const byProject = new Map<string, RatedUsage>()
   const subtotals = new Map<string, bigint>()
+  const feeItems = new Map<string, { usageCost: MicroUsd; overheadBps: number | null }[]>()
 
   for (const row of rows) {
     const projectId = row.projectId
@@ -117,15 +118,18 @@ export async function rateProjectsForOrganization(
       total: 0n,
     }
     existing.byDimension[row.dimension] = amount
-    existing.overhead += itemOverhead(amount, item.overheadBps, book.overheadBps)
     byProject.set(projectId, existing)
     subtotals.set(projectId, (subtotals.get(projectId) ?? 0n) + amount)
+    const projectFeeItems = feeItems.get(projectId) ?? []
+    projectFeeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
+    feeItems.set(projectId, projectFeeItems)
   }
 
   for (const [projectId, subtotal] of subtotals) {
     const rated = byProject.get(projectId)
     if (rated === undefined) continue
     rated.usage = subtotal
+    rated.overhead = groupedOverhead(feeItems.get(projectId) ?? [], book.overheadBps)
     rated.total = subtotal + rated.overhead
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   ceilDiv,
   creditedAmount,
+  groupedOverhead,
   formatBalanceMicroUsd,
   formatMicroUsd,
   itemOverhead,
@@ -55,6 +56,20 @@ describe("overhead", () => {
     expect(itemOverhead(1_000_000n, 200, 1200)).toBe(20_000n)
     expect(itemOverhead(1_000_000n, 0, 1200)).toBe(0n)
     expect(itemOverhead(1_000_000n, null, 1200)).toBe(120_000n)
+  })
+
+  it("rounds once per effective fee rate", () => {
+    expect(
+      groupedOverhead(
+        [
+          { usageCost: 1n, overheadBps: null },
+          { usageCost: 1n, overheadBps: 1200 },
+          { usageCost: 1n, overheadBps: 200 },
+          { usageCost: 1n, overheadBps: 0 },
+        ],
+        1200,
+      ),
+    ).toBe(2n)
   })
 })
 

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { lockAvailableBalance, postWithin } from "./ledger"
-import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
+import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 import { NoActivePriceBookError } from "./usage"
 
 /**
@@ -225,10 +225,12 @@ export async function chargeUsage(
     let charged = 0n
 
     for (const [organizationId, entry] of owed) {
-      const fee = [...entry.byDimension.values()].reduce(
-        (sum, dimension) =>
-          sum + itemOverhead(dimension.usage, dimension.overheadBps, book.overheadBps),
-        0n,
+      const fee = groupedOverhead(
+        [...entry.byDimension.values()].map((dimension) => ({
+          usageCost: dimension.usage,
+          overheadBps: dimension.overheadBps,
+        })),
+        book.overheadBps,
       )
       const total = entry.usage + fee
 

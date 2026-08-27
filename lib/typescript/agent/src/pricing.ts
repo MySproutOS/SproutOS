@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import { itemOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
+import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
 import type { Kysely, Transaction } from "kysely"
 
 /** Provider-billable token buckets. Long-context is per request, not per aggregated run. */
@@ -105,7 +105,7 @@ export async function rateTokens(
   const { priceBookId, overheadBps, rates } = await activeTokenRates(db, at)
 
   let subtotal = 0n
-  let platformOverhead = 0n
+  const feeItems: { usageCost: MicroUsd; overheadBps: number | null }[] = []
   for (const [field, dimension] of Object.entries(DIMENSIONS)) {
     const quantity = usage[field as keyof TokenUsage] ?? 0
     if (quantity <= 0) continue
@@ -116,8 +116,10 @@ export async function rateTokens(
 
     const amount = rateTimesQuantity(item.rate, String(quantity))
     subtotal += amount
-    platformOverhead += itemOverhead(amount, item.overheadBps, overheadBps)
+    feeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
   }
+
+  const platformOverhead = groupedOverhead(feeItems, overheadBps)
 
   return {
     usage: subtotal,

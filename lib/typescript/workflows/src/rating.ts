@@ -1,4 +1,4 @@
-import { itemOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
+import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Transaction } from "kysely"
 
@@ -90,7 +90,7 @@ export async function rateWorkflowRun(
 
   const byDimension: Record<string, MicroUsd> = {}
   let subtotal = 0n
-  let platformOverhead = 0n
+  const feeItems: { usageCost: MicroUsd; overheadBps: number | null }[] = []
 
   for (const dimension of DIMENSIONS) {
     const quantity = quantities[dimension]
@@ -104,8 +104,10 @@ export async function rateWorkflowRun(
     const amount = rateTimesQuantity(String(item.unitMicroUsd), quantity)
     byDimension[dimension] = amount
     subtotal += amount
-    platformOverhead += itemOverhead(amount, item.overheadBps, book.overheadBps)
+    feeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
   }
+
+  const platformOverhead = groupedOverhead(feeItems, book.overheadBps)
 
   return {
     byDimension,

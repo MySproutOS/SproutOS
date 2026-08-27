@@ -30,7 +30,7 @@ const CATEGORY_ORDER = ["Sandbox", "Postgres", "Cache", "AI", "Sites", "Workflow
 export function usageCategory(dimension: string): string {
   if (dimension.startsWith("sandbox_")) return "Sandbox"
   if (dimension.startsWith("db_")) return "Postgres"
-  if (dimension === "valkey_queue_byte_second") return "Cache"
+  if (dimension.startsWith("valkey_")) return "Cache"
   if (dimension.startsWith("ai_")) return "AI"
   if (dimension.startsWith("site_")) return "Sites"
   if (dimension.startsWith("workflow_")) return "Workflows"
@@ -40,7 +40,7 @@ export function usageCategory(dimension: string): string {
 
 export function usageDescription(dimension: string): string | null {
   return dimension === "valkey_queue_byte_second"
-    ? "Memory used by workflow queue data over time, measured as bytes multiplied by seconds."
+    ? "Workflow queue data and metadata stored over time, measured as bytes multiplied by seconds."
     : null
 }
 

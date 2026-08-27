@@ -83,6 +83,19 @@ export function itemOverhead(
   return overhead(usageCost, itemOverheadBps ?? defaultOverheadBps)
 }
 
+/** Sum usage by effective fee rate, then round each rate once. */
+export function groupedOverhead(
+  items: Iterable<{ usageCost: MicroUsd; overheadBps: number | null }>,
+  defaultOverheadBps: number,
+): MicroUsd {
+  const usageByBps = new Map<number, MicroUsd>()
+  for (const item of items) {
+    const bps = item.overheadBps ?? defaultOverheadBps
+    usageByBps.set(bps, (usageByBps.get(bps) ?? 0n) + item.usageCost)
+  }
+  return [...usageByBps].reduce((total, [bps, usageCost]) => total + overhead(usageCost, bps), 0n)
+}
+
 /** Integer division that rounds away from zero, so fees never round in our favour by accident. */
 export function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new RangeError("Division by zero")

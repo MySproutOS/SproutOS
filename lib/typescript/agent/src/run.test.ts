@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { runUsageEvents } from "./run"
+import { accumulateTokenUsage, runUsageEvents } from "./run"
 
 const input = {
   organizationId: "01990a1d-a9ea-7000-8000-000000000001",
@@ -50,5 +50,27 @@ describe("runUsageEvents", () => {
         true,
       ),
     ).toEqual([])
+  })
+})
+
+describe("accumulateTokenUsage", () => {
+  it("retains long-context cache writes across provider reports", () => {
+    const usage = { inputTokens: 0, outputTokens: 0 }
+    accumulateTokenUsage(usage, {
+      inputTokens: 1,
+      outputTokens: 2,
+      longContextCacheWriteTokens: 3,
+    })
+    accumulateTokenUsage(usage, {
+      inputTokens: 4,
+      outputTokens: 5,
+      longContextCacheWriteTokens: 6,
+    })
+
+    expect(usage).toMatchObject({
+      inputTokens: 5,
+      outputTokens: 7,
+      longContextCacheWriteTokens: 9,
+    })
   })
 })
