@@ -701,6 +701,55 @@ describe("sandbox lifecycle requests", () => {
 })
 
 describe("provisionSandbox", () => {
+  it("restores proxy authorization before retrying a failed bootstrap", async ({ skip }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-failed-retry-${v7()}`,
+      state: "failed",
+    })
+    let stateSeenByProvider: string | undefined
+
+    await expect(
+      provisionSandbox(
+        () =>
+          ({
+            state: async () => {
+              stateSeenByProvider = (
+                await db
+                  .selectFrom("sandbox")
+                  .select("state")
+                  .where("id", "=", sandbox.id)
+                  .executeTakeFirstOrThrow()
+              ).state
+              throw new Error("provider probe complete")
+            },
+            stop: () => Promise.resolve(),
+          }) as never,
+      )(
+        {
+          id: v7(),
+          kind: SANDBOX_KINDS.provision,
+          organizationId,
+          payload: { sandboxId: sandbox.id },
+        } as never,
+        context,
+      ),
+    ).rejects.toThrow("provider probe complete")
+
+    expect(stateSeenByProvider).toBe("starting")
+    expect(
+      (
+        await db
+          .selectFrom("sandbox")
+          .select("state")
+          .where("id", "=", sandbox.id)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("failed")
+  })
+
   it("reprovisions when a failed retry points at a provider object that no longer exists", async ({
     skip,
   }) => {
