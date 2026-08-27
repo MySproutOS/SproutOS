@@ -8,6 +8,7 @@ import {
   UpdateFunctionCodeCommand,
   UpdateFunctionConfigurationCommand,
   waitUntilFunctionUpdatedV2,
+  type InvokeCommandOutput,
   type Runtime,
 } from "@aws-sdk/client-lambda"
 import type { Architecture } from "@aws-sdk/client-lambda"
@@ -59,6 +60,37 @@ export type MigrateResult = {
   ok: boolean
   /** What the migrator said, trimmed. The only thing worth showing a customer whose deploy stopped. */
   output: string
+}
+
+/**
+ * Invoke a migrator with a client whose retry budget is exactly one attempt.
+ *
+ * Function publication still uses the caller's ordinary client and retry policy. Only the
+ * dangerous boundary is cloned: a retry of CreateFunction is harmless convergence, while a retry
+ * of RequestResponse after a lost response can execute a partially applied schema change twice.
+ */
+export async function invokeMigrationOnce(
+  client: LambdaClient,
+  functionName: string,
+): Promise<InvokeCommandOutput> {
+  const singleAttempt = new LambdaClient({
+    region: client.config.region,
+    credentials: client.config.credentials,
+    endpoint: client.config.endpoint,
+    requestHandler: client.config.requestHandler,
+    logger: client.config.logger,
+    maxAttempts: 1,
+  })
+
+  return singleAttempt.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "RequestResponse",
+      // The last 4 KB of the migrator's own logs, base64 in a header. Far more useful than the
+      // return value, which for most migrators is `undefined`.
+      LogType: "Tail",
+    }),
+  )
 }
 
 /**
@@ -125,15 +157,7 @@ export async function runMigration(
     await waitUntilFunctionUpdatedV2({ client, maxWaitTime: 120 }, { FunctionName: name })
   }
 
-  const invoked = await client.send(
-    new InvokeCommand({
-      FunctionName: name,
-      InvocationType: "RequestResponse",
-      // The last 4 KB of the migrator's own logs, base64 in a header. Far more useful than the
-      // return value, which for most migrators is `undefined`.
-      LogType: "Tail",
-    }),
-  )
+  const invoked = await invokeMigrationOnce(client, name)
 
   const logs =
     invoked.LogResult === undefined ? "" : Buffer.from(invoked.LogResult, "base64").toString("utf8")
