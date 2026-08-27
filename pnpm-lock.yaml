@@ -390,6 +390,9 @@ importers:
       '@aws-sdk/client-acm':
         specifier: 'catalog:'
         version: 3.1118.0
+      '@aws-sdk/client-cloudfront-keyvaluestore':
+        specifier: 'catalog:'
+        version: 3.1119.0
       '@aws-sdk/client-elastic-load-balancing-v2':
         specifier: 'catalog:'
         version: 3.1118.0
@@ -399,12 +402,18 @@ importers:
       '@aws-sdk/client-lambda':
         specifier: 'catalog:'
         version: 3.1117.0
+      '@aws-sdk/client-route-53':
+        specifier: 'catalog:'
+        version: 3.1119.0
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1118.0
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1117.0
         version: 3.1117.0
+      '@aws-sdk/signature-v4a':
+        specifier: 'catalog:'
+        version: 3.1111.0
       '@clickhouse/client':
         specifier: ^1.23.1
         version: 1.23.1
@@ -510,6 +519,9 @@ importers:
       kysely:
         specifier: 'catalog:'
         version: 0.29.5
+      mime-types:
+        specifier: ^3.0.2
+        version: 3.0.2
       openai:
         specifier: 'catalog:'
         version: 7.5.0(@aws-sdk/credential-provider-node@3.972.81)(@smithy/signature-v4@5.7.2)(ws@8.21.3)(zod@4.4.3)
@@ -525,6 +537,9 @@ importers:
       uuid:
         specifier: 'catalog:'
         version: 14.0.2
+      yauzl:
+        specifier: ^3.2.0
+        version: 3.4.0
     devDependencies:
       '@hey-api/openapi-ts':
         specifier: 'catalog:'
@@ -914,9 +929,6 @@ importers:
         specifier: ^3.2.0
         version: 3.4.0
     devDependencies:
-      '@aws-sdk/client-s3':
-        specifier: 'catalog:'
-        version: 3.1118.0
       '@daytona/sdk':
         specifier: 'catalog:'
         version: 0.207.0
