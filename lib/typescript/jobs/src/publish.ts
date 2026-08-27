@@ -56,6 +56,16 @@ export const PUBLISH_KINDS = {
   cleanUpStaticPreview: "deploy.static_preview_cleanup",
 } as const
 
+export type MigrationResumeAction = "run" | "publish" | "stop" | "ambiguous"
+
+/** Decide how a reclaimed/retried release continues without applying its migration twice. */
+export function migrationResumeAction(status: string | null): MigrationResumeAction {
+  if (status === "succeeded") return "publish"
+  if (status === "failed") return "stop"
+  if (status === "running") return "ambiguous"
+  return "run"
+}
+
 type PublishPayload = { deploymentId: string }
 
 /** The domain tenant applications are served from. */
@@ -66,6 +76,35 @@ function tenantDomain(): string {
 /** Lambda's own defaults for a project that has not chosen. */
 const DEFAULT_MEMORY_MB = 512
 const DEFAULT_TIMEOUT_S = 30
+
+/** Keep a long synchronous migration from outliving the queue lease that owns it. */
+async function withLeaseHeartbeat<T>(
+  keepAlive: () => Promise<boolean>,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!(await keepAlive())) throw new Error("Lost ownership of the deployment job before migration")
+
+  let heartbeatFailure: Error | undefined
+  const timer = setInterval(() => {
+    void keepAlive()
+      .then((held) => {
+        if (!held)
+          heartbeatFailure = new Error("Lost ownership of the deployment job during migration")
+      })
+      .catch((error: unknown) => {
+        heartbeatFailure = error instanceof Error ? error : new Error(String(error))
+      })
+  }, 60_000)
+  timer.unref()
+
+  try {
+    const result = await work()
+    if (heartbeatFailure !== undefined) throw heartbeatFailure
+    return result
+  } finally {
+    clearInterval(timer)
+  }
+}
 
 export type PublishOptions = {
   lambda: LambdaClient
@@ -537,37 +576,95 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       which is how a recoverable failure becomes an unrecoverable one. The deployment is marked
       failed and a human decides.
     */
-          if (deployment.migrationArtifactKey !== null) {
-            await crudDeployment(db).update(deploymentId, { migrationStatus: "running" })
+          const migrationArtifactKey = deployment.migrationArtifactKey
+          if (migrationArtifactKey !== null) {
+            /*
+              Read this state *inside* the project lock.
 
-            const result = await runMigration(clients.lambda, {
-              projectId: project.id,
-              bucket:
-                options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
-              key: deployment.migrationArtifactKey,
-              handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
-              runtime:
-                deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
-                  ? deployment.runtime
-                  : DEFAULT_RUNTIME,
-              roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
-              environment,
-            })
+              The deployment was fetched before waiting for the lock. A worker reclaiming an
+              expired lease could otherwise wait behind the original invocation, then act on its
+              stale `pending` value and invoke the same migrator again after the first succeeded.
+            */
+            const migration = await db
+              .selectFrom("deployment")
+              .select("migrationStatus")
+              .where("id", "=", deploymentId)
+              .executeTakeFirstOrThrow()
 
-            await crudDeployment(db).update(deploymentId, {
-              migrationStatus: result.ok ? "succeeded" : "failed",
-              migrationOutput: result.output,
-              migrationFinishedAt: new Date(),
-            })
+            const migrationAction = migrationResumeAction(migration.migrationStatus)
+            if (migrationAction === "stop") return
 
-            if (!result.ok) {
+            if (migrationAction === "ambiguous") {
               await crudDeployment(db).update(deploymentId, {
                 status: "error",
+                migrationStatus: "failed",
+                migrationOutput:
+                  "A previous migration attempt ended without a confirmed result. SproutOS did " +
+                  "not run it again automatically; inspect the database before starting a new run.",
+                migrationFinishedAt: new Date(),
                 failureReason:
-                  "The database migration failed, so this release was not published and the previous " +
-                  "one is still serving. The migrator's output is on this deployment.",
+                  "The migration's result is unknown, so this release was not published and the " +
+                  "previous one is still serving.",
               })
               return
+            }
+
+            // A worker can die after recording success but before publishing the function. A
+            // reclaimed job resumes publication from here without applying the schema twice.
+            if (migrationAction === "run") {
+              await crudDeployment(db).update(deploymentId, { migrationStatus: "running" })
+
+              let result
+              try {
+                result = await withLeaseHeartbeat(keepAlive, () =>
+                  runMigration(clients.lambda, {
+                    projectId: project.id,
+                    bucket:
+                      options?.bucket ??
+                      process.env.SERVICE_BUILD_BUCKET ??
+                      "sproutos-dev-artifacts",
+                    key: migrationArtifactKey,
+                    handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
+                    runtime:
+                      deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
+                        ? deployment.runtime
+                        : DEFAULT_RUNTIME,
+                    roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
+                    environment,
+                  }),
+                )
+              } catch (error) {
+                const detail =
+                  error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+                await crudDeployment(db).update(deploymentId, {
+                  status: "error",
+                  migrationStatus: "failed",
+                  migrationOutput:
+                    `SproutOS could not confirm the migration result (${detail}). ` +
+                    "It was not retried automatically; inspect the database before starting a new run.",
+                  migrationFinishedAt: new Date(),
+                  failureReason:
+                    "The migration's result could not be confirmed, so this release was not " +
+                    "published and the previous one is still serving.",
+                })
+                return
+              }
+
+              await crudDeployment(db).update(deploymentId, {
+                migrationStatus: result.ok ? "succeeded" : "failed",
+                migrationOutput: result.output,
+                migrationFinishedAt: new Date(),
+              })
+
+              if (!result.ok) {
+                await crudDeployment(db).update(deploymentId, {
+                  status: "error",
+                  failureReason:
+                    "The database migration failed, so this release was not published and the previous " +
+                    "one is still serving. The migrator's output is on this deployment.",
+                })
+                return
+              }
             }
           }
 
