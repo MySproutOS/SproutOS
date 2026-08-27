@@ -108,6 +108,7 @@ function defaultSinks(): MeteringSinks {
             dimension: event.dimension,
             quantity: event.quantity,
             occurredAt: event.occurredAt,
+            version: event.version,
           })
         }),
       )
@@ -282,8 +283,8 @@ const app = new Hono().post(
     // and the emitter receives a non-2xx so it keeps its own buffered copy.
     await sinks.publish(events)
     // Do not acknowledge until the live projection also lands. A Valkey failure makes the emitter
-    // retry: Kafka receives the same event id and ClickHouse replaces it, while Valkey's event-id
-    // guard makes the projection idempotent. This repairs the live view without making it the
+    // retry: Kafka receives the same event id and ClickHouse replaces it, while Valkey's
+    // version-aware contribution makes the projection idempotent. This repairs the live view without making it the
     // financial authority or allowing its outage to interrupt tenant traffic.
     await sinks.project(events)
 

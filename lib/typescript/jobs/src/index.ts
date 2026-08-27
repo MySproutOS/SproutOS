@@ -1,5 +1,19 @@
 export { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 export {
+  ACTIVE_USAGE_PAGE_SIZE,
+  ACTIVE_USAGE_WINDOW_MS,
+  DEFAULT_ACTIVE_USAGE_MAX_EVENTS_PER_ORGANIZATION,
+  DEFAULT_ACTIVE_USAGE_MAX_GENERATION_KEYS,
+  DEFAULT_ACTIVE_USAGE_MAX_ORGANIZATIONS,
+  reconcileActiveUsageJob,
+  reconcileActiveUsageOrganization,
+  RECONCILE_ACTIVE_USAGE_KIND,
+  type ActiveUsagePageSource,
+  type ActiveUsageReconciliationJobDependencies,
+  type ActiveUsageReconciliationOptions,
+  type ActiveUsageReconciliationReport,
+} from "./active-usage-reconciliation"
+export {
   REFRESH_CREDIT_STATES_KIND,
   refreshCreditStates,
   refreshOrganizationCreditState,
