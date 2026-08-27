@@ -757,6 +757,109 @@ async fn a_non_queue_credential_cannot_enter_the_valkey_proxy() {
     cleanup(&url, &fixtures).await;
 }
 
+/// BullMQ passes declared Lua keys in `KEYS` and constructs more keys from `ARGV`. The proxy can
+/// rewrite the former but cannot see the latter, so the public prefix must be accepted exactly
+/// once and the backend ACL must reject a client that omits it from script-created keys.
+#[tokio::test]
+async fn the_published_bullmq_prefix_works_in_lua_and_mixed_key_commands() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service_id, fixtures) = provision(&url).await;
+    let prefix = format!(
+        "{{kv:{}}}:",
+        sproutos_tenant_auth::encode_short_id(service_id)
+    );
+    let unique = Uuid::now_v7().simple().to_string();
+    let bull = format!("{prefix}bull:contract-{unique}");
+    let declared = format!("{bull}:wait");
+    let constructed = format!("{bull}:meta");
+    let bare_script_key = format!("bull:contract-{unique}:unprefixed");
+    let celery = format!("celery-{unique}");
+
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    // A BullMQ-shaped script: KEYS is visible to the proxy, while the second key is used only from
+    // ARGV. Both already carry the published prefix and must reach the engine without doubling it.
+    let script =
+        "redis.call('SET', KEYS[1], 'declared'); return redis.call('SET', ARGV[1], 'constructed')";
+    assert_eq!(
+        client
+            .send(&["EVAL", script, "1", &declared, &constructed])
+            .await,
+        "+OK\r\n"
+    );
+    assert_eq!(backend_get(&declared).await, "$8\r\ndeclared\r\n");
+    assert_eq!(backend_get(&constructed).await, "$11\r\nconstructed\r\n");
+    assert_eq!(
+        backend_get(&format!("{prefix}{declared}")).await,
+        "$-1\r\n",
+        "the published prefix was applied twice"
+    );
+
+    // Omitting the prefix from a Lua-constructed ARGV key is refused by Valkey itself. That turns
+    // the old shared-root leak into an explicit client error.
+    let refused = client
+        .send(&[
+            "EVAL",
+            "return redis.call('SET', ARGV[1], 'forbidden')",
+            "1",
+            &declared,
+            &bare_script_key,
+        ])
+        .await;
+    assert!(
+        refused.contains("NOPERM") || refused.contains("ACL failure in script"),
+        "{refused}"
+    );
+    assert_eq!(backend_get(&bare_script_key).await, "$-1\r\n");
+
+    // Published BullMQ keys and ordinary bare Celery keys can share one variadic command during
+    // rollout. Only the bare key is prefixed.
+    assert_eq!(
+        client
+            .send(&["MSET", &constructed, "bull", &celery, "celery"])
+            .await,
+        "+OK\r\n"
+    );
+    assert_eq!(backend_get(&constructed).await, "$4\r\nbull\r\n");
+    assert_eq!(
+        backend_get(&format!("{prefix}{celery}")).await,
+        "$6\r\ncelery\r\n"
+    );
+
+    // A blocking pop echoes whichever key won. Preserve an already-prefixed spelling, but strip
+    // the prefix the proxy added to a bare key, even when both forms occur in the same command.
+    let published_ready = format!("{bull}:published-ready");
+    let bare_empty = format!("bare-empty-{unique}");
+    assert_eq!(
+        client.send(&["RPUSH", &published_ready, "published"]).await,
+        ":1\r\n"
+    );
+    let published_reply = client
+        .send(&["BLPOP", &bare_empty, &published_ready, "1"])
+        .await;
+    assert!(published_reply.contains(&format!("\r\n{published_ready}\r\n")));
+
+    let published_empty = format!("{bull}:published-empty");
+    let bare_ready = format!("bare-ready-{unique}");
+    assert_eq!(client.send(&["RPUSH", &bare_ready, "bare"]).await, ":1\r\n");
+    let bare_reply = client
+        .send(&["BLPOP", &published_empty, &bare_ready, "1"])
+        .await;
+    assert!(bare_reply.contains(&format!("\r\n{bare_ready}\r\n")));
+    assert!(!bare_reply.contains(&format!("\r\n{prefix}{bare_ready}\r\n")));
+
+    client
+        .send(&["DEL", &declared, &constructed, &celery])
+        .await;
+    cleanup(&url, &fixtures).await;
+}
+
 /// Two queues owned by the *same* organization.
 ///
 /// The obvious tenancy design is one prefix per customer, and it is wrong: a customer with a queue
@@ -837,13 +940,27 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
 
     let address = start_proxy_with_master(&url).await;
     let (username, secret, service_id, fixtures) = provision(&url).await;
+    let published_queue = format!(
+        "{{kv:{}}}:bull:emails:wait",
+        sproutos_tenant_auth::encode_short_id(service_id)
+    );
 
     let mut client = Client::connect(address).await;
     assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
 
-    // An enqueue, and a read that must not be mistaken for one.
+    // A BullMQ-shaped scripted enqueue, and a read that must not be mistaken for one. The script is
+    // `args[1]`; deriving the queue from that position instead of the declared key silently wakes a
+    // queue named after the Lua source.
     assert_eq!(
-        client.send(&["LPUSH", "bull:emails:wait", "job-1"]).await,
+        client
+            .send(&[
+                "EVAL",
+                "return redis.call('LPUSH', KEYS[1], ARGV[1])",
+                "1",
+                &published_queue,
+                "job-1",
+            ])
+            .await,
         ":1\r\n"
     );
     client
@@ -877,9 +994,10 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
       out on this connection, its reply would arrive here and `PING` would return the `ZADD` result.
     */
     assert_eq!(client.send(&["PING"]).await, "+PONG\r\n");
-    assert_eq!(client.send(&["LLEN", "bull:emails:wait"]).await, ":1\r\n");
+    assert_eq!(client.send(&["LLEN", &published_queue]).await, ":1\r\n");
 
     raw.send(&["DEL", "sproutos:master:wake"]).await;
+    client.send(&["DEL", &published_queue]).await;
     cleanup(&url, &fixtures).await;
 }
 

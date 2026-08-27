@@ -28,12 +28,21 @@ pub fn prefix_for(identity: &TenantIdentity) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Namespaces a key.
-pub fn namespace(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+/// Namespaces a key unless it already carries this tenant's exact prefix.
+///
+/// BullMQ must put the tenant prefix in keys passed to Lua because the proxy cannot rewrite keys
+/// constructed from `ARGV` inside a script. Ordinary clients such as Celery still send bare keys.
+/// Another tenant's prefix is deliberately treated as ordinary key data and nested safely inside
+/// the authenticated tenant's namespace.
+pub fn namespace_once(prefix: &[u8], key: &[u8]) -> (Vec<u8>, bool) {
+    if key.starts_with(prefix) {
+        return (key.to_vec(), false);
+    }
+
     let mut out = Vec::with_capacity(prefix.len() + key.len());
     out.extend_from_slice(prefix);
     out.extend_from_slice(key);
-    out
+    (out, true)
 }
 
 /// Strips the namespace from a key, for anything the proxy shows back to a tenant.
@@ -129,7 +138,22 @@ mod tests {
     fn namespace_and_strip_are_inverses() {
         let prefix = b"{kv:01hb}:";
         let key = b"bull:emails:wait";
-        assert_eq!(strip(prefix, &namespace(prefix, key)).unwrap(), key);
+        let (namespaced, added) = namespace_once(prefix, key);
+        assert!(added);
+        assert_eq!(strip(prefix, &namespaced).unwrap(), key);
+    }
+
+    #[test]
+    fn namespacing_is_idempotent_only_for_this_tenant() {
+        let prefix = b"{kv:01hb}:";
+        let own = b"{kv:01hb}:bull:emails:wait";
+        assert_eq!(namespace_once(prefix, own), (own.to_vec(), false));
+
+        let foreign = b"{kv:other}:bull:emails:wait";
+        assert_eq!(
+            namespace_once(prefix, foreign),
+            ([prefix.as_slice(), foreign.as_slice()].concat(), true)
+        );
     }
 
     #[test]
@@ -143,8 +167,8 @@ mod tests {
     #[test]
     fn namespacing_is_binary_safe() {
         assert_eq!(
-            namespace(b"p:", &[0xff, 0x00]),
-            vec![b'p', b':', 0xff, 0x00]
+            namespace_once(b"p:", &[0xff, 0x00]),
+            (vec![b'p', b':', 0xff, 0x00], true)
         );
     }
 }

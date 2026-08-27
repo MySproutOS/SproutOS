@@ -232,11 +232,24 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
     })
 }
 
-/// Rewrites a command's keys, returning the argument indices that were namespaced.
+/// What happened to one key argument while a command was namespaced.
+///
+/// Commands such as `BLPOP` echo the selected key in their reply. The caller needs this per-key
+/// decision when a command mixes an already-prefixed BullMQ key with a bare Celery key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NamespacedKey {
+    pub index: usize,
+    pub added_prefix: bool,
+}
+
+/// Rewrites a command's keys, returning the per-argument namespacing decisions.
 ///
 /// Returns `Err` describing why a command was refused. The caller turns that into a RESP error the
 /// tenant can act on — "unknown or disallowed command" rather than a dropped connection.
-pub fn namespace_command(args: &mut [Vec<u8>], prefix: &[u8]) -> Result<Vec<usize>, &'static str> {
+pub fn namespace_command(
+    args: &mut [Vec<u8>],
+    prefix: &[u8],
+) -> Result<Vec<NamespacedKey>, &'static str> {
     let verb = args
         .first()
         .map(|arg| String::from_utf8_lossy(arg).to_uppercase())
@@ -274,11 +287,17 @@ pub fn namespace_command(args: &mut [Vec<u8>], prefix: &[u8]) -> Result<Vec<usiz
         }
     };
 
-    for index in &indices {
-        args[*index] = crate::keyspace::namespace(prefix, &args[*index]);
-    }
-
-    Ok(indices)
+    Ok(indices
+        .into_iter()
+        .map(|index| {
+            let (key, added_prefix) = crate::keyspace::namespace_once(prefix, &args[index]);
+            args[index] = key;
+            NamespacedKey {
+                index,
+                added_prefix,
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -351,6 +370,32 @@ mod tests {
         // The value must not be touched: it is the caller's data, and prefixing it corrupts it.
         let out = namespaced(&["SET", "jobs", "payload"]).unwrap();
         assert_eq!(out, vec!["SET", "{kv:01hb}:jobs", "payload"]);
+    }
+
+    #[test]
+    fn a_command_can_mix_published_and_bare_keys() {
+        let mut args = command(&["MGET", "{kv:01hb}:bull:emails:wait", "celery"]);
+        let decisions = namespace_command(&mut args, PREFIX).unwrap();
+
+        assert_eq!(
+            args.iter()
+                .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                .collect::<Vec<_>>(),
+            ["MGET", "{kv:01hb}:bull:emails:wait", "{kv:01hb}:celery"]
+        );
+        assert_eq!(
+            decisions,
+            [
+                NamespacedKey {
+                    index: 1,
+                    added_prefix: false
+                },
+                NamespacedKey {
+                    index: 2,
+                    added_prefix: true
+                }
+            ]
+        );
     }
 
     #[test]
@@ -493,14 +538,14 @@ pub fn adds_work(verb: &str) -> bool {
 /// the same rule: strip a known broker prefix if there is one, then take the segment before the next
 /// colon.
 ///
-/// Reads the pre-namespace key deliberately. After namespacing, the key carries `{kv:…}:` and this
-/// would have to strip a prefix it was not given — and getting that wrong means a dispatcher looking
-/// for a queue whose name contains a hash tag.
-pub fn queue_of(key: &[u8]) -> Option<String> {
+/// BullMQ sends the published tenant prefix itself, while Celery sends a bare key. Strip this
+/// tenant's exact prefix once before interpreting either layout. A foreign prefix is not stripped.
+pub fn queue_of(key: &[u8], prefix: &[u8]) -> Option<String> {
+    let key = key.strip_prefix(prefix).unwrap_or(key);
     let key = std::str::from_utf8(key).ok()?;
 
-    // BullMQ's own prefix. SproutOS generates the worker code, so `bull` is not a customer choice —
-    // see `tenantQueuePrefix` in `@lib/queue`.
+    // BullMQ's own prefix. The public `BULLMQ_PREFIX` contract fixes this portion of the layout;
+    // see `valkeyKeyPrefix` in `@lib/services`.
     let rest = key.strip_prefix("bull:").unwrap_or(key);
 
     let name = match rest.split_once(':') {
@@ -519,13 +564,24 @@ pub fn queue_of(key: &[u8]) -> Option<String> {
 mod master_queue_tests {
     use super::*;
 
+    const PREFIX: &[u8] = b"{kv:01hb}:";
+
     #[test]
     fn bullmq_key_layouts_name_their_queue() {
-        assert_eq!(queue_of(b"bull:emails:wait").as_deref(), Some("emails"));
-        assert_eq!(queue_of(b"bull:emails:id").as_deref(), Some("emails"));
-        assert_eq!(queue_of(b"bull:emails:1").as_deref(), Some("emails"));
         assert_eq!(
-            queue_of(b"bull:media-transcode:delayed").as_deref(),
+            queue_of(b"{kv:01hb}:bull:emails:wait", PREFIX).as_deref(),
+            Some("emails")
+        );
+        assert_eq!(
+            queue_of(b"{kv:01hb}:bull:emails:id", PREFIX).as_deref(),
+            Some("emails")
+        );
+        assert_eq!(
+            queue_of(b"bull:emails:1", PREFIX).as_deref(),
+            Some("emails")
+        );
+        assert_eq!(
+            queue_of(b"{kv:01hb}:bull:media-transcode:delayed", PREFIX).as_deref(),
             Some("media-transcode")
         );
     }
@@ -533,20 +589,20 @@ mod master_queue_tests {
     #[test]
     fn a_plain_list_is_its_own_queue() {
         // Celery's default.
-        assert_eq!(queue_of(b"celery").as_deref(), Some("celery"));
+        assert_eq!(queue_of(b"celery", PREFIX).as_deref(), Some("celery"));
     }
 
     #[test]
     fn a_key_that_names_nothing_is_not_a_queue() {
-        assert_eq!(queue_of(b""), None);
-        assert_eq!(queue_of(b"bull:"), None);
+        assert_eq!(queue_of(b"", PREFIX), None);
+        assert_eq!(queue_of(b"{kv:01hb}:bull:", PREFIX), None);
     }
 
     /// Invalid UTF-8 is a legal Valkey key. It is not a queue name a dispatcher can use, and it must
     /// not panic on the way to finding that out.
     #[test]
     fn a_binary_key_is_not_a_queue() {
-        assert_eq!(queue_of(&[0xff, 0x00, 0xfe]), None);
+        assert_eq!(queue_of(&[0xff, 0x00, 0xfe], PREFIX), None);
     }
 
     #[test]

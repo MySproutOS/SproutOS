@@ -185,24 +185,31 @@ pub async fn serve(
                                 continue;
                             }
 
-                            /*
-                              The queue name, read before namespacing.
-
-                              After `namespace_command` the key carries `{kv:…}:`, and recovering
-                              the tenant's own name from it would mean stripping a prefix this
-                              function was not given. Taken here, from the argument as the tenant
-                              wrote it, there is nothing to strip.
-                            */
-                            let queue = if adds_work(&verb) {
-                                command.args.get(1).and_then(|key| queue_of(key))
-                            } else {
-                                None
-                            };
-
                             match namespace_command(&mut command.args, &prefix) {
-                                Ok(_) => {
+                                Ok(namespaced_keys) => {
+                                    // Use the command table's first actual key, not blindly
+                                    // `args[1]`: for EVAL that argument is the script and the first
+                                    // key follows `numkeys`. `queue_of` accepts both the published
+                                    // BullMQ form and a Celery key the proxy just prefixed.
+                                    let queue = if adds_work(&verb) {
+                                        namespaced_keys.first().and_then(|key| {
+                                            queue_of(&command.args[key.index], &prefix)
+                                        })
+                                    } else {
+                                        None
+                                    };
                                     upstream_write.write_all(&command.encode()).await?;
-                                    let rewrite = if echoes_key(&verb) { ReplyRewrite::FirstKey } else { ReplyRewrite::None };
+                                    let rewrite = if echoes_key(&verb) {
+                                        ReplyRewrite::FirstKey {
+                                            newly_prefixed: namespaced_keys
+                                                .into_iter()
+                                                .filter(|key| key.added_prefix)
+                                                .map(|key| command.args[key.index].clone())
+                                                .collect(),
+                                        }
+                                    } else {
+                                        ReplyRewrite::None
+                                    };
                                     pending.push_back(Pending::Upstream { rewrite });
 
                                     match verb.as_str() {
@@ -326,10 +333,14 @@ async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
         }
     };
 
-    match framed
-        .first_bulk
-        .filter(|_| rewrite == ReplyRewrite::FirstKey)
-    {
+    let first_bulk = framed.first_bulk.filter(|(start, end)| match &rewrite {
+        ReplyRewrite::None => false,
+        ReplyRewrite::FirstKey { newly_prefixed } => newly_prefixed
+            .iter()
+            .any(|key| key.as_slice() == &raw[*start..*end]),
+    });
+
+    match first_bulk {
         Some((start, end)) => {
             let key = &raw[start..end];
             match strip(prefix, key) {
@@ -370,10 +381,10 @@ fn scan_refusal(mode: ConnectionMode) -> Option<&'static str> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ReplyRewrite {
     None,
-    FirstKey,
+    FirstKey { newly_prefixed: Vec<Vec<u8>> },
 }
 
 async fn drain_local<W: tokio::io::AsyncWrite + Unpin>(
