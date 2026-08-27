@@ -1,9 +1,9 @@
-import { tenantIndexPrefix } from "@lib/services/tenant-auth"
+import { tenantIndexPrefix, tenantUsername } from "@lib/services/tenant-auth"
 import { db } from "@sproutos/db"
 import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { purgeTenantIndices, type SearchAdminConfig } from "./search"
+import { purgeTenantIndices, purgeTenantSearch, type SearchAdminConfig } from "./search"
 import { reapDeletedOrganizations, reapDeletedServices } from "./reap"
 import { purgeTenantKeys, tenantKeyPrefix } from "./valkey"
 
@@ -121,19 +121,30 @@ describe.skipIf(!valkeyUp)("purging a tenant's Valkey keys", () => {
 describe.skipIf(!searchUp)("purging a tenant's indices", () => {
   it("deletes every index under the prefix and nothing outside it", async () => {
     const mine = v7()
+    const mineOrganization = v7()
     const theirs = v7()
+    const username = tenantUsername({
+      organizationId: mineOrganization,
+      kind: "searchIndex",
+      resourceId: mine,
+    })
+    const role = `tenant_${tenantIndexPrefix(mine).replace(/_$/, "")}`
 
     await createIndex(`${tenantIndexPrefix(mine)}products`)
     await createIndex(`${tenantIndexPrefix(mine)}orders`)
     await createIndex(`${tenantIndexPrefix(theirs)}products`)
+    await createSecurityIdentity(username, role, tenantIndexPrefix(mine))
 
-    const deleted = await purgeTenantIndices(search, tenantIndexPrefix(mine))
+    const deleted = await purgeTenantSearch(search, tenantIndexPrefix(mine), username)
 
     expect(deleted.sort()).toEqual(
       [`${tenantIndexPrefix(mine)}orders`, `${tenantIndexPrefix(mine)}products`].sort(),
     )
     expect(await indexExists(`${tenantIndexPrefix(mine)}products`)).toBe(false)
     expect(await indexExists(`${tenantIndexPrefix(theirs)}products`)).toBe(true)
+    expect(await securityResourceStatus(`internalusers/${encodeURIComponent(username)}`)).toBe(404)
+    expect(await securityResourceStatus(`rolesmapping/${encodeURIComponent(role)}`)).toBe(404)
+    expect(await securityResourceStatus(`roles/${encodeURIComponent(role)}`)).toBe(404)
 
     await purgeTenantIndices(search, tenantIndexPrefix(theirs))
   })
@@ -154,6 +165,7 @@ describe.skipIf(!valkeyUp || !searchUp)("the reaper pass", () => {
   const organizationId = v7()
   const userId = v7()
   const serviceId = v7()
+  const searchServiceId = v7()
 
   beforeAll(async () => {
     // `region_id` is not null, and the regions are reference data the seeds create. Reading one
@@ -194,6 +206,7 @@ describe.skipIf(!valkeyUp || !searchUp)("the reaper pass", () => {
   })
 
   afterAll(async () => {
+    await db.deleteFrom("backendService").where("id", "=", searchServiceId).execute()
     await db.deleteFrom("backendService").where("id", "=", serviceId).execute()
     await db.deleteFrom("organization").where("id", "=", organizationId).execute()
     await db.deleteFrom("user").where("id", "=", userId).execute()
@@ -215,6 +228,57 @@ describe.skipIf(!valkeyUp || !searchUp)("the reaper pass", () => {
     */
     const second = await reapDeletedServices(db, { valkeyUrl, search, logs: false })
     expect(second.some((row) => row.backendServiceId === serviceId)).toBe(false)
+  })
+
+  it("purges a deleted search service's indices and Security identity before stamping it", async () => {
+    const region = await db
+      .selectFrom("region")
+      .select("id")
+      .orderBy("id", "asc")
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: searchServiceId,
+        organizationId,
+        projectId: null,
+        kind: "elasticsearch",
+        name: "search",
+        regionId: region.id,
+        status: "deleting",
+        deletedAt: new Date(),
+      })
+      .execute()
+
+    const prefix = tenantIndexPrefix(searchServiceId)
+    const username = tenantUsername({
+      organizationId,
+      kind: "searchIndex",
+      resourceId: searchServiceId,
+    })
+    const role = `tenant_${prefix.replace(/_$/, "")}`
+    await createIndex(`${prefix}documents`)
+    await createSecurityIdentity(username, role, prefix)
+
+    const result = await reapDeletedServices(db, { valkeyUrl, search, logs: false })
+    expect(result).toContainEqual({
+      backendServiceId: searchServiceId,
+      kind: "elasticsearch",
+      removed: 1,
+    })
+    expect(await indexExists(`${prefix}documents`)).toBe(false)
+    expect(await securityResourceStatus(`internalusers/${encodeURIComponent(username)}`)).toBe(404)
+    expect(await securityResourceStatus(`rolesmapping/${encodeURIComponent(role)}`)).toBe(404)
+    expect(await securityResourceStatus(`roles/${encodeURIComponent(role)}`)).toBe(404)
+    expect(
+      (
+        await db
+          .selectFrom("backendService")
+          .select("purgedAt")
+          .where("id", "=", searchServiceId)
+          .executeTakeFirstOrThrow()
+      ).purgedAt,
+    ).not.toBeNull()
   })
 
   it("will not stamp an organization while one of its services is unpurged", async () => {
@@ -256,6 +320,42 @@ async function createIndex(name: string): Promise<void> {
 
 async function indexExists(name: string): Promise<boolean> {
   return (await searchFetch(`/${name}`, { method: "HEAD" })).status === 200
+}
+
+async function createSecurityIdentity(
+  username: string,
+  role: string,
+  prefix: string,
+): Promise<void> {
+  await securityPut(`roles/${encodeURIComponent(role)}`, {
+    cluster_permissions: ["cluster_composite_ops"],
+    index_permissions: [{ index_patterns: [`${prefix}*`], allowed_actions: ["read", "write"] }],
+    tenant_permissions: [],
+  })
+  await securityPut(`internalusers/${encodeURIComponent(username)}`, {
+    password: "Test-only-search-user-password-73!",
+    backend_roles: [role],
+    attributes: {},
+  })
+  await securityPut(`rolesmapping/${encodeURIComponent(role)}`, {
+    backend_roles: [role],
+    hosts: [],
+    users: [username],
+  })
+}
+
+async function securityPut(path: string, body: unknown): Promise<void> {
+  const response = await searchFetch(`/_plugins/_security/api/${path}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok)
+    throw new Error(`Could not create Security resource ${path}: ${await response.text()}`)
+}
+
+async function securityResourceStatus(path: string): Promise<number> {
+  return (await searchFetch(`/_plugins/_security/api/${path}`)).status
 }
 
 /** Use the same admin identity as the reaper itself for setup, probes, and assertions. */

@@ -11,6 +11,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use search_proxy::naming::prefix_for;
 use search_proxy::security::SecurityManager;
@@ -67,18 +68,22 @@ async fn services_up(url: &str) -> bool {
 
 /// Starts the proxy on an ephemeral port.
 async fn start_proxy(url: &str) -> SocketAddr {
+    start_proxy_at(url, upstream()).await
+}
+
+async fn start_proxy_at(url: &str, upstream: String) -> SocketAddr {
     let store = Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let client = reqwest::Client::new();
     let security = SecurityManager::new(
         client.clone(),
-        upstream(),
+        upstream.clone(),
         std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY")
             .unwrap_or_else(|_| "local-search-security-root-key-32-bytes".into()),
     )
     .expect("security manager");
     let proxy = Arc::new(Proxy {
         store,
-        upstream: upstream(),
+        upstream,
         client,
         security,
     });
@@ -305,6 +310,17 @@ async fn cleanup(url: &str, tenants: &[&Tenant]) {
         )
         .send()
         .await;
+        let role = format!(
+            "tenant_{}",
+            prefix_for(&tenant.identity).trim_end_matches('_')
+        );
+        for path in [
+            format!("/_plugins/_security/api/internalusers/{}", tenant.username),
+            format!("/_plugins/_security/api/rolesmapping/{role}"),
+            format!("/_plugins/_security/api/roles/{role}"),
+        ] {
+            let _ = admin_request(reqwest::Method::DELETE, &path).send().await;
+        }
     }
 }
 
@@ -696,5 +712,90 @@ async fn a_deleted_organizations_credentials_stop_working() {
             &[&tenant.identity.organization_id],
         )
         .await;
+    cleanup(&url, &[&tenant]).await;
+}
+
+#[tokio::test]
+async fn a_deleted_internal_user_is_reprovisioned_after_one_upstream_401() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision(&url).await;
+    let index = unique_index("security-recovery");
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::POST,
+        &format!("/{index}/_doc/1?refresh=true"),
+        Some(("application/json", r#"{"recovered":true}"#.into())),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {body}");
+
+    admin_request(
+        reqwest::Method::DELETE,
+        &format!("/_plugins/_security/api/internalusers/{}", tenant.username),
+    )
+    .send()
+    .await
+    .expect("delete cached internal user");
+
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::GET,
+        &format!("/{index}/_doc/1"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("recovered"), "{body}");
+    cleanup(&url, &[&tenant]).await;
+}
+
+#[tokio::test]
+async fn a_second_upstream_401_is_not_retried() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    #[derive(Clone, Default)]
+    struct Counts {
+        tenant: Arc<AtomicUsize>,
+        provisioning: Arc<AtomicUsize>,
+    }
+    async fn always_unauthorized(
+        axum::extract::State(counts): axum::extract::State<Counts>,
+        request: axum::extract::Request,
+    ) -> axum::http::StatusCode {
+        if request.uri().path().starts_with("/_plugins/_security/api/") {
+            counts.provisioning.fetch_add(1, Ordering::SeqCst);
+            axum::http::StatusCode::CREATED
+        } else {
+            counts.tenant.fetch_add(1, Ordering::SeqCst);
+            axum::http::StatusCode::UNAUTHORIZED
+        }
+    }
+
+    let counts = Counts::default();
+    let mock = axum::Router::new()
+        .fallback(axum::routing::any(always_unauthorized))
+        .with_state(counts.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+
+    let address = start_proxy_at(&url, format!("http://{mock_address}")).await;
+    let tenant = provision(&url).await;
+    let (status, _) = as_tenant(address, &tenant, reqwest::Method::GET, "/_search", None).await;
+    assert_eq!(status, 503);
+    assert_eq!(counts.tenant.load(Ordering::SeqCst), 2);
+    assert_eq!(counts.provisioning.load(Ordering::SeqCst), 6);
     cleanup(&url, &[&tenant]).await;
 }

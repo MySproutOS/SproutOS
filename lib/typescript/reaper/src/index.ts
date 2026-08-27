@@ -9,6 +9,7 @@ export {
 } from "./reap"
 export {
   purgeTenantIndices,
+  purgeTenantSearch,
   SearchAdminError,
   searchAdminConfigFromEnv,
   type SearchAdminConfig,

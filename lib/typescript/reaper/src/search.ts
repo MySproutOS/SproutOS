@@ -80,6 +80,34 @@ export async function purgeTenantIndices(
   return names
 }
 
+/** Delete both the tenant's data and the Security-plugin identity that could reach it. */
+export async function purgeTenantSearch(
+  config: SearchAdminConfig,
+  prefix: string,
+  username: string,
+): Promise<string[]> {
+  if (username === "") throw new RangeError("Refusing to purge an empty search username")
+
+  const names = await purgeTenantIndices(config, prefix)
+  const role = `tenant_${prefix.replace(/_$/, "")}`
+
+  // User first: after this succeeds there is no credential that can use the role while the other
+  // two idempotent deletes finish. A partial failure leaves the service unstamped for the next pass.
+  await request(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/internalusers/${encodeURIComponent(username)}`,
+  )
+  await request(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/rolesmapping/${encodeURIComponent(role)}`,
+  )
+  await request(config, "DELETE", `/_plugins/_security/api/roles/${encodeURIComponent(role)}`)
+
+  return names
+}
+
 async function request<T>(
   config: SearchAdminConfig,
   method: "GET" | "DELETE",

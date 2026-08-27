@@ -136,6 +136,12 @@ impl SecurityManager {
         Ok(identity)
     }
 
+    /// Forget only the local success marker. OpenSearch remains the source of truth: the next
+    /// `ensure` idempotently recreates all three documents before another tenant request is sent.
+    pub async fn invalidate(&self, prefix: &str) {
+        self.inner.ready.lock().await.remove(prefix);
+    }
+
     fn derived_password(&self, user: &str) -> String {
         let mut mac = HmacSha256::new_from_slice(&self.inner.root_key)
             .expect("HMAC accepts a key of any length");
@@ -316,5 +322,19 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn invalidation_makes_a_cached_tenant_provision_again() {
+        let (manager, seen) = manager().await;
+        let tenant = tenant(3);
+        let prefix = "t00000000000000000000000003_";
+        manager.ensure(&tenant, prefix).await.unwrap();
+        manager.ensure(&tenant, prefix).await.unwrap();
+        assert_eq!(seen.lock().await.len(), 3);
+
+        manager.invalidate(prefix).await;
+        manager.ensure(&tenant, prefix).await.unwrap();
+        assert_eq!(seen.lock().await.len(), 6);
     }
 }

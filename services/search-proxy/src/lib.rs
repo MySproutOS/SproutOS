@@ -214,30 +214,104 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
 
     forward(
         &proxy,
-        &parts.method,
-        &parts.uri,
-        &path,
-        &parts.headers,
-        forwarded,
-        &security_identity,
+        &identity,
+        security_identity,
+        ForwardRequest {
+            method: &parts.method,
+            uri: &parts.uri,
+            path: &path,
+            headers: &parts.headers,
+            body: forwarded,
+        },
     )
     .await
 }
 
+struct ForwardRequest<'a> {
+    method: &'a Method,
+    uri: &'a Uri,
+    path: &'a str,
+    headers: &'a HeaderMap,
+    body: Bytes,
+}
+
 async fn forward(
     proxy: &Proxy,
-    method: &Method,
-    uri: &Uri,
-    path: &str,
-    headers: &HeaderMap,
-    body: Bytes,
-    security: &crate::security::TenantSecurityIdentity,
+    tenant: &TenantIdentity,
+    mut security: crate::security::TenantSecurityIdentity,
+    request: ForwardRequest<'_>,
 ) -> Response {
-    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
-    let target = format!("{}{path}{query}", proxy.upstream.trim_end_matches('/'));
+    let mut response = match send_upstream(proxy, &request, &security).await {
+        Ok(response) => response,
+        Err(cause) => {
+            warn!(%cause, "upstream request failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "The search cluster did not respond",
+            );
+        }
+    };
 
-    let mut request = proxy.client.request(method.clone(), &target).body(body);
-    for (name, value) in headers {
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        // A deleted Security document is indistinguishable from a bad derived password at the
+        // upstream boundary. Drop the local success marker, recreate the exact documents, and
+        // retry once. A second 401 is never looped and never handed through as though the tenant's
+        // own credentials were wrong: they already authenticated successfully at this proxy.
+        proxy.security.invalidate(&security.index_prefix).await;
+        security = match proxy.security.ensure(tenant, &security.index_prefix).await {
+            Ok(identity) => identity,
+            Err(cause) => {
+                warn!(tenant = %tenant, %cause, "tenant security recovery failed");
+                return error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "The service is temporarily unavailable; retry shortly",
+                );
+            }
+        };
+        response = match send_upstream(proxy, &request, &security).await {
+            Ok(response) => response,
+            Err(cause) => {
+                warn!(%cause, "upstream request failed after security recovery");
+                return error(
+                    StatusCode::BAD_GATEWAY,
+                    "The search cluster did not respond",
+                );
+            }
+        };
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            warn!(tenant = %tenant, "upstream authentication failed after one recovery attempt");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The service is temporarily unavailable; retry shortly",
+            );
+        }
+    }
+
+    render_upstream(response, &security.index_prefix).await
+}
+
+async fn send_upstream(
+    proxy: &Proxy,
+    forwarded: &ForwardRequest<'_>,
+    security: &crate::security::TenantSecurityIdentity,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let query = forwarded
+        .uri
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
+    let target = format!(
+        "{}{}{}",
+        proxy.upstream.trim_end_matches('/'),
+        forwarded.path,
+        query
+    );
+
+    let mut request = proxy
+        .client
+        .request(forwarded.method.clone(), &target)
+        .body(forwarded.body.clone());
+    for (name, value) in forwarded.headers {
         if strip_request_header(name) {
             continue;
         }
@@ -256,17 +330,10 @@ async fn forward(
     // internal user with an HMAC-derived password that is never stored or given to the tenant.
     request = request.basic_auth(&security.user, Some(&security.password));
 
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(cause) => {
-            warn!(%cause, "upstream request failed");
-            return error(
-                StatusCode::BAD_GATEWAY,
-                "The search cluster did not respond",
-            );
-        }
-    };
+    request.send().await
+}
 
+async fn render_upstream(response: reqwest::Response, prefix: &str) -> Response {
     let status = StatusCode::from_u16(response.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let upstream_headers = response.headers().clone();
@@ -284,7 +351,7 @@ async fn forward(
 
     // Every response, not only successful ones: an OpenSearch error message names the index it
     // objected to, and that name is the namespaced one.
-    let stripped = strip_prefix_from_response(&security.index_prefix, &payload);
+    let stripped = strip_prefix_from_response(prefix, &payload);
 
     let mut out = Response::builder().status(status);
     for (name, value) in &upstream_headers {
