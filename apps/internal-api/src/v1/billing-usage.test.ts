@@ -45,11 +45,25 @@ function actor(): TestUser {
   return user
 }
 
-async function meter(dimension: string, quantity: string, bucket = "day"): Promise<string> {
+async function meter(
+  dimension: string,
+  quantity: string,
+  bucket = "day",
+  externallyChargedQuantity = "0",
+): Promise<string> {
   const id = v7()
   await db
     .insertInto("usageRollup")
-    .values({ id, organizationId, dimension, bucket, bucketStart: new Date(), quantity })
+    .values({
+      id,
+      organizationId,
+      dimension,
+      bucket,
+      bucketStart: new Date(),
+      quantity,
+      externallyChargedQuantity,
+      chargedQuantity: externallyChargedQuantity,
+    })
     .execute()
   rollupIds.push(id)
   return id
@@ -139,6 +153,21 @@ describe.skipIf(!up)("usage this period", () => {
     // A statement has to be explicable as usage plus overhead, and this is the identity that says
     // so — the same one `@lib/billing`'s README promises.
     expect(BigInt(response.json.totalMicroUsd as string)).toBe(expectedUsage + expectedOverhead)
+  })
+
+  it("shows BYO AI usage without presenting it as a SproutOS charge", async ({ skip }) => {
+    if (!up) skip()
+    await meter("ai_input_token", "12345", "day", "12345")
+
+    const response = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const line = (response.json.lines as Json[]).find((row) => row.dimension === "ai_input_token")
+
+    expect(line).toMatchObject({
+      label: "AI input",
+      quantity: "12345",
+      unit: "tokens",
+      amountMicroUsd: "0",
+    })
   })
 
   it("counts each rollup grain once", async ({ skip }) => {

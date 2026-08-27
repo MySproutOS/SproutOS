@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
-import { postWithin } from "./ledger"
+import { lockAvailableBalance, postWithin } from "./ledger"
 import { type MicroUsd, overhead, rateTimesQuantity } from "./money"
 import { NoActivePriceBookError } from "./usage"
 
@@ -36,13 +36,13 @@ import { NoActivePriceBookError } from "./usage"
  * "never charged" to anyone who does not know, so it is written here rather than left to be
  * rediscovered from a confusing query.
  *
- * ## Why this posts rather than spends
+ * ## Prepaid means the balance is a hard floor
  *
- * `spend` refuses when the balance will not cover the charge. That is right for a top-up-time
- * decision and wrong here: this compute has already been consumed. Refusing to record it does not
- * un-run the pods — it loses the revenue and leaves the ledger disagreeing with the world. The
- * balance is allowed to go negative, and stopping a customer *before* they overdraw is what holds
- * (`placeHold`) and the balance checks on expensive operations are for.
+ * Metering arrives after the resource was used, so a delayed sample can cost more than the credit
+ * remaining when it is rated. That operational lag is the platform's risk, not a customer debt.
+ * The charger takes at most the locked available balance, marks the sample settled, and never lets
+ * a later top-up pay for old overage. Holds still prevent the expensive paths from starting without
+ * credit; this is the last-line invariant for every asynchronous meter.
  */
 
 /** The grain that gets charged. See the note above. */
@@ -209,44 +209,38 @@ export async function chargeUsage(
       const total = entry.usage + fee
 
       /*
-        Posted even when it rates to nothing.
-
-        `rated_transaction_id` has a foreign key to `credit_transaction`, so there is no id to write
-        that is not a real transaction — the first version of this generated one, which would have
-        failed on the constraint the first time a grain rated to zero. Leaving it null instead means
-        those rows are reconsidered on every run, forever, as a slowly growing tail.
-
-        `rateTimesQuantity` rounds away from zero, so any non-zero quantity at a non-zero rate costs
-        at least one micro-USD; a zero here means the quantity really was zero or the dimension is
-        priced at nothing. A ledger entry recording that honestly is better than a row that cannot
-        be told apart from one nobody has charged yet.
+        Lock before deciding how much can be posted. Usage may cost more than what remains, and two
+        charge workers must not each spend the same last dollar. Any unpaid tail is settled without
+        a transaction: prepaid usage is not debt waiting to eat the next top-up.
       */
-      const posted = await postWithin(trx, {
-        organizationId,
-        kind: "usage",
-        /*
-          Keyed on the rows **and the quantity they will stand at**.
-
-          The row ids alone are not enough, and the way that fails is subtle enough that a test
-          caught it rather than review: a grain charged once, then topped up by a late event, is
-          claimed again with the *same* id and the same count. The key matched the earlier
-          transaction, `postWithin` returned it unchanged, no entry was written — and the late usage
-          was free while the job reported having charged for it.
-
-          Including the post-charge quantity makes the key a function of the state transition. A
-          retry of this exact work recomputes the same key and is correctly a no-op; a later charge
-          for more usage computes a different one.
-        */
-        idempotencyKey: `usage:${organizationId}:${chargeKey(entry.watermark)}`,
-        description: `Metered usage, ${entry.ids.length} grain(s)`,
-        postings: [
-          { account: "user_credit", amount: -total },
-          // Overhead is revenue like the rest of it. Split across two postings rather than one so
-          // a statement can show the amortized fee as its own line, which the plan requires it to.
-          { account: "platform_revenue", amount: entry.usage },
-          { account: "platform_revenue", amount: fee },
-        ],
-      })
+      const available = await lockAvailableBalance(trx, organizationId)
+      const debit = available <= 0n ? 0n : available < total ? available : total
+      const paidUsage = debit < entry.usage ? debit : entry.usage
+      const paidOverhead = debit - paidUsage
+      const idempotencyKey = `usage:${organizationId}:${chargeKey(entry.watermark)}`
+      const posted =
+        debit === 0n
+          ? null
+          : await postWithin(trx, {
+              organizationId,
+              kind: "usage",
+              /*
+                Keyed on the rows **and the quantity they will stand at**. The row ids alone do not
+                distinguish late usage added to a grain that was already charged.
+              */
+              idempotencyKey,
+              description:
+                debit === total
+                  ? `Metered usage, ${entry.ids.length} grain(s)`
+                  : `Metered usage capped at prepaid balance, ${entry.ids.length} grain(s)`,
+              postings: [
+                { account: "user_credit", amount: -debit },
+                // Usage first, then overhead. If only part of a delayed sample can be paid, the
+                // platform does not take a fee while forgiving the underlying resource cost.
+                { account: "platform_revenue", amount: paidUsage },
+                { account: "platform_revenue", amount: paidOverhead },
+              ],
+            })
       /*
         Only what was actually posted.
 
@@ -255,7 +249,7 @@ export async function chargeUsage(
         how the idempotency-key bug below looked from the outside: a charge of the right size,
         reported, with the balance unmoved.
       */
-      if (posted.created) charged += total
+      if (posted?.created === true) charged += debit
 
       /*
         `charged_quantity = quantity`, in the same transaction as the posting.
@@ -271,7 +265,7 @@ export async function chargeUsage(
       await sql`
         update usage_rollup
         set charged_quantity = quantity,
-            rated_transaction_id = ${posted.transactionId},
+            rated_transaction_id = coalesce(${posted?.transactionId ?? null}, rated_transaction_id),
             updated_at = ${now}
         where id = any(${entry.ids}::uuid[])
       `.execute(trx)

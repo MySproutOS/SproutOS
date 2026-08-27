@@ -75,7 +75,7 @@ export async function rateProjectsForOrganization(
       "dimension",
       // Summed as text: `numeric(38,9)` does not fit a JavaScript number, and pg would hand back a
       // string anyway. Made explicit so nothing downstream is tempted to treat it as one.
-      sql<string>`sum(quantity)::text`.as("quantity"),
+      sql<string>`sum(greatest(quantity - externally_charged_quantity, 0))::text`.as("quantity"),
     ])
     .where("organizationId", "=", organizationId)
     .where("projectId", "is not", null)

@@ -176,6 +176,28 @@ export async function availableBalance(
 }
 
 /**
+ * Lock one organization's spendable balance for the rest of the caller's transaction.
+ *
+ * Metering is imported after the resource was used, so its charger cannot reserve an exact amount
+ * in advance. It still must obey the prepaid invariant. Reading without this lock lets two charge
+ * workers see the same dollars and together take the account below zero.
+ */
+export async function lockAvailableBalance(
+  tx: Transaction<DB>,
+  organizationId: string,
+  kind: AccountKind = "user_credit",
+): Promise<MicroUsd> {
+  const accountId = (await ensureAccounts(tx, organizationId, [kind]))[kind]!
+  await tx
+    .selectFrom("creditAccount")
+    .select("id")
+    .where("id", "=", accountId)
+    .forUpdate()
+    .executeTakeFirstOrThrow()
+  return await availableBalance(tx, organizationId, kind)
+}
+
+/**
  * The two balances, read together.
  *
  * `posted` is what the ledger says the account holds; `available` is what may actually be spent,

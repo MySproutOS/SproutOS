@@ -542,7 +542,13 @@ app
 
       const rows = await db
         .selectFrom("usageRollup")
-        .select(["dimension", sql<string>`sum(quantity)::text`.as("quantity")])
+        .select([
+          "dimension",
+          sql<string>`sum(quantity)::text`.as("quantity"),
+          sql<string>`sum(greatest(quantity - externally_charged_quantity, 0))::text`.as(
+            "billableQuantity",
+          ),
+        ])
         .where("organizationId", "=", organizationId)
         .where("bucket", "=", "day")
         .where("bucketStart", ">=", periodStart)
@@ -562,7 +568,9 @@ app
         .map((row) => {
           const rate = rates.get(row.dimension)
           if (rate === undefined) throw new Error(`No price book entry for ${row.dimension}`)
-          const amount = rateTimesQuantity(String(rate), row.quantity)
+          // BYO model tokens remain visible as usage, but their provider already billed the user.
+          // Only the part SproutOS funded belongs in this page's Cost column and overhead subtotal.
+          const amount = rateTimesQuantity(String(rate), row.billableQuantity)
           subtotal += amount
 
           const display = DIMENSION_DISPLAY[row.dimension] ?? {

@@ -108,8 +108,7 @@ beforeAll(async () => {
     })
     .execute()
 
-  // Something to spend. Without a top-up the balance simply goes negative, which is correct
-  // behaviour and makes the assertions below less legible.
+  // Something to spend. The prepaid balance is a hard floor; the final tests drain it deliberately.
   await post(db, {
     organizationId,
     kind: "topup",
@@ -355,33 +354,52 @@ describe("chargeUsage", () => {
     expect(await chargedHere(() => chargeUsage(db))).toBeGreaterThan(0n)
   })
 
-  /*
-    The charge is posted, not spent.
-
-    The compute has already been consumed. Refusing to record it does not un-run the pods; it loses
-    the revenue and leaves the ledger disagreeing with the world. Stopping a customer before they
-    overdraw is what holds are for.
-  */
-  it("charges past a balance of zero rather than refusing", async ({ skip }) => {
+  it("caps a delayed charge at prepaid credit and creates no debt for a later top-up", async ({
+    skip,
+  }) => {
     if (!reachable) skip()
 
     // Spend the balance down to nothing, then meter more usage.
     const balance = await availableBalance(db, organizationId)
-    if (balance > 0n) {
+    const lastCredit = 1_000n
+    if (balance > lastCredit) {
       await post(db, {
         organizationId,
         kind: "adjustment",
         idempotencyKey: `charge-test-drain-${organizationId}`,
         postings: [
-          { account: "user_credit", amount: -balance },
-          { account: "platform_revenue", amount: balance },
+          { account: "user_credit", amount: -(balance - lastCredit) },
+          { account: "platform_revenue", amount: balance - lastCredit },
         ],
       })
     }
+    expect(await availableBalance(db, organizationId)).toBe(lastCredit)
+
+    // More than the final credit after rating and overhead, so this must exercise the cap rather
+    // than merely happen to leave a small positive remainder.
+    await event("1000")
+    expect(await chargedHere(() => chargeUsage(db))).toBe(lastCredit)
     expect(await availableBalance(db, organizationId)).toBe(0n)
 
-    await event("250")
-    expect(await chargedHere(() => chargeUsage(db))).toBeGreaterThan(0n)
-    expect(await availableBalance(db, organizationId)).toBeLessThan(0n)
+    const settled = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "site_gib_second")
+      .where("bucket", "=", CHARGED_BUCKET)
+      .executeTakeFirstOrThrow()
+    expect(settled.chargedQuantity).toBe(settled.quantity)
+
+    await post(db, {
+      organizationId,
+      kind: "topup",
+      idempotencyKey: `charge-test-later-topup-${organizationId}`,
+      postings: [
+        { account: "user_credit", amount: 1_000_000n },
+        { account: "stripe_clearing", amount: -1_000_000n },
+      ],
+    })
+    await chargeUsage(db)
+    expect(await availableBalance(db, organizationId)).toBe(1_000_000n)
   })
 })
