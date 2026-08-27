@@ -45,13 +45,20 @@ would have to be true for it to fail. Here the answer was "wait 24 hours", which
 
 ## What stops it now
 
-Two things, deliberately, because either alone reintroduces the failure:
+Three checks now cover the failure from different directions:
 
 1. **`platform.refresh_routes`**, hourly, republishing every live project's route from
    `project.live_deployment_id`. Hourly against a 24-hour lease means twenty-three consecutive
    failures before anyone notices.
 2. **`refresh-routes.test.ts`**, which deletes the key by hand — expiry, as the router experiences
    it — and asserts the route comes back, and that its new lease is hours rather than seconds.
+
+3. **The router reads through to Postgres on a clean Valkey miss.** It resolves only the live,
+   ready production deployment belonging to the exact generated or active custom hostname, then
+   restores the 24-hour Valkey entry. A Valkey error remains a 404 instead of moving the entire hot
+   path onto Postgres; a Postgres error also fails closed and is not cached. The durable connection
+   and its TLS configuration are checked at boot, so a deployment cannot look healthy while this
+   second defence is absent.
 
 The refresher is driven from the live-deployment pointer rather than from the deployment table, so a
 release that has been rolled back past does not resurrect its own hostname, and a project whose

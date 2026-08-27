@@ -6,8 +6,8 @@ import type { JobHandler } from "./worker"
  * Re-publishing every live route, before the last write expires.
  *
  * `publishRoute` writes `route:<host>` with a 24-hour TTL and is called from exactly one place —
- * the release handler, at deploy time. Nothing refreshed it, and the router has no fallback: a miss
- * is a 404. So **every tenant site stopped resolving 24 hours after its last deploy**, and a
+ * the release handler, at deploy time. Nothing refreshed it, and the router had no fallback: a miss
+ * was a 404. So **every tenant site stopped resolving 24 hours after its last deploy**, and a
  * project nobody had redeployed in a day was simply gone.
  *
  * It passed every test that existed, because every test deploys and then immediately asserts. The
@@ -15,9 +15,8 @@ import type { JobHandler } from "./worker"
  * to fail, and here the answer was "wait a day".
  *
  * This runs well inside the TTL so a single missed run is survivable. It is deliberately *not* the
- * only defence — the router reads through to Postgres on a miss — because a refresher that dies
- * quietly reintroduces exactly the failure it was written to prevent, and the symptom would again
- * be "everything works until tomorrow".
+ * only defence — the router now reads through to Postgres on a clean Valkey miss — because a
+ * refresher that dies quietly must not reintroduce exactly the failure it was written to prevent.
  */
 export const REFRESH_ROUTES_KIND = "platform.refresh_routes"
 

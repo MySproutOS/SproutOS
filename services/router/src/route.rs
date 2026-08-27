@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Where a hostname goes. Field names match the TypeScript writer exactly.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Route {
     /// The alias ARN, so we invoke whatever `live` currently points at.
     pub arn: String,
