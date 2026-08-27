@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use reqwest::StatusCode;
@@ -15,6 +16,8 @@ use sproutos_tenant_auth::TenantIdentity;
 use tokio::sync::Mutex;
 
 const MANAGER_USER: &str = "sproutos_search_proxy_manager";
+const SECURITY_PUT_MAX_ATTEMPTS: usize = 4;
+const SECURITY_PUT_BASE_BACKOFF_MS: u64 = 20;
 const ALPHABET: &[u8] = b"0123456789abcdefghjkmnpqrstvwxyz";
 type HmacSha256 = Hmac<Sha256>;
 
@@ -208,24 +211,52 @@ impl SecurityManager {
             "{}/_plugins/_security/api/{path}",
             self.inner.upstream.trim_end_matches('/')
         );
-        let request = self
-            .inner
-            .client
-            .put(url)
-            .basic_auth(
-                MANAGER_USER,
-                Some(String::from_utf8_lossy(&self.inner.root_key)),
-            )
-            .json(&body);
-        let response = request.send().await.map_err(SecurityError::Unreachable)?;
-        if !response.status().is_success() {
-            return Err(SecurityError::Refused {
-                resource,
-                status: response.status(),
-            });
+        for attempt in 0..SECURITY_PUT_MAX_ATTEMPTS {
+            let response = self
+                .inner
+                .client
+                .put(&url)
+                .basic_auth(
+                    MANAGER_USER,
+                    Some(String::from_utf8_lossy(&self.inner.root_key)),
+                )
+                .json(&body)
+                .send()
+                .await
+                .map_err(SecurityError::Unreachable)?;
+            let status = response.status();
+            if status.is_success() {
+                return Ok(());
+            }
+
+            /*
+              The Security plugin stores these documents in its own index. Two router instances
+              can PUT the same deterministic document at once and one receives a transient 409
+              while the other's write advances that index. A process-local mutex cannot serialize
+              separate routers, so retry only that conflict, with a bounded exponential delay and
+              a small time-derived jitter to keep the losing instances from colliding in lockstep.
+
+              Every other status fails immediately. Four failed conflicts fail closed rather than
+              turning an unavailable security index into an unbounded tenant request.
+            */
+            if status == StatusCode::CONFLICT && attempt + 1 < SECURITY_PUT_MAX_ATTEMPTS {
+                tokio::time::sleep(conflict_backoff(attempt)).await;
+                continue;
+            }
+            return Err(SecurityError::Refused { resource, status });
         }
-        Ok(())
+
+        unreachable!("the bounded provisioning loop always returns")
     }
+}
+
+fn conflict_backoff(attempt: usize) -> Duration {
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64
+        % SECURITY_PUT_BASE_BACKOFF_MS;
+    Duration::from_millis(SECURITY_PUT_BASE_BACKOFF_MS * (1 << attempt) + jitter)
 }
 
 fn encode(bytes: &[u8]) -> String {
@@ -254,6 +285,7 @@ mod tests {
     use axum::routing::put;
     use axum::{Json, Router};
     use sproutos_tenant_auth::ResourceKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
     type Seen = Arc<Mutex<Vec<(String, HeaderMap, serde_json::Value)>>>;
@@ -374,6 +406,72 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn transient_security_index_conflicts_are_retried() {
+        async fn conflict_then_create(State(calls): State<Arc<AtomicUsize>>) -> StatusCode {
+            if calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::CREATED
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .fallback(put(conflict_then_create))
+            .with_state(Arc::clone(&calls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let manager = SecurityManager::new(
+            reqwest::Client::new(),
+            format!("http://{address}"),
+            "0123456789abcdef0123456789abcdef".into(),
+        )
+        .unwrap();
+
+        manager
+            .put("role", "roles/tenant", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn persistent_security_index_conflicts_are_bounded() {
+        async fn conflict(State(calls): State<Arc<AtomicUsize>>) -> StatusCode {
+            calls.fetch_add(1, Ordering::SeqCst);
+            StatusCode::CONFLICT
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .fallback(put(conflict))
+            .with_state(Arc::clone(&calls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let manager = SecurityManager::new(
+            reqwest::Client::new(),
+            format!("http://{address}"),
+            "0123456789abcdef0123456789abcdef".into(),
+        )
+        .unwrap();
+
+        let error = manager
+            .put("role", "roles/tenant", json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            SecurityError::Refused {
+                status: StatusCode::CONFLICT,
+                ..
+            }
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), SECURITY_PUT_MAX_ATTEMPTS);
     }
 
     #[tokio::test]

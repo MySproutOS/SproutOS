@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use search_proxy::metering::SearchMeter;
 use search_proxy::naming::prefix_for;
-use search_proxy::security::SecurityManager;
+use search_proxy::security::{SecurityManager, TenantSecurityIdentity};
 use search_proxy::{Proxy, handle};
 use sproutos_llm_proxy::spool::{MeteringSpool, SpoolLimits};
 use sproutos_metering_proto::{UsageBatch, UsageDimension};
@@ -481,6 +481,139 @@ fn admin_request(method: reqwest::Method, path: &str) -> reqwest::RequestBuilder
                     .unwrap_or_else(|_| "L0cal!Windmill-Quartz-83".into()),
             ),
         )
+}
+
+/// A request straight to OpenSearch as the generated tenant user.
+///
+/// This deliberately bypasses every proxy route and rewrite. A denial here belongs to the engine's
+/// Security plugin; a proxy bug cannot make the test pass by rejecting the request first.
+async fn direct_as_tenant(
+    tenant: &TenantSecurityIdentity,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (u16, String) {
+    let mut request = reqwest::Client::new()
+        .request(method, format!("{}{path}", upstream()))
+        .basic_auth(&tenant.user, Some(&tenant.password));
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.expect("direct tenant request");
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap_or_default())
+}
+
+#[tokio::test]
+async fn opensearch_itself_enforces_the_tenant_boundary() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let a = provision(&url).await;
+    let b = provision(&url).await;
+    let manager = SecurityManager::new(
+        reqwest::Client::new(),
+        upstream(),
+        std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY")
+            .unwrap_or_else(|_| "local-search-security-root-key-32-bytes".into()),
+    )
+    .expect("security manager");
+    let a_security = manager
+        .ensure(&a.identity, &prefix_for(&a.identity))
+        .await
+        .expect("provision tenant a in OpenSearch");
+    let b_security = manager
+        .ensure(&b.identity, &prefix_for(&b.identity))
+        .await
+        .expect("provision tenant b in OpenSearch");
+
+    let logical = unique_index("engine-boundary");
+    let a_index = format!("{}{logical}", prefix_for(&a.identity));
+    let b_index = format!("{}{logical}", prefix_for(&b.identity));
+    for (security, index, marker) in [
+        (&a_security, &a_index, "tenant a engine proof"),
+        (&b_security, &b_index, "tenant b engine proof"),
+    ] {
+        let (status, body) = direct_as_tenant(
+            security,
+            reqwest::Method::PUT,
+            &format!("/{index}/_doc/1?refresh=true"),
+            Some(serde_json::json!({ "marker": marker, "tags": [marker] })),
+        )
+        .await;
+        assert!((200..300).contains(&status), "{status} {body}");
+    }
+
+    // Positive control: these credentials are usable directly when the index belongs to them.
+    let (status, body) = direct_as_tenant(
+        &a_security,
+        reqwest::Method::GET,
+        &format!("/{a_index}/_search"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("tenant a engine proof"), "{body}");
+
+    // The physical foreign index name is presented directly to OpenSearch. No proxy is present to
+    // rewrite it to tenant A's prefix, so only the engine's role can stop this read.
+    let (status, body) = direct_as_tenant(
+        &a_security,
+        reqwest::Method::GET,
+        &format!("/{b_index}/_search"),
+        None,
+    )
+    .await;
+    assert_eq!(status, 403, "foreign index returned {status}: {body}");
+    assert!(
+        !body.contains("tenant b engine proof"),
+        "cross-tenant read: {body}"
+    );
+
+    // Terms lookup is an auxiliary read named inside the query body. It is the kind of path a
+    // future proxy parser could miss, which is precisely why the engine boundary must exist.
+    let (status, body) = direct_as_tenant(
+        &a_security,
+        reqwest::Method::POST,
+        &format!("/{a_index}/_search"),
+        Some(serde_json::json!({
+            "query": {
+                "terms": {
+                    "marker": {
+                        "index": b_index,
+                        "id": "1",
+                        "path": "tags"
+                    }
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(
+        status, 403,
+        "foreign terms lookup returned {status}: {body}"
+    );
+    assert!(
+        !body.contains("tenant b engine proof"),
+        "cross-tenant read: {body}"
+    );
+
+    for (method, path) in [
+        (reqwest::Method::GET, "/_cat/indices?format=json"),
+        (reqwest::Method::GET, "/_cluster/health"),
+        (
+            reqwest::Method::GET,
+            "/_plugins/_security/api/internalusers",
+        ),
+    ] {
+        let (status, body) = direct_as_tenant(&a_security, method, path, None).await;
+        assert_eq!(status, 403, "admin path {path} returned {status}: {body}");
+    }
+
+    cleanup(&url, &[&a, &b]).await;
 }
 
 #[tokio::test]
