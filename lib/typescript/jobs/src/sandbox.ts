@@ -766,6 +766,49 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
         }
       }
     } catch (error) {
+      if (error instanceof SandboxNotFoundError) {
+        /*
+          A stopped row can outlive Daytona's provider object.
+
+          Daytona auto-archives stopped sandboxes and the reaper also treats an already-missing
+          object as stopped. Starting that stale id can never succeed: retrying the same start job
+          only turns `starting` into `failed`, after which the reaper writes `stopped` again and
+          the next request repeats the loop. Clear the stale join and enqueue the ordinary
+          provision path instead. The row lock makes concurrent missing-object observations
+          collapse into one replacement, and the old provider id is part of the idempotency key so
+          a later, genuinely different replacement is not suppressed.
+        */
+        await db.transaction().execute(async (tx) => {
+          const current = await tx
+            .selectFrom("sandbox")
+            .select(["externalId", "state"])
+            .where("id", "=", sandbox.id)
+            .forUpdate()
+            .executeTakeFirst()
+          if (
+            current === undefined ||
+            current.externalId !== sandbox.externalId ||
+            !["starting", "failed"].includes(current.state)
+          ) {
+            return
+          }
+
+          await crudSandbox(tx).update(sandbox.id, {
+            externalId: null,
+            state: "starting",
+            lastActivityAt: sql<Date>`now()` as unknown as Date,
+          })
+          await enqueue(tx, {
+            kind: SANDBOX_KINDS.provision,
+            organizationId: job.organizationId,
+            payload: { sandboxId: sandbox.id },
+            idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${sandbox.externalId}`,
+            maxAttempts: 3,
+          })
+        })
+        return
+      }
+
       const failed = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
         state: "failed",
       })

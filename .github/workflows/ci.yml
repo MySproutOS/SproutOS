@@ -441,3 +441,4 @@ jobs:
         run: |
           bash bin/fill-idle.test.sh
           bash bin/cutover.test.sh
+          bash bin/user-data.test.sh

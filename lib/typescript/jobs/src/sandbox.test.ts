@@ -1,4 +1,5 @@
 import { crudSandbox } from "@lib/dao"
+import { SandboxNotFoundError } from "@lib/sandbox"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
@@ -528,7 +529,15 @@ describe("startSandbox", () => {
             return Promise.resolve()
           },
         }) as never,
-    )({ id: v7(), kind: SANDBOX_KINDS.start, payload: { sandboxId: sandbox.id } } as never, context)
+    )(
+      {
+        id: v7(),
+        kind: SANDBOX_KINDS.start,
+        organizationId,
+        payload: { sandboxId: sandbox.id },
+      } as never,
+      context,
+    )
 
     expect(started).toEqual(["daytona-start-test"])
     const row = await db
@@ -584,6 +593,54 @@ describe("startSandbox", () => {
       .where("id", "=", sandbox.id)
       .executeTakeFirstOrThrow()
     expect(row.state).toBe("running")
+  })
+
+  it("reprovisions when a stopped row points at a provider object that no longer exists", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+
+    const missingExternalId = `daytona-missing-${v7()}`
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: missingExternalId,
+      provider: "daytona",
+      state: "starting",
+    })
+
+    await startSandbox(
+      () =>
+        ({
+          start: () => Promise.reject(new SandboxNotFoundError(missingExternalId)),
+        }) as never,
+    )(
+      {
+        id: v7(),
+        kind: SANDBOX_KINDS.start,
+        organizationId,
+        payload: { sandboxId: sandbox.id },
+      } as never,
+      context,
+    )
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select(["state", "externalId"])
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ state: "starting", externalId: null })
+
+    const jobs = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "payload", "idempotencyKey"])
+      .where("organizationId", "=", organizationId)
+      .execute()
+    expect(jobs).toContainEqual({
+      kind: SANDBOX_KINDS.provision,
+      payload: { sandboxId: sandbox.id },
+      idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${missingExternalId}`,
+    })
   })
 })
 
