@@ -582,6 +582,36 @@ async fn a_missing_cached_acl_user_is_reprovisioned_once() {
 }
 
 #[tokio::test]
+async fn deleting_the_acl_user_closes_a_live_tenant_connection() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut tenant = Client::connect(address).await;
+    assert_eq!(tenant.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+    assert_eq!(tenant.send(&["PING"]).await, "+PONG\r\n");
+
+    let mut admin = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(admin.send(&["ACL", "DELUSER", &username]).await, ":1\r\n");
+
+    let mut byte = [0_u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), tenant.stream.read(&mut byte))
+        .await
+        .expect("the proxy kept a revoked tenant session open")
+        .expect("read after ACL deletion");
+    assert_eq!(
+        read, 0,
+        "the proxy did not close after its tenant upstream was revoked"
+    );
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
 async fn backend_acl_rejects_another_tenants_key_and_admin_commands() {
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {

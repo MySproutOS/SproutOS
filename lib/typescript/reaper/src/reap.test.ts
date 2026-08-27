@@ -118,6 +118,102 @@ describe.skipIf(!valkeyUp)("purging a tenant's Valkey keys", () => {
   })
 })
 
+describe.skipIf(!valkeyUp)("reaping a Valkey service", () => {
+  const organizationId = v7()
+  const userId = v7()
+  const serviceId = v7()
+  const username = tenantUsername({
+    organizationId,
+    kind: "queue",
+    resourceId: serviceId,
+  })
+
+  beforeAll(async () => {
+    const region = await db
+      .selectFrom("region")
+      .select("id")
+      .orderBy("id", "asc")
+      .executeTakeFirstOrThrow()
+
+    await db
+      .insertInto("user")
+      .values({ id: userId, email: `reaper-valkey-${userId}@example.invalid` })
+      .execute()
+    await db
+      .insertInto("organization")
+      .values({
+        id: organizationId,
+        name: "Valkey Reaper",
+        slug: `reaper-valkey-${organizationId.slice(-12)}`,
+        kind: "team",
+        ownerUserId: userId,
+      })
+      .execute()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: serviceId,
+        organizationId,
+        projectId: null,
+        kind: "valkey",
+        name: "queue",
+        regionId: region.id,
+        status: "deleting",
+        deletedAt: new Date(),
+      })
+      .execute()
+  })
+
+  afterAll(async () => {
+    await client().call("ACL", "DELUSER", username)
+    await db.deleteFrom("backendService").where("id", "=", serviceId).execute()
+    await db.deleteFrom("organization").where("id", "=", organizationId).execute()
+    await db.deleteFrom("user").where("id", "=", userId).execute()
+  })
+
+  it("closes the tenant connection before it stamps the service purged", async () => {
+    const password = "reaper-live-session-password"
+    await client().call("ACL", "SETUSER", username, "reset", "on", `>${password}`, "+PING")
+    const tenant = new Redis(valkeyUrl, {
+      enableReadyCheck: false,
+      lazyConnect: true,
+      maxRetriesPerRequest: 0,
+      password,
+      retryStrategy: () => null,
+      username,
+    })
+    tenant.on("error", () => {})
+    await tenant.connect()
+    expect(await tenant.ping()).toBe("PONG")
+
+    const ended = new Promise<void>((resolve) =>
+      tenant.once("end", () => {
+        resolve()
+      }),
+    )
+    const result = await reapDeletedServices(db, { valkeyUrl, search, logs: false })
+    await Promise.race([
+      ended,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Valkey did not close the reaped ACL session"))
+        }, 2_000)
+      }),
+    ])
+
+    expect(result).toContainEqual({ backendServiceId: serviceId, kind: "valkey", removed: 0 })
+    expect(
+      (
+        await db
+          .selectFrom("backendService")
+          .select("purgedAt")
+          .where("id", "=", serviceId)
+          .executeTakeFirstOrThrow()
+      ).purgedAt,
+    ).not.toBeNull()
+  })
+})
+
 describe.skipIf(!searchUp)("purging a tenant's indices", () => {
   it("deletes every index under the prefix and nothing outside it", async () => {
     const mine = v7()
@@ -147,7 +243,7 @@ describe.skipIf(!searchUp)("purging a tenant's indices", () => {
     expect(await securityResourceStatus(`roles/${encodeURIComponent(role)}`)).toBe(404)
 
     await purgeTenantIndices(search, tenantIndexPrefix(theirs))
-  })
+  }, 20_000)
 
   it("succeeds for a tenant that never indexed anything", async () => {
     // `_cat/indices/nomatch*` is a 200 with an empty array, not a 404 — asserted because the

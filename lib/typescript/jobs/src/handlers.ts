@@ -42,6 +42,7 @@ import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
+import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -87,6 +88,7 @@ export const JOB_KINDS = {
   destroySandbox: SANDBOX_KINDS.destroy,
   reapSandboxes: SANDBOX_KINDS.reap,
   meterSandboxes: SANDBOX_KINDS.meter,
+  revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -274,6 +276,21 @@ const chargeUsageJob: JobHandler = async (_job, { db }) => {
   }
 }
 
+const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
+  const payload = job.payload as { generationId?: unknown; username?: unknown }
+  if (typeof payload.generationId !== "string" || typeof payload.username !== "string") {
+    throw new Error("Valkey ACL revocation payload requires generationId and username")
+  }
+  const adminUrl = process.env.SERVICE_VALKEY_ADMIN_URL
+  if (adminUrl === undefined || adminUrl === "") {
+    throw new Error("SERVICE_VALKEY_ADMIN_URL is not set; Valkey ACL revocation cannot run")
+  }
+  await runValkeyAclRevocation(db, adminUrl, {
+    generationId: payload.generationId,
+    username: payload.username,
+  })
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   /*
     The GitHub webhook handlers.
@@ -308,6 +325,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.destroySandbox]: destroySandbox(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
+  [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
 }
 
 /**

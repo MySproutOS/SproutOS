@@ -18,6 +18,7 @@
     "@lib/envelope": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@utils/crypto": "workspace:*",
+    "ioredis": "^6.0.0",
     "kysely": "catalog:",
     "pg": "^8.23.0",
     "uuid": "catalog:"

@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely } from "kysely"
+import type { Kysely, Transaction } from "kysely"
 import { v7 } from "uuid"
 import {
   encodeShortId,
@@ -16,6 +16,12 @@ import {
   type ServiceDriver,
   ServiceNotConfiguredError,
 } from "./types"
+import {
+  deleteValkeyAclUser,
+  enqueueValkeyAclRevocation,
+  lockValkeyAclUser,
+  type ValkeyAclRevocation,
+} from "./valkey-revocation"
 
 /**
  * A Valkey service, which is a credential and nothing else.
@@ -41,6 +47,8 @@ export type ValkeyServiceConfig = {
   publicPort: number
   /** `rediss` where the proxy terminates TLS. Local development is plain `redis`. */
   scheme?: "redis" | "rediss"
+  /** Administrator endpoint used only to remove derived ACL users during credential revocation. */
+  adminUrl: string
 }
 
 export function valkeyServiceConfigFromEnv(
@@ -50,7 +58,12 @@ export function valkeyServiceConfigFromEnv(
   if (host === undefined || host === "") {
     throw new ServiceNotConfiguredError("SERVICE_VALKEY_PUBLIC_HOST", "valkey")
   }
+  const adminUrl = env.SERVICE_VALKEY_ADMIN_URL
+  if (adminUrl === undefined || adminUrl === "") {
+    throw new ServiceNotConfiguredError("SERVICE_VALKEY_ADMIN_URL", "valkey")
+  }
   return {
+    adminUrl,
     publicHost: host,
     publicPort: Number(env.SERVICE_VALKEY_PUBLIC_PORT ?? 6379),
     scheme: env.SERVICE_VALKEY_SCHEME === "redis" ? "redis" : "rediss",
@@ -99,6 +112,32 @@ export function valkeyKeyPrefix(backendServiceId: string): string {
   return `{kv:${encodeShortId(backendServiceId)}}:bull`
 }
 
+async function valkeyCredentialGeneration(trx: Transaction<DB>, username: string): Promise<string> {
+  return (
+    await trx
+      .selectFrom("serviceCredential")
+      .select("id")
+      .where("username", "=", username)
+      .orderBy("id", "desc")
+      .executeTakeFirstOrThrow()
+  ).id
+}
+
+async function finishRevocation(
+  trx: Transaction<DB>,
+  revocation: ValkeyAclRevocation,
+): Promise<void> {
+  await trx
+    .updateTable("backgroundJob")
+    .set({ finishedAt: new Date(), state: "succeeded", updatedAt: new Date() })
+    .where("id", "=", revocation.jobId)
+    .execute()
+}
+
+function revocationError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error("Valkey ACL deletion failed", { cause })
+}
+
 /**
  * The Valkey driver, and one capability beyond `ServiceDriver`.
  *
@@ -115,11 +154,35 @@ export function valkeyDriver(
   async function locate(backendServiceId: string) {
     const row = await db
       .selectFrom("serviceCredential")
-      .select(["id", "username", "lastFour"])
+      .innerJoin("backendService", "backendService.id", "serviceCredential.backendServiceId")
+      .select([
+        "serviceCredential.id as id",
+        "serviceCredential.username as username",
+        "serviceCredential.lastFour as lastFour",
+        "backendService.organizationId as organizationId",
+      ])
       .where("backendServiceId", "=", backendServiceId)
+      .where("purpose", "=", "tenant")
       .where("revokedAt", "is", null)
       .executeTakeFirst()
 
+    if (row === undefined) throw new ServiceNotProvisionedError(backendServiceId)
+    return row
+  }
+
+  async function latestTenantCredential(backendServiceId: string) {
+    const row = await db
+      .selectFrom("serviceCredential")
+      .innerJoin("backendService", "backendService.id", "serviceCredential.backendServiceId")
+      .select([
+        "serviceCredential.id as id",
+        "serviceCredential.username as username",
+        "backendService.organizationId as organizationId",
+      ])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("purpose", "=", "tenant")
+      .orderBy("serviceCredential.id", "desc")
+      .executeTakeFirst()
     if (row === undefined) throw new ServiceNotProvisionedError(backendServiceId)
     return row
   }
@@ -196,15 +259,52 @@ export function valkeyDriver(
       order matters: a worker whose pod is still running loses its connection the moment this
       commits, which is why the caller restarts it with the new URI.
     */
-    await db
-      .updateTable("serviceCredential")
-      .set({ revokedAt: new Date() })
-      .where("backendServiceId", "=", backendServiceId)
-      .where("purpose", "=", "worker")
-      .where("revokedAt", "is", null)
-      .execute()
+    const secret = generateSecret()
+    const secretHash = await hashGeneratedSecret(secret)
+    const outcome = await db.transaction().execute(async (trx) => {
+      await lockValkeyAclUser(trx, username)
+      const previous = await trx
+        .selectFrom("serviceCredential")
+        .select("id")
+        .where("backendServiceId", "=", backendServiceId)
+        .where("purpose", "=", "worker")
+        .where("revokedAt", "is", null)
+        .executeTakeFirst()
 
-    const secret = await issue(backendServiceId, username, "worker")
+      if (previous !== undefined) {
+        const cutoff = await valkeyCredentialGeneration(trx, username)
+        await trx
+          .updateTable("serviceCredential")
+          .set({ revokedAt: new Date() })
+          .where("id", "=", previous.id)
+          .execute()
+        const revocation = await enqueueValkeyAclRevocation(trx, {
+          generationId: cutoff,
+          organizationId: service.organizationId,
+          username,
+        })
+        try {
+          await deleteValkeyAclUser(config.adminUrl, username)
+          await finishRevocation(trx, revocation)
+        } catch (error) {
+          return { error }
+        }
+      }
+
+      await trx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId,
+          username,
+          purpose: "worker",
+          secretHash,
+          lastFour: lastFour(secret),
+        })
+        .execute()
+      return {}
+    })
+    if (outcome.error !== undefined) throw revocationError(outcome.error)
 
     return valkeyUri({
       scheme,
@@ -247,7 +347,7 @@ export function valkeyDriver(
   }
 
   async function rotateCredentials(backendServiceId: string) {
-    const existing = await locate(backendServiceId)
+    const existing = await latestTenantCredential(backendServiceId)
 
     /*
       Revoke the old credential, then insert the new one, in one transaction.
@@ -264,13 +364,28 @@ export function valkeyDriver(
       from a leaked credential, and a leaked credential that keeps working for another ten minutes
       has not been recovered from.
     */
-    const secret = await db.transaction().execute(async (trx) => {
-      const fresh = generateSecret()
+    const fresh = generateSecret()
+    const freshHash = await hashGeneratedSecret(fresh)
+    const outcome = await db.transaction().execute(async (trx) => {
+      await lockValkeyAclUser(trx, existing.username)
+      const cutoff = await valkeyCredentialGeneration(trx, existing.username)
       await trx
         .updateTable("serviceCredential")
         .set({ revokedAt: new Date() })
-        .where("id", "=", existing.id)
+        .where("backendServiceId", "=", backendServiceId)
+        .where("purpose", "=", "tenant")
+        .where("revokedAt", "is", null)
         .execute()
+      const revocation = await enqueueValkeyAclRevocation(trx, {
+        generationId: cutoff,
+        organizationId: existing.organizationId,
+        username: existing.username,
+      })
+      try {
+        await deleteValkeyAclUser(config.adminUrl, existing.username)
+      } catch (error) {
+        return { error }
+      }
       await trx
         .insertInto("serviceCredential")
         .values({
@@ -279,12 +394,14 @@ export function valkeyDriver(
           // Deliberately the same username: it encodes which tenant this is, so changing it would
           // change which keyspace the connection lands in.
           username: existing.username,
-          secretHash: await hashGeneratedSecret(fresh),
+          secretHash: freshHash,
           lastFour: lastFour(fresh),
         })
         .execute()
-      return fresh
+      await finishRevocation(trx, revocation)
+      return {}
     })
+    if (outcome.error !== undefined) throw revocationError(outcome.error)
 
     return {
       connectionUri: valkeyUri({
@@ -292,7 +409,7 @@ export function valkeyDriver(
         host: config.publicHost,
         port: config.publicPort,
         username: existing.username,
-        secret,
+        secret: fresh,
       }),
       keyPrefix: valkeyKeyPrefix(backendServiceId),
     }
@@ -301,18 +418,53 @@ export function valkeyDriver(
   async function suspend(backendServiceId: string): Promise<void> {
     // Revoking the credential is the whole suspension: the proxy refuses the next connection, and
     // the tenant's keys are untouched. There is no server to stop.
-    await db
-      .updateTable("serviceCredential")
-      .set({ revokedAt: new Date() })
-      .where("backendServiceId", "=", backendServiceId)
-      .where("revokedAt", "is", null)
-      .execute()
+    const outcome = await db.transaction().execute(async (trx) => {
+      const credentials = await trx
+        .selectFrom("serviceCredential")
+        .innerJoin("backendService", "backendService.id", "serviceCredential.backendServiceId")
+        .select([
+          "serviceCredential.id as id",
+          "serviceCredential.username as username",
+          "backendService.organizationId as organizationId",
+        ])
+        .where("serviceCredential.backendServiceId", "=", backendServiceId)
+        .where("serviceCredential.revokedAt", "is", null)
+        .orderBy("serviceCredential.id", "desc")
+        .execute()
 
-    await db
-      .updateTable("backendService")
-      .set({ status: "suspended", updatedAt: new Date() })
-      .where("id", "=", backendServiceId)
-      .execute()
+      let error: unknown
+      const newest = credentials[0]
+      if (newest !== undefined) {
+        await lockValkeyAclUser(trx, newest.username)
+        await trx
+          .updateTable("serviceCredential")
+          .set({ revokedAt: new Date() })
+          .where("backendServiceId", "=", backendServiceId)
+          .where("revokedAt", "is", null)
+          .execute()
+        const revocation = await enqueueValkeyAclRevocation(trx, {
+          generationId: newest.id,
+          organizationId: newest.organizationId,
+          username: newest.username,
+        })
+        try {
+          await deleteValkeyAclUser(config.adminUrl, newest.username)
+          await finishRevocation(trx, revocation)
+        } catch (cause) {
+          error = cause
+        }
+      }
+
+      await trx
+        .updateTable("backendService")
+        .set({ status: "suspended", updatedAt: new Date() })
+        .where("id", "=", backendServiceId)
+        .execute()
+      return { error }
+    })
+    if (outcome.error !== undefined) {
+      console.error("[valkey] ACL deletion failed; durable retry queued", outcome.error)
+    }
   }
 
   async function destroy(backendServiceId: string): Promise<void> {

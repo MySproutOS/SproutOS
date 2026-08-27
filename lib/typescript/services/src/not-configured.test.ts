@@ -56,4 +56,10 @@ describe("a deployment with no service configuration", () => {
       ServiceNotConfiguredError,
     )
   })
+
+  it("requires the Valkey administrator endpoint used for durable ACL revocation", () => {
+    expect(() =>
+      valkeyServiceConfigFromEnv({ SERVICE_VALKEY_PUBLIC_HOST: "valkey.example.invalid" }),
+    ).toThrow(expect.objectContaining({ variable: "SERVICE_VALKEY_ADMIN_URL" }))
+  })
 })

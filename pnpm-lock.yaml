@@ -1072,6 +1072,9 @@ importers:
       '@utils/crypto':
         specifier: workspace:*
         version: link:../utils/crypto
+      ioredis:
+        specifier: ^6.0.0
+        version: 6.0.0
       kysely:
         specifier: 'catalog:'
         version: 0.29.5

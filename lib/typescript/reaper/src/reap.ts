@@ -82,6 +82,15 @@ export async function reapDeletedServices(
 
       if (service.kind === "valkey" && redis !== undefined) {
         removed = (await purgeTenantKeys(redis, service.id)).deleted
+        await redis.call(
+          "ACL",
+          "DELUSER",
+          tenantUsername({
+            organizationId: service.organizationId,
+            kind: "queue",
+            resourceId: service.id,
+          }),
+        )
       } else if (service.kind === "elasticsearch") {
         removed = (
           await purgeTenantSearch(
