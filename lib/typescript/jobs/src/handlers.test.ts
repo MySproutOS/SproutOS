@@ -53,4 +53,20 @@ describe("PLATFORM_HANDLERS", () => {
       else process.env.CLICKHOUSE_URL = previous
     }
   })
+
+  it("fails visibly when OpenSearch reconciliation has no derivation root", async () => {
+    const previous = process.env.SEARCH_PROXY_SECURITY_ROOT_KEY
+    delete process.env.SEARCH_PROXY_SECURITY_ROOT_KEY
+    try {
+      const handler = PLATFORM_HANDLERS[JOB_KINDS.reconcileSearchSecurity]
+      expect(handler).toBeTypeOf("function")
+      if (handler === undefined) throw new Error("OpenSearch reconciliation is not registered")
+      await expect(handler({} as never, { db: {} } as never)).rejects.toThrow(
+        "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; OpenSearch tenant identities cannot be reconciled",
+      )
+    } finally {
+      if (previous === undefined) delete process.env.SEARCH_PROXY_SECURITY_ROOT_KEY
+      else process.env.SEARCH_PROXY_SECURITY_ROOT_KEY = previous
+    }
+  })
 })

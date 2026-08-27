@@ -27,6 +27,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const relayKey = `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`
     const importKey = `${JOB_KINDS.importUsage}:${now.toISOString().slice(0, 15)}`
     const creditKey = `${JOB_KINDS.refreshCreditStates}:2099-12-31T23:55`
+    const searchSecurityKey = `${JOB_KINDS.reconcileSearchSecurity}:2099-12-31T23`
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
@@ -36,7 +37,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const scheduled = await db
       .selectFrom("backgroundJob")
       .select(["kind", "idempotencyKey"])
-      .where("idempotencyKey", "in", [relayKey, importKey, creditKey])
+      .where("idempotencyKey", "in", [relayKey, importKey, creditKey, searchSecurityKey])
       .orderBy("kind")
       .execute()
 
@@ -44,6 +45,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
       { kind: JOB_KINDS.importUsage, idempotencyKey: importKey },
       { kind: JOB_KINDS.refreshCreditStates, idempotencyKey: creditKey },
       { kind: JOB_KINDS.relayMeteringOutbox, idempotencyKey: relayKey },
+      { kind: JOB_KINDS.reconcileSearchSecurity, idempotencyKey: searchSecurityKey },
     ])
   })
 })

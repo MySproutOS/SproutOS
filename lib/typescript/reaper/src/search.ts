@@ -62,7 +62,7 @@ export async function purgeTenantIndices(
 ): Promise<string[]> {
   if (prefix === "") throw new RangeError("Refusing to purge indices under an empty prefix")
 
-  const listed = await request<{ index: string }[]>(
+  const listed = await searchAdminRequest<{ index: string }[]>(
     config,
     "GET",
     // `expand_wildcards=all` so a closed index is found too. A closed index still holds its shards
@@ -74,7 +74,7 @@ export async function purgeTenantIndices(
   const names = listed.map((row) => row.index).filter((name) => name.startsWith(prefix))
 
   for (const name of names) {
-    await request(config, "DELETE", `/${encodeURIComponent(name)}`)
+    await searchAdminRequest(config, "DELETE", `/${encodeURIComponent(name)}`)
   }
 
   return names
@@ -93,25 +93,30 @@ export async function purgeTenantSearch(
 
   // User first: after this succeeds there is no credential that can use the role while the other
   // two idempotent deletes finish. A partial failure leaves the service unstamped for the next pass.
-  await request(
+  await searchAdminRequest(
     config,
     "DELETE",
     `/_plugins/_security/api/internalusers/${encodeURIComponent(username)}`,
   )
-  await request(
+  await searchAdminRequest(
     config,
     "DELETE",
     `/_plugins/_security/api/rolesmapping/${encodeURIComponent(role)}`,
   )
-  await request(config, "DELETE", `/_plugins/_security/api/roles/${encodeURIComponent(role)}`)
+  await searchAdminRequest(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/roles/${encodeURIComponent(role)}`,
+  )
 
   return names
 }
 
-async function request<T>(
+export async function searchAdminRequest<T>(
   config: SearchAdminConfig,
-  method: "GET" | "DELETE",
+  method: "GET" | "PUT" | "DELETE",
   path: string,
+  payload?: unknown,
 ): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" }
   if (config.username !== undefined) {
@@ -119,7 +124,12 @@ async function request<T>(
     headers.authorization = `Basic ${auth}`
   }
 
-  const response = await fetch(`${config.url}${path}`, { method, headers })
+  if (payload !== undefined) headers["content-type"] = "application/json"
+  const response = await fetch(`${config.url}${path}`, {
+    method,
+    headers,
+    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+  })
   const body = await response.text()
 
   // 404 on a DELETE means someone else already removed it, which is the outcome we wanted.

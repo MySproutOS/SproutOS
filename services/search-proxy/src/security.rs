@@ -10,7 +10,7 @@ use std::sync::Arc;
 use hmac::{Hmac, Mac};
 use reqwest::StatusCode;
 use serde_json::json;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use sproutos_tenant_auth::TenantIdentity;
 use tokio::sync::Mutex;
 
@@ -116,7 +116,13 @@ impl SecurityManager {
             json!({
                 "password": identity.password,
                 "backend_roles": [identity.role],
-                "attributes": {}
+                "attributes": {
+                    "sproutos_managed": "search-v1",
+                    "sproutos_credential_sha256": format!(
+                        "{:x}",
+                        Sha256::digest(identity.password.as_bytes())
+                    )
+                }
             }),
         )
         .await?;
@@ -270,6 +276,10 @@ mod tests {
         assert_eq!(identity.user, tenant.username());
         assert_eq!(identity.role, "tenant_t00000000000000000000000001");
         assert_eq!(identity.password.len(), 52);
+        assert_eq!(
+            identity.password,
+            "cg4vg1275ggawkhs73n4p41eskvy8180w9xsg45f85vpxrgfqza0"
+        );
 
         // A second request for this tenant must not turn three Security API calls into permanent
         // request-path overhead.

@@ -15,3 +15,10 @@ export {
   type SearchAdminConfig,
 } from "./search"
 export { purgeTenantKeys, tenantKeyPrefix, type PurgeKeysResult } from "./valkey"
+export {
+  reconcileSearchSecurity,
+  deriveSearchSecurityPassword,
+  SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT,
+  SEARCH_SECURITY_REPAIRS_PER_PASS,
+  type SearchSecurityReconciliation,
+} from "./reconcile-search"

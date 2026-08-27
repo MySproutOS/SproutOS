@@ -10,7 +10,12 @@ import {
   observabilityConfigured,
   usageRollupsChangedBetween,
 } from "@lib/observability"
-import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
+import {
+  reap,
+  reconcileSearchSecurity,
+  SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT,
+  searchAdminConfigFromEnv,
+} from "@lib/reaper"
 import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
@@ -66,6 +71,7 @@ export const JOB_KINDS = {
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
+  reconcileSearchSecurity: "platform.reconcile_search_security",
   sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
@@ -186,6 +192,57 @@ const purgeDeletedTenants: JobHandler = async (_job, { db }) => {
   }
 }
 
+/** Repair live OpenSearch Security identities and make cardinality/drift visible. */
+const reconcileSearchSecurityJob: JobHandler = async (_job, { db }) => {
+  const rootKey = process.env.SEARCH_PROXY_SECURITY_ROOT_KEY
+  if (rootKey === undefined || rootKey === "") {
+    throw new Error(
+      "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; OpenSearch tenant identities cannot be reconciled",
+    )
+  }
+  const configuredLimit = process.env.SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT
+  const softLimit =
+    configuredLimit === undefined ? SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT : Number(configuredLimit)
+  const report = await reconcileSearchSecurity(db, searchAdminConfigFromEnv(), rootKey, softLimit)
+  const fields = [
+    `expected=${report.expected}`,
+    `observed_users=${report.observed.users}`,
+    `observed_roles=${report.observed.roles}`,
+    `observed_mappings=${report.observed.mappings}`,
+    `missing_users=${report.missing.users}`,
+    `missing_roles=${report.missing.roles}`,
+    `missing_mappings=${report.missing.mappings}`,
+    `drifted_users=${report.drifted.users}`,
+    `drifted_roles=${report.drifted.roles}`,
+    `drifted_mappings=${report.drifted.mappings}`,
+    `repaired_users=${report.repaired.users}`,
+    `repaired_roles=${report.repaired.roles}`,
+    `repaired_mappings=${report.repaired.mappings}`,
+    `orphaned_users=${report.orphaned.users}`,
+    `orphaned_roles=${report.orphaned.roles}`,
+    `orphaned_mappings=${report.orphaned.mappings}`,
+    `list_ms=${report.listLatencyMs.toFixed(1)}`,
+    `repair_ms=${report.repairLatencyMs.toFixed(1)}`,
+    `soft_limit=${report.softLimit}`,
+    `pending_repairs=${report.pendingRepairs}`,
+  ].join(" ")
+  console.info(`[jobs] OpenSearch Security reconciliation ${fields}`)
+  if (
+    report.softLimitExceeded ||
+    report.orphaned.users > 0 ||
+    report.orphaned.roles > 0 ||
+    report.orphaned.mappings > 0 ||
+    report.pendingRepairs > 0 ||
+    report.repaired.users > 0 ||
+    report.repaired.roles > 0 ||
+    report.repaired.mappings > 0
+  ) {
+    console.warn(
+      `[jobs] OpenSearch Security attention required soft_limit_exceeded=${report.softLimitExceeded} ${fields}`,
+    )
+  }
+}
+
 /**
  * Delete the rows whose retention window has closed.
  *
@@ -233,6 +290,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
+  [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
   [JOB_KINDS.sweepExpired]: retentionSweep,
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
@@ -339,6 +397,12 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.purgeDeletedTenants}:${hour}`,
     // Retried more than the others: this one talks to three systems we do not run in-process, and
     // a transient cluster error is the expected failure rather than a surprising one.
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    // Hourly: drifted-open roles are repaired even when no tenant happens to make a request.
+    kind: JOB_KINDS.reconcileSearchSecurity,
+    idempotencyKey: `${JOB_KINDS.reconcileSearchSecurity}:${hour}`,
     maxAttempts: 5,
   })
   await enqueue(db, {
