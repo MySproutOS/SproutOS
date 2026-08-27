@@ -60,6 +60,13 @@ export {
   type ValkeyAclRevocation,
 } from "./valkey-revocation"
 export {
+  expectedValkeyAclTokens,
+  VALKEY_ACL_POLICY,
+  valkeyAclSetUserArgs,
+  valkeyAclUsername,
+  type ValkeyAclIdentity,
+} from "./valkey-acl-policy"
+export {
   type ConnectionDetails,
   type CredentialRotationResult,
   type ProvisionInput,

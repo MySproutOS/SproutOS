@@ -22,3 +22,12 @@ export {
   SEARCH_SECURITY_REPAIRS_PER_PASS,
   type SearchSecurityReconciliation,
 } from "./reconcile-search"
+export {
+  reconcileValkeyAcl,
+  reconcileValkeyAclIdentities,
+  VALKEY_ACL_CARDINALITY_SOFT_LIMIT,
+  VALKEY_ACL_INSPECTIONS_PER_PASS,
+  VALKEY_ACL_REPAIRS_PER_PASS,
+  type ReconcileOptions as ValkeyAclReconcileOptions,
+  type ValkeyAclReconciliation,
+} from "./reconcile-valkey"
