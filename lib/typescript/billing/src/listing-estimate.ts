@@ -98,7 +98,9 @@ export async function estimateListingCosts(
       "project.storeListingId as storeListingId",
       "usageRollup.projectId as projectId",
       "usageRollup.dimension as dimension",
-      sql<string>`sum(usage_rollup.quantity)::text`.as("quantity"),
+      sql<string>`sum(greatest(usage_rollup.quantity - usage_rollup.externally_charged_quantity, 0))::text`.as(
+        "quantity",
+      ),
       // How many distinct days this project actually reported, so a fork that existed for three
       // days of the window is scaled from three days rather than from thirty.
       sql<string>`count(distinct usage_rollup.bucket_start)::text`.as("days"),
