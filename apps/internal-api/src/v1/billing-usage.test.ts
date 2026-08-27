@@ -23,14 +23,7 @@ const up = await databaseReachable()
 
 type Json = Record<string, unknown>
 
-const NO_WRITER_DIMENSIONS = [
-  "site_provisioned_gib_second",
-  "site_ws_connection_second",
-  "db_storage_gib_hour",
-  "db_compute_cu_second",
-  "workflow_exec_vcpu_second",
-  "workflow_exec_gib_second",
-] as const
+const NO_WRITER_DIMENSIONS = ["site_provisioned_gib_second"] as const
 
 async function call(
   method: string,
@@ -99,7 +92,7 @@ describe.skipIf(!up)("usage this period", () => {
     expect(response.json.burnPerDayMicroUsd).toBe("0")
   })
 
-  it("keeps priced dimensions with no writer absent rather than presenting invented zeroes", async ({
+  it("keeps dimensions with no writer absent rather than presenting invented zeroes", async ({
     skip,
   }) => {
     if (!up) skip()
@@ -109,6 +102,16 @@ describe.skipIf(!up)("usage this period", () => {
     for (const dimension of NO_WRITER_DIMENSIONS) {
       expect(lines.find((line) => line.dimension === dimension)).toBeUndefined()
     }
+  })
+
+  it("does not price unsupported WebSocket usage", async ({ skip }) => {
+    if (!up) skip()
+    const priced = await db
+      .selectFrom("priceBookItem")
+      .select("priceBookId")
+      .where("dimension", "=", "site_ws_connection_second")
+      .executeTakeFirst()
+    expect(priced).toBeUndefined()
   })
 
   it("rates a dimension against the price book and adds overhead", async ({ skip }) => {

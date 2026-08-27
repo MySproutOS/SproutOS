@@ -458,7 +458,6 @@ const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: 
   site_provisioned_gib_second: { label: "Provisioned memory", unit: "GiB-hours", divisor: 3600 },
   site_request: { label: "Requests", unit: "requests", divisor: 1 },
   site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },
-  site_ws_connection_second: { label: "WebSocket time", unit: "connection-hours", divisor: 3600 },
   db_storage_gib_hour: { label: "Postgres storage", unit: "GiB-months", divisor: 730 },
   db_compute_cu_second: { label: "Postgres compute", unit: "CU-hours", divisor: 3600 },
   es_storage_gib_hour: { label: "Search storage", unit: "GiB-months", divisor: 730 },

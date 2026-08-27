@@ -65,8 +65,6 @@ pub enum UsageDimension {
     SiteRequest,
     /// One byte of egress from a tenant site.
     SiteEgressByte,
-    /// One second of an open WebSocket connection.
-    SiteWsConnectionSecond,
     /// Database storage, in GiB-hours.
     DbStorageGibHour,
     /// Database compute, in compute-unit seconds.
@@ -106,7 +104,6 @@ impl UsageDimension {
         Self::SiteProvisionedGibSecond,
         Self::SiteRequest,
         Self::SiteEgressByte,
-        Self::SiteWsConnectionSecond,
         Self::DbStorageGibHour,
         Self::DbComputeCuSecond,
         Self::EsStorageGibHour,
@@ -131,7 +128,6 @@ impl UsageDimension {
             Self::SiteProvisionedGibSecond => "site_provisioned_gib_second",
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
-            Self::SiteWsConnectionSecond => "site_ws_connection_second",
             Self::DbStorageGibHour => "db_storage_gib_hour",
             Self::DbComputeCuSecond => "db_compute_cu_second",
             Self::EsStorageGibHour => "es_storage_gib_hour",
