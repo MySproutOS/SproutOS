@@ -43,34 +43,37 @@ KEYS=(
   KAFKA_BROKERS
   KAFKA_SASL_USERNAME
   KAFKA_SASL_PASSWORD
-  OVH_CLICKHOUSE_PASSWORD
+  KAFKA_USAGE_EVENT_SASL_USERNAME
+  KAFKA_USAGE_EVENT_SASL_PASSWORD
   # Runtime logs. Only the password is a secret; the URL, user and database are plain text in the
   # launch template, because a hostname is not a credential.
   CLICKHOUSE_PASSWORD
   # Signs metering batches. Unset, the ingest route answers 401 by design and no usage is recorded.
   METERING_INGEST_HMAC_KEY
-  # Where the coding agent runs. Sandboxes are rented, so without a key there is nowhere for an
+  # Sandboxes are rented, so without a key there is nowhere for an
   # agent to work and `daytonaConfigFromEnv` refuses at the first create rather than inventing a
   # default — the platform has never had one of these set, which is why no sandbox has ever
   # existed. `SANDBOX_DAYTONA_SNAPSHOT` names the image carrying the agent binaries; a wrong one
   # produces a sandbox that starts cleanly with no agent in it and reports no error.
-  SANDBOX_DAYTONA_API_KEY
+  DAYTONA_API_KEY
+  DAYTONA_ORGANIZATION_ID
   SANDBOX_DAYTONA_SNAPSHOT
   SANDBOX_DAYTONA_API_URL
   SANDBOX_DAYTONA_TARGET
+  SANDBOX_FORWARD_PROXY_ROOT_KEY
   # The key the control plane seals a sandbox's model credential under, and the router opens it
   # with. Both halves must hold the same value or every agent turn fails to authenticate — see
   # `@lib/proxy-secret`, and the fixtures both implementations assert against.
   LLM_PROXY_SECRET
+  # Platform-credit turns terminate at the router. This key is never injected into a sandbox.
+  OPENAI_KEY
   # Not derived from OpenTofu because nothing in this repository publishes the layer — the three
   # versions in the account were published by hand. Pinning it in the launch template would make it
   # silently stale on the next publish; here a person updates it in the same motion.
   LOG_EXTENSION_LAYER_ARN
-  # The basic-auth credential in front of OpenSearch on the OVH box, which authenticates nobody
-  # itself. `SEARCH_PROXY_UPSTREAM_AUTHORIZATION` is what the router's search split presents;
-  # `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD` are the same credential for the reaper, which
-  # goes straight to the cluster because an internal caller has no tenant to be separated from.
-  SEARCH_PROXY_UPSTREAM_AUTHORIZATION
+  # OpenSearch validates the reaper's internal admin user. This root key HMAC-derives a different
+  # internal password per tenant; neither the derived values nor the key leave the platform.
+  SEARCH_PROXY_SECURITY_ROOT_KEY
   SEARCH_ADMIN_USER
   SEARCH_ADMIN_PASSWORD
   # Managed Neon's API key, which creates a project per customer database. Nothing in this
@@ -84,6 +87,7 @@ KEYS=(
   # internal caller has no tenant to be separated from and could not authenticate to the proxy
   # anyway — the tenant's secret is stored as a one-way hash.
   VALKEY_PROXY_BACKEND
+  VALKEY_PROXY_ACL_ROOT_KEY
   SERVICE_VALKEY_ADMIN_URL
 )
 

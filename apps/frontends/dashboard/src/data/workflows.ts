@@ -24,7 +24,8 @@ export type Job = {
   projectId: string
   workflow: string
   duration: string
-  costMicros: bigint
+  /** Null while one of the run's billable dimensions has never been measured. */
+  costMicros: bigint | null
   status: string
 }
 
@@ -89,7 +90,7 @@ export function useRecentJobs(orgSlug: string) {
       projectId: run.projectId,
       workflow: run.workflowName,
       duration: durationLabel(run.durationMs),
-      costMicros: BigInt(run.costMicroUsd),
+      costMicros: run.costMicroUsd === null ? null : BigInt(run.costMicroUsd),
       status: run.status,
     })),
   }

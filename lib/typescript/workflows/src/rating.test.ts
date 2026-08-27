@@ -32,12 +32,21 @@ describe("quantitiesFor", () => {
       usage({ bytesEnqueued: 1_048_576n, dwellMs: 86_400_000n }),
     ).valkey_queue_byte_second
     expect(quantity).toBe("90596966400")
-    expect(BigInt(quantity)).toBe((1_048_576n * 86_400_000n) / 1000n)
+    expect(BigInt(quantity ?? "unmeasured")).toBe((1_048_576n * 86_400_000n) / 1000n)
   })
 
   it("charges nothing for a job that never waited", () => {
     expect(quantitiesFor(usage({ bytesEnqueued: 4_096n })).valkey_queue_byte_second).toBe("0")
     expect(quantitiesFor(usage({ dwellMs: 60_000n })).valkey_queue_byte_second).toBe("0")
+  })
+
+  it("keeps unmeasured queue residency unknown rather than calling it zero", () => {
+    expect(
+      quantitiesFor(usage({ bytesEnqueued: null, dwellMs: null })).valkey_queue_byte_second,
+    ).toBeNull()
+    expect(
+      quantitiesFor(usage({ bytesEnqueued: 4096n, dwellMs: null })).valkey_queue_byte_second,
+    ).toBeNull()
   })
 
   it("never produces a negative quantity", () => {

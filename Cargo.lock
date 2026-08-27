@@ -2597,10 +2597,12 @@ dependencies = [
  "aws-config",
  "aws-sdk-lambda",
  "aws-sdk-s3",
+ "aws-types",
  "axum",
  "base64",
  "bytes",
  "chrono",
+ "deadpool-postgres",
  "hmac 0.12.1",
  "pg-proxy",
  "redis",
@@ -2612,11 +2614,15 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sproutos-llm-proxy",
+ "sproutos-metering-proto",
+ "sproutos-sandbox-forward-proxy",
  "sproutos-service-credentials",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "valkey-proxy",
  "webpki-roots 1.0.9",
  "zip",
@@ -2816,8 +2822,13 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
+ "hmac 0.12.1",
+ "percent-encoding",
  "reqwest",
  "serde_json",
+ "sha2 0.10.9",
+ "sproutos-llm-proxy",
+ "sproutos-metering-proto",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",
  "thiserror 2.0.20",
@@ -3137,6 +3148,24 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "sproutos-sandbox-forward-proxy"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hmac 0.12.1",
+ "http 1.5.0",
+ "httparse",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -3713,8 +3742,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "hmac 0.12.1",
  "rustls-pki-types",
  "serde_json",
+ "sha2 0.10.9",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",
  "thiserror 2.0.20",

@@ -1,4 +1,5 @@
 import type { UsageBatch, UsageEvent } from "./canonical"
+import { isBillableDimension } from "./dimensions"
 
 /**
  * Turn the wire JSON into a batch, or say why not.
@@ -22,6 +23,10 @@ function attributesOf(value: unknown): Record<string, string> | undefined {
 
   const out: Record<string, string> = {}
   for (const [key, entry] of Object.entries(value)) {
+    // Exact parity with Rust's `UsageBatch::validate`. These keys become operational labels and
+    // ClickHouse map keys, so accepting a second vocabulary here would make a Rust-built batch
+    // valid or invalid depending on which side happened to inspect it first.
+    if (!/^[a-z0-9._-]+$/.test(key)) return undefined
     // Not coerced. `String(entry)` on an object gives "[object Object]", which signs cleanly and
     // means nothing.
     if (typeof entry !== "string") return undefined
@@ -48,7 +53,7 @@ function eventFrom(value: unknown): UsageEvent | string {
   if (projectId !== null && projectId !== undefined && typeof projectId !== "string") {
     return "project_id must be a string or null"
   }
-  if (typeof dimension !== "string") return "dimension must be a string"
+  if (!isBillableDimension(dimension)) return "dimension must be a current billable dimension"
   // `Number.isFinite` rather than `typeof === "number"`: NaN and the infinities are numbers, they
   // round-trip through JSON as `null`, and they bill as garbage.
   if (typeof quantity !== "number" || !Number.isFinite(quantity)) {
@@ -60,7 +65,9 @@ function eventFrom(value: unknown): UsageEvent | string {
   }
 
   const parsedAttributes = attributesOf(attributes)
-  if (parsedAttributes === undefined) return "attributes must be a flat string map"
+  if (parsedAttributes === undefined) {
+    return "attributes must be a flat string map with keys matching [a-z0-9._-]+"
+  }
 
   return {
     externalId,

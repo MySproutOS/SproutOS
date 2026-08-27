@@ -26,6 +26,8 @@ export type ProvisionInput = {
  */
 export type ProvisionResult = {
   connectionUri: string
+  /** Required client-side key prefix for engines whose URI cannot carry it. */
+  keyPrefix?: string
   host: string
   port: number
   database: string
@@ -35,6 +37,8 @@ export type ProvisionResult = {
 /** Everything but the secret. What a list or a detail page is allowed to show. */
 export type ConnectionDetails = Omit<ProvisionResult, "connectionUri">
 
+export type CredentialRotationResult = Pick<ProvisionResult, "connectionUri" | "keyPrefix">
+
 export type ServiceDriver = {
   kind: ServiceKind
   provision: (input: ProvisionInput) => Promise<ProvisionResult>
@@ -42,7 +46,7 @@ export type ServiceDriver = {
   connectionUri: (backendServiceId: string) => Promise<string>
   details: (backendServiceId: string) => Promise<ConnectionDetails>
   /** A new password, invalidating the old URI. The only recovery from a leaked one. */
-  rotateCredentials: (backendServiceId: string) => Promise<string>
+  rotateCredentials: (backendServiceId: string) => Promise<CredentialRotationResult>
   suspend: (backendServiceId: string) => Promise<void>
   /**
    * Undo a suspension, where the driver can.

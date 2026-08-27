@@ -179,10 +179,11 @@ describe.skipIf(!reachable)("search driver", () => {
     })
 
     const second = await driver.rotateCredentials(backendServiceId)
-    expect(secretFrom(second)).not.toBe(secretFrom(first.connectionUri))
+    expect(secretFrom(second.connectionUri)).not.toBe(secretFrom(first.connectionUri))
+    expect(second.keyPrefix).toBeUndefined()
     // The username encodes the index prefix. Changing it would hand the tenant a URI pointing at an
     // empty namespace and their data would appear to have vanished.
-    expect(new URL(second).username).toBe(new URL(first.connectionUri).username)
+    expect(new URL(second.connectionUri).username).toBe(new URL(first.connectionUri).username)
 
     const rows = await db
       .selectFrom("serviceCredential")

@@ -19,6 +19,7 @@ use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 use valkey_proxy::CredentialStore;
 use valkey_proxy::master::MasterQueue;
+use valkey_proxy::provision::AclProvisioner;
 
 /// The shared Valkey these tests proxy to.
 ///
@@ -90,6 +91,74 @@ impl Client {
             .expect("the proxy did not reply in time")
             .expect("read");
         String::from_utf8_lossy(&buffer[..read]).into_owned()
+    }
+
+    async fn pipeline(&mut self, commands: &[&[&str]]) -> Vec<String> {
+        let mut out = String::new();
+        for args in commands {
+            out.push_str(&format!("*{}\r\n", args.len()));
+            for arg in *args {
+                out.push_str(&format!("${}\r\n{arg}\r\n", arg.len()));
+            }
+        }
+        self.stream
+            .write_all(out.as_bytes())
+            .await
+            .expect("write pipeline");
+
+        let mut buffer = bytes::BytesMut::new();
+        let mut replies = Vec::new();
+        while replies.len() < commands.len() {
+            tokio::time::timeout(Duration::from_secs(5), self.stream.read_buf(&mut buffer))
+                .await
+                .expect("the proxy did not reply to the pipeline in time")
+                .expect("read pipeline");
+            while let Some(framed) = valkey_proxy::reply::frame(&buffer).expect("valid reply") {
+                replies.push(String::from_utf8_lossy(&buffer.split_to(framed.len)).into_owned());
+            }
+        }
+        replies
+    }
+}
+
+fn parse_scan_reply(reply: &str) -> (String, Vec<String>) {
+    let mut lines = reply.split("\r\n");
+    assert_eq!(lines.next(), Some("*2"), "{reply:?}");
+    let cursor_len = lines.next().expect("cursor bulk header");
+    assert!(cursor_len.starts_with('$'), "{reply:?}");
+    let cursor = lines.next().expect("cursor").to_owned();
+    let count = lines
+        .next()
+        .and_then(|line| line.strip_prefix('*'))
+        .and_then(|line| line.parse::<usize>().ok())
+        .expect("key array header");
+    let mut keys = Vec::with_capacity(count);
+    for _ in 0..count {
+        let header = lines.next().expect("key bulk header");
+        assert!(header.starts_with('$'), "{reply:?}");
+        keys.push(lines.next().expect("key").to_owned());
+    }
+    (cursor, keys)
+}
+
+async fn scan_all(client: &mut Client, pattern: Option<&str>) -> Vec<String> {
+    let mut cursor = "0".to_owned();
+    let mut keys = Vec::new();
+    loop {
+        let reply = match pattern {
+            Some(pattern) => {
+                client
+                    .send(&["SCAN", &cursor, "MATCH", pattern, "COUNT", "1000"])
+                    .await
+            }
+            None => client.send(&["SCAN", &cursor, "COUNT", "1000"]).await,
+        };
+        let (next, batch) = parse_scan_reply(&reply);
+        keys.extend(batch);
+        cursor = next;
+        if cursor == "0" {
+            return keys;
+        }
     }
 }
 
@@ -220,6 +289,14 @@ async fn start(url: &str, master: MasterQueue) -> SocketAddr {
     // A `String`, matching what `serve` now takes. The proxy resolves it per connection, so a
     // DNS name works here exactly as it does in production — which a `SocketAddr` never did.
     let backend = std::sync::Arc::new(backend());
+    let provisioner = std::sync::Arc::new(
+        AclProvisioner::new(
+            backend.as_ref().clone(),
+            b"integration-test-acl-root-key-32-bytes".to_vec(),
+        )
+        .expect("ACL provisioner"),
+    );
+    provisioner.self_check().await.expect("ACL self-check");
     let master = std::sync::Arc::new(master);
 
     tokio::spawn(async move {
@@ -228,10 +305,10 @@ async fn start(url: &str, master: MasterQueue) -> SocketAddr {
                 return;
             };
             let store = std::sync::Arc::clone(&store);
-            let backend = std::sync::Arc::clone(&backend);
+            let provisioner = std::sync::Arc::clone(&provisioner);
             let master = std::sync::Arc::clone(&master);
             tokio::spawn(async move {
-                let _ = valkey_proxy::serve(client, &backend, &store, &master).await;
+                let _ = valkey_proxy::serve(client, &store, &provisioner, &master).await;
             });
         }
     });
@@ -438,6 +515,351 @@ async fn a_refused_command_does_not_end_the_connection() {
     cleanup(&url, &fixtures).await;
 }
 
+#[tokio::test]
+async fn local_replies_keep_their_place_in_a_pipeline() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    let replies = client
+        .pipeline(&[
+            &["SET", "ordered", "yes"],
+            &["AUTH", "again", "again"],
+            &["GET", "ordered"],
+        ])
+        .await;
+    assert_eq!(replies[0], "+OK\r\n");
+    assert!(replies[1].contains("AUTH is not allowed"), "{:?}", replies);
+    assert_eq!(replies[2], "$3\r\nyes\r\n");
+
+    assert!(
+        client
+            .send(&["HELLO", "3"])
+            .await
+            .contains("RESP3 is not supported")
+    );
+    assert!(
+        client
+            .send(&["HELLO", "2"])
+            .await
+            .contains("$5\r\nproto\r\n:2")
+    );
+    client.send(&["DEL", "ordered"]).await;
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn a_missing_cached_acl_user_is_reprovisioned_once() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut first = Client::connect(address).await;
+    assert_eq!(first.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+    assert_eq!(first.send(&["PING"]).await, "+PONG\r\n");
+
+    let mut admin = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(admin.send(&["ACL", "DELUSER", &username]).await, ":1\r\n");
+
+    let mut recovered = Client::connect(address).await;
+    assert_eq!(
+        recovered.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(recovered.send(&["PING"]).await, "+PONG\r\n");
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn deleting_the_acl_user_closes_a_live_tenant_connection() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut tenant = Client::connect(address).await;
+    assert_eq!(tenant.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+    assert_eq!(tenant.send(&["PING"]).await, "+PONG\r\n");
+
+    let mut admin = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(admin.send(&["ACL", "DELUSER", &username]).await, ":1\r\n");
+
+    let mut byte = [0_u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), tenant.stream.read(&mut byte))
+        .await
+        .expect("the proxy kept a revoked tenant session open")
+        .expect("read after ACL deletion");
+    assert_eq!(
+        read, 0,
+        "the proxy did not close after its tenant upstream was revoked"
+    );
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn backend_acl_rejects_another_tenants_key_and_admin_commands() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service, fixtures) = provision(&url).await;
+    let mut through_proxy = Client::connect(address).await;
+    assert_eq!(
+        through_proxy.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    // AUTH is acknowledged after the control-plane check; the first proxied command proves the
+    // lazy upstream ACL provisioning has completed before we connect to Valkey directly below.
+    assert_eq!(through_proxy.send(&["PING"]).await, "+PONG\r\n");
+
+    let identity = sproutos_tenant_auth::TenantIdentity::new(
+        fixtures[0],
+        sproutos_tenant_auth::ResourceKind::Queue,
+        service,
+    );
+    let acl = valkey_proxy::acl::credentials(b"integration-test-acl-root-key-32-bytes", &identity);
+    let mut direct = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(
+        direct.send(&["AUTH", &acl.username, &acl.password]).await,
+        "+OK\r\n"
+    );
+    let foreign = direct
+        .send(&["GET", "{kv:00000000000000000000000000}:secret"])
+        .await;
+    assert!(foreign.contains("NOPERM"), "{foreign}");
+    let administrative = direct.send(&["DBSIZE"]).await;
+    assert!(administrative.contains("NOPERM"), "{administrative}");
+    let script_scan = direct
+        .send(&["EVAL", "return redis.call('SCAN', '0')", "0"])
+        .await;
+    // Valkey wraps an ACL NOPERM raised inside Lua as "ACL failure in script" rather than keeping
+    // the outer error code. The important property is that SCAN did not execute as the tenant.
+    assert!(
+        script_scan.starts_with("-ERR ACL failure in script")
+            && script_scan.contains("no permissions to run the 'scan' command"),
+        "{script_scan}"
+    );
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn scan_is_tenant_scoped_unprefixed_and_an_ordering_barrier() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username_a, secret_a, _service_a, fixtures_a) = provision(&url).await;
+    let (username_b, secret_b, _service_b, fixtures_b) = provision(&url).await;
+    let mut a = Client::connect(address).await;
+    let mut b = Client::connect(address).await;
+    assert_eq!(a.send(&["AUTH", &username_a, &secret_a]).await, "+OK\r\n");
+    assert_eq!(b.send(&["AUTH", &username_b, &secret_b]).await, "+OK\r\n");
+
+    for key in ["apple", "apricot", "banana"] {
+        assert_eq!(a.send(&["SET", key, "a"]).await, "+OK\r\n");
+    }
+    assert_eq!(b.send(&["SET", "foreign-only", "b"]).await, "+OK\r\n");
+
+    let mut all = scan_all(&mut a, None).await;
+    all.sort();
+    assert_eq!(all, ["apple", "apricot", "banana"]);
+    assert!(all.iter().all(|key| !key.contains("{kv:")));
+
+    let mut matched = scan_all(&mut a, Some("ap*")).await;
+    matched.sort();
+    assert_eq!(matched, ["apple", "apricot"]);
+
+    // Both commands are written in one syscall. The privileged SCAN connection must not overtake
+    // the tenant connection's SET, and commands after SCAN must not be forwarded ahead of it.
+    let replies = a
+        .pipeline(&[
+            &["SET", "barrier-visible", "yes"],
+            &["SCAN", "0", "MATCH", "barrier-*", "COUNT", "1000"],
+            &["GET", "barrier-visible"],
+        ])
+        .await;
+    assert_eq!(replies[0], "+OK\r\n");
+    assert_eq!(parse_scan_reply(&replies[1]).1, ["barrier-visible"]);
+    assert_eq!(replies[2], "$3\r\nyes\r\n");
+
+    assert_eq!(a.send(&["MULTI"]).await, "+OK\r\n");
+    let refused = a.send(&["SCAN", "0"]).await;
+    assert!(
+        refused.contains("SCAN is not allowed in MULTI"),
+        "{refused}"
+    );
+    assert_eq!(a.send(&["DISCARD"]).await, "+OK\r\n");
+    assert_eq!(a.send(&["PING"]).await, "+PONG\r\n");
+
+    a.send(&["DEL", "apple", "apricot", "banana", "barrier-visible"])
+        .await;
+    b.send(&["DEL", "foreign-only"]).await;
+    cleanup(&url, &fixtures_a).await;
+    cleanup(&url, &fixtures_b).await;
+}
+
+#[tokio::test]
+async fn a_non_queue_credential_cannot_enter_the_valkey_proxy() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (_queue_username, _queue_secret, service, fixtures) = provision(&url).await;
+    let organization = fixtures[0];
+    let identity = sproutos_tenant_auth::TenantIdentity::new(
+        organization,
+        sproutos_tenant_auth::ResourceKind::Database,
+        service,
+    );
+    let username = identity.username();
+    let secret = sproutos_tenant_auth::generate_secret();
+    let (database, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    database.execute(
+        "insert into service_credential (id, backend_service_id, username, secret_hash, last_four) values ($1, $2, $3, $4, $5)",
+        &[&Uuid::now_v7(), &service, &username, &sproutos_tenant_auth::hash_generated_secret(&secret), &&secret[secret.len() - 4..]],
+    ).await.unwrap();
+
+    let mut client = Client::connect(address).await;
+    assert!(
+        client
+            .send(&["AUTH", &username, &secret])
+            .await
+            .starts_with("-ERR WRONGPASS")
+    );
+    cleanup(&url, &fixtures).await;
+}
+
+/// BullMQ passes declared Lua keys in `KEYS` and constructs more keys from `ARGV`. The proxy can
+/// rewrite the former but cannot see the latter, so the public prefix must be accepted exactly
+/// once and the backend ACL must reject a client that omits it from script-created keys.
+#[tokio::test]
+async fn the_published_bullmq_prefix_works_in_lua_and_mixed_key_commands() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service_id, fixtures) = provision(&url).await;
+    let prefix = format!(
+        "{{kv:{}}}:",
+        sproutos_tenant_auth::encode_short_id(service_id)
+    );
+    let unique = Uuid::now_v7().simple().to_string();
+    let bull = format!("{prefix}bull:contract-{unique}");
+    let declared = format!("{bull}:wait");
+    let constructed = format!("{bull}:meta");
+    let bare_script_key = format!("bull:contract-{unique}:unprefixed");
+    let celery = format!("celery-{unique}");
+
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    // A BullMQ-shaped script: KEYS is visible to the proxy, while the second key is used only from
+    // ARGV. Both already carry the published prefix and must reach the engine without doubling it.
+    let script =
+        "redis.call('SET', KEYS[1], 'declared'); return redis.call('SET', ARGV[1], 'constructed')";
+    assert_eq!(
+        client
+            .send(&["EVAL", script, "1", &declared, &constructed])
+            .await,
+        "+OK\r\n"
+    );
+    assert_eq!(backend_get(&declared).await, "$8\r\ndeclared\r\n");
+    assert_eq!(backend_get(&constructed).await, "$11\r\nconstructed\r\n");
+    assert_eq!(
+        backend_get(&format!("{prefix}{declared}")).await,
+        "$-1\r\n",
+        "the published prefix was applied twice"
+    );
+
+    // Omitting the prefix from a Lua-constructed ARGV key is refused by Valkey itself. That turns
+    // the old shared-root leak into an explicit client error.
+    let refused = client
+        .send(&[
+            "EVAL",
+            "return redis.call('SET', ARGV[1], 'forbidden')",
+            "1",
+            &declared,
+            &bare_script_key,
+        ])
+        .await;
+    assert!(
+        refused.contains("NOPERM") || refused.contains("ACL failure in script"),
+        "{refused}"
+    );
+    assert_eq!(backend_get(&bare_script_key).await, "$-1\r\n");
+
+    // Published BullMQ keys and ordinary bare Celery keys can share one variadic command during
+    // rollout. Only the bare key is prefixed.
+    assert_eq!(
+        client
+            .send(&["MSET", &constructed, "bull", &celery, "celery"])
+            .await,
+        "+OK\r\n"
+    );
+    assert_eq!(backend_get(&constructed).await, "$4\r\nbull\r\n");
+    assert_eq!(
+        backend_get(&format!("{prefix}{celery}")).await,
+        "$6\r\ncelery\r\n"
+    );
+
+    // A blocking pop echoes whichever key won. Preserve an already-prefixed spelling, but strip
+    // the prefix the proxy added to a bare key, even when both forms occur in the same command.
+    let published_ready = format!("{bull}:published-ready");
+    let bare_empty = format!("bare-empty-{unique}");
+    assert_eq!(
+        client.send(&["RPUSH", &published_ready, "published"]).await,
+        ":1\r\n"
+    );
+    let published_reply = client
+        .send(&["BLPOP", &bare_empty, &published_ready, "1"])
+        .await;
+    assert!(published_reply.contains(&format!("\r\n{published_ready}\r\n")));
+
+    let published_empty = format!("{bull}:published-empty");
+    let bare_ready = format!("bare-ready-{unique}");
+    assert_eq!(client.send(&["RPUSH", &bare_ready, "bare"]).await, ":1\r\n");
+    let bare_reply = client
+        .send(&["BLPOP", &published_empty, &bare_ready, "1"])
+        .await;
+    assert!(bare_reply.contains(&format!("\r\n{bare_ready}\r\n")));
+    assert!(!bare_reply.contains(&format!("\r\n{prefix}{bare_ready}\r\n")));
+
+    client
+        .send(&["DEL", &declared, &constructed, &celery])
+        .await;
+    cleanup(&url, &fixtures).await;
+}
+
 /// Two queues owned by the *same* organization.
 ///
 /// The obvious tenancy design is one prefix per customer, and it is wrong: a customer with a queue
@@ -518,13 +940,27 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
 
     let address = start_proxy_with_master(&url).await;
     let (username, secret, service_id, fixtures) = provision(&url).await;
+    let published_queue = format!(
+        "{{kv:{}}}:bull:emails:wait",
+        sproutos_tenant_auth::encode_short_id(service_id)
+    );
 
     let mut client = Client::connect(address).await;
     assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
 
-    // An enqueue, and a read that must not be mistaken for one.
+    // A BullMQ-shaped scripted enqueue, and a read that must not be mistaken for one. The script is
+    // `args[1]`; deriving the queue from that position instead of the declared key silently wakes a
+    // queue named after the Lua source.
     assert_eq!(
-        client.send(&["LPUSH", "bull:emails:wait", "job-1"]).await,
+        client
+            .send(&[
+                "EVAL",
+                "return redis.call('LPUSH', KEYS[1], ARGV[1])",
+                "1",
+                &published_queue,
+                "job-1",
+            ])
+            .await,
         ":1\r\n"
     );
     client
@@ -558,9 +994,10 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
       out on this connection, its reply would arrive here and `PING` would return the `ZADD` result.
     */
     assert_eq!(client.send(&["PING"]).await, "+PONG\r\n");
-    assert_eq!(client.send(&["LLEN", "bull:emails:wait"]).await, ":1\r\n");
+    assert_eq!(client.send(&["LLEN", &published_queue]).await, ":1\r\n");
 
     raw.send(&["DEL", "sproutos:master:wake"]).await;
+    client.send(&["DEL", &published_queue]).await;
     cleanup(&url, &fixtures).await;
 }
 

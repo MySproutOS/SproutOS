@@ -6,8 +6,10 @@ import { v7 } from "uuid"
 import {
   meterSandboxes,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
+  reconcileSandboxes,
   reapSandboxes,
   SANDBOX_KINDS,
+  startSandbox,
 } from "./sandbox"
 
 /**
@@ -73,7 +75,9 @@ afterAll(async () => {
   if (!reachable || !organizationId) return
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
-    await tx.deleteFrom("usageEvent").where("organizationId", "=", organizationId).execute()
+    await sql`delete from metering_outbox where payload ->> 'organization_id' = ${organizationId}`.execute(
+      tx,
+    )
     await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -85,12 +89,31 @@ afterAll(async () => {
 })
 
 async function eventsFor(sandboxId: string) {
-  return await db
-    .selectFrom("usageEvent")
-    .select(["dimension", "quantity", "externalId"])
-    .where("resourceId", "=", sandboxId)
-    .orderBy("dimension")
-    .execute()
+  const result = await sql<{ payload: string }>`
+    select payload::text as payload
+    from metering_outbox
+    where payload ->> 'resource_id' = ${sandboxId}
+  `.execute(db)
+
+  type SandboxEventPayload = {
+    attributes: Record<string, string>
+    charged_externally: boolean
+    dimension: string
+    event_id: string
+    external_id: string
+    organization_id: string
+    project_id: string | null
+    quantity: string
+    resource_id: string | null
+    resource_type: string
+    source: string
+    window_end: string | null
+    window_start: string | null
+  }
+
+  return result.rows
+    .map((row) => JSON.parse(row.payload) as SandboxEventPayload)
+    .toSorted((a, b) => a.dimension.localeCompare(b.dimension))
 }
 
 describe("the sandbox price book", () => {
@@ -164,6 +187,19 @@ describe("meterSandboxes", () => {
       "sandbox_disk_gib_second",
       "sandbox_gib_second",
     ])
+    expect(events[0]).toMatchObject({
+      attributes: {},
+      charged_externally: false,
+      organization_id: organizationId,
+      project_id: projectId,
+      resource_id: sandbox.id,
+      resource_type: "sandbox",
+      source: "sandbox",
+    })
+    expect(events[0]?.event_id).toMatch(/^[0-9a-f]{64}$/)
+    expect(events[0]?.external_id).toContain(`${sandbox.id}:sandbox_cpu_second:`)
+    expect(events[0]?.window_start).not.toBeNull()
+    expect(events[0]?.window_end).not.toBeNull()
 
     // ~60 seconds × the resource shape. Loose bounds: the interval is real wall-clock.
     const byDimension = new Map(events.map((row) => [row.dimension, Number(row.quantity)]))
@@ -208,6 +244,65 @@ describe("meterSandboxes", () => {
     expect(totalCpu).toBeLessThan(61 + elapsed)
   })
 
+  it("serializes concurrent meters so their intervals never overlap", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const initialWatermark = new Date(Date.now() - 60_000)
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      state: "running",
+      cpu: 1,
+      memoryGib: 1,
+      diskGib: 1,
+      meteredThrough: initialWatermark,
+    })
+
+    let announceLocked: (() => void) | undefined
+    const locked = new Promise<void>((resolve) => {
+      announceLocked = resolve
+    })
+    let releaseLock: (() => void) | undefined
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve
+    })
+
+    // Hold the row while both sweeps reach it. Without the meter's own `FOR UPDATE`, both read the
+    // old watermark, emit overlapping sixty-second intervals, then wait only when updating it.
+    const blocker = db.transaction().execute(async (tx) => {
+      await tx
+        .selectFrom("sandbox")
+        .select("id")
+        .where("id", "=", sandbox.id)
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+      announceLocked?.()
+      await release
+    })
+    await locked
+
+    const first = meterSandboxes(job, context)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const second = meterSandboxes(job, context)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    releaseLock?.()
+    await Promise.all([blocker, first, second])
+
+    const cpuEvents = (await eventsFor(sandbox.id))
+      .filter((row) => row.dimension === "sandbox_cpu_second")
+      .toSorted((a, b) => (a.window_start ?? "").localeCompare(b.window_start ?? ""))
+    expect(cpuEvents.length).toBeGreaterThan(0)
+
+    const totalCpu = cpuEvents.reduce((sum, row) => sum + Number(row.quantity), 0)
+    const elapsed = (Date.now() - initialWatermark.getTime()) / 1000
+    expect(totalCpu).toBeGreaterThan(59)
+    expect(totalCpu).toBeLessThan(elapsed + 1)
+
+    for (let index = 1; index < cpuEvents.length; index += 1) {
+      expect(cpuEvents[index]?.window_start).toBe(cpuEvents[index - 1]?.window_end)
+    }
+  })
+
   it("does not meter a stopped sandbox", async ({ skip }) => {
     if (!reachable) skip()
 
@@ -220,6 +315,28 @@ describe("meterSandboxes", () => {
 
     await meterSandboxes(job, context)
     expect(await eventsFor(sandbox.id)).toHaveLength(0)
+  })
+
+  it("never bills an ordinary sandbox past its provider auto-stop deadline", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const activity = new Date(Date.now() - 60_000)
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      state: "running",
+      cpu: 1,
+      memoryGib: 1,
+      diskGib: 1,
+      idleTimeoutS: 10,
+      lastActivityAt: activity,
+      meteredThrough: activity,
+    })
+
+    await meterSandboxes(job, context)
+    const cpu = (await eventsFor(sandbox.id)).find((row) => row.dimension === "sandbox_cpu_second")
+    expect(Number(cpu?.quantity)).toBeGreaterThan(9)
+    expect(Number(cpu?.quantity)).toBeLessThan(11)
   })
 
   /*
@@ -316,5 +433,70 @@ describe("reapSandboxes", () => {
     const targets = queued.map((row) => (row.payload as { sandboxId?: string }).sandboxId)
     expect(targets).toContain(idle.id)
     expect(targets).not.toContain(alwaysOn.id)
+  })
+})
+
+describe("reconcileSandboxes", () => {
+  it("repairs a provider auto-archive that the database did not observe", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: "daytona-archived-test",
+      provider: "daytona",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+
+    await reconcileSandboxes(
+      () =>
+        ({
+          state: (externalId: string) =>
+            Promise.resolve(externalId === sandbox.externalId ? "archived" : "started"),
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never, context)
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select("state")
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("stopped")
+  })
+})
+
+describe("startSandbox", () => {
+  it("starts the provider and begins a fresh metering interval", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: "daytona-start-test",
+      provider: "daytona",
+      state: "starting",
+      meteredThrough: new Date(Date.now() - 60_000),
+    })
+    const started: string[] = []
+
+    await startSandbox(
+      () =>
+        ({
+          start: (externalId: string) => {
+            started.push(externalId)
+            return Promise.resolve()
+          },
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.start, payload: { sandboxId: sandbox.id } } as never, context)
+
+    expect(started).toEqual(["daytona-start-test"])
+    const row = await db
+      .selectFrom("sandbox")
+      .select(["state", "meteredThrough"])
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("running")
+    expect(row.meteredThrough?.getTime()).toBeGreaterThan(Date.now() - 10_000)
   })
 })

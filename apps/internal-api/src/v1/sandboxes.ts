@@ -1,8 +1,7 @@
 import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
 import { enqueue, SANDBOX_KINDS } from "@lib/jobs"
 import {
-  daytonaConfigFromEnv,
-  daytonaDriver,
+  sandboxDriverFromEnv,
   SandboxNotFoundError,
   SandboxUnavailableError,
   WORKSPACE_DIR,
@@ -68,11 +67,11 @@ const DEFAULT_PREVIEW_PORT = 3000
  *
  * A driver constructed while this module is imported reads configuration that a process may not
  * have — the OpenAPI generator, for one, imports every route and would then fail to start wherever
- * `SANDBOX_DAYTONA_API_KEY` is absent. `2249bad` records the same bug with a Redis client, where
+ * `DAYTONA_API_KEY` is absent. `2249bad` records the same bug with a Redis client, where
  * the generator's process never exited and timed out at three minutes.
  */
 function driver(): SandboxDriver {
-  return daytonaDriver(daytonaConfigFromEnv())
+  return sandboxDriverFromEnv()
 }
 
 function serialize(row: Selectable<DB["sandbox"]>) {
@@ -209,10 +208,10 @@ const app = new Hono()
         if (existing.state === "stopped" || existing.state === "failed") {
           await crudSandbox(db).update(existing.id, { state: "starting" })
           await enqueue(db, {
-            kind: existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.stop,
+            kind: existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start,
             organizationId: organization.id,
             payload: { sandboxId: existing.id },
-            idempotencyKey: `${SANDBOX_KINDS.provision}:${existing.id}:${Date.now()}`,
+            idempotencyKey: `${existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start}:${existing.id}:${Date.now()}`,
             maxAttempts: 3,
           })
         }
@@ -264,9 +263,9 @@ const app = new Hono()
   .delete(
     "/:orgSlug/projects/:projectId/sandbox",
     describeRoute({
-      description: "Stops the caller's dev sandbox, keeping its workspace",
+      description: "Permanently deletes the caller's dev sandbox and its database branch",
       responses: {
-        202: { description: "Stop queued" },
+        202: { description: "Deletion queued" },
         403: { description: "Caller lacks sandbox:write", ...errorResponse },
         404: { description: "No sandbox for this caller and project", ...errorResponse },
       },
@@ -278,12 +277,13 @@ const app = new Hono()
       const row = await sandboxFor(c.var.organization.id, projectId, c.var.user.id)
       if (row === undefined) return throwNotFound(c, "No sandbox for this project")
 
-      // Stop, not destroy: the workspace is the customer's work and outlives the container.
+      // DELETE means the user is completely done. Ordinary inactivity is handled by stop plus
+      // Daytona archive, which preserves the workspace without billing reserved disk.
       await enqueue(db, {
-        kind: SANDBOX_KINDS.stop,
+        kind: SANDBOX_KINDS.destroy,
         organizationId: c.var.organization.id,
         payload: { sandboxId: row.id },
-        idempotencyKey: `${SANDBOX_KINDS.stop}:${row.id}:${Date.now()}`,
+        idempotencyKey: `${SANDBOX_KINDS.destroy}:${row.id}`,
         maxAttempts: 3,
       })
 
@@ -292,11 +292,41 @@ const app = new Hono()
         actorUserId: c.var.user.id,
         action: "sandbox:write",
         resourceSrn: `sandbox/${row.id}`,
-        after: { state: "stopping" },
+        after: { state: "deleting" },
         ...auditContext(c),
       })
 
       return c.body(null, 202)
+    },
+  )
+  .post(
+    "/:orgSlug/projects/:projectId/sandbox/activity",
+    describeRoute({
+      description: "Keeps an actively viewed sandbox preview from being reaped",
+      responses: {
+        204: { description: "Activity recorded" },
+        403: { description: "Caller lacks sandbox:read", ...errorResponse },
+        404: { description: "No running sandbox for this caller and project", ...errorResponse },
+      },
+    }),
+    requirePermission("sandbox:read", paramResource("compute", "sandbox", "projectId")),
+    validator("param", sandboxSchemaProjectParam),
+    async (c) => {
+      const { projectId } = c.req.valid("param")
+      const row = await sandboxFor(c.var.organization.id, projectId, c.var.user.id)
+      if (row === undefined || row.externalId === null || row.state !== "running") {
+        return throwNotFound(c, "No running sandbox for this project")
+      }
+
+      try {
+        // Keep both clocks aligned. Preview HTTP reaches Daytona directly and would otherwise keep
+        // only the provider clock alive while Sprout's reaper stopped a page somebody was viewing.
+        await driver().touch(row.externalId)
+        await crudSandbox(db).touch(row.id)
+        return c.body(null, 204)
+      } catch (error) {
+        return providerError(c, error)
+      }
     },
   )
   .get(

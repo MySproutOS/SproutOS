@@ -87,7 +87,7 @@ describe.skipIf(!reachable)("project routes", () => {
   let forkedProjectId = ""
   let sharedProjectId = ""
   let repositoryId = ""
-  const usageEventIds: string[] = []
+  const usageRollupIds: string[] = []
 
   beforeAll(async () => {
     alice = await createTestUser("projalice")
@@ -124,11 +124,10 @@ describe.skipIf(!reachable)("project routes", () => {
   })
 
   afterAll(async () => {
-    // `usage_event.project_id` and `.organization_id` are both ON DELETE RESTRICT, which is the
-    // property the soft-delete test asserts — so the suite has to clear its own ledger rows
-    // before the shared teardown can reach the organizations.
-    if (usageEventIds.length > 0) {
-      await db.deleteFrom("usageEvent").where("id", "in", usageEventIds).execute()
+    // Billing grains are ON DELETE RESTRICT, which is the property the soft-delete test asserts —
+    // so the suite has to clear its own rows before shared teardown reaches the organizations.
+    if (usageRollupIds.length > 0) {
+      await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
     await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
     await cleanupFixtures()
@@ -1022,27 +1021,25 @@ describe.skipIf(!reachable)("project routes", () => {
   })
 
   /**
-   * ADR 0017. Deletion is a state change plus a teardown job. Nothing `usage_event` points at is
-   * ever destroyed, because that is the record justifying charges already made.
+   * ADR 0017. Deletion is a state change plus a teardown job. Nothing a billing grain points at is
+   * destroyed, because that is the record justifying charges already made.
    */
   describe("soft delete", () => {
     beforeAll(async () => {
       const id = v7()
       await db
-        .insertInto("usageEvent")
+        .insertInto("usageRollup")
         .values({
           id,
           organizationId: orgAId,
           projectId: forkedProjectId,
-          resourceType: "site",
           dimension: "site_request",
           quantity: "1000",
-          occurredAt: new Date(),
-          source: "projects-test",
-          externalId: `projects-test-${id}`,
+          bucket: "day",
+          bucketStart: new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"),
         })
         .execute()
-      usageEventIds.push(id)
+      usageRollupIds.push(id)
     })
 
     it("keeps the repository while another project still uses it", async () => {
@@ -1065,7 +1062,8 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(response.status).toBe(200)
 
       expect(response.json.destroyed).toStrictEqual([])
-      expect(response.json.retained).toContain("usage_event")
+      expect(response.json.retained).toContain("usage_rollup")
+      expect(response.json.retained).not.toContain("usage_event")
       expect(response.json.scheduledForTeardown).toContain("deployment")
       expect(response.json.repositoryReleased).toBe(true)
       expect((response.json.project as Json).state).toBe("deleting")
@@ -1085,16 +1083,16 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(second.status).toBe(404)
     })
 
-    it("keeps the usage row, still attributable to the deleted project by name", async () => {
+    it("keeps the billing grain attributable to the deleted project by name", async () => {
       const row = await db
-        .selectFrom("usageEvent")
-        .innerJoin("project", "project.id", "usageEvent.projectId")
+        .selectFrom("usageRollup")
+        .innerJoin("project", "project.id", "usageRollup.projectId")
         .select([
-          "usageEvent.quantity as quantity",
+          "usageRollup.quantity as quantity",
           "project.slug as slug",
           "project.deletedAt as deletedAt",
         ])
-        .where("usageEvent.id", "=", usageEventIds[0])
+        .where("usageRollup.id", "=", usageRollupIds[0])
         .executeTakeFirstOrThrow()
 
       expect(row.slug).toBe("forked-fixture")

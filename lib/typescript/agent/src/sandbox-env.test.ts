@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { codexConfig, sandboxAgentEnv } from "./sandbox-env"
+import { codexOverrides, sandboxAgentEnv } from "./sandbox-env"
 
 const token = {
   accessExpiresAt: new Date("2026-01-01T00:15:00Z"),
@@ -77,22 +77,53 @@ describe("sandboxAgentEnv", () => {
   })
 })
 
-describe("codexConfig", () => {
-  it("names one provider, which is ours", () => {
-    const config = codexConfig({ model: "gpt-5.6-terra", proxyBaseUrl: "https://llm.sproutos.me" })
-    // From the sandbox's point of view there is only one provider. Which real one is behind it is
-    // decided at token-mint time, which is what lets a customer switch from OpenAI to OpenRouter
-    // without anything inside the sandbox changing.
-    expect(config).toContain('base_url = "https://llm.sproutos.me"')
-    expect(config).toContain('env_key = "SPROUTOS_PROXY_KEY"')
-    expect(config).toContain('model_provider = "sproutos"')
-    expect(config).not.toContain("api.openai.com")
-    expect(config).not.toContain("openrouter.ai")
+describe("codexOverrides", () => {
+  it("names one provider: ours", () => {
+    const argv = codexOverrides({ model: "gpt-5.6-terra", proxyBaseUrl: "https://llm.sproutos.me" })
+    const flat = argv.join(" ")
+    expect(flat).toContain('model_provider="sproutos"')
+    expect(flat).toContain('base_url="https://llm.sproutos.me"')
+    expect(flat).toContain('env_key="SPROUTOS_PROXY_KEY"')
+    expect(flat).toContain('wire_api="responses"')
+    expect(flat).toContain('model="gpt-5.6-terra"')
   })
 
-  it("asks for the responses wire API, which is what the proxy parses", () => {
-    // The usage parser looks for `response.completed`. A provider configured for the completions
-    // API would stream a shape it never counts, and the turn would bill zero.
-    expect(codexConfig({ model: "m", proxyBaseUrl: "u" })).toContain('wire_api = "responses"')
+  it("does not put a second /v1 on the base URL", () => {
+    /*
+      Codex posts to `<base_url>/responses` and the proxy prepends the session's upstream base,
+      which for OpenAI already ends in `/v1`. A `/v1` on this end too composes to `/v1/v1/responses`
+      — a 404 from the provider on every turn, reported as the model being unavailable.
+    */
+    const argv = codexOverrides({ model: "m", proxyBaseUrl: "https://llm.sproutos.me/" })
+    expect(argv.join(" ")).toContain('base_url="https://llm.sproutos.me"')
+    expect(argv.join(" ")).not.toContain("/v1")
+  })
+
+  it("turns off the websocket transport the proxy does not speak", () => {
+    // Left on, every turn opens with five failed connections and about ten seconds of retries
+    // before Codex falls back to HTTP — which the customer sees as an agent doing nothing.
+    expect(codexOverrides({ model: "m", proxyBaseUrl: "u" })).toContain(
+      "features.responses_websocket=false",
+    )
+  })
+})
+
+describe("what the harness needs to be able to act at all", () => {
+  it("tells Claude Code that something else is the boundary", () => {
+    // The CLI refuses `--dangerously-skip-permissions` as root, and a container's default user is
+    // root. Without this every edit is denied and the turn still reports success — which is how the
+    // first sandbox turn ever run announced a file it had not written.
+    expect(sandboxAgentEnv({ ...base, harness: "claude-code" }).IS_SANDBOX).toBe("1")
+  })
+
+  it("points Codex at the config the bootstrap actually wrote", () => {
+    // Codex reads `$CODEX_HOME/config.toml`, never the working directory. The file naming our proxy
+    // is written into the checkout, so without this Codex would look in `~/.codex`, find nothing,
+    // and try to reach OpenAI directly with no key.
+    expect(sandboxAgentEnv({ ...base, harness: "codex" }).CODEX_HOME).toBe("/workspace/.codex")
+    expect(
+      sandboxAgentEnv({ ...base, harness: "codex", workspace: "/home/daytona/workspace" })
+        .CODEX_HOME,
+    ).toBe("/home/daytona/workspace/.codex")
   })
 })

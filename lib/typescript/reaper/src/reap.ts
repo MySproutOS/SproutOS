@@ -1,9 +1,9 @@
-import { tenantIndexPrefix } from "@lib/services/tenant-auth"
+import { tenantIndexPrefix, tenantUsername } from "@lib/services/tenant-auth"
 import type { DB } from "@sproutos/db"
 import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
 import { purgeOrganizationLogs } from "./logs"
-import { purgeTenantIndices, type SearchAdminConfig } from "./search"
+import { purgeTenantSearch, type SearchAdminConfig } from "./search"
 import { purgeTenantKeys } from "./valkey"
 
 /**
@@ -62,7 +62,7 @@ export async function reapDeletedServices(
 ): Promise<ReapedService[]> {
   const pending = await db
     .selectFrom("backendService")
-    .select(["id", "kind"])
+    .select(["id", "kind", "organizationId"])
     .where("deletedAt", "is not", null)
     .where("purgedAt", "is", null)
     .orderBy("deletedAt", "asc")
@@ -82,8 +82,27 @@ export async function reapDeletedServices(
 
       if (service.kind === "valkey" && redis !== undefined) {
         removed = (await purgeTenantKeys(redis, service.id)).deleted
+        await redis.call(
+          "ACL",
+          "DELUSER",
+          tenantUsername({
+            organizationId: service.organizationId,
+            kind: "queue",
+            resourceId: service.id,
+          }),
+        )
       } else if (service.kind === "elasticsearch") {
-        removed = (await purgeTenantIndices(deps.search, tenantIndexPrefix(service.id))).length
+        removed = (
+          await purgeTenantSearch(
+            deps.search,
+            tenantIndexPrefix(service.id),
+            tenantUsername({
+              organizationId: service.organizationId,
+              kind: "searchIndex",
+              resourceId: service.id,
+            }),
+          )
+        ).length
       }
       /*
         `postgres` is absent on purpose, and is not an oversight.

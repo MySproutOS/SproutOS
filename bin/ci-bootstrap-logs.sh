@@ -10,6 +10,8 @@ set -euo pipefail
 
 BROKER="${KAFKA_BROKERS:-localhost:29092}"
 CLICKHOUSE="${CLICKHOUSE_URL:-http://localhost:28123}"
+RUNTIME_TOPIC="${KAFKA_RUNTIME_LOG_TOPIC:-runtime-logs}"
+USAGE_TOPIC="${KAFKA_USAGE_EVENT_TOPIC:-usage-events}"
 
 # The address *ClickHouse* uses to reach Kafka, which is not the one this script uses. ClickHouse is
 # a container on the services network and sees `kafka:9092`; the runner sees `localhost:29092`. The
@@ -20,9 +22,11 @@ PASSWORD="${CLICKHOUSE_PASSWORD:-sproutos}"
 
 # The service container has no bin on the host, so the topic is created from a throwaway container
 # on the host network.
-docker run --rm --network host apache/kafka:4.3.1 \
-  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BROKER" \
-  --create --topic runtime-logs --partitions 3 --if-not-exists
+for topic in "$RUNTIME_TOPIC" "$USAGE_TOPIC"; do
+  docker run --rm --network host apache/kafka:4.3.1 \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BROKER" \
+    --create --topic "$topic" --partitions 3 --if-not-exists
+done
 
 query() {
   curl -sSf -u "$USER_NAME:$PASSWORD" -X POST "$CLICKHOUSE" --data-binary "$1" >/dev/null
@@ -48,7 +52,7 @@ create table if not exists observability.runtime_log_queue (
   duration_ms Nullable(Float32), billed_ms Nullable(UInt32), memory_mb Nullable(UInt16),
   init_ms Nullable(Float32), cold_start Nullable(Bool)
 ) engine = Kafka
-settings kafka_broker_list = '${CLICKHOUSE_KAFKA_BROKER:-kafka:9092}', kafka_topic_list = 'runtime-logs',
+settings kafka_broker_list = '${CLICKHOUSE_KAFKA_BROKER:-kafka:9092}', kafka_topic_list = '${RUNTIME_TOPIC}',
   kafka_group_name = 'clickhouse-runtime-log', kafka_format = 'JSONEachRow',
   kafka_skip_broken_messages = 100"
 

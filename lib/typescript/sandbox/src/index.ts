@@ -2,12 +2,12 @@ export { quoteArg, quoteArgv } from "./argv"
 export {
   daytonaConfigFromEnv,
   daytonaDriver,
-  NOVNC_PORT,
   PROVIDER,
+  SNAPSHOT_RESOURCES,
+  sandboxDriverFromEnv,
   WORKSPACE_DIR,
   type DaytonaConfig,
 } from "./daytona"
-export { BLOCKED_RANGES, EGRESS_ALLOW_LIST, PUBLIC_IPV4_RANGES } from "./egress"
 export {
   SANDBOX_CLASSES,
   SandboxNotFoundError,

@@ -1,0 +1,16 @@
+---
+_meta:
+  type: internalusers
+  config_version: 2
+
+"__ADMIN_USER__":
+  hash: "__ADMIN_HASH__"
+  reserved: true
+  backend_roles:
+    - sproutos_search_admin
+
+sproutos_search_proxy_manager:
+  hash: "__MANAGER_HASH__"
+  reserved: true
+  backend_roles:
+    - sproutos_search_proxy_manager

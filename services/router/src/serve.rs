@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use aws_sdk_lambda::Client as LambdaClient;
 use aws_sdk_lambda::primitives::Blob;
+use aws_types::request_id::RequestId as _;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
@@ -24,6 +25,9 @@ pub struct Router {
     /// Verifies the token an extension presents. Empty where logging is unconfigured, in which case
     /// `logs` is `None` and it is never consulted.
     pub log_token_secret: Vec<u8>,
+    /// Durable billing observed at this boundary. Optional in development and fail-open on
+    /// capacity: metering trouble is never allowed to take a tenant application down.
+    pub site_meter: Option<crate::site_metering::SiteMeter>,
 }
 
 pub type Shared = Arc<Router>;
@@ -174,6 +178,7 @@ pub async fn handle(
                 .into_response();
         }
     };
+    let invocation_request_id = output.request_id().map(str::to_owned);
 
     /*
       An unhandled error inside the customer's code, not a transport failure.
@@ -210,6 +215,17 @@ pub async fn handle(
                 .into_response();
         }
     };
+
+    if let Some(meter) = state.site_meter.as_ref()
+        && !bytes.is_empty()
+    {
+        let _ = meter.record_egress(
+            &route,
+            invocation_request_id.as_deref().unwrap_or_default(),
+            bytes.len(),
+            crate::site_metering::now_millis(),
+        );
+    }
 
     let status = StatusCode::from_u16(status_of(&reply)).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut response = Response::builder().status(status);
@@ -272,11 +288,11 @@ fn ingest_logs(
         return (StatusCode::METHOD_NOT_ALLOWED, "post logs here").into_response();
     }
 
-    let Some(sink) = state.logs.as_ref() else {
-        // No producer configured. Not an error: a development router with no Kafka should accept
-        // and discard rather than fail an extension that is only doing its job.
+    if state.logs.is_none() && state.site_meter.is_none() {
+        // Nothing consumes the body in this development configuration. Preserve the old no-op
+        // endpoint so attaching the extension locally does not require production credentials.
         return (StatusCode::ACCEPTED, "logging is not configured").into_response();
-    };
+    }
 
     let Some(token) = crate::logs::bearer(
         headers
@@ -291,7 +307,7 @@ fn ingest_logs(
         .map(|value| value.as_secs())
         .unwrap_or(0);
 
-    let Ok(project_id) = crate::log_token::project_of(token, &state.log_token_secret, now) else {
+    let Ok(claims) = crate::log_token::claims_of(token, &state.log_token_secret, now) else {
         // One answer for malformed, mis-signed and expired alike. Which of the three it was is a
         // hint to somebody working through guesses, and of no use to a correctly configured
         // extension.
@@ -313,8 +329,30 @@ fn ingest_logs(
 
     let stamped: Vec<_> = records
         .into_iter()
-        .map(|record| crate::logs::stamp(record, &project_id, deployment_id))
+        .map(|record| crate::logs::stamp(record, &claims.project_id, deployment_id))
         .collect();
+
+    if let Some(meter) = state.site_meter.as_ref() {
+        let outcomes = meter.record_reports(&claims, &stamped);
+        let unavailable = outcomes
+            .iter()
+            .filter(|outcome| **outcome == crate::site_metering::Recorded::CapacityUnavailable)
+            .count();
+        if unavailable > 0 {
+            tracing::error!(
+                unavailable,
+                project_id = claims.project_id,
+                organization_id = claims.organization_id.as_deref().unwrap_or("legacy-token"),
+                "runtime usage was not durably recorded; accepting telemetry to keep tenant traffic fail-open"
+            );
+        }
+    }
+
+    let Some(sink) = state.logs.as_ref() else {
+        // Metering above is independent of Kafka. A developer with no broker still gets the same
+        // accepted response, while a configured site meter can durably record platform reports.
+        return (StatusCode::ACCEPTED, "logging is not configured").into_response();
+    };
 
     match sink.offer(stamped) {
         crate::logs::Accepted::Queued(count) => {
@@ -329,7 +367,11 @@ fn ingest_logs(
           here, where somebody can act on it.
         */
         crate::logs::Accepted::Dropped(count) => {
-            tracing::warn!(count, project_id, "log queue full; dropped a batch");
+            tracing::warn!(
+                count,
+                project_id = claims.project_id,
+                "log queue full; dropped a batch"
+            );
             (StatusCode::ACCEPTED, "dropped").into_response()
         }
     }

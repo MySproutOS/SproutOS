@@ -54,6 +54,8 @@ import {
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
+  postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
+  postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
   postV1OrgsByOrgSlugAnalysesResponseTransformer,
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
   postV1OrgsByOrgSlugInvitesResponseTransformer,
@@ -191,6 +193,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
@@ -329,6 +334,9 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1DeployMigrateData,
+  PostV1DeployMigrateErrors,
+  PostV1DeployMigrateResponses,
   PostV1DeployReleaseData,
   PostV1DeployReleaseErrors,
   PostV1DeployReleaseResponses,
@@ -363,6 +371,12 @@ import type {
   PostV1OrgsByOrgSlugAgentCredentialsData,
   PostV1OrgsByOrgSlugAgentCredentialsErrors,
   PostV1OrgsByOrgSlugAgentCredentialsResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenData,
+  PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses,
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesErrors,
   PostV1OrgsByOrgSlugAnalysesResponses,
@@ -408,6 +422,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData,
@@ -1268,7 +1285,7 @@ export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = fa
   })
 
 /**
- * Stops the caller's dev sandbox, keeping its workspace
+ * Permanently deletes the caller's dev sandbox and its database branch
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox = <
   ThrowOnError extends boolean = false,
@@ -1324,6 +1341,24 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError exten
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
     ...options,
   })
+
+/**
+ * Keeps an actively viewed sandbox preview from being reaped
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/activity", ...options })
 
 /**
  * A signed, short-lived URL onto a port in the sandbox
@@ -1575,6 +1610,54 @@ export const putV1OrgsByOrgSlugAgentConfig = <ThrowOnError extends boolean = fal
     ThrowOnError
   >({
     url: "/v1/orgs/{orgSlug}/agent/config",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Mint an access/refresh pair for a sandbox agent to reach the LLM proxy
+ */
+export const postV1OrgsByOrgSlugAgentProxyToken = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugAgentProxyTokenData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugAgentProxyTokenResponses,
+    PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/proxy-token",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Exchange a refresh token for a new pair
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenRefresh = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/proxy-token/refresh",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -1944,6 +2027,24 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId = <
     DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}", ...options })
+
+/**
+ * The GitHub Actions workflow that deploys this project, generated for it
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-workflow", ...options })
 
 /**
  * One workflow and its current graph
@@ -3156,6 +3257,25 @@ export const postV1DeployRelease = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({
     url: "/v1/deploy/release",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Run an uploaded migrator against the project's database, and wait for it
+ */
+export const postV1DeployMigrate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployMigrateData, ThrowOnError>,
+): RequestResult<PostV1DeployMigrateResponses, PostV1DeployMigrateErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1DeployMigrateResponses,
+    PostV1DeployMigrateErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/migrate",
     ...options,
     headers: {
       "Content-Type": "application/json",

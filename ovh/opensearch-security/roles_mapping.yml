@@ -1,0 +1,16 @@
+---
+_meta:
+  type: rolesmapping
+  config_version: 2
+
+sproutos_search_admin:
+  reserved: true
+  backend_roles:
+    - sproutos_search_admin
+
+sproutos_search_proxy_manager:
+  reserved: true
+  users:
+    - sproutos_search_proxy_manager
+  backend_roles:
+    - sproutos_search_proxy_manager

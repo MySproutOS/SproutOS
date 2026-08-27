@@ -65,6 +65,7 @@ export const oauthGrantsSchemaRevokeResponse = Type.Object({
       name: Type.String(),
       kind: Type.String(),
       connectionUri: Type.String({ description: "Shown once. It cannot be retrieved again." }),
+      keyPrefix: Type.Optional(Type.String()),
     }),
   ),
   deleted: Type.Array(Type.Object({ id: UUID7String, name: Type.String(), kind: Type.String() })),

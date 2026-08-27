@@ -118,36 +118,48 @@ export async function settleHold(
   db: Kysely<DB>,
   input: SettleHold,
 ): Promise<{ transactionId: string; created: boolean }> {
-  return await db.transaction().execute(async (tx) => {
-    const hold = await lockActiveHold(tx, input.holdId)
+  return await db.transaction().execute(async (tx) => await settleHoldWithin(tx, input))
+}
 
-    const usage = input.actual
-    const platformOverhead = input.overheadAmount ?? 0n
-    const total = usage + platformOverhead
+/**
+ * Settle inside a transaction that also commits the durable metering outbox row.
+ *
+ * A caller using this form must own the transaction. Keeping it beside `settleHold` avoids copying
+ * the ledger operation into the agent package while allowing "charged" and "publishable usage"
+ * to remain one atomic fact.
+ */
+export async function settleHoldWithin(
+  tx: Transaction<DB>,
+  input: SettleHold,
+): Promise<{ transactionId: string; created: boolean }> {
+  const hold = await lockActiveHold(tx, input.holdId)
 
-    // A run that cost nothing still closes its hold. Posting an all-zero transaction would be a
-    // row that says nothing, so the hold is simply released.
-    if (total === 0n) {
-      await closeHold(tx, hold.id, "released", null)
-      return { transactionId: "", created: false }
-    }
+  const usage = input.actual
+  const platformOverhead = input.overheadAmount ?? 0n
+  const total = usage + platformOverhead
 
-    const posted = await postWithin(tx, {
-      organizationId: hold.organizationId,
-      kind: "hold_settle",
-      idempotencyKey: input.idempotencyKey,
-      referenceType: hold.resourceType,
-      referenceId: hold.resourceId,
-      description: input.description ?? null,
-      postings: [
-        { account: "user_credit", amount: -total },
-        { account: "platform_revenue", amount: total },
-      ],
-    })
+  // A run that cost nothing still closes its hold. Posting an all-zero transaction would be a
+  // row that says nothing, so the hold is simply released.
+  if (total === 0n) {
+    await closeHold(tx, hold.id, "released", null)
+    return { transactionId: "", created: false }
+  }
 
-    await closeHold(tx, hold.id, "settled", posted.transactionId)
-    return posted
+  const posted = await postWithin(tx, {
+    organizationId: hold.organizationId,
+    kind: "hold_settle",
+    idempotencyKey: input.idempotencyKey,
+    referenceType: hold.resourceType,
+    referenceId: hold.resourceId,
+    description: input.description ?? null,
+    postings: [
+      { account: "user_credit", amount: -total },
+      { account: "platform_revenue", amount: total },
+    ],
   })
+
+  await closeHold(tx, hold.id, "settled", posted.transactionId)
+  return posted
 }
 
 /** Close a hold without charging: the work did not happen, or failed before it cost anything. */

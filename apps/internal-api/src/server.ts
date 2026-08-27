@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server"
 import type { Server } from "node:http"
 import app from "./index"
+import { closeMeteringSinks } from "./v1/metering"
 
 /**
  * The production entry point.
@@ -47,7 +48,19 @@ const shutdown = (signal: NodeJS.Signals) => {
       )
       process.exit(1)
     }
-    process.exit(0)
+    void closeMeteringSinks().then(
+      () => process.exit(0),
+      (cause: unknown) => {
+        console.error(
+          JSON.stringify({
+            level: "error",
+            message: "metering shutdown failed",
+            error: String(cause),
+          }),
+        )
+        process.exit(1)
+      },
+    )
   })
 
   /*

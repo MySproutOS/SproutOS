@@ -1,6 +1,6 @@
-# 0017. Soft delete (`deleted_at`) on anything `usage_event` references
+# 0017. Soft delete (`deleted_at`) on anything billing history references
 
-- Status: Accepted
+- Status: Accepted; raw-storage mechanism amended by [0028](0028-kafka-clickhouse-metering.md)
 - Date: 2026-08-20
 
 ## Context
@@ -26,6 +26,11 @@ structurally impossible — you cannot remove the row, and you cannot cascade pa
 Anything `usage_event` references — `organization` and `project` — is **soft-deleted** via a
 nullable `deleted_at timestamptz`. Their inbound FKs from billing tables are `ON DELETE RESTRICT`.
 No cascade may reach a table the ledger points at.
+
+ADR 0028 later removed Postgres `usage_event`. The delete invariant remains: `usage_rollup`,
+`statement_line_item`, deployments, and audit records retain their project and organization
+references with `ON DELETE RESTRICT`. The raw table was one reason for the rule, not the rule's
+permanent implementation.
 
 Concretely:
 

@@ -54,6 +54,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow,
   getV1OrgsByOrgSlugProjectsByProjectIdDomains,
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdFiles,
@@ -101,6 +102,7 @@ import {
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthLogout,
+  postV1DeployMigrate,
   postV1DeployRelease,
   postV1DeployStaticUploadUrl,
   postV1DeployToken,
@@ -114,6 +116,8 @@ import {
   postV1OauthToken,
   postV1Orgs,
   postV1OrgsByOrgSlugAgentCredentials,
+  postV1OrgsByOrgSlugAgentProxyToken,
+  postV1OrgsByOrgSlugAgentProxyTokenRefresh,
   postV1OrgsByOrgSlugAnalyses,
   postV1OrgsByOrgSlugApiKeys,
   postV1OrgsByOrgSlugBillingTopup,
@@ -131,6 +135,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
@@ -272,6 +277,8 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
@@ -404,6 +411,8 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
+  PostV1DeployMigrateData,
+  PostV1DeployMigrateResponse,
   PostV1DeployReleaseData,
   PostV1DeployReleaseResponse,
   PostV1DeployStaticUploadUrlData,
@@ -432,6 +441,10 @@ import type {
   PostV1OrgsByOrgSlugAgentCredentialsData,
   PostV1OrgsByOrgSlugAgentCredentialsError,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
+  PostV1OrgsByOrgSlugAgentProxyTokenData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+  PostV1OrgsByOrgSlugAgentProxyTokenResponse,
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesError,
   PostV1OrgsByOrgSlugAnalysesResponse,
@@ -477,6 +490,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData,
@@ -1959,7 +1975,7 @@ export const getV1OrgsByOrgSlugRepositoriesInfiniteOptions = (
 }
 
 /**
- * Stops the caller's dev sandbox, keeping its workspace
+ * Permanently deletes the caller's dev sandbox and its database branch
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
   options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData>>,
@@ -2030,6 +2046,33 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Keeps an actively viewed sandbox preview from being reaped
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -2441,6 +2484,60 @@ export const putV1OrgsByOrgSlugAgentConfigMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await putV1OrgsByOrgSlugAgentConfig({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Mint an access/refresh pair for a sandbox agent to reach the LLM proxy
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAgentProxyTokenData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAgentProxyTokenResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugAgentProxyTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAgentProxyTokenResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugAgentProxyTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAgentProxyToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Exchange a refresh token for a new pair
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenRefreshMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAgentProxyTokenRefresh({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -2943,6 +3040,34 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdMutation =
   }
   return mutationOptions
 }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow", options)
+
+/**
+ * The GitHub Actions workflow that deploys this project, generated for it
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
+    DefaultError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
@@ -4944,6 +5069,33 @@ export const postV1DeployReleaseMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1DeployRelease({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Run an uploaded migrator against the project's database, and wait for it
+ */
+export const postV1DeployMigrateMutation = (
+  options?: Partial<Options<PostV1DeployMigrateData>>,
+): UseMutationOptions<
+  PostV1DeployMigrateResponse,
+  DefaultError,
+  Options<PostV1DeployMigrateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1DeployMigrateResponse,
+    DefaultError,
+    Options<PostV1DeployMigrateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1DeployMigrate({
         ...options,
         ...fnOptions,
         throwOnError: true,

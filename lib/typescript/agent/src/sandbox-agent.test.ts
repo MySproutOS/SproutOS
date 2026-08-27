@@ -1,14 +1,39 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentEvent } from "./runner"
-import { bootstrapSandbox, runSandboxTurn, WORKSPACE } from "./sandbox-agent"
+import { bootstrapSandbox, commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
 
-function fakeDriver(options: { stdout?: string[]; execExit?: number } = {}) {
+const WORKSPACE = "/home/daytona/workspace"
+
+function fakeDriver(
+  options: {
+    stdout?: string[]
+    execExit?: number
+    /** Canned stdout, keyed by a substring of the command. */
+    results?: Record<string, string>
+    /** Commands that should come back non-zero, keyed the same way, with their stderr. */
+    failures?: Record<string, string>
+  } = {},
+) {
   const commands: string[][] = []
+  const clones: Array<{ url: string; password: string }> = []
   const files: Record<string, string> = {}
   const driver = {
+    workspaceDir: WORKSPACE,
+    cloneRepository: (_id: string, input: { url: string; password: string }) => {
+      clones.push({ url: input.url, password: input.password })
+      if (options.execExit) return Promise.reject(new Error("clone failed"))
+      return Promise.resolve()
+    },
     exec: (_id: string, argv: string[]) => {
       commands.push(argv)
+      const line = argv.join(" ")
+      for (const [needle, stderr] of Object.entries(options.failures ?? {})) {
+        if (line.includes(needle)) return Promise.resolve({ stdout: "", stderr, exitCode: 1 })
+      }
+      for (const [needle, stdout] of Object.entries(options.results ?? {})) {
+        if (line.includes(needle)) return Promise.resolve({ stdout, stderr: "", exitCode: 0 })
+      }
       return Promise.resolve({ stdout: "", stderr: "", exitCode: options.execExit ?? 0 })
     },
     execStream: (
@@ -26,7 +51,7 @@ function fakeDriver(options: { stdout?: string[]; execExit?: number } = {}) {
       return Promise.resolve()
     },
   } as never
-  return { commands, driver, files }
+  return { clones, commands, driver, files }
 }
 
 const token = {
@@ -47,17 +72,18 @@ describe("bootstrapSandbox", () => {
     skill: "# SproutOS\nDeployment is performed by the platform.",
   }
 
-  it("takes the clone credential straight back out of the remote", async () => {
-    const { commands, driver } = fakeDriver()
+  it("keeps the clone credential out of sandbox commands and the remote", async () => {
+    const { clones, commands, driver } = fakeDriver()
     await bootstrapSandbox({ ...base, driver, externalId: "sb" })
 
-    const clone = commands.find((argv) => argv[1] === "clone")
-    expect(clone?.join(" ")).toContain("ghs_installation")
+    expect(clones).toEqual([
+      { url: "https://github.com/acme/app.git", password: "ghs_installation" },
+    ])
+    expect(commands.flat().join(" ")).not.toContain("ghs_installation")
 
     /*
-      The property that matters. An installation token in the clone URL lands in `.git/config`,
-      where it is readable by everything the agent runs for the rest of the session — so the remote
-      is rewritten immediately, and the push path supplies a fresh one.
+      The provider receives the credential as an API field, while the sandbox and its Git remote
+      only ever see the credential-free URL. The push path supplies a fresh token separately.
     */
     const reset = commands.find((argv) => argv.includes("set-url"))
     expect(reset).toBeDefined()
@@ -95,17 +121,17 @@ describe("bootstrapSandbox", () => {
     expect(exclude).toContain("/.codex/")
   })
 
-  it("writes a Codex config only for Codex", async () => {
-    const claude = fakeDriver()
-    await bootstrapSandbox({ ...base, driver: claude.driver, externalId: "sb" })
-    expect(claude.files[`${WORKSPACE}/.codex/config.toml`]).toBeUndefined()
-
-    const codex = fakeDriver()
-    await bootstrapSandbox({ ...base, driver: codex.driver, externalId: "sb", harness: "codex" })
-    const config = codex.files[`${WORKSPACE}/.codex/config.toml`] ?? ""
-    expect(config).toContain('base_url = "https://llm.sproutos.me"')
-    // The sandbox talks to us, never to a provider.
-    expect(config).not.toContain("api.openai.com")
+  it("writes no Codex config at all, for either harness", async () => {
+    /*
+      It used to write one, and Codex overwrote the file with its own trust entry on the first turn
+      — taking the provider with it, so the next turn went to `wss://api.openai.com` with no key.
+      The settings are passed per invocation now; see `codexOverrides`.
+    */
+    for (const harness of ["claude-code", "codex"] as const) {
+      const { driver, files } = fakeDriver()
+      await bootstrapSandbox({ ...base, driver, externalId: "sb", harness })
+      expect(files[`${WORKSPACE}/.codex/config.toml`]).toBeUndefined()
+    }
   })
 
   it("reports a partial bootstrap rather than throwing", async () => {
@@ -223,5 +249,131 @@ describe("runSandboxTurn", () => {
     await runSandboxTurn({ ...base, driver, onEvent: (event) => events.push(event) })
     // A harness that prints a banner should not end a customer's turn.
     expect(events).toEqual([])
+  })
+})
+
+describe("a turn that was refused its tools", () => {
+  const refused = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    num_turns: 2,
+    duration_ms: 900,
+    result: "Wrote SANDBOX_PROOF.md.",
+    permission_denials: [
+      { tool_name: "Write", tool_use_id: "toolu_1", tool_input: { file_path: "/workspace/a" } },
+      { tool_name: "Bash", tool_use_id: "toolu_2", tool_input: { command: "npm test" } },
+    ],
+  })
+
+  async function turn(harness: "claude-code" | "codex", stdout: string[]) {
+    const events: AgentEvent[] = []
+    const { commands, driver } = fakeDriver({ stdout })
+    await runSandboxTurn({
+      driver,
+      externalId: "sandbox",
+      harness,
+      model: null,
+      onEvent: (event) => events.push(event),
+      prompt: "write a file",
+      proxyBaseUrl: "https://llm.sproutos.me",
+      refreshUrl: "https://api.sproutos.me/refresh",
+      timeoutMs: 60_000,
+      token,
+      touch: () => Promise.resolve(),
+    })
+    return { commands, events }
+  }
+
+  it("is reported as an error, whatever the harness calls it", async () => {
+    /*
+      That line is exactly what Claude Code emits when a `--print` turn has nobody to grant
+      permission: a success, no error, and the refusals in a field nothing was reading. Taken at
+      face value the transcript shows an agent describing a change that does not exist — which is
+      what the first sandbox turn ever run actually did.
+    */
+    const { events } = await turn("claude-code", [`${refused}\n`])
+
+    const error = events.find((event) => event.type === "error")
+    expect(error).toBeDefined()
+    expect((error as { message: string }).message).toContain("Write, Bash")
+    expect(events.at(-1)).toMatchObject({ type: "done", isError: true })
+  })
+
+  it("asks for the permission that stops it happening", async () => {
+    // Both harnesses, because the failure is identical and only the spelling differs.
+    const claude = await turn("claude-code", [])
+    expect(claude.commands.at(-1)).toContain("--dangerously-skip-permissions")
+
+    const codex = await turn("codex", [])
+    expect(codex.commands.at(-1)).toContain("--dangerously-bypass-approvals-and-sandbox")
+  })
+})
+
+describe("commitSandboxWork", () => {
+  const base = {
+    author: { email: "dev@example.com", name: "Dev" },
+    branch: "sproutos/agent-abc",
+    externalId: "sb",
+    message: "Add a thing",
+    repository: "octocat/Hello-World",
+    token: "ghs_installation",
+  }
+
+  it("says nothing changed rather than making an empty commit", async () => {
+    // The common case: a turn that answered a question without touching a file. A caller that had
+    // to catch an exception to find that out would eventually catch a real failure with it.
+    const { commands, driver } = fakeDriver()
+    const result = await commitSandboxWork({ ...base, driver })
+
+    expect(result).toEqual({ committed: false, reason: "no_changes" })
+    // Nothing was staged, committed or pushed on the way to that answer.
+    expect(commands.map((argv) => argv.join(" ")).join("\n")).not.toContain("commit")
+  })
+
+  it("keeps the credential out of the URL, and pushes to an explicit ref", async () => {
+    const { commands, driver } = fakeDriver({
+      results: {
+        "status --porcelain": " M src/app.ts\n?? README.md\n",
+        "rev-parse HEAD": "abc123\n",
+      },
+    })
+
+    const result = await commitSandboxWork({ ...base, driver })
+    expect(result).toEqual({
+      committed: true,
+      sha: "abc123",
+      branch: "sproutos/agent-abc",
+      files: ["src/app.ts", "README.md"],
+    })
+
+    const push = commands.find((argv) => argv.includes("push"))!
+    /*
+      The URL carries no credential. `git push <url>` with one in it leaves it in the reflog, and a
+      remote set from it leaves it in `.git/config` — both outlive the push by an hour of validity.
+    */
+    expect(push).toContain("https://github.com/octocat/Hello-World.git")
+    expect(push.join(" ")).not.toContain("x-access-token")
+    expect(push.join(" ")).not.toContain("ghs_installation@")
+    // The clone is off the production branch, so the local branch is called that. An explicit ref
+    // is what lets the agent's work land somewhere else without a checkout dance.
+    expect(push).toContain("HEAD:refs/heads/sproutos/agent-abc")
+    expect(push).toContain("--force-with-lease")
+
+    // An identity on the command itself: `git commit` refuses without one, and the bootstrap's
+    // `git config` is a step that is allowed to have failed.
+    const commit = commands.find((argv) => argv.includes("commit"))!
+    expect(commit.join(" ")).toContain("user.email=dev@example.com")
+  })
+
+  it("reports which step failed, not just that something did", async () => {
+    // "the push failed" and "the commit failed" send a person to different places. A single generic
+    // error sends them to neither.
+    const { driver } = fakeDriver({
+      results: { "status --porcelain": " M a.ts\n" },
+      failures: { push: "remote: Permission to octocat/Hello-World.git denied" },
+    })
+
+    await expect(commitSandboxWork({ ...base, driver })).rejects.toThrow(/the push failed/)
   })
 })

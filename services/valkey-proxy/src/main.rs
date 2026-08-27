@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
 use valkey_proxy::master::MasterQueue;
+use valkey_proxy::provision::AclProvisioner;
 use valkey_proxy::{CredentialStore, serve};
 
 #[tokio::main]
@@ -52,6 +53,15 @@ async fn main() -> anyhow::Result<()> {
     // silently turn every authentication into an operational error.
     store.check().await?;
 
+    let acl_root_key = std::env::var("VALKEY_PROXY_ACL_ROOT_KEY").map_err(|_| {
+        anyhow::anyhow!("VALKEY_PROXY_ACL_ROOT_KEY is not set; tenant ACL users cannot be derived")
+    })?;
+    let provisioner = Arc::new(AclProvisioner::new(
+        backend.as_ref().clone(),
+        acl_root_key.into_bytes(),
+    )?);
+    provisioner.self_check().await?;
+
     /*
       The master queue — TASK 20's second half — is opt-in.
 
@@ -68,15 +78,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let listener = TcpListener::bind(listen).await?;
-    info!(%listen, %backend, "valkey-proxy listening");
+    info!(%listen, backend = %valkey_proxy::upstream::redacted(&backend), "valkey-proxy listening");
 
     loop {
         let (client, peer) = listener.accept().await?;
         let store = Arc::clone(&store);
-        let backend = Arc::clone(&backend);
         let master = Arc::clone(&master);
+        let provisioner = Arc::clone(&provisioner);
         tokio::spawn(async move {
-            if let Err(cause) = serve(client, &backend, &store, &master).await {
+            if let Err(cause) = serve(client, &store, &provisioner, &master).await {
                 // Debug rather than warn: a client hanging up mid-command is ordinary, and a log
                 // line per disconnect is how a proxy drowns its own useful output.
                 tracing::debug!(%peer, %cause, "connection ended");

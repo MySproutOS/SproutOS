@@ -293,3 +293,105 @@ resource "aws_vpc_security_group_ingress_rule" "service_valkey_from_nlb" {
   to_port                      = 6379
   description                  = "Valkey split from the tenant load balancer"
 }
+
+# ---------------------------------------------------------------------------
+# The sandbox forward-proxy split
+# ---------------------------------------------------------------------------
+
+# Public deliberately, like the other customer-facing listeners. Daytona sandboxes do not have a
+# stable source range to allowlist, so authentication belongs to the proxy protocol and the service
+# behind this listener must fail closed. TLS terminates at the NLB before the HTTP CONNECT exchange.
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Authenticated HTTPS forward proxy from sandboxes"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
+resource "aws_lb_target_group" "forward_proxy" {
+  for_each = local.service_colours
+
+  # `egress` is also the short name used by `bin/cutover.sh`; keep the two identical so a router
+  # release can derive these groups rather than carrying another pair of mutable ARNs.
+  name     = "${var.name_prefix}-egress-${each.key}"
+  port     = 3128
+  protocol = "TCP"
+  vpc_id   = aws_vpc.main.id
+
+  # The instance port is reachable only from the tenant NLB's security group. Preserving a sandbox
+  # source address would make that reference stop matching and require opening 3128 to the world.
+  preserve_client_ip = false
+
+  # The forward proxy is another listener in the router process. Its honest readiness signal is the
+  # shared HTTP endpoint, rather than an unauthenticated synthetic CONNECT on the public protocol.
+  health_check {
+    protocol            = "HTTP"
+    path                = "/healthz"
+    port                = "8080"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    matcher             = "200"
+  }
+
+  # CONNECT tunnels are bounded to five minutes in the proxy. Give the old colour that same drain
+  # window so cutover does not truncate a package download or Git fetch mid-transfer.
+  deregistration_delay = 300
+  tags                 = { Name = "${var.name_prefix}-egress-${each.key}" }
+}
+
+resource "aws_lb_listener" "forward_proxy" {
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 443
+  protocol          = "TLS"
+  certificate_arn   = aws_acm_certificate.tenant.arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  default_action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.forward_proxy["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.forward_proxy["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [default_action]
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_forward_proxy_from_nlb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
+  from_port                    = 3128
+  to_port                      = 3128
+  description                  = "Sandbox forward proxy from the tenant load balancer"
+}
+
+/*
+  `egress.<domain>`, an exact alias to the tenant NLB.
+
+  The control-plane wildcard resolves to the ALB, so relying on it would send CONNECT requests to
+  the wrong load balancer. As with Postgres, the exact record wins over that wildcard.
+*/
+resource "aws_route53_record" "forward_proxy" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${var.egress_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
+    evaluate_target_health = false
+  }
+}

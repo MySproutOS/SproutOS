@@ -104,7 +104,7 @@ output "search_rule_arn" {
 }
 
 # The tenant balancer's listeners, so the cutover moves them with the router. Without these a
-# release leaves every customer's database and queue on the colour the router just drained.
+# release leaves every customer's database, queue and sandbox egress on the colour just drained.
 output "pg_listener_arn" {
   description = "Postgres listener on the tenant NLB. Set as the PG_LISTENER_ARN repository variable."
   value       = aws_lb_listener.postgres.arn
@@ -113,6 +113,11 @@ output "pg_listener_arn" {
 output "valkey_listener_arn" {
   description = "Valkey listener on the tenant NLB. Set as the VALKEY_LISTENER_ARN repository variable."
   value       = aws_lb_listener.valkey.arn
+}
+
+output "forward_proxy_listener_arn" {
+  description = "Sandbox forward-proxy listener on the tenant NLB. Set as the FORWARD_PROXY_LISTENER_ARN repository variable."
+  value       = aws_lb_listener.forward_proxy.arn
 }
 
 output "forum_static_bucket" {

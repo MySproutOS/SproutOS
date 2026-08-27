@@ -231,7 +231,9 @@ function ProjectDetail() {
                         <TableCell numeric>{job.id.slice(-12)}</TableCell>
                         <TableCell>{job.workflow}</TableCell>
                         <TableCell numeric>{job.duration}</TableCell>
-                        <TableCell money>{formatMicroUsd(job.costMicros)}</TableCell>
+                        <TableCell money>
+                          {job.costMicros === null ? "—" : formatMicroUsd(job.costMicros)}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

@@ -296,7 +296,9 @@ describe("the sandbox vocabulary", () => {
   */
   it("refuses a second row for the same provider sandbox", async ({ skip }) => {
     if (!reachable) skip()
-    const externalId = `dup-${Date.now()}`
+    // Vitest can discover both source and an existing build output in the same checkout. A clock
+    // value lets those two copies collide before either reaches the assertion this test owns.
+    const externalId = `dup-${v7()}`
     await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId })
     await expect(
       crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId }),

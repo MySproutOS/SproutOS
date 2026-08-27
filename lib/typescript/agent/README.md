@@ -85,10 +85,11 @@ this system can have.
 
 ## Two ledgers, on purpose
 
-The credit ledger says what was **charged**. `usage_event` says what was **consumed**, per
-dimension. `withMeteredRun` writes both, keyed on the hold id, so a retried settlement collides on
-`(source, external_id, occurred_at)` rather than double-counting. A charge with no matching events
-is a bill nobody can explain.
+The credit ledger says what was **charged**. The Kafka/ClickHouse usage stream says what was
+**consumed**, per dimension. `withMeteredRun` commits token events and `agent_run_second` through
+the transactional metering outbox beside settlement, using one run id and one observation
+timestamp. Zero quantities are omitted, and retrying the outbox cannot restamp or double-count the
+run. A charge with no matching events is a bill nobody can explain.
 
 ## Running a turn
 

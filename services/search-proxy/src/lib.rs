@@ -8,17 +8,19 @@
 //! client at this as though it were their own cluster; it authenticates them, rewrites every index
 //! name they mention into their own namespace, and forwards to the shared cluster.
 //!
-//! **This proxy is the security boundary, not a convenience.** Document- and field-level security
-//! are not in OpenSearch's open-source tier, so there is nothing inside the cluster that would stop
-//! a tenant naming another tenant's index. Everything that keeps them apart is in `naming.rs`,
-//! `routes.rs` and `body.rs`.
+//! This proxy authenticates and namespaces every supported request, then authenticates upstream as
+//! a matching OpenSearch internal user whose role can access only that namespace. The parser keeps
+//! customer-facing names tidy and narrows the API; the server-enforced role is the backstop that
+//! makes a missed present or future body shape fail closed.
 //!
 //! Rust because it sits in front of every search request a tenant makes, and because the rewriting
 //! is byte work on bodies that can be megabytes.
 
 pub mod body;
+pub mod metering;
 pub mod naming;
 pub mod routes;
+pub mod security;
 
 use std::sync::Arc;
 
@@ -28,11 +30,12 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use sproutos_service_credentials::{Authentication, CredentialStore, report};
-use sproutos_tenant_auth::TenantIdentity;
+use sproutos_tenant_auth::{ResourceKind, TenantIdentity};
 use tracing::warn;
 
-use crate::body::{rewrite_ndjson, strip_prefix_from_response};
-use crate::routes::{Plan, RouteError, plan};
+use crate::body::{rewrite_mget, rewrite_ndjson, strip_prefix_from_response};
+use crate::routes::{Plan, RouteError, plan, validate_query};
+use crate::security::SecurityManager;
 
 /// The largest body this proxy will hold.
 ///
@@ -45,23 +48,12 @@ pub struct Proxy {
     pub store: Arc<CredentialStore>,
     pub upstream: String,
     pub client: reqwest::Client,
-    /*
-      What this proxy presents to the cluster, when the cluster asks for anything.
-
-      OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` because *this* is meant to be its security
-      boundary — which is true right up to the moment the cluster has to be reachable across a
-      network. Then "the proxy is the boundary" needs the cluster to be unreachable by anything
-      else, and an IP allowlist cannot provide that here: the platform's tenant functions egress
-      through the same NAT address the allowlist would have to admit.
-
-      So the cluster gets a second lock, and this is the key to it. `None` where the upstream is
-      genuinely private — a loopback port, or a compose network — because a credential nothing
-      checks is a credential to rotate for no reason.
-
-      Compare the ClickHouse route on the same host, whose comment puts it exactly: "Two locks, not
-      one. ClickHouse's own user and password still apply; this restricts *who may reach the door*."
-    */
-    pub upstream_authorization: Option<String>,
+    /// Provisions the server-enforced role before forwarding. Required: there is deliberately no
+    /// parser-only mode, because it would turn a missing deployment secret into weaker isolation.
+    pub security: SecurityManager,
+    /// Durable billing handoff. Absent in development; failures are loud and fail open so a
+    /// metering outage cannot become a search outage.
+    pub metering: Option<metering::SearchMeter>,
 }
 
 /// Headers that must not be forwarded upstream.
@@ -71,6 +63,7 @@ pub struct Proxy {
 /// resolve the wrong virtual host; the rest are hop-by-hop and belong to this connection.
 const STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "authorization",
+    "accept-encoding",
     "host",
     "connection",
     "proxy-authorization",
@@ -79,6 +72,9 @@ const STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "transfer-encoding",
     "upgrade",
     "content-length",
+    "x-proxy-user",
+    "x-proxy-roles",
+    "x-opaque-id",
 ];
 
 /// Headers that must not be forwarded back.
@@ -91,6 +87,10 @@ const STRIPPED_RESPONSE_HEADERS: &[&str] = &[
     "transfer-encoding",
     "content-encoding",
 ];
+
+fn strip_request_header(name: &HeaderName) -> bool {
+    STRIPPED_REQUEST_HEADERS.contains(&name.as_str())
+}
 
 fn error(status: StatusCode, message: &str) -> Response {
     // OpenSearch's own error shape, so a client's error handling works unchanged rather than
@@ -150,7 +150,25 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
 
     let prefix = naming::prefix_for(&identity);
 
-    let planned = match plan(&prefix, parts.uri.path()) {
+    // The username grammar and credential store are shared by every tenant split. A valid queue
+    // credential must not become a search credential merely because it authenticates successfully.
+    if identity.resource_kind != ResourceKind::SearchIndex {
+        warn!(tenant = %identity, "credential belongs to a different resource kind");
+        return error(StatusCode::UNAUTHORIZED, "Invalid username or password");
+    }
+
+    let security_identity = match proxy.security.ensure(&identity, &prefix).await {
+        Ok(identity) => identity,
+        Err(cause) => {
+            warn!(tenant = %identity, %cause, "tenant security provisioning failed");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The service is temporarily unavailable; retry shortly",
+            );
+        }
+    };
+
+    let planned = match plan(&prefix, &parts.method, parts.uri.path()) {
         Ok(planned) => planned,
         Err(RouteError::Refused(endpoint)) => {
             warn!(tenant = %identity, endpoint, "refused");
@@ -162,7 +180,16 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         Err(RouteError::Index(cause)) => {
             return error(StatusCode::BAD_REQUEST, &cause.to_string());
         }
+        Err(
+            cause @ (RouteError::Query(_) | RouteError::DuplicateQuery(_) | RouteError::Encoding),
+        ) => {
+            return error(StatusCode::BAD_REQUEST, &cause.to_string());
+        }
     };
+
+    if let Err(cause) = validate_query(parts.uri.query()) {
+        return error(StatusCode::BAD_REQUEST, &cause.to_string());
+    }
 
     // Read the body *after* authentication, so an unauthenticated caller never makes us hold 64 MiB.
     let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
@@ -181,35 +208,129 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
             Ok(rewritten) => (path, Bytes::from(rewritten)),
             Err(cause) => return error(StatusCode::BAD_REQUEST, &cause.to_string()),
         },
+        Plan::PathAndMget {
+            path,
+            index_in_path,
+        } => match rewrite_mget(&prefix, &bytes, index_in_path) {
+            Ok(rewritten) => (path, Bytes::from(rewritten)),
+            Err(cause) => return error(StatusCode::BAD_REQUEST, &cause.to_string()),
+        },
     };
+
+    let query = metering::QueryObservation::for_request(&identity, &path, &forwarded);
 
     forward(
         &proxy,
-        &parts.method,
-        &parts.uri,
-        &path,
-        &parts.headers,
-        forwarded,
-        &prefix,
+        &identity,
+        security_identity,
+        ForwardRequest {
+            method: &parts.method,
+            uri: &parts.uri,
+            path: &path,
+            headers: &parts.headers,
+            body: forwarded,
+            query,
+        },
     )
     .await
 }
 
+struct ForwardRequest<'a> {
+    method: &'a Method,
+    uri: &'a Uri,
+    path: &'a str,
+    headers: &'a HeaderMap,
+    body: Bytes,
+    query: Option<metering::QueryObservation>,
+}
+
 async fn forward(
     proxy: &Proxy,
-    method: &Method,
-    uri: &Uri,
-    path: &str,
-    headers: &HeaderMap,
-    body: Bytes,
-    prefix: &str,
+    tenant: &TenantIdentity,
+    mut security: crate::security::TenantSecurityIdentity,
+    request: ForwardRequest<'_>,
 ) -> Response {
-    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
-    let target = format!("{}{path}{query}", proxy.upstream.trim_end_matches('/'));
+    let mut response = match send_upstream(proxy, &request, &security).await {
+        Ok(response) => response,
+        Err(cause) => {
+            warn!(%cause, "upstream request failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "The search cluster did not respond",
+            );
+        }
+    };
 
-    let mut request = proxy.client.request(method.clone(), &target).body(body);
-    for (name, value) in headers {
-        if STRIPPED_REQUEST_HEADERS.contains(&name.as_str()) {
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        // A deleted Security document is indistinguishable from a bad derived password at the
+        // upstream boundary. Drop the local success marker, recreate the exact documents, and
+        // retry once. A second 401 is never looped and never handed through as though the tenant's
+        // own credentials were wrong: they already authenticated successfully at this proxy.
+        proxy.security.invalidate(&security.index_prefix).await;
+        security = match proxy.security.ensure(tenant, &security.index_prefix).await {
+            Ok(identity) => identity,
+            Err(cause) => {
+                warn!(tenant = %tenant, %cause, "tenant security recovery failed");
+                return error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "The service is temporarily unavailable; retry shortly",
+                );
+            }
+        };
+        response = match send_upstream(proxy, &request, &security).await {
+            Ok(response) => response,
+            Err(cause) => {
+                warn!(%cause, "upstream request failed after security recovery");
+                return error(
+                    StatusCode::BAD_GATEWAY,
+                    "The search cluster did not respond",
+                );
+            }
+        };
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            warn!(tenant = %tenant, "upstream authentication failed after one recovery attempt");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The service is temporarily unavailable; retry shortly",
+            );
+        }
+    }
+
+    // Receiving a successful response header is the first honest point at which we know the
+    // engine accepted the query. Persist before reading/rendering the body, so a client that hangs
+    // up after OpenSearch did the work is not silently free.
+    if response.status().is_success()
+        && let (Some(meter), Some(observation)) = (&proxy.metering, &request.query)
+    {
+        meter.record_query(observation);
+    }
+
+    render_upstream(response, &security.index_prefix).await
+}
+
+async fn send_upstream(
+    proxy: &Proxy,
+    forwarded: &ForwardRequest<'_>,
+    security: &crate::security::TenantSecurityIdentity,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let query = forwarded
+        .uri
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
+    let target = format!(
+        "{}{}{}",
+        proxy.upstream.trim_end_matches('/'),
+        forwarded.path,
+        query
+    );
+
+    let mut request = proxy
+        .client
+        .request(forwarded.method.clone(), &target)
+        .body(forwarded.body.clone());
+    for (name, value) in forwarded.headers {
+        if strip_request_header(name) {
             continue;
         }
         request = request.header(name, value);
@@ -223,21 +344,17 @@ async fn forward(
       header would overwrite it on the next iteration, and the request would reach the cluster
       carrying a credential the cluster has never heard of — which fails closed, but only by luck.
     */
-    if let Some(authorization) = &proxy.upstream_authorization {
-        request = request.header("authorization", authorization);
+    // Set after tenant-controlled Authorization has been stripped. This is a matching OpenSearch
+    // internal user with an HMAC-derived password that is never stored or given to the tenant.
+    request = request.basic_auth(&security.user, Some(&security.password));
+    if let Some(query) = &forwarded.query {
+        request = request.header("x-opaque-id", &query.request_id);
     }
 
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(cause) => {
-            warn!(%cause, "upstream request failed");
-            return error(
-                StatusCode::BAD_GATEWAY,
-                "The search cluster did not respond",
-            );
-        }
-    };
+    request.send().await
+}
 
+async fn render_upstream(response: reqwest::Response, prefix: &str) -> Response {
     let status = StatusCode::from_u16(response.status().as_u16())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let upstream_headers = response.headers().clone();
@@ -276,4 +393,30 @@ async fn forward(
                 "Could not build a response",
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upstream_compression_is_disabled_before_response_rewriting() {
+        assert!(strip_request_header(&HeaderName::from_static(
+            "accept-encoding"
+        )));
+        assert!(!strip_request_header(&HeaderName::from_static("accept")));
+    }
+
+    #[test]
+    fn tenant_cannot_assert_an_opensearch_identity() {
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-proxy-user"
+        )));
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-proxy-roles"
+        )));
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-opaque-id"
+        )));
+    }
 }

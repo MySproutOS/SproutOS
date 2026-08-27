@@ -42,6 +42,8 @@ export function functionName(projectId: string): string {
 
 export type PublishInput = {
   projectId: string
+  /** Signed into the telemetry token so the extension body cannot choose a billing owner. */
+  organizationId: string
   /**
    * Which deployment this is, for attributing a log line to a release.
    *
@@ -246,7 +248,7 @@ function withTelemetryEnv(input: PublishInput): Record<string, string> {
     ...input.environment,
     SPROUTOS_PROJECT_ID: input.projectId,
     ...(input.deploymentId === undefined ? {} : { SPROUTOS_DEPLOYMENT_ID: input.deploymentId }),
-    ...logEnv(input.projectId),
+    ...logEnv(input.projectId, input.organizationId),
     /*
       Last, so it wins over a customer's own `PORT`.
 
@@ -281,7 +283,7 @@ function withTelemetryEnv(input: PublishInput): Record<string, string> {
  */
 const LOG_TOKEN_TTL_SECONDS = 400 * 24 * 60 * 60
 
-function logEnv(projectId: string): Record<string, string> {
+function logEnv(projectId: string, organizationId: string): Record<string, string> {
   const endpoint = process.env.SPROUTOS_LOG_ENDPOINT ?? ""
   const secret = process.env.LOG_TOKEN_SECRET ?? ""
 
@@ -293,9 +295,9 @@ function logEnv(projectId: string): Record<string, string> {
 
   return {
     SPROUTOS_LOG_ENDPOINT: endpoint,
-    // Deliberately the same format `mintDeployToken` produces and `services/router/src/log_token.rs`
-    // verifies, against one set of fixtures both languages read.
-    SPROUTOS_LOG_TOKEN: mintProjectToken(projectId, expiresAt, secret),
+    // The organization-bearing format `services/router/src/log_token.rs` verifies, against one set
+    // of fixtures both languages read.
+    SPROUTOS_LOG_TOKEN: mintProjectToken(projectId, organizationId, expiresAt, secret),
   }
 }
 

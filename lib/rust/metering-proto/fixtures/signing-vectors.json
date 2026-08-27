@@ -40,10 +40,10 @@
         "source": "search-proxy",
         "events": [
           {
-            "external_id": "search-proxy:idx-4:search_query:1723459260",
+            "external_id": "search-proxy:idx-4:es_search_unit:1723459260",
             "organization_id": "0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b",
             "project_id": "01912d41-0000-7000-8000-0000000000b1",
-            "dimension": "search_query",
+            "dimension": "es_search_unit",
             "quantity": 42.0,
             "occurred_at": 1723459260000,
             "attributes": {
@@ -55,8 +55,8 @@
           }
         ]
       },
-      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"index\":\"produits-café\",\"note\":\"東京 ☕ 😀 — tab:\\ttab, quote:\\\" backslash:\\\\ ctl:\\u0001\",\"query.locale\":\"ja-JP\",\"region\":\"iad\"},\"dimension\":\"search_query\",\"external_id\":\"search-proxy:idx-4:search_query:1723459260\",\"occurred_at\":1723459260000,\"organization_id\":\"0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"4045000000000000\"}],\"source\":\"search-proxy\"}",
-      "signature": "d4593973c9914389a2981921973b53b6b474e604ad9fd4dd5c95b88d50fdb5d7"
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"index\":\"produits-café\",\"note\":\"東京 ☕ 😀 — tab:\\ttab, quote:\\\" backslash:\\\\ ctl:\\u0001\",\"query.locale\":\"ja-JP\",\"region\":\"iad\"},\"dimension\":\"es_search_unit\",\"external_id\":\"search-proxy:idx-4:es_search_unit:1723459260\",\"occurred_at\":1723459260000,\"organization_id\":\"0191a0b1-c2d3-7e4f-8a9b-0c1d2e3f4a5b\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"4045000000000000\"}],\"source\":\"search-proxy\"}",
+      "signature": "35eadddfe5339adde702724868c840e2d0037a409786b97a88c9a65d662d6d11"
     },
     {
       "name": "multi-event-unordered-attributes",
@@ -66,10 +66,10 @@
         "source": "pg-proxy",
         "events": [
           {
-            "external_id": "pg-proxy:db-1:db_compute_second:1723459200",
+            "external_id": "pg-proxy:db-1:db_compute_cu_second:1723459200",
             "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
             "project_id": "01912d41-0000-7000-8000-0000000000b1",
-            "dimension": "db_compute_second",
+            "dimension": "db_compute_cu_second",
             "quantity": 0.25,
             "occurred_at": 1723459200000,
             "attributes": {
@@ -80,10 +80,10 @@
             }
           },
           {
-            "external_id": "pg-proxy:db-1:db_connection_second:1723459200",
+            "external_id": "pg-proxy:db-1:db_storage_gib_hour:1723459200",
             "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
             "project_id": "01912d41-0000-7000-8000-0000000000b1",
-            "dimension": "db_connection_second",
+            "dimension": "db_storage_gib_hour",
             "quantity": 30.0,
             "occurred_at": 1723459200000,
             "attributes": {
@@ -92,9 +92,9 @@
             }
           },
           {
-            "external_id": "pg-proxy:db-1:db_storage_gib_second:1723459200",
+            "external_id": "pg-proxy:db-1:db_compute_cu_second:fraction:1723459200",
             "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
-            "dimension": "db_storage_gib_second",
+            "dimension": "db_compute_cu_second",
             "quantity": 0.0078125,
             "occurred_at": 1723459200000,
             "attributes": {
@@ -103,8 +103,8 @@
           }
         ]
       },
-      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"a.very.long.attribute.key\":\"1\",\"branch\":\"prod\",\"database\":\"main\",\"zone\":\"use1-az2\"},\"dimension\":\"db_compute_second\",\"external_id\":\"pg-proxy:db-1:db_compute_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"3fd0000000000000\"},{\"attributes\":{\"branch\":\"prod\",\"database\":\"main\"},\"dimension\":\"db_connection_second\",\"external_id\":\"pg-proxy:db-1:db_connection_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"403e000000000000\"},{\"attributes\":{\"database\":\"main\"},\"dimension\":\"db_storage_gib_second\",\"external_id\":\"pg-proxy:db-1:db_storage_gib_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3f80000000000000\"}],\"source\":\"pg-proxy\"}",
-      "signature": "978c9ef0c76117e81f1a492768306836d6b3f7814524afd52db5506063d0c080"
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{\"a.very.long.attribute.key\":\"1\",\"branch\":\"prod\",\"database\":\"main\",\"zone\":\"use1-az2\"},\"dimension\":\"db_compute_cu_second\",\"external_id\":\"pg-proxy:db-1:db_compute_cu_second:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"3fd0000000000000\"},{\"attributes\":{\"branch\":\"prod\",\"database\":\"main\"},\"dimension\":\"db_storage_gib_hour\",\"external_id\":\"pg-proxy:db-1:db_storage_gib_hour:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":\"01912d41-0000-7000-8000-0000000000b1\",\"quantity\":\"403e000000000000\"},{\"attributes\":{\"database\":\"main\"},\"dimension\":\"db_compute_cu_second\",\"external_id\":\"pg-proxy:db-1:db_compute_cu_second:fraction:1723459200\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"3f80000000000000\"}],\"source\":\"pg-proxy\"}",
+      "signature": "f6ddedbb6ca1e47404cb8cc7583dff340b866c61cad67fd150abd4c5c2bf1ca1"
     },
     {
       "name": "float-edge-cases",

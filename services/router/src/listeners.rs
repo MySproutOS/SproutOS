@@ -59,6 +59,17 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         .await
         .context("the Valkey split cannot reach the control-plane database")?;
 
+    let acl_root_key = std::env::var("VALKEY_PROXY_ACL_ROOT_KEY")
+        .context("VALKEY_PROXY_ACL_ROOT_KEY is required when the Valkey split is enabled")?;
+    let provisioner = Arc::new(valkey_proxy::provision::AclProvisioner::new(
+        backend.as_ref().clone(),
+        acl_root_key.into_bytes(),
+    )?);
+    provisioner
+        .self_check()
+        .await
+        .context("the Valkey split's administrator cannot manage ACL users")?;
+
     let master = if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
         tracing::info!("master queue enabled; enqueues will be reported for dispatch");
         Arc::new(valkey_proxy::master::MasterQueue::spawn(
@@ -83,11 +94,11 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
             match listener.accept().await {
                 Ok((client, peer)) => {
                     let store = Arc::clone(&store);
-                    let backend = Arc::clone(&backend);
                     let master = Arc::clone(&master);
+                    let provisioner = Arc::clone(&provisioner);
                     tokio::spawn(async move {
                         if let Err(cause) =
-                            valkey_proxy::serve(client, &backend, &store, &master).await
+                            valkey_proxy::serve(client, &store, &provisioner, &master).await
                         {
                             // Debug rather than warn: a client hanging up mid-command is ordinary,
                             // and a line per disconnect is how a proxy drowns its own output.
@@ -126,15 +137,29 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         .await
         .context("the search split cannot reach the control-plane database")?;
 
+    let client = reqwest::Client::builder()
+        // The tenant's own timeout is what should govern a slow query; this only bounds a
+        // cluster that has stopped answering at all.
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let security_root_key = std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY").map_err(|_| {
+        anyhow::anyhow!(
+            "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; server-enforced tenant isolation is required"
+        )
+    })?;
+    let security = search_proxy::security::SecurityManager::new(
+        client.clone(),
+        upstream.clone(),
+        security_root_key,
+    )?;
+    let metering = search_meter(&client, &security, &upstream);
+
     let proxy = Arc::new(search_proxy::Proxy {
         store,
         upstream: upstream.clone(),
-        upstream_authorization: std::env::var("SEARCH_PROXY_UPSTREAM_AUTHORIZATION").ok(),
-        client: reqwest::Client::builder()
-            // The tenant's own timeout is what should govern a slow query; this only bounds a
-            // cluster that has stopped answering at all.
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?,
+        client,
+        security,
+        metering,
     });
 
     let app = AxumRouter::new()
@@ -151,6 +176,49 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
             tracing::error!(%cause, "the search split stopped serving");
         }
     })))
+}
+
+fn search_meter(
+    client: &reqwest::Client,
+    security: &search_proxy::security::SecurityManager,
+    upstream: &str,
+) -> Option<search_proxy::metering::SearchMeter> {
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let (Some(ingest_url), Some(key)) = (ingest_url, key) else {
+        tracing::warn!("search metering is not configured; search usage will not be billed");
+        return None;
+    };
+    let directory = std::env::var("SEARCH_METERING_SPOOL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("search-metering")
+        });
+    let spool = match sproutos_llm_proxy::spool::MeteringSpool::open(
+        directory,
+        sproutos_llm_proxy::spool::SpoolLimits::default(),
+    ) {
+        Ok(spool) => spool,
+        Err(cause) => {
+            tracing::error!(%cause, "search metering is disabled; durable spool could not open");
+            return None;
+        }
+    };
+    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+        client.clone(),
+        ingest_url,
+        key.into_bytes(),
+    ));
+    let meter = search_proxy::metering::SearchMeter::new(spool);
+    meter.spawn_storage_sampling(security.clone(), client.clone(), upstream.to_owned());
+    Some(meter)
 }
 
 /// Start the Postgres split, if this deployment has one.
@@ -341,6 +409,31 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
         tracing::warn!("the LLM proxy is running without metering; model usage will not be billed");
     }
 
+    let metering = match (ingest_url, metering_key) {
+        (Some(ingest_url), Some(metering_key)) => {
+            let directory = std::env::var("LLM_PROXY_METERING_SPOOL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::var("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join("llm-metering")
+                });
+            let spool = sproutos_llm_proxy::spool::MeteringSpool::open(
+                directory,
+                sproutos_llm_proxy::spool::SpoolLimits::default(),
+            )
+            .context("the LLM proxy cannot open its durable metering spool")?;
+            spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+                reqwest::Client::builder().build()?,
+                ingest_url,
+                metering_key,
+            ));
+            Some(spool)
+        }
+        _ => None,
+    };
+
     let state = Arc::new(sproutos_llm_proxy::serve::ProxyState {
         store,
         /*
@@ -352,8 +445,7 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
           mid-token.
         */
         http: reqwest::Client::builder().build()?,
-        ingest_url,
-        metering_key,
+        metering,
     });
 
     let app = AxumRouter::new()
@@ -368,6 +460,63 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
     Ok(Some(tokio::spawn(async move {
         if let Err(cause) = axum::serve(listener, app).await {
             tracing::error!(%cause, "the LLM proxy stopped serving");
+        }
+    })))
+}
+
+/// Start the authenticated HTTP(S) egress boundary used by Daytona.
+///
+/// The listener is optional in development, but once named every dependency is checked at boot.
+/// A public endpoint that accepts credentials while its lifecycle database is unavailable would
+/// turn a control-plane outage into unrestricted internet access, so that configuration is fatal.
+pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+    use base64::Engine as _;
+
+    let Ok(listen) = std::env::var("FORWARD_PROXY_LISTEN") else {
+        return Ok(None);
+    };
+    let encoded_key = std::env::var("SANDBOX_FORWARD_PROXY_ROOT_KEY")
+        .context("SANDBOX_FORWARD_PROXY_ROOT_KEY is required when the forward proxy is enabled")?;
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(&encoded_key)
+        .context("SANDBOX_FORWARD_PROXY_ROOT_KEY is not base64")?;
+    if key.len() != 32 || base64::engine::general_purpose::STANDARD.encode(&key) != encoded_key {
+        anyhow::bail!(
+            "SANDBOX_FORWARD_PROXY_ROOT_KEY must be exactly 32 bytes in canonical base64"
+        );
+    }
+
+    let pool_size = std::env::var("FORWARD_PROXY_DB_POOL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(8);
+    let authorizer = Arc::new(crate::sandbox_egress::SandboxAuthorizer::connect(
+        database_url,
+        pool_size,
+    )?);
+    authorizer
+        .check()
+        .await
+        .context("the sandbox forward proxy cannot reach the control-plane database")?;
+    let proxy_url = std::env::var("SANDBOX_FORWARD_PROXY_URL")
+        .context("SANDBOX_FORWARD_PROXY_URL is required when the forward proxy is enabled")?;
+    let resolver = Arc::new(crate::sandbox_egress::EgressResolver::new(&proxy_url)?);
+
+    let proxy = Arc::new(sproutos_sandbox_forward_proxy::SandboxForwardProxy::new(
+        key,
+        authorizer,
+        resolver,
+        Arc::new(sproutos_sandbox_forward_proxy::TokioDialer),
+        sproutos_sandbox_forward_proxy::Limits::default(),
+    )?);
+    let listener = TcpListener::bind(&listen)
+        .await
+        .with_context(|| format!("the sandbox forward proxy could not bind {listen}"))?;
+    tracing::info!(%listen, "sandbox forward proxy listening");
+
+    Ok(Some(tokio::spawn(async move {
+        if let Err(cause) = proxy.serve(listener).await {
+            tracing::error!(%cause, "the sandbox forward proxy stopped serving");
         }
     })))
 }

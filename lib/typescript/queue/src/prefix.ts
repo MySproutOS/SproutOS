@@ -1,4 +1,4 @@
-import { encodeShortId } from "@lib/services/tenant-auth"
+import { valkeyKeyPrefix } from "@lib/services/valkey"
 
 /**
  * BullMQ's own key prefix, which it puts in front of every key it writes.
@@ -27,5 +27,5 @@ export const BULLMQ_PREFIX = "bull"
  * that makes a stolen credential table worthless, and worth keeping.
  */
 export function tenantQueuePrefix(backendServiceId: string): string {
-  return `{kv:${encodeShortId(backendServiceId)}}:${BULLMQ_PREFIX}`
+  return valkeyKeyPrefix(backendServiceId)
 }

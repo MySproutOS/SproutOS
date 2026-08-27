@@ -90,11 +90,13 @@ services:
       # A development heap. Production sizing is phase 9's problem; 512 MB is enough to hold a few
       # tenant indices and small enough to sit alongside Postgres, Valkey and ClickHouse on a laptop.
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
-      # The security plugin is off here and the proxy is the boundary regardless: document- and
-      # field-level security are not in the open-source tier, which is *why* services/search-proxy
-      # exists rather than being a convenience.
-      - DISABLE_SECURITY_PLUGIN=true
-      - DISABLE_INSTALL_DEMO_CONFIG=true
+      # Development uses the image's test CA, then `bin/bootstrap-opensearch-security.sh` replaces
+      # the demo authorization config. Production never uses these certificates.
+      - DISABLE_SECURITY_PLUGIN=false
+      - DISABLE_INSTALL_DEMO_CONFIG=false
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${SEARCH_ADMIN_PASSWORD:-L0cal!Windmill-Quartz-83}
+      - plugins.security.ssl.http.enabled=false
+      - plugins.security.restapi.roles_enabled=all_access
     ulimits:
       memlock:
         soft: -1
@@ -104,6 +106,15 @@ services:
         hard: 65536
     volumes:
       - opensearch:/usr/share/opensearch/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf -u admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD} http://localhost:9200/_cluster/health >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
   localstack:
     container_name: sproutos_localstack

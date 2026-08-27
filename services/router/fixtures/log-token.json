@@ -2,7 +2,8 @@
   "secret": "log-token-fixture-secret",
   "valid": {
     "projectId": "01a03b00-0000-7000-8000-00000000beef",
+    "organizationId": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
     "expiresAt": 4102444800,
-    "token": "01a03b00-0000-7000-8000-00000000beef.4102444800.jTDkl8aIbYWyGHES0nTYkS2kG20q7vtB0zkpCK1k8cc"
+    "token": "01a03b00-0000-7000-8000-00000000beef.01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f.4102444800.ZcEqs-9ETu19Un7f-T_6Y-QNOPrlbC1hde0ynIfoeKI"
   }
 }

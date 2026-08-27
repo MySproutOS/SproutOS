@@ -22,7 +22,7 @@ import { type Project, useProjects } from "@frontends/dashboard/data/projects"
  */
 export function ProjectSwitcher({ orgSlug }: { orgSlug: string }) {
   const { data } = useProjects(orgSlug)
-  const params = useParams({ strict: false }) as { projectId?: string }
+  const params = useParams({ strict: false })
   const [query, setQuery] = useState("")
 
   const current = data?.find((project) => project.id === params.projectId)

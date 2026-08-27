@@ -529,6 +529,19 @@ export interface MemberRole {
   roleId: string
 }
 
+export interface MeteringImportState {
+  consumer: string
+  cursor: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
+export interface MeteringOutbox {
+  createdAt: Generated<Timestamp>
+  eventId: string
+  id: string
+  payload: Json
+}
+
 export interface Node {
   allocatableCpuMillis: Generated<Int8>
   allocatableMemoryBytes: Generated<Int8>
@@ -899,6 +912,7 @@ export interface Sandbox {
   alwaysOn: Generated<boolean>
   cpu: Generated<number>
   createdAt: Generated<Timestamp>
+  databaseBranchId: string | null
   diskGib: Generated<number>
   externalId: string | null
   hostname: string | null
@@ -1140,32 +1154,13 @@ export interface UpstreamSyncRun {
   upstreamSha: string | null
 }
 
-export interface UsageEvent {
-  chargedExternally: Generated<boolean>
-  dimension: string
-  externalId: string
-  id: string
-  ingestedAt: Generated<Timestamp>
-  nodeId: string | null
-  occurredAt: Timestamp
-  organizationId: string
-  podUid: string | null
-  projectId: string | null
-  quantity: Numeric
-  ratedAt: Timestamp | null
-  resourceId: string | null
-  resourceType: string
-  source: string
-  windowEnd: Timestamp | null
-  windowStart: Timestamp | null
-}
-
 export interface UsageRollup {
   bucket: string
   bucketStart: Timestamp
   chargedQuantity: Generated<Numeric>
   createdAt: Generated<Timestamp>
   dimension: string
+  externallyChargedQuantity: Generated<Numeric>
   id: string
   organizationId: string
   projectId: string | null
@@ -1199,6 +1194,13 @@ export interface UserPreference {
   userId: string
 }
 
+export interface ValkeyMeteringState {
+  backendServiceId: string
+  memoryBytes: Int8
+  sampledAt: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Workflow {
   createdAt: Generated<Timestamp>
   currentVersionId: string | null
@@ -1228,7 +1230,7 @@ export interface WorkflowJobEditAudit {
 
 export interface WorkflowRun {
   attempt: Generated<number>
-  bytesEnqueued: Generated<Int8>
+  bytesEnqueued: Int8 | null
   createdAt: Generated<Timestamp>
   error: Json | null
   finishedAt: Timestamp | null
@@ -1238,7 +1240,7 @@ export interface WorkflowRun {
   status: Generated<string>
   triggerType: string
   updatedAt: Generated<Timestamp>
-  valkeyDwellMs: Generated<Int8>
+  valkeyDwellMs: Int8 | null
   workflowId: string
   workflowVersionId: string | null
 }
@@ -1315,6 +1317,8 @@ export interface DB {
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission
   memberRole: MemberRole
+  meteringImportState: MeteringImportState
+  meteringOutbox: MeteringOutbox
   node: Node
   oauthAccessToken: OauthAccessToken
   oauthAuthorizationCode: OauthAuthorizationCode
@@ -1360,10 +1364,10 @@ export interface DB {
   tenantQueue: TenantQueue
   topup: Topup
   upstreamSyncRun: UpstreamSyncRun
-  usageEvent: UsageEvent
   usageRollup: UsageRollup
   user: User
   userPreference: UserPreference
+  valkeyMeteringState: ValkeyMeteringState
   workflow: Workflow
   workflowJobEditAudit: WorkflowJobEditAudit
   workflowRun: WorkflowRun

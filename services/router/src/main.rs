@@ -29,10 +29,10 @@ async fn main() -> anyhow::Result<()> {
       `aws-lc-rs` because the AWS SDK is the heavier user of TLS here and it is that crate's own
       default; the choice matters far less than making one.
 
-      The result is ignored deliberately: `install_default` fails only if a provider is already
-      installed, and this is the first thing `main` does.
+      Shared with the tests, which are separate processes that link the library rather than this
+      function — and which panicked on their first TLS call for exactly this reason.
     */
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    router::install_crypto_provider();
 
     let valkey_url = std::env::var("VALKEY_URL").context("VALKEY_URL is not set")?;
     let client = redis::Client::open(valkey_url).context("VALKEY_URL is not a Valkey URL")?;
@@ -69,12 +69,53 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let metering_key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let site_meter = match (ingest_url, metering_key) {
+        (Some(ingest_url), Some(metering_key)) => {
+            let directory = std::env::var("SITE_METERING_SPOOL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::var("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join("site-metering")
+                });
+            match sproutos_llm_proxy::spool::MeteringSpool::open(
+                directory,
+                sproutos_llm_proxy::spool::SpoolLimits::default(),
+            ) {
+                Ok(spool) => {
+                    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+                        reqwest::Client::new(),
+                        ingest_url,
+                        metering_key.into_bytes(),
+                    ));
+                    Some(router::site_metering::SiteMeter::new(spool))
+                }
+                Err(cause) => {
+                    tracing::error!(%cause, "site metering is disabled; the durable spool could not open");
+                    None
+                }
+            }
+        }
+        _ => {
+            tracing::warn!("site metering is not configured; site usage will not be billed");
+            None
+        }
+    };
+
     let dispatch_manager = manager.clone();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager),
         lambda,
         logs,
         log_token_secret: log_token_secret.into_bytes(),
+        site_meter,
         /*
           The ceiling on any single wait.
 
@@ -126,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             router::listeners::search(&database_url).await?,
             router::listeners::postgres(&database_url).await?,
             router::listeners::llm(&database_url).await?,
+            router::listeners::forward_proxy(&database_url).await?,
         ]
         .into_iter()
         .flatten()

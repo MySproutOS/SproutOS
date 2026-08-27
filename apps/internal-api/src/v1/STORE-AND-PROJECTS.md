@@ -149,15 +149,15 @@ a value is `getSealed`, a different function behind a different RBAC action
 the decrypt succeeds. The audit row names the variable and never its value: `before`/`after` land
 in `jsonb` on an append-only table, so a secret written there literally cannot be removed.
 
-Deletion of a variable is a hard delete. `project_env_var` is not referenced by `usage_event`, and
-a soft-deleted row would leave a decryptable secret in the table after the user asked for it to be
-gone.
+Deletion of a variable is a hard delete. No durable billing or audit row references
+`project_env_var`, and a soft-deleted row would leave a decryptable secret after the user asked for
+it to be gone.
 
 ## Delete is soft, and the response says exactly what that means
 
-ADR 0017. `usage_event`, `usage_rollup`, and `statement_line_item` all reference `project` with
-`ON DELETE RESTRICT`, so a hard delete either fails or destroys the billing history that justifies
-charges already made. Deletion is a state change plus a teardown job:
+ADR 0017. `usage_rollup` and `statement_line_item` reference `project` with `ON DELETE RESTRICT`, so
+a hard delete either fails or destroys billing history that justifies charges already made.
+Deletion is a state change plus a teardown job:
 
 ```json
 {
@@ -165,7 +165,7 @@ charges already made. Deletion is a state change plus a teardown job:
   "job": { "kind": "delete", "state": "queued" },
   "destroyed": [],
   "scheduledForTeardown": ["deployment", "backend_service", "database_instance", "…"],
-  "retained": ["usage_event", "usage_rollup", "statement_line_item", "audit_log"],
+  "retained": ["usage_rollup", "statement_line_item", "audit_log"],
   "repositoryReleased": false,
   "remainingProjectsOnRepository": 1,
   "message": "…"
@@ -173,8 +173,8 @@ charges already made. Deletion is a state change plus a teardown job:
 ```
 
 `destroyed` is empty and stays empty: the request destroys nothing outside the database. The test
-suite asserts the retained half by inserting a `usage_event`, deleting the project, and then
-showing both that the ledger row still resolves to the project's name and that a raw
+suite asserts the retained half by inserting a `usage_rollup`, deleting the project, and then
+showing both that the billing grain still resolves to the project's name and that a raw
 `DELETE FROM project` is refused by Postgres.
 
 ## The auto-update default keys on the credential

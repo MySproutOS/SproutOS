@@ -4,11 +4,13 @@ import {
   renderSproutosSkill,
   resolveAgentCredential,
 } from "@lib/agent"
-import { crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
+import { crudMeteringOutbox, crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
-import { daytonaConfigFromEnv, daytonaDriver, SandboxNotFoundError } from "@lib/sandbox"
+import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
+import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
+import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
-import type { DB } from "@sproutos/db"
+import type { DB, JsonValue } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
@@ -16,8 +18,10 @@ import type { JobHandler } from "./worker"
 
 export const SANDBOX_KINDS = {
   provision: "sandbox.provision",
+  start: "sandbox.start",
   stop: "sandbox.stop",
   destroy: "sandbox.destroy",
+  reconcile: "sandbox.reconcile",
   reap: "sandbox.reap",
   meter: "sandbox.meter",
 } as const
@@ -45,7 +49,7 @@ const DIMENSIONS = {
   cpu: "sandbox_cpu_second",
   memoryGib: "sandbox_gib_second",
   diskGib: "sandbox_disk_gib_second",
-} as const
+} as const satisfies Record<string, BillableDimension>
 
 /**
  * Meter every running sandbox up to now.
@@ -60,75 +64,95 @@ const DIMENSIONS = {
  * and it also means a provider outage cannot silently stop the meter.
  */
 export const meterSandboxes: JobHandler = async (_job, { db }) => {
-  /*
-    The database's clock, not this process's.
-
-    `created_at` and `metered_through` are both written by Postgres, so an interval measured against
-    `new Date()` is a subtraction across two clocks. In CI those are two containers and the skew is
-    real: a sandbox created microseconds ago read as created *in the future*, `seconds` came out
-    negative, the row was skipped, and it was never billed at all — the test that caught it found no
-    usage row rather than a wrong one. `@lib/jobs`'s queue already defaults `run_at` to `sql\`now()\``
-    for the same reason.
-  */
-  const clock = await sql<{ now: Date }>`select now() as now`.execute(db)
-  const now = clock.rows[0]?.now ?? new Date()
-
   const due = await db
     .selectFrom("sandbox")
-    .innerJoin("project", "project.id", "sandbox.projectId")
-    .select([
-      "sandbox.id",
-      "sandbox.projectId",
-      "sandbox.cpu",
-      "sandbox.memoryGib",
-      "sandbox.diskGib",
-      "sandbox.meteredThrough",
-      "sandbox.createdAt",
-      "project.organizationId",
-    ])
+    .select("id")
     .where("sandbox.state", "in", ["starting", "running", "idle"])
+    // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
+    // deadlock by each holding the row the other plans to claim next.
+    .orderBy("id")
     .execute()
 
   let metered = 0
 
-  for (const sandbox of due) {
-    // Null means never metered. `created_at`, not the epoch — the difference is forty years of
-    // compute nobody ran.
-    const from = sandbox.meteredThrough ?? sandbox.createdAt
-    const seconds = (now.getTime() - new Date(from).getTime()) / 1000
-    // A clock that went backwards, or a row metered in the same second twice. Neither is billable.
-    if (seconds <= 0) continue
-
-    const quantities: Record<keyof typeof DIMENSIONS, number> = {
-      cpu: seconds * sandbox.cpu,
-      memoryGib: seconds * sandbox.memoryGib,
-      diskGib: seconds * sandbox.diskGib,
-    }
-
+  for (const candidate of due) {
     /*
-      The interval and the watermark move together.
+      The row lock is the claim on this interval.
 
-      If the insert commits and the update does not, the next run meters the same interval again —
-      harmless, because `(source, external_id, occurred_at)` drops it. If the update commits and the
-      insert does not, that interval is never billed and there is nothing left to notice it. So both
-      happen in one transaction, and the failure that survives is the recoverable one.
+      Two schedulers can select the same candidate before either advances its watermark. Reading the
+      authoritative watermark only after `FOR UPDATE` makes the second transaction wait, then see
+      the first one's new endpoint. Locking only `sandbox` matters: locking the joined project row
+      would unnecessarily serialize every sandbox belonging to one project.
     */
-    await db.transaction().execute(async (tx) => {
-      await tx
-        .insertInto("usageEvent")
-        .values(
-          (Object.keys(DIMENSIONS) as (keyof typeof DIMENSIONS)[]).map((key) => ({
-            id: v7(),
+    const didMeter = await db.transaction().execute(async (tx) => {
+      const sandbox = await tx
+        .selectFrom("sandbox")
+        .innerJoin("project", "project.id", "sandbox.projectId")
+        .select([
+          "sandbox.id",
+          "sandbox.projectId",
+          "sandbox.cpu",
+          "sandbox.memoryGib",
+          "sandbox.diskGib",
+          "sandbox.alwaysOn",
+          "sandbox.idleTimeoutS",
+          "sandbox.lastActivityAt",
+          "sandbox.meteredThrough",
+          "sandbox.createdAt",
+          "project.organizationId",
+        ])
+        .where("sandbox.id", "=", candidate.id)
+        .where("sandbox.state", "in", ["starting", "running", "idle"])
+        .forUpdate("sandbox")
+        .executeTakeFirst()
+      if (sandbox === undefined) return false
+
+      /*
+        The database's clock, taken after the lock.
+
+        `created_at` and `metered_through` are both written by Postgres, so an interval measured
+        against `new Date()` is a subtraction across two clocks. `clock_timestamp()` rather than
+        `now()` is important here: Postgres fixes `now()` at transaction start, which may be before
+        a concurrent meter whose row lock this transaction just waited for.
+      */
+      const clock = await sql<{ now: Date }>`select clock_timestamp() as now`.execute(tx)
+      const databaseNow = clock.rows[0]?.now
+      if (databaseNow === undefined) throw new Error("Postgres returned no clock timestamp")
+      // Daytona's provider backstop stops an ordinary sandbox at this same idle deadline. If its
+      // webhook/reconciliation arrives late, billing to the sweep time would charge for a machine
+      // the provider had already stopped. `always_on` is the only class without that ceiling.
+      const idleDeadline = new Date(
+        new Date(sandbox.lastActivityAt).getTime() + sandbox.idleTimeoutS * 1000,
+      )
+      const now = sandbox.alwaysOn || databaseNow <= idleDeadline ? databaseNow : idleDeadline
+
+      // Null means never metered. `created_at`, not the epoch — the difference is forty years of
+      // compute nobody ran.
+      const from = sandbox.meteredThrough ?? sandbox.createdAt
+      const seconds = (now.getTime() - new Date(from).getTime()) / 1000
+      // A clock that went backwards, or a row metered in the same millisecond twice. Neither is
+      // billable.
+      if (seconds <= 0) return false
+
+      const quantities: Record<keyof typeof DIMENSIONS, number> = {
+        cpu: seconds * sandbox.cpu,
+        memoryGib: seconds * sandbox.memoryGib,
+        diskGib: seconds * sandbox.diskGib,
+      }
+
+      const outbox = crudMeteringOutbox(tx)
+      await Promise.all(
+        (Object.keys(DIMENSIONS) as (keyof typeof DIMENSIONS)[]).map(async (key) => {
+          const event = usageEventRecord({
             source: "sandbox",
             /*
               Keyed on the interval **and the dimension**.
 
-              Without the dimension all three rows share `(source, external_id, occurred_at)`, and
-              the conflict clause below — which exists to make retries free — silently drops two of
-              them. The customer is billed for CPU and not for memory or disk, every row inserts
-              without error, and the only evidence is a bill that is a third of what it should be.
-              Caught by `sandbox.test.ts` asserting all three dimensions land, which is why that
-              test lists them rather than counting.
+              Without the dimension all three rows have the same source identity, so the outbox's
+              unique event id silently drops two of them. The customer is billed for CPU and not
+              for memory or disk, every row inserts without error, and the only evidence is a bill
+              that is a third of what it should be. Caught by `sandbox.test.ts` asserting all three
+              dimensions land, which is why that test lists them rather than counting.
             */
             externalId: `${sandbox.id}:${DIMENSIONS[key]}:${new Date(from).toISOString()}`,
             organizationId: sandbox.organizationId,
@@ -140,19 +164,29 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
             occurredAt: now,
             windowStart: new Date(from),
             windowEnd: now,
-          })),
-        )
-        .onConflict((oc) => oc.columns(["source", "externalId", "occurredAt"]).doNothing())
-        .execute()
+            nodeId: null,
+            podUid: null,
+            chargedExternally: false,
+            attributes: {},
+          })
+          await outbox.create({
+            id: v7(),
+            eventId: event.eventId,
+            payload: JSON.parse(encodeUsageEvent(event)) as JsonValue,
+          })
+        }),
+      )
 
       await tx
         .updateTable("sandbox")
         .set({ meteredThrough: now })
         .where("id", "=", sandbox.id)
         .execute()
+
+      return true
     })
 
-    metered += 1
+    if (didMeter) metered += 1
   }
 
   if (metered > 0) console.info(`[jobs] metered ${metered} sandboxes`)
@@ -181,6 +215,44 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
   }
 
   if (idle.length > 0) console.info(`[jobs] reaping ${idle.length} idle sandboxes`)
+}
+
+/** Repair provider-driven state changes before the database can keep metering a stopped machine. */
+export function reconcileSandboxes(makeDriver: () => SandboxDriver = driver): JobHandler {
+  return async (job, context) => {
+    const candidates = await context.db
+      .selectFrom("sandbox")
+      .select(["id", "externalId"])
+      .where("state", "in", ["starting", "running", "idle"])
+      .where("externalId", "is not", null)
+      .execute()
+
+    if (candidates.length === 0) return
+
+    // Settle active intervals first. The meter caps ordinary sandboxes at their idle deadline, so
+    // a delayed observation cannot charge past Daytona's own auto-stop boundary.
+    await meterSandboxes(job, context)
+    const sandboxDriver = makeDriver()
+
+    for (const candidate of candidates) {
+      try {
+        const providerState = await sandboxDriver.state(candidate.externalId!)
+        if (["stopped", "archived", "paused"].includes(providerState)) {
+          await crudSandbox(context.db).update(candidate.id, { state: "stopped" })
+        } else if (["destroyed", "error", "build_failed"].includes(providerState)) {
+          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+        }
+      } catch (error) {
+        if (error instanceof SandboxNotFoundError) {
+          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          continue
+        }
+        // One provider object must not prevent every other row from reconciling. The recurring job
+        // retries next minute, while this error remains visible to operations.
+        console.error(`[jobs] failed to reconcile sandbox ${candidate.id}: ${String(error)}`)
+      }
+    }
+  }
 }
 
 /**
@@ -290,10 +362,74 @@ async function bootstrap(
   }
 }
 
+/**
+ * The dev database a sandbox works against, and the environment variable that names it.
+ *
+ * A coding agent with a checkout and no database can read code and cannot run it: no dev server, no
+ * migration, no test that touches a row. This branches the project's Postgres — copy-on-write, so a
+ * copy of a hundred gigabytes is instant and costs only what the agent changes — and hands back a
+ * `DATABASE_URL` pointing at `pg-proxy` with a credential that can reach the branch and nothing
+ * else. Production is one connection away and unreachable, which is the point.
+ *
+ * Returns nothing rather than throwing when the project has no database. Most projects do not, and
+ * a sandbox without one is the normal case, not a failure.
+ *
+ * The service is looked up for the *group* as well as the project: a group holds the databases its
+ * children share, and a sandbox is scoped to the group — see `sandboxScopeFor`.
+ */
+async function devDatabase(
+  db: Kysely<DB>,
+  input: { projectId: string; organizationId: string; sandboxId: string },
+): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
+  const service = await db
+    .selectFrom("backendService")
+    .select(["id"])
+    .where("kind", "=", "postgres")
+    .where("status", "=", "active")
+    .where("deletedAt", "is", null)
+    .where((eb) =>
+      eb.or([
+        eb("projectId", "=", input.projectId),
+        eb(
+          "projectId",
+          "in",
+          eb
+            .selectFrom("project")
+            .select("parentProjectId")
+            .where("id", "=", input.projectId)
+            .where("parentProjectId", "is not", null)
+            .$castTo<string>(),
+        ),
+      ]),
+    )
+    .orderBy("createdAt", "asc")
+    .executeTakeFirst()
+
+  if (service === undefined) return undefined
+
+  try {
+    const branch = await createDevBranch(db, neonPostgresConfigFromEnv(), {
+      backendServiceId: service.id,
+      organizationId: input.organizationId,
+      label: input.sandboxId.slice(-12),
+    })
+    return { databaseBranchId: branch.databaseBranchId, env: { DATABASE_URL: branch.uri } }
+  } catch (cause) {
+    /*
+      A sandbox with no dev database is worth having; a provision that failed because Neon was busy
+      is not. Logged rather than raised, and the sandbox comes up without `DATABASE_URL` — which the
+      agent discovers immediately and can say, instead of the customer waiting for a container that
+      never arrives.
+    */
+    console.warn(`[jobs] sandbox ${input.sandboxId} has no dev database: ${String(cause)}`)
+    return undefined
+  }
+}
+
 type SandboxPayload = { sandboxId?: string }
 
 function driver(): SandboxDriver {
-  return daytonaDriver(daytonaConfigFromEnv())
+  return sandboxDriverFromEnv()
 }
 
 /** Create the sandbox at the provider and record what it gave back. */
@@ -314,6 +450,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         "sandbox.memoryGib",
         "sandbox.diskGib",
         "sandbox.idleTimeoutS",
+        "sandbox.alwaysOn",
         "sandbox.externalId",
         "project.organizationId",
       ])
@@ -334,6 +471,20 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
     if (sandbox.externalId !== null) return
 
     try {
+      /*
+        The branch is created before the container, because it is the part that can fail.
+
+        A container that comes up and then finds it has no database has already cost the customer
+        the wait; a branch that fails while nothing has been created costs a log line. The reverse
+        order also leaks: a create that succeeds and a branch that throws leaves a running sandbox
+        nobody recorded.
+      */
+      const database = await devDatabase(db, {
+        organizationId: sandbox.organizationId,
+        projectId: sandbox.projectId,
+        sandboxId: sandbox.id,
+      })
+
       const created = await makeDriver().create({
         sandboxId: sandbox.id,
         organizationId: sandbox.organizationId,
@@ -346,14 +497,18 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           diskGib: sandbox.diskGib,
         },
         idleTimeoutS: sandbox.idleTimeoutS,
+        alwaysOn: sandbox.alwaysOn,
+        ...(database === undefined ? {} : { env: database.env }),
       })
 
       await crudSandbox(db).update(sandbox.id, {
         externalId: created.externalId,
+        ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
         state: "running",
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
       })
 
       /*
@@ -380,6 +535,39 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
         )
       }
+    } catch (error) {
+      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      throw error
+    }
+  }
+}
+
+/** Start a stopped provider sandbox without replacing its persistent workspace. */
+export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+  return async (job, { db }) => {
+    const { sandboxId } = job.payload as SandboxPayload
+    if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
+
+    const sandbox = await db
+      .selectFrom("sandbox")
+      .select(["id", "externalId", "state"])
+      .where("id", "=", sandboxId)
+      .executeTakeFirst()
+
+    if (sandbox === undefined || sandbox.state === "running") return
+    if (sandbox.externalId === null) {
+      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      throw new Error(`sandbox ${sandbox.id} has no provider id to start`)
+    }
+
+    try {
+      await makeDriver().start(sandbox.externalId)
+      await crudSandbox(db).update(sandbox.id, {
+        state: "running",
+        // A stopped interval is not billable. Restarting begins a new interval at Postgres's clock.
+        meteredThrough: sql<Date>`now()` as unknown as Date,
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
+      })
     } catch (error) {
       await crudSandbox(db).update(sandbox.id, { state: "failed" })
       throw error
@@ -434,7 +622,7 @@ export function destroySandbox(makeDriver: () => SandboxDriver = driver): JobHan
 
     const sandbox = await db
       .selectFrom("sandbox")
-      .select(["id", "externalId"])
+      .select(["id", "externalId", "databaseBranchId"])
       .where("id", "=", sandboxId)
       .executeTakeFirst()
 
@@ -448,6 +636,21 @@ export function destroySandbox(makeDriver: () => SandboxDriver = driver): JobHan
       } catch (error) {
         if (!(error instanceof SandboxNotFoundError)) throw error
       }
+    }
+
+    /*
+      The dev branch goes with the sandbox.
+
+      A branch outlives the row that points at it unless something deletes it, and then it is
+      storage nobody is looking at, on a bill nobody can attribute — the same shape as the orphaned
+      sandbox the unique index does not prevent. `dropDevBranch` refuses a protected branch, so the
+      worst case of a wrong id here is a failed job rather than a deleted production database.
+
+      Failing the job on error is deliberate. Dropping the row while the branch survives is exactly
+      how the reference is lost.
+    */
+    if (sandbox.databaseBranchId !== null) {
+      await dropDevBranch(db, neonPostgresConfigFromEnv(), sandbox.databaseBranchId)
     }
 
     await crudSandbox(db).remove(sandbox.id)
@@ -467,6 +670,11 @@ export async function scheduleSandboxJobs(db: Kysely<DB>, now: Date = new Date()
   await enqueue(db, {
     kind: SANDBOX_KINDS.meter,
     idempotencyKey: `${SANDBOX_KINDS.meter}:${minute}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    kind: SANDBOX_KINDS.reconcile,
+    idempotencyKey: `${SANDBOX_KINDS.reconcile}:${minute}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

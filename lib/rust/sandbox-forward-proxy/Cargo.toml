@@ -1,0 +1,23 @@
+[package]
+name = "sproutos-sandbox-forward-proxy"
+description = "Authenticated, public-internet-only HTTP forward proxy for coding sandboxes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+base64.workspace = true
+hmac.workspace = true
+http = "1"
+httparse = "1"
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true

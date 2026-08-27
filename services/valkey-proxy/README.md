@@ -195,11 +195,22 @@ amplification on the tenant instance.
 
 `dispatchQueues` in `@lib/jobs` is the consumer.
 
+## Metering
+
+`valkey_queue_byte_second` is measured by the control plane, not inferred from commands in this
+proxy and not attributed to an individual workflow run. Every five minutes the privileged sampler
+forces the service's engine-enforced BullMQ prefix, walks those keys with `SCAN`, and sums exact
+`MEMORY USAGE ... SAMPLES 0` values. It integrates adjacent successful observations as
+byte-seconds and commits the observation watermark with a durable metering-outbox event.
+
+This is intentionally honest about gaps. A first sample establishes a baseline; a missed interval
+longer than the scheduling tolerance is not extrapolated. `workflow_run.bytes_enqueued` and
+`valkey_dwell_ms` therefore remain null: service-wide key residency cannot truthfully be assigned
+to one run. The proxy remains necessary for authentication, namespace enforcement, command
+rewriting, and queue dispatch even though this periodic measurement runs beside it.
+
 ## Not built yet
 
-- **Metering.** TASK 25's queue-dwell dimension has `workflow_run.bytes_enqueued` and
-  `valkey_dwell_ms` as columns with no writer. This proxy is the only place that can honestly fill
-  them, via `metering-proto`.
 - **TLS.** `SERVICE_VALKEY_SCHEME` defaults to `rediss` in the driver, but the proxy speaks plain
   TCP; termination is expected in front of it and that is not wired.
 - **A key reaper.** `destroy` revokes the credential, which makes the keys unreachable — the prefix

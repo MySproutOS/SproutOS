@@ -1,6 +1,13 @@
 import { clickhouse } from "./client"
 import { RUNTIME_LOG_RETENTION_DAYS } from "./runtime-logs"
 
+export const USAGE_EVENT_RAW_TABLE = "usage_event_raw"
+export const USAGE_EVENT_QUEUE_TABLE = "usage_event_queue"
+export const USAGE_EVENT_MATERIALIZED_VIEW = "usage_event_mv"
+export const USAGE_EVENT_DEAD_LETTER_TABLE = "usage_event_dead_letter"
+export const USAGE_EVENT_DEAD_LETTER_VIEW = "usage_event_dead_letter_mv"
+export const USAGE_BACKUP_MANIFEST_TABLE = "usage_backup_manifest"
+
 /**
  * The log table.
  *
@@ -183,6 +190,187 @@ select ts, project_id, deployment_id, request_id, level, message,
 from runtime_log_queue
 `
 
+/**
+ * Durable, unaggregated usage as received from the metering pipeline.
+ *
+ * Kafka delivery is deliberately at least once. A consumer can insert a block and lose its offset
+ * acknowledgement, so the same event may arrive again. `ReplacingMergeTree(version)` makes those
+ * copies converge during background merges; it does not make an ordinary SELECT immediately
+ * unique. Any financial read must use `FINAL` or group by `event_id` with `argMax(..., version)`.
+ *
+ * `event_id` and `version` are computed by the producer and are deterministic across retries:
+ * `event_id` is a lowercase SHA-256 hex string over the event identity, and `version` is
+ * `ingested_at` as epoch milliseconds. They are carried through unchanged rather than regenerated
+ * here, because a replay after a process restart must name the same row and version.
+ */
+export function usageEventRawDdl(database = ""): string {
+  const table = qualified(database, USAGE_EVENT_RAW_TABLE)
+
+  return `
+create table if not exists ${table} (
+  event_id String,
+  organization_id UUID,
+  project_id Nullable(UUID),
+  resource_type LowCardinality(String),
+  resource_id Nullable(UUID),
+  dimension LowCardinality(String),
+  quantity Decimal(38, 9),
+  occurred_at DateTime64(3, 'UTC'),
+  window_start Nullable(DateTime64(3, 'UTC')),
+  window_end Nullable(DateTime64(3, 'UTC')),
+  node_id Nullable(String),
+  pod_uid Nullable(String),
+  source String,
+  external_id String,
+  charged_externally Bool,
+  attributes Map(String, String),
+  ingested_at DateTime64(3, 'UTC'),
+  stored_at DateTime64(3, 'UTC') default now64(3, 'UTC'),
+  version UInt64,
+  constraint usage_event_id_is_sha256 check match(event_id, '^[0-9a-f]{64}$')
+)
+engine = ReplacingMergeTree(version)
+partition by toYYYYMM(occurred_at)
+order by event_id
+settings index_granularity = 8192
+`.trim()
+}
+
+/** Keep an already-created raw table compatible when the importer watermark is introduced. */
+export function usageEventStoredAtDdl(database = ""): string {
+  return `alter table ${qualified(database, USAGE_EVENT_RAW_TABLE)} add column if not exists stored_at DateTime64(3, 'UTC') default now64(3, 'UTC')`
+}
+
+/**
+ * The JSONEachRow consumer for normalized, one-event-per-message usage records.
+ *
+ * Authentication is deliberately absent from this DDL. ClickHouse applies the matching
+ * server-side `<kafka><kafka_topic>` configuration: plaintext on the private OVH Compose network,
+ * or SASL_SSL/SCRAM-SHA-512 for a remote consumer. Putting those settings here would copy the
+ * password into CREATE TABLE text and the query log.
+ */
+export function usageEventQueueDdl(brokers: string, topic: string, database = ""): string {
+  validateKafkaLocation(brokers, topic, "KAFKA_USAGE_EVENT_TOPIC")
+  const table = qualified(database, USAGE_EVENT_QUEUE_TABLE)
+  const consumerNamespace = database === "" ? "default" : database
+
+  return `
+create table if not exists ${table} (
+  event_id String,
+  organization_id UUID,
+  project_id Nullable(UUID),
+  resource_type LowCardinality(String),
+  resource_id Nullable(UUID),
+  dimension LowCardinality(String),
+  quantity Decimal(38, 9),
+  occurred_at DateTime64(3, 'UTC'),
+  window_start Nullable(DateTime64(3, 'UTC')),
+  window_end Nullable(DateTime64(3, 'UTC')),
+  node_id Nullable(String),
+  pod_uid Nullable(String),
+  source String,
+  external_id String,
+  charged_externally Bool,
+  attributes Map(String, String),
+  ingested_at DateTime64(3, 'UTC'),
+  version UInt64
+)
+engine = Kafka
+settings
+  kafka_broker_list = '${brokers}',
+  kafka_topic_list = '${topic}',
+  kafka_group_name = 'clickhouse-${consumerNamespace}-usage-event-v1',
+  kafka_format = 'JSONEachRow',
+  kafka_max_block_size = 65536,
+  -- A poison message must not stop every later bill. Stream mode exposes \`_error\` and
+  -- \`_raw_message\`; the two materialized views route good rows and retain bad rows.
+  kafka_handle_error_mode = 'stream'
+`.trim()
+}
+
+/** Durable quarantine for malformed Kafka records. Any row here makes billing health red. */
+export function usageEventDeadLetterDdl(database = ""): string {
+  return `
+create table if not exists ${qualified(database, USAGE_EVENT_DEAD_LETTER_TABLE)} (
+  raw_message String,
+  error String,
+  kafka_topic LowCardinality(String),
+  kafka_partition Int64,
+  kafka_offset Int64,
+  failed_at DateTime64(3, 'UTC') default now64(3, 'UTC')
+)
+engine = MergeTree
+partition by toYYYYMM(failed_at)
+order by (failed_at, kafka_partition, kafka_offset)
+`.trim()
+}
+
+/** Snapshot metadata stored inside each backup and verified by the restore drill. */
+export function usageBackupManifestDdl(database = ""): string {
+  return `
+create table if not exists ${qualified(database, USAGE_BACKUP_MANIFEST_TABLE)} (
+  backup_name String,
+  cutoff DateTime64(3, 'UTC'),
+  raw_rows UInt64,
+  raw_checksum UInt64,
+  dead_letter_rows UInt64,
+  created_at DateTime64(3, 'UTC') default now64(3, 'UTC')
+)
+engine = MergeTree
+order by (created_at, backup_name)
+`.trim()
+}
+
+/** The insert trigger that moves consumed Kafka messages into durable storage. */
+export function usageEventMaterializedViewDdl(database = ""): string {
+  const view = qualified(database, USAGE_EVENT_MATERIALIZED_VIEW)
+  const destination = qualified(database, USAGE_EVENT_RAW_TABLE)
+  const source = qualified(database, USAGE_EVENT_QUEUE_TABLE)
+
+  return `
+create materialized view if not exists ${view} to ${destination} as
+select event_id, organization_id, project_id, resource_type, resource_id, dimension, quantity,
+       occurred_at, window_start, window_end, node_id, pod_uid, source, external_id,
+       charged_externally, attributes, ingested_at, now64(3, 'UTC') as stored_at, version
+from ${source}
+where length(_error) = 0
+`.trim()
+}
+
+/** Insert trigger that preserves malformed Kafka records instead of wedging the consumer. */
+export function usageEventDeadLetterViewDdl(database = ""): string {
+  const view = qualified(database, USAGE_EVENT_DEAD_LETTER_VIEW)
+  const destination = qualified(database, USAGE_EVENT_DEAD_LETTER_TABLE)
+  const source = qualified(database, USAGE_EVENT_QUEUE_TABLE)
+
+  return `
+create materialized view if not exists ${view}
+to ${destination} as
+select _raw_message as raw_message, _error as error, _topic as kafka_topic,
+       toInt64(_partition) as kafka_partition, toInt64(_offset) as kafka_offset,
+       now64(3, 'UTC') as failed_at
+from ${source}
+where length(_error) > 0
+`.trim()
+}
+
+function qualified(database: string, table: string): string {
+  if (database === "") return table
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(database)) {
+    throw new Error(`ClickHouse database is not an identifier: ${JSON.stringify(database)}`)
+  }
+  return `${database}.${table}`
+}
+
+function validateKafkaLocation(brokers: string, topic: string, topicVariable: string): void {
+  if (!/^[A-Za-z0-9._-]+:\d+(,[A-Za-z0-9._-]+:\d+)*$/.test(brokers)) {
+    throw new Error(`KAFKA_BROKERS is not a host:port list: ${JSON.stringify(brokers)}`)
+  }
+  if (!/^[A-Za-z0-9._-]{1,249}$/.test(topic)) {
+    throw new Error(`${topicVariable} is not a Kafka topic name: ${JSON.stringify(topic)}`)
+  }
+}
+
 /** Where the log topic lives. Absent means this deployment does not consume from Kafka. */
 export function kafkaConfigured(): boolean {
   return (process.env.KAFKA_BROKERS ?? "") !== ""
@@ -190,10 +378,15 @@ export function kafkaConfigured(): boolean {
 
 export async function ensureSchema(): Promise<void> {
   const client = clickhouse()
+  const database = process.env.CLICKHOUSE_DATABASE ?? "observability"
   await client.command({ query: LOG_RECORD_DDL })
   await client.command({ query: BODY_INDEX_DDL })
   await client.command({ query: RUNTIME_LOG_DDL })
   await client.command({ query: RUNTIME_MESSAGE_INDEX_DDL })
+  await client.command({ query: usageEventRawDdl(database) })
+  await client.command({ query: usageEventStoredAtDdl(database) })
+  await client.command({ query: usageEventDeadLetterDdl(database) })
+  await client.command({ query: usageBackupManifestDdl(database) })
 
   /*
     The consumer, only where there is a broker to consume from.
@@ -211,4 +404,13 @@ export async function ensureSchema(): Promise<void> {
     ),
   })
   await client.command({ query: RUNTIME_LOG_MV_DDL })
+  await client.command({
+    query: usageEventQueueDdl(
+      process.env.KAFKA_BROKERS ?? "",
+      process.env.KAFKA_USAGE_EVENT_TOPIC ?? "usage-events",
+      database,
+    ),
+  })
+  await client.command({ query: usageEventMaterializedViewDdl(database) })
+  await client.command({ query: usageEventDeadLetterViewDdl(database) })
 }

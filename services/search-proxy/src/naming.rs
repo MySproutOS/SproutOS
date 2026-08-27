@@ -1,9 +1,9 @@
 //! Where one tenant's indices live, and why they cannot name another's.
 //!
-//! OpenSearch's open-source tier has **no document- or field-level security**. That is not a gap we
-//! are working around — it is the reason this proxy exists at all. Without it, "tenant-split" has
-//! to mean split by *index name*, and something has to guarantee a tenant can only ever name its
-//! own. That something is this file.
+//! The proxy maps the tenant's name to a shared-cluster name. This is namespacing, not the complete
+//! security boundary: OpenSearch's Security plugin can and must also enforce a per-tenant
+//! `index_patterns` role. Until that role is deployed, request parsing closes known escapes but
+//! cannot prove that every present and future search-body construct is harmless.
 //!
 //! ```text
 //! t01j4pkz2hbfh6sw7sa7d65tvkz_products

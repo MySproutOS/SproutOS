@@ -323,10 +323,22 @@ variable "search_subdomain" {
   default     = "search"
 }
 
+variable "llm_subdomain" {
+  description = "Where the router's LLM proxy answers. A sandbox reaches it from outside the VPC, so it is public, and a proxy token is the only thing that gets past it."
+  type        = string
+  default     = "llm"
+}
+
 variable "postgres_subdomain" {
   description = "The customer-facing address of the Postgres split, in front of `pg-proxy`. Never a Neon host."
   type        = string
   default     = "postgres"
+}
+
+variable "egress_subdomain" {
+  description = "The customer-facing HTTPS address of the authenticated sandbox forward proxy."
+  type        = string
+  default     = "egress"
 }
 
 /*

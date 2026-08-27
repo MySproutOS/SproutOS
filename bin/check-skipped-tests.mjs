@@ -67,6 +67,21 @@ const KNOWN = [
   { suite: "@api/internal agent", count: 6, waiting: "an Anthropic API key" },
   { suite: "@api/internal generate-openapi", count: 1, waiting: "a running API on :3001" },
   {
+    suite: "@lib/agent Daytona live",
+    count: 5,
+    waiting: "DAYTONA_API_KEY, DAYTONA_ORGANIZATION_ID and a built Daytona snapshot",
+  },
+  {
+    suite: "@lib/jobs sandbox-stop live",
+    count: 1,
+    waiting: "Daytona credentials and a reachable control-plane Postgres",
+  },
+  {
+    suite: "@api/internal metering Kafka live",
+    count: 1,
+    waiting: "a Kafka broker reachable from the test process",
+  },
+  {
     /*
       Waiting on a repository secret, not on a decision.
 

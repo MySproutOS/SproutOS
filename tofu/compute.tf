@@ -105,6 +105,18 @@ resource "aws_vpc_security_group_ingress_rule" "service_search_from_alb" {
   description                  = "search split from the load balancer"
 }
 
+# The LLM proxy's port, from the load balancer only. Same failure as the search split without it:
+# the health check times out, every target is unhealthy, and `llm.sproutos.me` answers 503 while the
+# rule, the listener and the process are all present and correct.
+resource "aws_vpc_security_group_ingress_rule" "service_llm_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 8788
+  to_port                      = 8788
+  description                  = "LLM proxy from the load balancer"
+}
+
 resource "aws_vpc_security_group_egress_rule" "service_out" {
   security_group_id = aws_security_group.service.id
   description       = "Outbound, for AWS APIs and the OVH backends"
@@ -459,6 +471,79 @@ resource "aws_lb_listener_rule" "search" {
   }
 
   # As above: the cutover owns these weights, and changing the shape of this block needs `-replace`.
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+/*
+  The LLM proxy: the router's fifth listener, on the ALB rather than the NLB.
+
+  It speaks HTTP, so it belongs where TLS already terminates. That matters more than tidiness: a
+  sandbox is a rented machine outside this VPC — Daytona's, not ours — and the token it carries goes
+  over the public internet on every model call. The listener rule below is what makes the proxy
+  reachable at all; without it `LLM_PROXY_URL` names a host that resolves to the ALB and matches no
+  rule, which is a 404 on every agent turn and nothing in the router's logs to explain it.
+
+  Health-checked on `/`, expecting 401, for exactly the reason `search` is: the proxy is a catch-all
+  — every path is forwarded to the customer's model provider — so there is no path it can reserve
+  without taking it away from a provider. A 200 would mean something answered; a 401 means the thing
+  that answered checks tokens.
+*/
+resource "aws_lb_target_group" "llm" {
+  for_each = local.service_colours
+
+  name     = "${var.name_prefix}-llm-${each.key}"
+  port     = 8788
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    timeout             = 5
+    matcher             = "401"
+  }
+
+  /*
+    Longer than the others, and the reason is the traffic.
+
+    An agent turn is a single streaming response that legitimately runs for minutes. Draining a
+    target in thirty seconds would cut every turn in flight at a cutover, and a customer watching
+    their agent stop mid-sentence has no way to tell that from a crash.
+  */
+  deregistration_delay = 300
+  tags                 = { Name = "${var.name_prefix}-llm-${each.key}" }
+}
+
+resource "aws_lb_listener_rule" "llm" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 70
+
+  action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.llm["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.llm["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["${var.llm_subdomain}.${var.control_plane_domain}"]
+    }
+  }
+
+  # The cutover owns these weights; changing the shape of this block needs `-replace`.
   lifecycle {
     ignore_changes = [action]
   }
@@ -956,6 +1041,8 @@ resource "aws_launch_template" "service" {
     postgres_subdomain      = var.postgres_subdomain
     tenant_valkey_subdomain = var.tenant_valkey_subdomain
     control_plane_domain    = var.control_plane_domain
+    llm_subdomain           = var.llm_subdomain
+    egress_subdomain        = var.egress_subdomain
   }))
 
   metadata_options {
@@ -1034,10 +1121,15 @@ resource "aws_autoscaling_group" "router" {
   target_group_arns = [
     aws_lb_target_group.router[each.key].arn,
     aws_lb_target_group.search[each.key].arn,
-    # The Postgres and Valkey splits, on the tenant network load balancer rather than the ALB —
-    # see `nlb.tf`. Neither speaks HTTP, which is the whole reason there is a second balancer.
+    # The LLM proxy, which is where a sandbox's model traffic goes. Missing from this list it would
+    # be a target group with no targets: healthy-looking in the console, 503 from the balancer, and
+    # nothing in any log saying why every agent turn failed.
+    aws_lb_target_group.llm[each.key].arn,
+    # The Postgres, Valkey and authenticated forward-proxy splits, on the tenant network load
+    # balancer rather than the ALB — see `nlb.tf`.
     aws_lb_target_group.postgres[each.key].arn,
     aws_lb_target_group.valkey[each.key].arn,
+    aws_lb_target_group.forward_proxy[each.key].arn,
   ]
 
   min_size         = 0

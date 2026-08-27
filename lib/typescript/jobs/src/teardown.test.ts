@@ -105,8 +105,6 @@ afterAll(async () => {
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
     await tx.deleteFrom("projectEnvVar").where("projectId", "=", projectId).execute()
-    // `usage_event` references `project` with `ON DELETE RESTRICT`, so it goes before the project.
-    await tx.deleteFrom("usageEvent").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("usageRollup").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("deployment").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -171,29 +169,18 @@ describe("tearing down a deleted project", () => {
       })
       .execute()
 
-    // A usage event, which must survive: a statement has to resolve its line items to a project.
-    const eventId = v7()
+    // A billing grain, which must survive: a statement has to resolve its line items to a project.
+    const rollupId = v7()
     await db
-      .insertInto("usageEvent")
+      .insertInto("usageRollup")
       .values({
-        id: eventId,
+        id: rollupId,
         organizationId,
         projectId,
-        resourceType: "site",
         dimension: "site_gib_second",
         quantity: "1",
-        occurredAt: new Date(),
-        source: "teardown-test",
-        externalId: `teardown-${eventId}`,
-        /*
-          Pre-rated, so no rollup ever claims it.
-
-          `rollUpUsage` is a platform-wide sweep with no organization filter — it cannot have one,
-          its job is to sweep everything owed. An unrated event left here by *this* file is picked
-          up by whichever billing test happens to run next, and the assertion that breaks is in that
-          file rather than this one. This test only cares that the row survives a deletion.
-        */
-        ratedAt: new Date(),
+        bucket: "day",
+        bucketStart: new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"),
       })
       .execute()
 
@@ -237,16 +224,16 @@ describe("tearing down a deleted project", () => {
     /*
       And the billing history is untouched — `RETAINED_ON_DELETE`, ADR 0017.
 
-      `usage_event` references `project` with `ON DELETE RESTRICT` so last month's statement can
-      still name the project it billed for. A teardown that took the evidence behind a bill with it
-      would be worse than one that ran late.
+      `usage_rollup` references `project` with `ON DELETE RESTRICT` so last month's statement can
+      still name the project it billed for. A teardown that took the evidence behind a bill with
+      it would be worse than one that ran late.
     */
-    const events = await db
-      .selectFrom("usageEvent")
+    const rollups = await db
+      .selectFrom("usageRollup")
       .select(["id"])
       .where("projectId", "=", projectId)
       .execute()
-    expect(events).toHaveLength(1)
+    expect(rollups).toHaveLength(1)
 
     const project = await db
       .selectFrom("project")

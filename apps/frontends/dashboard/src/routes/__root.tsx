@@ -14,6 +14,7 @@ import {
   EmptyStateTitle,
 } from "@ui/base/ui/empty-state"
 import { ListError } from "@frontends/dashboard/components/list-states"
+import { authGateState } from "@frontends/dashboard/data/auth-gate"
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -60,11 +61,12 @@ function NotFound() {
 }
 
 function RootLayout() {
-  const { data, isLoading, isError } = useQuery(getV1AuthMeOptions())
+  const { data, error, isLoading, isError, refetch } = useQuery(getV1AuthMeOptions())
   // Gate on `isLoading`: until the query settles there is nothing to conclude, and treating the
   // in-flight state as unauthenticated would redirect every visitor to /login before their
   // session is ever checked.
-  const unauthenticated = !isLoading && (isError || (data?.user ?? null) === null)
+  const state = authGateState({ loading: isLoading, failed: isError, user: data?.user })
+  const unauthenticated = state === "unauthenticated"
 
   // Navigating is a side effect, so it belongs in an effect rather than in render.
   useEffect(() => {
@@ -73,10 +75,30 @@ function RootLayout() {
     }
   }, [unauthenticated])
 
-  if (isLoading) {
+  if (state === "loading") {
     return (
       <div className="flex min-h-dvh items-center justify-center">
         <Spinner className="size-5 text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (state === "failed") {
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <ListError
+            title="Could not verify your session"
+            detail={
+              error instanceof Error
+                ? error.message
+                : "The dashboard API did not return an authentication result."
+            }
+            onRetry={() => {
+              void refetch()
+            }}
+          />
+        </div>
       </div>
     )
   }

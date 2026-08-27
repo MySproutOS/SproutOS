@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Create the runtime-log topic.
+# Create the two platform event topics.
 #
 # Separate from the ClickHouse schema, which creates the *consumer*: a `Kafka` engine table pointed
 # at a topic that does not exist logs a connection error on a timer and consumes nothing, with no
@@ -9,14 +9,20 @@
 set -euo pipefail
 
 BROKER="${KAFKA_BOOTSTRAP:-localhost:9092}"
-TOPIC="${KAFKA_RUNTIME_LOG_TOPIC:-runtime-logs}"
 CONTAINER="${KAFKA_CONTAINER:-sproutos_kafka}"
 
-docker exec "$CONTAINER" /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server "$BROKER" \
-  --create --topic "$TOPIC" \
-  --partitions 3 --if-not-exists
+TOPICS=(
+  "${KAFKA_RUNTIME_LOG_TOPIC:-runtime-logs}"
+  "${KAFKA_USAGE_EVENT_TOPIC:-usage-events}"
+)
 
-# Idempotent and cheap to re-run, like the LocalStack bootstrap next door.
-docker exec "$CONTAINER" /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server "$BROKER" --describe --topic "$TOPIC"
+for topic in "${TOPICS[@]}"; do
+  docker exec "$CONTAINER" /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server "$BROKER" \
+    --create --topic "$topic" \
+    --partitions 3 --if-not-exists
+
+  # Idempotent and cheap to re-run, like the LocalStack bootstrap next door.
+  docker exec "$CONTAINER" /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server "$BROKER" --describe --topic "$topic"
+done

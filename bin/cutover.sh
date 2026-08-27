@@ -11,10 +11,10 @@
 #   service   website | router
 #
 # Neither service moves one thing. `website` is the apex plus `api.<domain>`; `router` is the
-# listener's default action plus `search.<domain>`. In both cases those are different ports on the
-# *same instances* from the *same release tarball*, so they are one deployment with two target
-# groups. Moving them separately would be two commands that can disagree — and a disagreement means
-# the API is pointed at the colour the website just drained, or search is.
+# listener's default action plus its public protocol splits. In both cases those are different
+# ports on the *same instances* from the *same release tarball*, so they are one deployment with
+# several target groups. Moving them separately would be commands that can disagree — and a
+# disagreement means the API is pointed at the colour the website just drained, or search is.
 set -euo pipefail
 
 SERVICE="${1:-}"
@@ -47,8 +47,8 @@ esac
 # `EXTRAS` is a list of `kind|short|arn`, moved to whatever colour the primary decides.
 #
 # `kind` is `rule` or `listener`, because the two take different AWS calls and the router now has
-# one of each: the search split is a *rule* on the application load balancer, and the Postgres split
-# is the whole *listener* on the network load balancer beside it. `short` names its target groups,
+# both kinds: the search split is a *rule* on the application load balancer, and the wire-protocol
+# splits are whole *listeners* on the network load balancer beside it. `short` names target groups,
 # which are `$NAME_PREFIX-$short-$colour`.
 #
 # Every extra is optional. An estate with no OpenSearch behind it has no search rule, and one with
@@ -64,8 +64,10 @@ else
   RULE_ARN=""
   EXTRAS=""
   [ -n "${SEARCH_RULE_ARN:-}" ] && EXTRAS="$EXTRAS rule|search|$SEARCH_RULE_ARN"
+  [ -n "${LLM_RULE_ARN:-}" ] && EXTRAS="$EXTRAS rule|llm|$LLM_RULE_ARN"
   [ -n "${PG_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|pg|$PG_LISTENER_ARN"
   [ -n "${VALKEY_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|valkey|$VALKEY_LISTENER_ARN"
+  [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|egress|$FORWARD_PROXY_LISTENER_ARN"
   short=router
 fi
 

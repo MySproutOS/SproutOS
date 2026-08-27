@@ -1,8 +1,8 @@
 import type { SandboxDriver } from "@lib/sandbox"
 
-import type { Harness } from "./harness"
+import { PLATFORM_FALLBACK_MODEL, type Harness } from "./harness"
 import type { AgentEvent } from "./runner"
-import { codexConfig, sandboxAgentEnv } from "./sandbox-env"
+import { codexOverrides, sandboxAgentEnv } from "./sandbox-env"
 import type { MintedProxyToken } from "./proxy-token"
 
 /**
@@ -29,9 +29,6 @@ import type { MintedProxyToken } from "./proxy-token"
  * workspace is a git checkout — is one careless `git add -A` from being committed to the customer's
  * own repository.
  */
-
-/** Where the checkout lives inside the sandbox. Matches the driver's own default. */
-export const WORKSPACE = "/workspace"
 
 /** Long enough for `npm install` on a cold sandbox, short enough that a hang is not forever. */
 const BOOTSTRAP_TIMEOUT_MS = 10 * 60 * 1000
@@ -80,6 +77,7 @@ export type BootstrapResult = {
  */
 export async function bootstrapSandbox(input: BootstrapInput): Promise<BootstrapResult> {
   const { driver, externalId } = input
+  const workspace = driver.workspaceDir
   const problems: string[] = []
 
   const run = async (argv: string[], what: string): Promise<boolean> => {
@@ -98,26 +96,29 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     }
   }
 
-  /*
-    The token goes in the clone URL and comes straight back out.
-
-    `git clone https://x-access-token:<token>@github.com/...` is how an installation token is used,
-    and it lands in `.git/config` as the remote's URL — where it is readable by everything the agent
-    runs for the rest of the session, and by anyone who later reads the workspace. Rewriting the
-    remote immediately afterwards is what stops that; the push path supplies a fresh token.
-  */
-  const cloneUrl = `https://x-access-token:${input.repository.token}@github.com/${input.repository.fullName}.git`
-  const cloned = await run(
-    ["git", "clone", "--depth", "50", "--branch", input.repository.branch, cloneUrl, WORKSPACE],
-    "cloning the repository",
-  )
+  let cloned = false
+  try {
+    // Daytona carries credentials on its structured Git API request. They never appear in the
+    // sandbox process list, shell history, command logs, or `.git/config` remote URL.
+    await driver.cloneRepository(externalId, {
+      url: `https://github.com/${input.repository.fullName}.git`,
+      path: workspace,
+      branch: input.repository.branch,
+      username: "x-access-token",
+      password: input.repository.token,
+      depth: 50,
+    })
+    cloned = true
+  } catch (cause) {
+    problems.push(`cloning the repository: ${String(cause)}`)
+  }
 
   if (cloned) {
     await run(
       [
         "git",
         "-C",
-        WORKSPACE,
+        workspace,
         "remote",
         "set-url",
         "origin",
@@ -126,11 +127,11 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
       "removing the clone credential",
     )
     await run(
-      ["git", "-C", WORKSPACE, "config", "user.name", input.author.name],
+      ["git", "-C", workspace, "config", "user.name", input.author.name],
       "setting the commit author",
     )
     await run(
-      ["git", "-C", WORKSPACE, "config", "user.email", input.author.email],
+      ["git", "-C", workspace, "config", "user.email", input.author.email],
       "setting the commit email",
     )
   }
@@ -145,11 +146,11 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   await write(
     driver,
     externalId,
-    `${WORKSPACE}/.claude/skills/sproutos/SKILL.md`,
+    `${workspace}/.claude/skills/sproutos/SKILL.md`,
     input.skill,
     problems,
   )
-  await write(driver, externalId, `${WORKSPACE}/AGENTS.md`, agentsPointer(input.skill), problems)
+  await write(driver, externalId, `${workspace}/AGENTS.md`, agentsPointer(input.skill), problems)
 
   /*
     Kept out of the customer's commits.
@@ -161,20 +162,18 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   await write(
     driver,
     externalId,
-    `${WORKSPACE}/.git/info/exclude`,
+    `${workspace}/.git/info/exclude`,
     ["/.claude/skills/sproutos/", "/.codex/", ""].join("\n"),
     problems,
   )
 
-  if (input.harness === "codex") {
-    await write(
-      driver,
-      externalId,
-      `${WORKSPACE}/.codex/config.toml`,
-      codexConfig({ model: input.model ?? "gpt-5.6-terra", proxyBaseUrl: input.proxyBaseUrl }),
-      problems,
-    )
-  }
+  /*
+    Codex needs no file written here.
+
+    It used to get one, and Codex overwrote it with its own trust entry on the first turn — see
+    `codexOverrides`, which passes the same settings on every invocation instead. What Codex reads
+    from the checkout is `AGENTS.md`, written above.
+  */
 
   return { cloned, problems }
 }
@@ -246,6 +245,9 @@ export type TurnInput = {
  */
 const HEARTBEAT_MS = 5 * 60 * 1000
 
+/** Long enough for a push over a slow link, short enough that a hung git does not hold a turn. */
+const COMMIT_TIMEOUT_MS = 5 * 60 * 1000
+
 /**
  * Run one turn in the sandbox and stream what it does.
  *
@@ -254,12 +256,14 @@ const HEARTBEAT_MS = 5 * 60 * 1000
  * Two transports, one contract; the alternative is two chat clients.
  */
 export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: number }> {
+  const workspace = input.driver.workspaceDir
   const env = sandboxAgentEnv({
     harness: input.harness,
     model: input.model,
     proxyBaseUrl: input.proxyBaseUrl,
     refreshUrl: input.refreshUrl,
     token: input.token,
+    workspace,
   })
 
   /*
@@ -270,7 +274,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     `git add -A` from the customer's own repository.
   */
   const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
-  argv.push(...harnessArgv(input.harness, input.prompt))
+  argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model, workspace))
 
   /*
     A heartbeat for as long as the turn runs.
@@ -327,14 +331,208 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
   }
 }
 
-function harnessArgv(harness: Harness, prompt: string): string[] {
+/**
+ * Get the agent's work out of the sandbox and onto a branch.
+ *
+ * The sandbox commits, which the control-plane path deliberately does not — and the difference is
+ * not a change of mind, it is a change of machine. `commit.ts` keeps the commit out of the agent's
+ * hands because there the agent shares a process with the control-plane database URL, the envelope
+ * KMS key and the GitHub App's own credentials. Here it shares nothing: the container holds a proxy
+ * token and a branch-scoped database credential, and neither is worth taking.
+ *
+ * The push credential is an installation token: an hour long, scoped to the repositories the
+ * customer granted, and never written down. It goes in `GIT_CONFIG_*` for one command rather than
+ * into the URL, because a URL with a credential in it *persists* — `git push <url>` leaves it in
+ * the reflog, and a remote set from it leaves it in `.git/config`, where it outlives the token's
+ * usefulness by exactly nothing and its secrecy by an hour. `bootstrapSandbox` strips the clone's
+ * credential for the same reason.
+ *
+ * What is not claimed: that the agent cannot see it. It is one `ps` away in a container the model
+ * runs commands in, and that is accepted — it is an hourly token for the repository the agent is
+ * already editing, which is the one thing it is *for*. The boundary that matters is that it cannot
+ * reach anything else and cannot outlive the hour.
+ *
+ * `no_changes` rather than an error when nothing was edited. A turn that answered a question
+ * without touching a file is the common case.
+ */
+export type SandboxCommitInput = {
+  driver: SandboxDriver
+  externalId: string
+  /** `owner/repo`. */
+  repository: string
+  host?: string
+  /** A GitHub App installation token with `contents: write`. */
+  token: string
+  /**
+   * Where to push, when it is not `https://<host>/<repository>.git`.
+   *
+   * Exists so the push can be exercised against a repository that is not GitHub — the live test
+   * pushes to a bare repo in the container, which makes the ref negotiation and the lease real
+   * without writing to anybody's history. No production caller passes it.
+   */
+  remote?: string
+  /** Never the production branch unless the caller means it. */
+  branch: string
+  message: string
+  author: { name: string; email: string }
+}
+
+export type SandboxCommitResult =
+  | { committed: false; reason: "no_changes" }
+  | { committed: true; sha: string; branch: string; files: string[] }
+
+export async function commitSandboxWork(input: SandboxCommitInput): Promise<SandboxCommitResult> {
+  const { driver, externalId } = input
+  const workspace = driver.workspaceDir
+  const git = (...argv: string[]) =>
+    driver.exec(externalId, ["git", "-C", workspace, ...argv], COMMIT_TIMEOUT_MS)
+
+  const status = await git("status", "--porcelain")
+  if (status.exitCode !== 0) {
+    throw new Error(`the sandbox has no usable checkout: ${status.stderr.trim() || "git failed"}`)
+  }
+
+  const files = status.stdout
+    .split("\n")
+    .map((line) => line.slice(3).trim())
+    .filter((line) => line !== "")
+  if (files.length === 0) return { committed: false, reason: "no_changes" }
+
+  const added = await git("add", "-A")
+  if (added.exitCode !== 0) throw new Error(`staging failed: ${added.stderr.trim()}`)
+
+  /*
+    Identity on the command, even though the bootstrap already configured it.
+
+    The bootstrap's `git config` can have failed — it is one of the steps that reports a problem
+    rather than failing the provision — and `git commit` refuses outright without an identity. A
+    commit that fails here loses the turn's work, so it does not depend on an earlier step having
+    gone well.
+  */
+  const committed = await driver.exec(
+    externalId,
+    [
+      "git",
+      "-C",
+      workspace,
+      "-c",
+      `user.name=${input.author.name}`,
+      "-c",
+      `user.email=${input.author.email}`,
+      "commit",
+      "-m",
+      input.message,
+    ],
+    COMMIT_TIMEOUT_MS,
+  )
+  if (committed.exitCode !== 0) throw new Error(`the commit failed: ${committed.stderr.trim()}`)
+
+  const head = await git("rev-parse", "HEAD")
+  if (head.exitCode !== 0) throw new Error(`could not read HEAD: ${head.stderr.trim()}`)
+
+  /*
+    `HEAD:refs/heads/<branch>`, so whatever the local branch is called does not matter — the clone
+    is off the production branch and its local name is that.
+
+    `--force-with-lease` rather than `--force`: the branch belongs to this session, and the lease is
+    what stops a push racing another turn from silently discarding it.
+  */
+  const url = input.remote ?? `https://${input.host ?? "github.com"}/${input.repository}.git`
+  const pushed = await driver.exec(
+    externalId,
+    [
+      "env",
+      ...Object.entries(sandboxGitAuthEnv(url, input.token)).map(
+        ([key, value]) => `${key}=${value}`,
+      ),
+      "git",
+      "-C",
+      workspace,
+      "push",
+      url,
+      `HEAD:refs/heads/${input.branch}`,
+      "--force-with-lease",
+    ],
+    COMMIT_TIMEOUT_MS,
+  )
+  if (pushed.exitCode !== 0) throw new Error(`the push failed: ${pushed.stderr.trim()}`)
+
+  return { committed: true, sha: head.stdout.trim(), branch: input.branch, files }
+}
+
+/**
+ * The credential, in git's config-through-the-environment form.
+ *
+ * Mirrors `gitAuthEnv` deliberately — the same shape on both machines, so the property that the
+ * token never reaches the URL is one idea rather than two. `http.<url>.extraheader` is scoped to
+ * this remote, so a redirect elsewhere does not carry the header with it.
+ */
+export function sandboxGitAuthEnv(url: string, token: string): Record<string, string> {
+  const authorization = `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`
+  return {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `http.${url}.extraheader`,
+    GIT_CONFIG_VALUE_0: `Authorization: ${authorization}`,
+  }
+}
+
+function harnessArgv(
+  harness: Harness,
+  prompt: string,
+  proxyBaseUrl: string,
+  model: string | null,
+  workspace: string,
+): string[] {
   switch (harness) {
     case "claude-code":
-      // `--verbose` is required alongside `stream-json` for the CLI to emit tool events rather than
-      // only the final message — without it the transcript is a single block of text at the end.
-      return ["claude", "--print", "--output-format", "stream-json", "--verbose", prompt]
+      /*
+        `--dangerously-skip-permissions`, and it is not a shortcut.
+
+        Without it a `--print` turn has nobody to ask, so every edit is *denied* — and the denial
+        does not fail the turn: the CLI reports `subtype: "success"`, `is_error: false`, and lists
+        the refusals in `permission_denials`, which nothing was reading. The first real turn ever
+        taken in a sandbox ended with the agent saying it had written a file, no file, and a
+        successful exit code. Every sandbox turn would have done that.
+
+        The flag is safe here for the reason the sandbox exists: the boundary is the sandbox, not
+        the prompt. An agent that can be talked out of an edit is not more contained — the machine
+        it runs on is disposable and holds no credential worth taking, which is the whole design.
+
+        `--verbose` is required alongside `stream-json` for the CLI to emit tool events rather than
+        only the final message — without it the transcript is a single block of text at the end.
+      */
+      return [
+        "claude",
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+        prompt,
+      ]
     case "codex":
-      return ["codex", "exec", "--json", "--cd", WORKSPACE, prompt]
+      /*
+        Codex's spelling of the same thing, described by its own help as "intended solely for
+        running in environments that are externally sandboxed". That is this environment.
+
+        Its own sandbox is refused rather than layered: seccomp inside a container the platform
+        already owns buys nothing and breaks installs in ways that read as the model failing.
+      */
+      return [
+        "codex",
+        "exec",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        // The workspace is a checkout, so this is belt and braces — but a bootstrap whose clone
+        // failed would otherwise fail again here, with an error about git rather than about the
+        // clone that actually went wrong.
+        "--skip-git-repo-check",
+        "--cd",
+        workspace,
+        ...codexOverrides({ model: model ?? PLATFORM_FALLBACK_MODEL, proxyBaseUrl }),
+        prompt,
+      ]
   }
 }
 
@@ -368,10 +566,32 @@ function emit(line: string, onEvent: (event: AgentEvent) => void): void {
   }
 
   if (type === "result" || type === "turn.completed") {
+    /*
+      A turn that was refused its tools did not succeed, whatever it says.
+
+      Claude Code reports a denied edit as `subtype: "success"` with `is_error: false` and the
+      refusals listed in `permission_denials`. Read literally, the transcript then shows the agent
+      announcing a change that does not exist — which is precisely what the first sandbox turn ever
+      run did. `--dangerously-skip-permissions` is why that no longer happens; this is why it could
+      never happen quietly again if it did.
+    */
+    const denials = Array.isArray(parsed.permission_denials) ? parsed.permission_denials : []
+    if (denials.length > 0) {
+      const names = denials
+        .map((denial) => (denial as Record<string, unknown>).tool_name)
+        .filter((name): name is string => typeof name === "string")
+      onEvent({
+        type: "error",
+        message:
+          `the agent was refused ${denials.length} tool call(s) — ${names.join(", ")} — so any ` +
+          "change it describes was not made",
+      })
+    }
+
     onEvent({
       type: "done",
       subtype: typeof parsed.subtype === "string" ? parsed.subtype : "success",
-      isError: parsed.is_error === true,
+      isError: parsed.is_error === true || denials.length > 0,
       numTurns: typeof parsed.num_turns === "number" ? parsed.num_turns : 1,
       durationMs: typeof parsed.duration_ms === "number" ? parsed.duration_ms : 0,
     })

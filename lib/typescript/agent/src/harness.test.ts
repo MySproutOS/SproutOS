@@ -6,6 +6,7 @@ import {
   OPENAI_PROVIDER,
   OPENROUTER_PROVIDER,
   PLATFORM_FALLBACK_MODEL,
+  upstreamKindFor,
 } from "./harness"
 
 const ALL_KINDS: AgentCredentialKind[] = [
@@ -82,5 +83,19 @@ describe("the platform fallback", () => {
   it("names the model rather than leaving the provider to choose", () => {
     // A wrong slug should be a provider error naming the model, not a silent substitution.
     expect(PLATFORM_FALLBACK_MODEL).toBe("gpt-5.6-terra")
+  })
+})
+
+describe("what a credential kind means to the proxy", () => {
+  it("sends a subscription as an OAuth bearer, and an API key as an API key", () => {
+    /*
+      The distinction the proxy cannot infer. A Claude subscription is an OAuth token: as `x-api-key`
+      it is a 401 that reads like an invalid key, so every turn on a customer's own subscription
+      would fail with a message pointing at their credential rather than at this mapping.
+    */
+    expect(upstreamKindFor("claude_subscription")).toBe("anthropic_oauth")
+    expect(upstreamKindFor("anthropic_api_key")).toBe("anthropic")
+    expect(upstreamKindFor("openai_api_key")).toBe("openai")
+    expect(upstreamKindFor("openrouter_api_key")).toBe("openai")
   })
 })

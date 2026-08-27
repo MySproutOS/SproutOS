@@ -10,12 +10,11 @@ import { NoActivePriceBookError } from "./usage"
  *
  * ## The missing link
  *
- * The money path had four steps and three of them existed. A cgroup sample became a `usage_event`,
- * `rollUpUsage` collapsed events into `usage_rollup`, and `rateProjectsForOrganization` multiplied
- * quantity by rate at read time so a dashboard could show a cost. Nothing ever posted a ledger
- * entry. `usage_rollup.rated_transaction_id` — the column whose whole purpose is to record which
- * transaction charged a grain — had no writer anywhere in the repository, and every organization's
- * balance was exactly what they had topped up, no matter how much compute they had burned.
+ * The money path originally stopped at read-time rating: raw usage became `usage_rollup`, and
+ * `rateProjectsForOrganization` multiplied quantity by rate so a dashboard could show a cost.
+ * Nothing posted a ledger entry. `usage_rollup.rated_transaction_id` — the column whose whole
+ * purpose is to record which transaction charged a grain — had no writer anywhere in the
+ * repository, and every organization's balance stayed at its top-up despite consumed compute.
  *
  * Read-time rating is right for *display*, and the note on `rateProjectsForOrganization` says why:
  * a stored cost is wrong the moment a rate changes. It is not a charge. A prepaid platform whose
@@ -23,9 +22,9 @@ import { NoActivePriceBookError } from "./usage"
  *
  * ## Charging exactly one grain
  *
- * `rollUpUsage` writes the same usage at minute, hour **and** day grain. Summing across buckets
- * charges everything three times, and nothing about the result looks wrong — the arithmetic is
- * consistent, the ledger balances, and the customer is billed triple.
+ * The ClickHouse importer writes the same usage at minute, hour **and** day grain. Summing across
+ * buckets charges everything three times, and nothing about the result looks wrong — the
+ * arithmetic is consistent, the ledger balances, and the customer is billed triple.
  *
  * This charges the **hour** grain and nothing else, and `assertSingleGrain` makes that structural
  * rather than a matter of remembering. Hour rather than day because a prepaid balance that only
@@ -101,9 +100,8 @@ export class MultipleGrainsError extends Error {
 /**
  * Charge every organization for its unbilled hours.
  *
- * `now` is a parameter so a test can place the boundary; the grace it implies is the rollup's, not
- * a second one — `rollUpUsage` already refuses to roll up an event younger than
- * `LATE_ARRIVAL_GRACE_MS`, so a row that exists here is a row whose window has closed.
+ * `now` is a parameter so a test can place the boundary. The importer supplies closed grains; this
+ * query still refuses a bucket whose start is not earlier than the charge clock.
  */
 export async function chargeUsage(
   db: Kysely<DB>,
@@ -188,11 +186,10 @@ export async function chargeUsage(
       /*
         The *uncharged* part of the grain, not its whole quantity.
 
-        `rollUpUsage` upserts, so a late event adds to a grain that may already have been charged —
-        the metering agent has a retry buffer, so an event delayed past the rollup's grace by a
-        restart or a partition is ordinary rather than exceptional. Charging `quantity` again would
-        bill the paid part twice; skipping the row, which is what a null-marker check did, made the
-        addition free.
+        The importer can replace a grain with a larger absolute total after late usage arrives —
+        the metering agent has a retry buffer, so delay from a restart or partition is ordinary.
+        Charging `quantity` again would bill the paid part twice; skipping the row, which is what a
+        null-marker check did, made the addition free.
       */
       const entry = owed.get(row.organizationId) ?? { usage: 0n, ids: [], watermark: [] }
       entry.usage += rateTimesQuantity(rate, row.uncharged)

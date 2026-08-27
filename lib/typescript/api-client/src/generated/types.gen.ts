@@ -1240,6 +1240,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
+    isGroup?: boolean
   }
   path: {
     orgSlug: string
@@ -1994,7 +1995,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
   /**
-   * Stop queued
+   * Deletion queued
    */
   202: unknown
 }
@@ -2094,6 +2095,40 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/activity"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors = {
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses = {
+  /**
+   * Activity recorded
+   */
+  204: void
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewData = {
   body?: never
@@ -2656,6 +2691,68 @@ export type PutV1OrgsByOrgSlugAgentConfigResponses = {
 export type PutV1OrgsByOrgSlugAgentConfigResponse =
   PutV1OrgsByOrgSlugAgentConfigResponses[keyof PutV1OrgsByOrgSlugAgentConfigResponses]
 
+export type PostV1OrgsByOrgSlugAgentProxyTokenData = {
+  body?: {
+    projectId?: string | null
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/proxy-token"
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenErrors = {
+  409: unknown
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenResponses = {
+  /**
+   * The pair. Both values are returned once and are not recoverable
+   */
+  201: {
+    id: string
+    accessToken: string
+    refreshToken: string
+    accessExpiresAt: Date
+    refreshExpiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenResponse =
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses[keyof PostV1OrgsByOrgSlugAgentProxyTokenResponses]
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshData = {
+  body?: {
+    refreshToken: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/proxy-token/refresh"
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors = {
+  401: unknown
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses = {
+  /**
+   * A new pair. The old refresh token stops working
+   */
+  200: {
+    id: string
+    accessToken: string
+    refreshToken: string
+    accessExpiresAt: Date
+    refreshExpiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse =
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses[keyof PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData = {
   body?: never
   path: {
@@ -2770,6 +2867,7 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
       port: number | null
       database: string | null
       username: string | null
+      keyPrefix?: string
       createdAt: Date
     }>
   }
@@ -2812,6 +2910,7 @@ export type PostV1OrgsByOrgSlugServicesResponses = {
   201: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -2849,6 +2948,7 @@ export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
   200: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -2886,6 +2986,7 @@ export type PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses = {
   200: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -3558,6 +3659,41 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses =
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse =
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses]
 
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-workflow"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors = {
+  /**
+   * A group has nothing to deploy
+   */
+  400: unknown
+  /**
+   * No such project in this organization
+   */
+  404: unknown
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses = {
+  /**
+   * A workflow file to add to the repository
+   */
+  200: {
+    path: string
+    contents: string
+    projectRequired: boolean
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
   body?: never
   path: {
@@ -3702,7 +3838,7 @@ export type GetV1OrgsByOrgSlugWorkflowRunsResponses = {
       startedAt: Date | null
       finishedAt: Date | null
       durationMs: number | null
-      costMicroUsd: string
+      costMicroUsd: string | null
     }>
   }
 }
@@ -3894,8 +4030,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespon
       } | null
       triggerType: string
       queueJobId: string | null
-      bytesEnqueued: string
-      valkeyDwellMs: string
+      bytesEnqueued: string | null
+      valkeyDwellMs: string | null
       startedAt: Date | null
       finishedAt: Date | null
       createdAt: Date
@@ -3948,8 +4084,8 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespo
     } | null
     triggerType: string
     queueJobId: string | null
-    bytesEnqueued: string
-    valkeyDwellMs: string
+    bytesEnqueued: string | null
+    valkeyDwellMs: string | null
     startedAt: Date | null
     finishedAt: Date | null
     createdAt: Date
@@ -3999,8 +4135,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunI
       } | null
       triggerType: string
       queueJobId: string | null
-      bytesEnqueued: string
-      valkeyDwellMs: string
+      bytesEnqueued: string | null
+      valkeyDwellMs: string | null
       startedAt: Date | null
       finishedAt: Date | null
       createdAt: Date
@@ -4022,6 +4158,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunI
       byDimension: {
         [key: string]: unknown | string
       }
+      complete: boolean
+      missingDimensions: Array<string>
     }
   }
 }
@@ -5264,6 +5402,7 @@ export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses = {
        * Shown once. It cannot be retrieved again.
        */
       connectionUri: string
+      keyPrefix?: string
     }>
     deleted: Array<{
       id: string
@@ -6213,6 +6352,37 @@ export type PostV1DeployReleaseResponses = {
 
 export type PostV1DeployReleaseResponse =
   PostV1DeployReleaseResponses[keyof PostV1DeployReleaseResponses]
+
+export type PostV1DeployMigrateData = {
+  body?: {
+    migration_key: string
+    migration_handler?: string
+    runtime?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/migrate"
+}
+
+export type PostV1DeployMigrateErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+}
+
+export type PostV1DeployMigrateResponses = {
+  /**
+   * The migrator ran. `ok` says whether it succeeded
+   */
+  200: {
+    ok: boolean
+    output: string
+  }
+}
+
+export type PostV1DeployMigrateResponse =
+  PostV1DeployMigrateResponses[keyof PostV1DeployMigrateResponses]
 
 export type PostV1ApkSigningClaimData = {
   body?: {

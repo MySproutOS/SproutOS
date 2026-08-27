@@ -59,70 +59,94 @@ pub const SIGNATURE_LEN: usize = 32;
 pub enum UsageDimension {
     /// Memory held by a tenant site, in GiB-seconds.
     SiteGibSecond,
+    /// Memory provisioned for a tenant site, in GiB-seconds.
+    SiteProvisionedGibSecond,
     /// One HTTP request served by a tenant site.
     SiteRequest,
     /// One byte of egress from a tenant site.
     SiteEgressByte,
     /// One second of an open WebSocket connection.
-    WsConnectionSecond,
-    /// One workflow job execution.
-    WorkflowJob,
+    SiteWsConnectionSecond,
+    /// Database storage, in GiB-hours.
+    DbStorageGibHour,
+    /// Database compute, in compute-unit seconds.
+    DbComputeCuSecond,
+    /// Search index storage, in GiB-hours.
+    EsStorageGibHour,
+    /// One billable search unit.
+    EsSearchUnit,
     /// Bytes resident in a tenant's valkey queues, in byte-seconds.
     ValkeyQueueByteSecond,
-    /// Database CPU time, in compute-seconds.
-    DbComputeSecond,
-    /// Database storage, in GiB-seconds.
-    DbStorageGibSecond,
-    /// One second of an open database connection.
-    DbConnectionSecond,
-    /// Search index storage, in GiB-seconds.
-    SearchStorageGibSecond,
-    /// One search query.
-    SearchQuery,
+    /// One workflow job accepted for execution.
+    WorkflowJobEnqueued,
+    /// Workflow execution CPU, in vCPU-seconds.
+    WorkflowExecVcpuSecond,
+    /// Workflow execution memory, in GiB-seconds.
+    WorkflowExecGibSecond,
     /// One token of AI model input.
     AiInputToken,
     /// One token of AI model output.
     AiOutputToken,
     /// One token read from an AI prompt cache.
     AiCacheReadToken,
+    /// One second spent running a coding agent.
+    AgentRunSecond,
+    /// Sandbox CPU allocation, in vCPU-seconds.
+    SandboxCpuSecond,
+    /// Sandbox memory allocation, in GiB-seconds.
+    SandboxGibSecond,
+    /// Sandbox disk allocation, in GiB-seconds.
+    SandboxDiskGibSecond,
 }
 
 impl UsageDimension {
     /// Every dimension, in declaration order.
     pub const ALL: &'static [Self] = &[
         Self::SiteGibSecond,
+        Self::SiteProvisionedGibSecond,
         Self::SiteRequest,
         Self::SiteEgressByte,
-        Self::WsConnectionSecond,
-        Self::WorkflowJob,
+        Self::SiteWsConnectionSecond,
+        Self::DbStorageGibHour,
+        Self::DbComputeCuSecond,
+        Self::EsStorageGibHour,
+        Self::EsSearchUnit,
         Self::ValkeyQueueByteSecond,
-        Self::DbComputeSecond,
-        Self::DbStorageGibSecond,
-        Self::DbConnectionSecond,
-        Self::SearchStorageGibSecond,
-        Self::SearchQuery,
+        Self::WorkflowJobEnqueued,
+        Self::WorkflowExecVcpuSecond,
+        Self::WorkflowExecGibSecond,
         Self::AiInputToken,
         Self::AiOutputToken,
         Self::AiCacheReadToken,
+        Self::AgentRunSecond,
+        Self::SandboxCpuSecond,
+        Self::SandboxGibSecond,
+        Self::SandboxDiskGibSecond,
     ];
 
     /// The wire name, identical to the serde representation.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::SiteGibSecond => "site_gib_second",
+            Self::SiteProvisionedGibSecond => "site_provisioned_gib_second",
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
-            Self::WsConnectionSecond => "ws_connection_second",
-            Self::WorkflowJob => "workflow_job",
+            Self::SiteWsConnectionSecond => "site_ws_connection_second",
+            Self::DbStorageGibHour => "db_storage_gib_hour",
+            Self::DbComputeCuSecond => "db_compute_cu_second",
+            Self::EsStorageGibHour => "es_storage_gib_hour",
+            Self::EsSearchUnit => "es_search_unit",
             Self::ValkeyQueueByteSecond => "valkey_queue_byte_second",
-            Self::DbComputeSecond => "db_compute_second",
-            Self::DbStorageGibSecond => "db_storage_gib_second",
-            Self::DbConnectionSecond => "db_connection_second",
-            Self::SearchStorageGibSecond => "search_storage_gib_second",
-            Self::SearchQuery => "search_query",
+            Self::WorkflowJobEnqueued => "workflow_job_enqueued",
+            Self::WorkflowExecVcpuSecond => "workflow_exec_vcpu_second",
+            Self::WorkflowExecGibSecond => "workflow_exec_gib_second",
             Self::AiInputToken => "ai_input_token",
             Self::AiOutputToken => "ai_output_token",
             Self::AiCacheReadToken => "ai_cache_read_token",
+            Self::AgentRunSecond => "agent_run_second",
+            Self::SandboxCpuSecond => "sandbox_cpu_second",
+            Self::SandboxGibSecond => "sandbox_gib_second",
+            Self::SandboxDiskGibSecond => "sandbox_disk_gib_second",
         }
     }
 }
@@ -449,6 +473,7 @@ mod tests {
 
     /// The shared cross-language contract; see `fixtures/signing-vectors.json`.
     const FIXTURE: &str = include_str!("../fixtures/signing-vectors.json");
+    const DIMENSION_FIXTURE: &str = include_str!("../fixtures/billable-dimensions.json");
 
     const ORG: &str = "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f";
 
@@ -465,6 +490,11 @@ mod tests {
         batch: UsageBatch,
         canonical: String,
         signature: String,
+    }
+
+    #[derive(Deserialize)]
+    struct DimensionFixture {
+        dimensions: Vec<String>,
     }
 
     fn fixture() -> Fixture {
@@ -581,6 +611,20 @@ mod tests {
     }
 
     #[test]
+    fn dimensions_exactly_match_the_shared_contract() {
+        let fixture: DimensionFixture = serde_json::from_str(DIMENSION_FIXTURE)
+            .expect("fixtures/billable-dimensions.json is valid JSON");
+        let actual: Vec<&str> = UsageDimension::ALL
+            .iter()
+            .map(UsageDimension::as_str)
+            .collect();
+
+        assert_eq!(actual, fixture.dimensions);
+        let unique: std::collections::BTreeSet<_> = actual.iter().copied().collect();
+        assert_eq!(unique.len(), actual.len(), "dimension names must be unique");
+    }
+
+    #[test]
     fn dimension_names_are_the_documented_ones() {
         assert_eq!(UsageDimension::SiteGibSecond.as_str(), "site_gib_second");
         assert_eq!(
@@ -592,8 +636,8 @@ mod tests {
             "ai_cache_read_token"
         );
         assert_eq!(
-            "db_storage_gib_second".parse(),
-            Ok(UsageDimension::DbStorageGibSecond)
+            "db_storage_gib_hour".parse(),
+            Ok(UsageDimension::DbStorageGibHour)
         );
         assert_eq!(
             "site_cpu_second".parse::<UsageDimension>(),
@@ -603,11 +647,11 @@ mod tests {
 
     #[test]
     fn canonical_form_is_order_independent() {
-        let ascending = UsageEvent::new("k", org(), UsageDimension::SearchQuery, 1.0, 1)
+        let ascending = UsageEvent::new("k", org(), UsageDimension::EsSearchUnit, 1.0, 1)
             .with_attribute("a", "1")
             .with_attribute("b", "2")
             .with_attribute("c", "3");
-        let descending = UsageEvent::new("k", org(), UsageDimension::SearchQuery, 1.0, 1)
+        let descending = UsageEvent::new("k", org(), UsageDimension::EsSearchUnit, 1.0, 1)
             .with_attribute("c", "3")
             .with_attribute("b", "2")
             .with_attribute("a", "1");
@@ -629,7 +673,7 @@ mod tests {
             vec![UsageEvent::new(
                 "k",
                 org(),
-                UsageDimension::DbComputeSecond,
+                UsageDimension::DbComputeCuSecond,
                 0.25,
                 7,
             )],
@@ -642,8 +686,8 @@ mod tests {
 
     #[test]
     fn event_order_is_significant() {
-        let first = UsageEvent::new("a", org(), UsageDimension::SearchQuery, 1.0, 1);
-        let second = UsageEvent::new("b", org(), UsageDimension::SearchQuery, 1.0, 1);
+        let first = UsageEvent::new("a", org(), UsageDimension::EsSearchUnit, 1.0, 1);
+        let second = UsageEvent::new("b", org(), UsageDimension::EsSearchUnit, 1.0, 1);
         let key = b"key";
         let forward = UsageBatch::new("s", vec![first.clone(), second.clone()]);
         let reverse = UsageBatch::new("s", vec![second, first]);
@@ -796,6 +840,36 @@ mod tests {
     }
 
     #[test]
+    fn attribute_keys_match_the_shared_cross_language_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vectors {
+            valid: Vec<String>,
+            invalid: Vec<String>,
+        }
+
+        let vectors: Vectors =
+            serde_json::from_str(include_str!("../fixtures/attribute-key-vectors.json")).unwrap();
+        let batch = |key: &str| {
+            let event = UsageEvent::new("k", org(), UsageDimension::SiteRequest, 1.0, 1)
+                .with_attribute(key, "value");
+            UsageBatch::new("metering-agent", vec![event])
+        };
+
+        for key in vectors.valid {
+            assert!(
+                batch(&key).validate().is_ok(),
+                "valid key rejected: {key:?}"
+            );
+        }
+        for key in vectors.invalid {
+            assert!(
+                batch(&key).validate().is_err(),
+                "invalid key accepted: {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn builders_populate_optional_fields() {
         let project = Uuid::parse_str("01912d41-0000-7000-8000-0000000000b1").unwrap();
         let event = UsageEvent::new("k", org(), UsageDimension::SiteRequest, 1.0, 5)
@@ -812,7 +886,7 @@ mod tests {
     #[test]
     fn absent_optional_fields_deserialize() {
         let wire = format!(
-            r#"{{"source":"pg-proxy","events":[{{"external_id":"k","organization_id":"{ORG}","dimension":"db_connection_second","quantity":30.0,"occurred_at":1723459200000}}]}}"#
+            r#"{{"source":"pg-proxy","events":[{{"external_id":"k","organization_id":"{ORG}","dimension":"db_compute_cu_second","quantity":30.0,"occurred_at":1723459200000}}]}}"#
         );
         let batch: UsageBatch = serde_json::from_str(&wire).unwrap();
         assert_eq!(batch.events[0].project_id, None);

@@ -1,0 +1,5 @@
+{
+  "$comment": "Attribute keys accepted by both UsageBatch::validate and the TypeScript ingest parser. The billing signature accepts Unicode values, but keys are deliberately restricted to the portable label vocabulary [a-z0-9._-].",
+  "valid": ["a", "a0", "a.b", "a_b", "a-b", "query.locale"],
+  "invalid": ["", "Region", "with space", "slash/key", "ümlaut"]
+}

@@ -25,17 +25,22 @@ export function sandboxAgentEnv(input: {
   /** Where the router's LLM proxy answers, from inside the sandbox. */
   proxyBaseUrl: string
   token: MintedProxyToken
-  /** Where the agent exchanges its refresh token, so a long turn does not die at 15 minutes. */
+  /** Reserved for a future harness wrapper; stock Claude Code and Codex do not consume it. */
   refreshUrl: string
   model?: string | null
+  /**
+   * The checkout, which is also where Codex's configuration lives.
+   *
+   * Passed in rather than imported, because the constant belongs to `sandbox-agent` and importing
+   * it here would close a cycle. Defaulted to the same value it always has, so a caller cannot
+   * silently point Codex at a directory the bootstrap never wrote.
+   */
+  workspace?: string
 }): Record<string, string> {
   const env: Record<string, string> = {
     /*
-      The refresh half, so the agent can keep itself alive.
-
-      Without these a turn stops at the access token's expiry — fifteen minutes — which is shorter
-      than plenty of legitimate work. The agent is expected to exchange the refresh token when a
-      call comes back 401; the token is useless to anyone who cannot also reach our API.
+      The refresh half is exposed for a future wrapper and for explicit token clients. The stock
+      harnesses do not know this protocol; access tokens therefore outlive the bounded turn.
     */
     SPROUTOS_AGENT_REFRESH_TOKEN: input.token.refreshToken,
     SPROUTOS_AGENT_REFRESH_URL: input.refreshUrl,
@@ -57,16 +62,35 @@ export function sandboxAgentEnv(input: {
       */
       env.ANTHROPIC_BASE_URL = input.proxyBaseUrl
       env.ANTHROPIC_AUTH_TOKEN = input.token.accessToken
+      /*
+        Claude Code refuses `--dangerously-skip-permissions` when it is running as root, and a
+        container's default user is root. `IS_SANDBOX` is the CLI's own escape hatch for the case
+        where something else is the boundary — which is what a sandbox is.
+
+        Set here rather than only where a driver happens to run as root: a snapshot that changes its
+        user should not change whether the agent can edit anything, and the variable is harmless
+        when it does not apply.
+      */
+      env.IS_SANDBOX = "1"
       break
     case "codex":
       /*
         Codex reads its provider from `config.toml` and the key from whatever `env_key` names.
 
-        `codexConfig` below writes that file with `base_url` pointing here, so the variable name is
-        ours to choose and is the same for every provider — the sandbox is not talking to OpenAI or
-        OpenRouter, it is talking to us.
+        `codexOverrides` below passes that provider on the command line with `base_url` pointing
+        here, so the variable name is ours to choose and is the same for every provider — the
+        sandbox is not talking to OpenAI or OpenRouter, it is talking to us.
       */
       env.SPROUTOS_PROXY_KEY = input.token.accessToken
+      /*
+        Where Codex reads `config.toml` from — and it is not the working directory.
+
+        Codex keeps its own state — session files, and the trust entry it writes for a directory
+        it has been told to act in — under `$CODEX_HOME`, default `~/.codex`. Pointing it into the
+        workspace keeps that beside the checkout, where `.git/info/exclude` already hides it, rather
+        than in a home directory that a driver may or may not persist.
+      */
+      env.CODEX_HOME = `${input.workspace ?? "/workspace"}/.codex`
       break
   }
 
@@ -74,27 +98,42 @@ export function sandboxAgentEnv(input: {
 }
 
 /**
- * The `config.toml` a Codex sandbox runs with.
+ * How a Codex sandbox is told to talk to us: command-line overrides, not a file.
  *
- * Written rather than templated from the customer's provider, because from the sandbox's point of
- * view there is only one provider: ours. The real provider is chosen at token-mint time and lives
- * on the token row, which is what lets a customer switch from OpenAI to OpenRouter without anything
- * inside the sandbox changing.
+ * It was a file — `$CODEX_HOME/config.toml` — until Codex was watched doing this to it:
  *
- * `wire_api = "responses"` because that is what both our upstreams' OpenAI-compatible surfaces
- * implement, and what the proxy's usage parser expects to see `response.completed` on.
+ *   [projects."/workspace"]
+ *   trust_level = "trusted"
+ *
+ * Codex writes that file itself, and the write replaced everything in it, provider and all. The
+ * next turn went to `wss://api.openai.com` with no key. A configuration file the tool being
+ * configured also owns is not configuration; it is a suggestion.
+ *
+ * `-c` overrides are passed per invocation, so nothing can rewrite them between turns.
+ *
+ * The base URL is the proxy's **root**, with no `/v1`. Codex posts to `<base_url>/responses`, the
+ * proxy forwards the path onto the session's upstream base — which for OpenAI already ends in
+ * `/v1` — and the two halves compose to `/v1/responses`. Putting `/v1` on both ends produces
+ * `/v1/v1/responses`, which is a 404 from the provider on every single turn.
  */
-export function codexConfig(input: { proxyBaseUrl: string; model: string }): string {
-  return `# Written by SproutOS. The endpoint below is SproutOS's proxy, not a model provider:
-# the sandbox never holds a provider credential.
-[model_providers.sproutos]
-name = "sproutos"
-base_url = "${input.proxyBaseUrl}"
-env_key = "SPROUTOS_PROXY_KEY"
+export function codexOverrides(input: { proxyBaseUrl: string; model: string }): string[] {
+  const provider =
+    `{name="sproutos",base_url="${input.proxyBaseUrl.replace(/\/+$/, "")}",` +
+    `env_key="SPROUTOS_PROXY_KEY",wire_api="responses"}`
 
-[settings]
-model_provider = "sproutos"
-model = "${input.model}"
-wire_api = "responses"
-`
+  return [
+    "-c",
+    `model_provider="sproutos"`,
+    "-c",
+    `model_providers.sproutos=${provider}`,
+    "-c",
+    `model="${input.model}"`,
+    /*
+      Codex prefers a WebSocket transport, built from the same base URL. The proxy speaks HTTP, so
+      leaving this on costs five failed connections and about ten seconds of retries at the start of
+      every turn before Codex falls back — visible to the customer as an agent that sits there.
+    */
+    "-c",
+    "features.responses_websocket=false",
+  ]
 }

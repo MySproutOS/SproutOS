@@ -13,6 +13,10 @@
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "ioredis": "^6.0.0",
+    "kafkajs": "^2.2.4"
+  },
   "devDependencies": {
     "@types/node": "catalog:"
   }

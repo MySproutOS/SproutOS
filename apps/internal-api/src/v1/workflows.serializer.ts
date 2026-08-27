@@ -66,8 +66,8 @@ export const workflowsSchemaRun = Type.Object({
   error: Nullable(Type.Object({ code: Type.String(), message: Type.String() })),
   triggerType: Type.String(),
   queueJobId: Nullable(Type.String()),
-  bytesEnqueued: Type.String(),
-  valkeyDwellMs: Type.String(),
+  bytesEnqueued: Nullable(Type.String()),
+  valkeyDwellMs: Nullable(Type.String()),
   startedAt: Nullable(Type.String({ format: "date-time" })),
   finishedAt: Nullable(Type.String({ format: "date-time" })),
   createdAt: Type.String({ format: "date-time" }),
@@ -97,6 +97,8 @@ export const workflowsSchemaRunDetailResponse = Type.Object({
     overheadMicroUsd: Type.String(),
     totalMicroUsd: Type.String(),
     byDimension: Type.Record(Type.String(), Type.String()),
+    complete: Type.Boolean(),
+    missingDimensions: Type.Array(Type.String()),
   }),
 })
 
@@ -201,7 +203,8 @@ export const workflowsSchemaRecentRun = Type.Object({
   finishedAt: Nullable(Type.String({ format: "date-time" })),
   /** Milliseconds, or null while it is still running. */
   durationMs: Nullable(Type.Integer()),
-  costMicroUsd: Type.String(),
+  /** Null when an unmeasured dimension makes a per-run total unknowable. */
+  costMicroUsd: Nullable(Type.String()),
 })
 
 export const workflowsSchemaRecentRunsResponse = Type.Object({

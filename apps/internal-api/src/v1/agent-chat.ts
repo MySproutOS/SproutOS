@@ -7,6 +7,7 @@ import {
   AgentNotConfiguredError,
   checkout,
   commitAndPush,
+  commitSandboxWork,
   installSproutosSkill,
   type PlatformMessage,
   resolveAgentCredential,
@@ -32,7 +33,7 @@ import {
   userGitHubCredential,
 } from "@lib/github"
 import { srnFor } from "@lib/srn"
-import { daytonaConfigFromEnv, daytonaDriver } from "@lib/sandbox"
+import { sandboxDriverFromEnv } from "@lib/sandbox"
 import { sealForProxy } from "@lib/proxy-secret"
 import { db } from "@sproutos/db"
 import { randomUUID } from "node:crypto"
@@ -326,7 +327,7 @@ const app = new Hono()
             })
 
             const { exitCode } = await runSandboxTurn({
-              driver: daytonaDriver(daytonaConfigFromEnv()),
+              driver: sandboxDriverFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
               model: credential.model,
@@ -341,6 +342,55 @@ const app = new Hono()
               // Or the reaper stops the sandbox out from under a turn that is still working.
               touch: () => crudSandbox(db).touch(sandbox.id),
             })
+
+            /*
+              The agent's work leaves the sandbox, or it lives only until the reaper.
+
+              A branch, never the production branch: the platform holds a credential that can write,
+              and using it to push straight to `main` would make every agent turn an unreviewed
+              commit on a customer's repository. The same rule the control-plane path follows below.
+
+              The repository credential is resolved here rather than reused from above, because on
+              platform credit `repository` is deliberately null — that path needs no checkout. A
+              sandbox has one regardless: it was cloned at provision.
+
+              Never fatal. A turn that produced good work and then failed to push must report the
+              push, not discard the answer the customer already watched being written.
+            */
+            if (exitCode === 0) {
+              try {
+                const target =
+                  repository ?? (await repositoryFor(organization.id, projectId, c.var.user.id))
+                if (typeof target === "string") throw new Error(target)
+
+                const pushed = await commitSandboxWork({
+                  author: {
+                    email: c.var.user.email ?? "agent@users.noreply.github.com",
+                    name: c.var.user.name ?? "SproutOS Agent",
+                  },
+                  branch: `sproutos/agent-${sessionId.slice(-12)}`,
+                  driver: sandboxDriverFromEnv(),
+                  externalId: sandbox.externalId,
+                  message: `${prompt.split("\n")[0]?.slice(0, 72) ?? "Agent changes"}\n\nWritten by the SproutOS agent in a sandbox.`,
+                  repository: `${target.ownerLogin}/${target.name}`,
+                  token: target.credential.token,
+                })
+
+                if (pushed.committed) {
+                  await emit({
+                    type: "committed",
+                    branch: pushed.branch,
+                    sha: pushed.sha,
+                    files: pushed.files,
+                  })
+                }
+              } catch (cause) {
+                await emit({
+                  type: "commit_failed",
+                  message: cause instanceof Error ? cause.message : "the push failed",
+                })
+              }
+            }
 
             await sessions.closeTurn(turn.id, {
               resultSubtype: exitCode === 0 ? "success" : "error",

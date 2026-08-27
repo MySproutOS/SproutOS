@@ -7,15 +7,18 @@ OpenSearch client at this as though it were their own cluster.
 > Elasticsearch database shares resources with others. We manage the database ourselves in EC2
 > instances.
 
-## This proxy _is_ the security boundary
+## Namespacing now; server-enforced isolation still required
 
-Document- and field-level security are **not in OpenSearch's open-source tier**. That is not a gap
-being worked around — it is the reason this service exists. Without them, "tenant-split" has to mean
-split by index name, and something has to guarantee a tenant can only ever name its own.
+OpenSearch's Apache-2.0 Security plugin supports per-role index patterns. The proxy closes the known
+path, query-string and body escapes, but request inspection cannot prove that every current and
+future search-body construct is unable to name an index. Complete isolation therefore requires a
+per-tenant OpenSearch role underneath this proxy; that role is separate work and is not claimed by
+the request hardening here.
 
-Everything that keeps tenants apart is in three files: `naming.rs` decides what a legal index name
-is and how it is prefixed, `routes.rs` decides which requests are allowed through at all, and
-`body.rs` rewrites the index names that appear inside bodies rather than paths.
+The proxy still has three necessary jobs: `naming.rs` decides what a legal index name is and how it
+is prefixed, `routes.rs` decides which requests are allowed through at all, and `body.rs` rewrites
+the documented index names that appear inside bodies rather than paths. It is also the place every
+request crosses for metering.
 
 ## OpenSearch, not Elasticsearch
 
@@ -72,6 +75,16 @@ cross-tenant write. The trade is that a _document_ containing its own `_index` f
 rewritten; there is a test that names this explicitly, and it is the direction the trade should
 fall.
 
+`_mget` is ordinary JSON rather than NDJSON. Its root object and `docs` descriptors are validated
+against the documented shape, and every `docs[]._index` is namespaced. A bare `/_mget` requires an
+index on every descriptor; the `ids` shorthand is accepted only when the index is already in the
+path.
+
+Query parameters are also allowlisted. In particular, `index`, `source` and
+`source_content_type` are refused rather than allowed to override a path or smuggle a body past the
+rewriter. Duplicate parameter names are refused after decoding, so two spellings cannot rely on
+different first-value/last-value behavior in the proxy and OpenSearch.
+
 ## Responses
 
 Every search hit carries `"_index": "t01j…_products"`. A client that reads it and sends it back —
@@ -98,12 +111,14 @@ drifted.
 
 ## Configuration
 
-| Variable                    | Default                      | What it is                            |
-| --------------------------- | ---------------------------- | ------------------------------------- |
-| `SEARCH_PROXY_LISTEN`       | `0.0.0.0:9200`               | Where tenants connect                 |
-| `SEARCH_PROXY_UPSTREAM`     | `http://127.0.0.1:9200`      | The shared cluster                    |
-| `SEARCH_PROXY_DATABASE_URL` | falls back to `DATABASE_URL` | Control plane, for credential lookups |
-| `SEARCH_PROXY_DB_POOL`      | `8`                          | Control-plane connections             |
+| Variable                         | Default                      | What it is                            |
+| -------------------------------- | ---------------------------- | ------------------------------------- |
+| `SEARCH_PROXY_LISTEN`            | `0.0.0.0:9200`               | Where tenants connect                 |
+| `SEARCH_PROXY_UPSTREAM`          | `http://127.0.0.1:9200`      | The shared cluster                    |
+| `SEARCH_PROXY_DATABASE_URL`      | falls back to `DATABASE_URL` | Control plane, for credential lookups |
+| `SEARCH_PROXY_DB_POOL`           | `8`                          | Control-plane connections             |
+| `SEARCH_PROXY_SECURITY_ROOT_KEY` | required                     | HMAC root for internal tenant users   |
+| `SEARCH_METERING_SPOOL_DIR`      | `./search-metering`          | Durable query/storage usage records   |
 
 Unlike the Valkey proxy, a lookup happens **per request** rather than per connection, because HTTP
 connections are pooled and reused across tenants by intermediaries. That is why the pool is larger
@@ -147,7 +162,11 @@ another customer's data.
   deep pagination, a huge `terms` aggregation, a wildcard leading a term. The shape of the fix is a
   body inspection with limits; the shape of getting it wrong is refusing legitimate queries, so it
   wants real traffic to calibrate against.
-- **Metering.** Bytes indexed and queries run are the two dimensions TASK 25 would bill, and this is
-  the only place that can honestly count them.
+- **Metering details.** Successful `_search` and `_count` requests count one `es_search_unit`;
+  successful `_msearch` counts its executed header/body pairs. The observation is committed to the
+  fsynced spool after OpenSearch accepts it and before the response body is returned. Once per UTC
+  hour the proxy enumerates only managed Security-plugin users and samples primary-store bytes via
+  each tenant user's scoped `_stats`, emitting `es_storage_gib_hour`. Delivery retries through the
+  signed ingest path and is fail-open when its bounded spool is unavailable.
 - **Scroll and PIT lifecycle.** A point-in-time id is a cluster-wide handle; `_pit` is allowed for
   creation but the ids are not scoped, so one tenant holding another's id is not yet prevented.

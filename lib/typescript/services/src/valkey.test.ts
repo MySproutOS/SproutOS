@@ -1,10 +1,12 @@
 import { db } from "@sproutos/db"
+import { Redis } from "ioredis"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { hashGeneratedSecret, tenantUsername } from "./tenant-auth"
+import { encodeShortId, hashGeneratedSecret, tenantUsername } from "./tenant-auth"
 import { ServiceNotProvisionedError } from "./types"
 import { SecretNotRecoverableError, valkeyDriver, type ValkeyServiceConfig } from "./valkey"
+import { runValkeyAclRevocation } from "./valkey-revocation"
 
 /**
  * Runs against the compose Postgres.
@@ -24,6 +26,7 @@ const reachable = await (async () => {
 })()
 
 const config: ValkeyServiceConfig = {
+  adminUrl: process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41023",
   publicHost: "kv.sprout.run",
   publicPort: 6379,
   scheme: "rediss",
@@ -91,6 +94,40 @@ function secretFrom(uri: string): string {
   return decodeURIComponent(new URL(uri).password)
 }
 
+async function aclClient(username: string, password: string): Promise<Redis> {
+  const admin = new Redis(config.adminUrl)
+  await admin.call("ACL", "SETUSER", username, "reset", "on", `>${password}`, "+PING")
+  await admin.quit()
+  const client = new Redis(config.adminUrl, {
+    lazyConnect: true,
+    enableReadyCheck: false,
+    maxRetriesPerRequest: 0,
+    password,
+    retryStrategy: () => null,
+    username,
+  })
+  await client.connect()
+  expect(await client.ping()).toBe("PONG")
+  return client
+}
+
+async function closedByServer(client: Redis, action: () => Promise<unknown>): Promise<void> {
+  const closed = new Promise<void>((resolve) => {
+    client.once("end", () => {
+      resolve()
+    })
+  })
+  await action()
+  await Promise.race([
+    closed,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Valkey did not close the revoked ACL session"))
+      }, 2_000)
+    }),
+  ])
+}
+
 describe.skipIf(!reachable)("valkey driver", () => {
   it("provisions a credential the proxy can verify", async ({ skip }) => {
     if (!reachable) skip()
@@ -110,6 +147,8 @@ describe.skipIf(!reachable)("valkey driver", () => {
       tenantUsername({ organizationId, kind: "queue", resourceId: backendServiceId }),
     )
     expect(result.username.startsWith("kv_")).toBe(true)
+    expect(result.keyPrefix).toBe(`{kv:${encodeShortId(backendServiceId)}}:bull`)
+    expect((await driver.details(backendServiceId)).keyPrefix).toBe(result.keyPrefix)
 
     const uri = new URL(result.connectionUri)
     expect(uri.protocol).toBe("rediss:")
@@ -168,11 +207,12 @@ describe.skipIf(!reachable)("valkey driver", () => {
     })
 
     const second = await driver.rotateCredentials(backendServiceId)
-    expect(secretFrom(second)).not.toBe(secretFrom(first.connectionUri))
+    expect(secretFrom(second.connectionUri)).not.toBe(secretFrom(first.connectionUri))
+    expect(second.keyPrefix).toBe(first.keyPrefix)
 
     // The username must not change: it encodes which keyspace the connection lands in, so a
     // rotation that changed it would hand the tenant a URI pointing at an empty namespace.
-    expect(new URL(second).username).toBe(new URL(first.connectionUri).username)
+    expect(new URL(second.connectionUri).username).toBe(new URL(first.connectionUri).username)
 
     const rows = await db
       .selectFrom("serviceCredential")
@@ -184,7 +224,7 @@ describe.skipIf(!reachable)("valkey driver", () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]?.revokedAt).not.toBeNull()
     expect(rows[1]?.revokedAt).toBeNull()
-    expect(rows[1]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second)))
+    expect(rows[1]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second.connectionUri)))
   })
 
   it("refuses two live credentials for one username and purpose", async ({ skip }) => {
@@ -224,7 +264,13 @@ describe.skipIf(!reachable)("valkey driver", () => {
           lastFour: "cond",
         })
         .execute(),
-    ).rejects.toThrow(/service_credential_live_username_purpose_key/)
+      /*
+      The index is named for what it now keys on: username, purpose, and the branch. A credential
+      with no branch — every credential a customer holds — coalesces to a fixed uuid, so the
+      invariant this test was written for is exactly as strict as it was; what changed is that a
+      sandbox's branch-scoped credential can also exist. See `sandbox_dev_branch`.
+    */
+    ).rejects.toThrow(/service_credential_live_username_purpose_branch_key/)
   })
 
   /*
@@ -327,6 +373,71 @@ describe.skipIf(!reachable)("valkey driver", () => {
     // Suspended, not deprovisioned: `details` still answers, because the tenant's data is still
     // there and resuming is one insert.
     await expect(driver.details(backendServiceId)).rejects.toThrow(ServiceNotProvisionedError)
+  })
+
+  it("closes a live ACL session and a stale rotation retry cannot close the replacement", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const driver = valkeyDriver(db, config)
+    const { backendServiceId, organizationId } = await service()
+    const first = await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Revocation",
+    })
+    const username = first.username
+    const old = await aclClient(username, "old-test-password")
+
+    let rotated!: Awaited<ReturnType<typeof driver.rotateCredentials>>
+    await closedByServer(old, async () => {
+      rotated = await driver.rotateCredentials(backendServiceId)
+    })
+
+    const replacement = await aclClient(username, "new-test-password")
+    const job = await db
+      .selectFrom("backgroundJob")
+      .select("payload")
+      .where("kind", "=", "platform.valkey_acl_deluser")
+      .where("organizationId", "=", organizationId)
+      .orderBy("createdAt", "desc")
+      .executeTakeFirstOrThrow()
+    const payload = job.payload as { generationId: string; username: string }
+    expect(await runValkeyAclRevocation(db, config.adminUrl, payload)).toBe("superseded")
+    expect(await replacement.ping()).toBe("PONG")
+    expect(rotated.connectionUri).not.toBe(first.connectionUri)
+    replacement.disconnect()
+  })
+
+  it("keeps a failed ACL deletion as durable work and retries it successfully", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const healthy = valkeyDriver(db, config)
+    const { backendServiceId, organizationId } = await service()
+    const provisioned = await healthy.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "Retry",
+    })
+    const live = await aclClient(provisioned.username, "retry-test-password")
+    const unavailable = valkeyDriver(db, { ...config, adminUrl: "redis://127.0.0.1:1" })
+    await unavailable.suspend(backendServiceId)
+
+    const job = await db
+      .selectFrom("backgroundJob")
+      .select(["id", "payload", "state"])
+      .where("kind", "=", "platform.valkey_acl_deluser")
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirstOrThrow()
+    expect(job.state).toBe("queued")
+
+    const payload = job.payload as { generationId: string; username: string }
+    await closedByServer(live, async () => {
+      expect(await runValkeyAclRevocation(db, config.adminUrl, payload)).toBe("deleted")
+    })
   })
 
   it("refuses to describe a service that was never provisioned", async ({ skip }) => {

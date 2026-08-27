@@ -1,5 +1,10 @@
 export { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
 export {
+  REFRESH_CREDIT_STATES_KIND,
+  refreshCreditStates,
+  refreshOrganizationCreditState,
+} from "./credit-state"
+export {
   decideUpkeepAction,
   type UpkeepAction,
   upkeepBranchName,
@@ -9,6 +14,7 @@ export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
 export {
   destroySandbox,
+  reconcileSandboxes,
   meterSandboxes,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
   provisionSandbox,
@@ -54,8 +60,28 @@ export {
   workflowRunJob,
   type WorkflowRunPayload,
 } from "./workflow-run"
+export { WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU } from "./workflow-metering"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
+export {
+  METERING_OUTBOX_BATCH_SIZE,
+  METERING_OUTBOX_PUBLISH_TIMEOUT_MS,
+  METERING_OUTBOX_PROJECT_TIMEOUT_MS,
+  type MeteringOutboxRelayDependencies,
+  meteringOutboxRelay,
+} from "./metering-outbox"
+export {
+  meterValkeyQueues,
+  meterValkeyQueuesJob,
+  METER_VALKEY_QUEUES_KIND,
+  sampleTenantValkeyMemory,
+  sampledByteSeconds,
+  VALKEY_METERING_BATCH_SIZE,
+  VALKEY_METERING_INTERVAL_MS,
+  VALKEY_METERING_MAX_GAP_MS,
+  type ValkeyMeteringOptions,
+  type ValkeyMemorySample,
+} from "./valkey-metering"
 export {
   CLAIM_TIMEOUT_MS,
   claimSigningJob,

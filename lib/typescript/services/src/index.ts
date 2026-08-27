@@ -14,6 +14,12 @@ export {
 } from "./object-storage"
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
+  createDevBranch,
+  DevBranchUnavailableError,
+  dropDevBranch,
+  type DevBranch,
+} from "./dev-branch"
+export {
   rolePasswordContext,
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
@@ -39,12 +45,23 @@ export {
 export {
   SecretNotRecoverableError,
   valkeyDriver,
+  valkeyKeyPrefix,
   valkeyServiceConfigFromEnv,
   valkeyUri,
   type ValkeyServiceConfig,
 } from "./valkey"
 export {
+  deleteValkeyAclUser,
+  enqueueValkeyAclRevocation,
+  hasNewerValkeyCredential,
+  lockValkeyAclUser,
+  runValkeyAclRevocation,
+  VALKEY_ACL_REVOCATION_KIND,
+  type ValkeyAclRevocation,
+} from "./valkey-revocation"
+export {
   type ConnectionDetails,
+  type CredentialRotationResult,
   type ProvisionInput,
   type ProvisionResult,
   type ServiceDriver,

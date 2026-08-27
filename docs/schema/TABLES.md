@@ -66,8 +66,10 @@ All ids are app-supplied UUIDv7 (`v7()`) unless noted. Timestamps are `timestamp
 | `credit_hold`               | billing        | reservations so a long job cannot overdraw                                                     | `organization`, `credit_account`, `credit_transaction`                       |
 | `price_book`                | billing        | versioned, carries `overhead_bps` (launch 1200)                                                | —                                                                            |
 | `price_book_item`           | billing        | unit price per dimension                                                                       | `price_book`                                                                 |
-| `usage_event`               | billing        | raw metered events; **partitioned daily**                                                      | `organization` (RESTRICT), `project` (RESTRICT)                              |
 | `usage_rollup`              | billing        | minute → hour → day cascade                                                                    | `organization`, `project`, `credit_transaction`                              |
+| `metering_outbox`           | billing        | transactional control-plane usage awaiting Kafka publication                                   | —                                                                            |
+| `metering_import_state`     | billing        | ClickHouse import cursor per consumer                                                          | —                                                                            |
+| `valkey_metering_state`     | billing        | last successful per-service queue-memory observation                                           | `backend_service`                                                            |
 | `statement`                 | billing        | the monthly explicable bill                                                                    | `organization`                                                               |
 | `statement_line_item`       | billing        | per-dimension legs plus the visible overhead row                                               | `statement`, `project`                                                       |
 | `topup`                     | billing        | one Stripe purchase                                                                            | `organization`, `credit_transaction`                                         |
@@ -170,11 +172,13 @@ openrouter_api_key`. Auto-update defaults ON only for `claude_subscription`
 (see [Conflicts resolved](#conflicts-resolved)). `agent_event` holds customer source code and
 possibly secrets the agent read — a 30-day default TTL is set **before** the first run, not after.
 
-### Billing — 16 tables
+### Billing — 18 tables
 
 `payment_method`, `stripe_customer`, `credit_account`, `credit_transaction`, `credit_ledger_entry`,
-`credit_balance_cache`, `credit_hold`, `price_book`, `price_book_item`, `usage_event`,
-`usage_rollup`, `statement`, `statement_line_item`, `topup`, `stripe_webhook_event`, `refund`.
+`credit_balance_cache`, `credit_hold`, `price_book`, `price_book_item`, `usage_rollup`,
+`metering_outbox`, `metering_import_state`, `valkey_metering_state`, `statement`,
+`statement_line_item`, `topup`,
+`stripe_webhook_event`, `refund`.
 
 Append-only double-entry: `credit_ledger_entry` carries a `BEFORE UPDATE OR DELETE` trigger raising
 an exception, plus a deferred constraint trigger asserting each transaction's legs sum to zero.
@@ -215,18 +219,20 @@ and metric bodies live in ClickHouse, not Postgres. Telemetry never carries mone
 
 `deployment`, `deployment_build`, `compute_instance`, `sandbox`.
 
-`compute_usage_sample` from the research is deleted; `usage_event` is the only table the rating job
-reads. `compute_instance` survives as the `pod_uid` → deployment registry the metering agent resolves
+`compute_usage_sample` and Postgres `usage_event` are deleted. Kafka and ClickHouse retain raw
+financial usage; the ClickHouse importer projects absolute totals into `usage_rollup`.
+`compute_instance` survives as the `pod_uid` → deployment registry the metering agent resolves
 against. `deployment.runtime_class` defaults to `kata-fc`; `sandbox.runtime_class` to `kata-clh`
-([0012](../adr/0012-two-kata-runtime-classes.md)).
+([0012](../adr/0012-two-kata-runtime-classes.md), [0028](../adr/0028-kafka-clickhouse-metering.md)).
 
 ### Workflows — 7 tables
 
 `workflow`, `workflow_version`, `workflow_schedule`, `workflow_run`, `workflow_run_step`,
 `workflow_job_edit_audit`, `tenant_queue`.
 
-`workflow_run.bytes_enqueued` and `valkey_dwell_ms` had no writer in the research. `services/valkey-proxy`
-is that writer, emitting `metering-proto` events at dequeue.
+`workflow_run.bytes_enqueued` and `valkey_dwell_ms` still have no writer. Their schema defaults are
+not measurements, and a zero in either column must not be presented as observed queue residency.
+The Valkey proxy can eventually measure residency, but it does not currently emit that usage.
 
 ### OAuth provider — 8 tables
 
@@ -333,7 +339,7 @@ places, noted inline.
 67. `credit_ledger_entry`
 68. `credit_balance_cache`
 69. `credit_hold`
-70. `usage_event` — **partitioned parent** plus the initial daily partitions.
+70. `usage_event` — historical init table; removed by the ClickHouse cutover migration.
 71. `usage_rollup`
 72. `statement` — _absent from the critique's ordering._
 73. `statement_line_item` — _absent from the critique's ordering._
@@ -427,15 +433,15 @@ deferred constraint that fails does so at COMMIT, where the error is much harder
 
 ### Soft delete
 
-Anything `usage_event` references is soft-deleted; a hard delete destroys billing history
+Anything durable billing history references is soft-deleted; a hard delete destroys that history
 ([0017](../adr/0017-soft-delete-on-billing-referenced-tables.md)).
 
 `deleted_at timestamptz NULL` on: `organization`, `project`, `user`, `repository`,
 `github_installation`, `store_listing`, `backend_service`, `database_instance`, `deployment`,
 `agent_credential`, `workflow`.
 
-`usage_event.organization_id` and `usage_event.project_id` are `ON DELETE RESTRICT`, as are
-`deployment.project_id` and `database_instance.project_id`.
+`usage_rollup.organization_id`, `usage_rollup.project_id`, `statement_line_item.project_id`,
+`deployment.project_id`, and `database_instance.project_id` are `ON DELETE RESTRICT`.
 
 Every DAO `fetch*` filters `deleted_at IS NULL` by default. Uniqueness that must be reusable after
 deletion becomes a partial unique index `WHERE deleted_at IS NULL` — specifically
@@ -444,18 +450,14 @@ deletion becomes a partial unique index `WHERE deleted_at IS NULL` — specifica
 
 Deletion is a state change plus a teardown job on the `background_job` runner, which tears down
 Knative services, database branches, ECR images, and search indexes before marking child rows
-deleted. A retention job hard-deletes soft-deleted rows only once no `usage_event` inside the
-retention window references them.
+deleted. A retention job hard-deletes soft-deleted rows only after retained billing and audit rows
+no longer require them.
 
 ### Partitioning
 
-`usage_event` is the only partitioned table at init: **RANGE on `occurred_at`, daily partitions**,
-14-day raw retention, with rollups carrying the long tail (hourly kept 400 days). At one-minute
-windows and 10k pods this is roughly 14M rows/day, which is why it is partitioned and why it is
-never indexed on `organization_id` alone — use `(organization_id, occurred_at)`.
-
-A partition-creation job (a `background_job` type) creates tomorrow's partition and detaches expired
-ones. If it does not run, inserts fail — so it needs an alert, not just a schedule.
+No current Postgres table is partitioned. Raw usage formerly lived in daily `usage_event`
+partitions, but the fixed partition window was the failure that forced ADR 0028. Raw retention is
+now ClickHouse TTL; Postgres retains financial rollups and ledger state.
 
 `agent_event` and `audit_log` are partitioning candidates once volume justifies it. Neither is
 partitioned at init; both are append-only and time-ordered, so converting later is mechanical.

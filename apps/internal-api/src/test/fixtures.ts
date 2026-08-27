@@ -213,13 +213,9 @@ export async function cleanupFixtures(): Promise<void> {
         .execute()
     })
 
-    // The usage that produced those charges, and the grains it rolled into.
+    // The imported grains that produced those charges.
     await db
       .deleteFrom("usageRollup")
-      .where("organizationId", "in", created.organizationIds)
-      .execute()
-    await db
-      .deleteFrom("usageEvent")
       .where("organizationId", "in", created.organizationIds)
       .execute()
 

@@ -250,16 +250,11 @@ const JOB_FIELDS = [
 
 /**
  * Nothing the ledger points at is destroyed by a delete, and nothing outside the database is
- * destroyed by the request. ADR 0017: `usage_event`, `usage_rollup`, and `statement_line_item`
- * all reference `project` with `ON DELETE RESTRICT`, so last month's statement can still resolve
- * its line items to a named project.
+ * destroyed by the request. ADR 0017: `usage_rollup` and `statement_line_item` reference `project`
+ * with `ON DELETE RESTRICT`, so last month's statement can still resolve its line items to a named
+ * project.
  */
-const RETAINED_ON_DELETE = [
-  "usage_event",
-  "usage_rollup",
-  "statement_line_item",
-  "audit_log",
-] as const
+const RETAINED_ON_DELETE = ["usage_rollup", "statement_line_item", "audit_log"] as const
 
 const TORN_DOWN_BY_JOB = [
   "deployment",

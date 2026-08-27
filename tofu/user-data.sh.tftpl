@@ -106,6 +106,24 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
+# The LLM proxy's port, matching `aws_lb_target_group.llm`. Unset, `listeners::llm` returns without
+# binding — which is the right behaviour for a router that has no proxy secret, and the wrong one
+# here: it would start, pass its own health check on the other listeners, and answer nothing on this
+# target group. The load balancer would then report the target unhealthy rather than the feature
+# missing.
+LLM_PROXY_LISTEN=0.0.0.0:8788
+# systemd creates and owns `/var/lib/sproutos` through `StateDirectory=sproutos` below. Metering
+# records live there so a router process or service restart cannot erase an unacknowledged bill.
+LLM_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/llm-metering
+# Site reports and response egress use their own source and spool so delivery cannot combine them
+# with model events. The parent state directory persists across process and service restarts.
+SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
+# Search query observations and hourly primary-storage samples are isolated from the other
+# emitters, while remaining on the router's persistent state volume.
+SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
+# Daytona reaches this listener through `egress.<domain>` on the tenant NLB. TLS terminates there;
+# the router receives the authenticated HTTP forward-proxy protocol on this private instance port.
+FORWARD_PROXY_LISTEN=0.0.0.0:3128
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
@@ -116,6 +134,22 @@ API_PORT=3001
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
 NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
+
+# Where a sandbox reaches the LLM proxy. Read by the chat route and by sandbox provisioning, and it
+# goes into the sandbox's environment — so it has to be the address as seen from *outside* this VPC,
+# which is the load balancer, not the router's own port.
+#
+# There is a default in the code (`https://llm.sproutos.me`) and it was a hostname nothing served:
+# no listener rule, no target group, no `LLM_PROXY_LISTEN`. Set here so the value comes from the
+# deployment that owns the domain rather than from a constant that happened to be written first.
+LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
+SANDBOX_FORWARD_PROXY_URL=https://${egress_subdomain}.${control_plane_domain}
+METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/events
+
+# Separate topics because their failure policies differ: runtime logs may be dropped to protect a
+# customer's request, while usage ingest acknowledges only after Kafka has replicated the event.
+KAFKA_RUNTIME_LOG_TOPIC=runtime-logs
+KAFKA_USAGE_EVENT_TOPIC=usage-events
 
 # The key `@lib/envelope` wraps data keys with.
 #
@@ -182,8 +216,8 @@ SESSION_COOKIE_DOMAIN=.${control_plane_domain}
 # `SERVICE_VALKEY_ADMIN_URL`, which carries a password and therefore arrives through Parameter Store
 # instead of this file.
 #
-# The credential is `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD`: the cluster authenticates nobody
-# itself, so what this is presenting to is the Traefik basic-auth in front of it.
+# `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD` authenticate the reaper to OpenSearch Security's
+# internal backend. Tenant requests use separate HMAC-derived internal users.
 SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
 
 # What a customer is handed when they provision an Elasticsearch service: the router's search split
@@ -406,8 +440,10 @@ if [ "$SERVICE" = "website" ]; then
     STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
-    SANDBOX_DAYTONA_API_KEY SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
-    SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
+    KAFKA_BROKERS KAFKA_USAGE_EVENT_SASL_USERNAME KAFKA_USAGE_EVENT_SASL_PASSWORD \
+    DAYTONA_API_KEY DAYTONA_ORGANIZATION_ID \
+    SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
+    SANDBOX_DAYTONA_TARGET SANDBOX_FORWARD_PROXY_ROOT_KEY LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
     SERVICE_VALKEY_ADMIN_URL"
 fi
@@ -421,8 +457,9 @@ if [ "$SERVICE" = "router" ]; then
   # and requires a password. It was withheld until that was true: the split starts when this is set
   # and `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does
   # not disable a feature — it stops the router, which is the front door.
-  write_app_secrets "LLM_PROXY_SECRET LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
-    SEARCH_PROXY_UPSTREAM_AUTHORIZATION VALKEY_PROXY_BACKEND"
+  write_app_secrets "LLM_PROXY_SECRET OPENAI_KEY METERING_INGEST_HMAC_KEY LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
+    SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_BACKEND VALKEY_PROXY_ACL_ROOT_KEY \
+    SANDBOX_FORWARD_PROXY_ROOT_KEY"
 fi
 
 chmod 0640 /etc/sproutos/env

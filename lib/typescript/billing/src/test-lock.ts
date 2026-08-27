@@ -4,15 +4,13 @@ import { sql } from "kysely"
 /**
  * Serialize test files that drive a **platform-wide** job.
  *
- * `rollUpUsage` and `chargeUsage` do not take an organization. They cannot: their job is to sweep
- * everything that is owed, and a version that swept one tenant would need a caller that knew which
- * tenants exist. That is right for production and awkward for tests, because vitest runs files in
- * parallel against one database — so `rollup.test.ts` calling `rollUpUsage` claims and rolls up the
- * events `charge.test.ts` had just written, and vice versa.
+ * `chargeUsage` does not take an organization. It cannot: its job is to sweep everything that is
+ * owed, and a version that swept one tenant would need a caller that knew which tenants exist.
+ * That is right for production and awkward for tests, because Vitest runs files in parallel
+ * against one database.
  *
- * The failures that produces are the confusing kind. `rollup.test.ts` asserted a grain of 1.75 and
- * found 3.75, because another file's sweep had folded in an event it had not rolled up yet; the
- * assertion that broke was in the file that had done nothing wrong.
+ * The failures that produces are the confusing kind: one file can charge another file's fixture,
+ * and the assertion that breaks is in the file that did nothing wrong.
  *
  * A Postgres advisory lock held for the file's lifetime makes those files take turns. Session-scoped
  * rather than transaction-scoped because the tests span many transactions, and it is released

@@ -1,6 +1,7 @@
 /* oxlint-disable no-await-in-loop */
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
+import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import app from "../index"
 import {
@@ -314,6 +315,27 @@ describe.skipIf(!up)("the organization's workflows", () => {
 })
 
 describe.skipIf(!up)("recent runs across the organization", () => {
+  it("stores unmeasured queue quantities as null without a zero default", async ({ skip }) => {
+    if (!up) skip()
+    const columns = await sql<{
+      columnName: string
+      isNullable: string
+      columnDefault: string | null
+    }>`
+      select column_name, is_nullable, column_default
+        from information_schema.columns
+       where table_schema = current_schema()
+         and table_name = 'workflow_run'
+         and column_name in ('bytes_enqueued', 'valkey_dwell_ms')
+       order by column_name
+    `.execute(db)
+
+    expect(columns.rows).toEqual([
+      { columnName: "bytes_enqueued", isNullable: "YES", columnDefault: null },
+      { columnName: "valkey_dwell_ms", isNullable: "YES", columnDefault: null },
+    ])
+  })
+
   it("returns runs newest first with a duration", async ({ skip }) => {
     if (!up) skip()
     const workflowId = await makeWorkflow("Recent")
@@ -329,8 +351,9 @@ describe.skipIf(!up)("recent runs across the organization", () => {
     expect(ours[0]?.durationMs).toBe(1500)
     expect(ours[0]?.workflowName).toBe("Recent")
     expect(ours[0]?.projectName).toBe("Workflows")
-    // Micro-USD as a string: money is bigint, and JSON has no integer wide enough to trust.
-    expect(typeof ours[0]?.costMicroUsd).toBe("string")
+    // Queue bytes and dwell have no writer. A null says the total is incomplete; "0" would claim
+    // they were measured and empty.
+    expect(ours[0]?.costMicroUsd).toBeNull()
   })
 
   it("has no duration for a run that has not finished", async ({ skip }) => {
@@ -355,6 +378,26 @@ describe.skipIf(!up)("recent runs across the organization", () => {
     const entry = (response.json.data as Json[]).find((row) => row.id === id)
     expect(entry?.durationMs).toBeNull()
     expect(entry?.finishedAt).toBeNull()
+  })
+
+  it("exposes unmeasured queue residency as unknown in run detail and cost", async ({ skip }) => {
+    if (!up) skip()
+    const workflowId = await makeWorkflow("Unknown queue residency")
+    const runId = await makeRun(workflowId, "succeeded", 1_000)
+
+    const response = await call(
+      "GET",
+      `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/runs/${runId}`,
+      actor(),
+    )
+    expect(response.status).toBe(200)
+    const run = response.json.run as Json
+    const cost = response.json.cost as Json
+    expect(run.bytesEnqueued).toBeNull()
+    expect(run.valkeyDwellMs).toBeNull()
+    expect(cost.complete).toBe(false)
+    expect(cost.missingDimensions).toEqual(["valkey_queue_byte_second"])
+    expect(cost.byDimension as Json).not.toHaveProperty("valkey_queue_byte_second")
   })
 
   describe.skipIf(!up)("one workflow and its graph", () => {

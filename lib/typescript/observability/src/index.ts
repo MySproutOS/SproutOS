@@ -17,7 +17,23 @@ export {
   type LogLine,
   type LogQuery,
 } from "./query"
-export { ensureSchema } from "./schema"
+export {
+  ensureSchema,
+  kafkaConfigured,
+  USAGE_BACKUP_MANIFEST_TABLE,
+  USAGE_EVENT_DEAD_LETTER_TABLE,
+  USAGE_EVENT_DEAD_LETTER_VIEW,
+  USAGE_EVENT_MATERIALIZED_VIEW,
+  USAGE_EVENT_QUEUE_TABLE,
+  USAGE_EVENT_RAW_TABLE,
+  usageBackupManifestDdl,
+  usageEventDeadLetterDdl,
+  usageEventDeadLetterViewDdl,
+  usageEventMaterializedViewDdl,
+  usageEventQueueDdl,
+  usageEventRawDdl,
+  usageEventStoredAtDdl,
+} from "./schema"
 export {
   generateIngestKey,
   hashIngestKey,
@@ -43,4 +59,8 @@ export {
 } from "./runtime-logs"
 export { gbSeconds, type UsageEvent, usageFrom, usageFromBatch } from "./lambda-usage"
 export { connectProducer, encode, type LogProducer, topic } from "./producer"
-export { kafkaConfigured } from "./schema"
+export {
+  clickhouseUsageWatermark,
+  usageRollupsChangedBetween,
+  type ClickHouseUsageRollup,
+} from "./usage-rollups"

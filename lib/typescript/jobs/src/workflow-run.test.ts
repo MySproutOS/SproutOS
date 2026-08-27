@@ -1,7 +1,8 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { beforeAll, describe, expect, it } from "vitest"
-import { MAX_DELAY_MS, delayMs, stepRowsFor } from "./workflow-run"
+import { v7 } from "uuid"
+import { MAX_DELAY_MS, delayMs, runWorkflow, stepRowsFor } from "./workflow-run"
 
 describe("delayMs", () => {
   it("takes any of the three spellings a node config might use", () => {
@@ -99,5 +100,119 @@ describe("the status vocabulary", () => {
   }) => {
     if (!reachable) skip()
     expect(allowed.step).not.toContain("blocked")
+  })
+})
+
+describe("terminal workflow usage", () => {
+  let reachable = false
+
+  beforeAll(async () => {
+    try {
+      await sql`select 1`.execute(db)
+      reachable = true
+    } catch {
+      /* not reachable */
+    }
+  })
+
+  it("commits the terminal state and both execution dimensions atomically", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const userId = v7()
+    const organizationId = v7()
+    const repositoryId = v7()
+    const projectId = v7()
+    const workflowId = v7()
+    const runId = v7()
+    const suffix = runId.replaceAll("-", "")
+
+    try {
+      await db
+        .insertInto("user")
+        .values({
+          id: userId,
+          email: `workflow-meter-${suffix}@example.test`,
+          name: "Workflow meter",
+          isAdmin: false,
+        })
+        .execute()
+      await db
+        .insertInto("organization")
+        .values({
+          id: organizationId,
+          slug: `workflow-meter-${suffix}`,
+          name: "Workflow meter",
+          kind: "team",
+          ownerUserId: userId,
+        })
+        .execute()
+      await db
+        .insertInto("repository")
+        .values({
+          id: repositoryId,
+          organizationId,
+          githubRepoId: BigInt(Date.now()),
+          ownerLogin: "sprout-test",
+          name: `workflow-meter-${suffix}`,
+          provenance: "new",
+        })
+        .execute()
+      await db
+        .insertInto("project")
+        .values({
+          id: projectId,
+          organizationId,
+          repositoryId,
+          name: "Workflow meter",
+          slug: `workflow-meter-${suffix}`,
+        })
+        .execute()
+      await db
+        .insertInto("workflow")
+        .values({
+          id: workflowId,
+          projectId,
+          slug: `workflow-meter-${suffix}`,
+          name: "Workflow meter",
+          queueName: `workflow-meter-${suffix}`,
+        })
+        .execute()
+      await db
+        .insertInto("workflowRun")
+        .values({ id: runId, workflowId, triggerType: "manual", status: "queued" })
+        .execute()
+
+      await runWorkflow(db, { workflowRunId: runId })
+
+      const run = await db
+        .selectFrom("workflowRun")
+        .select(["status", "startedAt", "finishedAt"])
+        .where("id", "=", runId)
+        .executeTakeFirstOrThrow()
+      const outbox = await db
+        .selectFrom("meteringOutbox")
+        .select(["eventId", "payload"])
+        .where(sql<boolean>`payload ->> 'resource_id' = ${runId}`)
+        .orderBy(sql`payload ->> 'dimension'`)
+        .execute()
+      expect(run.status).toBe("succeeded")
+      expect(run.startedAt).not.toBeNull()
+      expect(run.finishedAt).not.toBeNull()
+      expect(outbox.map((row) => (row.payload as { dimension?: string }).dimension)).toEqual([
+        "workflow_exec_gib_second",
+        "workflow_exec_vcpu_second",
+      ])
+    } finally {
+      await db
+        .deleteFrom("meteringOutbox")
+        .where(sql<boolean>`payload ->> 'resource_id' = ${runId}`)
+        .execute()
+      await db.deleteFrom("workflowRun").where("id", "=", runId).execute()
+      await db.deleteFrom("workflow").where("id", "=", workflowId).execute()
+      await db.deleteFrom("project").where("id", "=", projectId).execute()
+      await db.deleteFrom("repository").where("id", "=", repositoryId).execute()
+      await db.deleteFrom("organization").where("id", "=", organizationId).execute()
+      await db.deleteFrom("user").where("id", "=", userId).execute()
+    }
   })
 })

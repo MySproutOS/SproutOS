@@ -58,9 +58,43 @@ echo "==> data directories"
 # hardware guide asks not to share its drive with other filesystem activity and ClickHouse merges
 # are the noisiest neighbour on offer.
 sudo mkdir -p "$ROOT_DATA"/{opensearch,valkey-queue,valkey-cache}
+sudo mkdir -p "$ROOT_DATA/opensearch-security/certs"
 sudo mkdir -p "$DATA_MOUNT"/sproutos/{clickhouse,clickhouse-logs,kafka}
 # OpenSearch runs as uid 1000 inside its image and will not start if it cannot write its data dir.
 sudo chown -R 1000:1000 "$ROOT_DATA/opensearch"
+
+echo "==> OpenSearch transport certificates"
+CERT_DIR="$ROOT_DATA/opensearch-security/certs"
+if [ ! -e "$CERT_DIR/root-ca.pem" ]; then
+  # Generated on the host and never checked in. The admin key is retained only for an emergency
+  # on-host securityadmin repair over transport TLS; the router receives neither it nor the CA key.
+  sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$CERT_DIR/root-ca-key.pem"
+  sudo openssl req -x509 -new -sha256 -days 3650 -key "$CERT_DIR/root-ca-key.pem" \
+    -subj '/CN=sproutos-opensearch-ca' -out "$CERT_DIR/root-ca.pem"
+  for kind in node admin; do
+    if [ "$kind" = node ]; then
+      cn=sproutos-opensearch-node
+      extensions='subjectAltName=DNS:sproutos-1,DNS:opensearch,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth'
+    else
+      cn=sproutos-opensearch-admin
+      extensions='extendedKeyUsage=clientAuth'
+    fi
+    sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$CERT_DIR/$kind-key.pem"
+    sudo openssl req -new -key "$CERT_DIR/$kind-key.pem" -subj "/CN=$cn" -out "$CERT_DIR/$kind.csr"
+    printf '%b\n' "$extensions" | sudo openssl x509 -req -sha256 -days 1825 \
+      -in "$CERT_DIR/$kind.csr" -CA "$CERT_DIR/root-ca.pem" -CAkey "$CERT_DIR/root-ca-key.pem" \
+      -CAcreateserial -extfile /dev/stdin -out "$CERT_DIR/$kind.pem"
+    sudo rm "$CERT_DIR/$kind.csr"
+  done
+  sudo rm -f "$CERT_DIR/root-ca.srl"
+fi
+for required in root-ca.pem node.pem node-key.pem admin.pem admin-key.pem; do
+  [ -s "$CERT_DIR/$required" ] || { echo "incomplete OpenSearch certificate set: $required" >&2; exit 1; }
+done
+# The OpenSearch Security plugin warns on group/world-readable certificate files as well as keys.
+# The container runs as uid 1000, which owns the directory below, so no broader mode is needed.
+sudo chmod 0600 "$CERT_DIR"/*.pem
+sudo chown -R 1000:1000 "$ROOT_DATA/opensearch-security"
 # ClickHouse runs as 101; Kafka as 1000.
 sudo chown -R 101:101 "$DATA_MOUNT"/sproutos/clickhouse "$DATA_MOUNT"/sproutos/clickhouse-logs
 sudo chown -R 1000:1000 "$DATA_MOUNT"/sproutos/kafka
@@ -152,5 +186,6 @@ sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/valkey-tls.sh
 
 echo
 echo "host prepared. Copy the compose file and start:"
-echo "  scp ovh/docker-compose.yaml ovh/.env ubuntu@<host>:/opt/sproutos/"
-echo "  ssh ubuntu@<host> 'cd /opt/sproutos && docker compose up -d'"
+echo "  scp ovh/docker-compose.yaml ovh/.env ovh/bootstrap-kafka.sh ovh/bootstrap-opensearch-security.sh ovh/opensearch-entrypoint.sh ubuntu@<host>:/opt/sproutos/"
+echo "  scp -r ovh/opensearch-security ubuntu@<host>:/opt/sproutos/"
+echo "  ssh ubuntu@<host> 'cd /opt/sproutos && docker compose up -d && ./bootstrap-opensearch-security.sh && ./bootstrap-kafka.sh'"

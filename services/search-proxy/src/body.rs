@@ -9,6 +9,130 @@ use serde_json::Value;
 
 use crate::naming::{IndexError, namespace, strip};
 
+const MGET_DOC_FIELDS: &[&str] = &[
+    "_id",
+    "_index",
+    "_source",
+    "_source_excludes",
+    "_source_includes",
+    "routing",
+    "stored_fields",
+    "version",
+    "version_type",
+];
+
+/// Validate and namespace the exact JSON shapes accepted by the allowlisted `_mget` route.
+///
+/// A bare `/_mget` must use `docs` with one `_index` per document. An index-scoped request may
+/// instead use the `ids` shorthand. Unknown root or document fields are refused rather than
+/// recursively rewriting anything named `index`: a tenant document may legitimately contain such
+/// a field, and an undocumented future field must be reviewed before it is forwarded.
+pub fn rewrite_mget(prefix: &str, body: &[u8], index_in_path: bool) -> Result<Vec<u8>, IndexError> {
+    let mut value: Value = serde_json::from_slice(body)
+        .map_err(|_| IndexError::Illegal("_mget body is not JSON".into()))?;
+    let root = value
+        .as_object_mut()
+        .ok_or_else(|| IndexError::Illegal("_mget body must be an object".into()))?;
+
+    if root.len() != 1 {
+        return Err(IndexError::Illegal(
+            "_mget body must contain exactly one of `docs` or `ids`".into(),
+        ));
+    }
+
+    if let Some(ids) = root.get("ids") {
+        if !index_in_path
+            || !ids
+                .as_array()
+                .is_some_and(|ids| ids.iter().all(Value::is_string))
+        {
+            return Err(IndexError::Illegal(
+                "_mget `ids` is allowed only on an index-scoped path and must be strings".into(),
+            ));
+        }
+        return serde_json::to_vec(&value)
+            .map_err(|_| IndexError::Illegal("could not encode _mget body".into()));
+    }
+
+    let docs = root
+        .get_mut("docs")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| IndexError::Illegal("_mget body must contain a `docs` array".into()))?;
+
+    for document in docs {
+        let descriptor = document.as_object_mut().ok_or_else(|| {
+            IndexError::Illegal("every _mget `docs` entry must be an object".into())
+        })?;
+        if descriptor
+            .keys()
+            .any(|field| !MGET_DOC_FIELDS.contains(&field.as_str()))
+        {
+            return Err(IndexError::Illegal(
+                "an _mget document contains an unknown field".into(),
+            ));
+        }
+        if !descriptor.get("_id").is_some_and(Value::is_string) {
+            return Err(IndexError::Illegal(
+                "every _mget document must have a string `_id`".into(),
+            ));
+        }
+        for (field, value) in descriptor.iter() {
+            let valid = match field.as_str() {
+                "_id" | "routing" | "version_type" => value.is_string(),
+                "version" => value.as_i64().is_some() || value.as_u64().is_some(),
+                "stored_fields" | "_source_includes" | "_source_excludes" => {
+                    string_or_string_array(value)
+                }
+                "_source" => source_filter(value),
+                "_index" => true, // Rewritten and type-checked immediately below.
+                _ => false,
+            };
+            if !valid {
+                return Err(IndexError::Illegal(format!(
+                    "an _mget document `{field}` has the wrong type"
+                )));
+            }
+        }
+
+        match descriptor.get_mut("_index") {
+            Some(Value::String(index)) => *index = namespace(prefix, index)?,
+            Some(_) => {
+                return Err(IndexError::Illegal(
+                    "an _mget document `_index` must be a string".into(),
+                ));
+            }
+            None if !index_in_path => {
+                return Err(IndexError::Illegal(
+                    "a bare _mget document must name `_index`".into(),
+                ));
+            }
+            None => {}
+        }
+    }
+
+    serde_json::to_vec(&value)
+        .map_err(|_| IndexError::Illegal("could not encode _mget body".into()))
+}
+
+fn string_or_string_array(value: &Value) -> bool {
+    value.is_string()
+        || value
+            .as_array()
+            .is_some_and(|values| values.iter().all(Value::is_string))
+}
+
+fn source_filter(value: &Value) -> bool {
+    if value.is_boolean() || string_or_string_array(value) {
+        return true;
+    }
+    value.as_object().is_some_and(|filter| {
+        filter
+            .keys()
+            .all(|key| key == "includes" || key == "excludes")
+            && filter.values().all(string_or_string_array)
+    })
+}
+
 /// Rewrites the `_index` field on every line of an NDJSON body.
 ///
 /// `_bulk` alternates an action line with an optional document line; `_msearch` alternates a header
@@ -150,6 +274,10 @@ mod tests {
         String::from_utf8(rewrite_ndjson(PREFIX, body.as_bytes()).unwrap()).unwrap()
     }
 
+    fn rewrite_mget_text(body: &str, index_in_path: bool) -> String {
+        String::from_utf8(rewrite_mget(PREFIX, body.as_bytes(), index_in_path).unwrap()).unwrap()
+    }
+
     /// The leak this module exists for: a `_bulk` body names its index per line, so namespacing the
     /// path and leaving the body alone lets a tenant write into anyone's index.
     #[test]
@@ -267,5 +395,54 @@ mod tests {
     fn present_falls_back_to_the_name_it_was_given() {
         assert_eq!(present(PREFIX, &format!("{PREFIX}products")), "products");
         assert_eq!(present(PREFIX, "products"), "products");
+    }
+
+    #[test]
+    fn a_bare_mget_namespaces_every_document_index() {
+        let out = rewrite_mget_text(
+            r#"{"docs":[{"_index":"products","_id":"1"},{"_index":"orders","_id":"2"}]}"#,
+            false,
+        );
+        assert!(
+            out.contains(&format!(r#""_index":"{PREFIX}products""#)),
+            "{out}"
+        );
+        assert!(
+            out.contains(&format!(r#""_index":"{PREFIX}orders""#)),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn mget_refuses_off_schema_or_unscoped_bodies() {
+        for body in [
+            r#"{"docs":[{"_index":"products","_id":"1","index":"victim"}]}"#,
+            r#"{"docs":[{"_id":"1"}]}"#,
+            r#"{"docs":[{"_index":7,"_id":"1"}]}"#,
+            r#"{"docs":"products"}"#,
+            r#"{"ids":["1"]}"#,
+            r#"{"docs":[],"index":"victim"}"#,
+        ] {
+            assert!(
+                rewrite_mget(PREFIX, body.as_bytes(), false).is_err(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_index_scoped_mget_accepts_ids_and_optional_document_indices() {
+        assert_eq!(
+            rewrite_mget_text(r#"{"ids":["1","2"]}"#, true),
+            r#"{"ids":["1","2"]}"#
+        );
+        let out = rewrite_mget_text(
+            r#"{"docs":[{"_id":"1"},{"_index":"archive","_id":"2"}]}"#,
+            true,
+        );
+        assert!(
+            out.contains(&format!(r#""_index":"{PREFIX}archive""#)),
+            "{out}"
+        );
     }
 }

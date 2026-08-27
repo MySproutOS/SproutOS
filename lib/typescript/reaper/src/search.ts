@@ -62,7 +62,7 @@ export async function purgeTenantIndices(
 ): Promise<string[]> {
   if (prefix === "") throw new RangeError("Refusing to purge indices under an empty prefix")
 
-  const listed = await request<{ index: string }[]>(
+  const listed = await searchAdminRequest<{ index: string }[]>(
     config,
     "GET",
     // `expand_wildcards=all` so a closed index is found too. A closed index still holds its shards
@@ -74,16 +74,51 @@ export async function purgeTenantIndices(
   const names = listed.map((row) => row.index).filter((name) => name.startsWith(prefix))
 
   for (const name of names) {
-    await request(config, "DELETE", `/${encodeURIComponent(name)}`)
+    // Deletes are deliberately serialized to avoid a burst of cluster-state mutations.
+    // eslint-disable-next-line no-await-in-loop
+    await searchAdminRequest(config, "DELETE", `/${encodeURIComponent(name)}`)
   }
 
   return names
 }
 
-async function request<T>(
+/** Delete both the tenant's data and the Security-plugin identity that could reach it. */
+export async function purgeTenantSearch(
   config: SearchAdminConfig,
-  method: "GET" | "DELETE",
+  prefix: string,
+  username: string,
+): Promise<string[]> {
+  if (username === "") throw new RangeError("Refusing to purge an empty search username")
+
+  const names = await purgeTenantIndices(config, prefix)
+  const role = `tenant_${prefix.replace(/_$/, "")}`
+
+  // User first: after this succeeds there is no credential that can use the role while the other
+  // two idempotent deletes finish. A partial failure leaves the service unstamped for the next pass.
+  await searchAdminRequest(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/internalusers/${encodeURIComponent(username)}`,
+  )
+  await searchAdminRequest(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/rolesmapping/${encodeURIComponent(role)}`,
+  )
+  await searchAdminRequest(
+    config,
+    "DELETE",
+    `/_plugins/_security/api/roles/${encodeURIComponent(role)}`,
+  )
+
+  return names
+}
+
+export async function searchAdminRequest<T>(
+  config: SearchAdminConfig,
+  method: "GET" | "PUT" | "DELETE",
   path: string,
+  payload?: unknown,
 ): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" }
   if (config.username !== undefined) {
@@ -91,8 +126,29 @@ async function request<T>(
     headers.authorization = `Basic ${auth}`
   }
 
-  const response = await fetch(`${config.url}${path}`, { method, headers })
-  const body = await response.text()
+  if (payload !== undefined) headers["content-type"] = "application/json"
+  const encoded = payload === undefined ? undefined : JSON.stringify(payload)
+  let response: Response
+  let body: string
+  for (let attempt = 0; ; attempt++) {
+    // A retry depends on the preceding conflict response and cannot be parallelized.
+    // eslint-disable-next-line no-await-in-loop
+    response = await fetch(`${config.url}${path}`, {
+      method,
+      headers,
+      ...(encoded === undefined ? {} : { body: encoded }),
+    })
+    // eslint-disable-next-line no-await-in-loop
+    body = await response.text()
+    // Security config updates rewrite one shared config document. Concurrent idempotent PUTs can
+    // race on its optimistic version even when they address different tenants. Retry only that
+    // transient write conflict, with a small exponential delay and jitter; every other response
+    // keeps its original semantics and a fourth conflict remains visible.
+    if (!(method === "PUT" && response.status === 409 && attempt < 3)) break
+    const delayMs = 25 * 2 ** attempt + Math.floor(Math.random() * 25)
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
 
   // 404 on a DELETE means someone else already removed it, which is the outcome we wanted.
   if (response.status === 404 && method === "DELETE") return [] as T

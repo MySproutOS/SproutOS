@@ -191,7 +191,13 @@ const routes = app
         return throwBadRequest(c, "That request names a database this application did not create")
       }
 
-      const kept: { id: string; name: string; kind: string; connectionUri: string }[] = []
+      const kept: {
+        id: string
+        name: string
+        kind: string
+        connectionUri: string
+        keyPrefix?: string
+      }[] = []
       const deleted: { id: string; name: string; kind: string }[] = []
 
       for (const service of services) {
@@ -218,7 +224,7 @@ const routes = app
           the old URI stops working now.
         */
         // eslint-disable-next-line no-await-in-loop
-        const connectionUri = await driverFor(service.kind).rotateCredentials(service.id)
+        const result = await driverFor(service.kind).rotateCredentials(service.id)
         // eslint-disable-next-line no-await-in-loop
         await db
           .updateTable("backendService")
@@ -229,7 +235,8 @@ const routes = app
           id: service.id,
           name: service.name,
           kind: service.kind,
-          connectionUri,
+          connectionUri: result.connectionUri,
+          ...(result.keyPrefix === undefined ? {} : { keyPrefix: result.keyPrefix }),
         })
       }
 

@@ -218,13 +218,14 @@ describe.skipIf(!reachable)("sprout postgres driver", () => {
     })
 
     const rotated = await driver.rotateCredentials(id)
-    expect(rotated).not.toBe(original.connectionUri)
+    expect(rotated.connectionUri).not.toBe(original.connectionUri)
+    expect(rotated).toEqual({ connectionUri: rotated.connectionUri })
 
     // The only recovery from a leaked URI is one that stops working.
     const stale = new Client({ connectionString: original.connectionUri })
     await expect(stale.connect()).rejects.toThrow(/password authentication failed/)
 
-    const fresh = new Client({ connectionString: rotated })
+    const fresh = new Client({ connectionString: rotated.connectionUri })
     await fresh.connect()
     await fresh.end()
   }, 60_000)

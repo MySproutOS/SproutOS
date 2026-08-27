@@ -18,6 +18,7 @@ export {
   releaseHold,
   type SettleHold,
   settleHold,
+  settleHoldWithin,
 } from "./holds"
 export {
   ceilDiv,
@@ -49,13 +50,11 @@ export {
   type RatedUsage,
 } from "./usage"
 export {
-  BATCH_SIZE,
-  BUCKETS,
-  LATE_ARRIVAL_GRACE_MS,
-  rollUpUsage,
-  type Bucket,
-  type RollupResult,
-} from "./rollup"
+  applyImportedUsageRollups,
+  CLICKHOUSE_METERING_CONSUMER,
+  importedUsageCursor,
+  type ImportedUsageRollup,
+} from "./import-rollups"
 export {
   CHARGE_BATCH_SIZE,
   CHARGED_BUCKET,

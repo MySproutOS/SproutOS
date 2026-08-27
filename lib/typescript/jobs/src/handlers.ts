@@ -1,6 +1,21 @@
-import { BATCH_SIZE, chargeUsage, expireHolds, formatMicroUsd, rollUpUsage } from "@lib/billing"
-import { observabilityConfigured } from "@lib/observability"
-import { reap, searchAdminConfigFromEnv } from "@lib/reaper"
+import {
+  applyImportedUsageRollups,
+  chargeUsage,
+  expireHolds,
+  formatMicroUsd,
+  importedUsageCursor,
+} from "@lib/billing"
+import {
+  clickhouseUsageWatermark,
+  observabilityConfigured,
+  usageRollupsChangedBetween,
+} from "@lib/observability"
+import {
+  reap,
+  reconcileSearchSecurity,
+  SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT,
+  searchAdminConfigFromEnv,
+} from "@lib/reaper"
 import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
@@ -11,11 +26,13 @@ import { REFRESH_ROUTES_KIND, refreshRoutes } from "./refresh-routes"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import {
   destroySandbox,
+  reconcileSandboxes,
   meterSandboxes,
   provisionSandbox,
   reapSandboxes,
   SANDBOX_KINDS,
   scheduleSandboxJobs,
+  startSandbox,
   stopSandbox,
 } from "./sandbox"
 import { enqueue } from "./queue"
@@ -24,16 +41,10 @@ import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
-
-/**
- * How many rollup batches one job run works through.
- *
- * Ten thirty-second samples per pod per node adds up: an hour of downtime on a hundred-pod cluster
- * is on the order of a million events. Draining that in one job would hold a transaction open long
- * enough to matter and would starve every other job of a worker. Twenty batches is 100,000 events
- * per run, and the ten-minute schedule catches up on the rest.
- */
-const MAX_ROLLUP_BATCHES = 20
+import { meteringOutboxRelay } from "./metering-outbox"
+import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
+import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
+import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -57,10 +68,13 @@ function tenMinuteWindow(now: Date): string {
  */
 export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
-  rollUpUsage: "billing.roll_up_usage",
+  importUsage: "billing.import_clickhouse_usage",
+  relayMeteringOutbox: "billing.relay_metering_outbox",
   chargeUsage: "billing.charge_usage",
+  refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
+  reconcileSearchSecurity: "platform.reconcile_search_security",
   sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
@@ -71,10 +85,14 @@ export const JOB_KINDS = {
   workflowRun: WORKFLOW_RUN_KIND,
   tearDownProject: TEARDOWN_KIND,
   provisionSandbox: SANDBOX_KINDS.provision,
+  startSandbox: SANDBOX_KINDS.start,
   stopSandbox: SANDBOX_KINDS.stop,
   destroySandbox: SANDBOX_KINDS.destroy,
+  reconcileSandboxes: SANDBOX_KINDS.reconcile,
   reapSandboxes: SANDBOX_KINDS.reap,
   meterSandboxes: SANDBOX_KINDS.meter,
+  meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
+  revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -98,21 +116,23 @@ const expireCreditHolds: JobHandler = async (_job, { db }) => {
 }
 
 /**
- * Fold metered events into the rollups every cost figure is computed from.
+ * Make Postgres's billable rollups an absolute projection of deduplicated ClickHouse events.
  *
- * Runs in a loop until a batch comes back short, because one poll interval of arrears is a cost
- * figure that lags by a poll interval — and after any outage there is a backlog whose size is the
- * outage's length times the whole fleet's sampling rate. Bounded by `MAX_ROLLUP_BATCHES` so a very
- * long backlog is worked down over several runs rather than in one job that never returns.
+ * The cutoff comes from ClickHouse before the query. Messages stored afterward therefore compare
+ * above this cursor on the next run even if the API and ClickHouse clocks disagree. Cursor and
+ * rollups commit together in Postgres, so a retry recomputes the same absolute values.
  */
-const rollUpUsageJob: JobHandler = async (_job, { db }) => {
-  let events = 0
-  for (let batch = 0; batch < MAX_ROLLUP_BATCHES; batch += 1) {
-    const result = await rollUpUsage(db)
-    events += result.events
-    if (result.events < BATCH_SIZE) break
+const importUsageJob: JobHandler = async (_job, { db }) => {
+  if (!observabilityConfigured()) {
+    throw new Error(
+      "CLICKHOUSE_URL is not set; authoritative usage rollups cannot be imported into billing",
+    )
   }
-  if (events > 0) console.info(`[jobs] rolled up ${events} usage events`)
+  const since = (await importedUsageCursor(db)) ?? new Date(0)
+  const until = await clickhouseUsageWatermark()
+  const rows = await usageRollupsChangedBetween(since, until)
+  await applyImportedUsageRollups(db, rows, until)
+  if (rows.length > 0) console.info(`[jobs] imported ${rows.length} ClickHouse usage rollups`)
 }
 
 /**
@@ -178,6 +198,57 @@ const purgeDeletedTenants: JobHandler = async (_job, { db }) => {
   }
 }
 
+/** Repair live OpenSearch Security identities and make cardinality/drift visible. */
+const reconcileSearchSecurityJob: JobHandler = async (_job, { db }) => {
+  const rootKey = process.env.SEARCH_PROXY_SECURITY_ROOT_KEY
+  if (rootKey === undefined || rootKey === "") {
+    throw new Error(
+      "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; OpenSearch tenant identities cannot be reconciled",
+    )
+  }
+  const configuredLimit = process.env.SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT
+  const softLimit =
+    configuredLimit === undefined ? SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT : Number(configuredLimit)
+  const report = await reconcileSearchSecurity(db, searchAdminConfigFromEnv(), rootKey, softLimit)
+  const fields = [
+    `expected=${report.expected}`,
+    `observed_users=${report.observed.users}`,
+    `observed_roles=${report.observed.roles}`,
+    `observed_mappings=${report.observed.mappings}`,
+    `missing_users=${report.missing.users}`,
+    `missing_roles=${report.missing.roles}`,
+    `missing_mappings=${report.missing.mappings}`,
+    `drifted_users=${report.drifted.users}`,
+    `drifted_roles=${report.drifted.roles}`,
+    `drifted_mappings=${report.drifted.mappings}`,
+    `repaired_users=${report.repaired.users}`,
+    `repaired_roles=${report.repaired.roles}`,
+    `repaired_mappings=${report.repaired.mappings}`,
+    `orphaned_users=${report.orphaned.users}`,
+    `orphaned_roles=${report.orphaned.roles}`,
+    `orphaned_mappings=${report.orphaned.mappings}`,
+    `list_ms=${report.listLatencyMs.toFixed(1)}`,
+    `repair_ms=${report.repairLatencyMs.toFixed(1)}`,
+    `soft_limit=${report.softLimit}`,
+    `pending_repairs=${report.pendingRepairs}`,
+  ].join(" ")
+  console.info(`[jobs] OpenSearch Security reconciliation ${fields}`)
+  if (
+    report.softLimitExceeded ||
+    report.orphaned.users > 0 ||
+    report.orphaned.roles > 0 ||
+    report.orphaned.mappings > 0 ||
+    report.pendingRepairs > 0 ||
+    report.repaired.users > 0 ||
+    report.repaired.roles > 0 ||
+    report.repaired.mappings > 0
+  ) {
+    console.warn(
+      `[jobs] OpenSearch Security attention required soft_limit_exceeded=${report.softLimitExceeded} ${fields}`,
+    )
+  }
+}
+
 /**
  * Delete the rows whose retention window has closed.
  *
@@ -192,9 +263,9 @@ const retentionSweep: JobHandler = async (_job, { db }) => {
 /**
  * Post the ledger charges for usage that has been rolled up.
  *
- * Separate from `rollUpUsage` rather than folded into it, because the two fail differently and
- * should be retried differently: rolling up is arithmetic over rows this platform wrote, and
- * charging touches balances. A rollup that has to be retried ten times must not post ten charges.
+ * Separate from the ClickHouse importer because the two fail differently and should be retried
+ * differently: importing is absolute arithmetic over durable raw usage, and charging touches
+ * balances. An import retried ten times must not post ten charges.
  *
  * Runs after the rollup on the same schedule. `chargeUsage` claims only grains whose quantity
  * exceeds what has already been charged, so ordering between the two is a matter of latency rather
@@ -209,6 +280,21 @@ const chargeUsageJob: JobHandler = async (_job, { db }) => {
   }
 }
 
+const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
+  const payload = job.payload as { generationId?: unknown; username?: unknown }
+  if (typeof payload.generationId !== "string" || typeof payload.username !== "string") {
+    throw new Error("Valkey ACL revocation payload requires generationId and username")
+  }
+  const adminUrl = process.env.SERVICE_VALKEY_ADMIN_URL
+  if (adminUrl === undefined || adminUrl === "") {
+    throw new Error("SERVICE_VALKEY_ADMIN_URL is not set; Valkey ACL revocation cannot run")
+  }
+  await runValkeyAclRevocation(db, adminUrl, {
+    generationId: payload.generationId,
+    username: payload.username,
+  })
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   /*
     The GitHub webhook handlers.
@@ -219,10 +305,13 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   */
   ...GITHUB_EVENT_HANDLERS,
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
-  [JOB_KINDS.rollUpUsage]: rollUpUsageJob,
+  [JOB_KINDS.importUsage]: importUsageJob,
+  [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
+  [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
+  [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
   [JOB_KINDS.sweepExpired]: retentionSweep,
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
@@ -235,10 +324,14 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.provisionSandbox]: provisionSandbox(),
+  [JOB_KINDS.startSandbox]: startSandbox(),
   [JOB_KINDS.stopSandbox]: stopSandbox(),
   [JOB_KINDS.destroySandbox]: destroySandbox(),
+  [JOB_KINDS.reconcileSandboxes]: reconcileSandboxes(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
+  [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
+  [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
 }
 
 /**
@@ -251,6 +344,24 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  await enqueue(db, {
+    /*
+      Every minute. This is the durable bridge for control-plane usage committed alongside a
+      ledger settlement or resource watermark; a minute is the maximum normal Kafka delay.
+    */
+    kind: JOB_KINDS.relayMeteringOutbox,
+    idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes. The sampler emits only an interval bracketed by two successful
+      observations; missed windows are deliberately left unbilled rather than extrapolated.
+    */
+    kind: JOB_KINDS.meterValkeyQueues,
+    idempotencyKey: `${JOB_KINDS.meterValkeyQueues}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
+    maxAttempts: 10,
+  })
   await enqueue(db, {
     kind: JOB_KINDS.expireCreditHolds,
     idempotencyKey: `${JOB_KINDS.expireCreditHolds}:${hour}`,
@@ -274,22 +385,20 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     /*
       Every ten minutes, not hourly.
 
-      This is the only thing standing between a metered event and a number a customer can see, so
-      the interval is how stale the dashboard's cost figure is allowed to be. Hourly would mean a
-      project that has been running all afternoon shows an hour-old total, which reads as the
-      metering being broken.
+      This imports absolute, deduplicated ClickHouse totals into the Postgres rows the dashboard
+      and charge job read. The interval is how stale the visible cost figure is allowed to be.
     */
-    kind: JOB_KINDS.rollUpUsage,
-    idempotencyKey: `${JOB_KINDS.rollUpUsage}:${tenMinuteWindow(now)}`,
+    kind: JOB_KINDS.importUsage,
+    idempotencyKey: `${JOB_KINDS.importUsage}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
   })
   await enqueue(db, {
     /*
       Every ten minutes too, right behind the rollup.
 
-      The two are separate jobs because they fail differently: rolling up is arithmetic over rows
-      this platform wrote, and charging moves balances. A rollup retried ten times must not post ten
-      charges, and keeping them apart is what makes each retry policy sane on its own.
+      The two are separate jobs because they fail differently: importing is absolute arithmetic
+      over ClickHouse rows, and charging moves balances. An import retried ten times must not post
+      ten charges, and keeping them apart is what makes each retry policy sane on its own.
 
       Ordering between them is latency, not correctness. `chargeUsage` claims grains whose quantity
       exceeds what has already been charged, so a grain the rollup writes after the charge has run
@@ -297,6 +406,18 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.chargeUsage,
     idempotencyKey: `${JOB_KINDS.chargeUsage}:${tenMinuteWindow(now)}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes against a fifteen-minute TTL.
+
+      This is a projection, not the ledger: retries simply replace the same key. Three missed
+      windows make the key expire and the router fail open, so a cache or worker outage cannot
+      become a platform-wide 402.
+    */
+    kind: JOB_KINDS.refreshCreditStates,
+    idempotencyKey: `${JOB_KINDS.refreshCreditStates}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
     maxAttempts: 3,
   })
   await enqueue(db, {
@@ -309,6 +430,12 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.purgeDeletedTenants}:${hour}`,
     // Retried more than the others: this one talks to three systems we do not run in-process, and
     // a transient cluster error is the expected failure rather than a surprising one.
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    // Hourly: drifted-open roles are repaired even when no tenant happens to make a request.
+    kind: JOB_KINDS.reconcileSearchSecurity,
+    idempotencyKey: `${JOB_KINDS.reconcileSearchSecurity}:${hour}`,
     maxAttempts: 5,
   })
   await enqueue(db, {

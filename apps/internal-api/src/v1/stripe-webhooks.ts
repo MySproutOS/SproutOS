@@ -1,14 +1,22 @@
 import { fail, settle, stripe } from "@lib/billing"
+import { refreshOrganizationCreditState } from "@lib/jobs"
 import { db, type JsonObject } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import type Stripe from "stripe"
+import { Redis } from "ioredis"
 import { EmptyObject } from "../utils/common.serializer"
 import { ErrorSchemaResponse } from "../utils/errors/error.serializer"
 import { throwBadRequest, throwUnauthenticated } from "../utils/http-exception"
 
 const SIGNATURE_HEADER = "stripe-signature"
+
+let valkey: Redis | undefined
+function creditStateValkey(): Redis {
+  valkey ??= new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
+  return valkey
+}
 
 /**
  * Stripe's delivery endpoint.
@@ -96,7 +104,17 @@ async function handle(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case "payment_intent.succeeded": {
       const intent = event.data.object
-      await settle(db, intent.id)
+      const settled = await settle(db, intent.id)
+      if (settled.organizationId !== null) {
+        try {
+          await refreshOrganizationCreditState(db, creditStateValkey(), settled.organizationId)
+        } catch (error) {
+          // The recurring projection repairs this within five minutes. Failing a Stripe delivery
+          // for an ephemeral cache write would make a settled payment look unprocessed, while the
+          // router already treats an absent/expired key as funded.
+          console.error("[billing] could not refresh credit state after top-up", error)
+        }
+      }
       return
     }
     case "payment_intent.payment_failed": {
