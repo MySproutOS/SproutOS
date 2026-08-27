@@ -33,6 +33,7 @@ export const BILLABLE_DIMENSIONS = [
   "sandbox_cpu_second",
   "sandbox_gib_second",
   "sandbox_disk_gib_second",
+  "sandbox_egress_byte",
 ] as const
 
 export type BillableDimension = (typeof BILLABLE_DIMENSIONS)[number]

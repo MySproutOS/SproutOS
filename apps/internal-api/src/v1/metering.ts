@@ -62,6 +62,11 @@ export function ingestAttribution(
   if (source === "pg-proxy" && event.dimension.startsWith("db_")) {
     return { resourceType: "database", resourceId: null }
   }
+  if (source === "sandbox-forward-proxy" && event.dimension === "sandbox_egress_byte") {
+    const resourceId = event.attributes.sandbox_id
+    if (resourceId === undefined || resourceId === "") return undefined
+    return { resourceType: "sandbox", resourceId }
+  }
   return undefined
 }
 

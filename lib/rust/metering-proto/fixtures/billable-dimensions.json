@@ -26,6 +26,7 @@
     "agent_run_second",
     "sandbox_cpu_second",
     "sandbox_gib_second",
-    "sandbox_disk_gib_second"
+    "sandbox_disk_gib_second",
+    "sandbox_egress_byte"
   ]
 }

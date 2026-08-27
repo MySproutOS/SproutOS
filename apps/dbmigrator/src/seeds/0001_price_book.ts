@@ -65,6 +65,9 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   ["sandbox_cpu_second", "14"],
   ["sandbox_gib_second", "4.5"],
   ["sandbox_disk_gib_second", "0.03"],
+  // AWS US-East first-tier internet DTO, $0.09 per decimal GB. One proxy exchange can create two
+  // outbound legs; the Rust meter counts the bytes actually written on both.
+  ["sandbox_egress_byte", "0.00009"],
 ]
 
 const ITEM_OVERHEAD_BPS = new Map<string, number>([
@@ -84,6 +87,7 @@ const ITEM_OVERHEAD_BPS = new Map<string, number>([
   ["sandbox_cpu_second", 0],
   ["sandbox_gib_second", 0],
   ["sandbox_disk_gib_second", 0],
+  ["sandbox_egress_byte", 0],
 ])
 
 export async function seed(db: Kysely<any>): Promise<void> {
