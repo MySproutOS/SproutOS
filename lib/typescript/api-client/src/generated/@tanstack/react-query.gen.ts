@@ -28,6 +28,7 @@ import {
   deleteV1UserMeImpersonation,
   getV1AndroidCatalogue,
   getV1AuthMe,
+  getV1DeployDeploymentsByDeploymentId,
   getV1Orgs,
   getV1OrgsByOrgSlug,
   getV1OrgsByOrgSlugAgentConfig,
@@ -210,6 +211,8 @@ import type {
   GetV1AndroidCatalogueData,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
+  GetV1DeployDeploymentsByDeploymentIdData,
+  GetV1DeployDeploymentsByDeploymentIdResponse,
   GetV1OrgsByOrgSlugAgentConfigData,
   GetV1OrgsByOrgSlugAgentConfigError,
   GetV1OrgsByOrgSlugAgentConfigResponse,
@@ -5078,6 +5081,34 @@ export const postV1DeployReleaseMutation = (
   }
   return mutationOptions
 }
+
+export const getV1DeployDeploymentsByDeploymentIdQueryKey = (
+  options: Options<GetV1DeployDeploymentsByDeploymentIdData>,
+) => createQueryKey("getV1DeployDeploymentsByDeploymentId", options)
+
+/**
+ * Read one deployment's publish status. Called by the deploy action until the release is terminal.
+ */
+export const getV1DeployDeploymentsByDeploymentIdOptions = (
+  options: Options<GetV1DeployDeploymentsByDeploymentIdData>,
+) =>
+  queryOptions<
+    GetV1DeployDeploymentsByDeploymentIdResponse,
+    DefaultError,
+    GetV1DeployDeploymentsByDeploymentIdResponse,
+    ReturnType<typeof getV1DeployDeploymentsByDeploymentIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1DeployDeploymentsByDeploymentId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1DeployDeploymentsByDeploymentIdQueryKey(options),
+  })
 
 /**
  * Run an uploaded migrator against the project's database, and wait for it

@@ -11,6 +11,20 @@ import type { Kysely, Selectable } from "kysely"
  * the permission check. The join is what turns that into a 404.
  */
 export function fetchDeployment(db: Kysely<DB>) {
+  async function getForProject<T extends (keyof DB["deployment"])[]>(
+    projectId: string,
+    id: string,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["deployment"]>, T[number]> | undefined> {
+    return await db
+      .selectFrom("deployment")
+      .select(fields)
+      .where("id", "=", id)
+      .where("projectId", "=", projectId)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+  }
+
   async function getInOrganization<T extends (keyof DB["deployment"])[]>(
     organizationId: string,
     id: string,
@@ -97,5 +111,5 @@ export function fetchDeployment(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { currentProduction, getInOrganization, withProject }
+  return { currentProduction, getForProject, getInOrganization, withProject }
 }

@@ -6361,6 +6361,43 @@ export type PostV1DeployReleaseResponses = {
 export type PostV1DeployReleaseResponse =
   PostV1DeployReleaseResponses[keyof PostV1DeployReleaseResponses]
 
+export type GetV1DeployDeploymentsByDeploymentIdData = {
+  body?: never
+  path: {
+    deploymentId: string
+  }
+  query?: never
+  url: "/v1/deploy/deployments/{deploymentId}"
+}
+
+export type GetV1DeployDeploymentsByDeploymentIdErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+  /**
+   * No such deployment belongs to the token's project
+   */
+  404: unknown
+}
+
+export type GetV1DeployDeploymentsByDeploymentIdResponses = {
+  /**
+   * The deployment's current status and any recorded failure details
+   */
+  200: {
+    deployment_id: string
+    status: "queued" | "building" | "deploying" | "ready" | "error" | "torn_down"
+    failure_reason: string | null
+    migration_status: "pending" | "running" | "succeeded" | "failed" | "skipped" | null
+    migration_output: string | null
+    url: string | null
+  }
+}
+
+export type GetV1DeployDeploymentsByDeploymentIdResponse =
+  GetV1DeployDeploymentsByDeploymentIdResponses[keyof GetV1DeployDeploymentsByDeploymentIdResponses]
+
 export type PostV1DeployMigrateData = {
   body?: {
     migration_key: string

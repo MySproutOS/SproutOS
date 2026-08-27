@@ -126,6 +126,9 @@ import type {
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
+  GetV1DeployDeploymentsByDeploymentIdData,
+  GetV1DeployDeploymentsByDeploymentIdErrors,
+  GetV1DeployDeploymentsByDeploymentIdResponses,
   GetV1OrgsByOrgSlugAgentConfigData,
   GetV1OrgsByOrgSlugAgentConfigErrors,
   GetV1OrgsByOrgSlugAgentConfigResponses,
@@ -3263,6 +3266,22 @@ export const postV1DeployRelease = <ThrowOnError extends boolean = false>(
       ...options?.headers,
     },
   })
+
+/**
+ * Read one deployment's publish status. Called by the deploy action until the release is terminal.
+ */
+export const getV1DeployDeploymentsByDeploymentId = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1DeployDeploymentsByDeploymentIdData, ThrowOnError>,
+): RequestResult<
+  GetV1DeployDeploymentsByDeploymentIdResponses,
+  GetV1DeployDeploymentsByDeploymentIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1DeployDeploymentsByDeploymentIdResponses,
+    GetV1DeployDeploymentsByDeploymentIdErrors,
+    ThrowOnError
+  >({ url: "/v1/deploy/deployments/{deploymentId}", ...options })
 
 /**
  * Run an uploaded migrator against the project's database, and wait for it

@@ -120,6 +120,22 @@ describe.skipIf(!reachable)("fetchDeployment", () => {
     expect(found).toBeUndefined()
   })
 
+  it("returns a deployment only to its own project", async () => {
+    const mine = await seedOrganizationWithDeployment()
+    const theirs = await seedOrganizationWithDeployment()
+
+    const found = await fetchDeployment(db).getForProject(mine.projectId, mine.deployment.id, [
+      "id",
+      "status",
+    ])
+    const crossed = await fetchDeployment(db).getForProject(mine.projectId, theirs.deployment.id, [
+      "id",
+    ])
+
+    expect(found).toEqual({ id: mine.deployment.id, status: "ready" })
+    expect(crossed).toBeUndefined()
+  })
+
   it("hides a soft-deleted deployment", async () => {
     const { deployment, orgId } = await seedOrganizationWithDeployment()
     await crudDeployment(db).softDelete(deployment.id)

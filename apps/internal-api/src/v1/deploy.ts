@@ -20,6 +20,7 @@ import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { Type } from "typebox"
 import { validator } from "../utils/validator"
+import { deployStatusSchemaParam, deployStatusSchemaResponse } from "./deploy.serializer"
 
 /**
  * What `MySproutOS/sproutos-deploy-action` calls.
@@ -40,11 +41,12 @@ import { validator } from "../utils/validator"
 /**
  * How long a deploy token lives.
  *
- * Long enough to upload a large artifact on a slow runner; short enough that a token captured from
- * a log is worthless by the time anyone reads it. Stateless — an HMAC over the claims — because a
- * revocation table for a credential that expires in fifteen minutes is machinery guarding nothing.
+ * Long enough to upload a large artifact and wait through the migration and publication window;
+ * short enough that a token captured from a log is worthless by the time anyone reads it. Stateless
+ * — an HMAC over the claims — because a revocation table for a credential that expires in thirty
+ * minutes is machinery guarding nothing.
  */
-const TOKEN_TTL_SECONDS = 15 * 60
+const TOKEN_TTL_SECONDS = 30 * 60
 
 function tokenSecret(): string {
   const secret = process.env.DEPLOY_TOKEN_SECRET
@@ -582,6 +584,43 @@ const deploy: Hono = new Hono()
       }
 
       return c.json({ deployment_id: deployment.id })
+    },
+  )
+  .get(
+    "/deploy/deployments/:deploymentId",
+    describeRoute({
+      description:
+        "Read one deployment's publish status. Called by the deploy action until the release is terminal.",
+      responses: {
+        200: {
+          description: "The deployment's current status and any recorded failure details",
+          content: { "application/json": { schema: resolver(deployStatusSchemaResponse) } },
+        },
+        401: { description: "Missing or expired deploy token" },
+        404: { description: "No such deployment belongs to the token's project" },
+      },
+    }),
+    validator("param", deployStatusSchemaParam),
+    async (c) => {
+      const authorized = bearer(c.req.header("Authorization"))
+      if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+
+      const { deploymentId } = c.req.valid("param")
+      const deployment = await fetchDeployment(db).getForProject(
+        authorized.projectId,
+        deploymentId,
+        ["id", "status", "failureReason", "migrationStatus", "migrationOutput", "url"],
+      )
+      if (deployment === undefined) return c.json({ message: "Deployment not found" }, 404)
+
+      return c.json({
+        deployment_id: deployment.id,
+        status: deployment.status,
+        failure_reason: deployment.failureReason,
+        migration_status: deployment.migrationStatus,
+        migration_output: deployment.migrationOutput,
+        url: deployment.url,
+      })
     },
   )
   /**
