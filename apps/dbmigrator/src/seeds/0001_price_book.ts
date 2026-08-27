@@ -23,7 +23,6 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   */
   ["site_gib_second", "3"],
   ["site_provisioned_gib_second", "3"],
-  ["site_ws_connection_second", "0.5"],
   ["site_request", "2"],
   ["site_egress_byte", "0.00014"],
   ["db_storage_gib_hour", "480"],

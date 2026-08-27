@@ -27,6 +27,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const relayKey = `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`
     const importKey = `${JOB_KINDS.importUsage}:${now.toISOString().slice(0, 15)}`
     const creditKey = `${JOB_KINDS.refreshCreditStates}:2099-12-31T23:55`
+    const neonMeteringKey = `${JOB_KINDS.meterNeonDatabases}:2099-12-31T23`
     const valkeyMeteringKey = `${JOB_KINDS.meterValkeyQueues}:2099-12-31T23:55`
     const searchSecurityKey = `${JOB_KINDS.reconcileSearchSecurity}:2099-12-31T23`
 
@@ -42,6 +43,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
         relayKey,
         importKey,
         creditKey,
+        neonMeteringKey,
         valkeyMeteringKey,
         searchSecurityKey,
       ])
@@ -50,6 +52,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
 
     expect(scheduled).toEqual([
       { kind: JOB_KINDS.importUsage, idempotencyKey: importKey },
+      { kind: JOB_KINDS.meterNeonDatabases, idempotencyKey: neonMeteringKey },
       { kind: JOB_KINDS.meterValkeyQueues, idempotencyKey: valkeyMeteringKey },
       { kind: JOB_KINDS.refreshCreditStates, idempotencyKey: creditKey },
       { kind: JOB_KINDS.relayMeteringOutbox, idempotencyKey: relayKey },

@@ -45,6 +45,7 @@ import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
+import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -92,6 +93,7 @@ export const JOB_KINDS = {
   reapSandboxes: SANDBOX_KINDS.reap,
   meterSandboxes: SANDBOX_KINDS.meter,
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
+  meterNeonDatabases: METER_NEON_DATABASES_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
@@ -331,6 +333,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
+  [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
 }
 
@@ -351,6 +354,16 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.relayMeteringOutbox,
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Hourly, behind Neon's approximately fifteen-minute consumption refresh. The handler uses
+      closed provider windows and commits each service watermark with its outbox rows, so retries
+      are exact and a missed run is recovered from history rather than estimated.
+    */
+    kind: JOB_KINDS.meterNeonDatabases,
+    idempotencyKey: `${JOB_KINDS.meterNeonDatabases}:${hour}`,
     maxAttempts: 10,
   })
   await enqueue(db, {

@@ -542,6 +542,12 @@ export interface MeteringOutbox {
   payload: Json
 }
 
+export interface NeonMeteringState {
+  backendServiceId: string
+  meteredThrough: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Node {
   allocatableCpuMillis: Generated<Int8>
   allocatableMemoryBytes: Generated<Int8>
@@ -1319,6 +1325,7 @@ export interface DB {
   memberRole: MemberRole
   meteringImportState: MeteringImportState
   meteringOutbox: MeteringOutbox
+  neonMeteringState: NeonMeteringState
   node: Node
   oauthAccessToken: OauthAccessToken
   oauthAuthorizationCode: OauthAuthorizationCode
