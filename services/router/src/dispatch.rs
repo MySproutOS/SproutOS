@@ -21,7 +21,7 @@
 //! function's timeout with the queue no shorter than it started.
 
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aws_sdk_lambda::Client as LambdaClient;
 use aws_sdk_lambda::primitives::Blob;
@@ -87,6 +87,9 @@ pub fn worker_event(pending: &Pending) -> serde_json::Value {
 /// noticed, which for a queue that just went quiet is forever.
 pub async fn drain_master(valkey: &ConnectionManager) -> Vec<Pending> {
     let mut connection = valkey.clone();
+    // One cutoff for both commands. Re-reading the clock before removal could delete a wake that
+    // became due between the range and remove without ever returning it to the dispatcher.
+    let cutoff = now_ms();
 
     /*
       One round trip, and the read must come back typed.
@@ -98,8 +101,10 @@ pub async fn drain_master(valkey: &ConnectionManager) -> Vec<Pending> {
     */
     let members: Result<(Vec<String>,), redis::RedisError> = redis::pipe()
         .atomic()
-        .zrange(MASTER_WAKE_KEY, 0, -1)
-        .del(MASTER_WAKE_KEY)
+        // Future scores are delayed-job alarms. Taking them here would invoke early and erase the
+        // only fact that can wake the queue when the job becomes due.
+        .zrangebyscore(MASTER_WAKE_KEY, "-inf", cutoff)
+        .zrembyscore(MASTER_WAKE_KEY, "-inf", cutoff)
         .ignore()
         .query_async(&mut connection)
         .await;
@@ -117,6 +122,58 @@ pub async fn drain_master(valkey: &ConnectionManager) -> Vec<Pending> {
             Vec::new()
         }
     }
+}
+
+fn delayed_key(pending: &Pending) -> String {
+    format!("{{kv:{}}}:bull:{}:delayed", pending.resource, pending.queue)
+}
+
+fn bullmq_due_ms(score: f64) -> Option<u64> {
+    if !score.is_finite() || score < 0.0 {
+        return None;
+    }
+    // BullMQ reserves the low 12 bits for ordering jobs with the same millisecond timestamp.
+    Some((score / 4096.0).floor() as u64)
+}
+
+/// Preserve an alarm for the earliest BullMQ delayed job after the initial enqueue wake.
+async fn preserve_delayed_wake(valkey: &ConnectionManager, pending: &Pending) {
+    let mut connection = valkey.clone();
+    let rows: Result<Vec<(String, f64)>, redis::RedisError> = redis::cmd("ZRANGE")
+        .arg(delayed_key(pending))
+        .arg(0)
+        .arg(0)
+        .arg("WITHSCORES")
+        .query_async(&mut connection)
+        .await;
+    let Some(due_ms) = rows
+        .ok()
+        .and_then(|rows| rows.first().and_then(|(_, score)| bullmq_due_ms(*score)))
+    else {
+        return;
+    };
+
+    // A due job may still be present while the async Lambda starts. Recheck after a bounded grace
+    // period rather than writing a past score that would hot-loop invocations every two seconds.
+    let wake_ms = due_ms.max(now_ms().saturating_add(30_000));
+    let mut connection = valkey.clone();
+    let result: Result<(), redis::RedisError> = redis::cmd("ZADD")
+        .arg(MASTER_WAKE_KEY)
+        .arg("GT")
+        .arg(wake_ms)
+        .arg(format!("{}/{}", pending.resource, pending.queue))
+        .query_async(&mut connection)
+        .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, queue = pending.queue, "could not preserve delayed queue wake");
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Ask a project's function to drain one queue.
@@ -180,6 +237,10 @@ pub async fn run(valkey: ConnectionManager, lambda: LambdaClient) {
                 tracing::warn!(resource = pending.resource, "unreadable queue binding");
                 continue;
             };
+
+            // Preserve the alarm before any credit/function early return. Credit can recover and a
+            // deployment can appear; neither should require the customer to enqueue another job.
+            preserve_delayed_wake(&valkey, &pending).await;
 
             /*
               Credit before starting work, the same as a web request.
@@ -286,5 +347,26 @@ mod tests {
 
         assert!(event.get("sproutos").is_some());
         assert!(event["sproutos"].get("kind").is_some());
+    }
+
+    #[test]
+    fn decodes_bullmq_delayed_scores_without_losing_the_timestamp() {
+        let timestamp = 1_787_844_000_123_u64;
+        assert_eq!(
+            bullmq_due_ms((timestamp * 4096 + 37) as f64),
+            Some(timestamp)
+        );
+        assert_eq!(bullmq_due_ms(f64::NAN), None);
+    }
+
+    #[test]
+    fn delayed_key_is_the_same_namespaced_bullmq_key_the_proxy_writes() {
+        assert_eq!(
+            delayed_key(&Pending {
+                resource: "01hb".into(),
+                queue: "emails".into()
+            }),
+            "{kv:01hb}:bull:emails:delayed"
+        );
     }
 }
