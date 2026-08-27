@@ -31,6 +31,7 @@ import {
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
+import { projectCreateErrorMessage } from "./project-create-error"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { isProjectRootDir } from "./project-root-dir"
 import { slugify } from "./slug"
@@ -637,9 +638,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
       )}
 
       {create.isError && (
-        <p className="text-[13px] text-destructive">
-          The project could not be created. Nothing was changed on GitHub.
-        </p>
+        <p className="text-[13px] text-destructive">{projectCreateErrorMessage(create.error)}</p>
       )}
 
       {/*
