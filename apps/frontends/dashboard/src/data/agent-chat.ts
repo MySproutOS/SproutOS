@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsOptions,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation,
@@ -7,6 +8,7 @@ import {
 import {
   baseUrl,
   getV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  getV1OrgsByOrgSlugAgentConfig,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
 } from "@lib/api-client/index"
 
@@ -44,6 +46,7 @@ const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
 const SANDBOX_START_TIMEOUT_MS = 120_000
 
 type SandboxStartDependencies = {
+  preflight: (path: { orgSlug: string }) => Promise<void>
   start: (path: { orgSlug: string; projectId: string }) => Promise<void>
   read: (path: { orgSlug: string; projectId: string }, signal?: AbortSignal) => Promise<string>
   wait: (milliseconds: number) => Promise<void>
@@ -51,6 +54,12 @@ type SandboxStartDependencies = {
 }
 
 const sandboxStartDependencies: SandboxStartDependencies = {
+  preflight: async (path) => {
+    const { data } = await getV1OrgsByOrgSlugAgentConfig({ path, throwOnError: true })
+    if (data.effectiveBilling === "none") {
+      throw new Error("No model credential configured")
+    }
+  },
   start: async (path) => {
     await postV1OrgsByOrgSlugProjectsByProjectIdSandbox({ path, throwOnError: true })
   },
@@ -77,6 +86,7 @@ export async function ensureSandboxRunning(
   dependencies: SandboxStartDependencies = sandboxStartDependencies,
 ): Promise<void> {
   const path = { orgSlug: input.orgSlug, projectId: input.projectId }
+  await dependencies.preflight({ orgSlug: input.orgSlug })
   await dependencies.start(path)
 
   const deadline = dependencies.now() + SANDBOX_START_TIMEOUT_MS
@@ -122,6 +132,17 @@ export function useCreateAgentSession(orgSlug: string, projectId: string) {
         }),
       })
       return session.id
+    },
+  }
+}
+
+/** Permanently release the Daytona workspace and its branch-scoped development database. */
+export function useFinishSandbox(orgSlug: string, projectId: string) {
+  const mutation = useMutation(deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation())
+  return {
+    ...mutation,
+    finish: async (): Promise<void> => {
+      await mutation.mutateAsync({ path: { orgSlug, projectId } })
     },
   }
 }

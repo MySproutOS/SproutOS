@@ -240,12 +240,28 @@ impl SandboxForwardProxy {
         if addresses.iter().any(|address| !is_public_ip(*address)) {
             return respond(&mut client, ResponseKind::DestinationForbidden).await;
         }
-        let address = SocketAddr::new(addresses[0], destination.port);
-        let mut upstream =
-            match timeout(self.limits.connect_timeout, self.dialer.connect(address)).await {
-                Ok(Ok(upstream)) => upstream,
-                _ => return respond(&mut client, ResponseKind::BadGateway).await,
-            };
+        // DNS answer order is not an availability guarantee. Try every validated public address
+        // within one shared deadline, so a dead first AAAA/A record does not turn an otherwise
+        // reachable public domain into a 502 and a large answer cannot multiply the timeout.
+        let mut upstream = match timeout(self.limits.connect_timeout, async {
+            for ip in addresses {
+                if let Ok(upstream) = self
+                    .dialer
+                    .connect(SocketAddr::new(ip, destination.port))
+                    .await
+                {
+                    return Ok(upstream);
+                }
+            }
+            Err(io::Error::other(
+                "no resolved address accepted a connection",
+            ))
+        })
+        .await
+        {
+            Ok(Ok(upstream)) => upstream,
+            _ => return respond(&mut client, ResponseKind::BadGateway).await,
+        };
 
         if request.method.eq_ignore_ascii_case("CONNECT") {
             client
@@ -594,7 +610,12 @@ pub fn is_public_ip(address: IpAddr) -> bool {
 }
 
 fn is_public_v4(address: Ipv4Addr) -> bool {
-    let [a, b, _, _] = address.octets();
+    let [a, b, c, d] = address.octets();
+    // 192.0.0.0/24 is special-purpose except for the two globally reachable anycast addresses.
+    // The old `(192, 0)` match denied the entire 192.0.0.0/16, including ordinary public space.
+    if (a, b, c) == (192, 0, 0) {
+        return matches!(d, 9 | 10);
+    }
     !matches!(
         (a, b),
         (0, _)
@@ -603,18 +624,52 @@ fn is_public_v4(address: Ipv4Addr) -> bool {
             | (127, _)
             | (169, 254)
             | (172, 16..=31)
-            | (192, 0)
             | (192, 168)
             | (198, 18..=19)
             | (224..=255, _)
     ) && !address.is_documentation()
+        && (a, b, c) != (192, 88, 99)
 }
 
 fn is_public_v6(address: Ipv6Addr) -> bool {
-    let segments = address.segments();
-    // Public global unicast. This deliberately excludes link-local, unique-local, multicast,
-    // documentation, ORCHID and transition ranges rather than maintaining a permissive denylist.
-    (segments[0] & 0xe000) == 0x2000 && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+    // Follow IANA's Globally Reachable column. Most public unicast is 2000::/3; the exceptions
+    // below are special-purpose ranges that are not globally reachable, with IANA's more-specific
+    // globally reachable allocations admitted again. NAT64's well-known prefix is the one public
+    // allocation outside 2000::/3 in the current registry.
+    if in_v6_prefix(address, "64:ff9b::".parse().unwrap(), 96) {
+        return true;
+    }
+    if !in_v6_prefix(address, "2000::".parse().unwrap(), 3) {
+        return false;
+    }
+    if in_v6_prefix(address, "2002::".parse().unwrap(), 16)
+        || in_v6_prefix(address, "2001:db8::".parse().unwrap(), 32)
+        || in_v6_prefix(address, "3fff::".parse().unwrap(), 20)
+    {
+        return false;
+    }
+    if !in_v6_prefix(address, "2001::".parse().unwrap(), 23) {
+        return true;
+    }
+
+    matches!(
+        address,
+        address if address == "2001:1::1".parse::<Ipv6Addr>().unwrap()
+            || address == "2001:1::2".parse::<Ipv6Addr>().unwrap()
+            || address == "2001:1::3".parse::<Ipv6Addr>().unwrap()
+    ) || in_v6_prefix(address, "2001:3::".parse().unwrap(), 32)
+        || in_v6_prefix(address, "2001:4:112::".parse().unwrap(), 48)
+        || in_v6_prefix(address, "2001:20::".parse().unwrap(), 28)
+        || in_v6_prefix(address, "2001:30::".parse().unwrap(), 28)
+}
+
+fn in_v6_prefix(address: Ipv6Addr, network: Ipv6Addr, prefix: u32) -> bool {
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix)
+    };
+    u128::from(address) & mask == u128::from(network) & mask
 }
 
 enum ResponseKind {
@@ -685,6 +740,24 @@ mod tests {
     impl Dialer for RecordingDialer {
         async fn connect(&self, address: SocketAddr) -> io::Result<Box<dyn ProxyIo>> {
             self.addresses.lock().unwrap().push(address);
+            Ok(Box::new(self.peer.lock().unwrap().take().unwrap()))
+        }
+    }
+
+    struct FailingFirstDialer {
+        addresses: Arc<Mutex<Vec<SocketAddr>>>,
+        peer: Mutex<Option<DuplexStream>>,
+    }
+
+    #[async_trait]
+    impl Dialer for FailingFirstDialer {
+        async fn connect(&self, address: SocketAddr) -> io::Result<Box<dyn ProxyIo>> {
+            let mut addresses = self.addresses.lock().unwrap();
+            addresses.push(address);
+            if addresses.len() == 1 {
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "test"));
+            }
+            drop(addresses);
             Ok(Box::new(self.peer.lock().unwrap().take().unwrap()))
         }
     }
@@ -783,7 +856,12 @@ mod tests {
             "::1",
             "fc00::1",
             "fe80::1",
+            "64:ff9b:1::1",
+            "100::1",
+            "2001:2::1",
             "2001:db8::1",
+            "2002::1",
+            "3fff::1",
             "::ffff:127.0.0.1",
         ] {
             assert!(!is_public_ip(denied.parse().unwrap()), "allowed {denied}");
@@ -791,11 +869,62 @@ mod tests {
         for allowed in [
             "1.1.1.1",
             "8.8.8.8",
+            "192.0.0.9",
+            "192.0.1.1",
+            "64:ff9b::1",
+            "2001:3::1",
             "2606:4700:4700::1111",
             "::ffff:8.8.8.8",
         ] {
             assert!(is_public_ip(allowed.parse().unwrap()), "denied {allowed}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_dead_first_public_dns_answer_falls_back_to_the_next() {
+        let root = &ROOT;
+        let (upstream, mut peer) = tokio::io::duplex(16 * 1024);
+        let dialed = Arc::new(Mutex::new(Vec::new()));
+        let proxy = SandboxForwardProxy::new(
+            root,
+            Arc::new(StaticAuthorizer {
+                result: Ok(Some(authorization(SandboxState::Running))),
+            }),
+            Arc::new(StaticResolver(vec![
+                "1.1.1.1".parse().unwrap(),
+                "8.8.8.8".parse().unwrap(),
+            ])),
+            Arc::new(FailingFirstDialer {
+                addresses: Arc::clone(&dialed),
+                peer: Mutex::new(Some(upstream)),
+            }),
+            Limits::default(),
+        )
+        .unwrap();
+
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let task = tokio::spawn(async move { proxy.serve_connection(server).await });
+        client
+            .write_all(request(root, "http://example.com/", "").as_bytes())
+            .await
+            .unwrap();
+        let mut forwarded = vec![0; 4096];
+        let read = peer.read(&mut forwarded).await.unwrap();
+        assert!(String::from_utf8_lossy(&forwarded[..read]).starts_with("GET / HTTP/1.1"));
+        peer.write_all(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        peer.shutdown().await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        task.await.unwrap().unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 204"));
+        assert_eq!(
+            *dialed.lock().unwrap(),
+            vec!["1.1.1.1:80".parse().unwrap(), "8.8.8.8:80".parse().unwrap()]
+        );
     }
 
     #[tokio::test]

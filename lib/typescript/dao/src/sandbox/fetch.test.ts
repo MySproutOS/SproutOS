@@ -1,6 +1,6 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { crudSandbox, SANDBOX_STATES } from "./crud"
 import { fetchSandbox } from "./fetch"
@@ -75,6 +75,11 @@ beforeAll(async () => {
     .insertInto("project")
     .values({ id: projectId, organizationId, repositoryId, name: "Sandbox", slug: "sbx-test" })
     .execute()
+})
+
+beforeEach(async () => {
+  if (!reachable || !projectId) return
+  await db.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
 })
 
 afterAll(async () => {
@@ -239,7 +244,7 @@ describe("the sandbox vocabulary", () => {
     for (const sandboxClass of ["container", "android", "linux-vm", "windows"]) {
       const row = await crudSandbox(db).create({
         projectId,
-        userId: ownerUserId,
+        userId: await anotherUser(),
         state: "stopped",
         sandboxClass,
       })
@@ -301,24 +306,38 @@ describe("the sandbox vocabulary", () => {
     const externalId = `dup-${v7()}`
     await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId })
     await expect(
-      crudSandbox(db).create({ projectId, userId: ownerUserId, state: "stopped", externalId }),
+      crudSandbox(db).create({
+        projectId,
+        userId: await anotherUser(),
+        state: "stopped",
+        externalId,
+      }),
     ).rejects.toThrow(/sandbox_provider_external_id_key/)
   })
 
-  /*
-    Null `external_id` is the window between insert and create, and there are as many of those as
-    there are interrupted provisions — so the unique index has to be partial or the second one
-    fails on a collision that is not one.
-  */
-  it("allows many rows with no provider sandbox yet", async ({ skip }) => {
+  it("allows different users to have rows with no provider sandbox yet", async ({ skip }) => {
     if (!reachable) skip()
 
     const rows = []
     for (let i = 0; i < 2; i += 1) {
-      rows.push(await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" }))
+      rows.push(
+        await crudSandbox(db).create({
+          projectId,
+          userId: await anotherUser(),
+          state: "starting",
+        }),
+      )
     }
     expect(rows.map((row) => row.externalId)).toEqual([null, null])
     expect(new Set(rows.map((row) => row.id)).size).toBe(2)
+  })
+
+  it("refuses two sandboxes for one scoped project and user", async ({ skip }) => {
+    if (!reachable) skip()
+    await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" })
+    await expect(
+      crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" }),
+    ).rejects.toThrow(/sandbox_project_user_key/)
   })
 
   it("does not allow the word the failure path first used", ({ skip }) => {

@@ -1,5 +1,5 @@
 import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
-import { enqueue, SANDBOX_KINDS } from "@lib/jobs"
+import { requestSandboxDestroy, requestSandboxStart, SandboxDeletingError } from "@lib/jobs"
 import {
   sandboxDriverFromEnv,
   SandboxNotFoundError,
@@ -16,7 +16,12 @@ import type { DB } from "@sproutos/db"
 import { authMiddleware } from "../middleware"
 import { paramResource, requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwInternalServerError, throwNotFound } from "../utils/http-exception"
+import {
+  throwBadRequest,
+  throwConflict,
+  throwInternalServerError,
+  throwNotFound,
+} from "../utils/http-exception"
 import { requireArray } from "../utils/require-array"
 import { auditContext } from "../utils/request-context"
 import { validator } from "../utils/validator"
@@ -184,6 +189,7 @@ const app = new Hono()
         },
         403: { description: "Caller lacks sandbox:write", ...errorResponse },
         404: { description: "No such project", ...errorResponse },
+        409: { description: "The previous sandbox is being deleted", ...errorResponse },
       },
     }),
     requirePermission("sandbox:write", paramResource("compute", "sandbox", "projectId")),
@@ -195,58 +201,21 @@ const app = new Hono()
       const project = await fetchProject(db).getInOrganization(organization.id, projectId, ["id"])
       if (!project) return throwNotFound(c, "Project not found")
 
-      const existing = await activeSandbox(organization.id, projectId, c.var.user.id)
-
-      /*
-        One sandbox per (project, user), restarted rather than duplicated.
-
-        A second row would mean a second rented container for the same person and the same project,
-        both billing, with only one of them reachable from the UI. `stopped` is the ordinary state
-        for a sandbox somebody used yesterday, so this is the common path and not an edge case.
-      */
-      if (existing !== undefined) {
-        if (existing.state === "stopped" || existing.state === "failed") {
-          await crudSandbox(db).update(existing.id, { state: "starting" })
-          await enqueue(db, {
-            kind: existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start,
-            organizationId: organization.id,
-            payload: { sandboxId: existing.id },
-            idempotencyKey: `${existing.externalId === null ? SANDBOX_KINDS.provision : SANDBOX_KINDS.start}:${existing.id}:${Date.now()}`,
-            maxAttempts: 3,
-          })
-        }
-        return c.json(serialize(existing), 201)
-      }
-
-      /*
-        Created against the group, so the next child asking finds this one.
-
-        Resolved again rather than reusing the lookup above: `existing` being absent says only that
-        there is no sandbox, not what the scope is.
-      */
       const scope = (await sandboxScopeFor(db, organization.id, projectId)) ?? projectId
-
-      const created = await crudSandbox(db).create({
-        projectId: scope,
-        userId: c.var.user.id,
-        state: "starting",
-        idleTimeoutS: IDLE_TIMEOUT_S,
-      })
-
-      /*
-        The row first, then the job.
-
-        Enqueued rather than created inline: provisioning talks to a provider and takes seconds, and
-        a request that holds a connection open for that long is one the browser gives up on while
-        the work continues. The row is what the dashboard polls.
-      */
-      await enqueue(db, {
-        kind: SANDBOX_KINDS.provision,
-        organizationId: organization.id,
-        payload: { sandboxId: created.id },
-        idempotencyKey: `${SANDBOX_KINDS.provision}:${created.id}`,
-        maxAttempts: 3,
-      })
+      let created
+      try {
+        created = await requestSandboxStart(db, {
+          organizationId: organization.id,
+          projectId: scope,
+          userId: c.var.user.id,
+          idleTimeoutS: IDLE_TIMEOUT_S,
+        })
+      } catch (error) {
+        if (error instanceof SandboxDeletingError) {
+          return throwConflict(c, "The previous sandbox is still being deleted")
+        }
+        throw error
+      }
 
       await crudAuditLog(db).record({
         organizationId: organization.id,
@@ -274,18 +243,14 @@ const app = new Hono()
     validator("param", sandboxSchemaProjectParam),
     async (c) => {
       const { projectId } = c.req.valid("param")
-      const row = await sandboxFor(c.var.organization.id, projectId, c.var.user.id)
-      if (row === undefined) return throwNotFound(c, "No sandbox for this project")
-
-      // DELETE means the user is completely done. Ordinary inactivity is handled by stop plus
-      // Daytona archive, which preserves the workspace without billing reserved disk.
-      await enqueue(db, {
-        kind: SANDBOX_KINDS.destroy,
+      const scope = await sandboxScopeFor(db, c.var.organization.id, projectId)
+      if (scope === undefined) return throwNotFound(c, "No sandbox for this project")
+      const row = await requestSandboxDestroy(db, {
         organizationId: c.var.organization.id,
-        payload: { sandboxId: row.id },
-        idempotencyKey: `${SANDBOX_KINDS.destroy}:${row.id}`,
-        maxAttempts: 3,
+        projectId: scope,
+        userId: c.var.user.id,
       })
+      if (row === undefined) return throwNotFound(c, "No sandbox for this project")
 
       await crudAuditLog(db).record({
         organizationId: c.var.organization.id,

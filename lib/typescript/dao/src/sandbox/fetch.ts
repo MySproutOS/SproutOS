@@ -26,6 +26,23 @@ export function fetchSandbox(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
+  async function forUserForUpdate(
+    organizationId: string,
+    projectId: string,
+    userId: string,
+  ): Promise<Selectable<DB["sandbox"]> | undefined> {
+    return await db
+      .selectFrom("sandbox")
+      .innerJoin("project", "project.id", "sandbox.projectId")
+      .selectAll("sandbox")
+      .where("sandbox.projectId", "=", projectId)
+      .where("sandbox.userId", "=", userId)
+      .where("project.organizationId", "=", organizationId)
+      .where("project.deletedAt", "is", null)
+      .forUpdate("sandbox")
+      .executeTakeFirst()
+  }
+
   async function getInOrganization(
     organizationId: string,
     id: string,
@@ -55,11 +72,18 @@ export function fetchSandbox(db: Kysely<DB>) {
     return await db
       .selectFrom("sandbox")
       .selectAll()
-      .where("state", "in", ["starting", "running"])
-      .where("alwaysOn", "=", false)
-      .where(sql<boolean>`last_activity_at < now() - (interval '1 second' * idle_timeout_s)`)
+      .where((eb) =>
+        eb.or([
+          eb.and([
+            eb("state", "in", ["starting", "running"]),
+            eb("alwaysOn", "=", false),
+            sql<boolean>`last_activity_at < now() - (interval '1 second' * idle_timeout_s)`,
+          ]),
+          eb.and([eb("state", "=", "failed"), eb("externalId", "is not", null)]),
+        ]),
+      )
       .execute()
   }
 
-  return { forUser, getInOrganization, idle }
+  return { forUser, forUserForUpdate, getInOrganization, idle }
 }
