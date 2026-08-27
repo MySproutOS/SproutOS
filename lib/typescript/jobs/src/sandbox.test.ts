@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import {
   meterSandboxes,
+  findSandboxPostgresServiceId,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
   provisionSandbox,
   reconcileSandboxes,
@@ -102,6 +103,7 @@ afterAll(async () => {
     )
     await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
+    await tx.deleteFrom("backendService").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("repository").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("organization").where("id", "=", organizationId).execute()
@@ -697,6 +699,56 @@ describe("sandbox lifecycle requests", () => {
       payload: { sandboxId: sandbox.id },
       idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}`,
     })
+  })
+})
+
+describe("sandbox dev database scope", () => {
+  it("finds a Postgres service on a child when the sandbox is scoped to its group", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+
+    const groupId = v7()
+    const childId = v7()
+    const backendServiceId = v7()
+    const region = await db.selectFrom("region").select("id").executeTakeFirstOrThrow()
+
+    await db
+      .insertInto("project")
+      .values([
+        {
+          id: groupId,
+          organizationId,
+          repositoryId,
+          name: "Sandbox Database Group",
+          slug: `sandbox-db-group-${groupId.slice(-8)}`,
+          isGroup: true,
+        },
+        {
+          id: childId,
+          organizationId,
+          repositoryId,
+          name: "Sandbox Database Child",
+          slug: `sandbox-db-child-${childId.slice(-8)}`,
+          rootDir: `apps/${childId.slice(-8)}`,
+          parentProjectId: groupId,
+        },
+      ])
+      .execute()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: backendServiceId,
+        organizationId,
+        projectId: childId,
+        regionId: region.id,
+        name: "child-postgres",
+        kind: "postgres",
+        status: "active",
+      })
+      .execute()
+
+    await expect(findSandboxPostgresServiceId(db, groupId)).resolves.toBe(backendServiceId)
   })
 })
 
