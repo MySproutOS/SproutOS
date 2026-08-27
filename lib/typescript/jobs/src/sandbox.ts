@@ -11,7 +11,7 @@ import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/
 import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { SandboxDriver } from "@lib/sandbox"
 import type { DB, JsonValue } from "@sproutos/db"
-import { sql, type Kysely } from "kysely"
+import { sql, type Kysely, type Selectable } from "kysely"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
@@ -51,6 +51,117 @@ const DIMENSIONS = {
   diskGib: "sandbox_disk_gib_second",
 } as const satisfies Record<string, BillableDimension>
 
+export async function requestSandboxStart(
+  db: Kysely<DB>,
+  input: {
+    organizationId: string
+    projectId: string
+    userId: string
+    idleTimeoutS: number
+  },
+): Promise<Selectable<DB["sandbox"]>> {
+  return await db.transaction().execute(async (tx) => {
+    let sandbox = await fetchSandbox(tx).forUserForUpdate(
+      input.organizationId,
+      input.projectId,
+      input.userId,
+    )
+
+    if (sandbox === undefined) {
+      sandbox = await crudSandbox(tx).createIfAbsent({
+        projectId: input.projectId,
+        userId: input.userId,
+        state: "starting",
+        idleTimeoutS: input.idleTimeoutS,
+      })
+
+      if (sandbox !== undefined) {
+        await enqueue(tx, {
+          kind: SANDBOX_KINDS.provision,
+          organizationId: input.organizationId,
+          payload: { sandboxId: sandbox.id },
+          idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}`,
+          maxAttempts: 3,
+        })
+        return sandbox
+      }
+
+      sandbox = await fetchSandbox(tx).forUserForUpdate(
+        input.organizationId,
+        input.projectId,
+        input.userId,
+      )
+      if (sandbox === undefined) throw new Error("sandbox uniqueness conflict produced no row")
+    }
+
+    if (sandbox.state === "stopped" || sandbox.state === "failed") {
+      const kind =
+        sandbox.state === "failed" || sandbox.externalId === null
+          ? SANDBOX_KINDS.provision
+          : SANDBOX_KINDS.start
+      const transitioned = await crudSandbox(tx).updateIfState(sandbox.id, ["stopped", "failed"], {
+        state: "starting",
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
+      })
+      if (transitioned !== undefined) {
+        await enqueue(tx, {
+          kind,
+          organizationId: input.organizationId,
+          payload: { sandboxId: sandbox.id },
+          idempotencyKey: `${kind}:${sandbox.id}:${transitioned.updatedAt.toISOString()}`,
+          maxAttempts: 3,
+        })
+        return transitioned
+      }
+    }
+
+    if (sandbox.state === "deleting") throw new SandboxDeletingError(sandbox.id)
+
+    await crudSandbox(tx).touch(sandbox.id)
+    return sandbox
+  })
+}
+
+export class SandboxDeletingError extends Error {
+  override readonly name = "SandboxDeletingError"
+
+  constructor(readonly sandboxId: string) {
+    super(`sandbox ${sandboxId} is being deleted`)
+  }
+}
+
+export async function requestSandboxDestroy(
+  db: Kysely<DB>,
+  input: { organizationId: string; projectId: string; userId: string },
+): Promise<Selectable<DB["sandbox"]> | undefined> {
+  return await db.transaction().execute(async (tx) => {
+    const sandbox = await fetchSandbox(tx).forUserForUpdate(
+      input.organizationId,
+      input.projectId,
+      input.userId,
+    )
+    if (sandbox === undefined) return undefined
+
+    const deleting =
+      sandbox.state === "deleting"
+        ? sandbox
+        : ((await crudSandbox(tx).updateIfState(
+            sandbox.id,
+            ["starting", "running", "idle", "stopped", "failed"],
+            { state: "deleting" },
+          )) ?? sandbox)
+
+    await enqueue(tx, {
+      kind: SANDBOX_KINDS.destroy,
+      organizationId: input.organizationId,
+      payload: { sandboxId: sandbox.id },
+      idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}`,
+      maxAttempts: 3,
+    })
+    return deleting
+  })
+}
+
 /**
  * Meter every running sandbox up to now.
  *
@@ -67,7 +178,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
   const due = await db
     .selectFrom("sandbox")
     .select("id")
-    .where("sandbox.state", "in", ["starting", "running", "idle"])
+    .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
     // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
     // deadlock by each holding the row the other plans to claim next.
     .orderBy("id")
@@ -102,7 +213,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
           "project.organizationId",
         ])
         .where("sandbox.id", "=", candidate.id)
-        .where("sandbox.state", "in", ["starting", "running", "idle"])
+        .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
         .forUpdate("sandbox")
         .executeTakeFirst()
       if (sandbox === undefined) return false
@@ -279,6 +390,7 @@ async function bootstrap(
       .select([
         "project.slug as slug",
         "project.productionBranch as branch",
+        "repository.id as repositoryId",
         "repository.ownerLogin as owner",
         "repository.name as name",
       ])
@@ -286,19 +398,12 @@ async function bootstrap(
       .executeTakeFirst()
     if (project === undefined) return ["the project disappeared before the sandbox was ready"]
 
-    /*
-      The installation that owns this repository, or the organization's only one.
-
-      `listUsable` already excludes suspended and deleted installations — a suspended App is the
-      common way this breaks, and cloning with its token fails with a 401 that says nothing about
-      suspension.
-    */
-    const installations = await fetchGithubInstallation(db).listUsable(input.organizationId, [
-      "installationId",
-      "accountLogin",
-    ])
-    const installation =
-      installations.find((row) => row.accountLogin === project.owner) ?? installations[0]
+    /* The exact installation linked to this repository; another installation is not authority. */
+    const installation = await fetchGithubInstallation(db).getForRepository(
+      input.organizationId,
+      project.repositoryId,
+      ["installationId"],
+    )
     if (installation === undefined) {
       // Not a failure of the sandbox. Said plainly because "the agent cannot see your code" has a
       // cause the customer can act on, and a generic bootstrap error does not.
@@ -452,6 +557,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         "sandbox.idleTimeoutS",
         "sandbox.alwaysOn",
         "sandbox.externalId",
+        "sandbox.state",
         "project.organizationId",
       ])
       .where("sandbox.id", "=", sandboxId)
@@ -460,32 +566,56 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
     // Deleted between enqueue and claim. Nothing to provision and nothing to report.
     if (sandbox === undefined) return
 
-    /*
-      Already created at the provider, but not necessarily bootstrapped.
-
-      A job whose lease expired mid-create is retried, and the provider may well have created the
-      sandbox before we lost the response. Creating a second one would leave the first running,
-      unreferenced and billing — the unique index on `(provider, external_id)` prevents the row, not
-      the container. Finish bootstrap against the recorded object and only then expose it as
-      `running`; the UI treats that state as permission to send a turn immediately.
-    */
-    if (sandbox.externalId !== null) {
-      const problems = await bootstrap(db, makeDriver(), {
-        externalId: sandbox.externalId,
-        organizationId: sandbox.organizationId,
-        projectId: sandbox.projectId,
-        userId: sandbox.userId,
-      })
-      if (problems.length > 0) {
-        console.warn(
-          `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
-        )
-      }
-      await crudSandbox(db).update(sandbox.id, { state: "running" })
+    if (
+      sandbox.state === "running" ||
+      sandbox.state === "idle" ||
+      sandbox.state === "stopped" ||
+      sandbox.state === "deleting"
+    ) {
       return
     }
 
+    let sandboxDriver: SandboxDriver | undefined
+    let providerExternalId = sandbox.externalId
     try {
+      sandboxDriver = makeDriver()
+
+      /*
+        Already created at the provider, but not necessarily bootstrapped.
+
+        A job whose lease expired mid-create is retried, and the provider may well have created the
+        sandbox before we lost the response. Creating a second one would leave the first running,
+        unreferenced and billing — the unique index on `(provider, external_id)` prevents the row,
+        not the container. Finish bootstrap against the recorded object and only then expose it as
+        `running`; the UI treats that state as permission to send a turn immediately.
+      */
+      if (sandbox.externalId !== null) {
+        const providerState = await sandboxDriver.state(sandbox.externalId)
+        if (!["started", "running"].includes(providerState)) {
+          await sandboxDriver.start(sandbox.externalId)
+        }
+        const current = await db
+          .selectFrom("sandbox")
+          .select("state")
+          .where("id", "=", sandbox.id)
+          .executeTakeFirst()
+        if (current === undefined || current.state === "deleting") {
+          await sandboxDriver.destroy(sandbox.externalId)
+          return
+        }
+        const problems = await bootstrap(db, sandboxDriver, {
+          externalId: sandbox.externalId,
+          organizationId: sandbox.organizationId,
+          projectId: sandbox.projectId,
+          userId: sandbox.userId,
+        })
+        if (problems.length > 0) throw new SandboxBootstrapError(sandbox.id, problems)
+        await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
+          state: "running",
+        })
+        return
+      }
+
       /*
         The branch is created before the container, because it is the part that can fail.
 
@@ -500,7 +630,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         sandboxId: sandbox.id,
       })
 
-      const created = await makeDriver().create({
+      const created = await sandboxDriver.create({
         sandboxId: sandbox.id,
         organizationId: sandbox.organizationId,
         projectId: sandbox.projectId,
@@ -515,8 +645,9 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         alwaysOn: sandbox.alwaysOn,
         ...(database === undefined ? {} : { env: database.env }),
       })
+      providerExternalId = created.externalId
 
-      await crudSandbox(db).update(sandbox.id, {
+      const recorded = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
         externalId: created.externalId,
         ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
         // The meter starts when the sandbox does, not when the row was inserted — a create that
@@ -524,6 +655,13 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         meteredThrough: sql<Date>`now()` as unknown as Date,
         lastActivityAt: sql<Date>`now()` as unknown as Date,
       })
+      if (recorded === undefined) {
+        await sandboxDriver.destroy(created.externalId)
+        if (database !== undefined) {
+          await dropDevBranch(db, neonPostgresConfigFromEnv(), database.databaseBranchId)
+        }
+        return
+      }
 
       /*
         A sandbox with nothing in it is a sandbox nobody can work in.
@@ -534,26 +672,50 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         customer is already waiting for the sandbox to start, instead of in the middle of their
         first message.
 
-        Failures are recorded on the row and do not fail the job. A sandbox with a checkout and no
-        skill is degraded; one that failed to provision because a file did not write is gone, and
-        the customer is told to try again for a reason that has nothing to do with them.
+        Every reported problem fails the job. Publishing `running` after clone or file setup failed
+        would send the first turn into an empty or partial workspace while claiming bootstrap had
+        completed. The catch below stops the provider before it publishes `failed`.
       */
-      const problems = await bootstrap(db, makeDriver(), {
+      const problems = await bootstrap(db, sandboxDriver, {
         externalId: created.externalId,
         organizationId: sandbox.organizationId,
         projectId: sandbox.projectId,
         userId: sandbox.userId,
       })
-      if (problems.length > 0) {
-        console.warn(
-          `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
+      if (problems.length > 0) throw new SandboxBootstrapError(sandbox.id, problems)
+      await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
+        state: "running",
+      })
+    } catch (error) {
+      let cleanupError: unknown
+      if (sandboxDriver !== undefined && providerExternalId !== null) {
+        try {
+          await sandboxDriver.stop(providerExternalId)
+        } catch (cause) {
+          if (!(cause instanceof SandboxNotFoundError)) cleanupError = cause
+        }
+      }
+      await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], { state: "failed" })
+      if (cleanupError !== undefined) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `sandbox ${sandbox.id} failed and its provider cleanup also failed`,
+          { cause: error },
         )
       }
-      await crudSandbox(db).update(sandbox.id, { state: "running" })
-    } catch (error) {
-      await crudSandbox(db).update(sandbox.id, { state: "failed" })
       throw error
     }
+  }
+}
+
+export class SandboxBootstrapError extends Error {
+  override readonly name = "SandboxBootstrapError"
+
+  constructor(
+    readonly sandboxId: string,
+    readonly problems: readonly string[],
+  ) {
+    super(`sandbox ${sandboxId} could not be bootstrapped: ${problems.join("; ")}`)
   }
 }
 
@@ -569,22 +731,51 @@ export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandl
       .where("id", "=", sandboxId)
       .executeTakeFirst()
 
-    if (sandbox === undefined || sandbox.state === "running") return
+    if (
+      sandbox === undefined ||
+      sandbox.state === "running" ||
+      sandbox.state === "idle" ||
+      sandbox.state === "stopped" ||
+      sandbox.state === "deleting"
+    ) {
+      return
+    }
     if (sandbox.externalId === null) {
-      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], { state: "failed" })
       throw new Error(`sandbox ${sandbox.id} has no provider id to start`)
     }
 
     try {
-      await makeDriver().start(sandbox.externalId)
-      await crudSandbox(db).update(sandbox.id, {
+      const sandboxDriver = makeDriver()
+      await sandboxDriver.start(sandbox.externalId)
+      const running = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
         state: "running",
         // A stopped interval is not billable. Restarting begins a new interval at Postgres's clock.
         meteredThrough: sql<Date>`now()` as unknown as Date,
         lastActivityAt: sql<Date>`now()` as unknown as Date,
       })
+      if (running === undefined) {
+        const current = await db
+          .selectFrom("sandbox")
+          .select("state")
+          .where("id", "=", sandbox.id)
+          .executeTakeFirst()
+        if (current === undefined || current.state === "deleting") {
+          await sandboxDriver.destroy(sandbox.externalId)
+        }
+      }
     } catch (error) {
-      await crudSandbox(db).update(sandbox.id, { state: "failed" })
+      const failed = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
+        state: "failed",
+      })
+      if (failed === undefined) {
+        const current = await db
+          .selectFrom("sandbox")
+          .select("state")
+          .where("id", "=", sandbox.id)
+          .executeTakeFirst()
+        if (current?.state === "running") return
+      }
       throw error
     }
   }
@@ -603,7 +794,7 @@ export function stopSandbox(makeDriver: () => SandboxDriver = driver): JobHandle
       .where("id", "=", sandboxId)
       .executeTakeFirst()
 
-    if (sandbox === undefined || sandbox.state === "stopped") return
+    if (sandbox === undefined || sandbox.state === "stopped" || sandbox.state === "deleting") return
 
     /*
       Meter before stopping, not after.
@@ -624,7 +815,9 @@ export function stopSandbox(makeDriver: () => SandboxDriver = driver): JobHandle
       }
     }
 
-    await crudSandbox(db).update(sandbox.id, { state: "stopped" })
+    await crudSandbox(db).updateIfState(sandbox.id, ["starting", "running", "idle"], {
+      state: "stopped",
+    })
   }
 }
 

@@ -215,16 +215,13 @@ const app = new Hono()
         return throwBadRequest(c, `No model credential configured (${credential.reason})`)
       }
       /*
-        Two runners, chosen by who pays.
+        Two credential sources, one coding environment.
 
-        A customer on their own credential gets the Claude Code agent: a checkout, tools, and a
-        pull request. A customer paying out of credits gets the platform assistant, which answers
-        questions and cannot touch their repository — our key is OpenAI's, and giving a second
-        model harness write access to someone's code is not a thing to add quietly.
-
-        The consequence is visible rather than hidden: the credit-billed path needs no repository,
-        so it does not fail on a missing GitHub App, and it says in its own system prompt that it
-        cannot make changes.
+        A configured customer credential is passed through the LLM proxy and billed by their
+        provider. Platform credit selects the platform OpenAI credential at the proxy. Once a
+        Daytona sandbox is running both execute the coding harness there, because shell access,
+        previews and repository edits are the product — the read-only API-process assistant below
+        remains only a compatibility fallback for direct clients that did not start a sandbox.
       */
       const onPlatformCredit = credential.billing === "platform"
 

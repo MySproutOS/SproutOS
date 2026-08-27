@@ -31,7 +31,14 @@ import type { PartialBy } from "../utils/types"
  * A comment claiming two things match is not a check that they do. Declared as an array so it can
  * be one: `fetch.test.ts` compares this to `pg_constraint` in both directions.
  */
-export const SANDBOX_STATES = ["starting", "running", "idle", "stopped", "failed"] as const
+export const SANDBOX_STATES = [
+  "starting",
+  "running",
+  "idle",
+  "stopped",
+  "failed",
+  "deleting",
+] as const
 
 export type SandboxState = (typeof SANDBOX_STATES)[number]
 
@@ -46,6 +53,17 @@ export function crudSandbox(db: Kysely<DB>) {
       .executeTakeFirstOrThrow()
   }
 
+  async function createIfAbsent(
+    data: PartialBy<Insertable<DB["sandbox"]>, "id">,
+  ): Promise<Selectable<DB["sandbox"]> | undefined> {
+    return await db
+      .insertInto("sandbox")
+      .values({ id: v7(), ...data })
+      .onConflict((oc) => oc.columns(["projectId", "userId"]).doNothing())
+      .returningAll()
+      .executeTakeFirst()
+  }
+
   async function update(
     id: string,
     values: Partial<Insertable<DB["sandbox"]>>,
@@ -54,6 +72,20 @@ export function crudSandbox(db: Kysely<DB>) {
       .updateTable("sandbox")
       .set({ ...values, updatedAt: new Date() })
       .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirst()
+  }
+
+  async function updateIfState(
+    id: string,
+    states: readonly SandboxState[],
+    values: Partial<Insertable<DB["sandbox"]>>,
+  ): Promise<Selectable<DB["sandbox"]> | undefined> {
+    return await db
+      .updateTable("sandbox")
+      .set({ ...values, updatedAt: new Date() })
+      .where("id", "=", id)
+      .where("state", "in", [...states])
       .returningAll()
       .executeTakeFirst()
   }
@@ -80,5 +112,5 @@ export function crudSandbox(db: Kysely<DB>) {
     await db.deleteFrom("sandbox").where("id", "=", id).execute()
   }
 
-  return { create, update, touch, remove }
+  return { create, createIfAbsent, update, updateIfState, touch, remove }
 }

@@ -1,14 +1,18 @@
 import { crudSandbox } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import {
   meterSandboxes,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
+  provisionSandbox,
   reconcileSandboxes,
   reapSandboxes,
+  requestSandboxDestroy,
+  requestSandboxStart,
   SANDBOX_KINDS,
+  SandboxDeletingError,
   startSandbox,
 } from "./sandbox"
 
@@ -21,6 +25,7 @@ import {
 let reachable = false
 let organizationId: string
 let userId: string
+let otherUserId: string
 let repositoryId: string
 let projectId: string
 
@@ -36,13 +41,17 @@ beforeAll(async () => {
   }
 
   userId = v7()
+  otherUserId = v7()
   organizationId = v7()
   repositoryId = v7()
   projectId = v7()
 
   await db
     .insertInto("user")
-    .values({ id: userId, email: `mtr-${userId}@test.invalid`, name: "Meter Test" })
+    .values([
+      { id: userId, email: `mtr-${userId}@test.invalid`, name: "Meter Test" },
+      { id: otherUserId, email: `mtr-${otherUserId}@test.invalid`, name: "Meter Test Other" },
+    ])
     .execute()
   await db
     .insertInto("organization")
@@ -71,6 +80,18 @@ beforeAll(async () => {
     .execute()
 })
 
+beforeEach(async () => {
+  if (!reachable || !organizationId) return
+  await db.transaction().execute(async (tx) => {
+    await sql`set local session_replication_role = 'replica'`.execute(tx)
+    await sql`delete from metering_outbox where payload ->> 'organization_id' = ${organizationId}`.execute(
+      tx,
+    )
+    await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
+    await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
+  })
+})
+
 afterAll(async () => {
   if (!reachable || !organizationId) return
   await db.transaction().execute(async (tx) => {
@@ -83,7 +104,7 @@ afterAll(async () => {
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("repository").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("organization").where("id", "=", organizationId).execute()
-    await tx.deleteFrom("user").where("id", "=", userId).execute()
+    await tx.deleteFrom("user").where("id", "in", [userId, otherUserId]).execute()
   })
   await db.destroy()
 })
@@ -415,7 +436,7 @@ describe("reapSandboxes", () => {
     })
     const alwaysOn = await crudSandbox(db).create({
       projectId,
-      userId,
+      userId: otherUserId,
       state: "running",
       idleTimeoutS: 1,
       alwaysOn: true,
@@ -433,6 +454,25 @@ describe("reapSandboxes", () => {
     const targets = queued.map((row) => (row.payload as { sandboxId?: string }).sandboxId)
     expect(targets).toContain(idle.id)
     expect(targets).not.toContain(alwaysOn.id)
+  })
+
+  it("retries provider cleanup for a failed sandbox with an external id", async ({ skip }) => {
+    if (!reachable) skip()
+    const failed = await crudSandbox(db).create({
+      projectId,
+      userId,
+      state: "failed",
+      externalId: `failed-provider-${v7()}`,
+    })
+
+    await reapSandboxes(job, context)
+
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select("payload")
+      .where("kind", "=", SANDBOX_KINDS.stop)
+      .execute()
+    expect(queued.map((row) => row.payload)).toContainEqual({ sandboxId: failed.id })
   })
 })
 
@@ -498,5 +538,172 @@ describe("startSandbox", () => {
       .executeTakeFirstOrThrow()
     expect(row.state).toBe("running")
     expect(row.meteredThrough?.getTime()).toBeGreaterThan(Date.now() - 10_000)
+  })
+
+  it("cannot let a failed concurrent start overwrite a successful one", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-concurrent-start-${v7()}`,
+      provider: "daytona",
+      state: "starting",
+    })
+    let releaseFailure: (() => void) | undefined
+    const successful = new Promise<void>((resolve) => {
+      releaseFailure = resolve
+    })
+    let calls = 0
+    const handler = startSandbox(
+      () =>
+        ({
+          start: async () => {
+            calls += 1
+            if (calls === 1) {
+              await successful
+              throw new Error("the losing provider call failed")
+            }
+            releaseFailure?.()
+          },
+        }) as never,
+    )
+    const makeJob = () =>
+      ({ id: v7(), kind: SANDBOX_KINDS.start, payload: { sandboxId: sandbox.id } }) as never
+
+    const outcomes = await Promise.allSettled([
+      handler(makeJob(), context),
+      handler(makeJob(), context),
+    ])
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true)
+    expect(calls).toBe(2)
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select("state")
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("running")
+  })
+})
+
+describe("sandbox lifecycle requests", () => {
+  it("creates one row and one provision job under concurrent first starts", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const starts = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        requestSandboxStart(db, {
+          organizationId,
+          projectId,
+          userId,
+          idleTimeoutS: 900,
+        }),
+      ),
+    )
+
+    expect(new Set(starts.map((row) => row.id)).size).toBe(1)
+    const rows = await db
+      .selectFrom("sandbox")
+      .select("id")
+      .where("projectId", "=", projectId)
+      .where("userId", "=", userId)
+      .execute()
+    expect(rows).toHaveLength(1)
+    const jobs = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "payload"])
+      .where("organizationId", "=", organizationId)
+      .where("kind", "=", SANDBOX_KINDS.provision)
+      .execute()
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]?.payload).toEqual({ sandboxId: rows[0]?.id })
+  })
+
+  it("marks deletion and enqueues it atomically, then refuses a restart", async ({ skip }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({ projectId, userId, state: "running" })
+
+    const deleting = await requestSandboxDestroy(db, { organizationId, projectId, userId })
+    expect(deleting?.state).toBe("deleting")
+    await expect(
+      requestSandboxStart(db, { organizationId, projectId, userId, idleTimeoutS: 900 }),
+    ).rejects.toBeInstanceOf(SandboxDeletingError)
+
+    const destroyJob = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "payload", "idempotencyKey"])
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirstOrThrow()
+    expect(destroyJob).toMatchObject({
+      kind: SANDBOX_KINDS.destroy,
+      payload: { sandboxId: sandbox.id },
+      idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}`,
+    })
+  })
+})
+
+describe("provisionSandbox", () => {
+  it("marks an external-id retry failed when driver configuration cannot be built", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-bootstrap-retry-${v7()}`,
+      state: "starting",
+    })
+
+    await expect(
+      provisionSandbox(() => {
+        throw new Error("driver configuration is unavailable")
+      })(
+        { id: v7(), kind: SANDBOX_KINDS.provision, payload: { sandboxId: sandbox.id } } as never,
+        context,
+      ),
+    ).rejects.toThrow("driver configuration is unavailable")
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select("state")
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("failed")
+  })
+
+  it("treats bootstrap problems as job failures", async ({ skip }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-bootstrap-problem-${v7()}`,
+      state: "starting",
+    })
+
+    const stopped: string[] = []
+    await expect(
+      provisionSandbox(
+        () =>
+          ({
+            state: () => Promise.resolve("started"),
+            stop: (externalId: string) => {
+              stopped.push(externalId)
+              return Promise.resolve()
+            },
+          }) as never,
+      )(
+        { id: v7(), kind: SANDBOX_KINDS.provision, payload: { sandboxId: sandbox.id } } as never,
+        context,
+      ),
+    ).rejects.toThrow(/could not be bootstrapped/)
+    expect(stopped).toEqual([sandbox.externalId])
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select("state")
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("failed")
   })
 })

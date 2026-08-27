@@ -39,6 +39,7 @@ describe("ensureSandboxRunning", () => {
     let now = 0
 
     await ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+      preflight: () => Promise.resolve(),
       start,
       read,
       wait,
@@ -53,12 +54,27 @@ describe("ensureSandboxRunning", () => {
   it("reports a provider-side start failure without opening an agent stream", async () => {
     await expect(
       ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+        preflight: () => Promise.resolve(),
         start: () => Promise.resolve(),
         read: () => Promise.resolve("failed"),
         wait: () => Promise.resolve(),
         now: () => 0,
       }),
     ).rejects.toThrow("The sandbox failed to start")
+  })
+
+  it("refuses an unconfigured agent before renting a sandbox", async () => {
+    const start = vi.fn<() => Promise<void>>()
+    await expect(
+      ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+        preflight: () => Promise.reject(new Error("No model credential configured (no_config)")),
+        start,
+        read: () => Promise.resolve("running"),
+        wait: () => Promise.resolve(),
+        now: () => 0,
+      }),
+    ).rejects.toThrow("No model credential configured (no_config)")
+    expect(start).not.toHaveBeenCalled()
   })
 })
 

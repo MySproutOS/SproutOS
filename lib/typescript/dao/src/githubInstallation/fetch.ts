@@ -24,7 +24,14 @@ export function fetchGithubInstallation(db: Kysely<DB>) {
       .executeTakeFirst()
 
     if (repository === undefined || repository.githubInstallationId === null) return undefined
-    return await getInOrganization(organizationId, repository.githubInstallationId, fields)
+    return await db
+      .selectFrom("githubInstallation")
+      .select(fields)
+      .where("id", "=", repository.githubInstallationId)
+      .where("organizationId", "=", organizationId)
+      .where("deletedAt", "is", null)
+      .where("suspendedAt", "is", null)
+      .executeTakeFirst()
   }
 
   async function getInOrganization<T extends (keyof DB["githubInstallation"])[]>(

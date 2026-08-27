@@ -5,11 +5,21 @@ import {
   CircleAlertIcon,
   MessageSquarePlusIcon,
   SendIcon,
+  Trash2Icon,
   WrenchIcon,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@ui/base/ui/dialog"
 import {
   EmptyState,
   EmptyStateDescription,
@@ -26,6 +36,7 @@ import {
   streamAgentTurn,
   useAgentSessions,
   useCreateAgentSession,
+  useFinishSandbox,
 } from "@frontends/dashboard/data/agent-chat"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/agent")({
@@ -43,11 +54,14 @@ function AgentChat() {
   const { orgSlug, projectId } = Route.useParams()
   const sessions = useAgentSessions(orgSlug, projectId)
   const { createSession } = useCreateAgentSession(orgSlug, projectId)
+  const finishSandbox = useFinishSandbox(orgSlug, projectId)
 
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [bubbles, setBubbles] = useState<Bubble[]>([])
   const [prompt, setPrompt] = useState("")
   const [running, setRunning] = useState(false)
+  const [confirmingFinish, setConfirmingFinish] = useState(false)
+  const [finishError, setFinishError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const tail = useRef<HTMLDivElement>(null)
 
@@ -114,6 +128,18 @@ function AgentChat() {
         >
           <MessageSquarePlusIcon />
           New chat
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={running || finishSandbox.isPending || bubbles.length === 0}
+          onClick={() => {
+            setFinishError(null)
+            setConfirmingFinish(true)
+          }}
+        >
+          <Trash2Icon />
+          Done
         </Button>
       </PageHeader>
 
@@ -204,6 +230,49 @@ function AgentChat() {
           </div>
         </div>
       </PageBody>
+
+      <Dialog open={confirmingFinish} onOpenChange={setConfirmingFinish}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this agent workspace?</DialogTitle>
+            <DialogDescription>
+              Use this when you are completely done. SproutOS will delete the Daytona sandbox and
+              its temporary database branch. Changes already pushed to GitHub are kept.
+            </DialogDescription>
+          </DialogHeader>
+
+          {finishError === null ? null : (
+            <p className="mt-3 text-xs text-destructive">{finishError}</p>
+          )}
+
+          <DialogFooter className="mt-6">
+            <DialogClose render={<Button variant="outline">Keep working</Button>} />
+            <Button
+              variant="destructive"
+              disabled={finishSandbox.isPending}
+              onClick={() => {
+                setFinishError(null)
+                void finishSandbox
+                  .finish()
+                  .then(() => {
+                    setConfirmingFinish(false)
+                    setSessionId(null)
+                    setBubbles([])
+                  })
+                  .catch((cause: unknown) => {
+                    setFinishError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "The workspace could not be deleted.",
+                    )
+                  })
+              }}
+            >
+              {finishSandbox.isPending ? "Deleting…" : "Delete workspace"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
