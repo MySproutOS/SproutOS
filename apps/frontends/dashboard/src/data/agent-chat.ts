@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandboxOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandboxQueryKey,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsOptions,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation,
@@ -119,6 +121,21 @@ export function useAgentSessions(orgSlug: string, projectId: string) {
   }
 }
 
+/** The newest conversation that can be continued after the Agent route remounts. */
+export function latestRestorableAgentSession(
+  sessions: AgentSession[] | undefined,
+): AgentSession | undefined {
+  return sessions?.find((session) => session.status === "active" || session.status === "idle")
+}
+
+/** The workspace is durable API state; transcript bubbles are not evidence that it exists. */
+export function useAgentSandbox(orgSlug: string, projectId: string) {
+  return useQuery({
+    ...getV1OrgsByOrgSlugProjectsByProjectIdSandboxOptions({ path: { orgSlug, projectId } }),
+    retry: false,
+  })
+}
+
 export function useCreateAgentSession(orgSlug: string, projectId: string) {
   const client = useQueryClient()
   const mutation = useMutation(postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation())
@@ -139,12 +156,18 @@ export function useCreateAgentSession(orgSlug: string, projectId: string) {
 
 /** Permanently release the Daytona workspace and its branch-scoped development database. */
 export function useFinishSandbox(orgSlug: string, projectId: string) {
+  const client = useQueryClient()
   const mutation = useMutation(deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation())
   return {
     ...mutation,
     finish: async (): Promise<void> => {
       await mutation.mutateAsync({ path: { orgSlug, projectId } })
       await waitForSandboxDeletion({ orgSlug, projectId })
+      client.removeQueries({
+        queryKey: getV1OrgsByOrgSlugProjectsByProjectIdSandboxQueryKey({
+          path: { orgSlug, projectId },
+        }),
+      })
     },
   }
 }

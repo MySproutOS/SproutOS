@@ -33,7 +33,9 @@ import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page
 import {
   type AgentEvent,
   ensureSandboxRunning,
+  latestRestorableAgentSession,
   streamAgentTurn,
+  useAgentSandbox,
   useAgentSessions,
   useCreateAgentSession,
   useFinishSandbox,
@@ -53,6 +55,7 @@ type Bubble =
 function AgentChat() {
   const { orgSlug, projectId } = Route.useParams()
   const sessions = useAgentSessions(orgSlug, projectId)
+  const sandbox = useAgentSandbox(orgSlug, projectId)
   const { createSession } = useCreateAgentSession(orgSlug, projectId)
   const finishSandbox = useFinishSandbox(orgSlug, projectId)
 
@@ -63,6 +66,8 @@ function AgentChat() {
   const [confirmingFinish, setConfirmingFinish] = useState(false)
   const [finishError, setFinishError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
+  const adoptedExistingSession = useRef(false)
+  const routeScope = useRef(`${orgSlug}/${projectId}`)
   const tail = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -72,6 +77,26 @@ function AgentChat() {
   // A run outlives a keystroke but not the page. Leaving one streaming into an unmounted
   // component would keep burning tokens against a balance nobody is watching.
   useEffect(() => () => abort.current?.abort(), [])
+
+  useEffect(() => {
+    const nextScope = `${orgSlug}/${projectId}`
+    if (routeScope.current === nextScope) return
+    routeScope.current = nextScope
+    adoptedExistingSession.current = false
+    setSessionId(null)
+    setBubbles([])
+  }, [orgSlug, projectId])
+
+  /*
+    Route navigation unmounts this component, so bubbles cannot be the source of conversation
+    identity. Adopt the newest durable session once per mount. `New chat` flips the same guard by
+    leaving it true, so the sessions query cannot immediately undo the user's choice.
+  */
+  useEffect(() => {
+    if (sessions.isPending || adoptedExistingSession.current) return
+    adoptedExistingSession.current = true
+    setSessionId(latestRestorableAgentSession(sessions.data)?.id ?? null)
+  }, [sessions.data, sessions.isPending])
 
   const send = async () => {
     const text = prompt.trim()
@@ -86,6 +111,7 @@ function AgentChat() {
 
     try {
       await ensureSandboxRunning({ orgSlug, projectId }, controller.signal)
+      await sandbox.refetch()
       const id = sessionId ?? (await createSession())
       setSessionId(id)
 
@@ -120,7 +146,7 @@ function AgentChat() {
         <Button
           variant="ghost"
           size="sm"
-          disabled={running || bubbles.length === 0}
+          disabled={running || sessionId === null}
           onClick={() => {
             setSessionId(null)
             setBubbles([])
@@ -132,7 +158,7 @@ function AgentChat() {
         <Button
           variant="ghost"
           size="sm"
-          disabled={running || finishSandbox.isPending || bubbles.length === 0}
+          disabled={running || finishSandbox.isPending || sandbox.data === undefined}
           onClick={() => {
             setFinishError(null)
             setConfirmingFinish(true)
