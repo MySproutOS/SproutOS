@@ -26,7 +26,7 @@ pub mod resp;
 pub mod scan;
 pub mod upstream;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use bytes::BytesMut;
 use sproutos_tenant_auth::{ResourceKind, TenantIdentity, encode_short_id};
@@ -38,7 +38,7 @@ use crate::commands::{adds_work, namespace_command, queue_of};
 use crate::keyspace::{prefix_for, strip};
 use crate::master::{MasterQueue, Wake};
 use crate::provision::AclProvisioner;
-use crate::reply::{echoes_key, frame};
+use crate::reply::{echoes_key, frame, is_pubsub_push, rewrite_pubsub, rewrite_xread_streams};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
 use crate::scan::ScanRequest;
 pub use sproutos_service_credentials::CredentialStore;
@@ -102,6 +102,8 @@ pub async fn serve(
     let mut pending: VecDeque<Pending> = VecDeque::new();
     const MAX_PENDING: usize = 8192;
     let mut mode = ConnectionMode::Normal;
+    let mut subscriptions = BTreeSet::new();
+    let mut patterns = BTreeSet::new();
 
     loop {
         tokio::select! {
@@ -131,6 +133,11 @@ pub async fn serve(
                                     Some(b"3") => error("RESP3 is not supported by this proxy"),
                                     _ => error("HELLO requires protocol version 2"),
                                 };
+                                pending.push_back(Pending::Local(reply));
+                                drain_local(&mut pending, &mut client_write).await?;
+                                continue;
+                            }
+                            if let Some(reply) = compatibility_reply(&command) {
                                 pending.push_back(Pending::Local(reply));
                                 drain_local(&mut pending, &mut client_write).await?;
                                 continue;
@@ -184,9 +191,47 @@ pub async fn serve(
                                 }
                                 continue;
                             }
+                            if mode == ConnectionMode::Multi
+                                && matches!(
+                                    verb.as_str(),
+                                    "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                )
+                            {
+                                pending.push_back(Pending::Local(error(
+                                    "pub/sub is not allowed in MULTI",
+                                )));
+                                drain_local(&mut pending, &mut client_write).await?;
+                                continue;
+                            }
 
                             match namespace_command(&mut command.args, &prefix) {
                                 Ok(namespaced_keys) => {
+                                    if matches!(verb.as_str(), "PSUBSCRIBE" | "PUNSUBSCRIBE")
+                                        && command.args.len() > 1
+                                        && let Err(cause) = provisioner
+                                            .allow_channel_patterns(&identity, &command.args[1..])
+                                            .await
+                                    {
+                                        warn!(tenant = %identity, %cause, "tenant channel pattern grant failed closed");
+                                        pending.push_back(Pending::Local(error(
+                                            "pattern subscriptions are temporarily unavailable",
+                                        )));
+                                        drain_local(&mut pending, &mut client_write).await?;
+                                        continue;
+                                    }
+                                    let acknowledgements = match update_pubsub_state(
+                                        &verb,
+                                        &command.args,
+                                        &mut subscriptions,
+                                        &mut patterns,
+                                    ) {
+                                        Ok(count) => count,
+                                        Err(reason) => {
+                                            pending.push_back(Pending::Local(error(reason)));
+                                            drain_local(&mut pending, &mut client_write).await?;
+                                            continue;
+                                        }
+                                    };
                                     // Use the command table's first actual key, not blindly
                                     // `args[1]`: for EVAL that argument is the script and the first
                                     // key follows `numkeys`. `queue_of` accepts both the published
@@ -199,7 +244,17 @@ pub async fn serve(
                                         None
                                     };
                                     upstream_write.write_all(&command.encode()).await?;
-                                    let rewrite = if echoes_key(&verb) {
+                                    let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE") {
+                                        ReplyRewrite::Pubsub
+                                    } else if matches!(verb.as_str(), "XREAD" | "XREADGROUP") {
+                                        ReplyRewrite::Streams {
+                                            newly_prefixed: namespaced_keys
+                                                .into_iter()
+                                                .filter(|key| key.added_prefix)
+                                                .map(|key| command.args[key.index].clone())
+                                                .collect(),
+                                        }
+                                    } else if echoes_key(&verb) {
                                         ReplyRewrite::FirstKey {
                                             newly_prefixed: namespaced_keys
                                                 .into_iter()
@@ -210,19 +265,26 @@ pub async fn serve(
                                     } else {
                                         ReplyRewrite::None
                                     };
-                                    pending.push_back(Pending::Upstream { rewrite });
+                                    for _ in 0..acknowledgements {
+                                        pending.push_back(Pending::Upstream {
+                                            rewrite: rewrite.clone(),
+                                        });
+                                    }
 
                                     match verb.as_str() {
                                         "MULTI" => mode = ConnectionMode::Multi,
                                         "EXEC" | "DISCARD" => mode = ConnectionMode::Normal,
-                                        // These commands are still refused by the command table.
-                                        // This transition is intentionally adjacent to the
-                                        // forwarding decision so admitting pub/sub later cannot
-                                        // accidentally make privileged SCAN available there.
-                                        "SUBSCRIBE" | "PSUBSCRIBE" => {
-                                            mode = ConnectionMode::Subscribed
-                                        }
                                         _ => {}
+                                    }
+                                    if matches!(
+                                        verb.as_str(),
+                                        "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                    ) {
+                                        mode = if subscriptions.is_empty() && patterns.is_empty() {
+                                            ConnectionMode::Normal
+                                        } else {
+                                            ConnectionMode::Subscribed
+                                        };
                                     }
 
                                     // After the forward, not before. A wake for a command the
@@ -324,6 +386,24 @@ async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
     prefix: &[u8],
 ) -> anyhow::Result<()> {
     let raw = buffer.split_to(framed.len);
+    let pubsub_ack_waiting = pending.iter().any(|entry| {
+        matches!(
+            entry,
+            Pending::Upstream {
+                rewrite: ReplyRewrite::Pubsub
+            }
+        )
+    });
+    let pubsub_ack_is_next = matches!(
+        pending.front(),
+        Some(Pending::Upstream {
+            rewrite: ReplyRewrite::Pubsub
+        })
+    );
+    if is_pubsub_push(&raw)? && (!pubsub_ack_waiting || pubsub_ack_is_next) {
+        client.write_all(&rewrite_pubsub(&raw, prefix)?).await?;
+        return Ok(());
+    }
     let rewrite = match pending.pop_front() {
         Some(Pending::Upstream { rewrite }) => rewrite,
         _ => {
@@ -333,11 +413,23 @@ async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
         }
     };
 
+    if rewrite == ReplyRewrite::Pubsub {
+        client.write_all(&rewrite_pubsub(&raw, prefix)?).await?;
+        return Ok(());
+    }
+    if let ReplyRewrite::Streams { newly_prefixed } = &rewrite {
+        client
+            .write_all(&rewrite_xread_streams(&raw, prefix, newly_prefixed)?)
+            .await?;
+        return Ok(());
+    }
+
     let first_bulk = framed.first_bulk.filter(|(start, end)| match &rewrite {
         ReplyRewrite::None => false,
         ReplyRewrite::FirstKey { newly_prefixed } => newly_prefixed
             .iter()
             .any(|key| key.as_slice() == &raw[*start..*end]),
+        ReplyRewrite::Pubsub | ReplyRewrite::Streams { .. } => false,
     });
 
     match first_bulk {
@@ -385,6 +477,64 @@ fn scan_refusal(mode: ConnectionMode) -> Option<&'static str> {
 enum ReplyRewrite {
     None,
     FirstKey { newly_prefixed: Vec<Vec<u8>> },
+    Pubsub,
+    Streams { newly_prefixed: Vec<Vec<u8>> },
+}
+
+fn compatibility_reply(command: &Command) -> Option<Vec<u8>> {
+    match command.verb().as_str() {
+        "INFO" => {
+            let body = b"# Server\r\nredis_version:7.2.0\r\nvalkey_version:8.0.0\r\nredis_mode:standalone\r\nrole:master\r\n";
+            Some([format!("${}\r\n", body.len()).as_bytes(), body, b"\r\n"].concat())
+        }
+        "CLIENT"
+            if command.args.len() == 4
+                && command.args[1].eq_ignore_ascii_case(b"SETINFO")
+                && (command.args[2].eq_ignore_ascii_case(b"LIB-NAME")
+                    || command.args[2].eq_ignore_ascii_case(b"LIB-VER")) =>
+        {
+            Some(simple_string("OK"))
+        }
+        "COMMAND" if command.args.len() >= 2 && command.args[1].eq_ignore_ascii_case(b"DOCS") => {
+            // An empty RESP2 array is accepted by ioredis and redis-py as "no command metadata".
+            // Returning fabricated server-wide docs would be worse than omitting optional hints.
+            Some(b"*0\r\n".to_vec())
+        }
+        _ => None,
+    }
+}
+
+fn update_pubsub_state(
+    verb: &str,
+    args: &[Vec<u8>],
+    subscriptions: &mut BTreeSet<Vec<u8>>,
+    patterns: &mut BTreeSet<Vec<u8>>,
+) -> Result<usize, &'static str> {
+    let target = match verb {
+        "SUBSCRIBE" | "UNSUBSCRIBE" => subscriptions,
+        "PSUBSCRIBE" | "PUNSUBSCRIBE" => patterns,
+        _ => return Ok(1),
+    };
+    let subscribing = matches!(verb, "SUBSCRIBE" | "PSUBSCRIBE");
+    if subscribing && args.len() < 2 {
+        return Err("subscribe requires at least one channel");
+    }
+    if subscribing {
+        for channel in &args[1..] {
+            target.insert(channel.clone());
+        }
+        return Ok(args.len() - 1);
+    }
+
+    if args.len() == 1 {
+        let replies = target.len().max(1);
+        target.clear();
+        return Ok(replies);
+    }
+    for channel in &args[1..] {
+        target.remove(channel);
+    }
+    Ok(args.len() - 1)
 }
 
 async fn drain_local<W: tokio::io::AsyncWrite + Unpin>(
