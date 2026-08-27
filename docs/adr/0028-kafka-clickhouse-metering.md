@@ -32,13 +32,13 @@ This decision continues two earlier records rather than erasing them:
 
 ## Decision
 
-One normalized event contract feeds two projections:
+One normalized event contract currently reaches two projections through the producer:
 
 ```text
 trusted producer
   -> Kafka usage-events (acks=all, stable event_id)
       -> ClickHouse usage_event_raw (ReplacingMergeTree(version))
-      -> Valkey fixed-point current counters (event-id idempotency)
+  -> Valkey fixed-point current counters (event-id idempotency)
 
 ClickHouse absolute minute/hour/day totals
   -> Postgres usage_rollup
@@ -56,9 +56,13 @@ late arrivals independently of their event timestamp. The importer recomputes ab
 grains and advances its Postgres cursor in the same transaction as the rollup changes. A corrected
 event that moves grains emits zero for its old grain, so stale quantity cannot remain billable.
 
-Valkey quantities use integer nano-units, never floating-point increments. It is the current usage
-view used for prompt feedback and enforcement; it is not charged directly. Postgres keeps durable
-financial rollups and the credit ledger, not raw events.
+Valkey quantities use integer nano-units, never floating-point increments. It is intended to be the
+current usage view for prompt feedback and enforcement; it is not charged directly. The current
+code writes this projection but does not read, reconcile, or rebuild it yet. Until that consumer is
+built, API ingest and the transactional outbox wait for the Valkey write so an immediate failure is
+retryable, but eviction after acknowledgement is not repaired. Postgres keeps durable financial
+rollups and the credit ledger, not raw events. [Finding 0032](../findings/0032-the-fast-usage-view-was-write-only.md)
+records this boundary rather than treating a planned cache consumer as deployed behavior.
 
 The canonical dimension list is a shared fixture asserted by Rust and TypeScript. Raw Postgres
 `usage_event`, its partitions, and the additive `rollUpUsage` job are removed. Existing billing
@@ -118,6 +122,11 @@ is logged and fails open rather than changing the tenant's search result.
 - The TypeScript outbox may hold Postgres row locks while waiting for bounded Kafka and Valkey
   acknowledgements. This is deliberately bounded and observable; a future lease state can reduce
   lock duration without changing delivery semantics.
+- Valkey is not a second durable usage store. Its current counters have no reader or authoritative
+  rebuild path, and their first-seen event marker cannot apply a newer ClickHouse correction with
+  the same event id. Prompt feedback or quota enforcement must not depend on those keys until a
+  version-aware projector plus a ClickHouse rebuild/reconciliation procedure is implemented and
+  tested under concurrent ingestion.
 - ClickHouse backup and poison-message handling are implemented in the repository: native backups
   use a restricted env-credentialed S3 disk, scheduled health checks make stale/failed backups and
   DLQ rows red, and a restore drill verifies an embedded snapshot manifest. They remain
