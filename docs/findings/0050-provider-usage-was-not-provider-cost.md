@@ -49,3 +49,15 @@ The regression fixture creates an hour-old `starting` row with no provider id be
 backed `starting` row. Only the latter emits events, and the former's watermark stays null. Pricing
 tests independently assert exact provider rates and zero item fees, so a future global fee change
 cannot silently turn pass-through resources back into platform markup.
+
+Neon's current consumption guide is also a unit contract: v2 `*_bytes_month` values are byte-months,
+GB means exactly 1,000,000,000 bytes, and Neon has already applied its fixed 744-hour billing month.
+The current meter therefore writes decimal `db_storage_gb_month` directly. The v2 book retains the
+legacy `db_storage_gib_hour` item at its algebraically equivalent rate so rollups written earlier in
+the same billing period remain rateable during deployment.
+
+The same API exposes instant-restore history separately, so it is metered as
+`db_history_storage_gb_month` at Neon's $0.20/GB-month with no platform fee. Snapshot storage is
+currently free during beta and has no invented charge here. Extra branches and network transfer
+have plan allowances and organization-level aggregation rules; they remain an explicit unallocated
+provider-cost boundary rather than being mislabeled as database storage.

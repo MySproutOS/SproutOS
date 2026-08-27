@@ -12,6 +12,8 @@ export const BILLABLE_DIMENSIONS = [
   "site_request",
   "site_egress_byte",
   "db_storage_gib_hour",
+  "db_storage_gb_month",
+  "db_history_storage_gb_month",
   "db_compute_cu_second",
   "es_storage_gib_hour",
   "es_search_unit",

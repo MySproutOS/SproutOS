@@ -25,8 +25,10 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   ["site_provisioned_gib_second", "3"],
   ["site_request", "2"],
   ["site_egress_byte", "0.00014"],
-  // Neon Launch pass-through: $0.106/CU-hour and $0.35/GiB-month (730 hours).
-  ["db_storage_gib_hour", "479.452054795"],
+  // Neon Launch pass-through: $0.106/CU-hour and $0.35 per decimal GB-month.
+  ["db_storage_gib_hour", "514.807723836"], // Legacy byte-month conversion compatibility.
+  ["db_storage_gb_month", "350000"],
+  ["db_history_storage_gb_month", "200000"],
   ["db_compute_cu_second", "29.444444444"],
   ["es_storage_gib_hour", "300"],
   ["es_search_unit", "1"],
@@ -68,6 +70,8 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
 const ITEM_OVERHEAD_BPS = new Map<string, number>([
   ["db_compute_cu_second", 200],
   ["db_storage_gib_hour", 0],
+  ["db_storage_gb_month", 0],
+  ["db_history_storage_gb_month", 0],
   ["ai_input_token", 0],
   ["ai_output_token", 0],
   ["ai_cache_read_token", 0],

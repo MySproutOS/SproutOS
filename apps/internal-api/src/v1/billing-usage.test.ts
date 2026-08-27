@@ -208,7 +208,7 @@ describe.skipIf(!up)("usage this period", () => {
         BigInt(before.json.overheadMicroUsd as string),
     ).toBe(overhead(compute, 200))
 
-    await meter("db_storage_gib_hour", "730")
+    await meter("db_storage_gb_month", "1")
     const afterStorage = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
     expect(afterStorage.json.overheadMicroUsd).toBe(afterCompute.json.overheadMicroUsd)
   })
@@ -261,6 +261,22 @@ describe.skipIf(!up)("usage this period", () => {
     )
     expect(Number(line?.quantity) - Number(beforeLine?.quantity ?? 0)).toBe(2)
     expect(line?.unit).toBe("GiB-months")
+  })
+
+  it("shows current Neon storage directly in decimal GB-months", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const beforeLine = (before.json.lines as Json[]).find(
+      (row) => row.dimension === "db_storage_gb_month",
+    )
+    await meter("db_storage_gb_month", "2.5")
+
+    const response = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const line = (response.json.lines as Json[]).find(
+      (row) => row.dimension === "db_storage_gb_month",
+    )
+    expect(Number(line?.quantity) - Number(beforeLine?.quantity ?? 0)).toBe(2.5)
+    expect(line?.unit).toBe("GB-months")
   })
 
   it("keeps a quantity that does not fit a JavaScript number", async ({ skip }) => {

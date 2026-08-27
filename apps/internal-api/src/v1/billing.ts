@@ -443,13 +443,12 @@ async function ensureStripeCustomer(organizationId: string, name: string): Promi
 /**
  * How each metered dimension is named and counted for a person.
  *
- * The database's dimension names are units of measurement — `site_vcpu_second`, `db_storage_gib_hour`
+ * The database's dimension names are units of measurement — `site_gib_second`, `db_storage_gb_month`
  * — which is right for a meter and wrong for a bill. Nobody reconciles an invoice against
  * "valkey_queue_byte_second".
  *
- * `divisor` converts the stored quantity into the unit shown. Storage is metered per GiB-*hour* and
- * read per GiB-*month*, which is a factor of 730 and the single easiest place to be wrong by three
- * orders of magnitude.
+ * `divisor` converts the stored quantity into the unit shown. Current Neon storage is already in
+ * decimal GB-months; the legacy GiB-hour line remains readable for current-period compatibility.
  */
 const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: number }> = {
   // The compute line. GB-seconds is what Lambda bills and what appears on our own AWS invoice, so
@@ -459,6 +458,8 @@ const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: 
   site_request: { label: "Requests", unit: "requests", divisor: 1 },
   site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },
   db_storage_gib_hour: { label: "Postgres storage", unit: "GiB-months", divisor: 730 },
+  db_storage_gb_month: { label: "Postgres storage", unit: "GB-months", divisor: 1 },
+  db_history_storage_gb_month: { label: "History storage", unit: "GB-months", divisor: 1 },
   db_compute_cu_second: { label: "Postgres compute", unit: "CU-hours", divisor: 3600 },
   es_storage_gib_hour: { label: "Search storage", unit: "GiB-months", divisor: 730 },
   es_search_unit: { label: "Search queries", unit: "queries", divisor: 1 },

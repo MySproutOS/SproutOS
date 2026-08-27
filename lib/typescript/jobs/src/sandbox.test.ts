@@ -203,6 +203,7 @@ describe("the sandbox price book", () => {
     expect(rates.map((row) => row.dimension).sort()).toEqual([
       "sandbox_cpu_second",
       "sandbox_disk_gib_second",
+      "sandbox_egress_byte",
       "sandbox_gib_second",
     ])
   })
@@ -221,14 +222,25 @@ describe("the sandbox price book", () => {
       .selectFrom("priceBookItem")
       .select(["dimension", "unitMicroUsd", "overheadBps"])
       .where("priceBookId", "=", book.id)
-      .where("dimension", "in", ["db_compute_cu_second", "db_storage_gib_hour"])
+      .where("dimension", "in", [
+        "db_compute_cu_second",
+        "db_storage_gib_hour",
+        "db_storage_gb_month",
+        "db_history_storage_gb_month",
+      ])
       .execute()
     const byDimension = new Map(items.map((item) => [item.dimension, item]))
 
     expect(String(byDimension.get("db_compute_cu_second")?.unitMicroUsd)).toBe("29.444444444")
     expect(byDimension.get("db_compute_cu_second")?.overheadBps).toBe(200)
-    expect(String(byDimension.get("db_storage_gib_hour")?.unitMicroUsd)).toBe("479.452054795")
+    expect(String(byDimension.get("db_storage_gb_month")?.unitMicroUsd)).toBe("350000.000000000")
+    expect(byDimension.get("db_storage_gb_month")?.overheadBps).toBe(0)
+    expect(String(byDimension.get("db_storage_gib_hour")?.unitMicroUsd)).toBe("514.807723836")
     expect(byDimension.get("db_storage_gib_hour")?.overheadBps).toBe(0)
+    expect(String(byDimension.get("db_history_storage_gb_month")?.unitMicroUsd)).toBe(
+      "200000.000000000",
+    )
+    expect(byDimension.get("db_history_storage_gb_month")?.overheadBps).toBe(0)
   })
 
   it("keeps agent duration operational but free", async ({ skip }) => {

@@ -6,7 +6,7 @@ import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import {
   meterNeonDatabases,
-  neonByteMonthsToGibHours,
+  neonByteMonthsToGbMonths,
   neonConsumptionCutoff,
 } from "./neon-metering"
 
@@ -94,10 +94,10 @@ describe("Neon consumption units", () => {
     )
   })
 
-  it("converts exact byte-months to the price book's GiB-hours without floating point", () => {
-    expect(neonByteMonthsToGibHours(1_073_741_824n)).toBe("730")
-    expect(neonByteMonthsToGibHours(3n * 1_073_741_824n)).toBe("2190")
-    expect(neonByteMonthsToGibHours(1n)).toMatch(/^0\.\d{9}$/)
+  it("converts exact byte-months to Neon's decimal GB-months without floating point", () => {
+    expect(neonByteMonthsToGbMonths(1_000_000_000n)).toBe("1")
+    expect(neonByteMonthsToGbMonths(3_000_000_000n)).toBe("3")
+    expect(neonByteMonthsToGbMonths(1n)).toBe("0.000000001")
   })
 })
 
@@ -132,6 +132,7 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
                       { metric_name: "compute_unit_seconds", value: 7_200 },
                       { metric_name: "root_branch_bytes_month", value: 1_073_741_824 },
                       { metric_name: "child_branch_bytes_month", value: 2_147_483_648 },
+                      { metric_name: "instant_restore_bytes_month", value: 500_000_000 },
                     ],
                   },
                 ],
@@ -146,7 +147,7 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
       meterNeonDatabases(db, config, { now, client, backendServiceIds: [backendServiceId] }),
       meterNeonDatabases(db, config, { now, client, backendServiceIds: [backendServiceId] }),
     ])
-    expect(results.reduce((sum, value) => sum + value, 0)).toBe(2)
+    expect(results.reduce((sum, value) => sum + value, 0)).toBe(3)
     expect(calls).toBe(2)
 
     const state = await db
@@ -162,19 +163,25 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
       where payload ->> 'resource_id' = ${backendServiceId}
       order by payload ->> 'dimension'
     `.execute(db)
-    expect(rows.rows).toHaveLength(2)
+    expect(rows.rows).toHaveLength(3)
     const events = rows.rows.map((row) => ({
       ...row,
       value: JSON.parse(row.payload) as UsageEventRecord,
     }))
     const compute = events.find((event) => event.value.dimension === "db_compute_cu_second")
-    const storage = events.find((event) => event.value.dimension === "db_storage_gib_hour")
+    const storage = events.find((event) => event.value.dimension === "db_storage_gb_month")
+    const history = events.find((event) => event.value.dimension === "db_history_storage_gb_month")
     expect(compute?.value.quantity).toBe("7200")
-    expect(storage?.value.quantity).toBe("2190")
+    expect(storage?.value.quantity).toBe("3.221225472")
     expect(storage?.value.attributes).toMatchObject({
       root_branch_bytes_month: "1073741824",
       child_branch_bytes_month: "2147483648",
-      conversion: "byte_month*730/1073741824",
+      conversion: "byte_month/1000000000",
+    })
+    expect(history?.value.quantity).toBe("0.5")
+    expect(history?.value.attributes).toMatchObject({
+      instant_restore_bytes_month: "500000000",
+      conversion: "byte_month/1000000000",
     })
     expect(compute?.eventId).toBe(
       usageEventId({

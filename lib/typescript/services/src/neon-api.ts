@@ -126,6 +126,7 @@ export const NEON_CONSUMPTION_METRICS = [
   "compute_unit_seconds",
   "root_branch_bytes_month",
   "child_branch_bytes_month",
+  "instant_restore_bytes_month",
 ] as const
 
 export type NeonConsumptionMetricName = (typeof NEON_CONSUMPTION_METRICS)[number]

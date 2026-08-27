@@ -67,6 +67,10 @@ pub enum UsageDimension {
     SiteEgressByte,
     /// Database storage, in GiB-hours.
     DbStorageGibHour,
+    /// Current Neon database storage, in decimal GB-months.
+    DbStorageGbMonth,
+    /// Neon instant-restore history storage, in decimal GB-months.
+    DbHistoryStorageGbMonth,
     /// Database compute, in compute-unit seconds.
     DbComputeCuSecond,
     /// Search index storage, in GiB-hours.
@@ -114,6 +118,8 @@ impl UsageDimension {
         Self::SiteRequest,
         Self::SiteEgressByte,
         Self::DbStorageGibHour,
+        Self::DbStorageGbMonth,
+        Self::DbHistoryStorageGbMonth,
         Self::DbComputeCuSecond,
         Self::EsStorageGibHour,
         Self::EsSearchUnit,
@@ -143,6 +149,8 @@ impl UsageDimension {
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
             Self::DbStorageGibHour => "db_storage_gib_hour",
+            Self::DbStorageGbMonth => "db_storage_gb_month",
+            Self::DbHistoryStorageGbMonth => "db_history_storage_gb_month",
             Self::DbComputeCuSecond => "db_compute_cu_second",
             Self::EsStorageGibHour => "es_storage_gib_hour",
             Self::EsSearchUnit => "es_search_unit",

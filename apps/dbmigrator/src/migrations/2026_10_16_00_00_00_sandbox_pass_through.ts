@@ -22,7 +22,9 @@ type MigrationDB = {
 }
 
 const VERSION = 2
-const ADDED_AI_RATES = new Map([
+const ADDED_RATES = new Map([
+  ["db_storage_gb_month", "350000"],
+  ["db_history_storage_gb_month", "200000"],
   ["ai_cache_write_token", "2.5"],
   ["ai_long_context_input_token", "4"],
   ["ai_long_context_output_token", "18"],
@@ -31,11 +33,11 @@ const ADDED_AI_RATES = new Map([
 ])
 const PASS_THROUGH_RATES = new Map([
   ["db_compute_cu_second", "29.444444444"],
-  ["db_storage_gib_hour", "479.452054795"],
+  ["db_storage_gib_hour", "514.807723836"],
   ["ai_input_token", "2"],
   ["ai_output_token", "12"],
   ["ai_cache_read_token", "0.2"],
-  ...ADDED_AI_RATES,
+  ...ADDED_RATES,
   ["sandbox_cpu_second", "14"],
   ["sandbox_gib_second", "4.5"],
   ["sandbox_disk_gib_second", "0.03"],
@@ -45,10 +47,12 @@ const PASS_THROUGH_RATES = new Map([
 const OVERHEAD_BPS = new Map([
   ["db_compute_cu_second", 200],
   ["db_storage_gib_hour", 0],
+  ["db_storage_gb_month", 0],
+  ["db_history_storage_gb_month", 0],
   ["ai_input_token", 0],
   ["ai_output_token", 0],
   ["ai_cache_read_token", 0],
-  ...[...ADDED_AI_RATES.keys()].map((dimension) => [dimension, 0] as [string, number]),
+  ...[...ADDED_RATES.keys()].map((dimension) => [dimension, 0] as [string, number]),
   ["sandbox_cpu_second", 0],
   ["sandbox_gib_second", 0],
   ["sandbox_disk_gib_second", 0],
@@ -61,6 +65,8 @@ const ACTIVE_DIMENSIONS = [
   "site_request",
   "site_egress_byte",
   "db_storage_gib_hour",
+  "db_storage_gb_month",
+  "db_history_storage_gb_month",
   "db_compute_cu_second",
   "es_storage_gib_hour",
   "es_search_unit",
@@ -71,7 +77,7 @@ const ACTIVE_DIMENSIONS = [
   "ai_input_token",
   "ai_output_token",
   "ai_cache_read_token",
-  ...ADDED_AI_RATES.keys(),
+  ...ADDED_RATES.keys(),
   "agent_run_second",
   "sandbox_cpu_second",
   "sandbox_gib_second",
@@ -172,7 +178,7 @@ export async function up(db: Kysely<MigrationDB>): Promise<void> {
     rounding: item.rounding,
     overheadBps: OVERHEAD_BPS.get(item.dimension) ?? null,
   }))
-  for (const [dimension, rate] of ADDED_AI_RATES) {
+  for (const [dimension, rate] of ADDED_RATES) {
     if (items.some((item) => item.dimension === dimension)) continue
     rows.push({
       id: uuidV7(),
@@ -200,7 +206,7 @@ export async function up(db: Kysely<MigrationDB>): Promise<void> {
 
 export async function down(db: Kysely<MigrationDB>): Promise<void> {
   await db.deleteFrom("priceBook").where("version", "=", VERSION).execute()
-  const previous = ACTIVE_DIMENSIONS.filter((dimension) => !ADDED_AI_RATES.has(dimension))
+  const previous = ACTIVE_DIMENSIONS.filter((dimension) => !ADDED_RATES.has(dimension))
   await dimensions(db, "price_book_item", previous)
   for (const table of ["usage_rollup", "statement_line_item"]) {
     await dimensions(db, table, [...previous, ...RETIRED_DIMENSIONS])
