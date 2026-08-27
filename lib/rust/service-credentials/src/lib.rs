@@ -21,7 +21,9 @@
 use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
-use sproutos_tenant_auth::{MAX_USERNAME_LEN, SecretError, TenantIdentity, verify_secret};
+use sproutos_tenant_auth::{
+    MAX_USERNAME_LEN, ResourceKind, SecretError, TenantIdentity, verify_secret,
+};
 use tracing::{error, info, warn};
 
 /// How long a credential lookup may take before the connection attempt is abandoned.
@@ -80,6 +82,39 @@ pub struct CredentialStore {
 }
 
 impl CredentialStore {
+    /// Lists the live queue identities whose engine ACL users must exist.
+    ///
+    /// This deliberately derives identities from services rather than credentials: one service can
+    /// have several credentials with the same wire username, while its engine identity is singular.
+    pub async fn live_queue_identities(&self) -> Result<Vec<TenantIdentity>, StoreError> {
+        let client = tokio::time::timeout(LOOKUP_TIMEOUT, self.pool.get())
+            .await
+            .map_err(|_| StoreError::Unavailable("timed out waiting for a connection".into()))?
+            .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+        let rows = tokio::time::timeout(
+            LOOKUP_TIMEOUT,
+            client.query(
+                "select s.id, s.organization_id
+                   from backend_service s
+                   join organization o on o.id = s.organization_id
+                  where s.kind = 'valkey'
+                    and s.deleted_at is null
+                    and s.status in ('provisioning', 'active')
+                    and o.deleted_at is null
+                  order by s.id",
+                &[],
+            ),
+        )
+        .await
+        .map_err(|_| StoreError::Unavailable("the live queue lookup timed out".into()))?
+        .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| TenantIdentity::new(row.get(1), ResourceKind::Queue, row.get(0)))
+            .collect())
+    }
+
     /// Connects, lazily — no connection is opened until the first lookup.
     ///
     /// `size` bounds how many control-plane connections this proxy can hold. It is small on

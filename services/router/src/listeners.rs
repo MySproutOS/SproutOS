@@ -69,6 +69,58 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         .self_check()
         .await
         .context("the Valkey split's administrator cannot manage ACL users")?;
+    let identities = store
+        .live_queue_identities()
+        .await
+        .context("the Valkey split could not enumerate live queue identities")?;
+    let soft_limit = std::env::var("VALKEY_ACL_CARDINALITY_SOFT_LIMIT")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .context("VALKEY_ACL_CARDINALITY_SOFT_LIMIT must be a positive integer")?
+        .unwrap_or(valkey_proxy::reconcile::CARDINALITY_SOFT_LIMIT);
+    anyhow::ensure!(
+        soft_limit > 0,
+        "VALKEY_ACL_CARDINALITY_SOFT_LIMIT must be positive"
+    );
+    let reconciliation = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        provisioner.reconcile(
+            &identities,
+            valkey_proxy::reconcile::DEFAULT_REPAIR_LIMIT,
+            valkey_proxy::reconcile::DEFAULT_INSPECTION_LIMIT,
+            soft_limit,
+        ),
+    )
+    .await
+    .context("the Valkey split's ACL reconciliation timed out")?
+    .context("the Valkey split could not reconcile tenant ACL users")?;
+    tracing::info!(
+        expected = reconciliation.expected,
+        observed = reconciliation.observed,
+        missing = reconciliation.missing,
+        drifted = reconciliation.drifted,
+        repaired = reconciliation.repaired,
+        orphaned = reconciliation.orphaned,
+        pending_repairs = reconciliation.pending_repairs,
+        pending_inspections = reconciliation.pending_inspections,
+        soft_limit_exceeded = reconciliation.soft_limit_exceeded,
+        list_ms = reconciliation.list_latency_ms,
+        repair_ms = reconciliation.repair_latency_ms,
+        "Valkey ACL startup reconciliation complete"
+    );
+    if reconciliation.pending_repairs > 0
+        || reconciliation.pending_inspections > 0
+        || reconciliation.soft_limit_exceeded
+    {
+        tracing::warn!(
+            pending_repairs = reconciliation.pending_repairs,
+            pending_inspections = reconciliation.pending_inspections,
+            soft_limit = reconciliation.soft_limit,
+            soft_limit_exceeded = reconciliation.soft_limit_exceeded,
+            "Valkey ACL startup reconciliation needs attention"
+        );
+    }
 
     let master = if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
         tracing::info!("master queue enabled; enqueues will be reported for dispatch");

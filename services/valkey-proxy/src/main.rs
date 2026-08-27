@@ -61,6 +61,44 @@ async fn main() -> anyhow::Result<()> {
         acl_root_key.into_bytes(),
     )?);
     provisioner.self_check().await?;
+    let identities = store.live_queue_identities().await?;
+    let soft_limit = std::env::var("VALKEY_ACL_CARDINALITY_SOFT_LIMIT")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(|_| {
+            anyhow::anyhow!("VALKEY_ACL_CARDINALITY_SOFT_LIMIT must be a positive integer")
+        })?
+        .unwrap_or(valkey_proxy::reconcile::CARDINALITY_SOFT_LIMIT);
+    anyhow::ensure!(
+        soft_limit > 0,
+        "VALKEY_ACL_CARDINALITY_SOFT_LIMIT must be positive"
+    );
+    let reconciliation = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        provisioner.reconcile(
+            &identities,
+            valkey_proxy::reconcile::DEFAULT_REPAIR_LIMIT,
+            valkey_proxy::reconcile::DEFAULT_INSPECTION_LIMIT,
+            soft_limit,
+        ),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Valkey ACL startup reconciliation timed out"))??;
+    info!(
+        expected = reconciliation.expected,
+        observed = reconciliation.observed,
+        missing = reconciliation.missing,
+        drifted = reconciliation.drifted,
+        repaired = reconciliation.repaired,
+        orphaned = reconciliation.orphaned,
+        pending_repairs = reconciliation.pending_repairs,
+        pending_inspections = reconciliation.pending_inspections,
+        soft_limit_exceeded = reconciliation.soft_limit_exceeded,
+        list_ms = reconciliation.list_latency_ms,
+        repair_ms = reconciliation.repair_latency_ms,
+        "Valkey ACL startup reconciliation complete"
+    );
 
     /*
       The master queue — TASK 20's second half — is opt-in.

@@ -21,6 +21,7 @@ pub mod commands;
 pub mod keyspace;
 pub mod master;
 pub mod provision;
+pub mod reconcile;
 pub mod reply;
 pub mod resp;
 pub mod scan;

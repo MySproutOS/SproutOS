@@ -1,0 +1,11 @@
+{
+  "extends": "../lib/typescript/reaper/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "paths": {
+      "ioredis": ["../lib/typescript/reaper/node_modules/ioredis"]
+    },
+    "typeRoots": ["../lib/typescript/reaper/node_modules/@types"]
+  },
+  "include": ["measure-valkey-acl-cardinality.ts"]
+}

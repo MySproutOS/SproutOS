@@ -29,6 +29,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const creditKey = `${JOB_KINDS.refreshCreditStates}:2099-12-31T23:55`
     const valkeyMeteringKey = `${JOB_KINDS.meterValkeyQueues}:2099-12-31T23:55`
     const searchSecurityKey = `${JOB_KINDS.reconcileSearchSecurity}:2099-12-31T23`
+    const valkeyAclKey = `${JOB_KINDS.reconcileValkeyAcl}:2099-12-31T23`
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
@@ -44,6 +45,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
         creditKey,
         valkeyMeteringKey,
         searchSecurityKey,
+        valkeyAclKey,
       ])
       .orderBy("kind")
       .execute()
@@ -54,6 +56,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
       { kind: JOB_KINDS.refreshCreditStates, idempotencyKey: creditKey },
       { kind: JOB_KINDS.relayMeteringOutbox, idempotencyKey: relayKey },
       { kind: JOB_KINDS.reconcileSearchSecurity, idempotencyKey: searchSecurityKey },
+      { kind: JOB_KINDS.reconcileValkeyAcl, idempotencyKey: valkeyAclKey },
     ])
   })
 })
