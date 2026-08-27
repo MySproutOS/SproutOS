@@ -1,4 +1,4 @@
-# Daytona retained the agent token
+# Daytona had retained the agent token
 
 ## What was wrong
 
