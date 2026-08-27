@@ -175,13 +175,21 @@ describe.runIf(reachable)("through the storage proxy", () => {
       headers first. That ordering is what prevents an anonymous caller from buying 16 MiB of the
       router's 1 GiB host on every concurrent request.
     */
-    const response = await fetch(`${active!.publicEndpoint}/v-not-a-service/large`, {
-      method: "PUT",
-      body: new Uint8Array(16 * 1024 * 1024 + 1),
-    })
+    let outcome: string
+    try {
+      const response = await fetch(`${active!.publicEndpoint}/v-not-a-service/large`, {
+        method: "PUT",
+        body: new Uint8Array(16 * 1024 * 1024 + 1),
+      })
 
-    expect(response.status).toBe(403)
-    expect(await response.text()).toContain("AccessDenied")
+      outcome = `response:${response.status}:${(await response.text()).includes("AccessDenied")}`
+    } catch (error) {
+      // Undici can still be writing the request body when the proxy rejects from the headers and
+      // closes the connection. EPIPE is therefore the transport-level form of the same proof: the
+      // peer refused the request before the client could finish sending the oversized body.
+      outcome = `error:${(error as { cause?: { code?: string } }).cause?.code}`
+    }
+    expect(["response:403:true", "error:EPIPE"]).toContain(outcome)
   }, 30_000)
 
   it("lets a customer write and read their own vault", async () => {
