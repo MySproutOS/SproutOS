@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest"
 import {
   AUTO_ARCHIVE_AFTER_STOP_MINUTES,
+  DAYTONA_DELETE_TIMEOUT_SECONDS,
+  DAYTONA_READ_MAX_ATTEMPTS,
   buildCreateParams,
   daytonaConfigFromEnv,
+  deleteDaytonaSandboxAndWait,
+  retryIdempotentDaytonaRead,
   type DaytonaConfig,
 } from "./daytona"
-import type { CreateSandboxInput } from "./types"
+import { SandboxUnavailableError, type CreateSandboxInput } from "./types"
 
 const config: DaytonaConfig = {
   apiKey: "k",
@@ -36,6 +40,12 @@ describe("buildCreateParams", () => {
     expect(() =>
       buildCreateParams(config, { ...input, resources: { ...input.resources, cpu: 4 } }),
     ).toThrow(/fixed at 2 CPU/)
+  })
+
+  it("rejects the unsupported android class instead of silently creating a container", () => {
+    expect(() => buildCreateParams(config, { ...input, sandboxClass: "android" })).toThrow(
+      /android is unsupported; only container sandboxes/,
+    )
   })
 
   it("carries attribution on the labels metering reads", () => {
@@ -91,6 +101,98 @@ describe("buildCreateParams", () => {
   it("omits envVars when there are none rather than sending an empty object", () => {
     expect(buildCreateParams(config, input).envVars).toBeUndefined()
     expect(buildCreateParams(config, { ...input, env: { A: "1" } }).envVars).toEqual({ A: "1" })
+  })
+})
+
+describe("Daytona provider failures", () => {
+  it("preserves the provider status, headers and Retry-After", () => {
+    const cause = {
+      statusCode: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": "12",
+      },
+    }
+    const error = new SandboxUnavailableError("daytona", cause)
+
+    expect(error.statusCode).toBe(429)
+    expect(error.headers).toEqual(cause.headers)
+    expect(error.retryAfter).toBe("12")
+  })
+
+  it("also preserves Axios-shaped response metadata", () => {
+    const error = new SandboxUnavailableError("daytona", {
+      response: { status: 503, headers: { "retry-after-sandbox-create": "4" } },
+    })
+
+    expect(error.statusCode).toBe(503)
+    expect(error.headers).toEqual({ "retry-after-sandbox-create": "4" })
+    expect(error.retryAfter).toBe("4")
+  })
+
+  it("retries a rate-limited idempotent read using Retry-After", async () => {
+    let attempts = 0
+    const delays: number[] = []
+    const rateLimit = Object.assign(new Error("rate limited"), {
+      statusCode: 429,
+      headers: { "retry-after": "0.01" },
+    })
+    const result = await retryIdempotentDaytonaRead(
+      () => {
+        attempts += 1
+        if (attempts < 3) return Promise.reject(rateLimit)
+        return Promise.resolve("ok")
+      },
+      (delayMs) => {
+        delays.push(delayMs)
+        return Promise.resolve()
+      },
+    )
+
+    expect(result).toBe("ok")
+    expect(attempts).toBe(3)
+    expect(delays).toEqual([10, 10])
+  })
+
+  it("bounds rate-limit attempts and never retries other provider failures", async () => {
+    let rateLimitAttempts = 0
+    const rateLimitError = Object.assign(new Error("rate limited"), { statusCode: 429 })
+    await expect(
+      retryIdempotentDaytonaRead(
+        () => {
+          rateLimitAttempts += 1
+          return Promise.reject(rateLimitError)
+        },
+        () => Promise.resolve(),
+      ),
+    ).rejects.toBe(rateLimitError)
+    expect(rateLimitAttempts).toBe(DAYTONA_READ_MAX_ATTEMPTS)
+
+    let unavailableAttempts = 0
+    const unavailable = Object.assign(new Error("unavailable"), { statusCode: 503 })
+    await expect(
+      retryIdempotentDaytonaRead(() => {
+        unavailableAttempts += 1
+        return Promise.reject(unavailable)
+      }),
+    ).rejects.toBe(unavailable)
+    expect(unavailableAttempts).toBe(1)
+  })
+})
+
+describe("Daytona deletion", () => {
+  it("waits for Daytona to confirm the sandbox is destroyed", async () => {
+    const calls: unknown[][] = []
+    const sandbox = {
+      delete: (...args: unknown[]) => {
+        calls.push(args)
+        return Promise.resolve()
+      },
+    }
+
+    await deleteDaytonaSandboxAndWait(sandbox)
+
+    expect(calls).toEqual([[DAYTONA_DELETE_TIMEOUT_SECONDS, true]])
   })
 })
 

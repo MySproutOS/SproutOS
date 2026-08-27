@@ -3,6 +3,7 @@ import { quoteArgv } from "./argv"
 import {
   SandboxNotFoundError,
   SandboxUnavailableError,
+  sandboxProviderHttpDetails,
   type CreateSandboxInput,
   type CreatedSandbox,
   type ExecResult,
@@ -22,6 +23,9 @@ export const SNAPSHOT_RESOURCES = { cpu: 2, memoryGib: 4, diskGib: 10 } as const
 /** A stopped container preserves its workspace but still bills disk until Daytona archives it. */
 export const AUTO_ARCHIVE_AFTER_STOP_MINUTES = 1
 export const DAYTONA_REQUEST_TIMEOUT_MS = 60_000
+export const DAYTONA_DELETE_TIMEOUT_SECONDS = DAYTONA_REQUEST_TIMEOUT_MS / 1000
+export const DAYTONA_READ_MAX_ATTEMPTS = 3
+export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
 
 export type DaytonaConfig = {
@@ -95,6 +99,13 @@ export function buildCreateParams(
   config: DaytonaConfig,
   input: CreateSandboxInput,
 ): CreateSandboxFromSnapshotParams {
+  if (input.sandboxClass !== "container") {
+    throw new Error(
+      `Daytona sandbox class ${input.sandboxClass} is unsupported; only container sandboxes have ` +
+        "a configured snapshot and execution path",
+    )
+  }
+
   const requested = input.resources
   if (
     requested.cpu !== SNAPSHOT_RESOURCES.cpu ||
@@ -178,7 +189,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
 
   async function get(externalId: string): Promise<Sandbox> {
     try {
-      return await sdk().get(externalId)
+      return await retryIdempotentDaytonaRead(() => sdk().get(externalId))
     } catch (cause) {
       if (isNotFound(cause)) throw new SandboxNotFoundError(externalId)
       throw new SandboxUnavailableError(PROVIDER, cause)
@@ -187,21 +198,22 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
 
   async function create(input: CreateSandboxInput): Promise<CreatedSandbox> {
     const params = buildCreateParams(config, input)
-    const matches = async (): Promise<Sandbox[]> => {
-      const found: Sandbox[] = []
-      for await (const sandbox of sdk().list({
-        labels: { "sproutos.dev/sandbox-id": input.sandboxId },
-      })) {
-        found.push(sandbox)
-      }
-      if (found.length > 1) {
-        throw new Error(
-          `Daytona has ${found.length} sandboxes labelled for ${input.sandboxId}; refusing to ` +
-            "choose one while another may still be billing",
-        )
-      }
-      return found
-    }
+    const matches = async (): Promise<Sandbox[]> =>
+      await retryIdempotentDaytonaRead(async () => {
+        const found: Sandbox[] = []
+        for await (const sandbox of sdk().list({
+          labels: { "sproutos.dev/sandbox-id": input.sandboxId },
+        })) {
+          found.push(sandbox)
+        }
+        if (found.length > 1) {
+          throw new Error(
+            `Daytona has ${found.length} sandboxes labelled for ${input.sandboxId}; refusing to ` +
+              "choose one while another may still be billing",
+          )
+        }
+        return found
+      })
 
     const [existing] = await call(matches)
     if (existing) return { externalId: existing.id }
@@ -412,7 +424,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
     create,
     state: async (externalId) => {
       const sandbox = await get(externalId)
-      await call(() => sandbox.refreshData())
+      await call(() => retryIdempotentDaytonaRead(() => sandbox.refreshData()))
       return sandbox.state ?? "unknown"
     },
     start: async (externalId) => {
@@ -436,7 +448,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
       try {
         const sandbox = await get(externalId)
         await deletePersistentSessions(externalId, sandbox)
-        await call(() => sandbox.delete())
+        await call(() => deleteDaytonaSandboxAndWait(sandbox))
       } catch (error) {
         if (error instanceof SandboxNotFoundError) return
         throw error
@@ -493,7 +505,53 @@ export function sandboxDriverFromEnv(env: NodeJS.ProcessEnv = process.env): Sand
 
 /** A 404 from the provider, however its client happens to have wrapped it. */
 function isNotFound(cause: unknown): boolean {
-  const status = (cause as { response?: { status?: number }; status?: number } | null)?.response
-    ?.status
-  return status === 404 || (cause as { status?: number } | null)?.status === 404
+  return sandboxProviderHttpDetails(cause).statusCode === 404
+}
+
+/** Delete is successful only after Daytona confirms the sandbox reached `destroyed`. */
+export async function deleteDaytonaSandboxAndWait(sandbox: Pick<Sandbox, "delete">): Promise<void> {
+  await sandbox.delete(DAYTONA_DELETE_TIMEOUT_SECONDS, true)
+}
+
+/**
+ * Retry only idempotent Daytona reads when the provider asks us to slow down.
+ *
+ * Create, start, stop, delete, writes, commands and activity touches deliberately do not use this
+ * helper: their response can be lost after the mutation happened, so blindly repeating them can
+ * duplicate work. Create retains its existing label-based reconciliation instead.
+ */
+export async function retryIdempotentDaytonaRead<T>(
+  read: () => Promise<T>,
+  sleep: (delayMs: number) => Promise<void> = delay,
+): Promise<T> {
+  async function attemptRead(attempt: number): Promise<T> {
+    try {
+      return await read()
+    } catch (cause) {
+      const details = sandboxProviderHttpDetails(cause)
+      if (details.statusCode !== 429 || attempt >= DAYTONA_READ_MAX_ATTEMPTS) throw cause
+      await sleep(daytonaRetryDelayMs(details.retryAfter, attempt))
+      return await attemptRead(attempt + 1)
+    }
+  }
+
+  return await attemptRead(1)
+}
+
+function daytonaRetryDelayMs(retryAfter: string | undefined, attempt: number): number {
+  let requestedDelay: number | undefined
+  if (retryAfter !== undefined) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      requestedDelay = seconds * 1_000
+    } else {
+      const date = Date.parse(retryAfter)
+      if (Number.isFinite(date)) requestedDelay = Math.max(0, date - Date.now())
+    }
+  }
+  return Math.min(requestedDelay ?? 250 * 2 ** (attempt - 1), DAYTONA_READ_MAX_RETRY_DELAY_MS)
+}
+
+async function delay(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
 }

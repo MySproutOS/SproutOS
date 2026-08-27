@@ -160,12 +160,77 @@ export type SandboxDriver = {
 export class SandboxUnavailableError extends Error {
   override readonly name = "SandboxUnavailableError"
 
+  /** HTTP status returned by the provider, when the SDK exposed one. */
+  readonly statusCode: number | undefined
+  /** Provider response headers copied into a stable, serializable shape. */
+  readonly headers: Readonly<Record<string, string>> | undefined
+  /** The provider's Retry-After value, retained separately for job scheduling and diagnostics. */
+  readonly retryAfter: string | undefined
+
   constructor(
     readonly provider: string,
     override readonly cause?: unknown,
   ) {
     super(`The ${provider} sandbox provider is unavailable`)
+    const details = sandboxProviderHttpDetails(cause)
+    this.statusCode = details.statusCode
+    this.headers = details.headers
+    this.retryAfter = details.retryAfter
   }
+}
+
+export type SandboxProviderHttpDetails = {
+  statusCode?: number
+  headers?: Readonly<Record<string, string>>
+  retryAfter?: string
+}
+
+/**
+ * Extract HTTP details from both DaytonaError and the underlying Axios-shaped error.
+ *
+ * DaytonaError uses `statusCode` and `headers`; an error raised before the SDK wraps the response
+ * can instead expose `response.status` and `response.headers`. Keeping this structural avoids
+ * coupling the provider-independent error type to Daytona or Axios classes.
+ */
+export function sandboxProviderHttpDetails(cause: unknown): SandboxProviderHttpDetails {
+  const value = cause as {
+    statusCode?: unknown
+    status?: unknown
+    headers?: unknown
+    response?: { status?: unknown; headers?: unknown }
+  } | null
+  const rawStatus = value?.statusCode ?? value?.response?.status ?? value?.status
+  const statusCode = typeof rawStatus === "number" ? rawStatus : undefined
+  const headers = normalizeProviderHeaders(value?.headers ?? value?.response?.headers)
+  const retryHeaders = Object.entries(headers ?? {})
+  const retryAfter =
+    retryHeaders.find(([name]) => name.toLowerCase() === "retry-after")?.[1] ??
+    retryHeaders.find(([name]) => name.toLowerCase().startsWith("retry-after-"))?.[1]
+
+  return {
+    ...(statusCode === undefined ? {} : { statusCode }),
+    ...(headers === undefined ? {} : { headers }),
+    ...(retryAfter === undefined ? {} : { retryAfter }),
+  }
+}
+
+function normalizeProviderHeaders(
+  rawHeaders: unknown,
+): Readonly<Record<string, string>> | undefined {
+  if (rawHeaders === null || rawHeaders === undefined || typeof rawHeaders !== "object") {
+    return undefined
+  }
+
+  const toJSON = (rawHeaders as { toJSON?: unknown }).toJSON
+  const source = typeof toJSON === "function" ? (toJSON.call(rawHeaders) as unknown) : rawHeaders
+  if (source === null || typeof source !== "object") return undefined
+
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(source)) {
+    if (value === null || value === undefined) continue
+    headers[name] = Array.isArray(value) ? value.map(String).join(", ") : String(value)
+  }
+  return Object.keys(headers).length === 0 ? undefined : headers
 }
 
 /** The provider has no sandbox by that id — it was destroyed, or never created. */
