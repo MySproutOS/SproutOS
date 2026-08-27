@@ -95,7 +95,7 @@ TENANT_LISTENER_ARN=${tenant_listener_arn}
 # The Lambda Web Adapter layer version, for customer builds that are HTTP servers.
 #
 # A version number rather than a full ARN because the account (753240598075) is AWS's own and the
-# region is this one; `webAdapterLayerArn` composes them. Pinned rather than tracking latest: a
+# region is this one; \`webAdapterLayerArn\` composes them. Pinned rather than tracking latest: a
 # layer version is the adapter's *code*, and every customer function published after a bump would
 # silently move to it.
 #
@@ -106,13 +106,13 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
-# The LLM proxy's port, matching `aws_lb_target_group.llm`. Unset, `listeners::llm` returns without
+# The LLM proxy's port, matching \`aws_lb_target_group.llm\`. Unset, \`listeners::llm\` returns without
 # binding — which is the right behaviour for a router that has no proxy secret, and the wrong one
 # here: it would start, pass its own health check on the other listeners, and answer nothing on this
 # target group. The load balancer would then report the target unhealthy rather than the feature
 # missing.
 LLM_PROXY_LISTEN=0.0.0.0:8788
-# systemd creates and owns `/var/lib/sproutos` through `StateDirectory=sproutos` below. Metering
+# systemd creates and owns \`/var/lib/sproutos\` through \`StateDirectory=sproutos\` below. Metering
 # records live there so a router process or service restart cannot erase an unacknowledged bill.
 LLM_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/llm-metering
 # Site reports and response egress use their own source and spool so delivery cannot combine them
@@ -121,15 +121,15 @@ SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 # Search query observations and hourly primary-storage samples are isolated from the other
 # emitters, while remaining on the router's persistent state volume.
 SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
-# Daytona reaches this listener through `egress.<domain>` on the tenant NLB. TLS terminates there;
+# Daytona reaches this listener through \`egress.<domain>\` on the tenant NLB. TLS terminates there;
 # the router receives the authenticated HTTP forward-proxy protocol on this private instance port.
 FORWARD_PROXY_LISTEN=0.0.0.0:3128
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
 #
-# `NEXT_PUBLIC_HOST_URL` is what `lib/typescript/oauth/src/github.ts` builds the OAuth redirect URI
-# from, and it is read through `requireEnv` — absent, the login route throws before it reaches
+# \`NEXT_PUBLIC_HOST_URL\` is what \`lib/typescript/oauth/src/github.ts\` builds the OAuth redirect URI
+# from, and it is read through \`requireEnv\` — absent, the login route throws before it reaches
 # GitHub. It has to be the *one* host the OAuth App has registered, because GitHub compares the
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
@@ -139,8 +139,8 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # goes into the sandbox's environment — so it has to be the address as seen from *outside* this VPC,
 # which is the load balancer, not the router's own port.
 #
-# There is a default in the code (`https://llm.sproutos.me`) and it was a hostname nothing served:
-# no listener rule, no target group, no `LLM_PROXY_LISTEN`. Set here so the value comes from the
+# There is a default in the code (\`https://llm.sproutos.me\`) and it was a hostname nothing served:
+# no listener rule, no target group, no \`LLM_PROXY_LISTEN\`. Set here so the value comes from the
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
 SANDBOX_FORWARD_PROXY_URL=https://${egress_subdomain}.${control_plane_domain}
@@ -151,30 +151,30 @@ METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/eve
 KAFKA_RUNTIME_LOG_TOPIC=runtime-logs
 KAFKA_USAGE_EVENT_TOPIC=usage-events
 
-# The key `@lib/envelope` wraps data keys with.
+# The key \`@lib/envelope\` wraps data keys with.
 #
 # An ARN identifies a key; it is not one, and holding it grants nothing — the instance can use this
 # key only because its role says so, which is why this sits in plain text beside the ports rather
 # than in Parameter Store.
 #
-# Absent, every route that stores an encrypted value throws `MissingKeyError: No KMS key configured`
+# Absent, every route that stores an encrypted value throws \`MissingKeyError: No KMS key configured\`
 # at the moment it tries — which for the GitHub callback is *after* the OAuth round trip has
 # succeeded, so the failure looks like a broken login rather than missing configuration.
 KMS_KEY_ID=${envelope_kms_key_arn}
 
-# Where `proxy.ts` fetches a SPA's `index.html` from.
+# Where \`proxy.ts\` fetches a SPA's \`index.html\` from.
 #
-# Unset, `rewriteToSpa` falls back to the request's own origin and asks Next.js for
-# `/dashboard/index.html` — a file the website build does not contain and never will, because the
+# Unset, \`rewriteToSpa\` falls back to the request's own origin and asks Next.js for
+# \`/dashboard/index.html\` — a file the website build does not contain and never will, because the
 # dashboard is a separate Vite app. That is a 404 immediately after a successful login, which reads
 # as broken authentication rather than a missing rewrite target.
 #
 # Only the HTML travels this path. The bundles are absolute CloudFront URLs baked in at build time
-# by `VITE_ASSET_BASE`, so a browser fetches them from the CDN directly instead of routing every
+# by \`VITE_ASSET_BASE\`, so a browser fetches them from the CDN directly instead of routing every
 # chunk back through the origin.
 SPA_ASSET_ORIGIN=https://${spa_asset_origin}
 
-# The role a tenant's Lambda runs as. `publish.ts` falls back to `""`, so an unset value is not an
+# The role a tenant's Lambda runs as. \`publish.ts\` falls back to \`""\`, so an unset value is not an
 # error — it is a deploy attempted with no execution role, refused by AWS with nothing naming why.
 LAMBDA_EXECUTION_ROLE_ARN=${lambda_execution_role_arn}
 
@@ -184,17 +184,17 @@ TENANT_STATIC_BUCKET=${tenant_static_bucket}
 
 # Where a customer's build archive is uploaded to and where Lambda reads it from.
 #
-# The same omission `tenant-static.tf` describes for the assets bucket, one line down and left
-# behind when that one was fixed: `deploy.ts` and `publish.ts` fall back to `sproutos-dev-artifacts`,
+# The same omission \`tenant-static.tf\` describes for the assets bucket, one line down and left
+# behind when that one was fixed: \`deploy.ts\` and \`publish.ts\` fall back to \`sproutos-dev-artifacts\`,
 # a bucket that exists in no account, so the API signed a PUT for somewhere that is not there and
-# the deploy action failed with a bare `curl: (22) ... 404` from S3.
+# the deploy action failed with a bare \`curl: (22) ... 404\` from S3.
 #
 # Its own bucket rather than the platform's artifacts bucket: that one holds the release this
 # instance boots from and the Postgres split's TLS certificate, and accepting customer uploads into
-# it would mean granting this role a write on both. See `tenant-builds.tf`.
+# it would mean granting this role a write on both. See \`tenant-builds.tf\`.
 SERVICE_BUILD_BUCKET=${tenant_builds_bucket}
 
-# Runtime logs. An empty `CLICKHOUSE_URL` is a feature flag rather than an error: the observability
+# Runtime logs. An empty \`CLICKHOUSE_URL\` is a feature flag rather than an error: the observability
 # client reads it as "not configured" and the logs UI is simply absent. Reached through Traefik on
 # the OVH box, whose IP allowlist holds this deployment's NAT egress address — which is why there is
 # no port and no credential in the URL.
@@ -202,8 +202,8 @@ CLICKHOUSE_URL=https://clickhouse.sproutos.me
 CLICKHOUSE_USER=sproutos
 CLICKHOUSE_DATABASE=sproutos
 
-# The leading dot is what lets `api.${control_plane_domain}` read the session cookie the apex sets, and is
-# why the API answers CORS with `credentials: true`.
+# The leading dot is what lets \`api.${control_plane_domain}\` read the session cookie the apex sets, and is
+# why the API answers CORS with \`credentials: true\`.
 SESSION_COOKIE_DOMAIN=.${control_plane_domain}
 
 # The cluster itself, for the one caller that legitimately names every tenant's indices: the reaper
@@ -213,18 +213,18 @@ SESSION_COOKIE_DOMAIN=.${control_plane_domain}
 # proxy exists only to stop one tenant naming another's indices. Routing the reaper through it would
 # also be impossible rather than merely wasteful — the proxy authenticates against a tenant secret
 # stored as a one-way hash, so the control plane has nothing to present. The same is true of
-# `SERVICE_VALKEY_ADMIN_URL`, which carries a password and therefore arrives through Parameter Store
+# \`SERVICE_VALKEY_ADMIN_URL\`, which carries a password and therefore arrives through Parameter Store
 # instead of this file.
 #
-# `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD` authenticate the reaper to OpenSearch Security's
+# \`SEARCH_ADMIN_USER\` / \`SEARCH_ADMIN_PASSWORD\` authenticate the reaper to OpenSearch Security's
 # internal backend. Tenant requests use separate HMAC-derived internal users.
 SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
 
 # What a customer is handed when they provision an Elasticsearch service: the router's search split
 # behind the load balancer, on 443, never the cluster.
 #
-# The distinction is the entire tenancy model rather than a preference. `docs/findings/0015` records
-# `SERVICE_POSTGRES_PUBLIC_HOST` once observed returning the backend's own address to a real caller,
+# The distinction is the entire tenancy model rather than a preference. \`docs/findings/0015\` records
+# \`SERVICE_POSTGRES_PUBLIC_HOST\` once observed returning the backend's own address to a real caller,
 # which is a URI that works and answers to nobody. This is why the code refuses to default it.
 SERVICE_SEARCH_PUBLIC_HOST=${search_subdomain}.${control_plane_domain}
 SERVICE_SEARCH_PUBLIC_PORT=443
@@ -234,25 +234,25 @@ SERVICE_SEARCH_PUBLIC_PORT=443
 SERVICE_POSTGRES_PUBLIC_HOST=${postgres_subdomain}.${control_plane_domain}
 SERVICE_POSTGRES_PUBLIC_PORT=5432
 
-# **`neon`, stated rather than left to the default, and this is a safety interlock.**
+# **\`neon\`, stated rather than left to the default, and this is a safety interlock.**
 #
-# The default is `sprout`, which means "a role and a database on a shared cluster" and takes its
-# admin connection from `SERVICE_POSTGRES_ADMIN_URL ?? DATABASE_URL`. `DATABASE_URL` here is the
+# The default is \`sprout\`, which means "a role and a database on a shared cluster" and takes its
+# admin connection from \`SERVICE_POSTGRES_ADMIN_URL ?? DATABASE_URL\`. \`DATABASE_URL\` here is the
 # *control plane*. So with the public host set and the provider left alone, provisioning a customer
 # database would not fail — it would succeed, by creating a real database and a real role inside the
 # RDS instance that holds every organization, session and credit ledger on the platform.
 #
 # That is the failure this repository keeps writing down: not an error, a working result that is
-# wrong. `sproutPostgresConfigFromEnv` already refuses to default the *public host* for the same
+# wrong. \`sproutPostgresConfigFromEnv\` already refuses to default the *public host* for the same
 # class of reason, and this is the other half of it.
 #
-# `neon` has no such fallback. Without `NEON_API_KEY` it refuses, the route answers 503 naming the
+# \`neon\` has no such fallback. Without \`NEON_API_KEY\` it refuses, the route answers 503 naming the
 # variable, and the missing thing is named rather than silently substituted.
 SERVICE_POSTGRES_PROVIDER=neon
 
-# The Valkey split, behind the tenant load balancer, which terminates TLS for it — so `rediss://`
+# The Valkey split, behind the tenant load balancer, which terminates TLS for it — so \`rediss://\`
 # is what a customer gets and it is true end to end. The queue this eventually reaches is a
-# different name (`queue.<domain>`) on purpose: one is the proxy, the other is the shared instance
+# different name (\`queue.<domain>\`) on purpose: one is the proxy, the other is the shared instance
 # behind it, and a customer must never be handed the second.
 SERVICE_VALKEY_PUBLIC_HOST=${tenant_valkey_subdomain}.${control_plane_domain}
 SERVICE_VALKEY_PUBLIC_PORT=6379
@@ -445,7 +445,7 @@ if [ "$SERVICE" = "website" ]; then
     SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
     SANDBOX_DAYTONA_TARGET SANDBOX_FORWARD_PROXY_ROOT_KEY LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
-    SERVICE_VALKEY_ADMIN_URL"
+    SERVICE_VALKEY_ADMIN_URL SEARCH_PROXY_SECURITY_ROOT_KEY"
 fi
 
 # The router verifies the per-project log token the extension presents and holds the Kafka
