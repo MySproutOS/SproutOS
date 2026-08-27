@@ -176,6 +176,26 @@ describe("an idle sandbox is actually turned off", () => {
           `public HTTPS through the proxy failed: ${JSON.stringify(publicThroughProxy)}`,
         )
       }
+      const postgresThroughProxy = await activeDriver.exec(
+        made.externalId,
+        [
+          "node",
+          "-e",
+          [
+            "const proxy = new URL(process.env.HTTPS_PROXY)",
+            "const transport = await import(proxy.protocol === 'https:' ? 'node:https' : 'node:http')",
+            "const credentials = Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64')",
+            "const request = transport.request({ host: proxy.hostname, port: Number(proxy.port || (proxy.protocol === 'https:' ? 443 : 80)), method: 'CONNECT', path: 'postgres.sproutos.me:5432', headers: { 'Proxy-Authorization': 'Basic ' + credentials } })",
+            "request.on('connect', (response, socket) => { console.log(response.statusCode); socket.destroy(); process.exit(response.statusCode === 200 ? 0 : 1) })",
+            "request.on('error', (error) => { console.error(error.message); process.exit(1) })",
+            "request.end()",
+          ].join(";"),
+        ],
+        15_000,
+      )
+      // The 200 is the proof: Daytona reached the authenticated boundary and it opened a raw
+      // tunnel to the public Postgres listener. No database credential is needed for that seam.
+      expect(postgresThroughProxy).toMatchObject({ exitCode: 0, stdout: "200\n" })
       const directBypass = await activeDriver.exec(
         made.externalId,
         [
