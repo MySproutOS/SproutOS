@@ -912,9 +912,42 @@ resource "aws_iam_policy" "application" {
           Scoped to the `static/` prefix: the same bucket is shared by every project, and the key
           prefix is the tenancy boundary that `deploy.ts` builds from the deploy token.
         */
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+        Resource = [
+          "${aws_s3_bucket.tenant_static.arn}/static/*",
+          "${aws_s3_bucket.tenant_static.arn}/sites/*",
+        ]
+      },
+      {
         Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:GetObject"]
-        Resource = "${aws_s3_bucket.tenant_static.arn}/static/*"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.tenant_static.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["static/*", "sites/*"]
+          }
+        }
+      },
+      {
+        # The last write of a static release: one atomic hostname-to-digest pointer at the edge.
+        Effect = "Allow"
+        Action = [
+          "cloudfront-keyvaluestore:DescribeKeyValueStore",
+          "cloudfront-keyvaluestore:PutKey",
+          "cloudfront-keyvaluestore:DeleteKey",
+        ]
+        Resource = aws_cloudfront_key_value_store.tenant_static.arn
+      },
+      {
+        /*
+          Exact records for static tenant hosts. The wildcard continues to send Lambda projects to
+          the ALB; an exact record written after a static release wins in DNS and sends only that
+          hostname to CloudFront.
+        */
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
       },
       {
         /*
@@ -1029,6 +1062,9 @@ resource "aws_launch_template" "service" {
     spa_asset_origin           = aws_cloudfront_distribution.spa.domain_name
     lambda_execution_role_arn  = aws_iam_role.lambda_execution.arn
     tenant_static_bucket       = aws_s3_bucket.tenant_static.id
+    tenant_zone_id             = aws_route53_zone.tenant.zone_id
+    tenant_static_distribution = aws_cloudfront_distribution.tenant_static.domain_name
+    tenant_static_kvs_arn      = aws_cloudfront_key_value_store.tenant_static.arn
     tenant_builds_bucket       = aws_s3_bucket.tenant_builds.id
     database_endpoint          = aws_db_instance.control_plane.endpoint
     database_name              = aws_db_instance.control_plane.db_name

@@ -458,11 +458,14 @@ export interface Deployment {
   migrationHandler: string | null
   migrationOutput: string | null
   migrationStatus: string | null
+  preset: Generated<string>
   prNumber: number | null
   projectId: string
   runtime: string | null
   runtimeClass: string | null
   scaleMode: Generated<string>
+  staticArtifactKey: string | null
+  staticDigest: string | null
   status: Generated<string>
   updatedAt: Generated<Timestamp>
   url: string | null
@@ -751,6 +754,7 @@ export interface Project {
   repositoryId: string
   rootDir: Generated<string>
   scaleMode: Generated<string>
+  servingMode: string | null
   slug: string
   state: Generated<string>
   stateReason: string | null

@@ -2067,6 +2067,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
    * No such project
    */
   404: ErrorResponseT
+  /**
+   * The previous sandbox is being deleted
+   */
+  409: ErrorResponseT
 }
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
@@ -3265,6 +3269,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
       prNumber: number | null
       url: string | null
       hostname: string | null
+      preset: string
       lambdaVersion: string | null
       migrationStatus: string | null
       migrationOutput: string | null
@@ -3330,6 +3335,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
     prNumber: number | null
     url: string | null
     hostname: string | null
+    preset: string
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null
@@ -3385,6 +3391,7 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
     prNumber: number | null
     url: string | null
     hostname: string | null
+    preset: string
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null
@@ -3444,6 +3451,7 @@ export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses = {
     prNumber: number | null
     url: string | null
     hostname: string | null
+    preset: string
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null

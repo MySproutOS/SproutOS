@@ -210,7 +210,9 @@ function Deployments() {
           <DialogHeader>
             <DialogTitle>Roll back to {target?.shortSha}?</DialogTitle>
             <DialogDescription>
-              This points the live alias at that release. No rebuild — it takes effect immediately.
+              {target?.preset === "static"
+                ? "This points the site's edge route at that release. No rebuild — it takes effect immediately."
+                : "This points the live alias at that release. No rebuild — it takes effect immediately."}
             </DialogDescription>
           </DialogHeader>
 
@@ -221,12 +223,14 @@ function Deployments() {
             configuration with it — including a secret rotated since. Vercel behaves the same way and
             also does not say so, which is how it becomes an outage nobody can explain.
           */}
-          <Alert className="mt-4">
-            <AlertDescription className="text-xs">
-              The environment variables this release was published with come back too. If any have
-              been rotated since, this reverts them.
-            </AlertDescription>
-          </Alert>
+          {target?.preset === "static" ? null : (
+            <Alert className="mt-4">
+              <AlertDescription className="text-xs">
+                The environment variables this release was published with come back too. If any have
+                been rotated since, this reverts them.
+              </AlertDescription>
+            </Alert>
+          )}
 
           {error === null ? null : <p className="mt-3 text-xs text-destructive">{error}</p>}
 

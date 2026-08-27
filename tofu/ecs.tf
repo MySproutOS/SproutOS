@@ -222,7 +222,11 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "API_PORT", value = "3001" },
         { name = "AWS_REGION", value = var.aws_region },
-        { name = "TENANT_DOMAIN", value = var.control_plane_domain },
+        { name = "TENANT_DOMAIN", value = var.tenant_domain },
+        { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
+        { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+        { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
+        { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
         # The entrypoint composes DATABASE_URL from these plus the injected secret. The host and
         # database name are not secret; only the credentials are, and those arrive separately.
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
@@ -269,6 +273,14 @@ resource "aws_ecs_task_definition" "web" {
 
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "TENANT_DOMAIN", value = var.tenant_domain },
+        { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
+        { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+        { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
+        { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
+        { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
+        { name = "LAMBDA_EXECUTION_ROLE_ARN", value = aws_iam_role.lambda_execution.arn },
+        { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
         { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
       ]

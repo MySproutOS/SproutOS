@@ -23,6 +23,8 @@ export const deploymentSchemaResponse = Type.Object({
   url: Nullable(Type.String()),
   /** The host this deployment serves on. Stored, not derived — see the Lambda migration. */
   hostname: Nullable(Type.String()),
+  /** `static` rolls back by moving the edge pointer; server presets move a Lambda alias. */
+  preset: Type.String(),
   /** The Lambda version this release published. The rollback target. */
   lambdaVersion: Nullable(Type.String()),
   /** `skipped` when the project has no migrator, which is not the same as nobody having run one. */

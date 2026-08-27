@@ -1,6 +1,9 @@
 import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
 import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import { LambdaClient } from "@aws-sdk/client-lambda"
+import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
+import { Route53Client } from "@aws-sdk/client-route-53"
+import { S3Client } from "@aws-sdk/client-s3"
 import { tearDownDeployment } from "@lib/lambda"
 import { Redis } from "ioredis"
 import {
@@ -14,6 +17,8 @@ import {
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
+import { removeStaticSite, type StaticPublisherClients } from "./static-publish"
+import { withProjectLock } from "./project-lock"
 
 /**
  * Destroy what a deleted project left running.
@@ -65,79 +70,141 @@ export type TeardownResult = {
  * means a unit test opens a Redis connection it never closes and reaches AWS without saying so.
  * The Kubernetes client this replaced was injected for the same reason.
  */
-export type TeardownClients = { lambda: LambdaClient; valkey: Redis }
+export type TeardownClients = {
+  lambda: LambdaClient
+  valkey: Redis
+  static?: StaticPublisherClients & {
+    bucket: string
+    tenantZoneId: string
+    keyValueStoreArn: string
+  }
+}
 
 export function tearDownProject(clients?: TeardownClients): JobHandler {
-  return async (job, { db }) => {
+  return async (job, { db, keepAlive, signal }) => {
     const { projectId, projectJobId } = job.payload as {
       projectId?: string
       projectJobId?: string
     }
     if (projectId === undefined) throw new Error("project.teardown needs a projectId")
 
-    /*
+    return withProjectLock(
+      db,
+      projectId,
+      async () => {
+        const ownLease = async () => {
+          signal?.throwIfAborted()
+          if (!(await keepAlive())) throw new Error("Lost ownership of the project teardown job")
+        }
+        await ownLease()
+        /*
       The `project_job` row the delete route created, driven to completion here.
 
       `provisionProject.remove` writes one with `kind: "delete"`, the route returns it, and the
       dashboard polls it — and `provision.ts` only ever handled `fork` and `create`, so it sat at
       `queued` forever. A customer watching their deletion would have watched it not happen.
     */
-    if (projectJobId !== undefined) {
-      await crudProjectJob(db).update(projectJobId, { state: "running", startedAt: new Date() })
-    }
+        if (projectJobId !== undefined) {
+          await crudProjectJob(db).update(projectJobId, { state: "running", startedAt: new Date() })
+        }
 
-    const project = await db
-      .selectFrom("project")
-      .select(["id", "slug", "organizationId", "deletedAt"])
-      .where("id", "=", projectId)
-      .executeTakeFirst()
+        const project = await db
+          .selectFrom("project")
+          .select(["id", "slug", "organizationId", "deletedAt"])
+          .where("id", "=", projectId)
+          .executeTakeFirst()
 
-    // Gone entirely, or never existed. Nothing to tear down and nothing to report.
-    if (project === undefined) return
+        // Gone entirely, or never existed. Nothing to tear down and nothing to report.
+        if (project === undefined) return
 
-    /*
+        /*
       Refuses to tear down a project that is not deleted.
 
       A teardown enqueued for a live project would destroy a customer's running site, and the only
       thing standing between the two is a payload field. This is the check that makes an
       accidentally-enqueued job harmless instead of catastrophic.
     */
-    if (project.deletedAt === null) {
-      throw new Error(`Project ${projectId} is not deleted; refusing to tear it down`)
-    }
+        if (project.deletedAt === null) {
+          throw new Error(`Project ${projectId} is not deleted; refusing to tear it down`)
+        }
 
-    // Built here, not at registration: constructing clients at import time makes a worker fail to
-    // start wherever the environment is incomplete.
-    const aws: TeardownClients = clients ?? {
-      lambda: new LambdaClient({
-        region: process.env.AWS_REGION ?? "us-east-1",
-        ...(process.env.AWS_ENDPOINT_URL === undefined
-          ? {}
-          : { endpoint: process.env.AWS_ENDPOINT_URL }),
-      }),
-      valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
-    }
-    const result: TeardownResult = {
-      deployments: 0,
-      services: 0,
-      sandboxes: 0,
-      workers: 0,
-      envVars: 0,
-    }
+        // Built here, not at registration: constructing clients at import time makes a worker fail to
+        // start wherever the environment is incomplete.
+        const awsConfig = {
+          region: process.env.AWS_REGION ?? "us-east-1",
+          ...(process.env.AWS_ENDPOINT_URL === undefined
+            ? {}
+            : { endpoint: process.env.AWS_ENDPOINT_URL }),
+        }
+        const aws: TeardownClients = clients ?? {
+          lambda: new LambdaClient(awsConfig),
+          valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
+        }
+        const result: TeardownResult = {
+          deployments: 0,
+          services: 0,
+          sandboxes: 0,
+          workers: 0,
+          envVars: 0,
+        }
 
-    /*
+        /*
       Deployments first. This is the one that costs money every minute it is skipped, and the one a
       customer would notice: a deleted project whose site still answers.
     */
-    const deployments = await db
-      .selectFrom("deployment")
-      .select(["id", "kind", "prNumber", "hostname"])
-      .where("projectId", "=", projectId)
-      .where("status", "!=", "torn_down")
-      .execute()
+        const deployments = await db
+          .selectFrom("deployment")
+          .select(["id", "kind", "prNumber", "hostname", "preset"])
+          .where("projectId", "=", projectId)
+          .where("status", "!=", "torn_down")
+          .execute()
 
-    for (const deployment of deployments) {
-      /*
+        const staticDeployments = deployments.filter(({ preset }) => preset === "static")
+        if (staticDeployments.length > 0) {
+          await ownLease()
+          const staticClients = aws.static
+          const bucket = staticClients?.bucket ?? process.env.TENANT_STATIC_BUCKET
+          const tenantZoneId = staticClients?.tenantZoneId ?? process.env.TENANT_ZONE_ID
+          const keyValueStoreArn =
+            staticClients?.keyValueStoreArn ?? process.env.TENANT_STATIC_KEY_VALUE_STORE_ARN
+          if (
+            bucket === undefined ||
+            tenantZoneId === undefined ||
+            keyValueStoreArn === undefined
+          ) {
+            throw new Error(
+              "Static teardown needs TENANT_STATIC_BUCKET, TENANT_ZONE_ID, and " +
+                "TENANT_STATIC_KEY_VALUE_STORE_ARN",
+            )
+          }
+          const sharedStatic =
+            staticClients ??
+            ({
+              s3: new S3Client({
+                ...awsConfig,
+                forcePathStyle: process.env.AWS_ENDPOINT_URL !== undefined,
+              }),
+              route53: new Route53Client(awsConfig),
+              keyValueStore: new CloudFrontKeyValueStoreClient({ region: "us-east-1" }),
+              bucket,
+              tenantZoneId,
+              keyValueStoreArn,
+            } satisfies NonNullable<TeardownClients["static"]>)
+
+          await removeStaticSite(sharedStatic, {
+            bucket,
+            projectId,
+            hostnames: staticDeployments.flatMap(({ hostname }) =>
+              hostname === null ? [] : [hostname],
+            ),
+            tenantZoneId,
+            keyValueStoreArn,
+          })
+        }
+
+        for (const deployment of deployments) {
+          await ownLease()
+          /*
         The route first, then the function — the reverse of publishing.
 
         A release publishes the function and then the route, so traffic never points at nothing.
@@ -148,12 +215,12 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         Withdrawn by the hostname stored on the row, not one recomputed from the project: a project
         renamed since it deployed would otherwise keep its old host resolving.
       */
-      await tearDownDeployment(aws, { projectId, hostname: deployment.hostname })
-      await crudDeployment(db).update(deployment.id, { status: "torn_down" })
-      result.deployments += 1
-    }
+          await tearDownDeployment(aws, { projectId, hostname: deployment.hostname })
+          await crudDeployment(db).update(deployment.id, { status: "torn_down" })
+          result.deployments += 1
+        }
 
-    /*
+        /*
       Backend services, through their own drivers.
 
       `destroy` is what revokes the credential, drops the database, and makes the tenant's keys
@@ -161,15 +228,16 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       configuration is missing throws, and that failure is the job's: a service left provisioned is
       exactly what this exists to prevent, so it must not pass silently.
     */
-    const services = await db
-      .selectFrom("backendService")
-      .select(["id", "kind"])
-      .where("projectId", "=", projectId)
-      .where("deletedAt", "is", null)
-      .execute()
+        const services = await db
+          .selectFrom("backendService")
+          .select(["id", "kind"])
+          .where("projectId", "=", projectId)
+          .where("deletedAt", "is", null)
+          .execute()
 
-    for (const service of services) {
-      /*
+        for (const service of services) {
+          await ownLease()
+          /*
         The driver owns the row, not this job.
 
         `destroy` already sets `status` and `deleted_at` — every driver does, in the same place it
@@ -182,14 +250,14 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         — see `sandbox_state_check`, `sandbox_runtime_class_check` and `workflow_run_step_status_check`.
         `services.test.ts` now reads this one out of `pg_constraint`.
       */
-      await driverFor(db, service.kind).destroy(service.id)
-      result.services += 1
+          await driverFor(db, service.kind).destroy(service.id)
+          result.services += 1
 
-      // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
-      // dispatch now and starts a Lambda per batch, so there is nothing left running to remove.
-    }
+          // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
+          // dispatch now and starts a Lambda per batch, so there is nothing left running to remove.
+        }
 
-    /*
+        /*
       Dev sandboxes: one rented container per user, billed by the second for as long as it exists.
 
       The earlier version of this marked the row `stopped` and cleared `pod_name`, which was the
@@ -202,30 +270,31 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       at the provider and then fails here leaves a row pointing at nothing, which the next run
       treats as already-destroyed. The reverse leaves a paid container nothing references.
     */
-    const sandboxes = await db
-      .selectFrom("sandbox")
-      .select(["id", "externalId"])
-      .where("projectId", "=", projectId)
-      .execute()
+        const sandboxes = await db
+          .selectFrom("sandbox")
+          .select(["id", "externalId"])
+          .where("projectId", "=", projectId)
+          .execute()
 
-    if (sandboxes.length > 0) {
-      const driver = sandboxDriverFromEnv()
-      for (const sandbox of sandboxes) {
-        if (sandbox.externalId !== null) {
-          try {
-            await driver.destroy(sandbox.externalId)
-          } catch (error) {
-            // Already gone is done. Anything else has to stop the job, because the alternative is
-            // deleting our only record of a sandbox that is still running and still billing.
-            if (!(error instanceof SandboxNotFoundError)) throw error
+        if (sandboxes.length > 0) {
+          const driver = sandboxDriverFromEnv()
+          for (const sandbox of sandboxes) {
+            await ownLease()
+            if (sandbox.externalId !== null) {
+              try {
+                await driver.destroy(sandbox.externalId)
+              } catch (error) {
+                // Already gone is done. Anything else has to stop the job, because the alternative is
+                // deleting our only record of a sandbox that is still running and still billing.
+                if (!(error instanceof SandboxNotFoundError)) throw error
+              }
+            }
+            await crudSandbox(db).remove(sandbox.id)
+            result.sandboxes += 1
           }
         }
-        await crudSandbox(db).remove(sandbox.id)
-        result.sandboxes += 1
-      }
-    }
 
-    /*
+        /*
       Environment variables, deleted rather than soft-deleted.
 
       These are the customer's secrets — sealed, but sealed with a key the platform holds. Retaining
@@ -233,13 +302,13 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       no statement resolves through them, and the request that triggered this was a request to stop
       holding the project's data.
     */
-    const envVars = await db
-      .deleteFrom("projectEnvVar")
-      .where("projectId", "=", projectId)
-      .executeTakeFirst()
-    result.envVars = Number(envVars.numDeletedRows ?? 0)
+        const envVars = await db
+          .deleteFrom("projectEnvVar")
+          .where("projectId", "=", projectId)
+          .executeTakeFirst()
+        result.envVars = Number(envVars.numDeletedRows ?? 0)
 
-    /*
+        /*
       There is no second copy to chase, and that is worth recording rather than leaving as a gap.
 
       A Knative revision's environment was a Kubernetes Secret named after its own contents, so a
@@ -248,31 +317,34 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       it, and the function went above, before this line runs.
     */
 
-    await db
-      .updateTable("project")
-      .set({ state: "deleted", updatedAt: new Date() })
-      .where("id", "=", projectId)
-      .execute()
+        await db
+          .updateTable("project")
+          .set({ state: "deleted", updatedAt: new Date() })
+          .where("id", "=", projectId)
+          .execute()
 
-    await crudAuditLog(db).record({
-      organizationId: project.organizationId,
-      actorUserId: null,
-      action: "project:delete",
-      resourceSrn: `srn:sproutos:compute:${project.organizationId}:project/${projectId}`,
-      after: { ...result },
-    })
+        await crudAuditLog(db).record({
+          organizationId: project.organizationId,
+          actorUserId: null,
+          action: "project:delete",
+          resourceSrn: `srn:sproutos:compute:${project.organizationId}:project/${projectId}`,
+          after: { ...result },
+        })
 
-    if (projectJobId !== undefined) {
-      await crudProjectJob(db).update(projectJobId, {
-        state: "succeeded",
-        finishedAt: new Date(),
-      })
-    }
+        if (projectJobId !== undefined) {
+          await crudProjectJob(db).update(projectJobId, {
+            state: "succeeded",
+            finishedAt: new Date(),
+          })
+        }
 
-    console.info(
-      `[jobs] tore down project ${project.slug}: ${result.deployments} deployment(s), ` +
-        `${result.services} service(s), ${result.sandboxes} sandbox(es), ${result.workers} worker(s), ` +
-        `${result.envVars} env var(s)`,
+        console.info(
+          `[jobs] tore down project ${project.slug}: ${result.deployments} deployment(s), ` +
+            `${result.services} service(s), ${result.sandboxes} sandbox(es), ${result.workers} worker(s), ` +
+            `${result.envVars} env var(s)`,
+        )
+      },
+      { keepAlive },
     )
   }
 }
