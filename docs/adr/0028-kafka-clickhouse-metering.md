@@ -131,10 +131,11 @@ is logged and fails open rather than changing the tenant's search result.
   consumers and must read only through the atomic generation pointer.
 - ClickHouse backup and poison-message handling are implemented in the repository: native backups
   use a restricted env-credentialed S3 disk, scheduled health checks make stale/failed backups and
-  DLQ rows red, and a restore drill verifies an embedded snapshot manifest. They remain
-  **production verification pending** until the bucket is applied, the runtime-only key is placed
-  on OVH, the initial backup succeeds, and the restore drill passes there. Every remaining
-  dimension emitter and limit enforcement are still separate rollout requirements.
+  DLQ rows red, and a restore drill verifies an embedded snapshot manifest. Production verification
+  passed on the OVH host on 2026-08-27: both timers were active, the health service reported a fresh
+  S3 backup and an empty DLQ, and the isolated restore drill reproduced all 45 raw rows and the
+  manifest checksum before dropping its drill database. Every remaining dimension emitter and limit
+  enforcement are still separate rollout requirements.
 - Daytona sandbox verification and the LLM proxy's real OAuth/model call remain governed by the
   sandbox handoff. They are not implied by Docker or stub-provider tests.
 - `site_request` and `site_gib_second` become durable only after a verified report reaches the
