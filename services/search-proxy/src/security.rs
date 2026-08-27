@@ -41,6 +41,8 @@ pub enum SecurityError {
         resource: &'static str,
         status: StatusCode,
     },
+    #[error("OpenSearch security provisioning returned an invalid response")]
+    InvalidResponse(#[source] reqwest::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,13 +80,7 @@ impl SecurityManager {
         tenant: &TenantIdentity,
         prefix: &str,
     ) -> Result<TenantSecurityIdentity, SecurityError> {
-        let stem = prefix.trim_end_matches('_');
-        let identity = TenantSecurityIdentity {
-            user: tenant.username(),
-            role: format!("tenant_{stem}"),
-            password: self.derived_password(&tenant.username()),
-            index_prefix: prefix.to_owned(),
-        };
+        let identity = self.credentials_for(tenant, prefix);
 
         let mut ready = self.inner.ready.lock().await;
         if ready.contains(prefix) {
@@ -146,6 +142,52 @@ impl SecurityManager {
     /// `ensure` idempotently recreates all three documents before another tenant request is sent.
     pub async fn invalidate(&self, prefix: &str) {
         self.inner.ready.lock().await.remove(prefix);
+    }
+
+    /// Enumerate only users explicitly marked as ours. The storage meter uses this instead of
+    /// trusting index names or tenant input for billing attribution.
+    pub async fn managed_tenants(&self) -> Result<Vec<TenantIdentity>, SecurityError> {
+        let url = format!(
+            "{}/_plugins/_security/api/internalusers",
+            self.inner.upstream.trim_end_matches('/')
+        );
+        let users = self
+            .inner
+            .client
+            .get(url)
+            .basic_auth(
+                MANAGER_USER,
+                Some(String::from_utf8_lossy(&self.inner.root_key)),
+            )
+            .send()
+            .await
+            .map_err(SecurityError::Unreachable)?
+            .error_for_status()
+            .map_err(SecurityError::InvalidResponse)?
+            .json::<serde_json::Map<String, serde_json::Value>>()
+            .await
+            .map_err(SecurityError::InvalidResponse)?;
+        Ok(users
+            .into_iter()
+            .filter(|(_, document)| document["attributes"]["sproutos_managed"] == "search-v1")
+            .filter_map(|(username, _)| username.parse::<TenantIdentity>().ok())
+            .filter(|tenant| {
+                tenant.resource_kind == sproutos_tenant_auth::ResourceKind::SearchIndex
+            })
+            .collect())
+    }
+
+    /// Reconstruct credentials for a user returned by [`Self::managed_tenants`] without mutating
+    /// cluster configuration. The hourly storage sampler must not rewrite every Security document
+    /// after each router restart merely to issue a scoped stats read.
+    pub fn credentials_for(&self, tenant: &TenantIdentity, prefix: &str) -> TenantSecurityIdentity {
+        let stem = prefix.trim_end_matches('_');
+        TenantSecurityIdentity {
+            user: tenant.username(),
+            role: format!("tenant_{stem}"),
+            password: self.derived_password(&tenant.username()),
+            index_prefix: prefix.to_owned(),
+        }
     }
 
     fn derived_password(&self, user: &str) -> String {

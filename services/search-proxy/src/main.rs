@@ -53,11 +53,14 @@ async fn main() -> anyhow::Result<()> {
     })?;
     let security = SecurityManager::new(client.clone(), upstream.clone(), security_root_key)?;
 
+    let metering = search_meter(&client, &security, &upstream);
+
     let proxy = Arc::new(Proxy {
         store,
         upstream: upstream.clone(),
         client,
         security,
+        metering,
     });
 
     let app = Router::new().fallback(any(handle)).with_state(proxy);
@@ -66,4 +69,42 @@ async fn main() -> anyhow::Result<()> {
     info!(%listen, %upstream, "search-proxy listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn search_meter(
+    client: &reqwest::Client,
+    security: &SecurityManager,
+    upstream: &str,
+) -> Option<search_proxy::metering::SearchMeter> {
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let (Some(ingest_url), Some(key)) = (ingest_url, key) else {
+        tracing::warn!("search metering is not configured; search usage will not be billed");
+        return None;
+    };
+    let directory = std::env::var("SEARCH_METERING_SPOOL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("search-metering"));
+    let spool = match sproutos_llm_proxy::spool::MeteringSpool::open(
+        directory,
+        sproutos_llm_proxy::spool::SpoolLimits::default(),
+    ) {
+        Ok(spool) => spool,
+        Err(cause) => {
+            tracing::error!(%cause, "search metering is disabled; durable spool could not open");
+            return None;
+        }
+    };
+    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+        client.clone(),
+        ingest_url,
+        key.into_bytes(),
+    ));
+    let meter = search_proxy::metering::SearchMeter::new(spool);
+    meter.spawn_storage_sampling(security.clone(), client.clone(), upstream.to_owned());
+    Some(meter)
 }

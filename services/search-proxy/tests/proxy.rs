@@ -13,9 +13,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use search_proxy::metering::SearchMeter;
 use search_proxy::naming::prefix_for;
 use search_proxy::security::SecurityManager;
 use search_proxy::{Proxy, handle};
+use sproutos_llm_proxy::spool::{MeteringSpool, SpoolLimits};
+use sproutos_metering_proto::{UsageBatch, UsageDimension};
 use sproutos_service_credentials::CredentialStore;
 use sproutos_tenant_auth::{ResourceKind, TenantIdentity, generate_secret, hash_generated_secret};
 use uuid::Uuid;
@@ -72,6 +75,14 @@ async fn start_proxy(url: &str) -> SocketAddr {
 }
 
 async fn start_proxy_at(url: &str, upstream: String) -> SocketAddr {
+    start_proxy_metered(url, upstream, None).await
+}
+
+async fn start_proxy_metered(
+    url: &str,
+    upstream: String,
+    metering: Option<SearchMeter>,
+) -> SocketAddr {
     let store = Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
     let client = reqwest::Client::new();
     let security = SecurityManager::new(
@@ -86,6 +97,7 @@ async fn start_proxy_at(url: &str, upstream: String) -> SocketAddr {
         upstream,
         client,
         security,
+        metering,
     });
 
     let app = axum::Router::new()
@@ -100,6 +112,93 @@ async fn start_proxy_at(url: &str, upstream: String) -> SocketAddr {
         let _ = axum::serve(listener, app).await;
     });
     address
+}
+
+#[tokio::test]
+async fn successful_queries_and_engine_owned_storage_are_durably_metered() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let spool_path = std::env::temp_dir().join(format!("search-meter-e2e-{}", Uuid::now_v7()));
+    let spool = MeteringSpool::open(&spool_path, SpoolLimits::default()).unwrap();
+    let meter = SearchMeter::new(spool.clone());
+    let upstream = upstream();
+    let address = start_proxy_metered(&url, upstream.clone(), Some(meter.clone())).await;
+    let tenant = provision(&url).await;
+    let index = unique_index("metered");
+
+    let (status, _) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::POST,
+        &format!("/{index}/_search"),
+        Some(("application/json", r#"{"query":{"match_all":{}}}"#.into())),
+    )
+    .await;
+    assert_eq!(status, 404);
+    assert_eq!(
+        spool.pending_records(),
+        0,
+        "a rejected query did not execute"
+    );
+
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::POST,
+        &format!("/{index}/_doc/1?refresh=true"),
+        Some(("application/json", r#"{"value":"owned"}"#.into())),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {body}");
+    assert_eq!(spool.pending_records(), 0, "index writes are not queries");
+
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::POST,
+        &format!("/{index}/_search"),
+        Some(("application/json", r#"{"query":{"match_all":{}}}"#.into())),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(spool.pending_records(), 1);
+
+    let client = reqwest::Client::new();
+    let security = SecurityManager::new(
+        client.clone(),
+        upstream.clone(),
+        std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY")
+            .unwrap_or_else(|_| "local-search-security-root-key-32-bytes".into()),
+    )
+    .unwrap();
+    meter
+        .sample_storage_at(&security, &client, &upstream, 1_723_460_400_000)
+        .await;
+
+    let batches: Vec<UsageBatch> = std::fs::read_dir(&spool_path)
+        .unwrap()
+        .map(|entry| {
+            serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap()
+        })
+        .collect();
+    assert!(batches.iter().flat_map(|batch| &batch.events).any(|event| {
+        event.organization_id == tenant.identity.organization_id
+            && event.dimension == UsageDimension::EsSearchUnit
+            && event.quantity == 1.0
+    }));
+    assert!(batches.iter().flat_map(|batch| &batch.events).any(|event| {
+        event.organization_id == tenant.identity.organization_id
+            && event.dimension == UsageDimension::EsStorageGibHour
+            && event.quantity > 0.0
+            && event.occurred_at == 1_723_460_400_000
+    }));
+
+    cleanup(&url, &[&tenant]).await;
+    std::fs::remove_dir_all(spool_path).unwrap();
 }
 
 struct Tenant {

@@ -118,6 +118,7 @@ drifted.
 | `SEARCH_PROXY_DATABASE_URL`      | falls back to `DATABASE_URL` | Control plane, for credential lookups |
 | `SEARCH_PROXY_DB_POOL`           | `8`                          | Control-plane connections             |
 | `SEARCH_PROXY_SECURITY_ROOT_KEY` | required                     | HMAC root for internal tenant users   |
+| `SEARCH_METERING_SPOOL_DIR`      | `./search-metering`          | Durable query/storage usage records   |
 
 Unlike the Valkey proxy, a lookup happens **per request** rather than per connection, because HTTP
 connections are pooled and reused across tenants by intermediaries. That is why the pool is larger
@@ -161,7 +162,11 @@ another customer's data.
   deep pagination, a huge `terms` aggregation, a wildcard leading a term. The shape of the fix is a
   body inspection with limits; the shape of getting it wrong is refusing legitimate queries, so it
   wants real traffic to calibrate against.
-- **Metering.** Bytes indexed and queries run are the two dimensions TASK 25 would bill, and this is
-  the only place that can honestly count them.
+- **Metering details.** Successful `_search` and `_count` requests count one `es_search_unit`;
+  successful `_msearch` counts its executed header/body pairs. The observation is committed to the
+  fsynced spool after OpenSearch accepts it and before the response body is returned. Once per UTC
+  hour the proxy enumerates only managed Security-plugin users and samples primary-store bytes via
+  each tenant user's scoped `_stats`, emitting `es_storage_gib_hour`. Delivery retries through the
+  signed ingest path and is fail-open when its bounded spool is unavailable.
 - **Scroll and PIT lifecycle.** A point-in-time id is a cluster-wide handle; `_pit` is allowed for
   creation but the ids are not scoped, so one tenant holding another's id is not yet prevented.

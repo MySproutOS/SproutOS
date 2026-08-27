@@ -118,6 +118,9 @@ LLM_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/llm-metering
 # Site reports and response egress use their own source and spool so delivery cannot combine them
 # with model events. The parent state directory persists across process and service restarts.
 SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
+# Search query observations and hourly primary-storage samples are isolated from the other
+# emitters, while remaining on the router's persistent state volume.
+SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
@@ -434,7 +437,7 @@ if [ "$SERVICE" = "website" ]; then
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET SPROUTOS_LOG_ENDPOINT \
     CLICKHOUSE_PASSWORD METERING_INGEST_HMAC_KEY LOG_EXTENSION_LAYER_ARN \
     KAFKA_BROKERS KAFKA_USAGE_EVENT_SASL_USERNAME KAFKA_USAGE_EVENT_SASL_PASSWORD \
-    SANDBOX_DRIVER DAYTONA_API_KEY DAYTONA_ORGANIZATION_ID \
+    DAYTONA_API_KEY DAYTONA_ORGANIZATION_ID \
     SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
     SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \

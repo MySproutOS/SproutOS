@@ -74,6 +74,8 @@ export async function purgeTenantIndices(
   const names = listed.map((row) => row.index).filter((name) => name.startsWith(prefix))
 
   for (const name of names) {
+    // Deletes are deliberately serialized to avoid a burst of cluster-state mutations.
+    // eslint-disable-next-line no-await-in-loop
     await searchAdminRequest(config, "DELETE", `/${encodeURIComponent(name)}`)
   }
 
@@ -125,12 +127,28 @@ export async function searchAdminRequest<T>(
   }
 
   if (payload !== undefined) headers["content-type"] = "application/json"
-  const response = await fetch(`${config.url}${path}`, {
-    method,
-    headers,
-    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
-  })
-  const body = await response.text()
+  const encoded = payload === undefined ? undefined : JSON.stringify(payload)
+  let response: Response
+  let body: string
+  for (let attempt = 0; ; attempt++) {
+    // A retry depends on the preceding conflict response and cannot be parallelized.
+    // eslint-disable-next-line no-await-in-loop
+    response = await fetch(`${config.url}${path}`, {
+      method,
+      headers,
+      ...(encoded === undefined ? {} : { body: encoded }),
+    })
+    // eslint-disable-next-line no-await-in-loop
+    body = await response.text()
+    // Security config updates rewrite one shared config document. Concurrent idempotent PUTs can
+    // race on its optimistic version even when they address different tenants. Retry only that
+    // transient write conflict, with a small exponential delay and jitter; every other response
+    // keeps its original semantics and a fourth conflict remains visible.
+    if (!(method === "PUT" && response.status === 409 && attempt < 3)) break
+    const delayMs = 25 * 2 ** attempt + Math.floor(Math.random() * 25)
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
 
   // 404 on a DELETE means someone else already removed it, which is the outcome we wanted.
   if (response.status === 404 && method === "DELETE") return [] as T

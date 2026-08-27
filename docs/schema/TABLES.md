@@ -69,6 +69,7 @@ All ids are app-supplied UUIDv7 (`v7()`) unless noted. Timestamps are `timestamp
 | `usage_rollup`              | billing        | minute → hour → day cascade                                                                    | `organization`, `project`, `credit_transaction`                              |
 | `metering_outbox`           | billing        | transactional control-plane usage awaiting Kafka publication                                   | —                                                                            |
 | `metering_import_state`     | billing        | ClickHouse import cursor per consumer                                                          | —                                                                            |
+| `valkey_metering_state`     | billing        | last successful per-service queue-memory observation                                           | `backend_service`                                                            |
 | `statement`                 | billing        | the monthly explicable bill                                                                    | `organization`                                                               |
 | `statement_line_item`       | billing        | per-dimension legs plus the visible overhead row                                               | `statement`, `project`                                                       |
 | `topup`                     | billing        | one Stripe purchase                                                                            | `organization`, `credit_transaction`                                         |
@@ -171,11 +172,12 @@ openrouter_api_key`. Auto-update defaults ON only for `claude_subscription`
 (see [Conflicts resolved](#conflicts-resolved)). `agent_event` holds customer source code and
 possibly secrets the agent read — a 30-day default TTL is set **before** the first run, not after.
 
-### Billing — 17 tables
+### Billing — 18 tables
 
 `payment_method`, `stripe_customer`, `credit_account`, `credit_transaction`, `credit_ledger_entry`,
 `credit_balance_cache`, `credit_hold`, `price_book`, `price_book_item`, `usage_rollup`,
-`metering_outbox`, `metering_import_state`, `statement`, `statement_line_item`, `topup`,
+`metering_outbox`, `metering_import_state`, `valkey_metering_state`, `statement`,
+`statement_line_item`, `topup`,
 `stripe_webhook_event`, `refund`.
 
 Append-only double-entry: `credit_ledger_entry` carries a `BEFORE UPDATE OR DELETE` trigger raising
@@ -228,8 +230,9 @@ against. `deployment.runtime_class` defaults to `kata-fc`; `sandbox.runtime_clas
 `workflow`, `workflow_version`, `workflow_schedule`, `workflow_run`, `workflow_run_step`,
 `workflow_job_edit_audit`, `tenant_queue`.
 
-`workflow_run.bytes_enqueued` and `valkey_dwell_ms` had no writer in the research. `services/valkey-proxy`
-is that writer, emitting `metering-proto` events at dequeue.
+`workflow_run.bytes_enqueued` and `valkey_dwell_ms` still have no writer. Their schema defaults are
+not measurements, and a zero in either column must not be presented as observed queue residency.
+The Valkey proxy can eventually measure residency, but it does not currently emit that usage.
 
 ### OAuth provider — 8 tables
 

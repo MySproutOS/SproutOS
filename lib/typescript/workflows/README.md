@@ -46,9 +46,15 @@ changed about what this runs.
 > billing based on number of jobs, size of the job in valkey, and how long it's been in valkey in
 > addition to the actual execution
 
-Four dimensions. The middle two are why `workflow_run.bytes_enqueued` and `valkey_dwell_ms` are
-separate columns rather than a single "queue cost": the charge is bytes **×** seconds, computed at
-rating time against the price book that was in force, and either factor alone means nothing.
+Four dimensions. `workflow_job_enqueued` is the number of planned step rows committed with a run;
+that exact count is emitted through the transactional metering outbox when the run is created.
+This is deliberately not counted by the dispatcher: its wake set coalesces any number of queue
+writes into one member, so a wake is not a job.
+
+The middle two dimensions are why `workflow_run.bytes_enqueued` and `valkey_dwell_ms` are separate
+columns rather than a single "queue cost": the charge is bytes **×** seconds. Neither is measured
+yet. Both remain null, the API reports the cost as incomplete, and the dashboard shows no price;
+zero is reserved for a future meter that actually observed zero residency.
 
 The dwell charge is the one people find surprising and the one that reflects reality — a job
 sitting in a queue for six hours holds memory on a Valkey instance we pay for the whole time,

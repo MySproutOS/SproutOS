@@ -3804,7 +3804,7 @@ export type GetV1OrgsByOrgSlugWorkflowRunsResponses = {
       startedAt: Date | null
       finishedAt: Date | null
       durationMs: number | null
-      costMicroUsd: string
+      costMicroUsd: string | null
     }>
   }
 }
@@ -3996,8 +3996,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespon
       } | null
       triggerType: string
       queueJobId: string | null
-      bytesEnqueued: string
-      valkeyDwellMs: string
+      bytesEnqueued: string | null
+      valkeyDwellMs: string | null
       startedAt: Date | null
       finishedAt: Date | null
       createdAt: Date
@@ -4050,8 +4050,8 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespo
     } | null
     triggerType: string
     queueJobId: string | null
-    bytesEnqueued: string
-    valkeyDwellMs: string
+    bytesEnqueued: string | null
+    valkeyDwellMs: string | null
     startedAt: Date | null
     finishedAt: Date | null
     createdAt: Date
@@ -4101,8 +4101,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunI
       } | null
       triggerType: string
       queueJobId: string | null
-      bytesEnqueued: string
-      valkeyDwellMs: string
+      bytesEnqueued: string | null
+      valkeyDwellMs: string | null
       startedAt: Date | null
       finishedAt: Date | null
       createdAt: Date
@@ -4124,6 +4124,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunI
       byDimension: {
         [key: string]: unknown | string
       }
+      complete: boolean
+      missingDimensions: Array<string>
     }
   }
 }
@@ -6454,73 +6456,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

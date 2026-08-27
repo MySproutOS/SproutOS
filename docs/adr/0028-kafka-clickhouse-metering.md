@@ -75,10 +75,36 @@ Existing project-only log tokens remain valid for logs during rollout, but canno
 next project deployment replaces them with the organization-bound shape rather than guessing a
 billing owner for an old credential.
 
+`workflow_job_enqueued` is emitted through the same transactional outbox as the workflow run and
+its planned steps, as one aggregate event whose quantity is the exact step count. This corrects
+the legacy hardening plan's proposed dispatcher boundary: the Valkey master wake set deliberately
+coalesces many enqueues into one queue activation, and a worker invocation may drain up to 25, so
+the dispatcher cannot honestly count jobs. Per-run queue bytes and dwell remain null because the
+service-level residency sampler below cannot attribute either value to one workflow run; the API
+marks their absence as incomplete rather than showing zero.
+
+Valkey residency is sampled from the privileged control plane, never from tenant-visible `SCAN`.
+Each pass forces the exact engine prefix, sums `MEMORY USAGE ... SAMPLES 0` for only those keys,
+and transactionally advances a per-service observation beside its outbox event. Byte-seconds are
+the trapezoidal integral between adjacent successful five-minute observations. This is explicitly a
+sampled estimate, not command-by-command accounting: a first observation establishes the baseline,
+and a gap longer than one period plus a one-minute scheduling tolerance resets it without billing
+the missing interval. The system would rather lose that interval than invent residency it did not
+observe.
+
 This does not pretend metering can take the front door down. If the bounded spool is full or cannot
 be opened, the router logs the unrecorded observation and serves the tenant response. That is an
 explicit availability-over-revenue failure mode, matching credit enforcement's fail-open rule;
 silently turning capacity exhaustion into a 500 would make a billing outage a customer outage.
+
+Search metering uses the same durable handoff in its own spool. A query is observed only after a
+successful response arrives from OpenSearch, before the response body is returned to the caller;
+this counts work the engine accepted even if the caller then disconnects. `_msearch` counts its
+individual header/body pairs. At the next UTC hour boundary, the proxy enumerates internal users
+carrying the platform ownership marker and authenticates as each tenant user to read primary-store
+bytes from that user's namespace-scoped `_stats`. The resource/hour external id converges across
+router replicas, and the stored timestamp is the original hour boundary. Missing metering capacity
+is logged and fails open rather than changing the tenant's search result.
 
 ## Consequences
 

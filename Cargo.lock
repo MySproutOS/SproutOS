@@ -2824,6 +2824,8 @@ dependencies = [
  "reqwest",
  "serde_json",
  "sha2 0.10.9",
+ "sproutos-llm-proxy",
+ "sproutos-metering-proto",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",
  "thiserror 2.0.20",

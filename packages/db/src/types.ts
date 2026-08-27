@@ -1194,6 +1194,13 @@ export interface UserPreference {
   userId: string
 }
 
+export interface ValkeyMeteringState {
+  backendServiceId: string
+  memoryBytes: Int8
+  sampledAt: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Workflow {
   createdAt: Generated<Timestamp>
   currentVersionId: string | null
@@ -1223,7 +1230,7 @@ export interface WorkflowJobEditAudit {
 
 export interface WorkflowRun {
   attempt: Generated<number>
-  bytesEnqueued: Generated<Int8>
+  bytesEnqueued: Int8 | null
   createdAt: Generated<Timestamp>
   error: Json | null
   finishedAt: Timestamp | null
@@ -1233,7 +1240,7 @@ export interface WorkflowRun {
   status: Generated<string>
   triggerType: string
   updatedAt: Generated<Timestamp>
-  valkeyDwellMs: Generated<Int8>
+  valkeyDwellMs: Int8 | null
   workflowId: string
   workflowVersionId: string | null
 }
@@ -1360,6 +1367,7 @@ export interface DB {
   usageRollup: UsageRollup
   user: User
   userPreference: UserPreference
+  valkeyMeteringState: ValkeyMeteringState
   workflow: Workflow
   workflowJobEditAudit: WorkflowJobEditAudit
   workflowRun: WorkflowRun

@@ -69,6 +69,18 @@ export {
   meteringOutboxRelay,
 } from "./metering-outbox"
 export {
+  meterValkeyQueues,
+  meterValkeyQueuesJob,
+  METER_VALKEY_QUEUES_KIND,
+  sampleTenantValkeyMemory,
+  sampledByteSeconds,
+  VALKEY_METERING_BATCH_SIZE,
+  VALKEY_METERING_INTERVAL_MS,
+  VALKEY_METERING_MAX_GAP_MS,
+  type ValkeyMeteringOptions,
+  type ValkeyMemorySample,
+} from "./valkey-metering"
+export {
   CLAIM_TIMEOUT_MS,
   claimSigningJob,
   completeSigning,

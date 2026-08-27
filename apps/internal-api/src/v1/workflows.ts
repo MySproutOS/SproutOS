@@ -15,6 +15,7 @@ import {
   type WorkflowGraph,
 } from "@lib/workflows"
 import { JOB_KINDS, enqueue, stepRowsFor } from "@lib/jobs"
+import { crudMeteringOutbox } from "@lib/dao"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -46,6 +47,7 @@ import {
   workflowsSchemaWorkflow,
   workflowsSchemaWorkflowParam,
 } from "./workflows.serializer"
+import { workflowJobsOutboxRecord } from "./workflow-metering"
 
 const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
@@ -371,8 +373,8 @@ app
             const elapsed = elapsedSeconds(run.startedAt, run.finishedAt)
             const cost = await rateWorkflowRun(db, {
               jobsEnqueued: stepCounts.get(run.id) ?? 0,
-              bytesEnqueued: BigInt(run.bytesEnqueued),
-              dwellMs: BigInt(run.valkeyDwellMs),
+              bytesEnqueued: run.bytesEnqueued === null ? null : BigInt(run.bytesEnqueued),
+              dwellMs: run.valkeyDwellMs === null ? null : BigInt(run.valkeyDwellMs),
               vcpuSeconds: elapsed,
               gibSeconds: elapsed * 0.5,
             })
@@ -392,7 +394,7 @@ app
                 run.startedAt !== null && run.finishedAt !== null
                   ? run.finishedAt.getTime() - run.startedAt.getTime()
                   : null,
-              costMicroUsd: cost.total.toString(),
+              costMicroUsd: cost.complete ? cost.total.toString() : null,
             }
           }),
         ),
@@ -663,6 +665,7 @@ app
 
       const runId = v7()
       const steps = stepRowsFor(runId, version.graph as WorkflowGraph)
+      const occurredAt = new Date()
 
       await db.transaction().execute(async (tx) => {
         await tx
@@ -673,10 +676,24 @@ app
             workflowVersionId: version.id,
             triggerType: "manual",
             status: "queued",
+            createdAt: occurredAt,
           })
           .execute()
 
         if (steps.length > 0) await tx.insertInto("workflowRunStep").values(steps).execute()
+
+        const usage = workflowJobsOutboxRecord({
+          runId,
+          workflowId,
+          workflowVersionId: version.id,
+          organizationId: c.var.organization.id,
+          projectId: workflow.projectId,
+          jobs: steps.length,
+          occurredAt,
+        })
+        if (usage !== undefined) {
+          await crudMeteringOutbox(tx).create({ id: v7(), ...usage })
+        }
       })
 
       // Outside the transaction on purpose: the worker polls `background_job`, and a job visible
@@ -776,8 +793,8 @@ app
       // cost is bytes × seconds, which is why the two columns are stored rather than a product.
       const rated = await rateWorkflowRun(db, {
         jobsEnqueued: steps.length,
-        bytesEnqueued: BigInt(run.bytesEnqueued),
-        dwellMs: BigInt(run.valkeyDwellMs),
+        bytesEnqueued: run.bytesEnqueued === null ? null : BigInt(run.bytesEnqueued),
+        dwellMs: run.valkeyDwellMs === null ? null : BigInt(run.valkeyDwellMs),
         vcpuSeconds: elapsedSeconds(run.startedAt, run.finishedAt),
         gibSeconds: elapsedSeconds(run.startedAt, run.finishedAt) * 0.5,
       })
@@ -801,6 +818,8 @@ app
           byDimension: Object.fromEntries(
             Object.entries(rated.byDimension).map(([key, value]) => [key, value.toString()]),
           ),
+          complete: rated.complete,
+          missingDimensions: rated.missingDimensions,
         },
       })
     },
@@ -1024,6 +1043,7 @@ async function ownedWorkflow(organizationId: string, workflowId: string) {
     // should act on.
     .select([
       "workflow.id as id",
+      "workflow.projectId as projectId",
       "workflow.currentVersionId as currentVersionId",
       "workflow.enabled as enabled",
     ])
@@ -1060,12 +1080,19 @@ function presentRun(run: RunRow) {
     queueJobId: run.queueJobId,
     // bigint columns arrive as strings and leave as strings — a run that queued four gigabytes is
     // past what a JSON number holds exactly.
-    bytesEnqueued: String(run.bytesEnqueued),
-    valkeyDwellMs: String(run.valkeyDwellMs),
+    bytesEnqueued: presentInt8(run.bytesEnqueued),
+    valkeyDwellMs: presentInt8(run.valkeyDwellMs),
     startedAt: run.startedAt?.toISOString() ?? null,
     finishedAt: run.finishedAt?.toISOString() ?? null,
     createdAt: run.createdAt.toISOString(),
   }
+}
+
+/** A nullable bigint column as JSON, refusing an unexpected driver value instead of stringifying it. */
+function presentInt8(value: unknown): string | null {
+  return typeof value === "string" || typeof value === "number" || typeof value === "bigint"
+    ? String(value)
+    : null
 }
 
 /** `workflow_run.error` as the schema promises it, or null for anything that is not that shape. */

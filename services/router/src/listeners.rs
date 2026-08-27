@@ -152,12 +152,14 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         upstream.clone(),
         security_root_key,
     )?;
+    let metering = search_meter(&client, &security, &upstream);
 
     let proxy = Arc::new(search_proxy::Proxy {
         store,
         upstream: upstream.clone(),
         client,
         security,
+        metering,
     });
 
     let app = AxumRouter::new()
@@ -174,6 +176,49 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
             tracing::error!(%cause, "the search split stopped serving");
         }
     })))
+}
+
+fn search_meter(
+    client: &reqwest::Client,
+    security: &search_proxy::security::SecurityManager,
+    upstream: &str,
+) -> Option<search_proxy::metering::SearchMeter> {
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let (Some(ingest_url), Some(key)) = (ingest_url, key) else {
+        tracing::warn!("search metering is not configured; search usage will not be billed");
+        return None;
+    };
+    let directory = std::env::var("SEARCH_METERING_SPOOL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("search-metering")
+        });
+    let spool = match sproutos_llm_proxy::spool::MeteringSpool::open(
+        directory,
+        sproutos_llm_proxy::spool::SpoolLimits::default(),
+    ) {
+        Ok(spool) => spool,
+        Err(cause) => {
+            tracing::error!(%cause, "search metering is disabled; durable spool could not open");
+            return None;
+        }
+    };
+    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+        client.clone(),
+        ingest_url,
+        key.into_bytes(),
+    ));
+    let meter = search_proxy::metering::SearchMeter::new(spool);
+    meter.spawn_storage_sampling(security.clone(), client.clone(), upstream.to_owned());
+    Some(meter)
 }
 
 /// Start the Postgres split, if this deployment has one.

@@ -17,6 +17,7 @@
 //! is byte work on bodies that can be megabytes.
 
 pub mod body;
+pub mod metering;
 pub mod naming;
 pub mod routes;
 pub mod security;
@@ -50,6 +51,9 @@ pub struct Proxy {
     /// Provisions the server-enforced role before forwarding. Required: there is deliberately no
     /// parser-only mode, because it would turn a missing deployment secret into weaker isolation.
     pub security: SecurityManager,
+    /// Durable billing handoff. Absent in development; failures are loud and fail open so a
+    /// metering outage cannot become a search outage.
+    pub metering: Option<metering::SearchMeter>,
 }
 
 /// Headers that must not be forwarded upstream.
@@ -70,6 +74,7 @@ const STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "content-length",
     "x-proxy-user",
     "x-proxy-roles",
+    "x-opaque-id",
 ];
 
 /// Headers that must not be forwarded back.
@@ -212,6 +217,8 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         },
     };
 
+    let query = metering::QueryObservation::for_request(&identity, &path, &forwarded);
+
     forward(
         &proxy,
         &identity,
@@ -222,6 +229,7 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
             path: &path,
             headers: &parts.headers,
             body: forwarded,
+            query,
         },
     )
     .await
@@ -233,6 +241,7 @@ struct ForwardRequest<'a> {
     path: &'a str,
     headers: &'a HeaderMap,
     body: Bytes,
+    query: Option<metering::QueryObservation>,
 }
 
 async fn forward(
@@ -287,6 +296,15 @@ async fn forward(
         }
     }
 
+    // Receiving a successful response header is the first honest point at which we know the
+    // engine accepted the query. Persist before reading/rendering the body, so a client that hangs
+    // up after OpenSearch did the work is not silently free.
+    if response.status().is_success()
+        && let (Some(meter), Some(observation)) = (&proxy.metering, &request.query)
+    {
+        meter.record_query(observation);
+    }
+
     render_upstream(response, &security.index_prefix).await
 }
 
@@ -329,6 +347,9 @@ async fn send_upstream(
     // Set after tenant-controlled Authorization has been stripped. This is a matching OpenSearch
     // internal user with an HMAC-derived password that is never stored or given to the tenant.
     request = request.basic_auth(&security.user, Some(&security.password));
+    if let Some(query) = &forwarded.query {
+        request = request.header("x-opaque-id", &query.request_id);
+    }
 
     request.send().await
 }
@@ -393,6 +414,9 @@ mod tests {
         )));
         assert!(strip_request_header(&HeaderName::from_static(
             "x-proxy-roles"
+        )));
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-opaque-id"
         )));
     }
 }

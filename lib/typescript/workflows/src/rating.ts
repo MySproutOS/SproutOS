@@ -20,8 +20,8 @@ export type WorkflowUsage = {
   /** How many jobs the run enqueued. Charged per job — `workflow_job_enqueued`. */
   jobsEnqueued: number
   /** The payload's size in Valkey, and how long it sat there. */
-  bytesEnqueued: bigint
-  dwellMs: bigint
+  bytesEnqueued: bigint | null
+  dwellMs: bigint | null
   /** Actual execution, in vCPU-seconds and GiB-seconds. */
   vcpuSeconds: number
   gibSeconds: number
@@ -32,6 +32,9 @@ export type RatedWorkflowRun = {
   usage: MicroUsd
   overhead: MicroUsd
   total: MicroUsd
+  /** False when one or more quantities were never measured, rather than measured as zero. */
+  complete: boolean
+  missingDimensions: string[]
 }
 
 export class NoActivePriceBookError extends Error {
@@ -83,12 +86,14 @@ export async function rateWorkflowRun(
 
   const rates = new Map(items.map((item) => [item.dimension, String(item.unitMicroUsd)]))
   const quantities = quantitiesFor(usage)
+  const missingDimensions = DIMENSIONS.filter((dimension) => quantities[dimension] === null)
 
   const byDimension: Record<string, MicroUsd> = {}
   let subtotal = 0n
 
   for (const dimension of DIMENSIONS) {
     const quantity = quantities[dimension]
+    if (quantity === null) continue
     if (quantity === "0") continue
 
     const rate = rates.get(dimension)
@@ -106,6 +111,8 @@ export async function rateWorkflowRun(
     usage: subtotal,
     overhead: platformOverhead,
     total: subtotal + platformOverhead,
+    complete: missingDimensions.length === 0,
+    missingDimensions,
   }
 }
 
@@ -116,12 +123,18 @@ export async function rateWorkflowRun(
  * is not, and `rateTimesQuantity` works in bigint precisely so the arithmetic never becomes
  * approximate on the way to a bill.
  */
-export function quantitiesFor(usage: WorkflowUsage): Record<(typeof DIMENSIONS)[number], string> {
-  const byteSeconds = (usage.bytesEnqueued * usage.dwellMs) / 1000n
+export function quantitiesFor(
+  usage: WorkflowUsage,
+): Record<(typeof DIMENSIONS)[number], string | null> {
+  const byteSeconds =
+    usage.bytesEnqueued === null || usage.dwellMs === null
+      ? null
+      : (usage.bytesEnqueued * usage.dwellMs) / 1000n
 
   return {
     workflow_job_enqueued: String(Math.max(0, usage.jobsEnqueued)),
-    valkey_queue_byte_second: (byteSeconds < 0n ? 0n : byteSeconds).toString(),
+    valkey_queue_byte_second:
+      byteSeconds === null ? null : (byteSeconds < 0n ? 0n : byteSeconds).toString(),
     workflow_exec_vcpu_second: usage.vcpuSeconds.toFixed(9),
     workflow_exec_gib_second: usage.gibSeconds.toFixed(9),
   }

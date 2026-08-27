@@ -43,6 +43,7 @@ import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
+import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -88,6 +89,7 @@ export const JOB_KINDS = {
   destroySandbox: SANDBOX_KINDS.destroy,
   reapSandboxes: SANDBOX_KINDS.reap,
   meterSandboxes: SANDBOX_KINDS.meter,
+  meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
@@ -325,6 +327,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.destroySandbox]: destroySandbox(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
+  [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
 }
 
@@ -345,6 +348,15 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.relayMeteringOutbox,
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes. The sampler emits only an interval bracketed by two successful
+      observations; missed windows are deliberately left unbilled rather than extrapolated.
+    */
+    kind: JOB_KINDS.meterValkeyQueues,
+    idempotencyKey: `${JOB_KINDS.meterValkeyQueues}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
     maxAttempts: 10,
   })
   await enqueue(db, {
