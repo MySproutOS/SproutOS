@@ -243,9 +243,7 @@ resource "aws_lb_target_group" "valkey" {
     matcher             = "200"
   }
 
-  # CONNECT tunnels are bounded to five minutes in the proxy. Give the old colour that same drain
-  # window so cutover does not truncate a package download or Git fetch mid-transfer.
-  deregistration_delay = 300
+  deregistration_delay = 30
   tags                 = { Name = "${var.name_prefix}-valkey-${each.key}" }
 }
 
@@ -338,7 +336,9 @@ resource "aws_lb_target_group" "forward_proxy" {
     matcher             = "200"
   }
 
-  deregistration_delay = 30
+  # CONNECT tunnels are bounded to five minutes in the proxy. Give the old colour that same drain
+  # window so cutover does not truncate a package download or Git fetch mid-transfer.
+  deregistration_delay = 300
   tags                 = { Name = "${var.name_prefix}-egress-${each.key}" }
 }
 
