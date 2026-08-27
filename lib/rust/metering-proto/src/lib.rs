@@ -87,6 +87,15 @@ pub enum UsageDimension {
     AiOutputToken,
     /// One token read from an AI prompt cache.
     AiCacheReadToken,
+    /// One token written to an AI prompt cache at the provider's write rate.
+    AiCacheWriteToken,
+    /// One input token on a request above the provider's long-context threshold.
+    AiLongContextInputToken,
+    /// One output token on a request above the provider's long-context threshold.
+    AiLongContextOutputToken,
+    /// One cached input token on a request above the provider's long-context threshold.
+    AiLongContextCacheReadToken,
+    AiLongContextCacheWriteToken,
     /// One second spent running a coding agent.
     AgentRunSecond,
     /// Sandbox CPU allocation, in vCPU-seconds.
@@ -115,6 +124,11 @@ impl UsageDimension {
         Self::AiInputToken,
         Self::AiOutputToken,
         Self::AiCacheReadToken,
+        Self::AiCacheWriteToken,
+        Self::AiLongContextInputToken,
+        Self::AiLongContextOutputToken,
+        Self::AiLongContextCacheReadToken,
+        Self::AiLongContextCacheWriteToken,
         Self::AgentRunSecond,
         Self::SandboxCpuSecond,
         Self::SandboxGibSecond,
@@ -139,6 +153,11 @@ impl UsageDimension {
             Self::AiInputToken => "ai_input_token",
             Self::AiOutputToken => "ai_output_token",
             Self::AiCacheReadToken => "ai_cache_read_token",
+            Self::AiCacheWriteToken => "ai_cache_write_token",
+            Self::AiLongContextInputToken => "ai_long_context_input_token",
+            Self::AiLongContextOutputToken => "ai_long_context_output_token",
+            Self::AiLongContextCacheReadToken => "ai_long_context_cache_read_token",
+            Self::AiLongContextCacheWriteToken => "ai_long_context_cache_write_token",
             Self::AgentRunSecond => "agent_run_second",
             Self::SandboxCpuSecond => "sandbox_cpu_second",
             Self::SandboxGibSecond => "sandbox_gib_second",

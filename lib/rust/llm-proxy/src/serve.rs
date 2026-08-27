@@ -23,7 +23,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt as _;
 
 use crate::meter;
-use crate::session::Session;
+use crate::session::{Session, Upstream};
 use crate::spool::{MeteringSpool, SpoolReservation};
 use crate::store::{SessionStore, StoreError};
 use crate::usage::UsageAccumulator;
@@ -141,6 +141,20 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     };
 
     /*
+      Platform-funded OpenAI traffic must name the one model this price book can reconcile.
+
+      A different model has a different provider rate. Forwarding it and applying the default
+      rate would turn a successful response into an unprovable charge, so
+      refuse before the provider can do billable work. BYO requests remain the customer's bill.
+    */
+    if session.upstream == Upstream::Openai
+        && !session.charged_externally
+        && let Err(message) = validate_platform_openai_request(&bytes)
+    {
+        return (StatusCode::BAD_REQUEST, message).into_response();
+    }
+
+    /*
       The request id, and why it is derived from the body rather than generated.
 
       It is the idempotency key's variable half. Generating one per attempt would mean a client
@@ -217,6 +231,15 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     *response.status_mut() = status;
     *response.headers_mut() = response_headers;
     response
+}
+
+fn validate_platform_openai_request(bytes: &[u8]) -> Result<(), &'static str> {
+    let body: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| "Platform-funded model requests must have a JSON body.")?;
+    if body.get("model").and_then(serde_json::Value::as_str) != Some("gpt-5.6-terra") {
+        return Err("Platform credit currently supports only gpt-5.6-terra.");
+    }
+    Ok(())
 }
 
 /// Add a provider-required header without erasing feature opt-ins sent by the harness.
@@ -437,6 +460,28 @@ mod tests {
     }
 
     #[test]
+    fn platform_credit_accepts_only_exactly_priceable_openai_requests() {
+        assert_eq!(
+            validate_platform_openai_request(br#"{"model":"gpt-5.6-terra"}"#),
+            Ok(())
+        );
+        assert!(validate_platform_openai_request(br#"{"model":"gpt-5"}"#).is_err());
+        assert_eq!(
+            validate_platform_openai_request(
+                br#"{"model":"gpt-5.6-terra","prompt_cache_key":"customer"}"#
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_platform_openai_request(
+                br#"{"model":"gpt-5.6-terra","prompt_cache_retention":"24h"}"#
+            ),
+            Ok(())
+        );
+        assert!(validate_platform_openai_request(b"not json").is_err());
+    }
+
+    #[test]
     fn oauth_authentication_preserves_claude_codes_beta_features() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -485,6 +530,7 @@ mod tests {
                 upstream: Upstream::Anthropic,
                 base_url: "https://api.anthropic.com".into(),
                 secret: "not-used".into(),
+                charged_externally: true,
             },
             "request-1".into(),
             Some(spool.reserve().unwrap()),

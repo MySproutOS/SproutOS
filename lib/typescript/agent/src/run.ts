@@ -84,6 +84,13 @@ export async function withMeteredRun<T>(
     usage.inputTokens += delta.inputTokens
     usage.outputTokens += delta.outputTokens
     usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + (delta.cacheReadTokens ?? 0)
+    usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + (delta.cacheWriteTokens ?? 0)
+    usage.longContextInputTokens =
+      (usage.longContextInputTokens ?? 0) + (delta.longContextInputTokens ?? 0)
+    usage.longContextOutputTokens =
+      (usage.longContextOutputTokens ?? 0) + (delta.longContextOutputTokens ?? 0)
+    usage.longContextCacheReadTokens =
+      (usage.longContextCacheReadTokens ?? 0) + (delta.longContextCacheReadTokens ?? 0)
   }
 
   if (credential.billing === "byo") {
@@ -218,6 +225,31 @@ export function runUsageEvents(
     {
       dimension: "ai_cache_read_token",
       quantity: usage.cacheReadTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_cache_write_token",
+      quantity: usage.cacheWriteTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_long_context_input_token",
+      quantity: usage.longContextInputTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_long_context_output_token",
+      quantity: usage.longContextOutputTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_long_context_cache_read_token",
+      quantity: usage.longContextCacheReadTokens ?? 0,
+      chargedExternally: tokensChargedExternally,
+    },
+    {
+      dimension: "ai_long_context_cache_write_token",
+      quantity: usage.longContextCacheWriteTokens ?? 0,
       chargedExternally: tokensChargedExternally,
     },
     {

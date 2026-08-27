@@ -17,9 +17,31 @@ export type CreditBalance = {
 
 export type UsageLine = {
   id: string
+  category: string
+  description: string | null
   label: string
   quantity: string
   costMicros: bigint
+}
+
+const CATEGORY_ORDER = ["Sandbox", "Postgres", "Cache", "AI", "Sites", "Workflows", "Search"]
+
+/** Customer-facing service taxonomy. It does not imply that every category has every meter yet. */
+export function usageCategory(dimension: string): string {
+  if (dimension.startsWith("sandbox_")) return "Sandbox"
+  if (dimension.startsWith("db_")) return "Postgres"
+  if (dimension === "valkey_queue_byte_second") return "Cache"
+  if (dimension.startsWith("ai_")) return "AI"
+  if (dimension.startsWith("site_")) return "Sites"
+  if (dimension.startsWith("workflow_")) return "Workflows"
+  if (dimension.startsWith("es_")) return "Search"
+  return "Other"
+}
+
+export function usageDescription(dimension: string): string | null {
+  return dimension === "valkey_queue_byte_second"
+    ? "Memory used by workflow queue data over time, measured as bytes multiplied by seconds."
+    : null
 }
 
 export type Invoice = {
@@ -158,13 +180,25 @@ export function useUsageLines(orgSlug: string) {
 
   return {
     ...query,
-    data: query.data?.lines.map((line): UsageLine => ({
-      id: line.dimension,
-      label: line.label,
-      // The unit belongs beside the number: "41.2" means nothing without "vCPU-hours".
-      quantity: `${line.quantity} ${line.unit}`,
-      costMicros: BigInt(line.amountMicroUsd),
-    })),
+    data: query.data?.lines
+      .map((line): UsageLine => ({
+        id: line.dimension,
+        category: usageCategory(line.dimension),
+        description: usageDescription(line.dimension),
+        label: line.label,
+        // The unit belongs beside the number: "41.2" means nothing without "vCPU-hours".
+        quantity: `${line.quantity} ${line.unit}`,
+        costMicros: BigInt(line.amountMicroUsd),
+      }))
+      .toSorted((a, b) => {
+        const aCategory = CATEGORY_ORDER.indexOf(a.category)
+        const bCategory = CATEGORY_ORDER.indexOf(b.category)
+        const category =
+          (aCategory === -1 ? CATEGORY_ORDER.length : aCategory) -
+          (bCategory === -1 ? CATEGORY_ORDER.length : bCategory)
+        if (category !== 0) return category
+        return b.costMicros === a.costMicros ? 0 : b.costMicros > a.costMicros ? 1 : -1
+      }),
   }
 }
 

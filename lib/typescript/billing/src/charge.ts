@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { lockAvailableBalance, postWithin } from "./ledger"
-import { type MicroUsd, overhead, rateTimesQuantity } from "./money"
+import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 import { NoActivePriceBookError } from "./usage"
 
 /**
@@ -167,21 +167,29 @@ export async function chargeUsage(
       (
         await trx
           .selectFrom("priceBookItem")
-          .select(["dimension", "unitMicroUsd"])
+          .select(["dimension", "unitMicroUsd", "overheadBps"])
           .where("priceBookId", "=", book.id)
           .where("dimension", "in", [...new Set(claimed.rows.map((row) => row.dimension))])
           .execute()
-      ).map((item) => [item.dimension, item.unitMicroUsd]),
+      ).map((item) => [item.dimension, item]),
     )
 
     /** Per organization: what it owes, which rows that covers, and the state that charge leaves. */
-    const owed = new Map<string, { usage: MicroUsd; ids: string[]; watermark: string[] }>()
+    const owed = new Map<
+      string,
+      {
+        usage: MicroUsd
+        byDimension: Map<string, { usage: MicroUsd; overheadBps: number | null }>
+        ids: string[]
+        watermark: string[]
+      }
+    >()
 
     for (const row of claimed.rows) {
-      const rate = rates.get(row.dimension)
+      const item = rates.get(row.dimension)
       // A dimension the book does not price is a seeding bug, not a free dimension. Skipping it
       // quietly is how a customer's bill loses a line and nobody finds out.
-      if (rate === undefined) throw new NoActivePriceBookError()
+      if (item === undefined) throw new NoActivePriceBookError()
 
       /*
         The *uncharged* part of the grain, not its whole quantity.
@@ -191,8 +199,20 @@ export async function chargeUsage(
         Charging `quantity` again would bill the paid part twice; skipping the row, which is what a
         null-marker check did, made the addition free.
       */
-      const entry = owed.get(row.organizationId) ?? { usage: 0n, ids: [], watermark: [] }
-      entry.usage += rateTimesQuantity(rate, row.uncharged)
+      const entry = owed.get(row.organizationId) ?? {
+        usage: 0n,
+        byDimension: new Map<string, { usage: MicroUsd; overheadBps: number | null }>(),
+        ids: [] as string[],
+        watermark: [] as string[],
+      }
+      const amount = rateTimesQuantity(item.unitMicroUsd, row.uncharged)
+      entry.usage += amount
+      const dimension = entry.byDimension.get(row.dimension) ?? {
+        usage: 0n,
+        overheadBps: item.overheadBps,
+      }
+      dimension.usage += amount
+      entry.byDimension.set(row.dimension, dimension)
       entry.ids.push(row.id)
       // Where each row's `charged_quantity` will stand once this charge commits. Part of the
       // idempotency key — see below.
@@ -205,7 +225,11 @@ export async function chargeUsage(
     let charged = 0n
 
     for (const [organizationId, entry] of owed) {
-      const fee = overhead(entry.usage, book.overheadBps)
+      const fee = [...entry.byDimension.values()].reduce(
+        (sum, dimension) =>
+          sum + itemOverhead(dimension.usage, dimension.overheadBps, book.overheadBps),
+        0n,
+      )
       const total = entry.usage + fee
 
       /*

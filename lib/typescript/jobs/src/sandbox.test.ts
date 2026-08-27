@@ -149,35 +149,54 @@ describe("the sandbox price book", () => {
     symptom is on an invoice arriving from the other direction. `docs/findings/0011-the-platform-was-free.md`
     is this failure one step earlier, when the rate was absent rather than merely too low.
   */
-  it("never prices a dimension below what the provider charges us", async ({ skip }) => {
+  it("prices every sandbox dimension at exactly the provider pass-through rate", async ({
+    skip,
+  }) => {
     if (!reachable) skip()
 
+    const book = await db
+      .selectFrom("priceBook")
+      .select("id")
+      .where("effectiveAt", "<=", new Date())
+      .orderBy("effectiveAt", "desc")
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow()
     const rates = await db
       .selectFrom("priceBookItem")
-      .select(["dimension", "unitMicroUsd"])
+      .select(["dimension", "unitMicroUsd", "overheadBps"])
       .where("dimension", "like", "sandbox%")
+      .where("priceBookId", "=", book.id)
       .execute()
 
-    const byDimension = new Map(rates.map((row) => [row.dimension, Number(row.unitMicroUsd)]))
+    const byDimension = new Map(rates.map((row) => [row.dimension, row]))
 
-    expect(byDimension.get("sandbox_cpu_second")).toBeGreaterThan(
+    expect(Number(byDimension.get("sandbox_cpu_second")?.unitMicroUsd)).toBe(
       PROVIDER_COST_MICRO_USD_PER_SECOND.cpu,
     )
-    expect(byDimension.get("sandbox_gib_second")).toBeGreaterThan(
+    expect(Number(byDimension.get("sandbox_gib_second")?.unitMicroUsd)).toBe(
       PROVIDER_COST_MICRO_USD_PER_SECOND.memoryGib,
     )
-    expect(byDimension.get("sandbox_disk_gib_second")).toBeGreaterThan(
+    expect(Number(byDimension.get("sandbox_disk_gib_second")?.unitMicroUsd)).toBe(
       PROVIDER_COST_MICRO_USD_PER_SECOND.diskGib,
     )
+    expect([...byDimension.values()].every((row) => row.overheadBps === 0)).toBe(true)
   })
 
   it("has a rate for every dimension the meter emits", async ({ skip }) => {
     if (!reachable) skip()
     // A dimension that meters and never rates produces usage a customer can see and is never
     // charged for — which looks like generosity and is actually an unpriced line.
+    const book = await db
+      .selectFrom("priceBook")
+      .select("id")
+      .where("effectiveAt", "<=", new Date())
+      .orderBy("effectiveAt", "desc")
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow()
     const rates = await db
       .selectFrom("priceBookItem")
       .select("dimension")
+      .where("priceBookId", "=", book.id)
       .where("dimension", "like", "sandbox%")
       .execute()
 
@@ -186,6 +205,50 @@ describe("the sandbox price book", () => {
       "sandbox_disk_gib_second",
       "sandbox_gib_second",
     ])
+  })
+
+  it("uses Neon pass-through rates with only the configured compute fee", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const book = await db
+      .selectFrom("priceBook")
+      .select("id")
+      .where("effectiveAt", "<=", new Date())
+      .orderBy("effectiveAt", "desc")
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow()
+    const items = await db
+      .selectFrom("priceBookItem")
+      .select(["dimension", "unitMicroUsd", "overheadBps"])
+      .where("priceBookId", "=", book.id)
+      .where("dimension", "in", ["db_compute_cu_second", "db_storage_gib_hour"])
+      .execute()
+    const byDimension = new Map(items.map((item) => [item.dimension, item]))
+
+    expect(String(byDimension.get("db_compute_cu_second")?.unitMicroUsd)).toBe("29.444444444")
+    expect(byDimension.get("db_compute_cu_second")?.overheadBps).toBe(200)
+    expect(String(byDimension.get("db_storage_gib_hour")?.unitMicroUsd)).toBe("479.452054795")
+    expect(byDimension.get("db_storage_gib_hour")?.overheadBps).toBe(0)
+  })
+
+  it("keeps agent duration operational but free", async ({ skip }) => {
+    if (!reachable) skip()
+    const book = await db
+      .selectFrom("priceBook")
+      .select("id")
+      .where("effectiveAt", "<=", new Date())
+      .orderBy("effectiveAt", "desc")
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow()
+    const item = await db
+      .selectFrom("priceBookItem")
+      .select(["unitMicroUsd", "overheadBps"])
+      .where("priceBookId", "=", book.id)
+      .where("dimension", "=", "agent_run_second")
+      .executeTakeFirstOrThrow()
+
+    expect(Number(item.unitMicroUsd)).toBe(0)
+    expect(item.overheadBps).toBe(0)
   })
 })
 
@@ -196,6 +259,7 @@ describe("meterSandboxes", () => {
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
+      externalId: `daytona-meter-${v7()}`,
       state: "running",
       cpu: 2,
       memoryGib: 4,
@@ -239,6 +303,7 @@ describe("meterSandboxes", () => {
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
+      externalId: `daytona-meter-${v7()}`,
       state: "running",
       cpu: 1,
       memoryGib: 1,
@@ -275,6 +340,7 @@ describe("meterSandboxes", () => {
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
+      externalId: `daytona-meter-${v7()}`,
       state: "running",
       cpu: 1,
       memoryGib: 1,
@@ -348,6 +414,7 @@ describe("meterSandboxes", () => {
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
+      externalId: `daytona-meter-${v7()}`,
       state: "running",
       cpu: 1,
       memoryGib: 1,
@@ -374,6 +441,7 @@ describe("meterSandboxes", () => {
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
+      externalId: `daytona-meter-${v7()}`,
       state: "running",
       cpu: 1,
       memoryGib: 1,

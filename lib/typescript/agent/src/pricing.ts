@@ -1,12 +1,17 @@
 import type { DB } from "@sproutos/db"
-import { type MicroUsd, overhead, rateTimesQuantity } from "@lib/billing/money"
+import { itemOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
 import type { Kysely, Transaction } from "kysely"
 
-/** The token dimensions in `price_book_item`. Cache writes rate as input tokens. */
+/** Provider-billable token buckets. Long-context is per request, not per aggregated run. */
 export type TokenUsage = {
   inputTokens: number
   outputTokens: number
   cacheReadTokens?: number
+  cacheWriteTokens?: number
+  longContextInputTokens?: number
+  longContextOutputTokens?: number
+  longContextCacheReadTokens?: number
+  longContextCacheWriteTokens?: number
 }
 
 export type RatedUsage = {
@@ -33,6 +38,11 @@ const DIMENSIONS = {
   inputTokens: "ai_input_token",
   outputTokens: "ai_output_token",
   cacheReadTokens: "ai_cache_read_token",
+  cacheWriteTokens: "ai_cache_write_token",
+  longContextInputTokens: "ai_long_context_input_token",
+  longContextOutputTokens: "ai_long_context_output_token",
+  longContextCacheReadTokens: "ai_long_context_cache_read_token",
+  longContextCacheWriteTokens: "ai_long_context_cache_write_token",
 } as const
 
 /**
@@ -45,7 +55,11 @@ const DIMENSIONS = {
 export async function activeTokenRates(
   db: Kysely<DB> | Transaction<DB>,
   at: Date = new Date(),
-): Promise<{ priceBookId: string; overheadBps: number; rates: Record<string, string> }> {
+): Promise<{
+  priceBookId: string
+  overheadBps: number
+  rates: Record<string, { rate: string; overheadBps: number | null }>
+}> {
   const book = await db
     .selectFrom("priceBook")
     .select(["id", "overheadBps"])
@@ -60,13 +74,18 @@ export async function activeTokenRates(
 
   const items = await db
     .selectFrom("priceBookItem")
-    .select(["dimension", "unitMicroUsd"])
+    .select(["dimension", "unitMicroUsd", "overheadBps"])
     .where("priceBookId", "=", book.id)
     .where("dimension", "in", Object.values(DIMENSIONS))
     .execute()
 
-  const rates: Record<string, string> = {}
-  for (const item of items) rates[item.dimension] = String(item.unitMicroUsd)
+  const rates: Record<string, { rate: string; overheadBps: number | null }> = {}
+  for (const item of items) {
+    rates[item.dimension] = {
+      rate: String(item.unitMicroUsd),
+      overheadBps: item.overheadBps,
+    }
+  }
 
   return { priceBookId: book.id, overheadBps: book.overheadBps, rates }
 }
@@ -86,18 +105,20 @@ export async function rateTokens(
   const { priceBookId, overheadBps, rates } = await activeTokenRates(db, at)
 
   let subtotal = 0n
+  let platformOverhead = 0n
   for (const [field, dimension] of Object.entries(DIMENSIONS)) {
     const quantity = usage[field as keyof TokenUsage] ?? 0
     if (quantity <= 0) continue
 
-    const rate = rates[dimension]
+    const item = rates[dimension]
     // A dimension the price book does not carry is a seeding bug, not a free dimension.
-    if (rate === undefined) throw new NoActivePriceBookError()
+    if (item === undefined) throw new NoActivePriceBookError()
 
-    subtotal += rateTimesQuantity(rate, String(quantity))
+    const amount = rateTimesQuantity(item.rate, String(quantity))
+    subtotal += amount
+    platformOverhead += itemOverhead(amount, item.overheadBps, overheadBps)
   }
 
-  const platformOverhead = overhead(subtotal, overheadBps)
   return {
     usage: subtotal,
     overhead: platformOverhead,

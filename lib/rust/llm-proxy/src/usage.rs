@@ -32,11 +32,15 @@ pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
 }
 
 impl Usage {
     pub fn is_empty(&self) -> bool {
-        self.input_tokens == 0 && self.output_tokens == 0 && self.cache_read_tokens == 0
+        self.input_tokens == 0
+            && self.output_tokens == 0
+            && self.cache_read_tokens == 0
+            && self.cache_write_tokens == 0
     }
 }
 
@@ -52,6 +56,7 @@ struct WireUsage {
     output_tokens: Option<u64>,
     #[serde(alias = "cache_read_input_tokens")]
     cached_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
     /// OpenAI nests the cache count; Anthropic does not.
     input_tokens_details: Option<InputDetails>,
 }
@@ -59,6 +64,7 @@ struct WireUsage {
 #[derive(Debug, Default, Deserialize)]
 struct InputDetails {
     cached_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
 }
 
 /// Accumulates usage across a response, streaming or not.
@@ -166,6 +172,16 @@ impl UsageAccumulator {
         if let Some(value) = cached {
             self.usage.cache_read_tokens = self.usage.cache_read_tokens.max(value);
         }
+        if let Some(value) = wire.cache_creation_input_tokens {
+            self.usage.cache_write_tokens = self.usage.cache_write_tokens.max(value);
+        }
+        if let Some(value) = wire
+            .input_tokens_details
+            .as_ref()
+            .and_then(|details| details.cache_write_tokens)
+        {
+            self.usage.cache_write_tokens = self.usage.cache_write_tokens.max(value);
+        }
     }
 }
 
@@ -196,6 +212,7 @@ mod tests {
                 input_tokens: 12,
                 output_tokens: 37,
                 cache_read_tokens: 4,
+                cache_write_tokens: 0,
             }
         );
     }
@@ -244,7 +261,7 @@ mod tests {
         acc.push(r#"data: {"type":"response.created","response":{"usage":null}}"#);
         acc.push("\n\n");
         acc.push(
-            r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":250,"input_tokens_details":{"cached_tokens":64}}}}"#,
+            r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":250,"input_tokens_details":{"cached_tokens":64,"cache_write_tokens":16}}}}"#,
         );
         acc.push("\n\n");
         acc.finish();
@@ -255,6 +272,7 @@ mod tests {
                 input_tokens: 100,
                 output_tokens: 250,
                 cache_read_tokens: 64,
+                cache_write_tokens: 16,
             }
         );
     }

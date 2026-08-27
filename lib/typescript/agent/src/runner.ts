@@ -256,7 +256,7 @@ export async function runAgentTurn(
 }
 
 /**
- * Cache *creation* tokens rate as input, because that is what they cost — a cache write is billed
+ * Cache *creation* tokens stay separate, because a cache write is billed at 1.25x input
  * at the input rate, and only cache *reads* get the discounted rate. Folding creation into the
  * cache-read dimension would under-bill every first request of a conversation.
  */
@@ -274,14 +274,16 @@ function totalUsage(
   let inputTokens = 0
   let outputTokens = 0
   let cacheReadTokens = 0
+  let cacheWriteTokens = 0
 
   for (const usage of Object.values(modelUsage)) {
-    inputTokens += usage.inputTokens + usage.cacheCreationInputTokens
+    inputTokens += usage.inputTokens
+    cacheWriteTokens += usage.cacheCreationInputTokens
     outputTokens += usage.outputTokens
     cacheReadTokens += usage.cacheReadInputTokens
   }
 
-  return { inputTokens, outputTokens, cacheReadTokens }
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }
 }
 
 /** The SDK takes an AbortController; a Hono handler has an AbortSignal. */

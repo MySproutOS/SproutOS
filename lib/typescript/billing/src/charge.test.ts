@@ -6,6 +6,7 @@ import { acquirePlatformJobLock, releasePlatformJobLock } from "./test-lock"
 import { assertSingleGrain, CHARGED_BUCKET, chargeUsage, MultipleGrainsError } from "./charge"
 import { applyImportedUsageRollups, type ImportedUsageBucket } from "./import-rollups"
 import { availableBalance, post } from "./ledger"
+import { rateTimesQuantity } from "./money"
 
 /**
  * Against the docker-compose Postgres, for the reason `rollup.test.ts` gives: every property worth
@@ -217,6 +218,15 @@ describe("chargeUsage", () => {
 
     const charged = await chargedHere(() => chargeUsage(db))
     expect(charged).toBeGreaterThan(0n)
+  })
+
+  it("charges Daytona sandbox usage at provider cost with no overhead", async ({ skip }) => {
+    if (!reachable) skip()
+
+    await event("3600", { dimension: "sandbox_cpu_second" })
+    const charged = await chargedHere(() => chargeUsage(db))
+
+    expect(charged).toBe(rateTimesQuantity("14", "3600"))
   })
 
   /*

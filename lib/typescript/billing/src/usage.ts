@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely, type Transaction } from "kysely"
-import { type MicroUsd, overhead, rateTimesQuantity } from "./money"
+import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 
 /**
  * What a project has cost so far, rated from its metered usage.
@@ -90,12 +90,12 @@ export async function rateProjectsForOrganization(
   const dimensions = [...new Set(rows.map((row) => row.dimension))]
   const items = await db
     .selectFrom("priceBookItem")
-    .select(["dimension", "unitMicroUsd"])
+    .select(["dimension", "unitMicroUsd", "overheadBps"])
     .where("priceBookId", "=", book.id)
     .where("dimension", "in", dimensions)
     .execute()
 
-  const rates = new Map(items.map((item) => [item.dimension, item.unitMicroUsd]))
+  const rates = new Map(items.map((item) => [item.dimension, item]))
 
   const byProject = new Map<string, RatedUsage>()
   const subtotals = new Map<string, bigint>()
@@ -104,12 +104,12 @@ export async function rateProjectsForOrganization(
     const projectId = row.projectId
     if (projectId === null) continue
 
-    const rate = rates.get(row.dimension)
+    const item = rates.get(row.dimension)
     // A dimension the price book does not carry is a seeding bug, not a free dimension. Silently
     // skipping it is how a customer's bill quietly loses a line.
-    if (rate === undefined) throw new NoActivePriceBookError()
+    if (item === undefined) throw new NoActivePriceBookError()
 
-    const amount = rateTimesQuantity(rate, row.quantity)
+    const amount = rateTimesQuantity(item.unitMicroUsd, row.quantity)
     const existing = byProject.get(projectId) ?? {
       byDimension: {},
       usage: 0n,
@@ -117,6 +117,7 @@ export async function rateProjectsForOrganization(
       total: 0n,
     }
     existing.byDimension[row.dimension] = amount
+    existing.overhead += itemOverhead(amount, item.overheadBps, book.overheadBps)
     byProject.set(projectId, existing)
     subtotals.set(projectId, (subtotals.get(projectId) ?? 0n) + amount)
   }
@@ -124,17 +125,8 @@ export async function rateProjectsForOrganization(
   for (const [projectId, subtotal] of subtotals) {
     const rated = byProject.get(projectId)
     if (rated === undefined) continue
-    /*
-      Overhead is applied to the project's subtotal, not to each dimension.
-
-      Rounding up per dimension and summing would charge a fraction more than rounding up once, and
-      the difference is real money at volume — the same reason `@lib/billing` rounds every fee up
-      exactly once.
-    */
-    const platformOverhead = overhead(subtotal, book.overheadBps)
     rated.usage = subtotal
-    rated.overhead = platformOverhead
-    rated.total = subtotal + platformOverhead
+    rated.total = subtotal + rated.overhead
   }
 
   return byProject

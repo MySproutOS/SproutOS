@@ -1,7 +1,7 @@
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql, type Transaction } from "kysely"
 import { NoActivePriceBookError } from "./usage"
-import { type MicroUsd, overhead, rateTimesQuantity } from "./money"
+import { itemOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 
 /**
  * What a store listing costs to run, from what its forks actually cost.
@@ -118,32 +118,44 @@ export async function estimateListingCosts(
   const dimensions = [...new Set(rows.map((row) => row.dimension))]
   const items = await db
     .selectFrom("priceBookItem")
-    .select(["dimension", "unitMicroUsd"])
+    .select(["dimension", "unitMicroUsd", "overheadBps"])
     .where("priceBookId", "=", book.id)
     .where("dimension", "in", dimensions)
     .execute()
 
-  const rates = new Map(items.map((item) => [item.dimension, item.unitMicroUsd]))
+  const rates = new Map(items.map((item) => [item.dimension, item]))
 
-  /** listing -> project -> { cost so far, widest day count seen } */
-  type ProjectTotal = { cost: bigint; days: bigint }
+  /** listing -> project -> observed costs and the project's widest measured lifetime */
+  type ProjectTotal = {
+    byDimension: Map<string, { amount: bigint; overheadBps: number | null }>
+    days: bigint
+  }
   const perProject = new Map<string, Map<string, ProjectTotal>>()
 
   for (const row of rows) {
     if (row.storeListingId === null || row.projectId === null) continue
 
-    const rate = rates.get(row.dimension)
+    const item = rates.get(row.dimension)
     // A dimension the price book does not carry is a seeding bug, not a free dimension — the same
     // call `rateProjectsForOrganization` makes, for the same reason.
-    if (rate === undefined) throw new NoActivePriceBookError()
+    if (item === undefined) throw new NoActivePriceBookError()
 
     const byProject: Map<string, ProjectTotal> =
       perProject.get(row.storeListingId) ?? new Map<string, ProjectTotal>()
-    const entry: ProjectTotal = byProject.get(row.projectId) ?? { cost: 0n, days: 0n }
-    entry.cost += rateTimesQuantity(rate, row.quantity)
-    // The widest span across this project's dimensions. A project metered for CPU on all thirty
-    // days and for egress on one has existed for thirty.
+    const entry: ProjectTotal = byProject.get(row.projectId) ?? {
+      byDimension: new Map(),
+      days: 0n,
+    }
+    const amount = rateTimesQuantity(item.unitMicroUsd, row.quantity)
     const days = BigInt(row.days)
+    const dimension = entry.byDimension.get(row.dimension)
+    entry.byDimension.set(row.dimension, {
+      amount: (dimension?.amount ?? 0n) + amount,
+      overheadBps: item.overheadBps,
+    })
+    // The widest span across this project's dimensions. CPU measured for thirty days and egress
+    // measured on one of them describes a thirty-day-old project, not one day of egress to
+    // extrapolate thirtyfold.
     if (days > entry.days) entry.days = days
     byProject.set(row.projectId, entry)
     perProject.set(row.storeListingId, byProject)
@@ -154,19 +166,23 @@ export async function estimateListingCosts(
   for (const [storeListingId, byProject] of perProject) {
     const monthly: bigint[] = []
 
-    for (const { cost, days } of byProject.values()) {
+    for (const { byDimension, days } of byProject.values()) {
       if (days === 0n) continue
-      monthly.push((cost * DAYS_PER_MONTH) / days)
+      let monthlyCost = 0n
+      for (const dimension of byDimension.values()) {
+        const monthlyAmount = (dimension.amount * DAYS_PER_MONTH) / days
+        monthlyCost +=
+          monthlyAmount + itemOverhead(monthlyAmount, dimension.overheadBps, book.overheadBps)
+      }
+      monthly.push(monthlyCost)
     }
 
     if (monthly.length < MINIMUM_SAMPLE) continue
 
-    const subtotal = median(monthly)
     estimates.set(storeListingId, {
       storeListingId,
-      // Overhead applied once to the median, the same shape a bill uses — not per dimension, and
-      // not per project before taking the median, either of which rounds up more than once.
-      monthlyMicroUsd: subtotal + overhead(subtotal, book.overheadBps),
+      // Median of what each fork would actually pay, including each dimension's configured fee.
+      monthlyMicroUsd: median(monthly),
       sampleSize: monthly.length,
     })
   }

@@ -30,6 +30,7 @@ export {
   type MicroUsd,
   MINIMUM_TOPUP,
   overhead,
+  itemOverhead,
   processingFee,
   rateTimesQuantity,
 } from "./money"

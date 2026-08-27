@@ -75,9 +75,9 @@ discarding the excess would mean paying for it ourselves.
 
 ## Rates come from the price book, and a missing one throws
 
-`rateTokens` reads `price_book_item` for `ai_input_token`, `ai_output_token`, and
-`ai_cache_read_token`. Rates are decimal strings, not integers, because a cache-read token costs
-0.33 micro-USD and an integer rate floors to zero — the dimension would bill nothing, forever.
+`rateTokens` reads one `price_book_item` for each provider token bucket, including cache writes and
+request-scoped long-context input, output, and cache reads. Rates are decimal strings, not integers,
+because a cached Terra input token costs 0.2 micro-USD and an integer rate floors to zero.
 
 `NoActivePriceBookError` is thrown rather than defaulting to zero. Zero-cost usage is
 indistinguishable from free usage on a statement, which makes it the most expensive silent failure
@@ -89,7 +89,8 @@ The credit ledger says what was **charged**. The Kafka/ClickHouse usage stream s
 **consumed**, per dimension. `withMeteredRun` commits token events and `agent_run_second` through
 the transactional metering outbox beside settlement, using one run id and one observation
 timestamp. Zero quantities are omitted, and retrying the outbox cannot restamp or double-count the
-run. A charge with no matching events is a bill nobody can explain.
+run. Agent duration is operational telemetry with a zero active rate; sandbox and token dimensions
+already carry the provider cost. A charge with no matching events is a bill nobody can explain.
 
 ## Running a turn
 

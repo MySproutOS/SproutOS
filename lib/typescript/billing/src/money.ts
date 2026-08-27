@@ -74,6 +74,15 @@ export function overhead(usageCost: MicroUsd, overheadBps: number): MicroUsd {
   return ceilDiv(usageCost * BigInt(overheadBps), 10_000n)
 }
 
+/** A dimension's fee, using its price-item override or the book-wide default. */
+export function itemOverhead(
+  usageCost: MicroUsd,
+  itemOverheadBps: number | null,
+  defaultOverheadBps: number,
+): MicroUsd {
+  return overhead(usageCost, itemOverheadBps ?? defaultOverheadBps)
+}
+
 /** Integer division that rounds away from zero, so fees never round in our favour by accident. */
 export function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new RangeError("Division by zero")

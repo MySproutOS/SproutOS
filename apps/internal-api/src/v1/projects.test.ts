@@ -1164,6 +1164,7 @@ describe.skipIf(!reachable)("project routes", () => {
         .selectFrom("priceBookItem")
         .innerJoin("priceBook", "priceBook.id", "priceBookItem.priceBookId")
         .select(["priceBookItem.dimension", "priceBookItem.unitMicroUsd", "priceBook.overheadBps"])
+        .where("priceBookItem.dimension", "=", "site_request")
         .orderBy("priceBook.effectiveAt", "desc")
         .executeTakeFirstOrThrow()
 

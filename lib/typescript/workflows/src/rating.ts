@@ -1,4 +1,4 @@
-import { type MicroUsd, overhead, rateTimesQuantity } from "@lib/billing/money"
+import { itemOverhead, type MicroUsd, rateTimesQuantity } from "@lib/billing/money"
 import type { DB } from "@sproutos/db"
 import type { Kysely, Transaction } from "kysely"
 
@@ -79,33 +79,34 @@ export async function rateWorkflowRun(
 
   const items = await db
     .selectFrom("priceBookItem")
-    .select(["dimension", "unitMicroUsd"])
+    .select(["dimension", "unitMicroUsd", "overheadBps"])
     .where("priceBookId", "=", book.id)
     .where("dimension", "in", [...DIMENSIONS])
     .execute()
 
-  const rates = new Map(items.map((item) => [item.dimension, String(item.unitMicroUsd)]))
+  const rates = new Map(items.map((item) => [item.dimension, item]))
   const quantities = quantitiesFor(usage)
   const missingDimensions = DIMENSIONS.filter((dimension) => quantities[dimension] === null)
 
   const byDimension: Record<string, MicroUsd> = {}
   let subtotal = 0n
+  let platformOverhead = 0n
 
   for (const dimension of DIMENSIONS) {
     const quantity = quantities[dimension]
     if (quantity === null) continue
     if (quantity === "0") continue
 
-    const rate = rates.get(dimension)
+    const item = rates.get(dimension)
     // A dimension the price book does not carry is a seeding bug, not a free dimension.
-    if (rate === undefined) throw new NoActivePriceBookError()
+    if (item === undefined) throw new NoActivePriceBookError()
 
-    const amount = rateTimesQuantity(rate, quantity)
+    const amount = rateTimesQuantity(String(item.unitMicroUsd), quantity)
     byDimension[dimension] = amount
     subtotal += amount
+    platformOverhead += itemOverhead(amount, item.overheadBps, book.overheadBps)
   }
 
-  const platformOverhead = overhead(subtotal, book.overheadBps)
   return {
     byDimension,
     usage: subtotal,

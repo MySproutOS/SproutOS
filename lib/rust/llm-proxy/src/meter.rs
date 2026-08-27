@@ -14,6 +14,7 @@
 use sproutos_metering_proto::{UsageBatch, UsageDimension, UsageEvent};
 
 use crate::session::Session;
+use crate::session::Upstream;
 use crate::usage::Usage;
 
 /// What this emitter calls itself in the batch, for attribution in the ledger.
@@ -56,12 +57,44 @@ pub fn batch_for(
         ),
     };
 
-    let mut events = Vec::with_capacity(3);
-    for (dimension, quantity) in [
-        (UsageDimension::AiInputToken, usage.input_tokens),
-        (UsageDimension::AiOutputToken, usage.output_tokens),
-        (UsageDimension::AiCacheReadToken, usage.cache_read_tokens),
-    ] {
+    const LONG_CONTEXT_THRESHOLD: u64 = 272_000;
+    let openai_long = session.upstream == Upstream::Openai
+        && !session.charged_externally
+        && usage.input_tokens > LONG_CONTEXT_THRESHOLD;
+    let uncached_input = if session.upstream == Upstream::Openai {
+        usage
+            .input_tokens
+            .saturating_sub(usage.cache_read_tokens)
+            .saturating_sub(usage.cache_write_tokens)
+    } else {
+        usage.input_tokens
+    };
+    let dimensions = if openai_long {
+        [
+            (UsageDimension::AiLongContextInputToken, uncached_input),
+            (
+                UsageDimension::AiLongContextOutputToken,
+                usage.output_tokens,
+            ),
+            (
+                UsageDimension::AiLongContextCacheReadToken,
+                usage.cache_read_tokens,
+            ),
+            (
+                UsageDimension::AiLongContextCacheWriteToken,
+                usage.cache_write_tokens,
+            ),
+        ]
+    } else {
+        [
+            (UsageDimension::AiInputToken, uncached_input),
+            (UsageDimension::AiOutputToken, usage.output_tokens),
+            (UsageDimension::AiCacheReadToken, usage.cache_read_tokens),
+            (UsageDimension::AiCacheWriteToken, usage.cache_write_tokens),
+        ]
+    };
+    let mut events = Vec::with_capacity(4);
+    for (dimension, quantity) in dimensions {
         if quantity == 0 {
             continue;
         }
@@ -102,10 +135,10 @@ mod tests {
             token_id: "01a03e5d-8cbf-7415-9ac6-82c3476aeb5c".into(),
             organization_id: "01a03b00-0000-7000-8000-00000000beef".into(),
             project_id: Some("01a03b96-a3d3-71f5-9f1d-af7569938433".into()),
-            charged_externally: true,
             upstream: Upstream::Anthropic,
             base_url: "https://api.anthropic.com".into(),
             secret: "sk-secret".into(),
+            charged_externally: true,
         }
     }
 
@@ -118,6 +151,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 20,
                 cache_read_tokens: 0,
+                cache_write_tokens: 0,
             },
             1_700_000_000_000,
         )
@@ -147,10 +181,10 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 0,
                 cache_read_tokens: 0,
+                cache_write_tokens: 0,
             },
             1,
         )
-        .unwrap()
         .unwrap();
 
         assert_eq!(batch.events[0].charged_externally, Some(false));
@@ -165,6 +199,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 20,
                 cache_read_tokens: 5,
+                cache_write_tokens: 0,
             },
             1,
         )
@@ -184,6 +219,7 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
             cache_read_tokens: 0,
+            cache_write_tokens: 0,
         };
         // Two builds of the same turn, at different times. Ingest deduplicates on this key, so a
         // retry after a timeout must produce the identical one — which rules out a clock read or a
@@ -191,6 +227,77 @@ mod tests {
         let first = batch_for(&session(), "req_1", usage, 1).unwrap().unwrap();
         let second = batch_for(&session(), "req_1", usage, 999).unwrap().unwrap();
         assert_eq!(first.events[0].external_id, second.events[0].external_id);
+    }
+
+    #[test]
+    fn byo_tokens_are_visible_but_never_charged_by_sproutos() {
+        let batch = batch_for(
+            &session(),
+            "req_byo",
+            Usage {
+                input_tokens: 10,
+                output_tokens: 2,
+                cache_read_tokens: 1,
+                cache_write_tokens: 3,
+            },
+            1,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            batch
+                .events
+                .iter()
+                .all(|event| event.charged_externally == Some(true))
+        );
+        assert!(
+            batch
+                .events
+                .iter()
+                .any(|event| event.dimension == UsageDimension::AiCacheWriteToken)
+        );
+    }
+
+    #[test]
+    fn platform_openai_uses_long_context_buckets_without_double_counting_cached_input() {
+        let mut platform = session();
+        platform.upstream = Upstream::Openai;
+        platform.charged_externally = false;
+        let batch = batch_for(
+            &platform,
+            "req_long",
+            Usage {
+                input_tokens: 300_000,
+                output_tokens: 10,
+                cache_read_tokens: 50_000,
+                cache_write_tokens: 20_000,
+            },
+            1,
+        )
+        .unwrap()
+        .unwrap();
+
+        let quantities: std::collections::BTreeMap<_, _> = batch
+            .events
+            .iter()
+            .map(|event| (event.dimension, event.quantity))
+            .collect();
+        assert_eq!(
+            quantities.get(&UsageDimension::AiLongContextInputToken),
+            Some(&230_000.0)
+        );
+        assert_eq!(
+            quantities.get(&UsageDimension::AiLongContextCacheReadToken),
+            Some(&50_000.0)
+        );
+        assert_eq!(
+            quantities.get(&UsageDimension::AiLongContextOutputToken),
+            Some(&10.0)
+        );
+        assert_eq!(
+            quantities.get(&UsageDimension::AiLongContextCacheWriteToken),
+            Some(&20_000.0)
+        );
     }
 
     #[test]
@@ -213,6 +320,7 @@ mod tests {
                 input_tokens: 900,
                 output_tokens: 0,
                 cache_read_tokens: 0,
+                cache_write_tokens: 0,
             },
             1,
         )
@@ -235,7 +343,8 @@ mod tests {
                 Usage {
                     input_tokens: 1,
                     output_tokens: 0,
-                    cache_read_tokens: 0
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0
                 },
                 1
             ),

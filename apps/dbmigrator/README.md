@@ -248,14 +248,14 @@ Kafka and ClickHouse; Postgres now holds only `metering_outbox`, `metering_impor
 `src/seeds/` runs in filename order via `pnpm --filter=dbmigrator run seed:run`. Every seed is
 idempotent and safe to re-run.
 
-| seed                     | what it establishes                                                              |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `0001_price_book.ts`     | Price book v1, `overhead_bps = 1200`, and one item per usage dimension           |
-| `0002_region.ts`         | `us-east-1` active, `us-west-2` and `eu-west-1` inactive                         |
-| `0003_store_category.ts` | The five catalogue facets                                                        |
-| `0004_store_listing.ts`  | Six published listings with tags                                                 |
-| `0005_dev_fixture.ts`    | Dev user, organization, repository, project — skipped when `NODE_ENV=production` |
-| `0006_system_roles.ts`   | `owner` / `admin` / `member` for every organization, plus `member_permission`    |
+| seed                     | what it establishes                                                                |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| `0001_price_book.ts`     | Price book v2, 12% default fee, and per-dimension provider rates and fee overrides |
+| `0002_region.ts`         | `us-east-1` active, `us-west-2` and `eu-west-1` inactive                           |
+| `0003_store_category.ts` | The five catalogue facets                                                          |
+| `0004_store_listing.ts`  | Six published listings with tags                                                   |
+| `0005_dev_fixture.ts`    | Dev user, organization, repository, project — skipped when `NODE_ENV=production`   |
+| `0006_system_roles.ts`   | `owner` / `admin` / `member` for every organization, plus `member_permission`      |
 
 **`0001` is not optional.** Without a price book, rating resolves no unit price and silently produces
 zero-cost usage. That is the most dangerous missing seed in the project: nothing fails, no error is
