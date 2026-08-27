@@ -16,9 +16,15 @@ function fakeDriver(
   } = {},
 ) {
   const commands: string[][] = []
+  const clones: Array<{ url: string; password: string }> = []
   const files: Record<string, string> = {}
   const driver = {
     workspaceDir: WORKSPACE,
+    cloneRepository: (_id: string, input: { url: string; password: string }) => {
+      clones.push({ url: input.url, password: input.password })
+      if (options.execExit) return Promise.reject(new Error("clone failed"))
+      return Promise.resolve()
+    },
     exec: (_id: string, argv: string[]) => {
       commands.push(argv)
       const line = argv.join(" ")
@@ -45,7 +51,7 @@ function fakeDriver(
       return Promise.resolve()
     },
   } as never
-  return { commands, driver, files }
+  return { clones, commands, driver, files }
 }
 
 const token = {
@@ -66,17 +72,18 @@ describe("bootstrapSandbox", () => {
     skill: "# SproutOS\nDeployment is performed by the platform.",
   }
 
-  it("takes the clone credential straight back out of the remote", async () => {
-    const { commands, driver } = fakeDriver()
+  it("keeps the clone credential out of sandbox commands and the remote", async () => {
+    const { clones, commands, driver } = fakeDriver()
     await bootstrapSandbox({ ...base, driver, externalId: "sb" })
 
-    const clone = commands.find((argv) => argv[1] === "clone")
-    expect(clone?.join(" ")).toContain("ghs_installation")
+    expect(clones).toEqual([
+      { url: "https://github.com/acme/app.git", password: "ghs_installation" },
+    ])
+    expect(commands.flat().join(" ")).not.toContain("ghs_installation")
 
     /*
-      The property that matters. An installation token in the clone URL lands in `.git/config`,
-      where it is readable by everything the agent runs for the rest of the session — so the remote
-      is rewritten immediately, and the push path supplies a fresh one.
+      The provider receives the credential as an API field, while the sandbox and its Git remote
+      only ever see the credential-free URL. The push path supplies a fresh token separately.
     */
     const reset = commands.find((argv) => argv.includes("set-url"))
     expect(reset).toBeDefined()

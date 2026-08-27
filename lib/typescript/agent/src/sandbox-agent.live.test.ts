@@ -46,6 +46,7 @@ async function sandbox(name: string): Promise<string> {
     projectId: crypto.randomUUID(),
     userId: crypto.randomUUID(),
     sandboxClass: "container",
+    alwaysOn: false,
     resources: SNAPSHOT_RESOURCES,
     idleTimeoutS: 900,
   })

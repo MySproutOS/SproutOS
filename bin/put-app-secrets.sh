@@ -55,7 +55,6 @@ KEYS=(
   # default — the platform has never had one of these set, which is why no sandbox has ever
   # existed. `SANDBOX_DAYTONA_SNAPSHOT` names the image carrying the agent binaries; a wrong one
   # produces a sandbox that starts cleanly with no agent in it and reports no error.
-  SANDBOX_DRIVER
   DAYTONA_API_KEY
   DAYTONA_ORGANIZATION_ID
   SANDBOX_DAYTONA_SNAPSHOT

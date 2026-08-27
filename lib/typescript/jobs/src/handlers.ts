@@ -26,6 +26,7 @@ import { REFRESH_ROUTES_KIND, refreshRoutes } from "./refresh-routes"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import {
   destroySandbox,
+  reconcileSandboxes,
   meterSandboxes,
   provisionSandbox,
   reapSandboxes,
@@ -87,6 +88,7 @@ export const JOB_KINDS = {
   startSandbox: SANDBOX_KINDS.start,
   stopSandbox: SANDBOX_KINDS.stop,
   destroySandbox: SANDBOX_KINDS.destroy,
+  reconcileSandboxes: SANDBOX_KINDS.reconcile,
   reapSandboxes: SANDBOX_KINDS.reap,
   meterSandboxes: SANDBOX_KINDS.meter,
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
@@ -325,6 +327,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.startSandbox]: startSandbox(),
   [JOB_KINDS.stopSandbox]: stopSandbox(),
   [JOB_KINDS.destroySandbox]: destroySandbox(),
+  [JOB_KINDS.reconcileSandboxes]: reconcileSandboxes(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 
 import { Daytona, Image } from "@daytona/sdk"
 import { SNAPSHOT_RESOURCES } from "./daytona"
+import { MANAGED_SNAPSHOT_PREFIX } from "./snapshot-lifecycle"
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const repository = resolve(packageDir, "../../..")
@@ -23,7 +24,7 @@ if (!organizationId) throw new Error("DAYTONA_ORGANIZATION_ID is not set")
 
 const source = await readFile(dockerfile)
 const revision = createHash("sha256").update(source).digest("hex").slice(0, 12)
-const name = `sproutos-agent-${revision}`
+const name = `${MANAGED_SNAPSHOT_PREFIX}${revision}`
 const client = new Daytona({ apiKey, organizationId })
 
 try {

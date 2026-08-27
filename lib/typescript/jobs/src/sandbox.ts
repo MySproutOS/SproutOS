@@ -21,6 +21,7 @@ export const SANDBOX_KINDS = {
   start: "sandbox.start",
   stop: "sandbox.stop",
   destroy: "sandbox.destroy",
+  reconcile: "sandbox.reconcile",
   reap: "sandbox.reap",
   meter: "sandbox.meter",
 } as const
@@ -93,6 +94,9 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
           "sandbox.cpu",
           "sandbox.memoryGib",
           "sandbox.diskGib",
+          "sandbox.alwaysOn",
+          "sandbox.idleTimeoutS",
+          "sandbox.lastActivityAt",
           "sandbox.meteredThrough",
           "sandbox.createdAt",
           "project.organizationId",
@@ -112,8 +116,15 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
         a concurrent meter whose row lock this transaction just waited for.
       */
       const clock = await sql<{ now: Date }>`select clock_timestamp() as now`.execute(tx)
-      const now = clock.rows[0]?.now
-      if (now === undefined) throw new Error("Postgres returned no clock timestamp")
+      const databaseNow = clock.rows[0]?.now
+      if (databaseNow === undefined) throw new Error("Postgres returned no clock timestamp")
+      // Daytona's provider backstop stops an ordinary sandbox at this same idle deadline. If its
+      // webhook/reconciliation arrives late, billing to the sweep time would charge for a machine
+      // the provider had already stopped. `always_on` is the only class without that ceiling.
+      const idleDeadline = new Date(
+        new Date(sandbox.lastActivityAt).getTime() + sandbox.idleTimeoutS * 1000,
+      )
+      const now = sandbox.alwaysOn || databaseNow <= idleDeadline ? databaseNow : idleDeadline
 
       // Null means never metered. `created_at`, not the epoch — the difference is forty years of
       // compute nobody ran.
@@ -204,6 +215,44 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
   }
 
   if (idle.length > 0) console.info(`[jobs] reaping ${idle.length} idle sandboxes`)
+}
+
+/** Repair provider-driven state changes before the database can keep metering a stopped machine. */
+export function reconcileSandboxes(makeDriver: () => SandboxDriver = driver): JobHandler {
+  return async (job, context) => {
+    const candidates = await context.db
+      .selectFrom("sandbox")
+      .select(["id", "externalId"])
+      .where("state", "in", ["starting", "running", "idle"])
+      .where("externalId", "is not", null)
+      .execute()
+
+    if (candidates.length === 0) return
+
+    // Settle active intervals first. The meter caps ordinary sandboxes at their idle deadline, so
+    // a delayed observation cannot charge past Daytona's own auto-stop boundary.
+    await meterSandboxes(job, context)
+    const sandboxDriver = makeDriver()
+
+    for (const candidate of candidates) {
+      try {
+        const providerState = await sandboxDriver.state(candidate.externalId!)
+        if (["stopped", "archived", "paused"].includes(providerState)) {
+          await crudSandbox(context.db).update(candidate.id, { state: "stopped" })
+        } else if (["destroyed", "error", "build_failed"].includes(providerState)) {
+          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+        }
+      } catch (error) {
+        if (error instanceof SandboxNotFoundError) {
+          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          continue
+        }
+        // One provider object must not prevent every other row from reconciling. The recurring job
+        // retries next minute, while this error remains visible to operations.
+        console.error(`[jobs] failed to reconcile sandbox ${candidate.id}: ${String(error)}`)
+      }
+    }
+  }
 }
 
 /**
@@ -401,6 +450,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         "sandbox.memoryGib",
         "sandbox.diskGib",
         "sandbox.idleTimeoutS",
+        "sandbox.alwaysOn",
         "sandbox.externalId",
         "project.organizationId",
       ])
@@ -447,6 +497,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           diskGib: sandbox.diskGib,
         },
         idleTimeoutS: sandbox.idleTimeoutS,
+        alwaysOn: sandbox.alwaysOn,
         ...(database === undefined ? {} : { env: database.env }),
       })
 
@@ -457,6 +508,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
       })
 
       /*
@@ -514,6 +566,7 @@ export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandl
         state: "running",
         // A stopped interval is not billable. Restarting begins a new interval at Postgres's clock.
         meteredThrough: sql<Date>`now()` as unknown as Date,
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
       })
     } catch (error) {
       await crudSandbox(db).update(sandbox.id, { state: "failed" })
@@ -617,6 +670,11 @@ export async function scheduleSandboxJobs(db: Kysely<DB>, now: Date = new Date()
   await enqueue(db, {
     kind: SANDBOX_KINDS.meter,
     idempotencyKey: `${SANDBOX_KINDS.meter}:${minute}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    kind: SANDBOX_KINDS.reconcile,
+    idempotencyKey: `${SANDBOX_KINDS.reconcile}:${minute}`,
     maxAttempts: 3,
   })
   await enqueue(db, {

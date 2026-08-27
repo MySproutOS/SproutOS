@@ -1,9 +1,10 @@
 import {
   getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewOptions,
   getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewQueryKey,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useCallback } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useCallback, useEffect } from "react"
 
 /**
  * The dev server running inside the sandbox, as a link the browser can load.
@@ -29,9 +30,13 @@ export const COMMON_PREVIEW_PORTS = [3000, 5173, 8080, 4321, 1420] as const
  * request per link lifetime.
  */
 const REFRESH_MARGIN_MS = 60_000
+const ACTIVITY_HEARTBEAT_MS = 60_000
 
 export function useSandboxPreview(orgSlug: string, projectId: string, port?: number) {
   const client = useQueryClient()
+  const { mutate: recordActivity } = useMutation({
+    ...postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityMutation(),
+  })
 
   const query = useQuery({
     ...getV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewOptions({
@@ -69,6 +74,18 @@ export function useSandboxPreview(orgSlug: string, projectId: string, port?: num
       }),
     })
   }, [client, orgSlug, projectId, port])
+
+  useEffect(() => {
+    if (query.data === undefined) return
+
+    const heartbeat = () => {
+      recordActivity({ path: { orgSlug, projectId } })
+    }
+    const interval = window.setInterval(heartbeat, ACTIVITY_HEARTBEAT_MS)
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [orgSlug, projectId, query.data, recordActivity])
 
   return { ...query, refresh }
 }

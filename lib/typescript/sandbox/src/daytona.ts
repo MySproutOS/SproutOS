@@ -19,6 +19,11 @@ export const WORKSPACE_DIR = "/home/daytona/workspace"
 /** Daytona snapshots have a fixed machine size; these values must match `build-snapshot.ts`. */
 export const SNAPSHOT_RESOURCES = { cpu: 2, memoryGib: 4, diskGib: 10 } as const
 
+/** A stopped container preserves its workspace but still bills disk until Daytona archives it. */
+export const AUTO_ARCHIVE_AFTER_STOP_MINUTES = 1
+export const DAYTONA_REQUEST_TIMEOUT_MS = 60_000
+export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
+
 export type DaytonaConfig = {
   apiKey: string
   organizationId: string
@@ -104,6 +109,9 @@ export function buildCreateParams(
   }
 
   return {
+    // A retry must address the same provider object. The UUID is app-supplied and unique, so this
+    // name is deterministic without leaking a repository or user name into Daytona's console.
+    name: `sproutos-${input.sandboxId}`,
     snapshot: config.snapshot,
     /*
     Attribution, and the reason `organizationId` is required rather than optional.
@@ -124,7 +132,14 @@ export function buildCreateParams(
     Minutes, and rounded up rather than down: a zero here does not mean "immediately", it means
     **disabled**, so a sub-minute timeout would silently turn the provider's backstop off.
     */
-    autoStopInterval: Math.max(1, Math.ceil(input.idleTimeoutS / 60)),
+    autoStopInterval: input.alwaysOn ? 0 : Math.max(1, Math.ceil(input.idleTimeoutS / 60)),
+    /*
+    Stopped Daytona containers still reserve and bill disk. Archiving preserves the filesystem,
+    releases that quota, and is free; one minute keeps stop/start uncomplicated while bounding the
+    otherwise indefinite stopped-disk charge. The control-plane row stays `stopped`, because start
+    works for both stopped and archived provider states.
+    */
+    autoArchiveInterval: AUTO_ARCHIVE_AFTER_STOP_MINUTES,
     /*
     Do not set Daytona's domain or network allow-list fields. Sandboxes need the ordinary internet
     to install arbitrary customer dependencies and talk to arbitrary third-party APIs; an allow
@@ -146,6 +161,7 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
       organizationId: config.organizationId,
       ...(config.apiUrl ? { apiUrl: config.apiUrl } : {}),
       ...(config.target ? { target: config.target } : {}),
+      requestTimeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
     })
     return client
   }
@@ -171,8 +187,35 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
 
   async function create(input: CreateSandboxInput): Promise<CreatedSandbox> {
     const params = buildCreateParams(config, input)
-    const sandbox = await call(() => sdk().create(params))
-    return { externalId: sandbox.id }
+    const matches = async (): Promise<Sandbox[]> => {
+      const found: Sandbox[] = []
+      for await (const sandbox of sdk().list({
+        labels: { "sproutos.dev/sandbox-id": input.sandboxId },
+      })) {
+        found.push(sandbox)
+      }
+      if (found.length > 1) {
+        throw new Error(
+          `Daytona has ${found.length} sandboxes labelled for ${input.sandboxId}; refusing to ` +
+            "choose one while another may still be billing",
+        )
+      }
+      return found
+    }
+
+    const [existing] = await call(matches)
+    if (existing) return { externalId: existing.id }
+
+    try {
+      const sandbox = await call(() => sdk().create(params))
+      return { externalId: sandbox.id }
+    } catch (cause) {
+      // A timeout or name conflict can mean create succeeded and only its response was lost. The
+      // label is the idempotency key; query it once before allowing the job runner to retry create.
+      const [recovered] = await call(matches)
+      if (recovered) return { externalId: recovered.id }
+      throw cause
+    }
   }
 
   async function exec(externalId: string, argv: string[], timeoutMs: number): Promise<ExecResult> {
@@ -317,6 +360,13 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
 
   async function readFile(externalId: string, path: string): Promise<string> {
     const sandbox = await get(externalId)
+    const details = await call(() => sandbox.fs.getFileDetails(path))
+    if (details.size > MAX_BUFFERED_FILE_BYTES) {
+      throw new Error(
+        `Refusing to buffer ${details.size} bytes from ${path}; the file API limit is ` +
+          `${MAX_BUFFERED_FILE_BYTES} bytes`,
+      )
+    }
     const buffer = await call(() => sandbox.fs.downloadFile(path))
     return buffer.toString("utf8")
   }
@@ -391,6 +441,21 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
         if (error instanceof SandboxNotFoundError) return
         throw error
       }
+    },
+    cloneRepository: async (externalId, input) => {
+      const sandbox = await get(externalId)
+      await call(() =>
+        sandbox.git.clone(
+          input.url,
+          input.path,
+          input.branch,
+          undefined,
+          input.password === "" ? undefined : input.username,
+          input.password === "" ? undefined : input.password,
+          false,
+          input.depth,
+        ),
+      )
     },
     exec,
     execStream,

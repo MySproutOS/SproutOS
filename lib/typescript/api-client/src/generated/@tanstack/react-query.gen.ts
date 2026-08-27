@@ -135,6 +135,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxExec,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAccept,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismiss,
@@ -489,6 +490,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxError,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData,
@@ -1971,7 +1975,7 @@ export const getV1OrgsByOrgSlugRepositoriesInfiniteOptions = (
 }
 
 /**
- * Stops the caller's dev sandbox, keeping its workspace
+ * Permanently deletes the caller's dev sandbox and its database branch
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
   options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData>>,
@@ -2042,6 +2046,33 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Keeps an actively viewed sandbox preview from being reaped
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity({
         ...options,
         ...fnOptions,
         throwOnError: true,

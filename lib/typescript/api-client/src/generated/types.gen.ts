@@ -1995,7 +1995,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxError =
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
   /**
-   * Stop queued
+   * Deletion queued
    */
   202: unknown
 }
@@ -2095,6 +2095,40 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses = {
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/activity"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors = {
+  /**
+   * Caller lacks sandbox:read
+   */
+  403: ErrorResponseT
+  /**
+   * No running sandbox for this caller and project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses = {
+  /**
+   * Activity recorded
+   */
+  204: void
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdSandboxPreviewData = {
   body?: never

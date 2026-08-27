@@ -107,12 +107,14 @@ describe("an idle sandbox is actually turned off", () => {
       projectId,
       userId,
       sandboxClass: "container",
+      alwaysOn: false,
       resources: SNAPSHOT_RESOURCES,
       idleTimeoutS: 900,
     })
     sandboxes.push(made.externalId)
     expect(await activeDriver.state(made.externalId)).toBe("started")
 
+    const lastActivityAt = new Date(Date.now() - 20 * 60_000)
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
@@ -120,7 +122,8 @@ describe("an idle sandbox is actually turned off", () => {
       provider: "daytona",
       state: "running",
       idleTimeoutS: 900,
-      lastActivityAt: new Date(Date.now() - 20 * 60_000),
+      lastActivityAt,
+      meteredThrough: lastActivityAt,
     })
 
     await reapSandboxes(

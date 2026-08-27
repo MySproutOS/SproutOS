@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { buildCreateParams, daytonaConfigFromEnv, type DaytonaConfig } from "./daytona"
+import {
+  AUTO_ARCHIVE_AFTER_STOP_MINUTES,
+  buildCreateParams,
+  daytonaConfigFromEnv,
+  type DaytonaConfig,
+} from "./daytona"
 import type { CreateSandboxInput } from "./types"
 
 const config: DaytonaConfig = {
@@ -14,6 +19,7 @@ const input: CreateSandboxInput = {
   projectId: "01930000-0000-7000-8000-0000000000bb",
   userId: "01930000-0000-7000-8000-0000000000cc",
   sandboxClass: "container",
+  alwaysOn: false,
   resources: { cpu: 2, memoryGib: 4, diskGib: 10 },
   idleTimeoutS: 900,
 }
@@ -22,6 +28,7 @@ describe("buildCreateParams", () => {
   it("uses the snapshot's fixed resources instead of sending an invalid override", () => {
     const params = buildCreateParams(config, input)
     expect(params.snapshot).toBe("sproutos/agent:1")
+    expect(params.name).toBe(`sproutos-${input.sandboxId}`)
     expect(params).not.toHaveProperty("resources")
   })
 
@@ -53,6 +60,10 @@ describe("buildCreateParams", () => {
   })
 
   describe("autostop backstop", () => {
+    it("is disabled only for an explicitly always-on sandbox", () => {
+      expect(buildCreateParams(config, { ...input, alwaysOn: true }).autoStopInterval).toBe(0)
+    })
+
     it("converts seconds to minutes", () => {
       expect(buildCreateParams(config, { ...input, idleTimeoutS: 900 }).autoStopInterval).toBe(15)
     })
@@ -69,6 +80,12 @@ describe("buildCreateParams", () => {
     it("rounds up rather than down", () => {
       expect(buildCreateParams(config, { ...input, idleTimeoutS: 61 }).autoStopInterval).toBe(2)
     })
+  })
+
+  it("archives stopped containers before reserved disk can bill indefinitely", () => {
+    expect(buildCreateParams(config, input).autoArchiveInterval).toBe(
+      AUTO_ARCHIVE_AFTER_STOP_MINUTES,
+    )
   })
 
   it("omits envVars when there are none rather than sending an empty object", () => {

@@ -422,6 +422,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxExecData,
@@ -1282,7 +1285,7 @@ export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = fa
   })
 
 /**
- * Stops the caller's dev sandbox, keeping its workspace
+ * Permanently deletes the caller's dev sandbox and its database branch
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox = <
   ThrowOnError extends boolean = false,
@@ -1338,6 +1341,24 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdSandbox = <ThrowOnError exten
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox",
     ...options,
   })
+
+/**
+ * Keeps an actively viewed sandbox preview from being reaped
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdSandboxActivityErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/sandbox/activity", ...options })
 
 /**
  * A signed, short-lived URL onto a port in the sandbox

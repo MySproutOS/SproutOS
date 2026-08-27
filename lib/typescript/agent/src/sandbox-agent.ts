@@ -96,19 +96,22 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     }
   }
 
-  /*
-    The token goes in the clone URL and comes straight back out.
-
-    `git clone https://x-access-token:<token>@github.com/...` is how an installation token is used,
-    and it lands in `.git/config` as the remote's URL — where it is readable by everything the agent
-    runs for the rest of the session, and by anyone who later reads the workspace. Rewriting the
-    remote immediately afterwards is what stops that; the push path supplies a fresh token.
-  */
-  const cloneUrl = `https://x-access-token:${input.repository.token}@github.com/${input.repository.fullName}.git`
-  const cloned = await run(
-    ["git", "clone", "--depth", "50", "--branch", input.repository.branch, cloneUrl, workspace],
-    "cloning the repository",
-  )
+  let cloned = false
+  try {
+    // Daytona carries credentials on its structured Git API request. They never appear in the
+    // sandbox process list, shell history, command logs, or `.git/config` remote URL.
+    await driver.cloneRepository(externalId, {
+      url: `https://github.com/${input.repository.fullName}.git`,
+      path: workspace,
+      branch: input.repository.branch,
+      username: "x-access-token",
+      password: input.repository.token,
+      depth: 50,
+    })
+    cloned = true
+  } catch (cause) {
+    problems.push(`cloning the repository: ${String(cause)}`)
+  }
 
   if (cloned) {
     await run(

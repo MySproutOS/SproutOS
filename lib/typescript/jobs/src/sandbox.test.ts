@@ -6,6 +6,7 @@ import { v7 } from "uuid"
 import {
   meterSandboxes,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
+  reconcileSandboxes,
   reapSandboxes,
   SANDBOX_KINDS,
   startSandbox,
@@ -316,6 +317,28 @@ describe("meterSandboxes", () => {
     expect(await eventsFor(sandbox.id)).toHaveLength(0)
   })
 
+  it("never bills an ordinary sandbox past its provider auto-stop deadline", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const activity = new Date(Date.now() - 60_000)
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      state: "running",
+      cpu: 1,
+      memoryGib: 1,
+      diskGib: 1,
+      idleTimeoutS: 10,
+      lastActivityAt: activity,
+      meteredThrough: activity,
+    })
+
+    await meterSandboxes(job, context)
+    const cpu = (await eventsFor(sandbox.id)).find((row) => row.dimension === "sandbox_cpu_second")
+    expect(Number(cpu?.quantity)).toBeGreaterThan(9)
+    expect(Number(cpu?.quantity)).toBeLessThan(11)
+  })
+
   /*
     Null is "never metered", and it has to mean `created_at` rather than the epoch. Metering from
     the epoch is roughly forty years of compute nobody ran, on the customer's bill, with every
@@ -410,6 +433,36 @@ describe("reapSandboxes", () => {
     const targets = queued.map((row) => (row.payload as { sandboxId?: string }).sandboxId)
     expect(targets).toContain(idle.id)
     expect(targets).not.toContain(alwaysOn.id)
+  })
+})
+
+describe("reconcileSandboxes", () => {
+  it("repairs a provider auto-archive that the database did not observe", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: "daytona-archived-test",
+      provider: "daytona",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+
+    await reconcileSandboxes(
+      () =>
+        ({
+          state: (externalId: string) =>
+            Promise.resolve(externalId === sandbox.externalId ? "archived" : "started"),
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never, context)
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select("state")
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row.state).toBe("stopped")
   })
 })
 

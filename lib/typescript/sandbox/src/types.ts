@@ -57,6 +57,8 @@ export type CreateSandboxInput = {
   userId: string
   sandboxClass: SandboxClass
   resources: SandboxResources
+  /** Long-running environments deliberately disable Daytona's idle auto-stop. */
+  alwaysOn: boolean
   /** Minutes of inactivity after which the provider stops it. Our reaper is authoritative; this is
    *  the backstop for when a job never runs. */
   idleTimeoutS: number
@@ -106,6 +108,18 @@ export type SandboxDriver = {
   start: (externalId: string) => Promise<void>
   stop: (externalId: string) => Promise<void>
   destroy: (externalId: string) => Promise<void>
+  /** Clone with credentials carried by the provider API, never embedded in a sandbox command. */
+  cloneRepository: (
+    externalId: string,
+    input: {
+      url: string
+      path: string
+      branch: string
+      username: string
+      password: string
+      depth?: number
+    },
+  ) => Promise<void>
   /**
    * Run a command.
    *

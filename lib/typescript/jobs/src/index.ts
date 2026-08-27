@@ -14,6 +14,7 @@ export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
 export {
   destroySandbox,
+  reconcileSandboxes,
   meterSandboxes,
   PROVIDER_COST_MICRO_USD_PER_SECOND,
   provisionSandbox,
