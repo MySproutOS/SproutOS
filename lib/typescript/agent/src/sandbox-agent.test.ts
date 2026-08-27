@@ -343,6 +343,7 @@ describe("a turn that was refused its tools", () => {
 describe("commitSandboxWork", () => {
   const base = {
     author: { email: "dev@example.com", name: "Dev" },
+    baseBranch: "main",
     branch: "sproutos/agent-abc",
     externalId: "sb",
     message: "Add a thing",
@@ -402,6 +403,27 @@ describe("commitSandboxWork", () => {
     // `git config` is a step that is allowed to have failed.
     const commit = commands.find((argv) => argv.includes("commit"))!
     expect(commit.join(" ")).toContain("user.email=dev@example.com")
+  })
+
+  it("pushes work the agent already committed even when the worktree is clean", async () => {
+    const { commands, driver } = fakeDriver({
+      results: {
+        "diff --name-only refs/remotes/origin/main..HEAD": "docs/launch-smoke.md\n",
+        "rev-parse HEAD": "c12eea3\n",
+      },
+    })
+
+    const result = await commitSandboxWork({ ...base, driver })
+    expect(result).toEqual({
+      committed: true,
+      sha: "c12eea3",
+      branch: "sproutos/agent-abc",
+      files: ["docs/launch-smoke.md"],
+    })
+    expect(commands.some((argv) => argv.includes("commit"))).toBe(false)
+    expect(commands.find((argv) => argv.includes("push"))).toContain(
+      "HEAD:refs/heads/sproutos/agent-abc",
+    )
   })
 
   it("creates a branch only when the authenticated remote read says it is absent", async () => {
