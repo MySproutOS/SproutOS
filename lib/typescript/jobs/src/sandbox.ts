@@ -624,6 +624,21 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
       return
     }
 
+    /*
+      The worker marks a failed attempt `failed` before asking the queue to retry it. The forward
+      proxy rejects failed sandboxes by design, so retrying bootstrap in that state guarantees that
+      clone and every package-manager request receive 407 forever. Re-enter the same `starting`
+      state the request path used before touching Daytona. A conditional update also makes a second,
+      distinct provision job stand down if another worker already moved this row.
+    */
+    if (sandbox.state === "failed") {
+      const retrying = await crudSandbox(db).updateIfState(sandbox.id, ["failed"], {
+        state: "starting",
+        lastActivityAt: sql<Date>`now()` as unknown as Date,
+      })
+      if (retrying === undefined) return
+    }
+
     let sandboxDriver: DaytonaSandboxClient | undefined
     let providerExternalId = sandbox.externalId
     try {
