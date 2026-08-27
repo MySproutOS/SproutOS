@@ -168,6 +168,22 @@ describe.runIf(reachable)("through the storage proxy", () => {
     return { ...created, uri: provisioned.connectionUri }
   }
 
+  it("refuses an unsigned request before admitting its oversized body", async () => {
+    /*
+      The body ceiling is 16 MiB. If the handler buffers before parsing Authorization this returns
+      EntityTooLarge after allocating the entire ceiling; a 403 proves the refusal happened from the
+      headers first. That ordering is what prevents an anonymous caller from buying 16 MiB of the
+      router's 1 GiB host on every concurrent request.
+    */
+    const response = await fetch(`${active!.publicEndpoint}/v-not-a-service/large`, {
+      method: "PUT",
+      body: new Uint8Array(16 * 1024 * 1024 + 1),
+    })
+
+    expect(response.status).toBe(403)
+    expect(await response.text()).toContain("AccessDenied")
+  }, 30_000)
+
   it("lets a customer write and read their own vault", async () => {
     // The whole thing working: the AWS SDK signs with a key AWS has never heard of, the proxy
     // verifies it against a derived secret, re-signs, and LocalStack answers.

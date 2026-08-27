@@ -103,6 +103,11 @@ output "search_rule_arn" {
   value       = aws_lb_listener_rule.search.arn
 }
 
+output "storage_rule_arn" {
+  description = "Listener rule for storage.<domain>. Set as the STORAGE_RULE_ARN repository variable."
+  value       = aws_lb_listener_rule.storage.arn
+}
+
 output "llm_rule_arn" {
   description = "Listener rule for llm.<domain>. Set as the LLM_RULE_ARN repository variable."
   value       = aws_lb_listener_rule.llm.arn

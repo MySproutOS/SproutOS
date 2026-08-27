@@ -32,6 +32,23 @@ describe("service connection contracts", () => {
       },
     ])
   })
+
+  it("writes every S3 field an attached project needs from the object-storage URI", () => {
+    expect(
+      connectionEnvironmentEntries({
+        connectionUri:
+          "sls+s3://SPROUTKEY:secret%3Avalue@storage.example.com?endpoint=https%3A%2F%2Fstorage.example.com&bucket=v-tenant&region=us-east-1",
+        kind: "object_storage",
+      }),
+    ).toEqual([
+      { isSecret: false, key: "S3_ENDPOINT", value: "https://storage.example.com" },
+      { isSecret: false, key: "S3_REGION", value: "us-east-1" },
+      { isSecret: false, key: "S3_BUCKET_NAME", value: "v-tenant" },
+      { isSecret: false, key: "S3_FORCE_PATH_STYLE", value: "true" },
+      { isSecret: true, key: "S3_ACCESS_KEY_ID", value: "SPROUTKEY" },
+      { isSecret: true, key: "S3_SECRET_ACCESS_KEY", value: "secret:value" },
+    ])
+  })
 })
 
 /**

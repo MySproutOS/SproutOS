@@ -9,7 +9,7 @@ import {
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 /**
- * The kinds the API accepts. Only `postgres` is implemented; the others say so when chosen.
+ * The kinds the API accepts.
  *
  * `object_storage` is here because the API returns it, not because the picker offers it. The list
  * was three long while `ServiceKind` on the wire was four, so a row of that kind arriving from the
@@ -48,13 +48,13 @@ export const KIND_LABELS: Record<ServiceKind, string> = {
     obtain. Every Postgres service in the list is in `error` for that reason, which is what a `true`
     here buys: a customer allowed to ask for something that cannot be delivered.
 
-  `object_storage` is genuinely not wired to a bucket yet.
+  Object storage is served through the authenticated storage proxy and the shared tenant bucket.
 */
 export const KIND_AVAILABLE: Record<ServiceKind, boolean> = {
   postgres: true,
   valkey: true,
   elasticsearch: true,
-  object_storage: false,
+  object_storage: true,
 }
 
 /**
@@ -129,7 +129,11 @@ export function useCreateBackendService(orgSlug: string) {
 
   return {
     ...mutation,
-    createService: async (input: { name: string; kind: ServiceKind }): Promise<string> => {
+    createService: async (input: {
+      name: string
+      kind: ServiceKind
+      projectId?: string | null
+    }): Promise<string> => {
       const created = await mutation.mutateAsync({ path: { orgSlug }, body: input })
       await invalidate()
       return created.connectionUri

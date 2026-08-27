@@ -46,6 +46,7 @@ import {
   useRevealConnection,
   useRotateConnection,
 } from "@frontends/dashboard/data/databases"
+import { useProjects } from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/databases")({
   component: DatabasesList,
@@ -348,6 +349,8 @@ function ConnectionDialog({
 
 function CreateDialog({ orgSlug }: { orgSlug: string }) {
   const { createService, isPending } = useCreateBackendService(orgSlug)
+  const projects = useProjects(orgSlug)
+  const attachableProjects = (projects.data ?? []).filter((project) => !project.isGroup)
   const [name, setName] = useState("")
   /*
     The first engine this deployment can actually deliver, rather than a hard-coded `postgres`.
@@ -357,6 +360,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
     open and the reason for it was a line of small grey text below the select.
   */
   const [kind, setKind] = useState<ServiceKind>(FIRST_AVAILABLE_KIND)
+  const [projectId, setProjectId] = useState("standalone")
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [uri, setUri] = useState<string | null>(null)
@@ -368,7 +372,11 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
       return
     }
     setError(null)
-    createService({ name: name.trim(), kind })
+    createService({
+      name: name.trim(),
+      kind,
+      ...(projectId === "standalone" ? {} : { projectId }),
+    })
       .then((connectionUri) => {
         // Captured before the field is cleared: the URI dialog names the database, and resetting
         // first made it say "your new database" for something the person had just named.
@@ -458,6 +466,38 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
                   {KIND_LABELS[kind]} is not available on this deployment yet.
                 </p>
               )}
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Project</Label>
+              <Select
+                items={[
+                  { label: "Standalone", value: "standalone" },
+                  ...attachableProjects.map((project) => ({
+                    label: project.name,
+                    value: project.id,
+                  })),
+                ]}
+                value={projectId}
+                onValueChange={(next) => {
+                  setProjectId(next ?? "standalone")
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="standalone">Standalone</SelectItem>
+                  {attachableProjects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Attaching writes the connection settings into that project's environment.
+              </p>
             </div>
 
             {error !== null && <p className="text-xs text-destructive">{error}</p>}

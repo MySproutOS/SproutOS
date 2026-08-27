@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -16,9 +17,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use sproutos_service_credentials::CredentialStore;
 use storage_proxy::{
-    Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredential, authorize,
-    bucket_from_path, is_list, is_listing_response, strip_prefix_from_listing, upstream_headers,
-    upstream_path, upstream_query,
+    Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredentialProvider, bucket_from_path,
+    finish_authorization, is_list, is_listing_response, prepare_authorization,
+    strip_prefix_from_listing, upstream_headers, upstream_path, upstream_query,
 };
 use tracing::{debug, info, warn};
 
@@ -48,6 +49,33 @@ if-none-match";
 /// without it makes every object look new — a full resync of the customer's vault, on every open.
 const EXPOSED_HEADERS: &str = "ETag,Content-Length,Content-Type,x-amz-request-id,x-amz-version-id";
 
+// Four simultaneous 16 MiB buffers cap request-body memory at 64 MiB on the 1 GiB t4g.micro that
+// runs this beside the router. Obsidian LiveSync chunks large files itself. Both values may be
+// lowered operationally, but invalid or zero overrides are refused at boot rather than silently
+// removing the bound.
+const DEFAULT_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_MAX_INFLIGHT_BODIES: usize = 4;
+const DEFAULT_BODY_READ_TIMEOUT_SECONDS: usize = 30;
+
+struct AppState {
+    proxy: Arc<Proxy>,
+    body_slots: tokio::sync::Semaphore,
+    max_body_bytes: usize,
+    body_read_timeout: Duration,
+}
+
+fn positive_usize(name: &str, default: usize) -> anyhow::Result<usize> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|parsed| *parsed > 0)
+            .ok_or_else(|| anyhow::anyhow!("{name} must be a positive integer")),
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(cause) => Err(anyhow::anyhow!("{name} is not valid Unicode: {cause}")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -74,13 +102,21 @@ async fn main() -> anyhow::Result<()> {
         anyhow::anyhow!("SERVICE_OBJECT_STORAGE_ROOT_KEY is not set; no tenant could be verified")
     })?;
 
-    let credential = UpstreamCredential {
-        access_key_id: std::env::var("AWS_ACCESS_KEY_ID")
-            .map_err(|_| anyhow::anyhow!("AWS_ACCESS_KEY_ID is not set"))?,
-        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY")
-            .map_err(|_| anyhow::anyhow!("AWS_SECRET_ACCESS_KEY is not set"))?,
-        session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
-    };
+    // The default chain supports local environment credentials as well as refreshable ECS task,
+    // web-identity, profile and instance credentials. Keep the provider rather than extracting a
+    // credential once: temporary role credentials expire while this process is still running.
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let credential_provider = UpstreamCredentialProvider::new(
+        aws_config
+            .credentials_provider()
+            .ok_or_else(|| anyhow::anyhow!("the AWS default credential chain is unavailable"))?,
+    );
+    // Fail a deployment at boot when the chain cannot resolve at all. The result is deliberately
+    // discarded; the refreshable provider remains in the proxy and supplies each request.
+    credential_provider
+        .current()
+        .await
+        .map_err(|cause| anyhow::anyhow!("the AWS default credential chain failed: {cause}"))?;
 
     let database_url = std::env::var("STORAGE_PROXY_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
@@ -102,14 +138,34 @@ async fn main() -> anyhow::Result<()> {
         root_key,
         upstream: upstream.trim_end_matches('/').to_owned(),
         region,
-        credential,
+        credential_provider,
         shared_bucket: std::env::var("STORAGE_PROXY_SHARED_BUCKET").ok(),
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()?,
     });
 
-    let app = Router::new().fallback(any(handle)).with_state(proxy);
+    let max_body_bytes = positive_usize("STORAGE_PROXY_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES)?;
+    let max_inflight = positive_usize(
+        "STORAGE_PROXY_MAX_INFLIGHT_BODIES",
+        DEFAULT_MAX_INFLIGHT_BODIES,
+    )?;
+    let body_read_timeout = Duration::from_secs(
+        positive_usize(
+            "STORAGE_PROXY_BODY_READ_TIMEOUT_SECONDS",
+            DEFAULT_BODY_READ_TIMEOUT_SECONDS,
+        )?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("STORAGE_PROXY_BODY_READ_TIMEOUT_SECONDS is too large"))?,
+    );
+    let state = Arc::new(AppState {
+        proxy,
+        body_slots: tokio::sync::Semaphore::new(max_inflight),
+        max_body_bytes,
+        body_read_timeout,
+    });
+
+    let app = Router::new().fallback(any(handle)).with_state(state);
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     info!(%listen, "storage-proxy listening");
@@ -143,6 +199,51 @@ fn s3_error(denied: &Denied, origin: Option<&str>) -> Response {
     response
 }
 
+fn body_error(
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    origin: Option<&str>,
+) -> Response {
+    let mut response = (
+        status,
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>{code}</Code><Message>{message}</Message></Error>"
+        ),
+    )
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/xml"),
+    );
+    apply_cors(response.headers_mut(), origin);
+    response
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum BodyReadFailure {
+    Rejected,
+    TimedOut,
+}
+
+async fn receive_body<F, E>(body: F, timeout: Duration) -> Result<Bytes, BodyReadFailure>
+where
+    F: std::future::Future<Output = Result<Bytes, E>>,
+{
+    match tokio::time::timeout(timeout, body).await {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(_)) => Err(BodyReadFailure::Rejected),
+        Err(_) => Err(BodyReadFailure::TimedOut),
+    }
+}
+
+fn declared_body_too_large(headers: &BTreeMap<String, String>, max_body_bytes: usize) -> bool {
+    headers
+        .get("content-length")
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|length| length > max_body_bytes as u64)
+}
+
 /// Reflect the request's origin when it is one we serve.
 ///
 /// Reflected rather than wildcarded because these responses are credentialed, and
@@ -165,7 +266,7 @@ fn apply_cors(headers: &mut axum::http::HeaderMap, origin: Option<&str>) {
     headers.insert(axum::http::header::VARY, HeaderValue::from_static("Origin"));
 }
 
-async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
+async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
     let path = uri.path().to_owned();
@@ -220,13 +321,74 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
         return response;
     }
 
-    // Buffered whole. Verifying a signature over a payload hash means having the payload, and a
-    // vault object is a note — `livesync` chunks large files itself. `DEFAULT_BODY_LIMIT` bounds it.
-    let body = match axum::body::to_bytes(request.into_body(), 64 * 1024 * 1024).await {
-        Ok(bytes) => bytes,
+    // Reject unsigned, unknown-key and bad UNSIGNED-PAYLOAD signatures before admitting the body.
+    // Without this ordering any anonymous caller could consume one full body allocation merely to
+    // receive the 403 that was knowable from its headers.
+    let headers_only = IncomingRequest {
+        method: method.as_str(),
+        path: &path,
+        query: &query,
+        headers: headers.clone(),
+        body: &[],
+    };
+    let prepared = match prepare_authorization(&state.proxy, &headers_only).await {
+        Ok(prepared) => prepared,
+        Err(denied) => {
+            warn!(%method, %path, %denied, "refused before body admission");
+            return s3_error(&denied, origin.as_deref());
+        }
+    };
+
+    // Content-Length is not trusted for correctness — the bounded reader below remains the
+    // authority — but rejecting an honest oversized upload here avoids reserving one of the four
+    // scarce body slots for bytes that can never be accepted.
+    if declared_body_too_large(&headers, state.max_body_bytes) {
+        return body_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "EntityTooLarge",
+            "The request body is too large.",
+            origin.as_deref(),
+        );
+    }
+
+    // Do not queue an unbounded number of authenticated bodies behind the four allocations. A
+    // valid tenant can retry SlowDown; the router sharing this host cannot recover from an OOM.
+    let _body_slot = match state.body_slots.try_acquire() {
+        Ok(permit) => permit,
         Err(_) => {
-            return s3_error(
-                &Denied::Malformed("the request body could not be read"),
+            return body_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SlowDown",
+                "Reduce your request rate.",
+                origin.as_deref(),
+            );
+        }
+    };
+
+    // Buffered whole because an actual payload digest must be checked against the bytes. The
+    // admission semaphore above makes the aggregate allocation bounded as well as each request.
+    // The timeout is equally load-bearing: otherwise four authenticated slow uploads can occupy
+    // every slot indefinitely without approaching the byte ceiling.
+    let body = match receive_body(
+        axum::body::to_bytes(request.into_body(), state.max_body_bytes),
+        state.body_read_timeout,
+    )
+    .await
+    {
+        Ok(bytes) => bytes,
+        Err(BodyReadFailure::Rejected) => {
+            return body_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "EntityTooLarge",
+                "The request body is too large.",
+                origin.as_deref(),
+            );
+        }
+        Err(BodyReadFailure::TimedOut) => {
+            return body_error(
+                StatusCode::REQUEST_TIMEOUT,
+                "RequestTimeout",
+                "The request body took too long to arrive.",
                 origin.as_deref(),
             );
         }
@@ -240,7 +402,7 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
         body: &body,
     };
 
-    let resolved = match authorize(&proxy, &incoming).await {
+    let resolved = match finish_authorization(&state.proxy, &incoming, prepared).await {
         Ok(resolved) => resolved,
         Err(denied) => {
             warn!(%method, %path, %denied, "refused");
@@ -259,7 +421,7 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
         "forwarding"
     );
 
-    match forward(&proxy, &method, &path, &query, &incoming, &body).await {
+    match forward(&state.proxy, &method, &path, &query, &incoming, &body).await {
         Ok(mut response) => {
             apply_cors(response.headers_mut(), origin.as_deref());
             response
@@ -329,8 +491,10 @@ async fn forward(
     };
 
     let amz_date = now_amz_date();
+    let credential = proxy.credential_provider.current().await?;
     let signed = upstream_headers(
-        proxy,
+        &proxy.region,
+        &credential,
         &OutgoingRequest {
             method: method.as_str(),
             path,
@@ -461,6 +625,25 @@ mod tests {
                 .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .unwrap(),
             "app://obsidian.md"
+        );
+    }
+
+    #[test]
+    fn rejects_a_declared_oversized_body_before_admission() {
+        let mut headers = BTreeMap::new();
+        headers.insert("content-length".to_owned(), "17".to_owned());
+        assert!(declared_body_too_large(&headers, 16));
+
+        headers.insert("content-length".to_owned(), "16".to_owned());
+        assert!(!declared_body_too_large(&headers, 16));
+    }
+
+    #[tokio::test]
+    async fn stops_a_body_that_never_arrives() {
+        let body = std::future::pending::<Result<Bytes, std::convert::Infallible>>();
+        assert_eq!(
+            receive_body(body, Duration::from_millis(1)).await,
+            Err(BodyReadFailure::TimedOut)
         );
     }
 }

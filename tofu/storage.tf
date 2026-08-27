@@ -1,68 +1,90 @@
 /*
-  Tenant object storage, and the one IRSA role in the platform that grants anything at S3.
+  Tenant object storage: one physical bucket, one prefix per backend service.
 
-  Every other data-plane proxy authenticates tenants and talks to something inside the cluster.
-  `storage-proxy` is different: it verifies a tenant's SigV4 signature and then *re-signs the request
-  with the platform's own credential*, because the customer holds a `SPROUT…` key that AWS has never
-  heard of. So this role is what actually reaches a customer's vault, and how narrow it is decides
-  what a compromised proxy is worth.
+  Customers never receive this bucket's name or an AWS credential. They address the logical bucket
+  `v-<service-id>` through `storage-proxy`; the proxy authenticates their derived SigV4 key and
+  rewrites the request below the same `v-<service-id>/` prefix here. That is the same split used by
+  Valkey and OpenSearch: the backing store is shared and the boundary is the proxy we can test.
 
-  Narrow means two things here, and neither is optional:
-
-  - **The `v-*` prefix.** Every tenant bucket is `v-<short-id>`; nothing else in the account is. A
-    role granted `arn:aws:s3:::*` could read the SPA bucket, the Terraform state bucket, and the
-    backups — none of which any tenant request has a reason to touch.
-  - **Six actions, not `s3:*`.** The same set `bucketPolicy()` in `lib/typescript/services` produces,
-    which is the set `obsidian-livesync` uses. `DeleteBucket` is absent: a compromised proxy can
-    delete a customer's notes one at a time, which is recoverable from versioning, and cannot delete
-    the vault wholesale, which is not.
+  Versioning is the recovery boundary. A tenant can delete an object through the proxy, but that
+  creates a delete marker and leaves the previous version recoverable for thirty days. The proxy's
+  role cannot delete this bucket, alter its policy, or reach any other bucket in the account.
 */
 
-resource "aws_iam_role" "object_storage_admin" {
-  name = "${var.name_prefix}-object-storage-admin"
+resource "aws_s3_bucket" "tenant_objects" {
+  bucket = "${var.name_prefix}-tenant-objects"
 
-  /*
-    Assumed by the service instances, not by a Kubernetes service account.
-
-    This was an IRSA role bound to one service account, and the `sub` condition was what stopped any
-    other pod assuming it. There is no cluster and no pods: the boundary is now the instance role,
-    which only the website and router instances carry, and which cannot itself create buckets — that
-    separation is the point of having two roles rather than one.
-  */
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRole"
-      Principal = { AWS = aws_iam_role.instance.arn }
-    }]
-  })
-
-  tags = local.tags
+  # A service teardown removes only its prefix. The platform bucket itself is never disposable.
+  force_destroy = false
+  tags          = local.tags
 }
 
-resource "aws_iam_role_policy" "object_storage_admin" {
-  name = "tenant-bucket-lifecycle"
-  role = aws_iam_role.object_storage_admin.id
+resource "aws_s3_bucket_public_access_block" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:CreateBucket",
-          "s3:DeleteBucket",
-          "s3:PutBucketCORS",
-          "s3:GetBucketCORS",
-          "s3:ListBucket",
-          "s3:DeleteObject",
-        ]
-        Resource = [
-          "arn:aws:s3:::${var.tenant_bucket_prefix}*",
-          "arn:aws:s3:::${var.tenant_bucket_prefix}*/*",
-        ]
-      },
-    ]
-  })
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.secrets.arn
+      sse_algorithm     = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
+    allowed_origins = ["app://obsidian.md", "capacitor://localhost", "http://localhost"]
+    expose_headers  = ["ETag", "Content-Length", "x-amz-version-id"]
+    max_age_seconds = 3000
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "tenant_objects" {
+  bucket = aws_s3_bucket.tenant_objects.id
+
+  rule {
+    id     = "recoverable-deletes"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.tenant_objects]
 }

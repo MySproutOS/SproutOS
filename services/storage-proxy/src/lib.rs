@@ -34,7 +34,10 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
+use aws_credential_types::Credentials;
+use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use sproutos_s3_sigv4::{
     AuthorizationHeader, CanonicalRequest, STREAMING_PAYLOAD, UNSIGNED_PAYLOAD, canonical_query,
     parse_authorization, sha256_hex, sign, string_to_sign, verify,
@@ -51,6 +54,77 @@ pub struct UpstreamCredential {
     pub session_token: Option<String>,
 }
 
+/// Refreshable credentials used to sign requests to the backing store.
+///
+/// The AWS SDK normally caches identities inside a generated service client. This proxy signs
+/// requests itself, so it owns the corresponding cache. Expiring credentials are refreshed before
+/// their expiry while non-expiring credentials (for example the environment provider used by a
+/// local test) remain cached.
+#[derive(Debug)]
+pub struct UpstreamCredentialProvider {
+    provider: SharedCredentialsProvider,
+    cached: tokio::sync::Mutex<Option<Credentials>>,
+    refresh_before: Duration,
+}
+
+impl UpstreamCredentialProvider {
+    const DEFAULT_REFRESH_BEFORE: Duration = Duration::from_secs(5 * 60);
+
+    pub fn new(provider: SharedCredentialsProvider) -> Self {
+        Self::with_refresh_window(provider, Self::DEFAULT_REFRESH_BEFORE)
+    }
+
+    /// A provider for tests and local callers that deliberately supply a fixed credential.
+    pub fn fixed(credential: UpstreamCredential) -> Self {
+        Self::new(SharedCredentialsProvider::new(Credentials::new(
+            credential.access_key_id,
+            credential.secret_access_key,
+            credential.session_token,
+            None,
+            "storage-proxy-fixed",
+        )))
+    }
+
+    fn with_refresh_window(provider: SharedCredentialsProvider, refresh_before: Duration) -> Self {
+        Self {
+            provider,
+            cached: tokio::sync::Mutex::new(None),
+            refresh_before,
+        }
+    }
+
+    /// Resolve the credential to use for this request, refreshing temporary credentials as needed.
+    pub async fn current(
+        &self,
+    ) -> Result<UpstreamCredential, aws_credential_types::provider::error::CredentialsError> {
+        let mut cached = self.cached.lock().await;
+        if let Some(credential) = cached.as_ref().filter(|credential| {
+            credential.expiry().is_none_or(|expiry| {
+                expiry
+                    .duration_since(SystemTime::now())
+                    .is_ok_and(|remaining| remaining > self.refresh_before)
+            })
+        }) {
+            return Ok(credential.into());
+        }
+
+        let credential = self.provider.provide_credentials().await?;
+        let current = (&credential).into();
+        *cached = Some(credential);
+        Ok(current)
+    }
+}
+
+impl From<&Credentials> for UpstreamCredential {
+    fn from(credential: &Credentials) -> Self {
+        Self {
+            access_key_id: credential.access_key_id().to_owned(),
+            secret_access_key: credential.secret_access_key().to_owned(),
+            session_token: credential.session_token().map(str::to_owned),
+        }
+    }
+}
+
 pub struct Proxy {
     pub store: Arc<CredentialStore>,
     /// The root key every tenant secret is derived from. Shared with the control plane.
@@ -58,7 +132,7 @@ pub struct Proxy {
     /// Where the buckets actually live: `https://s3.us-east-1.amazonaws.com`, or LocalStack.
     pub upstream: String,
     pub region: String,
-    pub credential: UpstreamCredential,
+    pub credential_provider: UpstreamCredentialProvider,
     pub client: reqwest::Client,
     /*
       The one real bucket every tenant lives in (§4.5).
@@ -69,6 +143,18 @@ pub struct Proxy {
       look like data loss.
     */
     pub shared_bucket: Option<String>,
+}
+
+/// Authorization state that can be established before a request body is admitted into memory.
+///
+/// Keep the fields private. The caller may only complete authorization through
+/// [`finish_authorization`], which verifies the payload signature and bucket boundary before the
+/// resolved tenant is returned.
+pub struct PreparedAuthorization {
+    auth: AuthorizationHeader,
+    resolved: ResolvedService,
+    secret: String,
+    signature_checked: bool,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -482,7 +568,11 @@ pub struct OutgoingRequest<'a> {
 /// Only the headers this signs are sent. Anything the client sent that is not in this list is
 /// dropped, which is deliberate: an unsigned header forwarded to S3 is a header the customer can
 /// set without the platform having agreed to it.
-pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeMap<String, String> {
+pub fn upstream_headers(
+    region: &str,
+    credential: &UpstreamCredential,
+    outgoing: &OutgoingRequest<'_>,
+) -> BTreeMap<String, String> {
     let OutgoingRequest {
         method,
         path,
@@ -499,7 +589,7 @@ pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeM
     headers.insert("host".to_owned(), host.to_owned());
     headers.insert("x-amz-content-sha256".to_owned(), hash.clone());
     headers.insert("x-amz-date".to_owned(), amz_date.to_owned());
-    if let Some(token) = &proxy.credential.session_token {
+    if let Some(token) = &credential.session_token {
         headers.insert("x-amz-security-token".to_owned(), token.clone());
     }
     if let Some(value) = content_type {
@@ -513,9 +603,9 @@ pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeM
         .collect::<String>();
 
     let scope = sproutos_s3_sigv4::CredentialScope {
-        access_key_id: proxy.credential.access_key_id.clone(),
+        access_key_id: credential.access_key_id.clone(),
         date: amz_date.get(..8).unwrap_or_default().to_owned(),
-        region: proxy.region.clone(),
+        region: region.to_owned(),
         service: "s3".to_owned(),
     };
 
@@ -529,7 +619,7 @@ pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeM
     };
 
     let signature = sign(
-        &proxy.credential.secret_access_key,
+        &credential.secret_access_key,
         &scope,
         &string_to_sign(amz_date, &scope.as_scope(), &canonical.to_string_form()),
     );
@@ -538,7 +628,7 @@ pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeM
         "authorization".to_owned(),
         format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            proxy.credential.access_key_id,
+            credential.access_key_id,
             scope.as_scope(),
             signed,
             signature
@@ -553,10 +643,10 @@ pub fn upstream_headers(proxy: &Proxy, outgoing: &OutgoingRequest<'_>) -> BTreeM
 /// Split out from the HTTP handler so the decision can be tested without a socket, and so the order
 /// of the checks is visible in one place: identify, authenticate, *then* authorize. Doing the bucket
 /// check before the signature check would tell an unauthenticated caller whether a bucket exists.
-pub async fn authorize(
+pub async fn prepare_authorization(
     proxy: &Proxy,
     request: &IncomingRequest<'_>,
-) -> Result<ResolvedService, Denied> {
+) -> Result<PreparedAuthorization, Denied> {
     let auth = authorization(request)?;
 
     let resolved = proxy
@@ -575,20 +665,60 @@ pub async fn authorize(
         proxy.root_key.as_bytes(),
         &auth.credential.access_key_id,
     );
-    check_signature(request, &auth, &secret)?;
+
+    // Browser-shaped S3 clients normally use UNSIGNED-PAYLOAD over HTTPS. Its signature is
+    // independent of the body, so verify it now, before the handler allocates any body bytes. This
+    // turns a forged request carrying a real-looking access-key id into a small 403 rather than a
+    // 16 MiB allocation. Requests carrying an actual payload digest are completed after buffering.
+    let signature_checked = request
+        .headers
+        .get("x-amz-content-sha256")
+        .is_some_and(|hash| hash == UNSIGNED_PAYLOAD);
+    if signature_checked {
+        check_signature(request, &auth, &secret)?;
+    }
+
+    Ok(PreparedAuthorization {
+        auth,
+        resolved,
+        secret,
+        signature_checked,
+    })
+}
+
+/// Complete payload authentication and the tenant bucket check after the bounded body is read.
+pub async fn finish_authorization(
+    proxy: &Proxy,
+    request: &IncomingRequest<'_>,
+    prepared: PreparedAuthorization,
+) -> Result<ResolvedService, Denied> {
+    if !prepared.signature_checked {
+        check_signature(request, &prepared.auth, &prepared.secret)?;
+    }
 
     let bucket = bucket_from_path(request.path).ok_or(Denied::NoBucket)?;
-    if bucket != bucket_for(resolved.backend_service_id) {
+    if bucket != bucket_for(prepared.resolved.backend_service_id) {
         return Err(Denied::WrongBucket);
     }
 
-    proxy.store.mark_used(resolved.credential_id).await;
-    Ok(resolved)
+    proxy.store.mark_used(prepared.resolved.credential_id).await;
+    Ok(prepared.resolved)
+}
+
+/// Convenience path for callers that already hold a bounded body.
+pub async fn authorize(
+    proxy: &Proxy,
+    request: &IncomingRequest<'_>,
+) -> Result<ResolvedService, Denied> {
+    let prepared = prepare_authorization(proxy, request).await?;
+    finish_authorization(proxy, request, prepared).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_credential_types::provider::future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -938,6 +1068,85 @@ mod tests {
         assert_eq!(
             check_signature(&tampered, &auth, &secret),
             Err(Denied::BadSignature)
+        );
+    }
+
+    #[derive(Debug)]
+    struct RotatingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ProvideCredentials for RotatingProvider {
+        fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+        where
+            Self: 'a,
+        {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let expiry = if call == 1 {
+                SystemTime::now() + Duration::from_secs(30)
+            } else {
+                SystemTime::now() + Duration::from_secs(60 * 60)
+            };
+            future::ProvideCredentials::ready(Ok(Credentials::new(
+                format!("ACCESS{call}"),
+                format!("secret{call}"),
+                Some(format!("token{call}")),
+                Some(expiry),
+                "rotating-test",
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn refreshes_temporary_credentials_before_they_expire() -> anyhow::Result<()> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = UpstreamCredentialProvider::with_refresh_window(
+            SharedCredentialsProvider::new(RotatingProvider {
+                calls: calls.clone(),
+            }),
+            Duration::from_secs(60),
+        );
+
+        assert_eq!(provider.current().await?.access_key_id, "ACCESS1");
+        assert_eq!(provider.current().await?.access_key_id, "ACCESS2");
+        // The second credential is outside the refresh window, so another request reuses it.
+        assert_eq!(provider.current().await?.access_key_id, "ACCESS2");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn signs_each_request_with_the_credential_it_was_given() {
+        let request = OutgoingRequest {
+            method: "GET",
+            path: "/bucket/key",
+            query: "",
+            host: "s3.us-east-1.amazonaws.com",
+            body: b"",
+            amz_date: "20260827T120000Z",
+            content_type: None,
+        };
+        let first = UpstreamCredential {
+            access_key_id: "ACCESS1".to_owned(),
+            secret_access_key: "secret1".to_owned(),
+            session_token: Some("token1".to_owned()),
+        };
+        let second = UpstreamCredential {
+            access_key_id: "ACCESS2".to_owned(),
+            secret_access_key: "secret2".to_owned(),
+            session_token: Some("token2".to_owned()),
+        };
+
+        let first_headers = upstream_headers("us-east-1", &first, &request);
+        let second_headers = upstream_headers("us-east-1", &second, &request);
+
+        assert!(first_headers["authorization"].contains("Credential=ACCESS1/"));
+        assert_eq!(first_headers["x-amz-security-token"], "token1");
+        assert!(second_headers["authorization"].contains("Credential=ACCESS2/"));
+        assert_eq!(second_headers["x-amz-security-token"], "token2");
+        assert_ne!(
+            first_headers["authorization"],
+            second_headers["authorization"]
         );
     }
 }

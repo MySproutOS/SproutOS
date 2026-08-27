@@ -225,6 +225,17 @@ describe("naming and policy", () => {
 })
 
 describe("objectStorageConfigFromEnv", () => {
+  it("keeps provisioning closed during the binary-only rollout stage", () => {
+    expect(() =>
+      objectStorageConfigFromEnv({
+        SERVICE_OBJECT_STORAGE_ENABLED: "false",
+        SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.example.com",
+        SERVICE_OBJECT_STORAGE_REGION: "us-east-1",
+        SERVICE_OBJECT_STORAGE_ROOT_KEY: "k",
+      }),
+    ).toThrow(/SERVICE_OBJECT_STORAGE_ENABLED/)
+  })
+
   it("refuses rather than pointing a customer at the bucket itself", () => {
     // The endpoint a customer receives is the proxy. Falling back to the one this process uses
     // would hand out a credential AWS has never heard of, and the failure would read as a wrong
@@ -247,6 +258,20 @@ describe("objectStorageConfigFromEnv", () => {
         SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.example.com",
       }),
     ).toThrow(/ROOT_KEY/)
+  })
+
+  it("keeps the physical shared bucket out of the customer-facing endpoint", () => {
+    expect(
+      objectStorageConfigFromEnv({
+        SERVICE_OBJECT_STORAGE_REGION: "us-east-1",
+        SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.example.com",
+        SERVICE_OBJECT_STORAGE_ROOT_KEY: "k",
+        SERVICE_OBJECT_STORAGE_SHARED_BUCKET: "platform-tenant-objects",
+      }),
+    ).toMatchObject({
+      publicEndpoint: "https://storage.example.com",
+      sharedBucket: "platform-tenant-objects",
+    })
   })
 })
 

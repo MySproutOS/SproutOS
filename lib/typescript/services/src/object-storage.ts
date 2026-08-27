@@ -17,7 +17,13 @@ import {
   lastFour,
   objectStorageAccessKeyId,
 } from "./tenant-auth"
-import type { ConnectionDetails, ProvisionInput, ProvisionResult, ServiceDriver } from "./types"
+import {
+  ServiceNotConfiguredError,
+  type ConnectionDetails,
+  type ProvisionInput,
+  type ProvisionResult,
+  type ServiceDriver,
+} from "./types"
 
 /**
  * S3-compatible object storage as a backend service.
@@ -90,11 +96,23 @@ export type ObjectStorageConfig = {
    * explains the trade.
    */
   rootKey: string
+  /**
+   * The one physical bucket used by the production data plane.
+   *
+   * Customers still address `v-<service-id>` as their bucket. The proxy rewrites that logical
+   * bucket below this real bucket's matching prefix, so this value is never exposed to them.
+   * Omitted only for the legacy/local bucket-per-service layout.
+   */
+  sharedBucket?: string
 }
 
 export function objectStorageConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): ObjectStorageConfig {
+  if (env.SERVICE_OBJECT_STORAGE_ENABLED === "false") {
+    throw new ServiceNotConfiguredError("SERVICE_OBJECT_STORAGE_ENABLED")
+  }
+
   const region = env.SERVICE_OBJECT_STORAGE_REGION ?? env.AWS_REGION
   if (region === undefined || region === "") {
     throw new Error("SERVICE_OBJECT_STORAGE_REGION is not set; S3 needs a region")
@@ -124,6 +142,10 @@ export function objectStorageConfigFromEnv(
     region,
     publicEndpoint,
     rootKey,
+    ...(env.SERVICE_OBJECT_STORAGE_SHARED_BUCKET === undefined ||
+    env.SERVICE_OBJECT_STORAGE_SHARED_BUCKET === ""
+      ? {}
+      : { sharedBucket: env.SERVICE_OBJECT_STORAGE_SHARED_BUCKET }),
     // Defaults on, and off is almost certainly a mistake now that the endpoint is the proxy.
     forcePathStyle: env.SERVICE_OBJECT_STORAGE_PATH_STYLE !== "false",
   }
@@ -360,33 +382,48 @@ export function objectStorageDriver(
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {
     const bucket = bucketNameFor(input.backendServiceId)
 
-    await s3.send(new CreateBucketCommand({ Bucket: bucket }))
+    if (config.sharedBucket === undefined) {
+      await s3.send(new CreateBucketCommand({ Bucket: bucket }))
 
-    /*
-      CORS before the credential, so the bucket is never briefly usable and unreachable.
+      /*
+        CORS before the credential, so the bucket is never briefly usable and unreachable.
 
-      Obsidian is a browser-shaped runtime: without these origins its preflight fails inside the
-      plugin's own fetch, and the customer sees "cannot connect" with nothing in any log. Upstream's
-      MinIO script carries the same rule, commented out, with their test harness's localhost ports.
-    */
-    await s3.send(
-      new PutBucketCorsCommand({
-        Bucket: bucket,
-        CORSConfiguration: {
-          CORSRules: [
-            {
-              AllowedOrigins: VAULT_ORIGINS,
-              AllowedMethods: ["GET", "PUT", "POST", "DELETE", "HEAD"],
-              AllowedHeaders: ["*"],
-              // The plugin reads `ETag` to decide what changed. Without it the header is stripped
-              // from the cross-origin response and every object looks new.
-              ExposeHeaders: ["ETag", "Content-Length"],
-              MaxAgeSeconds: 3000,
-            },
-          ],
-        },
-      }),
-    )
+        Obsidian is a browser-shaped runtime: without these origins its preflight fails inside the
+        plugin's own fetch, and the customer sees "cannot connect" with nothing in any log.
+
+        The shared production bucket is created and configured by OpenTofu. Rewriting its CORS on
+        every tenant provision would turn one customer's create into a global bucket mutation.
+      */
+      await s3.send(
+        new PutBucketCorsCommand({
+          Bucket: bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: VAULT_ORIGINS,
+                AllowedMethods: ["GET", "PUT", "POST", "DELETE", "HEAD"],
+                AllowedHeaders: ["*"],
+                // The plugin reads `ETag` to decide what changed. Without it the header is stripped
+                // from the cross-origin response and every object looks new.
+                ExposeHeaders: ["ETag", "Content-Length"],
+                MaxAgeSeconds: 3000,
+              },
+            ],
+          },
+        }),
+      )
+    } else {
+      // A shared-bucket provision has no create call of its own, so make one scoped read before
+      // issuing a credential. Otherwise a typo in the bucket name would produce an `active`
+      // service whose first customer request is the only place the missing infrastructure appears.
+      await s3.send(
+        new ListObjectsV2Command({
+          Bucket: config.sharedBucket,
+          Prefix: `${bucket}/`,
+          MaxKeys: 1,
+        }),
+      )
+    }
 
     const credential = await issue(input.backendServiceId)
 
@@ -466,19 +503,28 @@ export function objectStorageDriver(
    */
   async function destroy(backendServiceId: string): Promise<void> {
     const bucket = bucketNameFor(backendServiceId)
+    const physicalBucket = config.sharedBucket ?? bucket
+    const prefix = config.sharedBucket === undefined ? undefined : `${bucket}/`
 
     for (;;) {
-      const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucket }))
+      const listed = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: physicalBucket,
+          ...(prefix === undefined ? {} : { Prefix: prefix }),
+        }),
+      )
       const keys = (listed.Contents ?? []).flatMap((object) =>
         object.Key === undefined ? [] : [{ Key: object.Key }],
       )
       if (keys.length === 0) break
 
-      await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: keys } }))
+      await s3.send(new DeleteObjectsCommand({ Bucket: physicalBucket, Delete: { Objects: keys } }))
       if (listed.IsTruncated !== true) break
     }
 
-    await s3.send(new DeleteBucketCommand({ Bucket: bucket }))
+    if (config.sharedBucket === undefined) {
+      await s3.send(new DeleteBucketCommand({ Bucket: bucket }))
+    }
 
     /*
       Revoking the rows is what actually ends access.

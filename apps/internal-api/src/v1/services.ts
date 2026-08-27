@@ -7,6 +7,7 @@ import {
   ServiceNotProvisionedError,
   neonPostgresDriverFromEnv,
   objectStorageDriverFromEnv,
+  parseObjectStorageUri,
   searchDriver,
   searchServiceConfigFromEnv,
   sproutPostgresConfigFromEnv,
@@ -74,6 +75,17 @@ export function connectionEnvironmentEntries(input: {
   keyPrefix?: string
   kind: string
 }): { isSecret: boolean; key: string; value: string }[] {
+  if (input.kind === "object_storage") {
+    const parsed = parseObjectStorageUri(input.connectionUri)
+    return [
+      { isSecret: false, key: "S3_ENDPOINT", value: parsed.endpoint },
+      { isSecret: false, key: "S3_REGION", value: parsed.region },
+      { isSecret: false, key: "S3_BUCKET_NAME", value: parsed.bucket },
+      { isSecret: false, key: "S3_FORCE_PATH_STYLE", value: String(parsed.forcePathStyle) },
+      { isSecret: true, key: "S3_ACCESS_KEY_ID", value: parsed.accessKeyId },
+      { isSecret: true, key: "S3_SECRET_ACCESS_KEY", value: parsed.secretAccessKey },
+    ]
+  }
   const keys = CONNECTION_ENV_KEYS[input.kind]
   if (keys === undefined) return []
   return [
