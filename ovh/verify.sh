@@ -62,7 +62,14 @@ echo "valkey"
 # processes — this is the assertion that catches someone merging them.
 for pair in "queue:noeviction" "cache:allkeys-lru"; do
   name=${pair%%:*}; want=${pair##*:}
-  got=$(sudo docker exec "sproutos_valkey_${name}" valkey-cli config get maxmemory-policy | tail -1)
+  if [ "$name" = queue ]; then
+    # The durable queue disables plaintext entirely. A plaintext probe is reset during the TLS
+    # handshake, which previously made a healthy queue look broken after every host verification.
+    got=$(sudo docker exec "sproutos_valkey_${name}" valkey-cli --tls --insecure \
+      --no-auth-warning -a "$VALKEY_QUEUE_PASSWORD" config get maxmemory-policy | tail -1)
+  else
+    got=$(sudo docker exec "sproutos_valkey_${name}" valkey-cli config get maxmemory-policy | tail -1)
+  fi
   check "valkey-$name maxmemory-policy" "$got" "$want"
 done
 
