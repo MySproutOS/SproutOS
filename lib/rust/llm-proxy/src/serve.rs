@@ -34,7 +34,10 @@ use crate::usage::UsageAccumulator;
 /// the whole point is to replace the caller's credential with the real one; the connection headers
 /// because they describe a connection that ends here. Forwarding `content-length` alongside a body
 /// we may re-encode is how a proxy produces a truncated request nobody can explain.
-const HOP_BY_HOP: &[&str] = &[
+// Headers the proxy must terminate rather than relay. Most are hop-by-hop. `accept-encoding` is
+// also terminated because token accounting reads the provider body: reqwest advertises only the
+// encodings it can decode, then hands both the counter and the client the decoded stream.
+const STRIPPED_HEADERS: &[&str] = &[
     "host",
     "authorization",
     "x-api-key",
@@ -47,6 +50,7 @@ const HOP_BY_HOP: &[&str] = &[
     "transfer-encoding",
     "upgrade",
     "content-length",
+    "accept-encoding",
 ];
 
 /// Stop retaining an abandoned provider connection eventually, even if the provider never ends.
@@ -103,7 +107,7 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
 
     let mut headers = HeaderMap::new();
     for (name, value) in &parts.headers {
-        if HOP_BY_HOP.contains(&name.as_str()) {
+        if STRIPPED_HEADERS.contains(&name.as_str()) {
             continue;
         }
         headers.insert(name.clone(), value.clone());
@@ -192,7 +196,7 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     let status = upstream.status();
     let mut response_headers = HeaderMap::new();
     for (name, value) in upstream.headers() {
-        if HOP_BY_HOP.contains(&name.as_str()) {
+        if STRIPPED_HEADERS.contains(&name.as_str()) {
             continue;
         }
         response_headers.insert(name.clone(), value.clone());
@@ -426,9 +430,10 @@ mod tests {
     fn the_credential_headers_never_cross_the_hop() {
         // The one property this list exists for: whatever the sandbox sent as its own credential
         // must not reach the provider, and the provider's must not be visible to the sandbox.
-        assert!(HOP_BY_HOP.contains(&"authorization"));
-        assert!(HOP_BY_HOP.contains(&"x-api-key"));
-        assert!(HOP_BY_HOP.contains(&"host"));
+        assert!(STRIPPED_HEADERS.contains(&"authorization"));
+        assert!(STRIPPED_HEADERS.contains(&"x-api-key"));
+        assert!(STRIPPED_HEADERS.contains(&"host"));
+        assert!(STRIPPED_HEADERS.contains(&"accept-encoding"));
     }
 
     #[test]
