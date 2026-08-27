@@ -48,9 +48,10 @@ async function project(events: ActiveUsageEvent[]): Promise<void> {
  * rows available for retry; a crash after Kafka acknowledges but before deletion republishes the
  * same stable event ids, which ClickHouse deduplicates.
  *
- * Until an actual ClickHouse-to-Valkey rebuild job exists, the idempotent active projection also
- * runs before deletion. If it fails, the row remains: retrying republishes the same Kafka event id
- * and reapplies the same Valkey event id, so neither destination double-counts.
+ * The active projection also runs before deletion so prompt feedback normally sees the event
+ * without waiting for hourly reconciliation. If it fails, the row remains: retrying republishes
+ * the same Kafka event id and reapplies the same version-aware Valkey contribution, so neither
+ * destination double-counts. ClickHouse reconciliation remains the repair path after eviction.
  */
 export function meteringOutboxRelay(
   dependencies: MeteringOutboxRelayDependencies = {},
@@ -100,13 +101,15 @@ function activeEvent(eventId: string, encoded: string): ActiveUsageEvent {
   const dimension = payload.dimension
   const quantity = payload.quantity
   const occurredAt = payload.occurred_at
+  const version = payload.version
 
   if (
     typeof organizationId !== "string" ||
     (projectId !== null && typeof projectId !== "string") ||
     typeof dimension !== "string" ||
     typeof quantity !== "string" ||
-    typeof occurredAt !== "string"
+    typeof occurredAt !== "string" ||
+    typeof version !== "string"
   ) {
     throw new Error(`metering outbox event ${eventId} cannot be projected`)
   }
@@ -125,6 +128,7 @@ function activeEvent(eventId: string, encoded: string): ActiveUsageEvent {
     dimension,
     quantity,
     occurredAt: timestamp,
+    version,
   }
 }
 

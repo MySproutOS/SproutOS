@@ -1,5 +1,6 @@
 export { clickhouse, closeClickhouse, observabilityConfigured } from "./client"
 export { ingestLogs, MAX_RECORDS_PER_REQUEST, type IngestResult } from "./ingest"
+export { activeUsageEventsPage, type ActiveUsageRow } from "./active-usage"
 export {
   anyValueToString,
   attributesToMap,
