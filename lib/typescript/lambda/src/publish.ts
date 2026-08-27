@@ -52,6 +52,8 @@ export type PublishInput = {
    * empty string into the column when it is absent.
    */
   deploymentId?: string
+  /** Stable production alias, or a PR-specific alias for a preview. */
+  aliasName?: string
   /** Where the build archive is. Lambda reads it from S3 itself; we never stream it. */
   bucket: string
   key: string
@@ -191,7 +193,7 @@ export async function publishFunction(
     throw new Error(`Lambda published no version for ${name}`)
   }
 
-  const aliasArn = await pointAlias(client, name, version)
+  const aliasArn = await pointAlias(client, name, version, input.aliasName)
   return { functionName: name, version, aliasArn }
 }
 
@@ -208,24 +210,29 @@ export async function pointAlias(
   client: LambdaClient,
   name: string,
   version: string,
+  aliasName = LIVE_ALIAS,
 ): Promise<string> {
-  const existing = await aliasExists(client, name)
+  const existing = await aliasExists(client, name, aliasName)
 
   const result = existing
     ? await client.send(
-        new UpdateAliasCommand({ FunctionName: name, Name: LIVE_ALIAS, FunctionVersion: version }),
+        new UpdateAliasCommand({ FunctionName: name, Name: aliasName, FunctionVersion: version }),
       )
     : await client.send(
-        new CreateAliasCommand({ FunctionName: name, Name: LIVE_ALIAS, FunctionVersion: version }),
+        new CreateAliasCommand({ FunctionName: name, Name: aliasName, FunctionVersion: version }),
       )
 
   if (result.AliasArn === undefined) throw new Error(`no alias ARN for ${name}`)
   return result.AliasArn
 }
 
-async function aliasExists(client: LambdaClient, name: string): Promise<boolean> {
+async function aliasExists(
+  client: LambdaClient,
+  name: string,
+  aliasName: string,
+): Promise<boolean> {
   try {
-    await client.send(new GetAliasCommand({ FunctionName: name, Name: LIVE_ALIAS }))
+    await client.send(new GetAliasCommand({ FunctionName: name, Name: aliasName }))
     return true
   } catch (cause) {
     if (cause instanceof ResourceNotFoundException) return false

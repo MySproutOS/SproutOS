@@ -24,11 +24,14 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@aws-sdk/client-acm": "catalog:",
+    "@aws-sdk/client-cloudfront-keyvaluestore": "catalog:",
     "@aws-sdk/client-elastic-load-balancing-v2": "catalog:",
     "@aws-sdk/client-kms": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
+    "@aws-sdk/client-route-53": "catalog:",
     "@aws-sdk/client-s3": "catalog:",
     "@aws-sdk/s3-request-presigner": "^3.1117.0",
+    "@aws-sdk/signature-v4a": "catalog:",
     "@clickhouse/client": "^1.23.1",
     "@daytona/sdk": "catalog:",
     "@hono/node-server": "^2.1.1",
@@ -64,11 +67,13 @@
     "ioredis": "^6.0.0",
     "kafkajs": "^2.2.4",
     "kysely": "catalog:",
+    "mime-types": "^3.0.2",
     "openai": "catalog:",
     "pg": "^8.23.0",
     "stripe": "catalog:",
     "typebox": "catalog:",
-    "uuid": "catalog:"
+    "uuid": "catalog:",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "catalog:",

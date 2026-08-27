@@ -1,14 +1,31 @@
-import { GetFunctionConfigurationCommand, LambdaClient } from "@aws-sdk/client-lambda"
-import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import {
+  GetAliasCommand,
+  GetFunctionConfigurationCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda"
+import {
+  CreateBucketCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3"
+import {
+  DescribeKeyValueStoreCommand,
+  PutKeyCommand,
+  type CloudFrontKeyValueStoreClient,
+} from "@aws-sdk/client-cloudfront-keyvaluestore"
+import { ChangeResourceRecordSetsCommand, type Route53Client } from "@aws-sdk/client-route-53"
+import { createHash } from "node:crypto"
 import { readRoute } from "@lib/lambda"
 import { db } from "@sproutos/db"
 import { Redis } from "ioredis"
 import { sql } from "kysely"
 import { deflateRawSync } from "node:zlib"
 import { v7 } from "uuid"
-import { afterAll, describe, expect, it } from "vitest"
-import { hostnameFor, publishRelease } from "./publish"
+import { afterAll, describe, expect, it, vi } from "vitest"
+import { cleanUpStaticPreview, hostnameFor, publishRelease, tearDownPreview } from "./publish"
 import type { Job } from "./queue"
+import { runOne } from "./worker"
 
 /**
  * Against LocalStack's Lambda, the compose Valkey and the compose Postgres — all three, because the
@@ -46,8 +63,8 @@ const reachable = await (async () => {
 })()
 
 /** The smallest valid zip holding one handler. */
-function zip(content: string): Buffer {
-  const name = Buffer.from("index.mjs", "utf8")
+function zip(content: string, path = "index.mjs"): Buffer {
+  const name = Buffer.from(path, "utf8")
   const body = Buffer.from(content, "utf8")
   const deflated = deflateRawSync(body)
   let crc = 0xffff_ffff
@@ -99,7 +116,12 @@ const created: {
 const hostnames: string[] = []
 
 async function seed(
-  overrides: { artifactKey?: string | null } = {},
+  overrides: {
+    artifactKey?: string | null
+    preset?: string
+    staticArtifactKey?: string | null
+    staticDigest?: string | null
+  } = {},
 ): Promise<{ deploymentId: string; projectId: string; organizationId: string }> {
   const userId = v7()
   const orgId = v7()
@@ -149,6 +171,9 @@ async function seed(
       kind: "production",
       gitSha: "e".repeat(40),
       status: "queued",
+      preset: overrides.preset ?? "unknown",
+      staticArtifactKey: overrides.staticArtifactKey ?? null,
+      staticDigest: overrides.staticDigest ?? null,
       artifactKey:
         overrides.artifactKey === undefined ? `builds/${projectId}/app.zip` : overrides.artifactKey,
     })
@@ -173,7 +198,16 @@ function jobFor(deploymentId: string): Job {
 function deploymentRow(id: string) {
   return db
     .selectFrom("deployment")
-    .select(["status", "url", "hostname", "lambdaVersion", "failureReason"])
+    .select([
+      "status",
+      "url",
+      "hostname",
+      "lambdaVersion",
+      "failureReason",
+      "preset",
+      "staticArtifactKey",
+      "staticDigest",
+    ])
     .where("id", "=", id)
     .executeTakeFirstOrThrow()
 }
@@ -259,6 +293,549 @@ describe.runIf(reachable)("publishing a release", () => {
     // The reason lands on the row, not only in the job's last_error — a table no customer can read.
     expect(row.failureReason).toContain("No build artifact")
     expect(row.hostname).toBeNull()
+  })
+
+  it("projects a terminal publisher failure onto the deployment row", async () => {
+    const { deploymentId } = await seed({ artifactKey: "builds/missing/app.zip" })
+    const handler = publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })
+
+    await expect(handler(jobFor(deploymentId), context)).rejects.toBeInstanceOf(Error)
+    const row = await deploymentRow(deploymentId)
+    expect(row.status).toBe("error")
+    expect(row.failureReason).not.toBeNull()
+  })
+
+  it("publishes a static preset without inventing a Lambda", async () => {
+    const archive = zip("<h1>static release</h1>", "index.html")
+    const digest = createHash("sha256").update(archive).digest("hex")
+    const staticKey = `static/pending/${digest}.zip`
+    const seeded = await seed({
+      artifactKey: null,
+      preset: "static",
+      staticArtifactKey: staticKey,
+      staticDigest: digest,
+    })
+    // The route validates this before insertion in production. The integration seed writes rows
+    // directly, so make its key match the generated project now that the id is known.
+    const projectStaticKey = `static/${seeded.projectId}/${digest}.zip`
+    await db
+      .updateTable("deployment")
+      .set({ staticArtifactKey: projectStaticKey })
+      .where("id", "=", seeded.deploymentId)
+      .execute()
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: projectStaticKey, Body: archive }))
+
+    const edgeValues: string[] = []
+    const keyValueStore = {
+      send: (command: unknown) => {
+        if (command instanceof DescribeKeyValueStoreCommand) return Promise.resolve({ ETag: "v1" })
+        if (command instanceof PutKeyCommand) {
+          edgeValues.push(command.input.Value ?? "")
+          return Promise.resolve({})
+        }
+        throw new Error("unexpected key-value-store command")
+      },
+    } as unknown as CloudFrontKeyValueStoreClient
+    let dnsChanges = 0
+    const route53 = {
+      send: (command: unknown) => {
+        expect(command).toBeInstanceOf(ChangeResourceRecordSetsCommand)
+        dnsChanges += 1
+        return Promise.resolve({})
+      },
+    } as unknown as Route53Client
+
+    await publishRelease({
+      lambda,
+      valkey,
+      bucket: BUCKET,
+      roleArn: ROLE,
+      static: {
+        s3,
+        route53,
+        keyValueStore,
+        bucket: BUCKET,
+        tenantZoneId: "zone",
+        distributionDomain: "static.cloudfront.test",
+        keyValueStoreArn: "arn:kvs",
+      },
+    })(jobFor(seeded.deploymentId), context)
+
+    const row = await deploymentRow(seeded.deploymentId)
+    expect(row.status).toBe("ready")
+    expect(row.lambdaVersion).toBeNull()
+    expect(row.hostname).not.toBeNull()
+    hostnames.push(row.hostname ?? "")
+    expect(edgeValues).toEqual([`${seeded.projectId}/${digest}`])
+    expect(dnsChanges).toBe(1)
+
+    const published = await s3.send(
+      new GetObjectCommand({
+        Bucket: BUCKET,
+        Key: `sites/${seeded.projectId}/${digest}/index.html`,
+      }),
+    )
+    expect(await published.Body?.transformToString()).toBe("<h1>static release</h1>")
+    // An exact DNS record, not a Valkey route to a nonexistent function, serves a static project.
+    expect(await readRoute(valkey, row.hostname ?? "")).toBeUndefined()
+  })
+
+  it("waits for another project operation without consuming a job attempt", async () => {
+    const { deploymentId, projectId } = await seed({ artifactKey: null })
+    await db.connection().execute(async (connection) => {
+      const key = `sproutos:project:${projectId}`
+      await sql`select pg_advisory_lock(hashtextextended(${key}, 0))`.execute(connection)
+      const handler = publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })
+      const publishing = handler(jobFor(deploymentId), context)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      await sql`select pg_advisory_unlock(hashtextextended(${key}, 0))`.execute(connection)
+      await publishing
+      expect((await deploymentRow(deploymentId)).status).toBe("error")
+    })
+  }, 10_000)
+
+  it("restores the prior Lambda alias and route after a post-alias failure", async () => {
+    const first = await seed()
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: `builds/${first.projectId}/app.zip`,
+        Body: zip(HANDLER),
+      }),
+    )
+    const handler = publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })
+    await handler(jobFor(first.deploymentId), context)
+    const firstRow = await deploymentRow(first.deploymentId)
+    const secondId = v7()
+    const secondKey = `builds/${first.projectId}/second.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: secondId,
+        projectId: first.projectId,
+        kind: "production",
+        gitSha: "c".repeat(40),
+        status: "queued",
+        preset: "unknown",
+        artifactKey: secondKey,
+      })
+      .execute()
+    created.push({ table: "deployment", id: secondId })
+    await s3.send(
+      new PutObjectCommand({ Bucket: BUCKET, Key: secondKey, Body: zip(`${HANDLER}\n// second`) }),
+    )
+
+    let refusedNewRoute = false
+    const failingValkey = new Proxy(valkey, {
+      get(target, property) {
+        if (property === "set") {
+          return async (...args: Parameters<Redis["set"]>) => {
+            if (!refusedNewRoute && String(args[0]).startsWith("route:")) {
+              refusedNewRoute = true
+              throw new Error("injected route publication failure")
+            }
+            return target.set(...args)
+          }
+        }
+        const value = Reflect.get(target, property, target) as unknown
+        // oxlint-disable-next-line typescript/no-unsafe-return -- Reflect loses overloaded signatures.
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
+
+    await expect(
+      publishRelease({ lambda, valkey: failingValkey, bucket: BUCKET, roleArn: ROLE })(
+        jobFor(secondId),
+        context,
+      ),
+    ).rejects.toThrow(/injected route/)
+
+    const alias = await lambda.send(
+      new GetAliasCommand({ FunctionName: `sproutos-app-${first.projectId}`, Name: "live" }),
+    )
+    expect(alias.FunctionVersion).toBe(firstRow.lambdaVersion)
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("liveDeploymentId")
+          .where("id", "=", first.projectId)
+          .executeTakeFirstOrThrow()
+      ).liveDeploymentId,
+    ).toBe(first.deploymentId)
+    expect((await readRoute(valkey, firstRow.hostname ?? ""))?.deploymentId).toBe(
+      first.deploymentId,
+    )
+    expect((await deploymentRow(secondId)).status).toBe("error")
+  }, 180_000)
+
+  it("publishes a preview without changing any production traffic pointer", async () => {
+    const production = await seed()
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: `builds/${production.projectId}/app.zip`,
+        Body: zip(HANDLER),
+      }),
+    )
+    const handler = publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })
+    await handler(jobFor(production.deploymentId), context)
+    const productionRow = await deploymentRow(production.deploymentId)
+    const liveBefore = await lambda.send(
+      new GetAliasCommand({ FunctionName: `sproutos-app-${production.projectId}`, Name: "live" }),
+    )
+    const routeBefore = await readRoute(valkey, productionRow.hostname ?? "")
+
+    const previewId = v7()
+    const previewKey = `builds/${production.projectId}/preview.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: previewId,
+        projectId: production.projectId,
+        kind: "preview",
+        prNumber: 7,
+        gitSha: "b".repeat(40),
+        status: "queued",
+        preset: "unknown",
+        artifactKey: previewKey,
+      })
+      .execute()
+    created.push({ table: "deployment", id: previewId })
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: previewKey,
+        Body: zip(`${HANDLER}\n// preview`),
+      }),
+    )
+    await handler(jobFor(previewId), context)
+
+    const previewRow = await deploymentRow(previewId)
+    const liveAfter = await lambda.send(
+      new GetAliasCommand({ FunctionName: `sproutos-app-${production.projectId}`, Name: "live" }),
+    )
+    const previewAlias = await lambda.send(
+      new GetAliasCommand({
+        FunctionName: `sproutos-app-${production.projectId}`,
+        Name: "preview-7",
+      }),
+    )
+    expect(liveAfter.FunctionVersion).toBe(liveBefore.FunctionVersion)
+    expect(previewAlias.FunctionVersion).toBe(previewRow.lambdaVersion)
+    expect(await readRoute(valkey, productionRow.hostname ?? "")).toEqual(routeBefore)
+    expect((await readRoute(valkey, previewRow.hostname ?? ""))?.deploymentId).toBe(previewId)
+    expect(await valkey.get(`live:${production.projectId}`)).toBe(production.deploymentId)
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("liveDeploymentId")
+          .where("id", "=", production.projectId)
+          .executeTakeFirstOrThrow()
+      ).liveDeploymentId,
+    ).toBe(production.deploymentId)
+
+    const failedReplacementId = v7()
+    const failedReplacementKey = `builds/${production.projectId}/preview-failed.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: failedReplacementId,
+        projectId: production.projectId,
+        kind: "preview",
+        prNumber: 7,
+        gitSha: "8".repeat(40),
+        status: "queued",
+        preset: "unknown",
+        artifactKey: failedReplacementKey,
+      })
+      .execute()
+    created.push({ table: "deployment", id: failedReplacementId })
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: failedReplacementKey,
+        Body: zip(`${HANDLER}\n// failed replacement`),
+      }),
+    )
+    let failReplacementRoute = true
+    const failingPreviewValkey = new Proxy(valkey, {
+      get(target, property) {
+        if (property === "set") {
+          return async (...args: Parameters<Redis["set"]>) => {
+            if (failReplacementRoute && String(args[0]).startsWith("route:")) {
+              failReplacementRoute = false
+              throw new Error("injected preview replacement failure")
+            }
+            return target.set(...args)
+          }
+        }
+        const value = Reflect.get(target, property, target) as unknown
+        // oxlint-disable-next-line typescript/no-unsafe-return -- Reflect loses overloaded signatures.
+        return typeof value === "function" ? value.bind(target) : value
+      },
+    })
+    await expect(
+      publishRelease({
+        lambda,
+        valkey: failingPreviewValkey,
+        bucket: BUCKET,
+        roleArn: ROLE,
+      })(jobFor(failedReplacementId), context),
+    ).rejects.toThrow(/preview replacement/)
+    expect((await deploymentRow(previewId)).status).toBe("ready")
+    expect((await deploymentRow(failedReplacementId)).status).toBe("error")
+    expect((await readRoute(valkey, previewRow.hostname ?? ""))?.deploymentId).toBe(previewId)
+
+    const replacementId = v7()
+    const replacementKey = `builds/${production.projectId}/preview-replacement.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: replacementId,
+        projectId: production.projectId,
+        kind: "preview",
+        prNumber: 7,
+        gitSha: "9".repeat(40),
+        status: "queued",
+        preset: "unknown",
+        artifactKey: replacementKey,
+      })
+      .execute()
+    created.push({ table: "deployment", id: replacementId })
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: replacementKey,
+        Body: zip(`${HANDLER}\n// replacement`),
+      }),
+    )
+    await handler(jobFor(replacementId), context)
+    expect((await deploymentRow(previewId)).status).toBe("torn_down")
+    expect((await deploymentRow(replacementId)).status).toBe("ready")
+
+    await tearDownPreview({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })(
+      jobFor(replacementId),
+      context,
+    )
+    await expect(
+      lambda.send(
+        new GetAliasCommand({
+          FunctionName: `sproutos-app-${production.projectId}`,
+          Name: "preview-7",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "ResourceNotFoundException" })
+    expect(await readRoute(valkey, previewRow.hostname ?? "")).toBeUndefined()
+    expect((await deploymentRow(replacementId)).status).toBe("torn_down")
+  }, 180_000)
+
+  it("does not pin serving mode when the first attempted release fails", async () => {
+    const failed = await seed({ artifactKey: null })
+    await publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })(
+      jobFor(failed.deploymentId),
+      context,
+    )
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("servingMode")
+          .where("id", "=", failed.projectId)
+          .executeTakeFirstOrThrow()
+      ).servingMode,
+    ).toBeNull()
+
+    const archive = zip("<h1>static after failure</h1>", "index.html")
+    const digest = createHash("sha256").update(archive).digest("hex")
+    const staticId = v7()
+    const artifactKey = `static/${failed.projectId}/${digest}.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: staticId,
+        projectId: failed.projectId,
+        kind: "preview",
+        prNumber: 8,
+        gitSha: "a".repeat(40),
+        status: "queued",
+        preset: "static",
+        staticArtifactKey: artifactKey,
+        staticDigest: digest,
+      })
+      .execute()
+    created.push({ table: "deployment", id: staticId })
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: artifactKey, Body: archive }))
+    const keyValueStoreSend = vi.fn<(command: unknown) => Promise<unknown>>((command: unknown) =>
+      Promise.resolve(command instanceof DescribeKeyValueStoreCommand ? { ETag: "v1" } : {}),
+    )
+    const keyValueStore = { send: keyValueStoreSend } as unknown as CloudFrontKeyValueStoreClient
+    const route53 = {
+      send: (command: unknown) =>
+        Promise.resolve(
+          command instanceof ChangeResourceRecordSetsCommand ? {} : { ResourceRecordSets: [] },
+        ),
+    } as unknown as Route53Client
+    const staticOptions = {
+      lambda,
+      valkey,
+      bucket: BUCKET,
+      roleArn: ROLE,
+      static: {
+        s3,
+        route53,
+        keyValueStore,
+        bucket: BUCKET,
+        tenantZoneId: "zone",
+        distributionDomain: "static.cloudfront.test",
+        keyValueStoreArn: "arn:kvs",
+      },
+    }
+    await publishRelease(staticOptions)(jobFor(staticId), context)
+
+    expect((await deploymentRow(staticId)).status).toBe("ready")
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("servingMode")
+          .where("id", "=", failed.projectId)
+          .executeTakeFirstOrThrow()
+      ).servingMode,
+    ).toBe("static")
+
+    const replacementArchive = zip("<h1>replacement</h1>", "index.html")
+    const replacementDigest = createHash("sha256").update(replacementArchive).digest("hex")
+    const replacementId = v7()
+    const replacementArtifactKey = `static/${failed.projectId}/${replacementDigest}.zip`
+    await db
+      .insertInto("deployment")
+      .values({
+        id: replacementId,
+        projectId: failed.projectId,
+        kind: "preview",
+        prNumber: 8,
+        gitSha: "7".repeat(40),
+        status: "queued",
+        preset: "static",
+        staticArtifactKey: replacementArtifactKey,
+        staticDigest: replacementDigest,
+      })
+      .execute()
+    created.push({ table: "deployment", id: replacementId })
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: replacementArtifactKey,
+        Body: replacementArchive,
+      }),
+    )
+    await publishRelease(staticOptions)(jobFor(replacementId), context)
+    const edgeCallsBeforeCleanup = keyValueStoreSend.mock.calls.length
+    const reuseId = v7()
+    await db
+      .insertInto("deployment")
+      .values({
+        id: reuseId,
+        projectId: failed.projectId,
+        kind: "preview",
+        prNumber: 9,
+        gitSha: "6".repeat(40),
+        status: "queued",
+        preset: "static",
+        staticArtifactKey: artifactKey,
+        staticDigest: digest,
+      })
+      .execute()
+    created.push({ table: "deployment", id: reuseId })
+    const cleanupJob = await db
+      .selectFrom("backgroundJob")
+      .select("id")
+      .where("idempotencyKey", "=", `deploy.static_preview_cleanup:${staticId}`)
+      .executeTakeFirstOrThrow()
+    await db
+      .updateTable("backgroundJob")
+      .set({ priority: 10_000, runAt: sql<Date>`now()` })
+      .where("id", "=", cleanupJob.id)
+      .execute()
+    const cleanupHandlers = {
+      "deploy.static_preview_cleanup": cleanUpStaticPreview(staticOptions),
+    }
+    await runOne(db, { workerId: `cleanup-${v7()}`, handlers: cleanupHandlers })
+    expect(
+      (
+        await db
+          .selectFrom("backgroundJob")
+          .select("state")
+          .where("id", "=", cleanupJob.id)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("queued")
+    expect(
+      await (
+        await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: artifactKey }))
+      ).Body?.transformToByteArray(),
+    ).toBeDefined()
+    await db.updateTable("deployment").set({ status: "error" }).where("id", "=", reuseId).execute()
+    await db
+      .updateTable("backgroundJob")
+      .set({ runAt: sql<Date>`now()` })
+      .where("id", "=", cleanupJob.id)
+      .execute()
+    await runOne(db, { workerId: `cleanup-${v7()}`, handlers: cleanupHandlers })
+    expect(
+      (
+        await db
+          .selectFrom("backgroundJob")
+          .select("state")
+          .where("id", "=", cleanupJob.id)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("succeeded")
+    expect(keyValueStoreSend).toHaveBeenCalledTimes(edgeCallsBeforeCleanup)
+    await expect(
+      s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: artifactKey })),
+    ).rejects.toBeDefined()
+    await expect(
+      s3.send(
+        new GetObjectCommand({
+          Bucket: BUCKET,
+          Key: `sites/${failed.projectId}/${digest}/index.html`,
+        }),
+      ),
+    ).rejects.toBeDefined()
+    expect(
+      await (
+        await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: replacementArtifactKey }))
+      ).Body?.transformToByteArray(),
+    ).toBeDefined()
+
+    await tearDownPreview(staticOptions)(jobFor(replacementId), context)
+    expect((await deploymentRow(replacementId)).status).toBe("torn_down")
+  })
+
+  it("refuses serving-mode switches for previews as well as production", async () => {
+    const { deploymentId, projectId } = await seed()
+    await db
+      .updateTable("deployment")
+      .set({ kind: "preview", prNumber: 42 })
+      .where("id", "=", deploymentId)
+      .execute()
+    await db
+      .updateTable("project")
+      .set({ servingMode: "static" })
+      .where("id", "=", projectId)
+      .execute()
+
+    await publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })(
+      jobFor(deploymentId),
+      context,
+    )
+
+    const row = await deploymentRow(deploymentId)
+    expect(row.status).toBe("error")
+    expect(row.failureReason).toMatch(/cannot switch between static and serverless/)
   })
 
   it("refuses a project with config files instead of dropping them silently", async () => {

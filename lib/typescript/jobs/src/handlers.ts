@@ -23,7 +23,7 @@ import { TEARDOWN_KIND, tearDownProject } from "./teardown"
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
-import { PUBLISH_KINDS, publishRelease } from "./publish"
+import { cleanUpStaticPreview, PUBLISH_KINDS, publishRelease, tearDownPreview } from "./publish"
 import { REFRESH_ROUTES_KIND, refreshRoutes } from "./refresh-routes"
 import { PROVISION_KIND, provisionProjectJob } from "./provision"
 import {
@@ -85,6 +85,8 @@ export const JOB_KINDS = {
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   publishRelease: PUBLISH_KINDS.release,
+  tearDownPreview: PUBLISH_KINDS.tearDownPreview,
+  cleanUpStaticPreview: PUBLISH_KINDS.cleanUpStaticPreview,
   refreshRoutes: REFRESH_ROUTES_KIND,
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
@@ -373,6 +375,8 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.publishRelease]: publishRelease(),
+  [JOB_KINDS.tearDownPreview]: tearDownPreview(),
+  [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,

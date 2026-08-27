@@ -313,8 +313,8 @@ const push: JobHandler = async (job, { db }) => {
  * Preview deployments — TASK 36.
  *
  * `opened` and `synchronize` deploy the head commit; `closed` tears the preview down. A preview is
- * keyed on `(project, pr_number)` by `deployment_preview_pr_key`, so re-pushing to a PR updates the
- * same preview rather than accumulating one per commit.
+ * keyed by PR at the provider alias and hostname. Deployment rows remain immutable history; the
+ * publisher retires the previous ready row only after its replacement is serving.
  */
 const pullRequest: JobHandler = async (job, { db }) => {
   const { body } = job.payload as Delivery
@@ -353,35 +353,29 @@ const pullRequest: JobHandler = async (job, { db }) => {
         .execute()
 
       for (const preview of previews) {
-        await crudDeployment(db).update(preview.id, { status: "torn_down" })
+        await enqueue(db, {
+          kind: PUBLISH_KINDS.tearDownPreview,
+          organizationId: project.organizationId,
+          payload: { deploymentId: preview.id },
+          idempotencyKey: `${PUBLISH_KINDS.tearDownPreview}:${preview.id}`,
+        })
       }
       if (previews.length > 0) {
-        console.info(`[jobs] PR #${pr.number} closed: tore down ${previews.length} preview(s)`)
+        console.info(
+          `[jobs] PR #${pr.number} closed: queued ${previews.length} preview teardown(s)`,
+        )
       }
       continue
     }
 
     if (action !== "opened" && action !== "synchronize" && action !== "reopened") continue
     if (pr.head?.sha === undefined) continue
-
-    const deployment = await crudDeployment(db).create({
-      id: v7(),
-      projectId: project.id,
-      kind: "preview",
-      prNumber: pr.number,
-      gitSha: pr.head.sha,
-      gitRef: pr.head.ref === undefined ? null : `refs/heads/${pr.head.ref}`,
-      status: "queued",
-    })
-
-    await enqueue(db, {
-      kind: PUBLISH_KINDS.release,
-      organizationId: project.organizationId,
-      payload: { deploymentId: deployment.id },
-      idempotencyKey: `${PUBLISH_KINDS.release}:${deployment.id}`,
-    })
-
-    console.info(`[jobs] PR #${pr.number} ${action}: deploying preview for project ${project.id}`)
+    // The repository's deploy action builds and uploads the artifact, then creates the release.
+    // A webhook has only a SHA; inventing a deployment here guarantees the publisher rejects it for
+    // having no artifact and leaves a duplicate error row beside the action's real preview.
+    console.info(
+      `[jobs] PR #${pr.number} ${action}: waiting for the repository deploy action for project ${project.id}`,
+    )
   }
 }
 
