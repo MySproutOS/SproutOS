@@ -100,8 +100,7 @@ impl SecurityManager {
                     "allowed_actions": [
                         "read", "write", "create_index", "indices_monitor",
                         "indices:admin/refresh", "indices:admin/flush",
-                        "indices:admin/forcemerge", "indices:admin/analyze",
-                        "indices:data/read/point_in_time/*"
+                        "indices:admin/forcemerge", "indices:admin/analyze"
                     ]
                 }],
                 "tenant_permissions": []

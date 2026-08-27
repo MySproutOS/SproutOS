@@ -77,7 +77,6 @@ const INDEX_ENDPOINTS: &[&str] = &[
     "_validate",
     "_source",
     "_mget",
-    "_pit",
 ];
 
 /// Endpoints whose body is NDJSON carrying `_index` per line.
@@ -230,6 +229,14 @@ pub fn plan(prefix: &str, method: &Method, path: &str) -> Result<Plan, RouteErro
 
     let endpoint = rest[0].as_str();
     let tail = &rest[1..];
+
+    // OpenSearch creates a point-in-time handle at `/<index>/_search/point_in_time`. No `_search`
+    // subroute has been reviewed as an index-local operation, so refuse every tail rather than
+    // teaching the parser only today's dangerous spelling and forwarding tomorrow's by default.
+    // Elasticsearch's alternate `/<index>/_pit` spelling is absent from INDEX_ENDPOINTS above.
+    if endpoint == "_search" && !tail.is_empty() {
+        return Err(RouteError::Refused(path.to_owned()));
+    }
 
     if NDJSON_ENDPOINTS.contains(&endpoint) {
         if !tail.is_empty() {
@@ -384,7 +391,6 @@ fn allow_endpoint_method(method: &Method, endpoint: &str) -> Result<(), RouteErr
         "_refresh" | "_flush" | "_forcemerge" => &[Method::GET, Method::POST],
         "_stats" => &[Method::GET],
         "_source" => &[Method::GET, Method::HEAD],
-        "_pit" => &[Method::POST, Method::DELETE],
         "_bulk" => &[Method::POST, Method::PUT],
         "_msearch" => &[Method::GET, Method::POST],
         _ => return Err(RouteError::Refused(format!("/{endpoint}"))),
@@ -455,6 +461,25 @@ mod tests {
             plan(PREFIX, &Method::GET, "/_reindex"),
             Err(RouteError::Refused(_))
         ));
+    }
+
+    #[test]
+    fn every_point_in_time_lifecycle_route_is_refused() {
+        for (method, path) in [
+            (Method::POST, "/products/_pit"),
+            (Method::DELETE, "/products/_pit"),
+            (Method::POST, "/products/_search/point_in_time"),
+            (Method::POST, "/products/_search/future_subroute"),
+            (Method::DELETE, "/_search/point_in_time"),
+            (Method::GET, "/_search/point_in_time/_all"),
+            (Method::DELETE, "/_search/point_in_time/_all"),
+        ] {
+            assert!(
+                matches!(plan(PREFIX, &method, path), Err(RouteError::Refused(_))),
+                "{} {path} should be refused",
+                method.as_str()
+            );
+        }
     }
 
     #[test]
