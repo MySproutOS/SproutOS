@@ -19,6 +19,7 @@ function fakeDriver(
   } = {},
 ) {
   const commands: string[][] = []
+  const secretEnvironments: Record<string, string>[] = []
   const clones: Array<{ url: string; password: string }> = []
   const files: Record<string, string> = { ...options.files }
   const driver = {
@@ -49,12 +50,24 @@ function fakeDriver(
       for (const chunk of options.stdout ?? []) onStdout(chunk)
       return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 })
     },
+    execStreamWithSecrets: (
+      _id: string,
+      argv: string[],
+      env: Record<string, string>,
+      _timeout: number,
+      onStdout: (chunk: string) => void,
+    ) => {
+      commands.push(argv)
+      secretEnvironments.push(env)
+      for (const chunk of options.stdout ?? []) onStdout(chunk)
+      return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 })
+    },
     writeFile: (_id: string, path: string, content: string) => {
       files[path] = content
       return Promise.resolve()
     },
   } as never
-  return { clones, commands, driver, files }
+  return { clones, commands, driver, files, secretEnvironments }
 }
 
 const token = {
@@ -171,17 +184,24 @@ describe("runSandboxTurn", () => {
     touch: () => Promise.resolve(),
   }
 
-  it("never puts a provider credential in the command", async () => {
-    const { commands, driver } = fakeDriver()
+  it("keeps both proxy tokens out of the command and workspace", async () => {
+    const { commands, driver, files, secretEnvironments } = fakeDriver()
     await runSandboxTurn({ ...base, driver, onEvent: () => {} })
 
     const argv = commands[0]?.join(" ") ?? ""
-    // The whole reason the proxy exists. The sandbox holds a token that is useless anywhere but our
-    // own listener, and no provider key at all.
-    expect(argv).toContain("ANTHROPIC_BASE_URL=https://llm.sproutos.me")
-    expect(argv).toContain("spa_access")
+    expect(argv).not.toContain("spa_access")
+    expect(argv).not.toContain("spr_refresh")
     expect(argv).not.toContain("ANTHROPIC_API_KEY")
     expect(argv).not.toMatch(/sk-[A-Za-z0-9]/)
+
+    // The values exist only in the driver's explicitly sensitive channel, where Daytona delivers
+    // them over non-echoing stdin. No platform write during a turn can leave them in the checkout.
+    expect(secretEnvironments).toHaveLength(1)
+    expect(JSON.stringify(secretEnvironments[0])).toContain("spa_access")
+    expect(JSON.stringify(secretEnvironments[0])).toContain("spr_refresh")
+    expect(JSON.stringify(secretEnvironments[0])).toContain("https://llm.sproutos.me")
+    expect(JSON.stringify(files)).not.toContain("spa_access")
+    expect(JSON.stringify(files)).not.toContain("spr_refresh")
   })
 
   it("gives Claude Code the platform skill explicitly", async () => {

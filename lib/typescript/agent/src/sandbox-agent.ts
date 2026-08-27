@@ -25,10 +25,11 @@ import { SANDBOX_NETWORK_LAUNCHER, SANDBOX_NETWORK_LAUNCHER_SOURCE } from "./san
  *
  * ## What is deliberately not written to disk
  *
- * The proxy token is passed per invocation through `env`, never into a file in the workspace. A
- * file would survive the turn, be readable by anything the agent later runs, and — since the
- * workspace is a git checkout — is one careless `git add -A` from being committed to the customer's
- * own repository.
+ * The proxy token is passed per invocation through a suppressed Daytona stdin channel and becomes
+ * only the child process's environment. It is never part of the provider's retained command and is
+ * never written into the workspace. A file would survive the turn, be readable by anything the
+ * agent later runs, and — since the workspace is a git checkout — is one careless `git add -A`
+ * from being committed to the customer's own repository.
  */
 
 /** Long enough for `npm install` on a cold sandbox, short enough that a hang is not forever. */
@@ -257,14 +258,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     workspace,
   })
 
-  /*
-    `env K=V ... cmd` rather than a file.
-
-    The proxy token would otherwise have to be written into the workspace, where it outlives the
-    turn, is readable by anything the agent runs, and — the workspace being a git checkout — is one
-    `git add -A` from the customer's own repository.
-  */
-  const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
+  const argv: string[] = []
   argv.push("node", `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`, "--")
   argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model, workspace))
 
@@ -286,9 +280,10 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
 
   let buffer = ""
   try {
-    const result = await input.driver.execStream(
+    const result = await input.driver.execStreamWithSecrets(
       input.externalId,
       argv,
+      env,
       input.timeoutMs,
       (chunk) => {
         /*

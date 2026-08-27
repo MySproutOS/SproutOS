@@ -32,6 +32,79 @@ export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
 export const FORWARD_PROXY_CREDENTIAL_DOMAIN = "sproutos:sandbox-forward-proxy:v1"
 
+/*
+  A fixed command is the security boundary here.
+
+  Daytona retains every session command, so interpolating even an environment assignment into this
+  source puts it in provider metadata. The one JSON line arrives through `sendSessionCommandInput`
+  with input echo disabled. The launcher neither writes it nor forwards stdin to the child; after
+  parsing, the only remaining copy is the environment of the process that needs the credentials.
+*/
+const SENSITIVE_STDIN_LAUNCHER = String.raw`
+const { spawn } = require("node:child_process")
+
+process.stdin.setEncoding("utf8")
+let buffered = ""
+let launched = false
+
+function fail(message, code) {
+  process.stderr.write(message + "\n")
+  process.exit(code)
+}
+
+process.stdin.on("data", (chunk) => {
+  if (launched) return
+  buffered += chunk
+  if (buffered.length > 262144) fail("SproutOS secure command input was too large", 125)
+
+  const newline = buffered.indexOf("\n")
+  if (newline === -1) return
+  launched = true
+  process.stdin.pause()
+
+  let input
+  try {
+    input = JSON.parse(buffered.slice(0, newline))
+  } catch {
+    fail("SproutOS secure command input was invalid", 125)
+  }
+  buffered = ""
+
+  if (
+    !Array.isArray(input.argv) ||
+    input.argv.length === 0 ||
+    !input.argv.every((value) => typeof value === "string") ||
+    input.env === null ||
+    typeof input.env !== "object" ||
+    Array.isArray(input.env) ||
+    !Object.values(input.env).every((value) => typeof value === "string")
+  ) {
+    fail("SproutOS secure command input had the wrong shape", 125)
+  }
+
+  const child = spawn(input.argv[0], input.argv.slice(1), {
+    env: { ...process.env, ...input.env },
+    stdio: ["ignore", "inherit", "inherit"],
+  })
+  child.once("error", () => fail("SproutOS secure command could not start", 126))
+  child.once("exit", (code, signal) => {
+    if (typeof code === "number") process.exit(code)
+    process.stderr.write("SproutOS secure command ended by signal " + String(signal) + "\n")
+    process.exit(128)
+  })
+})
+`
+
+type DaytonaStreamProcess = Pick<
+  Sandbox["process"],
+  | "createSession"
+  | "deleteSession"
+  | "executeSessionCommand"
+  | "getSessionCommand"
+  | "getSessionCommandLogs"
+  | "sendSessionCommandInput"
+>
+
 export type DaytonaConfig = {
   apiKey: string
   organizationId: string
@@ -359,76 +432,46 @@ export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
     const sessionId = `stream-${crypto.randomUUID()}`
 
     return await call(async () => {
-      let keepSession = false
-      await sandbox.process.createSession(sessionId)
-      try {
-        const started = await sandbox.process.executeSessionCommand(sessionId, {
-          command,
-          runAsync: true,
-        })
-        const commandId = started.cmdId
-        if (commandId === undefined) {
-          // Without an id there is nothing to follow. Falling back to the synchronous form would be
-          // worse than saying so: it would look like it worked and stream nothing.
-          throw new Error("the sandbox provider started a command with no id to follow")
-        }
-
-        let stdout = ""
-        let stderr = ""
-        const collecting = sandbox.process.getSessionCommandLogs(
-          sessionId,
-          commandId,
-          (chunk) => {
-            stdout += chunk
-            onStdout(chunk)
-          },
-          (chunk) => {
-            stderr += chunk
-            onStderr(chunk)
-          },
-        )
-
-        /*
-          A timeout around the follow, not inside it.
-
-          `getSessionCommandLogs` resolves when the command ends; it has no deadline of its own, so
-          a hung agent would hold this request open until something else gave up. Racing it against
-          a timer is what makes `timeoutMs` mean anything.
-        */
-        let timer: NodeJS.Timeout | undefined
-        const deadline = new Promise<"timeout">((resolve) => {
-          timer = setTimeout(() => {
-            resolve("timeout")
-          }, timeoutMs)
-        })
-        const outcome = await Promise.race([collecting.then(() => "done" as const), deadline])
-        if (timer !== undefined) clearTimeout(timer)
-
-        if (outcome === "timeout") {
-          return { stdout, stderr, exitCode: -1 }
-        }
-
-        const finished = await sandbox.process.getSessionCommand(sessionId, commandId)
-        /*
-          Keep the session after a completed agent turn.
-
-          Daytona ties descendants to the process session: deleting it kills even a `nohup` dev
-          server the agent intentionally left behind. A preview that disappears when the answer
-          finishes is not a preview. Sessions are tracked and removed when the sandbox stops or is
-          destroyed, which is the lifecycle boundary that should kill those processes.
-        */
-        const exitCode = finished.exitCode ?? -1
-        keepSession = exitCode === 0
-        return { stdout, stderr, exitCode }
-      } finally {
-        if (keepSession) {
-          const sessions = persistentSessions.get(externalId) ?? new Set<string>()
-          sessions.add(sessionId)
-          persistentSessions.set(externalId, sessions)
-        } else {
-          await sandbox.process.deleteSession(sessionId).catch(() => {})
-        }
+      const streamed = await executeDaytonaSessionStream({
+        process: sandbox.process,
+        sessionId,
+        command,
+        timeoutMs,
+        onStdout,
+        onStderr,
+      })
+      if (streamed.keepSession) {
+        rememberPersistentSession(persistentSessions, externalId, sessionId)
       }
+      return streamed.result
+    })
+  }
+
+  async function execStreamWithSecrets(
+    externalId: string,
+    argv: string[],
+    env: Record<string, string>,
+    timeoutMs: number,
+    onStdout: (chunk: string) => void,
+    onStderr: (chunk: string) => void,
+  ): Promise<ExecResult> {
+    const sandbox = await get(externalId)
+    const sessionId = `secret-stream-${crypto.randomUUID()}`
+
+    return await call(async () => {
+      const streamed = await executeDaytonaSensitiveStream({
+        process: sandbox.process,
+        sessionId,
+        argv,
+        env,
+        timeoutMs,
+        onStdout,
+        onStderr,
+      })
+      if (streamed.keepSession) {
+        rememberPersistentSession(persistentSessions, externalId, sessionId)
+      }
+      return streamed.result
     })
   }
 
@@ -541,6 +584,7 @@ export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
     },
     exec,
     execStream,
+    execStreamWithSecrets,
     readFile,
     writeFile,
     tree,
@@ -549,6 +593,124 @@ export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
       const sandbox = await get(externalId)
       await call(() => sandbox.refreshActivity())
     },
+  }
+}
+
+function rememberPersistentSession(
+  sessionsBySandbox: Map<string, Set<string>>,
+  externalId: string,
+  sessionId: string,
+): void {
+  const sessions = sessionsBySandbox.get(externalId) ?? new Set<string>()
+  sessions.add(sessionId)
+  sessionsBySandbox.set(externalId, sessions)
+}
+
+type DaytonaStreamResult = { result: ExecResult; keepSession: boolean }
+
+/**
+ * Run a sensitive command over Daytona's non-echoing session input.
+ *
+ * Exported only so the provider boundary can be tested with a recording process implementation.
+ * Callers use `DaytonaSandboxClient.execStreamWithSecrets`, which also tracks the retained session
+ * for stop/destroy cleanup.
+ */
+export async function executeDaytonaSensitiveStream(input: {
+  process: DaytonaStreamProcess
+  sessionId: string
+  argv: string[]
+  env: Record<string, string>
+  timeoutMs: number
+  onStdout: (chunk: string) => void
+  onStderr: (chunk: string) => void
+}): Promise<DaytonaStreamResult> {
+  return await executeDaytonaSessionStream({
+    process: input.process,
+    sessionId: input.sessionId,
+    command: quoteArgv(["node", "-e", SENSITIVE_STDIN_LAUNCHER]),
+    suppressedInput: `${JSON.stringify({ argv: input.argv, env: input.env })}\n`,
+    timeoutMs: input.timeoutMs,
+    onStdout: input.onStdout,
+    onStderr: input.onStderr,
+  })
+}
+
+async function executeDaytonaSessionStream(input: {
+  process: DaytonaStreamProcess
+  sessionId: string
+  command: string
+  suppressedInput?: string
+  timeoutMs: number
+  onStdout: (chunk: string) => void
+  onStderr: (chunk: string) => void
+}): Promise<DaytonaStreamResult> {
+  let keepSession = false
+  await input.process.createSession(input.sessionId)
+  try {
+    const started = await input.process.executeSessionCommand(input.sessionId, {
+      command: input.command,
+      runAsync: true,
+      ...(input.suppressedInput === undefined ? {} : { suppressInputEcho: true }),
+    })
+    const commandId = started.cmdId
+    if (commandId === undefined) {
+      // Without an id there is nothing to follow. Falling back to the synchronous form would be
+      // worse than saying so: it would look like it worked and stream nothing.
+      throw new Error("the sandbox provider started a command with no id to follow")
+    }
+
+    if (input.suppressedInput !== undefined) {
+      await input.process.sendSessionCommandInput(input.sessionId, commandId, input.suppressedInput)
+    }
+
+    let stdout = ""
+    let stderr = ""
+    const collecting = input.process.getSessionCommandLogs(
+      input.sessionId,
+      commandId,
+      (chunk) => {
+        stdout += chunk
+        input.onStdout(chunk)
+      },
+      (chunk) => {
+        stderr += chunk
+        input.onStderr(chunk)
+      },
+    )
+
+    /*
+      A timeout around the follow, not inside it.
+
+      `getSessionCommandLogs` resolves when the command ends; it has no deadline of its own, so a
+      hung agent would hold this request open until something else gave up. Racing it against a
+      timer is what makes `timeoutMs` mean anything.
+    */
+    let timer: NodeJS.Timeout | undefined
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => {
+        resolve("timeout")
+      }, input.timeoutMs)
+    })
+    const outcome = await Promise.race([collecting.then(() => "done" as const), deadline])
+    if (timer !== undefined) clearTimeout(timer)
+
+    if (outcome === "timeout") {
+      return { result: { stdout, stderr, exitCode: -1 }, keepSession }
+    }
+
+    const finished = await input.process.getSessionCommand(input.sessionId, commandId)
+    /*
+      Keep the session after a completed agent turn.
+
+      Daytona ties descendants to the process session: deleting it kills even a `nohup` dev server
+      the agent intentionally left behind. A preview that disappears when the answer finishes is
+      not a preview. Sessions are removed when the sandbox stops or is destroyed.
+    */
+    const exitCode = finished.exitCode ?? -1
+    keepSession = exitCode === 0
+    return { result: { stdout, stderr, exitCode }, keepSession }
+  } finally {
+    if (!keepSession) await input.process.deleteSession(input.sessionId).catch(() => {})
   }
 }
 

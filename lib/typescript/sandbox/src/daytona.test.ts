@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import {
   AUTO_ARCHIVE_AFTER_STOP_MINUTES,
@@ -7,6 +8,7 @@ import {
   buildCreateParams,
   daytonaConfigFromEnv,
   deleteDaytonaSandboxAndWait,
+  executeDaytonaSensitiveStream,
   retryIdempotentDaytonaRead,
   sandboxForwardProxyPassword,
   startDaytonaSandbox,
@@ -31,6 +33,32 @@ const input: CreateSandboxInput = {
   alwaysOn: false,
   resources: { cpu: 2, memoryGib: 4, diskGib: 10 },
   idleTimeoutS: 900,
+}
+
+async function runRecordedCommand(
+  command: string,
+  stdin: string,
+): Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number | null
+}> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "pipe", "pipe"] })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk
+    })
+    child.once("error", reject)
+    child.once("exit", (exitCode) => {
+      resolve({ stdout, stderr, exitCode })
+    })
+    child.stdin.end(stdin)
+  })
 }
 
 describe("buildCreateParams", () => {
@@ -254,6 +282,146 @@ describe("Daytona start reconciliation", () => {
         intervalMs: 1_000,
       }),
     ).rejects.toBe(startError)
+  })
+})
+
+describe("Daytona sensitive stream transport", () => {
+  it("puts secrets only in suppressed session input, never retained metadata or logs", async () => {
+    const accessToken = "spa_adversarial_access"
+    const refreshToken = "spr_adversarial_refresh"
+    const commandRequests: Array<{ command: string; suppressInputEcho?: boolean }> = []
+    const sentInputs: string[] = []
+    const deletedSessions: string[] = []
+    const durableLogs = { stdout: [] as string[], stderr: [] as string[] }
+    const persistedWorkspace: Record<string, string> = {}
+
+    const process = {
+      createSession: () => Promise.resolve(),
+      deleteSession: (sessionId: string) => {
+        deletedSessions.push(sessionId)
+        return Promise.resolve()
+      },
+      executeSessionCommand: (
+        _sessionId: string,
+        request: { command: string; suppressInputEcho?: boolean },
+      ) => {
+        commandRequests.push(request)
+        return Promise.resolve({ cmdId: "command-1" })
+      },
+      sendSessionCommandInput: (_sessionId: string, _commandId: string, data: string) => {
+        sentInputs.push(data)
+        return Promise.resolve()
+      },
+      getSessionCommandLogs: (
+        _sessionId: string,
+        _commandId: string,
+        onStdout: (chunk: string) => void,
+        onStderr: (chunk: string) => void,
+      ) => {
+        onStdout("agent output\n")
+        onStderr("agent diagnostic\n")
+        return Promise.resolve()
+      },
+      getSessionCommand: () =>
+        Promise.resolve({
+          id: "command-1",
+          command: commandRequests[0]?.command ?? "",
+          exitCode: 0,
+        }),
+    }
+
+    const streamed = await executeDaytonaSensitiveStream({
+      process: process as never,
+      sessionId: "session-1",
+      argv: ["node", "/workspace/agent.js", "--prompt", "make it work"],
+      env: { SPROUT_PROXY_ACCESS_TOKEN: accessToken, SPROUT_PROXY_REFRESH_TOKEN: refreshToken },
+      timeoutMs: 1_000,
+      onStdout: (chunk) => durableLogs.stdout.push(chunk),
+      onStderr: (chunk) => durableLogs.stderr.push(chunk),
+    })
+
+    expect(commandRequests).toHaveLength(1)
+    expect(commandRequests[0]?.suppressInputEcho).toBe(true)
+    expect(sentInputs).toHaveLength(1)
+    expect(sentInputs[0]).toContain(accessToken)
+    expect(sentInputs[0]).toContain(refreshToken)
+
+    /*
+      These are the durable surfaces exposed by Daytona and by our sandbox filesystem contract.
+      The input endpoint is deliberately excluded: it is the one ephemeral carrier, and echo is
+      suppressed on the command before the first byte is sent.
+    */
+    const durableSurfaces = JSON.stringify({
+      commandRequests,
+      sessionMetadata: {
+        commands: [{ command: commandRequests[0]?.command, exitCode: 0 }],
+      },
+      durableLogs,
+      persistedWorkspace,
+    })
+    expect(durableSurfaces).not.toContain(accessToken)
+    expect(durableSurfaces).not.toContain(refreshToken)
+    expect(streamed).toEqual({
+      result: {
+        stdout: "agent output\n",
+        stderr: "agent diagnostic\n",
+        exitCode: 0,
+      },
+      keepSession: true,
+    })
+    // Keeping the session is what lets an agent-started dev server survive into the preview.
+    expect(deletedSessions).toEqual([])
+
+    // Execute the exact fixed command we recorded, not a second test-only launcher. This proves
+    // that the stdin payload becomes child argv/environment without being interpolated into it.
+    const probeInput = JSON.stringify({
+      argv: [
+        globalThis.process.execPath,
+        "-e",
+        "console.log(JSON.stringify({argument:process.argv[1],hasAccess:Boolean(process.env.SPROUT_PROXY_ACCESS_TOKEN),hasRefresh:Boolean(process.env.SPROUT_PROXY_REFRESH_TOKEN)}))",
+        "argument with spaces",
+      ],
+      env: { SPROUT_PROXY_ACCESS_TOKEN: accessToken, SPROUT_PROXY_REFRESH_TOKEN: refreshToken },
+    })
+    const probe = await runRecordedCommand(commandRequests[0]?.command ?? "", `${probeInput}\n`)
+    expect(probe).toEqual({
+      stdout: `${JSON.stringify({
+        argument: "argument with spaces",
+        hasAccess: true,
+        hasRefresh: true,
+      })}\n`,
+      stderr: "",
+      exitCode: 0,
+    })
+  })
+
+  it("deletes a failed sensitive session instead of retaining credentials in process state", async () => {
+    const deletedSessions: string[] = []
+    const process = {
+      createSession: () => Promise.resolve(),
+      deleteSession: (sessionId: string) => {
+        deletedSessions.push(sessionId)
+        return Promise.resolve()
+      },
+      executeSessionCommand: () => Promise.resolve({ cmdId: "command-2" }),
+      sendSessionCommandInput: () => Promise.resolve(),
+      getSessionCommandLogs: () => Promise.resolve(),
+      getSessionCommand: () =>
+        Promise.resolve({ id: "command-2", command: "node -e fixed", exitCode: 1 }),
+    }
+
+    const streamed = await executeDaytonaSensitiveStream({
+      process: process as never,
+      sessionId: "session-failed",
+      argv: ["false"],
+      env: { TOKEN: "secret" },
+      timeoutMs: 1_000,
+      onStdout: () => {},
+      onStderr: () => {},
+    })
+
+    expect(streamed.keepSession).toBe(false)
+    expect(deletedSessions).toEqual(["session-failed"])
   })
 })
 
