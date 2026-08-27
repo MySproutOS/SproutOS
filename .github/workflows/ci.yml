@@ -434,8 +434,10 @@ jobs:
       - name: Parse
         run: for f in bin/*.sh; do bash -n "$f"; done
 
-      # The cutover decides which colour is idle and refuses two ways. Both are worth a test: a
-      # cutover to an unhealthy group is a release whose first requests 503, and a cutover that
-      # guessed from an unrecognised listener is how a rollback becomes an outage.
-      - name: Test the cutover
-        run: bash bin/cutover.test.sh
+      # Fill proves every port on the idle release is healthy; cutover proves traffic moves only
+      # after that and the drained colour reaches zero. They are separate state transitions and a
+      # release is safe only when both contracts hold.
+      - name: Test fill and cutover
+        run: |
+          bash bin/fill-idle.test.sh
+          bash bin/cutover.test.sh
