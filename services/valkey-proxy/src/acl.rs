@@ -101,6 +101,7 @@ fn encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use sproutos_tenant_auth::ResourceKind;
     use uuid::Uuid;
 
@@ -139,5 +140,32 @@ mod tests {
         }
         assert!(!text.contains(&"+AUTH".into()));
         assert!(!text.contains(&"+HELLO".into()));
+    }
+
+    #[test]
+    fn control_plane_reconciliation_uses_the_same_command_policy() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../lib/typescript/services/src/valkey-acl-policy.json"
+        ))
+        .unwrap();
+        let strings = |name: &str| {
+            fixture[name]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item.as_str().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(strings("forwardedCommands"), FORWARDED_COMMANDS);
+        assert_eq!(strings("deniedCommands"), DENIED_COMMANDS);
+        let vector = &fixture["credentialVector"];
+        let identity = TenantIdentity::new(
+            Uuid::parse_str(vector["organizationId"].as_str().unwrap()).unwrap(),
+            ResourceKind::Queue,
+            Uuid::parse_str(vector["resourceId"].as_str().unwrap()).unwrap(),
+        );
+        let credential = credentials(vector["rootKey"].as_str().unwrap().as_bytes(), &identity);
+        assert_eq!(credential.username, vector["username"].as_str().unwrap());
+        assert_eq!(credential.password, vector["password"].as_str().unwrap());
     }
 }

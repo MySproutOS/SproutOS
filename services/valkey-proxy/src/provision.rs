@@ -25,7 +25,7 @@ struct State {
 
 pub struct AclProvisioner {
     backend: String,
-    root_key: Vec<u8>,
+    pub(crate) root_key: Vec<u8>,
     capacity: usize,
     state: Mutex<State>,
 }
@@ -127,14 +127,15 @@ impl AclProvisioner {
             rule.extend_from_slice(pattern);
             rule
         }));
-        self.admin_bytes(args)
+        self.admin_bytes(args, 64 * 1024)
             .await
+            .map(|_| ())
             .context("could not grant a tenant Valkey channel pattern")
     }
 
-    async fn provision(&self, identity: &TenantIdentity) -> Result<()> {
+    pub(crate) async fn provision(&self, identity: &TenantIdentity) -> Result<()> {
         let args = acl::setuser_args(&self.root_key, identity);
-        if let Err(cause) = self.admin_bytes(args).await {
+        if let Err(cause) = self.admin_bytes(args, 64 * 1024).await {
             tracing::error!(username = %identity.username(), %cause, "tenant ACL provisioning failed closed");
             return Err(cause).context("could not provision the tenant Valkey ACL user");
         }
@@ -165,25 +166,40 @@ impl AclProvisioner {
     }
 
     async fn admin(&self, args: &[&str]) -> Result<()> {
-        self.admin_bytes(args.iter().map(|arg| arg.as_bytes().to_vec()).collect())
-            .await
+        self.admin_reply(args, 64 * 1024).await.map(|_| ())
     }
 
-    async fn admin_bytes(&self, args: Vec<Vec<u8>>) -> Result<()> {
+    pub(crate) async fn admin_reply(&self, args: &[&str], maximum: usize) -> Result<Vec<u8>> {
+        self.admin_bytes(
+            args.iter().map(|arg| arg.as_bytes().to_vec()).collect(),
+            maximum,
+        )
+        .await
+    }
+
+    async fn admin_bytes(&self, args: Vec<Vec<u8>>, maximum: usize) -> Result<Vec<u8>> {
         let mut stream = upstream::connect(&self.backend).await?;
         stream.write_all(&Command::new(args).encode()).await?;
         stream.flush().await?;
         let mut reply = Vec::with_capacity(128);
+        let mut bulk_array_progress = None;
         loop {
-            let mut bytes = [0; 256];
+            // ACL LIST is roughly 1.5 KiB per tenant. A tiny read buffer would repeatedly rescan a
+            // growing multi-megabyte RESP frame during reconciliation.
+            let mut bytes = [0; 64 * 1024];
             let read = stream.read(&mut bytes).await?;
             anyhow::ensure!(read > 0, "Valkey closed before answering ACL command");
             reply.extend_from_slice(&bytes[..read]);
-            if frame(&reply)?.is_some() {
+            let complete = if reply.starts_with(b"*") {
+                bulk_array_complete(&reply, &mut bulk_array_progress)?
+            } else {
+                frame(&reply)?.is_some()
+            };
+            if complete {
                 break;
             }
             anyhow::ensure!(
-                reply.len() < 64 * 1024,
+                reply.len() < maximum,
                 "Valkey ACL reply was unexpectedly large"
             );
         }
@@ -192,6 +208,65 @@ impl AclProvisioner {
             "Valkey refused ACL command: {}",
             String::from_utf8_lossy(&reply).trim_end()
         );
-        Ok(())
+        Ok(reply)
+    }
+}
+
+/// Incrementally recognizes the RESP2 bulk-string array returned by `ACL LIST`.
+///
+/// Calling the generic frame parser after every socket read rescans the complete prefix each time;
+/// at 100k measured users that turns a 152 MiB reply into quadratic work. This retains the cursor
+/// after every complete item, so each byte is traversed once.
+fn bulk_array_complete(bytes: &[u8], progress: &mut Option<(usize, usize)>) -> Result<bool> {
+    if progress.is_none() {
+        let Some(end) = find_crlf(bytes, 1) else {
+            return Ok(false);
+        };
+        let count: usize = std::str::from_utf8(&bytes[1..end])?.parse()?;
+        *progress = Some((count, end + 2));
+    }
+    let (remaining, cursor) = progress.as_mut().expect("progress was initialized");
+    while *remaining > 0 {
+        if bytes.get(*cursor) != Some(&b'$') {
+            return Ok(false);
+        }
+        let Some(header_end) = find_crlf(bytes, *cursor + 1) else {
+            return Ok(false);
+        };
+        let length: usize = std::str::from_utf8(&bytes[*cursor + 1..header_end])?.parse()?;
+        let item_end = header_end + 2 + length;
+        if item_end + 2 > bytes.len() {
+            return Ok(false);
+        }
+        anyhow::ensure!(
+            &bytes[item_end..item_end + 2] == b"\r\n",
+            "ACL LIST item lacked a terminator"
+        );
+        *cursor = item_end + 2;
+        *remaining -= 1;
+    }
+    Ok(true)
+}
+
+fn find_crlf(bytes: &[u8], from: usize) -> Option<usize> {
+    bytes[from..]
+        .windows(2)
+        .position(|pair| pair == b"\r\n")
+        .map(|relative| from + relative)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_array_progress_survives_partial_items() {
+        let mut progress = None;
+        assert!(!bulk_array_complete(b"*2\r\n$5\r\nhel", &mut progress).unwrap());
+        assert_eq!(progress, Some((2, 4)));
+        assert!(
+            bulk_array_complete(b"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n", &mut progress).unwrap()
+        );
+        assert_eq!(progress, Some((0, 26)));
     }
 }

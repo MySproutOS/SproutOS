@@ -13,7 +13,9 @@ import {
 import {
   reap,
   reconcileSearchSecurity,
+  reconcileValkeyAcl,
   SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT,
+  VALKEY_ACL_CARDINALITY_SOFT_LIMIT,
   searchAdminConfigFromEnv,
 } from "@lib/reaper"
 import { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
@@ -75,6 +77,7 @@ export const JOB_KINDS = {
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   reconcileSearchSecurity: "platform.reconcile_search_security",
+  reconcileValkeyAcl: "platform.reconcile_valkey_acl",
   sweepExpired: "platform.retention_sweep",
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
@@ -249,6 +252,52 @@ const reconcileSearchSecurityJob: JobHandler = async (_job, { db }) => {
   }
 }
 
+/** Repair live Valkey engine ACL identities; unknown identities are reported but never deleted. */
+const reconcileValkeyAclJob: JobHandler = async (_job, { db }) => {
+  const rootKey = process.env.VALKEY_PROXY_ACL_ROOT_KEY
+  if (rootKey === undefined || rootKey === "") {
+    throw new Error(
+      "VALKEY_PROXY_ACL_ROOT_KEY is not set; Valkey tenant ACL users cannot be reconciled",
+    )
+  }
+  const adminUrl = process.env.SERVICE_VALKEY_ADMIN_URL ?? process.env.VALKEY_URL
+  if (adminUrl === undefined || adminUrl === "") {
+    throw new Error(
+      "SERVICE_VALKEY_ADMIN_URL is not set; Valkey tenant ACL users cannot be reconciled",
+    )
+  }
+  const configuredLimit = process.env.VALKEY_ACL_CARDINALITY_SOFT_LIMIT
+  const softLimit =
+    configuredLimit === undefined ? VALKEY_ACL_CARDINALITY_SOFT_LIMIT : Number(configuredLimit)
+  const report = await reconcileValkeyAcl(db, adminUrl, rootKey, { softLimit })
+  const fields = [
+    `expected=${report.expected}`,
+    `observed=${report.observed}`,
+    `missing=${report.missing}`,
+    `drifted=${report.drifted}`,
+    `repaired=${report.repaired}`,
+    `orphaned=${report.orphaned}`,
+    `inspected=${report.inspected}`,
+    `pending_inspections=${report.pendingInspections}`,
+    `pending_repairs=${report.pendingRepairs}`,
+    `list_ms=${report.listLatencyMs.toFixed(1)}`,
+    `repair_ms=${report.repairLatencyMs.toFixed(1)}`,
+    `soft_limit=${report.softLimit}`,
+  ].join(" ")
+  console.info(`[jobs] Valkey ACL reconciliation ${fields}`)
+  if (
+    report.softLimitExceeded ||
+    report.orphaned > 0 ||
+    report.pendingInspections > 0 ||
+    report.pendingRepairs > 0 ||
+    report.repaired > 0
+  ) {
+    console.warn(
+      `[jobs] Valkey ACL attention required soft_limit_exceeded=${report.softLimitExceeded} ${fields}`,
+    )
+  }
+}
+
 /**
  * Delete the rows whose retention window has closed.
  *
@@ -312,6 +361,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
+  [JOB_KINDS.reconcileValkeyAcl]: reconcileValkeyAclJob,
   [JOB_KINDS.sweepExpired]: retentionSweep,
   // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
   [JOB_KINDS.upkeepScan]: (job, context) =>
@@ -436,6 +486,12 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     // Hourly: drifted-open roles are repaired even when no tenant happens to make a request.
     kind: JOB_KINDS.reconcileSearchSecurity,
     idempotencyKey: `${JOB_KINDS.reconcileSearchSecurity}:${hour}`,
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    // Hourly and bounded: startup repair handles deploy-time drift; this catches later mutation.
+    kind: JOB_KINDS.reconcileValkeyAcl,
+    idempotencyKey: `${JOB_KINDS.reconcileValkeyAcl}:${hour}`,
     maxAttempts: 5,
   })
   await enqueue(db, {
