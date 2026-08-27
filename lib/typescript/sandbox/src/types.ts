@@ -151,6 +151,23 @@ export type DaytonaSandboxClient = {
     onStdout: (chunk: string) => void,
     onStderr: (chunk: string) => void,
   ) => Promise<ExecResult>
+  /**
+   * Run a command whose environment contains short-lived credentials, and watch its output.
+   *
+   * The environment is a separate field because Daytona retains session command strings. The
+   * implementation delivers both fields over a suppressed, one-shot stdin channel to a fixed
+   * launcher; it must never serialize `env` into the provider command, a file, or command logs.
+   * The launched process still receives these values in its environment — it needs them to call
+   * the LLM proxy — but that process state dies with the retained Daytona session.
+   */
+  execStreamWithSecrets: (
+    externalId: string,
+    argv: string[],
+    env: Record<string, string>,
+    timeoutMs: number,
+    onStdout: (chunk: string) => void,
+    onStderr: (chunk: string) => void,
+  ) => Promise<ExecResult>
   readFile: (externalId: string, path: string) => Promise<string>
   writeFile: (externalId: string, path: string, content: string) => Promise<void>
   tree: (externalId: string, path?: string) => Promise<TreeEntry[]>
