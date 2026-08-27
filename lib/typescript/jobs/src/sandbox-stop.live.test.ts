@@ -1,10 +1,14 @@
+import { Daytona } from "@daytona/sdk"
 import { crudSandbox } from "@lib/dao"
 import {
   daytonaConfigFromEnv,
   daytonaClientFromEnv,
   SNAPSHOT_RESOURCES,
+  type CreateSandboxInput,
+  type DaytonaConfig,
   type DaytonaSandboxClient,
 } from "@lib/sandbox"
+import { buildCreateParams, sandboxForwardProxyPassword } from "@lib/sandbox/daytona"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -19,11 +23,40 @@ try {
 }
 
 let driver: DaytonaSandboxClient | undefined
+let daytonaConfig: DaytonaConfig | undefined
 try {
-  daytonaConfigFromEnv()
+  daytonaConfig = daytonaConfigFromEnv()
   driver = daytonaClientFromEnv()
 } catch {
   driver = undefined
+}
+
+async function createSandbox(input: CreateSandboxInput): Promise<{ externalId: string }> {
+  if (driver === undefined || daytonaConfig === undefined) throw new Error("Daytona is unavailable")
+  const localProxy = process.env.SANDBOX_LIVE_FORWARD_PROXY_URL
+  if (localProxy === undefined) return await driver.create(input)
+  if (!egressControlPlaneReady) {
+    throw new Error("SANDBOX_LIVE_FORWARD_PROXY_URL requires the gated egress control-plane test")
+  }
+
+  const proxy = new URL(localProxy)
+  if (proxy.protocol !== "http:" || proxy.username !== "" || proxy.password !== "") {
+    throw new Error("the local live-test proxy must be an unauthenticated HTTP origin")
+  }
+  proxy.username = input.sandboxId.toLowerCase()
+  proxy.password = sandboxForwardProxyPassword(daytonaConfig.forwardProxyRootKey, input.sandboxId)
+
+  const sdk = new Daytona({
+    apiKey: daytonaConfig.apiKey,
+    organizationId: daytonaConfig.organizationId,
+    ...(daytonaConfig.apiUrl ? { apiUrl: daytonaConfig.apiUrl } : {}),
+    ...(daytonaConfig.target ? { target: daytonaConfig.target } : {}),
+  })
+  const made = await sdk.create({
+    ...buildCreateParams(daytonaConfig, input),
+    outboundProxyUrl: proxy.toString(),
+  })
+  return { externalId: made.id }
 }
 
 let reachable = false
@@ -114,7 +147,7 @@ describe("an idle sandbox is actually turned off", () => {
     })
     let externalId: string | undefined
     try {
-      const made = await activeDriver.create({
+      const made = await createSandbox({
         sandboxId: sandbox.id,
         organizationId,
         projectId,
@@ -130,14 +163,19 @@ describe("an idle sandbox is actually turned off", () => {
         state: "running",
       })
 
-      // This test is gated because the public proxy authorizes against production Postgres. A
-      // local row is not authority there and would turn every valid request into an expected 407.
+      // The test is gated because its proxy must authorize against the same database that owns
+      // this row. The local harness starts that proxy and gives Daytona a one-run ngrok endpoint;
+      // production points the same test at the deployed HTTPS listener.
       const publicThroughProxy = await activeDriver.exec(
         made.externalId,
-        ["curl", "--fail", "--silent", "https://www.google.com/generate_204"],
+        ["curl", "--fail", "--show-error", "https://www.google.com/generate_204"],
         30_000,
       )
-      expect(publicThroughProxy.exitCode).toBe(0)
+      if (publicThroughProxy.exitCode !== 0) {
+        throw new Error(
+          `public HTTPS through the proxy failed: ${JSON.stringify(publicThroughProxy)}`,
+        )
+      }
       const directBypass = await activeDriver.exec(
         made.externalId,
         [

@@ -890,6 +890,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1118.0
+      '@daytona/sdk':
+        specifier: 'catalog:'
+        version: 0.207.0
       '@types/node':
         specifier: 'catalog:'
         version: 26.2.0
