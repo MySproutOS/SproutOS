@@ -116,6 +116,11 @@ jobs:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: us-east-1
+      # The object-storage integration suites launch the real Rust proxy and point its upstream at
+      # LocalStack. Keep these explicit here: `.env` is deliberately absent in CI, and without them
+      # the tenant-isolation tests skip before they can prove anything.
+      SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9002
+      SERVICE_OBJECT_STORAGE_ROOT_KEY: ci-object-storage-root-key-not-for-production
       # Read by the step that starts LocalStack, and by its own `if`. `secrets` cannot be referenced
       # from an `if` — GitHub rejects the whole workflow file for it, which is why this run reported
       # as ".github/workflows/ci.yml: failure" with no jobs at all rather than as a failing step.
@@ -154,6 +159,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The TypeScript integration tests drive this binary with a real AWS SDK client. Building it
+      # here makes the shared-bucket tenant boundary part of the required test job instead of a
+      # local-only assertion hidden behind `describe.runIf`.
+      - name: Build the storage proxy for integration tests
+        if: ${{ env.LOCALSTACK_AUTH_TOKEN != '' }}
+        run: cargo build -p storage-proxy
 
       - name: Bootstrap OpenSearch Security
         run: bash bin/bootstrap-opensearch-security.sh
