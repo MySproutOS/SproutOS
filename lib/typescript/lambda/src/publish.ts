@@ -32,6 +32,17 @@ import { LAMBDA_ARCHITECTURE, webAdapterEnv } from "./web-adapter"
 /** Which version of a project's function the router should invoke. */
 export const LIVE_ALIAS = "live"
 
+/** Reserved router route used by the Lambda telemetry extension. */
+export const LOG_INGEST_PATH = "/_sproutos/logs"
+
+/**
+ * A generated tenant hostname always reaches the router. Using it avoids a second global hostname
+ * whose ALB rule can drift onto the website or internal API.
+ */
+export function logEndpointFor(hostname: string): string {
+  return `https://${hostname}${LOG_INGEST_PATH}`
+}
+
 /**
  * Lambda function names are `[a-zA-Z0-9-_]{1,64}`, so the project UUID goes in with its hyphens and
  * a prefix that makes the function identifiable in a console listing that also holds ours.
@@ -44,6 +55,8 @@ export type PublishInput = {
   projectId: string
   /** Signed into the telemetry token so the extension body cannot choose a billing owner. */
   organizationId: string
+  /** The router ingest URL derived from this deployment's generated tenant hostname. */
+  logEndpoint: string
   /**
    * Which deployment this is, for attributing a log line to a release.
    *
@@ -157,7 +170,7 @@ export async function publishFunction(
         Runtime: input.runtime,
         MemorySize: input.memoryMb,
         Timeout: input.timeoutS,
-        Environment: { Variables: withTelemetryEnv(input) },
+        Environment: { Variables: telemetryEnv(input) },
         Layers: layers,
       }),
     )
@@ -180,7 +193,7 @@ export async function publishFunction(
         MemorySize: input.memoryMb,
         Timeout: input.timeoutS,
         Code: { S3Bucket: input.bucket, S3Key: input.key },
-        Environment: { Variables: withTelemetryEnv(input) },
+        Environment: { Variables: telemetryEnv(input) },
         ...(layers.length === 0 ? {} : { Layers: layers }),
       }),
     )
@@ -250,12 +263,12 @@ async function aliasExists(
  * start, inside the customer's billed duration, for a value that never changes for the life of the
  * function version.
  */
-function withTelemetryEnv(input: PublishInput): Record<string, string> {
+export function telemetryEnv(input: PublishInput): Record<string, string> {
   return {
     ...input.environment,
     SPROUTOS_PROJECT_ID: input.projectId,
     ...(input.deploymentId === undefined ? {} : { SPROUTOS_DEPLOYMENT_ID: input.deploymentId }),
-    ...logEnv(input.projectId, input.organizationId),
+    ...logEnv(input.projectId, input.organizationId, input.logEndpoint),
     /*
       Last, so it wins over a customer's own `PORT`.
 
@@ -290,13 +303,16 @@ function withTelemetryEnv(input: PublishInput): Record<string, string> {
  */
 const LOG_TOKEN_TTL_SECONDS = 400 * 24 * 60 * 60
 
-function logEnv(projectId: string, organizationId: string): Record<string, string> {
-  const endpoint = process.env.SPROUTOS_LOG_ENDPOINT ?? ""
+function logEnv(
+  projectId: string,
+  organizationId: string,
+  endpoint: string,
+): Record<string, string> {
   const secret = process.env.LOG_TOKEN_SECRET ?? ""
 
-  // Both or neither. An extension given an endpoint and no token posts batches that are refused on
-  // every invocation, which costs the customer time to deliver nothing.
-  if (endpoint === "" || secret === "") return {}
+  // An extension given an endpoint and no token posts batches that are refused on every invocation,
+  // which costs the customer time to deliver nothing.
+  if (secret === "") return {}
 
   const expiresAt = Math.floor(Date.now() / 1000) + LOG_TOKEN_TTL_SECONDS
 

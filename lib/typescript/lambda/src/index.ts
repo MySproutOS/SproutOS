@@ -1,6 +1,8 @@
 export {
   functionName,
   LIVE_ALIAS,
+  LOG_INGEST_PATH,
+  logEndpointFor,
   pointAlias,
   publishFunction,
   type PublishInput,

@@ -6,8 +6,17 @@ import {
 } from "@aws-sdk/client-lambda"
 import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { deflateRawSync } from "node:zlib"
-import { afterAll, describe, expect, it } from "vitest"
-import { functionName, LIVE_ALIAS, pointAlias, publishFunction } from "./publish"
+import { readFileSync } from "node:fs"
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest"
+import {
+  functionName,
+  LIVE_ALIAS,
+  LOG_INGEST_PATH,
+  logEndpointFor,
+  pointAlias,
+  publishFunction,
+  telemetryEnv,
+} from "./publish"
 
 /**
  * Against LocalStack's Lambda, which really does create the function, publish versions and run the
@@ -142,6 +151,44 @@ async function upload(key: string, body: Buffer): Promise<void> {
 
 const projectId = "01a03600-0000-7000-8000-00000000d1ce"
 
+afterEach(() => vi.unstubAllEnvs())
+
+describe("the telemetry endpoint", () => {
+  it("uses the deployment's generated tenant hostname, not a global API host", () => {
+    vi.stubEnv("LOG_TOKEN_SECRET", "test-log-token-secret")
+    vi.stubEnv("SPROUTOS_LOG_ENDPOINT", "https://api.sproutos.me/_sproutos/logs")
+    const endpoint = logEndpointFor("myapp-a1b2c3.sproutos.run")
+    const environment = telemetryEnv({
+      projectId,
+      organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      logEndpoint: endpoint,
+      bucket: BUCKET,
+      key: "unused.zip",
+      handler: "index.handler",
+      runtime: "nodejs22.x",
+      memoryMb: 128,
+      timeoutS: 10,
+      roleArn: ROLE,
+    })
+
+    expect(environment.SPROUTOS_LOG_ENDPOINT).toBe(
+      "https://myapp-a1b2c3.sproutos.run/_sproutos/logs",
+    )
+    expect(environment.SPROUTOS_LOG_ENDPOINT).not.toContain("api.sproutos.me")
+    expect(environment.SPROUTOS_LOG_TOKEN).toBeDefined()
+  })
+
+  it("uses exactly the ingest path the Rust router serves", () => {
+    const router = readFileSync(
+      new URL("../../../../services/router/src/logs.rs", import.meta.url),
+      "utf8",
+    )
+    const routerPath = /pub const INGEST_PATH: &str = "([^"]+)";/.exec(router)?.[1]
+
+    expect(LOG_INGEST_PATH).toBe(routerPath)
+  })
+})
+
 if (reachable) {
   try {
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }))
@@ -200,6 +247,7 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
     const result = await publishFunction(lambda, {
       projectId,
       organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      logEndpoint: logEndpointFor("myapp-a1b2c3.sproutos.run"),
       bucket: BUCKET,
       key: "v1.zip",
       handler: "index.handler",
@@ -228,6 +276,7 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
     const result = await publishFunction(lambda, {
       projectId,
       organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      logEndpoint: logEndpointFor("myapp-a1b2c3.sproutos.run"),
       bucket: BUCKET,
       key: "v2.zip",
       handler: "index.handler",

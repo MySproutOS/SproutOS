@@ -10,6 +10,7 @@ import {
   functionName,
   hostLabel,
   isSupportedRuntime,
+  logEndpointFor,
   pointAlias,
   publishFunction,
   webAdapterLayerArn,
@@ -694,6 +695,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
           const published = await publishFunction(clients.lambda, {
             projectId: project.id,
             organizationId: project.organizationId,
+            logEndpoint: logEndpointFor(hostname),
             bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
             key: deployment.artifactKey!,
             /*
