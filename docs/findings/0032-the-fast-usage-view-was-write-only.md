@@ -5,7 +5,7 @@ transactional producers publish stable event ids to the dedicated Kafka topic; C
 raw `ReplacingMergeTree(version)` history; financial reads use `FINAL`; and an absolute importer
 projects affected minute, hour, and day grains into PostgreSQL `usage_rollup`.
 
-Valkey does not yet complete the other half of ADR 0028. The only references to
+At audit time, Valkey did not complete the other half of ADR 0028. The only references to
 `metering:active:v1` outside tests are writes from signed ingest and the transactional outbox. No
 prompt, quota, credit, or billing path reads those hashes. No job rebuilds them from ClickHouse.
 The outbox source comment already said “until an actual ClickHouse-to-Valkey rebuild job exists,”
@@ -19,6 +19,21 @@ row was deleted. The idempotency marker also implements first-seen semantics, wh
 latest `version` semantics. A corrected event with the same id replaces financial history in
 ClickHouse but remains the old quantity in Valkey.
 
+## Resolution
+
+The active projection is now generation-based. Reconciliation creates a blank generation, reads
+authoritative ClickHouse `FINAL` rows in bounded event-id pages, replays the bounded pending view,
+and atomically switches the reader pointer. Producers dual-write to the live and building
+generations. Each event marker stores the decimal ClickHouse version and exact contribution, so a
+newer version subtracts the old contribution while an older query page cannot replace a concurrent
+write.
+
+The pending hash closes the Kafka-consumer lag window: a direct writer records its latest version
+there, and reconciliation removes it only after ClickHouse presents that version or a newer one.
+Partial bucket eviction is repaired by the blank generation rather than by assigning an old
+aggregate over a live counter. Superseded generations are removed through bounded `SSCAN`/`UNLINK`
+passes and also retain a TTL as the final cleanup boundary.
+
 ## Current gap matrix
 
 | Requirement                                                   | State               | Evidence and remaining work                                                                                                                                                                                                                                                                                            |
@@ -26,23 +41,23 @@ ClickHouse but remains the old quantity in Valkey.
 | ClickHouse is durable raw usage authority                     | Implemented in code | `usage_event_raw` is a monthly `ReplacingMergeTree(version)`; financial rollups query `FINAL`; backup, DLQ health, and restore scripts exist. The OVH backup and restore drill remain production-verification pending.                                                                                                 |
 | PostgreSQL raw partitions are retired                         | Implemented         | The final migration cancels legacy `billing.roll_up_usage` jobs and drops `usage_event`; generated DB types expose `usageRollup`, `meteringOutbox`, and `meteringImportState`, but no raw usage table. Existing history was intentionally not migrated because production had no customer billing history to preserve. |
 | Transactional TypeScript emitters cannot lose committed usage | Implemented in code | Agent, sandbox, workflow, and Valkey sampling write the exact Kafka payload to `metering_outbox` in their owning transaction. The relay deletes only after bounded Kafka and current Valkey delivery.                                                                                                                  |
-| Valkey is only a fast projection                              | Partly implemented  | It is not used for financial reads, which is correct. It is also not read anywhere, rebuilt, or reconciled, so it cannot truthfully be called the current enforcement view yet.                                                                                                                                        |
-| Cache loss and corrections converge from ClickHouse           | Missing             | Build a version-aware projector with a stored ClickHouse watermark and a generation or equivalent handoff that is safe under concurrent ingestion. Prove full eviction recovery, partial-key loss, duplicate delivery, a newer version changing quantity/dimension/project, and an event arriving during rebuild.      |
+| Valkey is only a fast projection                              | Implemented in code | Billing does not read it. The exported reader resolves the atomic current-generation pointer, and the hourly job rebuilds that generation from ClickHouse. Prompt/quota product behavior is still a separate consumer decision.                                                                                        |
+| Cache loss and corrections converge from ClickHouse           | Implemented in code | Version-aware generation writes, the pending handoff, and a blank ClickHouse rebuild cover duplicates, corrected quantity/dimension/project, partial bucket eviction, and concurrent ingest. Organization/event/page/cleanup bounds fail observably.                                                                   |
 | Production durability is proved                               | Unproven            | Apply the OVH durability setup, observe the usage consumer and DLQ health, complete an initial S3 backup, restore it into the drill database, and compare the manifest. Repository validation is not that production proof.                                                                                            |
 
-The smallest safe next implementation is not a periodic `HSET` of ClickHouse totals. That can
+The implementation is deliberately not a periodic `HSET` of ClickHouse totals. That can
 overwrite a newer synchronous increment when an event arrives between the ClickHouse query and the
 Valkey write. Nor is replaying every raw event through the current idempotency script sufficient:
-a surviving seen-marker plus an evicted bucket suppresses the contribution. The repair needs an
-explicit projection generation or another atomic handoff, plus version-aware replacement semantics.
+a surviving seen-marker plus an evicted bucket suppresses the contribution. Blank generations,
+dual-write, pending versions, and an atomic pointer handoff provide the missing ordering.
 
-Until that exists:
+The remaining boundary is:
 
 - billing and statements continue to read only absolute PostgreSQL rollups imported from
   deduplicated ClickHouse rows;
-- `metering:active:v1` must not be used to deny work or shown as complete current usage;
-- Valkey failure after Kafka durability remains retryable at the current producer boundaries, but
-  this is a temporary delivery tactic, not a durability guarantee for the cache.
+- product prompt/quota code must use the current-generation reader rather than constructing Valkey
+  keys or treating a stale generation as authoritative;
+- Valkey remains fail-open enforcement state and is never a financial input.
 
 ## Evidence boundary and legacy record
 
@@ -71,5 +86,6 @@ specifically the remaining usage-storage/projection boundary.
 - Kafka retries keep stable event ids, and every financial ClickHouse aggregation deduplicates
   before summing.
 
-What does **not** stop Valkey projection drift yet is equally explicit above; that is launch work
-for prompt feedback or usage-based enforcement, not a reason to restore PostgreSQL raw partitions.
+The reconciliation job, version-aware Lua transition, pending handoff, and race/eviction tests stop
+the projection drift described here. Product-specific prompt feedback or usage-based enforcement is
+still separate launch work, not a reason to restore PostgreSQL raw partitions.

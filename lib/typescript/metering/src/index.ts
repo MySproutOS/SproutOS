@@ -14,10 +14,22 @@ export { attributionLabels, ORGANIZATION_ID_LABEL, PROJECT_ID_LABEL } from "./at
 export {
   ACTIVE_COUNTER_SCALE,
   ACTIVE_COUNTER_TTL_SECONDS,
+  ACTIVE_PROJECTION_PREFIX,
+  abortActiveUsageRebuild,
+  acknowledgeActiveUsagePending,
+  activeUsageControlKey,
+  activeUsageEventKey,
   activeUsageBucketKey,
-  activeUsageKeys,
+  activeUsageGenerationKeysKey,
+  activeUsagePending,
+  activeUsagePendingKey,
   applyActiveUsage,
+  applyActiveUsageToBuildingGeneration,
+  beginActiveUsageRebuild,
+  cleanupActiveUsageGeneration,
+  finalizeActiveUsageRebuild,
   quantityToNanoUnits,
+  readActiveUsage,
   type ActiveUsageEvent,
 } from "./active-counters"
 export {
