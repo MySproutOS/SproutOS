@@ -86,4 +86,23 @@ describe("the Daytona turn stream", () => {
       },
     ])
   })
+
+  it("treats a nonzero Daytona exit as failure even after a harness success record", () => {
+    const relay = sandboxEventRelay(() => Promise.resolve())
+    relay.onEvent({
+      type: "done",
+      subtype: "success",
+      isError: false,
+      numTurns: 3,
+      durationMs: 25,
+    })
+
+    expect(relay.terminal(1)).toEqual({
+      type: "done",
+      subtype: "error",
+      isError: true,
+      numTurns: 3,
+      durationMs: 25,
+    })
+  })
 })

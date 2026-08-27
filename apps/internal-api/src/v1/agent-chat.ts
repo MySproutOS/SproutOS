@@ -94,15 +94,16 @@ export function sandboxEventRelay(emit: (event: AgentEvent) => Promise<void>) {
       await delivery
     },
     terminal(exitCode: number): SandboxTerminalEvent {
-      return (
-        terminal ?? {
+      const result =
+        terminal ??
+        ({
           type: "done",
           subtype: exitCode === 0 ? "success" : "error",
           isError: exitCode !== 0,
           numTurns: 1,
           durationMs: 0,
-        }
-      )
+        } satisfies SandboxTerminalEvent)
+      return exitCode === 0 ? result : { ...result, subtype: "error", isError: true }
     },
   }
 }
