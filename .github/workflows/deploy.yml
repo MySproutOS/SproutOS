@@ -488,6 +488,10 @@ jobs:
           # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
           # moves the router alone rather than refusing.
           SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}
+          # The model endpoint is another rule on the router instances. Omitting it leaves Claude
+          # pointed at the colour this job drains to zero, while the router's primary listener
+          # still makes the deployment look healthy.
+          LLM_RULE_ARN: ${{ vars.LLM_RULE_ARN }}
           # The tenant load balancer's listeners. Optional in the same way: an estate without one
           # simply omits it from the atomic router cutover.
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
@@ -556,6 +560,9 @@ jobs:
           # Optional: an estate with no OpenSearch behind it has no such rule, and `cutover.sh`
           # moves the router alone rather than refusing.
           SEARCH_RULE_ARN: ${{ vars.SEARCH_RULE_ARN }}
+          # Kept in both fill and cutover environments. Fill may use it to extend health coverage;
+          # cutover must have it now so model traffic follows the router colour before drain.
+          LLM_RULE_ARN: ${{ vars.LLM_RULE_ARN }}
           # The tenant load balancer's listeners. Optional in the same way: an estate without one
           # simply omits it from the atomic router cutover.
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}

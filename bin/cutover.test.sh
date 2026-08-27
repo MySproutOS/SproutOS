@@ -136,6 +136,11 @@ run() {
 
 echo "cutover.sh"
 
+# The script cannot move an optional endpoint it is never told exists. Keep the production
+# workflow's LLM rule connected to the same atomic router cutover exercised below.
+check "production passes the LLM rule through both deployment stages" "2" \
+  "$(grep -c 'LLM_RULE_ARN:.*vars.LLM_RULE_ARN' "$HERE/../.github/workflows/deploy.yml")"
+
 # Live on blue, so the idle colour is green and nothing has to say so.
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router)
 check "moves to the colour that is not live" "1" "$(grep -c 'router is on green' <<<"$out")"
