@@ -109,9 +109,27 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
+    let route_pool_size = std::env::var("ROUTER_ROUTE_DB_POOL")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .context("ROUTER_ROUTE_DB_POOL must be a positive integer")?
+        .unwrap_or(4);
+    let durable_routes = Arc::new(router::resolve::PostgresRoutes::connect(
+        &database_url,
+        route_pool_size,
+        std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".into()),
+        std::env::var("AWS_ACCOUNT_ID").context("AWS_ACCOUNT_ID is not set")?,
+    )?);
+    durable_routes
+        .check()
+        .await
+        .context("the router cannot reach its durable route source")?;
+
     let dispatch_manager = manager.clone();
     let state = Arc::new(Router {
-        resolver: Resolver::new(manager),
+        resolver: Resolver::new(manager, durable_routes),
         lambda,
         logs,
         log_token_secret: log_token_secret.into_bytes(),
@@ -157,22 +175,16 @@ async fn main() -> anyhow::Result<()> {
       not there. A deployment with no tenant Valkey and no OpenSearch — a developer working on
       request routing — starts with neither and says so in the log.
     */
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_default();
-    let splits = if database_url.is_empty() {
-        tracing::info!("DATABASE_URL is not set; the tenant splits are off");
-        Vec::new()
-    } else {
-        [
-            router::listeners::valkey(&database_url).await?,
-            router::listeners::search(&database_url).await?,
-            router::listeners::postgres(&database_url).await?,
-            router::listeners::llm(&database_url).await?,
-            router::listeners::forward_proxy(&database_url).await?,
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-    };
+    let splits = [
+        router::listeners::valkey(&database_url).await?,
+        router::listeners::search(&database_url).await?,
+        router::listeners::postgres(&database_url).await?,
+        router::listeners::llm(&database_url).await?,
+        router::listeners::forward_proxy(&database_url).await?,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
     tracing::info!(splits = splits.len(), "tenant splits running");
 
     /*
