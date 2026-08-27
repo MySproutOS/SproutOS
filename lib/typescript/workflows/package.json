@@ -17,6 +17,7 @@
     "@lib/billing": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@utils/crypto": "workspace:*",
+    "cron-parser": "^5.10.0",
     "kysely": "catalog:",
     "uuid": "catalog:"
   },

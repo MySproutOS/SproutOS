@@ -8,6 +8,42 @@ import { v7 } from "uuid"
 export const WORKFLOW_EXEC_VCPU = 1
 export const WORKFLOW_EXEC_GIB = 0.5
 
+/** Durable billable job count known when a run and all its step rows are created. */
+export function workflowJobsOutboxRecord(input: {
+  runId: string
+  workflowId: string
+  workflowVersionId: string
+  organizationId: string
+  projectId: string
+  jobs: number
+  occurredAt: Date
+}): { eventId: string; payload: JsonValue } | undefined {
+  if (input.jobs <= 0) return undefined
+  const event = usageEventRecord({
+    organizationId: input.organizationId,
+    projectId: input.projectId,
+    resourceType: "workflow_run",
+    resourceId: input.runId,
+    dimension: "workflow_job_enqueued",
+    quantity: String(input.jobs),
+    occurredAt: input.occurredAt,
+    ingestedAt: input.occurredAt,
+    version: String(input.occurredAt.getTime()),
+    windowStart: null,
+    windowEnd: null,
+    nodeId: null,
+    podUid: null,
+    source: "workflow",
+    externalId: `${input.runId}:workflow_job_enqueued`,
+    chargedExternally: false,
+    attributes: {
+      workflow_id: input.workflowId,
+      workflow_version_id: input.workflowVersionId,
+    },
+  })
+  return { eventId: event.eventId, payload: JSON.parse(encodeUsageEvent(event)) as JsonValue }
+}
+
 type WorkflowExecution = {
   runId: string
   workflowId: string

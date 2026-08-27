@@ -2,6 +2,7 @@
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
 import { sql } from "kysely"
+import { runDueWorkflowSchedules } from "@lib/jobs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import app from "../index"
 import {
@@ -430,7 +431,7 @@ describe.skipIf(!up)("recent runs across the organization", () => {
             id: "start",
             type: "trigger.cron",
             name: "Every night",
-            config: {},
+            config: { cronExpression: "0 9 * * *", timezone: "America/New_York" },
             position: { x: 0, y: 0 },
           },
           {
@@ -458,6 +459,84 @@ describe.skipIf(!up)("recent runs across the organization", () => {
       expect(response.json.currentVersion).toBe(1)
       expect(response.json.graph).toEqual(graph)
       expect(response.json.graphSha256).toMatch(/^[0-9a-f]{64}$/)
+      const schedule = await db
+        .selectFrom("workflowSchedule")
+        .select(["cronExpression", "timezone", "nextRunAt"])
+        .where("workflowId", "=", workflowId)
+        .executeTakeFirstOrThrow()
+      expect(schedule.cronExpression).toBe("0 9 * * *")
+      expect(schedule.timezone).toBe("America/New_York")
+      expect(schedule.nextRunAt).not.toBeNull()
+
+      const dueAt = new Date(Date.now() - 60_000)
+      await db
+        .updateTable("workflowSchedule")
+        .set({ nextRunAt: dueAt })
+        .where("workflowId", "=", workflowId)
+        .execute()
+      expect(await runDueWorkflowSchedules(db, new Date())).toBe(1)
+      expect(await runDueWorkflowSchedules(db, new Date())).toBe(0)
+      const scheduledRun = await db
+        .selectFrom("workflowRun")
+        .select("id")
+        .where("workflowId", "=", workflowId)
+        .where("triggerType", "=", "cron")
+        .executeTakeFirstOrThrow()
+      const scheduledJob = await db
+        .selectFrom("backgroundJob")
+        .select(["id", "payload"])
+        .where(sql<boolean>`payload ->> 'workflowRunId' = ${scheduledRun.id}`)
+        .executeTakeFirstOrThrow()
+      expect(scheduledJob.payload).toMatchObject({
+        trigger: { scheduledAt: dueAt.toISOString() },
+      })
+      await db.deleteFrom("backgroundJob").where("id", "=", scheduledJob.id).execute()
+      await db
+        .deleteFrom("meteringOutbox")
+        .where(sql<boolean>`payload ->> 'resource_id' = ${scheduledRun.id}`)
+        .execute()
+      await db.deleteFrom("workflowRun").where("id", "=", scheduledRun.id).execute()
+    })
+
+    it("carries manual trigger JSON into the durable workflow job", async ({ skip }) => {
+      if (!up) skip()
+      const workflowId = await makeWorkflow("Payload")
+      const graph = {
+        nodes: [{ id: "start", type: "trigger.manual", name: "Start", config: {} }],
+        edges: [],
+      }
+      await app.request(`/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/graph`, {
+        method: "PUT",
+        headers: authHeaders(actor()),
+        body: JSON.stringify({ graph }),
+      })
+      const response = await app.request(
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/runs`,
+        {
+          method: "POST",
+          headers: authHeaders(actor()),
+          body: JSON.stringify({ trigger: { postId: "post-42" } }),
+        },
+      )
+      expect(response.status).toBe(201)
+      const run = (await response.json()) as Json
+      const job = await db
+        .selectFrom("backgroundJob")
+        .select(["id", "payload"])
+        .where("idempotencyKey", "=", `workflow.run:${run.id as string}`)
+        .executeTakeFirstOrThrow()
+      expect(job.payload).toMatchObject({ trigger: { postId: "post-42" } })
+      await db.deleteFrom("backgroundJob").where("id", "=", job.id).execute()
+      await db
+        .deleteFrom("meteringOutbox")
+        .where(sql<boolean>`payload ->> 'resource_id' = ${run.id as string}`)
+        .execute()
+
+      const invalid = await app.request(
+        `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/runs`,
+        { method: "POST", headers: authHeaders(actor()), body: "null" },
+      )
+      expect(invalid.status).toBe(400)
     })
 
     it("round-trips node positions the editor set", async ({ skip }) => {

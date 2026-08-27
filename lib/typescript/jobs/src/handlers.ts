@@ -39,6 +39,7 @@ import {
 } from "./sandbox"
 import { enqueue } from "./queue"
 import { WORKFLOW_RUN_KIND, workflowRunJob } from "./workflow-run"
+import { runDueWorkflowSchedules } from "./workflow-schedule"
 import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
@@ -91,6 +92,7 @@ export const JOB_KINDS = {
   analyzeRepository: ANALYSIS_KIND,
   provisionProject: PROVISION_KIND,
   workflowRun: WORKFLOW_RUN_KIND,
+  workflowScheduleScan: "workflow.schedule_scan",
   tearDownProject: TEARDOWN_KIND,
   provisionSandbox: SANDBOX_KINDS.provision,
   startSandbox: SANDBOX_KINDS.start,
@@ -382,6 +384,10 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.provisionProject]: provisionProjectJob,
   [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.workflowRun]: workflowRunJob,
+  [JOB_KINDS.workflowScheduleScan]: async (_job, { db }) => {
+    const runs = await runDueWorkflowSchedules(db)
+    if (runs > 0) console.info(`[jobs] started ${runs} scheduled workflow run(s)`)
+  },
   [JOB_KINDS.provisionSandbox]: provisionSandbox(),
   [JOB_KINDS.startSandbox]: startSandbox(),
   [JOB_KINDS.stopSandbox]: stopSandbox(),
@@ -404,6 +410,11 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  await enqueue(db, {
+    kind: JOB_KINDS.workflowScheduleScan,
+    idempotencyKey: `${JOB_KINDS.workflowScheduleScan}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 3,
+  })
   await enqueue(db, {
     /*
       Every minute. This is the durable bridge for control-plane usage committed alongside a

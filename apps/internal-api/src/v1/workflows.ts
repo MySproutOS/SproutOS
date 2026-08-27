@@ -8,21 +8,30 @@ import {
   type QueueLocation,
 } from "@lib/queue"
 import {
+  cronTriggerConfig,
   hashGraph,
   InvalidGraphError,
   rateWorkflowRun,
+  nextCronAt,
   validateGraph,
   type WorkflowGraph,
 } from "@lib/workflows"
-import { JOB_KINDS, WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU, enqueue, stepRowsFor } from "@lib/jobs"
+import {
+  JOB_KINDS,
+  WORKFLOW_EXEC_GIB,
+  WORKFLOW_EXEC_VCPU,
+  enqueue,
+  stepRowsFor,
+  workflowJobsOutboxRecord,
+} from "@lib/jobs"
 import { crudMeteringOutbox } from "@lib/dao"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
-import { db } from "@sproutos/db"
+import { db, type DB } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
-import { sql } from "kysely"
+import { sql, type Kysely, type Transaction } from "kysely"
 import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { collectionResource, paramResource, requirePermission } from "../rbac"
@@ -47,7 +56,6 @@ import {
   workflowsSchemaWorkflow,
   workflowsSchemaWorkflowParam,
 } from "./workflows.serializer"
-import { workflowJobsOutboxRecord } from "./workflow-metering"
 
 const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
@@ -99,6 +107,40 @@ function healthOf(
   if (recentRuns === 0) return "healthy"
   if (latestStatus !== undefined && FAILED_STATUSES.has(latestStatus)) return "failing"
   return failures > 0 ? "degraded" : "healthy"
+}
+
+/** Keep the materialized schedule exactly aligned with the graph's single trigger. */
+async function syncWorkflowSchedule(
+  workflowId: string,
+  cron: { expression: string; timezone: string } | undefined,
+  database: Kysely<DB> | Transaction<DB> = db,
+): Promise<void> {
+  if (cron === undefined) {
+    await database.deleteFrom("workflowSchedule").where("workflowId", "=", workflowId).execute()
+    return
+  }
+  const now = new Date()
+  await database
+    .insertInto("workflowSchedule")
+    .values({
+      id: v7(),
+      workflowId,
+      cronExpression: cron.expression,
+      timezone: cron.timezone,
+      nextRunAt: nextCronAt(cron.expression, cron.timezone, now),
+      enabled: true,
+      updatedAt: now,
+    })
+    .onConflict((oc) =>
+      oc.column("workflowId").doUpdateSet({
+        cronExpression: cron.expression,
+        timezone: cron.timezone,
+        nextRunAt: nextCronAt(cron.expression, cron.timezone, now),
+        enabled: true,
+        updatedAt: now,
+      }),
+    )
+    .execute()
 }
 
 /** Steps per run, which is what `jobsEnqueued` bills on. One query for the whole page. */
@@ -534,6 +576,7 @@ app
         // Validated before anything is written, so a graph that cannot run is rejected in the
         // editor with the offending node named — rather than at 3am, half-executed.
         validateGraph(graph)
+        cronTriggerConfig(graph)
       } catch (error) {
         if (error instanceof InvalidGraphError) {
           return throwBadRequest(
@@ -541,10 +584,11 @@ app
             error.nodeId === null ? error.problem : `${error.problem} (node ${error.nodeId})`,
           )
         }
-        throw error
+        return throwBadRequest(c, error instanceof Error ? error.message : String(error))
       }
 
       const graphSha256 = await hashGraph(graph)
+      const cron = cronTriggerConfig(graph)
 
       /*
         No new version when nothing changed.
@@ -560,6 +604,8 @@ app
         .executeTakeFirst()
 
       if (current !== undefined && current.graphSha256 === graphSha256) {
+        // Repair schedules created before graph-save reconciliation existed too.
+        await syncWorkflowSchedule(workflowId, cron)
         return c.json({
           id: current.id,
           version: current.version,
@@ -603,6 +649,8 @@ app
           .where("id", "=", workflowId)
           .execute()
 
+        await syncWorkflowSchedule(workflowId, cron, tx)
+
         return version
       })
 
@@ -630,6 +678,18 @@ app
     "/:orgSlug/projects/:projectId/workflows/:workflowId/runs",
     describeRoute({
       description: "Starts a run of the workflow's current version",
+      requestBody: {
+        required: false,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: { trigger: { description: "Arbitrary JSON delivered to every action" } },
+              additionalProperties: false,
+            },
+          },
+        },
+      },
       responses: {
         201: {
           description: "The queued run",
@@ -644,6 +704,22 @@ app
     validator("param", workflowsSchemaIdParam),
     async (c) => {
       const { workflowId } = c.req.valid("param")
+      // Existing callers send `Content-Type: application/json` with no body. That remains a manual
+      // trigger with no payload; a present body must be a JSON object rather than becoming a 500
+      // through destructuring `null` or an array.
+      const rawBody = await c.req.text()
+      let body: unknown = {}
+      if (rawBody.trim() !== "") {
+        try {
+          body = JSON.parse(rawBody) as unknown
+        } catch {
+          return throwBadRequest(c, "The trigger body must be valid JSON")
+        }
+      }
+      if (body === null || typeof body !== "object" || Array.isArray(body)) {
+        return throwBadRequest(c, "The trigger body must be a JSON object")
+      }
+      const trigger = (body as { trigger?: unknown }).trigger
       const workflow = await ownedWorkflow(c.var.organization.id, workflowId)
       if (workflow === undefined) return throwNotFound(c, "Workflow not found")
 
@@ -701,7 +777,7 @@ app
       await enqueue(db, {
         kind: JOB_KINDS.workflowRun,
         idempotencyKey: `${JOB_KINDS.workflowRun}:${runId}`,
-        payload: { workflowRunId: runId },
+        payload: { workflowRunId: runId, trigger },
         maxAttempts: 3,
       })
 

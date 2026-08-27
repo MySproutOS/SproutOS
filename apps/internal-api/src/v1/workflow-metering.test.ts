@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { workflowJobsOutboxRecord } from "./workflow-metering"
+import { workflowJobsOutboxRecord } from "@lib/jobs"
 
 const input = {
   runId: "01990a1d-a9ea-7000-8000-000000000001",

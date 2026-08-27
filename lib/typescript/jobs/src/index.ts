@@ -26,6 +26,7 @@ export {
 } from "./upkeep-decision"
 export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
+export { runDueWorkflowSchedules } from "./workflow-schedule"
 export {
   destroySandbox,
   reconcileSandboxes,
@@ -77,7 +78,11 @@ export {
   workflowRunJob,
   type WorkflowRunPayload,
 } from "./workflow-run"
-export { WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU } from "./workflow-metering"
+export {
+  WORKFLOW_EXEC_GIB,
+  WORKFLOW_EXEC_VCPU,
+  workflowJobsOutboxRecord,
+} from "./workflow-metering"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export {
   deactivateStaticHost,

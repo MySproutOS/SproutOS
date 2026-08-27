@@ -44,7 +44,7 @@ import { recordWorkflowExecution } from "./workflow-metering"
  */
 export const WORKFLOW_RUN_KIND = "workflow.run"
 
-export type WorkflowRunPayload = { workflowRunId: string }
+export type WorkflowRunPayload = { workflowRunId: string; trigger?: unknown }
 
 /** How long a `control.delay` may hold a worker. Longer belongs to a scheduler, not a held lease. */
 export const MAX_DELAY_MS = 30_000
@@ -147,6 +147,7 @@ export async function runWorkflow(
           nodeId: step.nodeId,
           nodeType: step.nodeType,
           config: (step.input as Record<string, unknown> | null) ?? {},
+          trigger: payload.trigger,
         })
 
         /*
