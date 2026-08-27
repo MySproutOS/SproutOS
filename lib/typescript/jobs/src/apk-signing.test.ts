@@ -140,9 +140,15 @@ describe.runIf(reachable)("the APK signing queue", () => {
       claimSigningJob(db, "signer-b"),
     ])
 
-    const winners = [first, second].filter((claim) => claim?.id === jobId)
+    const winners = [
+      { claim: first, signerId: "signer-a" },
+      { claim: second, signerId: "signer-b" },
+    ].filter(({ claim }) => claim?.id === jobId)
     expect(winners).toHaveLength(1)
-    expect(winners[0]?.unsignedDigest).toBe("a".repeat(64))
+    expect(winners[0]?.claim?.unsignedDigest).toBe("a".repeat(64))
+    // A successful response and the durable holder must name the same winner. The old scalar
+    // subquery let both requests return the job even though the second update replaced the first.
+    expect((await statusOf(jobId)).claimedBy).toBe(winners[0]?.signerId)
   })
 
   it("offers the job again once a claim has gone stale", async () => {
