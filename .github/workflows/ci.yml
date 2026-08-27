@@ -506,3 +506,4 @@ jobs:
           bash bin/fill-idle.test.sh
           bash bin/cutover.test.sh
           bash bin/user-data.test.sh
+          bash .claude/hooks/check-direction.test.sh

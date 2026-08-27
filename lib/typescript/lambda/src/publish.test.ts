@@ -1,4 +1,9 @@
-import { GetAliasCommand, InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda"
+import {
+  GetAliasCommand,
+  GetFunctionConfigurationCommand,
+  InvokeCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda"
 import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { deflateRawSync } from "node:zlib"
 import { afterAll, describe, expect, it } from "vitest"
@@ -119,6 +124,18 @@ function handlerFor(marker: string): Buffer {
   ])
 }
 
+/** The same observable handler on another runtime, so rollback proves configuration as well as code. */
+function pythonHandlerFor(marker: string): Buffer {
+  return zip([
+    {
+      name: "index.py",
+      content:
+        "def handler(event, context):\n" +
+        `    return {"statusCode": 200, "body": ${JSON.stringify(marker)}}\n`,
+    },
+  ])
+}
+
 async function upload(key: string, body: Buffer): Promise<void> {
   await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body }))
 }
@@ -140,6 +157,25 @@ async function invokeLive(): Promise<string> {
   )
   const payload = Buffer.from(response.Payload ?? new Uint8Array()).toString("utf8")
   return (JSON.parse(payload) as { body: string }).body
+}
+
+async function liveConfiguration(): Promise<{
+  runtime: string | undefined
+  handler: string | undefined
+}> {
+  const alias = await lambda.send(
+    new GetAliasCommand({ FunctionName: functionName(projectId), Name: LIVE_ALIAS }),
+  )
+  const response = await lambda.send(
+    new GetFunctionConfigurationCommand({
+      FunctionName: functionName(projectId),
+      // LocalStack does not resolve an alias on this read even though AWS does. Resolve the alias
+      // explicitly, then inspect the exact immutable version it names; that is also the property
+      // the test means to assert.
+      Qualifier: alias.FunctionVersion,
+    }),
+  )
+  return { runtime: response.Runtime, handler: response.Handler }
 }
 
 afterAll(() => {
@@ -178,23 +214,24 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
     // roll back to.
     expect(result.version).not.toBe("$LATEST")
     expect(await invokeLive()).toBe("first")
+    expect(await liveConfiguration()).toEqual({ runtime: "nodejs22.x", handler: "index.handler" })
     firstVersion = result.version
   }, 120_000)
 
-  it("moves the alias on the second deployment, leaving the first version invokable", async () => {
+  it("moves the alias to a deployment on another runtime, leaving the first version invokable", async () => {
     const alias = await lambda.send(
       new GetAliasCommand({ FunctionName: functionName(projectId), Name: LIVE_ALIAS }),
     )
     expect(alias.FunctionVersion).toBe(firstVersion)
 
-    await upload("v2.zip", handlerFor("second"))
+    await upload("v2.zip", pythonHandlerFor("second"))
     const result = await publishFunction(lambda, {
       projectId,
       organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
       bucket: BUCKET,
       key: "v2.zip",
       handler: "index.handler",
-      runtime: "nodejs22.x" as const,
+      runtime: "python3.13" as const,
       memoryMb: 128,
       timeoutS: 10,
       roleArn: ROLE,
@@ -202,18 +239,21 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
 
     expect(result.version).not.toBe(firstVersion)
     expect(await invokeLive()).toBe("second")
+    expect(await liveConfiguration()).toEqual({ runtime: "python3.13", handler: "index.handler" })
     secondVersion = result.version
   }, 120_000)
 
-  it("rolls back with one call and no rebuild", async () => {
+  it("rolls back code and runtime with one alias move and no rebuild", async () => {
     // The whole reason releases are versions behind an alias. Nothing is uploaded here and no
     // configuration changes — the previous version was never deleted, so pointing at it is enough.
     const name = functionName(projectId)
     await pointAlias(lambda, name, firstVersion)
 
     expect(await invokeLive()).toBe("first")
+    expect(await liveConfiguration()).toEqual({ runtime: "nodejs22.x", handler: "index.handler" })
 
     await pointAlias(lambda, name, secondVersion)
     expect(await invokeLive()).toBe("second")
+    expect(await liveConfiguration()).toEqual({ runtime: "python3.13", handler: "index.handler" })
   }, 120_000)
 })
