@@ -183,6 +183,11 @@ pub enum Upstream {
 /// Opens the upstream named by `raw`, negotiating TLS when the scheme asks for it and
 /// authenticating when the address carries a credential.
 pub async fn connect(raw: &str) -> Result<Upstream> {
+    connect_as(raw, None).await
+}
+
+/// Opens the upstream, authenticating as `credentials` instead of the administrator in the URL.
+pub async fn connect_as(raw: &str, credentials: Option<&Credentials>) -> Result<Upstream> {
     let backend = parse_backend(raw)?;
     let stream = TcpStream::connect(&backend.address)
         .await
@@ -202,11 +207,18 @@ pub async fn connect(raw: &str) -> Result<Upstream> {
         Upstream::Plain(stream)
     };
 
-    if let Some(credentials) = &backend.credentials {
+    if let Some(credentials) = credentials.or(backend.credentials.as_ref()) {
         authenticate(&mut upstream, credentials, &backend.host).await?;
     }
 
     Ok(upstream)
+}
+
+/// Whether a failed connection was rejected because its ACL user is absent or stale.
+pub fn is_wrongpass(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string().contains("WRONGPASS"))
 }
 
 /*

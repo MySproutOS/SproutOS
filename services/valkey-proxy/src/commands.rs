@@ -22,6 +22,141 @@ pub enum KeySpec {
     RangeExceptLast { first: usize, step: usize },
 }
 
+/// Commands which can reach the tenant upstream. The ACL provisioner grants exactly these.
+pub const FORWARDED_COMMANDS: &[&str] = &[
+    "PING",
+    "ECHO",
+    "QUIT",
+    "GET",
+    "GETDEL",
+    "GETEX",
+    "INCR",
+    "DECR",
+    "STRLEN",
+    "TTL",
+    "PTTL",
+    "PERSIST",
+    "TYPE",
+    "DUMP",
+    "SET",
+    "SETNX",
+    "SETEX",
+    "PSETEX",
+    "GETSET",
+    "APPEND",
+    "INCRBY",
+    "DECRBY",
+    "INCRBYFLOAT",
+    "EXPIRE",
+    "PEXPIRE",
+    "EXPIREAT",
+    "PEXPIREAT",
+    "MGET",
+    "DEL",
+    "UNLINK",
+    "EXISTS",
+    "TOUCH",
+    "WATCH",
+    "MSET",
+    "MSETNX",
+    "RENAME",
+    "RENAMENX",
+    "COPY",
+    "SMOVE",
+    "HGET",
+    "HSET",
+    "HDEL",
+    "HGETALL",
+    "HKEYS",
+    "HVALS",
+    "HLEN",
+    "HEXISTS",
+    "HINCRBY",
+    "HINCRBYFLOAT",
+    "HMGET",
+    "HMSET",
+    "HSETNX",
+    "HRANDFIELD",
+    "HSCAN",
+    "LPUSH",
+    "RPUSH",
+    "LPUSHX",
+    "RPUSHX",
+    "LPOP",
+    "RPOP",
+    "LLEN",
+    "LRANGE",
+    "LREM",
+    "LSET",
+    "LTRIM",
+    "LINSERT",
+    "LINDEX",
+    "LPOS",
+    "RPOPLPUSH",
+    "LMOVE",
+    "BLPOP",
+    "BRPOP",
+    "BRPOPLPUSH",
+    "BLMOVE",
+    "SADD",
+    "SREM",
+    "SMEMBERS",
+    "SISMEMBER",
+    "SMISMEMBER",
+    "SCARD",
+    "SPOP",
+    "SRANDMEMBER",
+    "SSCAN",
+    "SINTER",
+    "SUNION",
+    "SDIFF",
+    "ZADD",
+    "ZREM",
+    "ZSCORE",
+    "ZCARD",
+    "ZCOUNT",
+    "ZRANGE",
+    "ZREVRANGE",
+    "ZRANGEBYSCORE",
+    "ZREVRANGEBYSCORE",
+    "ZRANGEBYLEX",
+    "ZRANK",
+    "ZREVRANK",
+    "ZINCRBY",
+    "ZREMRANGEBYSCORE",
+    "ZREMRANGEBYRANK",
+    "ZREMRANGEBYLEX",
+    "ZSCAN",
+    "ZPOPMIN",
+    "ZPOPMAX",
+    "ZRANDMEMBER",
+    "BZPOPMIN",
+    "BZPOPMAX",
+    "XADD",
+    "XLEN",
+    "XRANGE",
+    "XREVRANGE",
+    "XDEL",
+    "XTRIM",
+    "XACK",
+    "XPENDING",
+    "XCLAIM",
+    "XAUTOCLAIM",
+    "XINFO",
+    "XGROUP",
+    "XSETID",
+    "EVAL",
+    "EVALSHA",
+    "EVAL_RO",
+    "EVALSHA_RO",
+    "FCALL",
+    "FCALL_RO",
+    "MULTI",
+    "EXEC",
+    "DISCARD",
+    "UNWATCH",
+];
+
 /// The commands a tenant may send, and where their keys are.
 ///
 /// BullMQ and Celery are the clients that matter, and between them they use most of this list.
@@ -32,9 +167,15 @@ pub enum KeySpec {
 pub fn key_spec(verb: &str) -> Option<KeySpec> {
     use KeySpec::{Fixed, None as NoKeys, Numkeys, Range, RangeExceptLast};
 
+    // The same list is installed into each tenant's upstream ACL. Keeping it authoritative here
+    // prevents a command from being admitted by the proxy but rejected only after reaching Valkey.
+    if !FORWARDED_COMMANDS.contains(&verb) {
+        return None;
+    }
+
     Some(match verb {
         // Connection and no-key commands.
-        "PING" | "ECHO" | "QUIT" | "HELLO" | "AUTH" => NoKeys,
+        "PING" | "ECHO" | "QUIT" => NoKeys,
 
         // Strings.
         "GET" | "GETDEL" | "GETEX" | "INCR" | "DECR" | "STRLEN" | "TTL" | "PTTL" | "PERSIST"
@@ -75,7 +216,8 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
 
         // Streams.
         "XADD" | "XLEN" | "XRANGE" | "XREVRANGE" | "XDEL" | "XTRIM" | "XACK" | "XPENDING"
-        | "XCLAIM" | "XAUTOCLAIM" | "XINFO" | "XGROUP" | "XSETID" => Fixed { first: 1, count: 1 },
+        | "XCLAIM" | "XAUTOCLAIM" | "XSETID" => Fixed { first: 1, count: 1 },
+        "XINFO" | "XGROUP" => Fixed { first: 2, count: 1 },
 
         // Scripting. BullMQ is almost entirely EVALSHA, so this is the important one.
         "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" => {
@@ -284,6 +426,30 @@ mod tests {
     fn no_key_commands_are_left_untouched() {
         assert_eq!(namespaced(&["PING"]).unwrap(), vec!["PING"]);
         assert_eq!(namespaced(&["MULTI"]).unwrap(), vec!["MULTI"]);
+    }
+
+    #[test]
+    fn acl_allowlist_and_proxy_allowlist_do_not_diverge() {
+        for command in FORWARDED_COMMANDS {
+            assert!(
+                key_spec(command).is_some(),
+                "ACL grants a refused command: {command}"
+            );
+        }
+        assert!(key_spec("AUTH").is_none());
+        assert!(key_spec("HELLO").is_none());
+    }
+
+    #[test]
+    fn stream_metadata_commands_namespace_the_key_not_the_subcommand() {
+        assert_eq!(
+            namespaced(&["XINFO", "STREAM", "jobs"]).unwrap(),
+            ["XINFO", "STREAM", "{kv:01hb}:jobs"]
+        );
+        assert_eq!(
+            namespaced(&["XGROUP", "CREATE", "jobs", "$", "MKSTREAM"]).unwrap(),
+            ["XGROUP", "CREATE", "{kv:01hb}:jobs", "$", "MKSTREAM"]
+        );
     }
 }
 

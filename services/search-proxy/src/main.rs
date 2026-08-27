@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::any;
+use search_proxy::security::SecurityManager;
 use search_proxy::{Proxy, handle};
 use sproutos_service_credentials::CredentialStore;
 use tracing::info;
@@ -40,15 +41,23 @@ async fn main() -> anyhow::Result<()> {
     // into an operational error.
     store.check().await?;
 
+    let client = reqwest::Client::builder()
+        // The tenant's own timeout is what should govern a slow query; this only bounds a
+        // cluster that has stopped answering at all.
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let security_root_key = std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY").map_err(|_| {
+        anyhow::anyhow!(
+            "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; server-enforced tenant isolation is required"
+        )
+    })?;
+    let security = SecurityManager::new(client.clone(), upstream.clone(), security_root_key)?;
+
     let proxy = Arc::new(Proxy {
         store,
         upstream: upstream.clone(),
-        upstream_authorization: std::env::var("SEARCH_PROXY_UPSTREAM_AUTHORIZATION").ok(),
-        client: reqwest::Client::builder()
-            // The tenant's own timeout is what should govern a slow query; this only bounds a
-            // cluster that has stopped answering at all.
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?,
+        client,
+        security,
     });
 
     let app = Router::new().fallback(any(handle)).with_state(proxy);

@@ -8,12 +8,10 @@
 //! client at this as though it were their own cluster; it authenticates them, rewrites every index
 //! name they mention into their own namespace, and forwards to the shared cluster.
 //!
-//! This proxy authenticates and namespaces every supported request, but it is not yet a complete
-//! isolation boundary by itself. OpenSearch's Apache-2.0 Security plugin supports index-pattern
-//! roles; until per-tenant roles are enabled underneath this proxy, a search-body construct not
-//! represented in `routes.rs` or `body.rs` could still name another index. The proxy remains
-//! necessary for namespacing, its narrow route surface, and metering; the server-side role is what
-//! will make a missed body shape fail closed.
+//! This proxy authenticates and namespaces every supported request, then authenticates upstream as
+//! a matching OpenSearch internal user whose role can access only that namespace. The parser keeps
+//! customer-facing names tidy and narrows the API; the server-enforced role is the backstop that
+//! makes a missed present or future body shape fail closed.
 //!
 //! Rust because it sits in front of every search request a tenant makes, and because the rewriting
 //! is byte work on bodies that can be megabytes.
@@ -21,6 +19,7 @@
 pub mod body;
 pub mod naming;
 pub mod routes;
+pub mod security;
 
 use std::sync::Arc;
 
@@ -35,6 +34,7 @@ use tracing::warn;
 
 use crate::body::{rewrite_mget, rewrite_ndjson, strip_prefix_from_response};
 use crate::routes::{Plan, RouteError, plan, validate_query};
+use crate::security::SecurityManager;
 
 /// The largest body this proxy will hold.
 ///
@@ -47,23 +47,9 @@ pub struct Proxy {
     pub store: Arc<CredentialStore>,
     pub upstream: String,
     pub client: reqwest::Client,
-    /*
-      What this proxy presents to the cluster, when the cluster asks for anything.
-
-      OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` because *this* is meant to be its security
-      boundary — which is true right up to the moment the cluster has to be reachable across a
-      network. Then "the proxy is the boundary" needs the cluster to be unreachable by anything
-      else, and an IP allowlist cannot provide that here: the platform's tenant functions egress
-      through the same NAT address the allowlist would have to admit.
-
-      So the cluster gets a second lock, and this is the key to it. `None` where the upstream is
-      genuinely private — a loopback port, or a compose network — because a credential nothing
-      checks is a credential to rotate for no reason.
-
-      Compare the ClickHouse route on the same host, whose comment puts it exactly: "Two locks, not
-      one. ClickHouse's own user and password still apply; this restricts *who may reach the door*."
-    */
-    pub upstream_authorization: Option<String>,
+    /// Provisions the server-enforced role before forwarding. Required: there is deliberately no
+    /// parser-only mode, because it would turn a missing deployment secret into weaker isolation.
+    pub security: SecurityManager,
 }
 
 /// Headers that must not be forwarded upstream.
@@ -82,6 +68,8 @@ const STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "transfer-encoding",
     "upgrade",
     "content-length",
+    "x-proxy-user",
+    "x-proxy-roles",
 ];
 
 /// Headers that must not be forwarded back.
@@ -164,6 +152,17 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         return error(StatusCode::UNAUTHORIZED, "Invalid username or password");
     }
 
+    let security_identity = match proxy.security.ensure(&identity, &prefix).await {
+        Ok(identity) => identity,
+        Err(cause) => {
+            warn!(tenant = %identity, %cause, "tenant security provisioning failed");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The service is temporarily unavailable; retry shortly",
+            );
+        }
+    };
+
     let planned = match plan(&prefix, &parts.method, parts.uri.path()) {
         Ok(planned) => planned,
         Err(RouteError::Refused(endpoint)) => {
@@ -220,7 +219,7 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         &path,
         &parts.headers,
         forwarded,
-        &prefix,
+        &security_identity,
     )
     .await
 }
@@ -232,7 +231,7 @@ async fn forward(
     path: &str,
     headers: &HeaderMap,
     body: Bytes,
-    prefix: &str,
+    security: &crate::security::TenantSecurityIdentity,
 ) -> Response {
     let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
     let target = format!("{}{path}{query}", proxy.upstream.trim_end_matches('/'));
@@ -253,9 +252,9 @@ async fn forward(
       header would overwrite it on the next iteration, and the request would reach the cluster
       carrying a credential the cluster has never heard of — which fails closed, but only by luck.
     */
-    if let Some(authorization) = &proxy.upstream_authorization {
-        request = request.header("authorization", authorization);
-    }
+    // Set after tenant-controlled Authorization has been stripped. This is a matching OpenSearch
+    // internal user with an HMAC-derived password that is never stored or given to the tenant.
+    request = request.basic_auth(&security.user, Some(&security.password));
 
     let response = match request.send().await {
         Ok(response) => response,
@@ -285,7 +284,7 @@ async fn forward(
 
     // Every response, not only successful ones: an OpenSearch error message names the index it
     // objected to, and that name is the namespaced one.
-    let stripped = strip_prefix_from_response(prefix, &payload);
+    let stripped = strip_prefix_from_response(&security.index_prefix, &payload);
 
     let mut out = Response::builder().status(status);
     for (name, value) in &upstream_headers {
@@ -318,5 +317,15 @@ mod tests {
             "accept-encoding"
         )));
         assert!(!strip_request_header(&HeaderName::from_static("accept")));
+    }
+
+    #[test]
+    fn tenant_cannot_assert_an_opensearch_identity() {
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-proxy-user"
+        )));
+        assert!(strip_request_header(&HeaderName::from_static(
+            "x-proxy-roles"
+        )));
     }
 }

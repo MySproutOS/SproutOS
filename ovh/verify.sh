@@ -29,12 +29,21 @@ done
 
 echo
 echo "memory"
+# Security is part of the data boundary. It must be checked before authenticated diagnostics so a
+# bad password cannot masquerade below as a JSON/parser failure.
+anonymous=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:9200/)
+check "opensearch anonymous HTTP" "$anonymous" "401"
+authenticated=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+  -u "$SEARCH_ADMIN_USER:$SEARCH_ADMIN_PASSWORD" http://localhost:9200/)
+check "opensearch admin HTTP" "$authenticated" "200"
 # Above ~32 GB the JVM drops compressed ordinary object pointers and a 40-50 GB heap is then needed
 # to hold what fit in 31. Reading the flag is the only way to know it did not happen.
-heap=$(curl -s --max-time 10 "localhost:9200/_nodes/jvm?filter_path=nodes.*.jvm.mem.heap_max_in_bytes" \
+heap=$(curl -s --max-time 10 -u "$SEARCH_ADMIN_USER:$SEARCH_ADMIN_PASSWORD" \
+  "localhost:9200/_nodes/jvm?filter_path=nodes.*.jvm.mem.heap_max_in_bytes" \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(round(list(d["nodes"].values())[0]["jvm"]["mem"]["heap_max_in_bytes"]/2**30))')
 check "opensearch heap GiB" "$heap" "30"
-oops=$(curl -s --max-time 10 "localhost:9200/_nodes/jvm?filter_path=nodes.*.jvm.using_compressed_ordinary_object_pointers" \
+oops=$(curl -s --max-time 10 -u "$SEARCH_ADMIN_USER:$SEARCH_ADMIN_PASSWORD" \
+  "localhost:9200/_nodes/jvm?filter_path=nodes.*.jvm.using_compressed_ordinary_object_pointers" \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(str(list(d["nodes"].values())[0]["jvm"]["using_compressed_ordinary_object_pointers"]).lower())')
 check "opensearch compressed oops" "$oops" "true"
 
@@ -66,6 +75,27 @@ ttl=$($CH "select if(position(create_table_query, 'toIntervalDay(3)') > 0, 'yes'
 check "runtime_log 3-day TTL" "${ttl:-error}" "yes"
 idx=$($CH "select count() from system.data_skipping_indices where database='sproutos' and table='runtime_log'" 2>/dev/null)
 check "runtime_log skip index" "${idx:-error}" "1"
+
+# A malformed bill must go to a durable, alerting DLQ without stopping consumption of later rows.
+queue_ddl=$(sudo docker exec sproutos_clickhouse clickhouse-client \
+  --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --format TSVRaw \
+  -q "show create table sproutos.usage_event_queue" 2>/dev/null)
+case "$queue_ddl" in
+  *"kafka_handle_error_mode = 'stream'"*) error_mode=stream ;;
+  *) error_mode=missing ;;
+esac
+check "usage Kafka poison handling" "$error_mode" "stream"
+dlq=$($CH "select count() from sproutos.usage_event_dead_letter" 2>/dev/null)
+check "usage dead-letter rows" "${dlq:-error}" "0"
+
+backup_marker=$(sudo cat /var/lib/sproutos/clickhouse-backup/last-success 2>/dev/null || true)
+backup_epoch=${backup_marker%%$'\t'*}
+if [[ "$backup_epoch" =~ ^[0-9]+$ ]] && [ $(( $(date -u +%s) - backup_epoch )) -le 108000 ]; then
+  backup_state=fresh
+else
+  backup_state=missing-or-stale
+fi
+check "ClickHouse metering backup" "$backup_state" "fresh"
 
 echo
 echo "kafka"

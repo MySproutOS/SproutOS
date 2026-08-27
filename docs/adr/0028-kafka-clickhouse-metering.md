@@ -76,9 +76,12 @@ history is intentionally not migrated: production has no customer history that m
 - The TypeScript outbox may hold Postgres row locks while waiting for bounded Kafka and Valkey
   acknowledgements. This is deliberately bounded and observable; a future lease state can reduce
   lock duration without changing delivery semantics.
-- ClickHouse backup, restore drills, every remaining dimension emitter, and limit enforcement are
-  separate rollout requirements. This ADR does not call them deployed merely because the raw path
-  exists in code.
+- ClickHouse backup and poison-message handling are implemented in the repository: native backups
+  use a restricted env-credentialed S3 disk, scheduled health checks make stale/failed backups and
+  DLQ rows red, and a restore drill verifies an embedded snapshot manifest. They remain
+  **production verification pending** until the bucket is applied, the runtime-only key is placed
+  on OVH, the initial backup succeeds, and the restore drill passes there. Every remaining
+  dimension emitter and limit enforcement are still separate rollout requirements.
 - Daytona sandbox verification and the LLM proxy's real OAuth/model call remain governed by the
   sandbox handoff. They are not implied by Docker or stub-provider tests.
 

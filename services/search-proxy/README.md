@@ -111,12 +111,13 @@ drifted.
 
 ## Configuration
 
-| Variable                    | Default                      | What it is                            |
-| --------------------------- | ---------------------------- | ------------------------------------- |
-| `SEARCH_PROXY_LISTEN`       | `0.0.0.0:9200`               | Where tenants connect                 |
-| `SEARCH_PROXY_UPSTREAM`     | `http://127.0.0.1:9200`      | The shared cluster                    |
-| `SEARCH_PROXY_DATABASE_URL` | falls back to `DATABASE_URL` | Control plane, for credential lookups |
-| `SEARCH_PROXY_DB_POOL`      | `8`                          | Control-plane connections             |
+| Variable                         | Default                      | What it is                            |
+| -------------------------------- | ---------------------------- | ------------------------------------- |
+| `SEARCH_PROXY_LISTEN`            | `0.0.0.0:9200`               | Where tenants connect                 |
+| `SEARCH_PROXY_UPSTREAM`          | `http://127.0.0.1:9200`      | The shared cluster                    |
+| `SEARCH_PROXY_DATABASE_URL`      | falls back to `DATABASE_URL` | Control plane, for credential lookups |
+| `SEARCH_PROXY_DB_POOL`           | `8`                          | Control-plane connections             |
+| `SEARCH_PROXY_SECURITY_ROOT_KEY` | required                     | HMAC root for internal tenant users   |
 
 Unlike the Valkey proxy, a lookup happens **per request** rather than per connection, because HTTP
 connections are pooled and reused across tenants by intermediaries. That is why the pool is larger

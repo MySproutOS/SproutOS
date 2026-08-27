@@ -80,10 +80,13 @@ jobs:
         env:
           discovery.type: single-node
           OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-          DISABLE_SECURITY_PLUGIN: true
-          DISABLE_INSTALL_DEMO_CONFIG: true
+          DISABLE_SECURITY_PLUGIN: false
+          DISABLE_INSTALL_DEMO_CONFIG: false
+          OPENSEARCH_INITIAL_ADMIN_PASSWORD: L0cal!Windmill-Quartz-83
+          plugins.security.ssl.http.enabled: false
+          plugins.security.restapi.roles_enabled: all_access
         options: >-
-          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-cmd "curl -sf -u admin:L0cal!Windmill-Quartz-83 http://localhost:9200/_cluster/health || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
@@ -101,6 +104,9 @@ jobs:
       SERVICE_POSTGRES_PUBLIC_HOST: localhost
       SERVICE_SEARCH_PUBLIC_HOST: localhost
       SEARCH_ADMIN_URL: http://127.0.0.1:29200
+      SEARCH_ADMIN_USER: admin
+      SEARCH_ADMIN_PASSWORD: L0cal!Windmill-Quartz-83
+      SEARCH_PROXY_SECURITY_ROOT_KEY: local-search-security-root-key-32-bytes
       CLICKHOUSE_URL: http://127.0.0.1:28123
       CLICKHOUSE_DATABASE: observability
       # The SDK-standard override, which `lib/typescript/utils/aws` keys on. Absent, every AWS call
@@ -148,6 +154,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Bootstrap OpenSearch Security
+        run: bash bin/bootstrap-opensearch-security.sh
 
       - name: Cache for Turbo
         uses: rharkor/caching-for-turbo@v2.4.2
@@ -260,10 +269,13 @@ jobs:
         env:
           discovery.type: single-node
           OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-          DISABLE_SECURITY_PLUGIN: true
-          DISABLE_INSTALL_DEMO_CONFIG: true
+          DISABLE_SECURITY_PLUGIN: false
+          DISABLE_INSTALL_DEMO_CONFIG: false
+          OPENSEARCH_INITIAL_ADMIN_PASSWORD: L0cal!Windmill-Quartz-83
+          plugins.security.ssl.http.enabled: false
+          plugins.security.restapi.roles_enabled: all_access
         options: >-
-          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-cmd "curl -sf -u admin:L0cal!Windmill-Quartz-83 http://localhost:9200/_cluster/health || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
@@ -318,6 +330,9 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/main
       VALKEY_PROXY_BACKEND: 127.0.0.1:41023
       SEARCH_PROXY_UPSTREAM: http://127.0.0.1:29200
+      SEARCH_ADMIN_USER: admin
+      SEARCH_ADMIN_PASSWORD: L0cal!Windmill-Quartz-83
+      SEARCH_PROXY_SECURITY_ROOT_KEY: local-search-security-root-key-32-bytes
       KAFKA_BROKERS: localhost:29092
       CLICKHOUSE_URL: http://localhost:28123
       # This job provides Kafka, so a skipped producer test here is a real silent skip and must fail.
@@ -343,6 +358,9 @@ jobs:
       # produced successfully and read back never.
       - name: Bootstrap Kafka and ClickHouse
         run: bash bin/ci-bootstrap-logs.sh
+
+      - name: Bootstrap OpenSearch Security
+        run: bash bin/bootstrap-opensearch-security.sh
 
       - name: Format
         run: cargo fmt --all -- --check

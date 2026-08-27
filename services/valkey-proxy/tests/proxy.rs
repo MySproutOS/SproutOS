@@ -19,6 +19,7 @@ use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 use valkey_proxy::CredentialStore;
 use valkey_proxy::master::MasterQueue;
+use valkey_proxy::provision::AclProvisioner;
 
 /// The shared Valkey these tests proxy to.
 ///
@@ -90,6 +91,33 @@ impl Client {
             .expect("the proxy did not reply in time")
             .expect("read");
         String::from_utf8_lossy(&buffer[..read]).into_owned()
+    }
+
+    async fn pipeline(&mut self, commands: &[&[&str]]) -> Vec<String> {
+        let mut out = String::new();
+        for args in commands {
+            out.push_str(&format!("*{}\r\n", args.len()));
+            for arg in *args {
+                out.push_str(&format!("${}\r\n{arg}\r\n", arg.len()));
+            }
+        }
+        self.stream
+            .write_all(out.as_bytes())
+            .await
+            .expect("write pipeline");
+
+        let mut buffer = bytes::BytesMut::new();
+        let mut replies = Vec::new();
+        while replies.len() < commands.len() {
+            tokio::time::timeout(Duration::from_secs(5), self.stream.read_buf(&mut buffer))
+                .await
+                .expect("the proxy did not reply to the pipeline in time")
+                .expect("read pipeline");
+            while let Some(framed) = valkey_proxy::reply::frame(&buffer).expect("valid reply") {
+                replies.push(String::from_utf8_lossy(&buffer.split_to(framed.len)).into_owned());
+            }
+        }
+        replies
     }
 }
 
@@ -220,6 +248,14 @@ async fn start(url: &str, master: MasterQueue) -> SocketAddr {
     // A `String`, matching what `serve` now takes. The proxy resolves it per connection, so a
     // DNS name works here exactly as it does in production — which a `SocketAddr` never did.
     let backend = std::sync::Arc::new(backend());
+    let provisioner = std::sync::Arc::new(
+        AclProvisioner::new(
+            backend.as_ref().clone(),
+            b"integration-test-acl-root-key-32-bytes".to_vec(),
+        )
+        .expect("ACL provisioner"),
+    );
+    provisioner.self_check().await.expect("ACL self-check");
     let master = std::sync::Arc::new(master);
 
     tokio::spawn(async move {
@@ -228,10 +264,10 @@ async fn start(url: &str, master: MasterQueue) -> SocketAddr {
                 return;
             };
             let store = std::sync::Arc::clone(&store);
-            let backend = std::sync::Arc::clone(&backend);
+            let provisioner = std::sync::Arc::clone(&provisioner);
             let master = std::sync::Arc::clone(&master);
             tokio::spawn(async move {
-                let _ = valkey_proxy::serve(client, &backend, &store, &master).await;
+                let _ = valkey_proxy::serve(client, &store, &provisioner, &master).await;
             });
         }
     });
@@ -435,6 +471,150 @@ async fn a_refused_command_does_not_end_the_connection() {
     assert!(refused.starts_with("-ERR"), "{refused}");
     assert_eq!(client.send(&["PING"]).await, "+PONG\r\n");
 
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn local_replies_keep_their_place_in_a_pipeline() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    let replies = client
+        .pipeline(&[
+            &["SET", "ordered", "yes"],
+            &["AUTH", "again", "again"],
+            &["GET", "ordered"],
+        ])
+        .await;
+    assert_eq!(replies[0], "+OK\r\n");
+    assert!(replies[1].contains("AUTH is not allowed"), "{:?}", replies);
+    assert_eq!(replies[2], "$3\r\nyes\r\n");
+
+    assert!(
+        client
+            .send(&["HELLO", "3"])
+            .await
+            .contains("RESP3 is not supported")
+    );
+    assert!(
+        client
+            .send(&["HELLO", "2"])
+            .await
+            .contains("$5\r\nproto\r\n:2")
+    );
+    client.send(&["DEL", "ordered"]).await;
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn a_missing_cached_acl_user_is_reprovisioned_once() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut first = Client::connect(address).await;
+    assert_eq!(first.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+    assert_eq!(first.send(&["PING"]).await, "+PONG\r\n");
+
+    let mut admin = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(admin.send(&["ACL", "DELUSER", &username]).await, ":1\r\n");
+
+    let mut recovered = Client::connect(address).await;
+    assert_eq!(
+        recovered.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(recovered.send(&["PING"]).await, "+PONG\r\n");
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn backend_acl_rejects_another_tenants_key_and_admin_commands() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service, fixtures) = provision(&url).await;
+    let mut through_proxy = Client::connect(address).await;
+    assert_eq!(
+        through_proxy.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    // AUTH is acknowledged after the control-plane check; the first proxied command proves the
+    // lazy upstream ACL provisioning has completed before we connect to Valkey directly below.
+    assert_eq!(through_proxy.send(&["PING"]).await, "+PONG\r\n");
+
+    let identity = sproutos_tenant_auth::TenantIdentity::new(
+        fixtures[0],
+        sproutos_tenant_auth::ResourceKind::Queue,
+        service,
+    );
+    let acl = valkey_proxy::acl::credentials(b"integration-test-acl-root-key-32-bytes", &identity);
+    let mut direct = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(
+        direct.send(&["AUTH", &acl.username, &acl.password]).await,
+        "+OK\r\n"
+    );
+    let foreign = direct
+        .send(&["GET", "{kv:00000000000000000000000000}:secret"])
+        .await;
+    assert!(foreign.contains("NOPERM"), "{foreign}");
+    let administrative = direct.send(&["DBSIZE"]).await;
+    assert!(administrative.contains("NOPERM"), "{administrative}");
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn a_non_queue_credential_cannot_enter_the_valkey_proxy() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (_queue_username, _queue_secret, service, fixtures) = provision(&url).await;
+    let organization = fixtures[0];
+    let identity = sproutos_tenant_auth::TenantIdentity::new(
+        organization,
+        sproutos_tenant_auth::ResourceKind::Database,
+        service,
+    );
+    let username = identity.username();
+    let secret = sproutos_tenant_auth::generate_secret();
+    let (database, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    database.execute(
+        "insert into service_credential (id, backend_service_id, username, secret_hash, last_four) values ($1, $2, $3, $4, $5)",
+        &[&Uuid::now_v7(), &service, &username, &sproutos_tenant_auth::hash_generated_secret(&secret), &&secret[secret.len() - 4..]],
+    ).await.unwrap();
+
+    let mut client = Client::connect(address).await;
+    assert!(
+        client
+            .send(&["AUTH", &username, &secret])
+            .await
+            .starts_with("-ERR WRONGPASS")
+    );
     cleanup(&url, &fixtures).await;
 }
 

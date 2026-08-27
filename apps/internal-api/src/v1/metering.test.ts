@@ -10,6 +10,9 @@ import {
 } from "@lib/metering"
 import {
   clickhouse,
+  usageBackupManifestDdl,
+  usageEventDeadLetterDdl,
+  usageEventDeadLetterViewDdl,
   usageEventMaterializedViewDdl,
   usageEventQueueDdl,
   usageEventRawDdl,
@@ -382,8 +385,22 @@ describe.skipIf(!reachable)("metering ingest", () => {
       const database = process.env.CLICKHOUSE_DATABASE ?? "observability"
       await clickhouse().command({ query: usageEventRawDdl(database) })
       await clickhouse().command({ query: usageEventStoredAtDdl(database) })
+      await clickhouse().command({ query: usageEventDeadLetterDdl(database) })
+      await clickhouse().command({ query: usageBackupManifestDdl(database) })
+      // Kafka engine settings cannot be altered. Mirror the production schema upgrader before
+      // asserting the poison-message-safe consumer rather than silently reusing an old table.
+      await clickhouse().command({
+        query: `drop view if exists ${database}.usage_event_mv`,
+      })
+      await clickhouse().command({
+        query: `drop view if exists ${database}.usage_event_dead_letter_mv`,
+      })
+      await clickhouse().command({
+        query: `drop table if exists ${database}.usage_event_queue sync`,
+      })
       await clickhouse().command({ query: usageEventQueueDdl("kafka:9092", topic, database) })
       await clickhouse().command({ query: usageEventMaterializedViewDdl(database) })
+      await clickhouse().command({ query: usageEventDeadLetterViewDdl(database) })
 
       const batch = batchOf([{ dimension: "site_request", quantity: 7 }])
       const event = batch.events[0]

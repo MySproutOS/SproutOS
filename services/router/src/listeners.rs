@@ -59,6 +59,17 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         .await
         .context("the Valkey split cannot reach the control-plane database")?;
 
+    let acl_root_key = std::env::var("VALKEY_PROXY_ACL_ROOT_KEY")
+        .context("VALKEY_PROXY_ACL_ROOT_KEY is required when the Valkey split is enabled")?;
+    let provisioner = Arc::new(valkey_proxy::provision::AclProvisioner::new(
+        backend.as_ref().clone(),
+        acl_root_key.into_bytes(),
+    )?);
+    provisioner
+        .self_check()
+        .await
+        .context("the Valkey split's administrator cannot manage ACL users")?;
+
     let master = if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
         tracing::info!("master queue enabled; enqueues will be reported for dispatch");
         Arc::new(valkey_proxy::master::MasterQueue::spawn(
@@ -83,11 +94,11 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
             match listener.accept().await {
                 Ok((client, peer)) => {
                     let store = Arc::clone(&store);
-                    let backend = Arc::clone(&backend);
                     let master = Arc::clone(&master);
+                    let provisioner = Arc::clone(&provisioner);
                     tokio::spawn(async move {
                         if let Err(cause) =
-                            valkey_proxy::serve(client, &backend, &store, &master).await
+                            valkey_proxy::serve(client, &store, &provisioner, &master).await
                         {
                             // Debug rather than warn: a client hanging up mid-command is ordinary,
                             // and a line per disconnect is how a proxy drowns its own output.
@@ -126,15 +137,27 @@ pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         .await
         .context("the search split cannot reach the control-plane database")?;
 
+    let client = reqwest::Client::builder()
+        // The tenant's own timeout is what should govern a slow query; this only bounds a
+        // cluster that has stopped answering at all.
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let security_root_key = std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY").map_err(|_| {
+        anyhow::anyhow!(
+            "SEARCH_PROXY_SECURITY_ROOT_KEY is not set; server-enforced tenant isolation is required"
+        )
+    })?;
+    let security = search_proxy::security::SecurityManager::new(
+        client.clone(),
+        upstream.clone(),
+        security_root_key,
+    )?;
+
     let proxy = Arc::new(search_proxy::Proxy {
         store,
         upstream: upstream.clone(),
-        upstream_authorization: std::env::var("SEARCH_PROXY_UPSTREAM_AUTHORIZATION").ok(),
-        client: reqwest::Client::builder()
-            // The tenant's own timeout is what should govern a slow query; this only bounds a
-            // cluster that has stopped answering at all.
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?,
+        client,
+        security,
     });
 
     let app = AxumRouter::new()

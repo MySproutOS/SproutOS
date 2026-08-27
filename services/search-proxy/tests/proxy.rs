@@ -13,10 +13,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use search_proxy::naming::prefix_for;
+use search_proxy::security::SecurityManager;
 use search_proxy::{Proxy, handle};
 use sproutos_service_credentials::CredentialStore;
 use sproutos_tenant_auth::{ResourceKind, TenantIdentity, generate_secret, hash_generated_secret};
 use uuid::Uuid;
+
+// Security-plugin configuration writes are cluster-global. The real router shares one manager and
+// serializes them; these tests each start their own proxy, so serialize the test cases as well.
+static INTEGRATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn upstream() -> String {
     std::env::var("SEARCH_PROXY_UPSTREAM").unwrap_or_else(|_| "http://127.0.0.1:29200".into())
@@ -34,7 +39,9 @@ async fn services_up(url: &str) -> bool {
         .get(upstream())
         .send()
         .await
-        .map(|response| response.status().is_success())
+        // A secured cluster answers an unauthenticated request with 401. That is healthy and is
+        // itself one of the properties this suite verifies.
+        .map(|response| !response.status().is_server_error())
         .unwrap_or(false);
     let postgres = match CredentialStore::connect(url, 2) {
         Ok(store) => store.check().await.is_ok(),
@@ -61,11 +68,19 @@ async fn services_up(url: &str) -> bool {
 /// Starts the proxy on an ephemeral port.
 async fn start_proxy(url: &str) -> SocketAddr {
     let store = Arc::new(CredentialStore::connect(url, 4).expect("credential store"));
+    let client = reqwest::Client::new();
+    let security = SecurityManager::new(
+        client.clone(),
+        upstream(),
+        std::env::var("SEARCH_PROXY_SECURITY_ROOT_KEY")
+            .unwrap_or_else(|_| "local-search-security-root-key-32-bytes".into()),
+    )
+    .expect("security manager");
     let proxy = Arc::new(Proxy {
-        upstream_authorization: None,
         store,
         upstream: upstream(),
-        client: reqwest::Client::new(),
+        client,
+        security,
     });
 
     let app = axum::Router::new()
@@ -170,6 +185,7 @@ async fn provision_kind(url: &str, resource_kind: ResourceKind) -> Tenant {
 
 #[tokio::test]
 async fn mget_cannot_name_another_tenants_index_and_refuses_unknown_fields() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -223,6 +239,7 @@ async fn mget_cannot_name_another_tenants_index_and_refuses_unknown_fields() {
 
 #[tokio::test]
 async fn query_parameters_cannot_override_the_scoped_path_or_body() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -252,6 +269,7 @@ async fn query_parameters_cannot_override_the_scoped_path_or_body() {
 
 #[tokio::test]
 async fn a_queue_credential_cannot_open_the_search_proxy() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -281,10 +299,12 @@ async fn cleanup(url: &str, tenants: &[&Tenant]) {
                 .execute("delete from \"user\" where id = $1", &[id])
                 .await;
         }
-        let _ = reqwest::Client::new()
-            .delete(format!("{}/{}*", upstream(), prefix_for(&tenant.identity)))
-            .send()
-            .await;
+        let _ = admin_request(
+            reqwest::Method::DELETE,
+            &format!("/{}*", prefix_for(&tenant.identity)),
+        )
+        .send()
+        .await;
     }
 }
 
@@ -319,8 +339,7 @@ fn unique_index(stem: &str) -> String {
 /// A request straight to OpenSearch, bypassing the proxy — the only way to see what was actually
 /// stored rather than what the proxy chose to show us.
 async fn direct(path: &str) -> String {
-    reqwest::Client::new()
-        .get(format!("{}{path}", upstream()))
+    admin_request(reqwest::Method::GET, path)
         .send()
         .await
         .expect("upstream request")
@@ -332,14 +351,26 @@ async fn direct(path: &str) -> String {
 async fn refresh() {
     // OpenSearch indexes are near-real-time: without this a document just written is not yet
     // searchable, and the test would fail for a reason that is not the code's fault.
-    let _ = reqwest::Client::new()
-        .post(format!("{}/_refresh", upstream()))
+    let _ = admin_request(reqwest::Method::POST, "/_refresh")
         .send()
         .await;
 }
 
+fn admin_request(method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    reqwest::Client::new()
+        .request(method, format!("{}{path}", upstream()))
+        .basic_auth(
+            std::env::var("SEARCH_ADMIN_USER").unwrap_or_else(|_| "admin".into()),
+            Some(
+                std::env::var("SEARCH_ADMIN_PASSWORD")
+                    .unwrap_or_else(|_| "L0cal!Windmill-Quartz-83".into()),
+            ),
+        )
+}
+
 #[tokio::test]
 async fn two_tenants_cannot_see_each_others_indices() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -411,6 +442,7 @@ async fn two_tenants_cannot_see_each_others_indices() {
 
 #[tokio::test]
 async fn a_search_response_does_not_leak_the_namespace() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -453,6 +485,7 @@ async fn a_search_response_does_not_leak_the_namespace() {
 
 #[tokio::test]
 async fn a_cluster_wide_search_returns_only_this_tenants_documents() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -485,6 +518,7 @@ async fn a_cluster_wide_search_returns_only_this_tenants_documents() {
 
 #[tokio::test]
 async fn a_bulk_body_cannot_write_outside_the_namespace() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -531,6 +565,7 @@ async fn a_bulk_body_cannot_write_outside_the_namespace() {
 
 #[tokio::test]
 async fn cluster_wide_endpoints_are_refused() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -557,6 +592,7 @@ async fn cluster_wide_endpoints_are_refused() {
 
 #[tokio::test]
 async fn an_unauthenticated_request_reaches_nothing() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -573,6 +609,7 @@ async fn an_unauthenticated_request_reaches_nothing() {
 
 #[tokio::test]
 async fn a_wrong_secret_is_refused_the_same_way_as_an_unknown_tenant() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;
@@ -617,6 +654,7 @@ async fn a_wrong_secret_is_refused_the_same_way_as_an_unknown_tenant() {
 /// and two would drift.
 #[tokio::test]
 async fn a_deleted_organizations_credentials_stop_working() {
+    let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
         return;

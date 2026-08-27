@@ -16,9 +16,11 @@
 //! This is Rust because it is per-command work on every job a tenant enqueues. A Node process
 //! between BullMQ and Valkey would pay an event-loop hop and a GC pause for what is byte-shuffling.
 
+pub mod acl;
 pub mod commands;
 pub mod keyspace;
 pub mod master;
+pub mod provision;
 pub mod reply;
 pub mod resp;
 pub mod upstream;
@@ -26,7 +28,7 @@ pub mod upstream;
 use std::collections::VecDeque;
 
 use bytes::BytesMut;
-use sproutos_tenant_auth::{TenantIdentity, encode_short_id};
+use sproutos_tenant_auth::{ResourceKind, TenantIdentity, encode_short_id};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
@@ -34,6 +36,7 @@ use tracing::{info, warn};
 use crate::commands::{adds_work, namespace_command, queue_of};
 use crate::keyspace::{prefix_for, strip};
 use crate::master::{MasterQueue, Wake};
+use crate::provision::AclProvisioner;
 use crate::reply::{echoes_key, frame};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
 pub use sproutos_service_credentials::CredentialStore;
@@ -46,8 +49,8 @@ const READ_BUFFER: usize = 16 * 1024;
 /// `backend` is a host:port string, resolved on each connection — see the note in `main.rs`.
 pub async fn serve(
     mut client: TcpStream,
-    backend: &str,
     store: &CredentialStore,
+    provisioner: &AclProvisioner,
     /*
       Where enqueues are reported, so a dispatcher can start a worker — TASK 20's second half.
 
@@ -67,7 +70,7 @@ pub async fn serve(
     };
 
     let prefix = prefix_for(&identity);
-    let upstream = upstream::connect(backend).await?;
+    let upstream = provisioner.connect(&identity).await?;
     info!(tenant = %identity, "authenticated");
 
     /*
@@ -94,7 +97,7 @@ pub async fn serve(
       Bounded, because a client can pipeline without ever reading: an unbounded queue would let one
       connection grow the proxy's memory without limit.
     */
-    let mut pending: VecDeque<String> = VecDeque::new();
+    let mut pending: VecDeque<Pending> = VecDeque::new();
     const MAX_PENDING: usize = 8192;
 
     loop {
@@ -107,10 +110,28 @@ pub async fn serve(
                     match parse_command(&mut buffer) {
                         Ok(Some(mut command)) => {
                             if pending.len() >= MAX_PENDING {
-                                client_write.write_all(&error("too many pipelined commands")).await?;
+                                // There is no free FIFO slot for a local error, and writing it now
+                                // would attach it to an earlier request. Disconnect rather than
+                                // violate RESP's only request/reply correlation mechanism.
                                 return Ok(())
                             }
                             let verb = command.verb();
+
+                            if verb == "AUTH" {
+                                pending.push_back(Pending::Local(error("AUTH is not allowed after authentication")));
+                                drain_local(&mut pending, &mut client_write).await?;
+                                continue;
+                            }
+                            if verb == "HELLO" {
+                                let reply = match command.args.get(1).map(Vec::as_slice) {
+                                    Some(b"2") => hello_two(),
+                                    Some(b"3") => error("RESP3 is not supported by this proxy"),
+                                    _ => error("HELLO requires protocol version 2"),
+                                };
+                                pending.push_back(Pending::Local(reply));
+                                drain_local(&mut pending, &mut client_write).await?;
+                                continue;
+                            }
 
                             /*
                               The queue name, read before namespacing.
@@ -129,7 +150,8 @@ pub async fn serve(
                             match namespace_command(&mut command.args, &prefix) {
                                 Ok(_) => {
                                     upstream_write.write_all(&command.encode()).await?;
-                                    pending.push_back(verb);
+                                    let rewrite = if echoes_key(&verb) { ReplyRewrite::FirstKey } else { ReplyRewrite::None };
+                                    pending.push_back(Pending::Upstream { rewrite });
 
                                     // After the forward, not before. A wake for a command the
                                     // backend never received would start a worker for a job that
@@ -146,7 +168,8 @@ pub async fn serve(
                                     // on and the connection stays usable. Nothing is queued,
                                     // because nothing was sent.
                                     warn!(tenant = %identity, %verb, reason, "refused");
-                                    client_write.write_all(&error(reason)).await?;
+                                    pending.push_back(Pending::Local(error(reason)));
+                                    drain_local(&mut pending, &mut client_write).await?;
                                 }
                             }
                         }
@@ -172,9 +195,12 @@ pub async fn serve(
                     match frame(&upstream_buffer) {
                         Ok(Some(framed)) => {
                             let raw = upstream_buffer.split_to(framed.len);
-                            let verb = pending.pop_front().unwrap_or_default();
+                            let rewrite = match pending.pop_front() {
+                                Some(Pending::Upstream { rewrite }) => rewrite,
+                                _ => return Err(anyhow::anyhow!("backend replied without a pending upstream command")),
+                            };
 
-                            match framed.first_bulk.filter(|_| echoes_key(&verb)) {
+                            match framed.first_bulk.filter(|_| rewrite == ReplyRewrite::FirstKey) {
                                 Some((start, end)) => {
                                     let key = &raw[start..end];
                                     match strip(&prefix, key) {
@@ -197,6 +223,7 @@ pub async fn serve(
                                 }
                                 None => client_write.write_all(&raw).await?,
                             }
+                            drain_local(&mut pending, &mut client_write).await?;
                         }
                         Ok(None) => break,
                         Err(cause) => {
@@ -208,6 +235,35 @@ pub async fn serve(
             }
         }
     }
+}
+
+#[derive(Debug)]
+enum Pending {
+    Upstream { rewrite: ReplyRewrite },
+    Local(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplyRewrite {
+    None,
+    FirstKey,
+}
+
+async fn drain_local<W: tokio::io::AsyncWrite + Unpin>(
+    pending: &mut VecDeque<Pending>,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    while matches!(pending.front(), Some(Pending::Local(_))) {
+        let Some(Pending::Local(reply)) = pending.pop_front() else {
+            unreachable!()
+        };
+        writer.write_all(&reply).await?;
+    }
+    Ok(())
+}
+
+fn hello_two() -> Vec<u8> {
+    b"*4\r\n$6\r\nserver\r\n$6\r\nvalkey\r\n$5\r\nproto\r\n:2\r\n".to_vec()
 }
 
 /// Bytes a bulk string header occupies for a payload of `len`: `$`, the digits, and CRLF.
@@ -240,9 +296,18 @@ async fn authenticate(
                     };
 
                     match store.authenticate(&username, &secret).await {
-                        Ok(Authentication::Ok(tenant)) => {
+                        Ok(Authentication::Ok(tenant))
+                            if tenant.identity.resource_kind == ResourceKind::Queue =>
+                        {
                             client.write_all(&simple_string("OK")).await?;
                             return Ok(Some(tenant.identity));
+                        }
+                        Ok(Authentication::Ok(_)) => {
+                            warn!(username, "authentication denied for non-queue credential");
+                            client
+                                .write_all(&error("WRONGPASS invalid username or password"))
+                                .await?;
+                            return Ok(None);
                         }
                         // One message for "no such tenant" and for "wrong secret". Distinguishing
                         // them would let anyone enumerate which tenants exist, one AUTH at a time.

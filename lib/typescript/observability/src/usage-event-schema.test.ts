@@ -4,6 +4,9 @@ import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import { clickhouse, observabilityConfigured } from "./client"
 import {
+  usageBackupManifestDdl,
+  usageEventDeadLetterDdl,
+  usageEventDeadLetterViewDdl,
   usageEventMaterializedViewDdl,
   usageEventQueueDdl,
   usageEventRawDdl,
@@ -36,8 +39,17 @@ describe("the raw usage-event schema", () => {
     const runtime = [
       usageEventRawDdl("sproutos"),
       usageEventStoredAtDdl("sproutos"),
+      `-- Kafka engine settings cannot be ALTERed in ClickHouse 25.8. The table itself stores no rows;
+-- offsets live in Kafka under the stable group name. Recreating this transport table is therefore
+-- the idempotent upgrade path, while the durable destination remains untouched.
+drop view if exists sproutos.usage_event_mv;
+drop view if exists sproutos.usage_event_dead_letter_mv;
+drop table if exists sproutos.usage_event_queue sync`,
       usageEventQueueDdl("kafka:9092", "usage-events", "sproutos"),
+      usageEventDeadLetterDdl("sproutos"),
+      usageBackupManifestDdl("sproutos"),
       usageEventMaterializedViewDdl("sproutos"),
+      usageEventDeadLetterViewDdl("sproutos"),
     ].join(";\n\n")
 
     expect(installed).toBe(`${runtime};\n`)
@@ -69,6 +81,7 @@ describe("the raw usage-event schema", () => {
       expect(ddl).toContain(field)
     }
     expect(ddl).toContain("kafka_format = 'JSONEachRow'")
+    expect(ddl).toContain("kafka_handle_error_mode = 'stream'")
     expect(ddl).toContain("kafka_group_name = 'clickhouse-default-usage-event-v1'")
   })
 

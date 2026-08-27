@@ -4,6 +4,9 @@ import { RUNTIME_LOG_RETENTION_DAYS } from "./runtime-logs"
 export const USAGE_EVENT_RAW_TABLE = "usage_event_raw"
 export const USAGE_EVENT_QUEUE_TABLE = "usage_event_queue"
 export const USAGE_EVENT_MATERIALIZED_VIEW = "usage_event_mv"
+export const USAGE_EVENT_DEAD_LETTER_TABLE = "usage_event_dead_letter"
+export const USAGE_EVENT_DEAD_LETTER_VIEW = "usage_event_dead_letter_mv"
+export const USAGE_BACKUP_MANIFEST_TABLE = "usage_backup_manifest"
 
 /**
  * The log table.
@@ -278,7 +281,43 @@ settings
   kafka_topic_list = '${topic}',
   kafka_group_name = 'clickhouse-${consumerNamespace}-usage-event-v1',
   kafka_format = 'JSONEachRow',
-  kafka_max_block_size = 65536
+  kafka_max_block_size = 65536,
+  -- A poison message must not stop every later bill. Stream mode exposes \`_error\` and
+  -- \`_raw_message\`; the two materialized views route good rows and retain bad rows.
+  kafka_handle_error_mode = 'stream'
+`.trim()
+}
+
+/** Durable quarantine for malformed Kafka records. Any row here makes billing health red. */
+export function usageEventDeadLetterDdl(database = ""): string {
+  return `
+create table if not exists ${qualified(database, USAGE_EVENT_DEAD_LETTER_TABLE)} (
+  raw_message String,
+  error String,
+  kafka_topic LowCardinality(String),
+  kafka_partition Int64,
+  kafka_offset Int64,
+  failed_at DateTime64(3, 'UTC') default now64(3, 'UTC')
+)
+engine = MergeTree
+partition by toYYYYMM(failed_at)
+order by (failed_at, kafka_partition, kafka_offset)
+`.trim()
+}
+
+/** Snapshot metadata stored inside each backup and verified by the restore drill. */
+export function usageBackupManifestDdl(database = ""): string {
+  return `
+create table if not exists ${qualified(database, USAGE_BACKUP_MANIFEST_TABLE)} (
+  backup_name String,
+  cutoff DateTime64(3, 'UTC'),
+  raw_rows UInt64,
+  raw_checksum UInt64,
+  dead_letter_rows UInt64,
+  created_at DateTime64(3, 'UTC') default now64(3, 'UTC')
+)
+engine = MergeTree
+order by (created_at, backup_name)
 `.trim()
 }
 
@@ -294,6 +333,24 @@ select event_id, organization_id, project_id, resource_type, resource_id, dimens
        occurred_at, window_start, window_end, node_id, pod_uid, source, external_id,
        charged_externally, attributes, ingested_at, now64(3, 'UTC') as stored_at, version
 from ${source}
+where length(_error) = 0
+`.trim()
+}
+
+/** Insert trigger that preserves malformed Kafka records instead of wedging the consumer. */
+export function usageEventDeadLetterViewDdl(database = ""): string {
+  const view = qualified(database, USAGE_EVENT_DEAD_LETTER_VIEW)
+  const destination = qualified(database, USAGE_EVENT_DEAD_LETTER_TABLE)
+  const source = qualified(database, USAGE_EVENT_QUEUE_TABLE)
+
+  return `
+create materialized view if not exists ${view}
+to ${destination} as
+select _raw_message as raw_message, _error as error, _topic as kafka_topic,
+       toInt64(_partition) as kafka_partition, toInt64(_offset) as kafka_offset,
+       now64(3, 'UTC') as failed_at
+from ${source}
+where length(_error) > 0
 `.trim()
 }
 
@@ -328,6 +385,8 @@ export async function ensureSchema(): Promise<void> {
   await client.command({ query: RUNTIME_MESSAGE_INDEX_DDL })
   await client.command({ query: usageEventRawDdl(database) })
   await client.command({ query: usageEventStoredAtDdl(database) })
+  await client.command({ query: usageEventDeadLetterDdl(database) })
+  await client.command({ query: usageBackupManifestDdl(database) })
 
   /*
     The consumer, only where there is a broker to consume from.
@@ -353,4 +412,5 @@ export async function ensureSchema(): Promise<void> {
     ),
   })
   await client.command({ query: usageEventMaterializedViewDdl(database) })
+  await client.command({ query: usageEventDeadLetterViewDdl(database) })
 }

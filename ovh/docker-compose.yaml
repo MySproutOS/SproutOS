@@ -26,9 +26,18 @@ services:
       - OPENSEARCH_JAVA_OPTS=-Xms30g -Xmx30g
       - bootstrap.memory_lock=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
-      # The proxy is the security boundary — document- and field-level security is not in the
-      # open-source distribution, so the plugin would give a false sense of one.
-      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_SECURITY_PLUGIN=false
+      # Transport TLS is mandatory when the Security plugin is enabled. HTTP remains plaintext on
+      # loopback/the Docker network; Traefik owns the public TLS certificate.
+      - plugins.security.ssl.transport.pemcert_filepath=certs/node.pem
+      - plugins.security.ssl.transport.pemkey_filepath=certs/node-key.pem
+      - plugins.security.ssl.transport.pemtrustedcas_filepath=certs/root-ca.pem
+      - plugins.security.ssl.http.enabled=false
+      - plugins.security.allow_default_init_securityindex=true
+      - SEARCH_ADMIN_USER=${SEARCH_ADMIN_USER:?set SEARCH_ADMIN_USER}
+      - SEARCH_ADMIN_PASSWORD=${SEARCH_ADMIN_PASSWORD:?set SEARCH_ADMIN_PASSWORD}
+      - SEARCH_PROXY_SECURITY_ROOT_KEY=${SEARCH_PROXY_SECURITY_ROOT_KEY:?set SEARCH_PROXY_SECURITY_ROOT_KEY}
+    entrypoint: ["/security-entrypoint.sh"]
     ulimits:
       memlock: { soft: -1, hard: -1 }
       nofile: { soft: 65536, hard: 65536 }
@@ -36,6 +45,9 @@ services:
     # this container caps Lucene's cache and silently undoes the heap reasoning above.
     volumes:
       - /srv/sproutos/opensearch:/usr/share/opensearch/data
+      - /srv/sproutos/opensearch-security/certs:/usr/share/opensearch/config/certs:ro
+      - /opt/sproutos/opensearch-security:/security-bootstrap:ro
+      - /opt/sproutos/opensearch-entrypoint.sh:/security-entrypoint.sh:ro
     ports:
       - "127.0.0.1:9200:9200"
 
@@ -56,25 +68,10 @@ services:
       traefik.http.routers.opensearch.rule: Host(`opensearch.sproutos.me`)
       traefik.http.routers.opensearch.tls.certresolver: le
       traefik.http.services.opensearch.loadbalancer.server.port: "9200"
-      # Two locks, and here the second one is not optional — it is the *only* one that works.
-      #
-      # ClickHouse can lean on an allowlist because ClickHouse also has a user and a password.
-      # OpenSearch runs with `DISABLE_SECURITY_PLUGIN=true` and authenticates nobody, so an
-      # allowlist alone would be one lock on nothing: tenant Lambdas egress through the same NAT
-      # address the allowlist has to admit, which would let every tenant read every other tenant's
-      # index by talking to this directly and skipping the proxy entirely.
-      #
-      # So the door gets a password of its own, held only by `search-proxy`, presented as
-      # `SEARCH_PROXY_UPSTREAM_AUTHORIZATION`. The tenant's own `Authorization` header is stripped
-      # before this one is set — see `services/search-proxy/src/lib.rs`.
-      traefik.http.routers.opensearch.middlewares: opensearch-allowlist,opensearch-auth
-      # **Every `$` in the bcrypt hash must be doubled in `.env`.** Compose interpolates the value it
-      # reads from there, so `$2y$05$Kq…` has `$05` and `$Kq…` taken as variable references and
-      # substituted with nothing — leaving `u:$2y` on the label. Traefik then rejects every
-      # credential, and the truncation is visible nowhere: `docker compose config` prints the
-      # mangled value with its own `$$` escaping on top, which reads like the correct answer.
-      # Measured: `.env` holding `u:$2y$05$abcdefgHIJKLmnop` produced the label `u:$2y$05`.
-      traefik.http.middlewares.opensearch-auth.basicauth.users: ${SEARCH_BASICAUTH_USERS:?set SEARCH_BASICAUTH_USERS}
+      # Two locks: this network allowlist and OpenSearch Security's per-tenant internal users. A
+      # tenant function shares the admitted NAT address but not the HMAC-derived password the proxy
+      # presents, so direct access is still refused.
+      traefik.http.routers.opensearch.middlewares: opensearch-allowlist
       # Same two families and the same reasoning as ClickHouse below — except that this name has no
       # AAAA record for the reason `tofu/dns.tf` gives, so in practice only the first line is ever
       # matched. It is kept because the day Docker IPv6 is enabled on this host is the day the
@@ -290,6 +287,12 @@ services:
       - CLICKHOUSE_USAGE_KAFKA_SASL_MECHANISM=${CLICKHOUSE_USAGE_KAFKA_SASL_MECHANISM:-SCRAM-SHA-512}
       - CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME=${CLICKHOUSE_USAGE_KAFKA_SASL_USERNAME:-unused}
       - CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD=${CLICKHOUSE_USAGE_KAFKA_SASL_PASSWORD:-unused}
+      # Native BACKUP writes through this named S3 disk. The endpoint is the restricted bucket and
+      # prefix; the access key is created out of band and exists only in this host's protected
+      # `.env`, never in OpenTofu state or ClickHouse query text.
+      - CLICKHOUSE_BACKUP_S3_ENDPOINT=${CLICKHOUSE_BACKUP_S3_ENDPOINT:?set CLICKHOUSE_BACKUP_S3_ENDPOINT}
+      - CLICKHOUSE_BACKUP_S3_ACCESS_KEY_ID=${CLICKHOUSE_BACKUP_S3_ACCESS_KEY_ID:?set CLICKHOUSE_BACKUP_S3_ACCESS_KEY_ID}
+      - CLICKHOUSE_BACKUP_S3_SECRET_ACCESS_KEY=${CLICKHOUSE_BACKUP_S3_SECRET_ACCESS_KEY:?set CLICKHOUSE_BACKUP_S3_SECRET_ACCESS_KEY}
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     volumes:
@@ -297,6 +300,7 @@ services:
       - /data/sproutos/clickhouse-logs:/var/log/clickhouse-server
       - ./clickhouse-init:/docker-entrypoint-initdb.d:ro
       - ./clickhouse-config/usage-kafka.xml:/etc/clickhouse-server/config.d/usage-kafka.xml:ro
+      - ./clickhouse-config/backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"

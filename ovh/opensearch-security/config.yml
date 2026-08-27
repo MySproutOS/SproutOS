@@ -1,0 +1,20 @@
+---
+_meta:
+  type: config
+  config_version: 2
+
+config:
+  dynamic:
+    http:
+      anonymous_auth_enabled: false
+    authc:
+      basic_internal_auth_domain:
+        description: Per-tenant proxy users and the administrative reaper
+        http_enabled: true
+        transport_enabled: false
+        order: 0
+        http_authenticator:
+          type: basic
+          challenge: true
+        authentication_backend:
+          type: internal

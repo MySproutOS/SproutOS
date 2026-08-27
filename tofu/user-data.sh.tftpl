@@ -206,8 +206,8 @@ SESSION_COOKIE_DOMAIN=.${control_plane_domain}
 # `SERVICE_VALKEY_ADMIN_URL`, which carries a password and therefore arrives through Parameter Store
 # instead of this file.
 #
-# The credential is `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD`: the cluster authenticates nobody
-# itself, so what this is presenting to is the Traefik basic-auth in front of it.
+# `SEARCH_ADMIN_USER` / `SEARCH_ADMIN_PASSWORD` authenticate the reaper to OpenSearch Security's
+# internal backend. Tenant requests use separate HMAC-derived internal users.
 SEARCH_ADMIN_URL=https://${opensearch_subdomain}.${control_plane_domain}
 
 # What a customer is handed when they provision an Elasticsearch service: the router's search split
@@ -448,7 +448,7 @@ if [ "$SERVICE" = "router" ]; then
   # and `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does
   # not disable a feature — it stops the router, which is the front door.
   write_app_secrets "LLM_PROXY_SECRET OPENAI_KEY METERING_INGEST_HMAC_KEY LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
-    SEARCH_PROXY_UPSTREAM_AUTHORIZATION VALKEY_PROXY_BACKEND"
+    SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_BACKEND VALKEY_PROXY_ACL_ROOT_KEY"
 fi
 
 chmod 0640 /etc/sproutos/env
