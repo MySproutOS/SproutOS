@@ -1,6 +1,6 @@
 # 0030. Daytona sandbox HTTP egress uses the platform proxy
 
-- Status: Accepted; implementation and production verification pending
+- Status: Accepted and implemented; strict proxy-only enforcement pending Daytona organization policy
 - Date: 2026-08-26
 - Extends: [0026](0026-aws-only-lambda-and-two-rust-proxies.md)
 
@@ -68,6 +68,13 @@ use. LLM access tokens remain separate, short-lived, rotating credentials. Datab
 remain branch-scoped because an HTTP proxy cannot protect the Postgres wire protocol.
 
 ## Verification required before production acceptance
+
+The public-proxy and private-destination checks passed in production on 2026-08-27. The direct
+bypass check exposed a narrower provider boundary than this ADR originally assumed: arbitrary
+destinations were blocked, but Daytona's Tier 1/2 essential services remained directly reachable.
+[Finding 0030](../findings/0030-daytonas-essential-services-bypassed-the-proxy.md) records the exact
+probes and the rejected network-policy update. The unchecked items below remain acceptance work;
+the agent instruction does not substitute for provider enforcement.
 
 - Missing, wrong, cross-sandbox, stopped, and deleted credentials all return the same 407 and never
   open a destination socket.
