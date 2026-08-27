@@ -15,6 +15,8 @@ function eventTypes(body: string): string[] {
 describe("the Daytona turn stream", () => {
   it("waits for ordered writes, durably appends done last, and closes the response", async () => {
     const durable: AgentEvent[] = []
+    const durableStatus: string[] = []
+    let statusWhenDone: string[] | undefined
     let releaseFirstWrite: (() => void) | undefined
     const firstWrite = new Promise<void>((resolve) => {
       releaseFirstWrite = resolve
@@ -26,6 +28,7 @@ describe("the Daytona turn stream", () => {
         const emit = async (event: AgentEvent) => {
           writes += 1
           if (writes === 1) await firstWrite
+          if (event.type === "done") statusWhenDone = [...durableStatus]
           await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
           durable.push(event)
         }
@@ -48,6 +51,7 @@ describe("the Daytona turn stream", () => {
           sha: "abc",
           files: [],
         })
+        durableStatus.push("turn:success", "session:idle")
         await emit(relay.terminal(0))
       }),
     )
@@ -57,6 +61,7 @@ describe("the Daytona turn stream", () => {
 
     expect(eventTypes(body)).toEqual(["text", "committed", "done"])
     expect(durable.map((event) => event.type)).toEqual(["text", "committed", "done"])
+    expect(statusWhenDone).toEqual(["turn:success", "session:idle"])
   })
 
   it("synthesizes a durable terminal event when the harness exits without one", async () => {

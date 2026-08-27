@@ -425,14 +425,14 @@ const app = new Hono()
               }
             }
 
-            await emit(terminal)
-            await flush()
             await sessions.closeTurn(turn.id, {
               resultSubtype: terminal.subtype,
               numTurns: terminal.numTurns,
               durationMs: terminal.durationMs,
             })
             await sessions.setStatus(sessionId, terminal.isError ? "failed" : "idle")
+            await emit(terminal)
+            await flush()
             return
           }
 
