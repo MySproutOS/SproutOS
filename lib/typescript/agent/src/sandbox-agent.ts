@@ -365,6 +365,8 @@ export type SandboxCommitInput = {
   remote?: string
   /** Never the production branch unless the caller means it. */
   branch: string
+  /** The repository branch cloned at bootstrap, used to find work the agent already committed. */
+  baseBranch: string
   message: string
   author: { name: string; email: string }
 }
@@ -384,11 +386,33 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
     throw new Error(`the sandbox has no usable checkout: ${status.stderr.trim() || "git failed"}`)
   }
 
-  const files = status.stdout
+  let files = status.stdout
     .split("\n")
     .map((line) => line.slice(3).trim())
     .filter((line) => line !== "")
-  if (files.length === 0) return { committed: false, reason: "no_changes" }
+  const needsCommit = files.length > 0
+  if (!needsCommit) {
+    /*
+      Models sometimes run `git commit` themselves even though the platform owns the credential and
+      push. A clean worktree is therefore not proof that there is no work. Compare HEAD with the
+      remote-tracking base cloned at bootstrap and push an already-committed diff as-is.
+
+      `--name-only` rather than commit count: an empty model-created commit is not customer work and
+      does not justify creating a remote branch.
+    */
+    const committedFiles = await git(
+      "diff",
+      "--name-only",
+      `refs/remotes/origin/${input.baseBranch}..HEAD`,
+    )
+    if (committedFiles.exitCode !== 0) {
+      throw new Error(
+        `could not compare the sandbox with ${input.baseBranch}: ${committedFiles.stderr.trim()}`,
+      )
+    }
+    files = committedFiles.stdout.split("\n").filter((line) => line !== "")
+    if (files.length === 0) return { committed: false, reason: "no_changes" }
+  }
 
   const url = input.remote ?? `https://${input.host ?? "github.com"}/${input.repository}.git`
   const remoteRef = `refs/heads/${input.branch}`
@@ -408,34 +432,36 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
     throw new Error("could not read the agent branch: git returned an invalid object id")
   }
 
-  const added = await git("add", "-A")
-  if (added.exitCode !== 0) throw new Error(`staging failed: ${added.stderr.trim()}`)
+  if (needsCommit) {
+    const added = await git("add", "-A")
+    if (added.exitCode !== 0) throw new Error(`staging failed: ${added.stderr.trim()}`)
 
-  /*
-    Identity on the command, even though the bootstrap already configured it.
+    /*
+      Identity on the command, even though the bootstrap already configured it.
 
-    The bootstrap's `git config` can have failed — it is one of the steps that reports a problem
-    rather than failing the provision — and `git commit` refuses outright without an identity. A
-    commit that fails here loses the turn's work, so it does not depend on an earlier step having
-    gone well.
-  */
-  const committed = await driver.exec(
-    externalId,
-    [
-      "git",
-      "-C",
-      workspace,
-      "-c",
-      `user.name=${input.author.name}`,
-      "-c",
-      `user.email=${input.author.email}`,
-      "commit",
-      "-m",
-      input.message,
-    ],
-    COMMIT_TIMEOUT_MS,
-  )
-  if (committed.exitCode !== 0) throw new Error(`the commit failed: ${committed.stderr.trim()}`)
+      The bootstrap's `git config` can have failed — it is one of the steps that reports a problem
+      rather than failing the provision — and `git commit` refuses outright without an identity. A
+      commit that fails here loses the turn's work, so it does not depend on an earlier step having
+      gone well.
+    */
+    const committed = await driver.exec(
+      externalId,
+      [
+        "git",
+        "-C",
+        workspace,
+        "-c",
+        `user.name=${input.author.name}`,
+        "-c",
+        `user.email=${input.author.email}`,
+        "commit",
+        "-m",
+        input.message,
+      ],
+      COMMIT_TIMEOUT_MS,
+    )
+    if (committed.exitCode !== 0) throw new Error(`the commit failed: ${committed.stderr.trim()}`)
+  }
 
   const head = await git("rev-parse", "HEAD")
   if (head.exitCode !== 0) throw new Error(`could not read HEAD: ${head.stderr.trim()}`)

@@ -5,7 +5,7 @@
 //! requests or a `CONNECT` tunnel to HTTPS or the public SproutOS Postgres listener. It deliberately
 //! does not terminate the tunneled protocol.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -132,6 +132,7 @@ pub struct SandboxForwardProxy {
     authorizer: Arc<dyn Authorizer>,
     resolver: Arc<dyn Resolver>,
     dialer: Arc<dyn Dialer>,
+    connect_overrides: Arc<BTreeMap<(String, u16), SocketAddr>>,
     limits: Limits,
 }
 
@@ -155,8 +156,26 @@ impl SandboxForwardProxy {
             authorizer,
             resolver,
             dialer,
+            connect_overrides: Arc::new(BTreeMap::new()),
             limits,
         })
+    }
+
+    /// Route one exact public authority to a platform-owned local listener.
+    ///
+    /// This is not a sandbox-controlled bypass: callers configure the authority at router boot,
+    /// and every other destination still resolves and passes the public-address check. It exists
+    /// for a public load balancer that cannot be hairpinned from the instance behind it.
+    pub fn with_connect_override(
+        mut self,
+        host: impl Into<String>,
+        port: u16,
+        target: SocketAddr,
+    ) -> Self {
+        let mut overrides = (*self.connect_overrides).clone();
+        overrides.insert((normalize_host(&host.into()), port), target);
+        self.connect_overrides = Arc::new(overrides);
+        self
     }
 
     /// Serve a listener suitable for the router's eventual sixth port.
@@ -227,28 +246,37 @@ impl SandboxForwardProxy {
             Ok(destination) => destination,
             Err(_) => return respond(&mut client, ResponseKind::BadRequest).await,
         };
-        let addresses = match timeout(
-            self.limits.resolve_timeout,
-            self.resolver.resolve(&destination.host, destination.port),
-        )
-        .await
-        {
-            Ok(Ok(addresses)) if !addresses.is_empty() => addresses,
-            _ => return respond(&mut client, ResponseKind::BadGateway).await,
+        let override_key = (normalize_host(&destination.host), destination.port);
+        let socket_addresses = if let Some(address) = self.connect_overrides.get(&override_key) {
+            vec![*address]
+        } else {
+            let addresses = match timeout(
+                self.limits.resolve_timeout,
+                self.resolver.resolve(&destination.host, destination.port),
+            )
+            .await
+            {
+                Ok(Ok(addresses)) if !addresses.is_empty() => addresses,
+                _ => return respond(&mut client, ResponseKind::BadGateway).await,
+            };
+            // Reject the whole answer, not merely the private entries. Otherwise a rebinding name
+            // with one public and one private result gets as many attempts as the resolver's ordering
+            // gives it. Only an exact, boot-configured platform override skips this check.
+            if addresses.iter().any(|address| !is_public_ip(*address)) {
+                return respond(&mut client, ResponseKind::DestinationForbidden).await;
+            }
+            addresses
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, destination.port))
+                .collect()
         };
-        // Reject the whole answer, not merely the private entries. Otherwise a rebinding name with
-        // one public and one private result gets as many attempts as the resolver's ordering gives it.
-        if addresses.iter().any(|address| !is_public_ip(*address)) {
-            return respond(&mut client, ResponseKind::DestinationForbidden).await;
-        }
         // DNS answer order is not an availability guarantee. Start every validated public address
         // under one shared deadline, so a stalled first AAAA/A record cannot prevent a later answer
         // from succeeding and a large answer cannot multiply the timeout. The losing attempts are
         // aborted as soon as one connects or the shared deadline expires.
         let mut attempts = tokio::task::JoinSet::new();
-        for ip in addresses {
+        for address in socket_addresses {
             let dialer = Arc::clone(&self.dialer);
-            let address = SocketAddr::new(ip, destination.port);
             attempts.spawn(async move { dialer.connect(address).await });
         }
         let upstream = timeout(self.limits.connect_timeout, async {
@@ -301,6 +329,10 @@ impl SandboxForwardProxy {
             Ok(())
         }
     }
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -1107,6 +1139,43 @@ mod tests {
         assert_eq!(
             *dialed.lock().unwrap(),
             vec!["8.8.4.4:5432".parse().unwrap()]
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_platform_postgres_authority_can_use_a_loopback_override() {
+        let root = &ROOT;
+        let (proxy, dialed, mut upstream) = make_proxy(
+            root,
+            Ok(Some(authorization(SandboxState::Running))),
+            vec!["8.8.8.8".parse().unwrap()],
+        );
+        let proxy = proxy.with_connect_override(
+            "postgres.sproutos.me",
+            5432,
+            "127.0.0.1:15432".parse().unwrap(),
+        );
+        let password = derive_password(root, SANDBOX.parse().unwrap());
+        let basic = STANDARD.encode(format!("{SANDBOX}:{password}"));
+        let request = format!(
+            "CONNECT POSTGRES.SPROUTOS.ME.:5432 HTTP/1.1\r\nProxy-Authorization: Basic {basic}\r\n\r\n"
+        );
+        let (mut client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move { proxy.serve_connection(server).await });
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut established = [0; 39];
+        client.read_exact(&mut established).await.unwrap();
+        assert_eq!(&established, b"HTTP/1.1 200 Connection Established\r\n\r\n");
+        client.write_all(b"postgres startup").await.unwrap();
+        let mut tunneled = [0; 16];
+        upstream.read_exact(&mut tunneled).await.unwrap();
+        assert_eq!(&tunneled, b"postgres startup");
+        drop(client);
+        drop(upstream);
+        task.await.unwrap().unwrap();
+        assert_eq!(
+            *dialed.lock().unwrap(),
+            vec!["127.0.0.1:15432".parse().unwrap()]
         );
     }
 

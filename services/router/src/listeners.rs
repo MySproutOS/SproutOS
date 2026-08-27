@@ -554,13 +554,38 @@ pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHand
         .context("SANDBOX_FORWARD_PROXY_URL is required when the forward proxy is enabled")?;
     let resolver = Arc::new(crate::sandbox_egress::EgressResolver::new(&proxy_url)?);
 
-    let proxy = Arc::new(sproutos_sandbox_forward_proxy::SandboxForwardProxy::new(
-        key,
-        authorizer,
-        resolver,
-        Arc::new(sproutos_sandbox_forward_proxy::TokioDialer),
-        sproutos_sandbox_forward_proxy::Limits::default(),
-    )?);
+    let postgres_host = std::env::var("SERVICE_POSTGRES_PUBLIC_HOST").context(
+        "SERVICE_POSTGRES_PUBLIC_HOST is required when the sandbox forward proxy is enabled",
+    )?;
+    let postgres_public_port = std::env::var("SERVICE_POSTGRES_PUBLIC_PORT")
+        .context(
+            "SERVICE_POSTGRES_PUBLIC_PORT is required when the sandbox forward proxy is enabled",
+        )?
+        .parse::<u16>()
+        .context("SERVICE_POSTGRES_PUBLIC_PORT is not a valid port")?;
+    let postgres_listen = std::env::var("PG_PROXY_LISTEN")
+        .unwrap_or_else(|_| "0.0.0.0:5432".into())
+        .parse::<std::net::SocketAddr>()
+        .context("PG_PROXY_LISTEN is not a socket address")?;
+    let postgres_loopback = match postgres_listen {
+        std::net::SocketAddr::V4(address) => {
+            std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), address.port())
+        }
+        std::net::SocketAddr::V6(address) => {
+            std::net::SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), address.port())
+        }
+    };
+
+    let proxy = Arc::new(
+        sproutos_sandbox_forward_proxy::SandboxForwardProxy::new(
+            key,
+            authorizer,
+            resolver,
+            Arc::new(sproutos_sandbox_forward_proxy::TokioDialer),
+            sproutos_sandbox_forward_proxy::Limits::default(),
+        )?
+        .with_connect_override(postgres_host, postgres_public_port, postgres_loopback),
+    );
     let listener = TcpListener::bind(&listen)
         .await
         .with_context(|| format!("the sandbox forward proxy could not bind {listen}"))?;

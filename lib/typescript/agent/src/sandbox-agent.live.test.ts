@@ -177,7 +177,7 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
       [
         "sh",
         "-c",
-        `git -C ${workspace} init && git -C ${workspace} -c user.email=a@b -c user.name=A commit --allow-empty -m init && git -C ${workspace} push ${origin} HEAD:refs/heads/main`,
+        `git -C ${workspace} init && git -C ${workspace} -c user.email=a@b -c user.name=A commit --allow-empty -m init && git -C ${workspace} push ${origin} HEAD:refs/heads/main && git -C ${workspace} update-ref refs/remotes/origin/main HEAD`,
       ],
       120_000,
     )
@@ -185,6 +185,7 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
     expect(
       await commitSandboxWork({
         author: { email: "dev@example.com", name: "Dev" },
+        baseBranch: "main",
         branch: "sproutos/agent-live",
         driver: activeDriver,
         externalId,
@@ -198,6 +199,7 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
     await activeDriver.writeFile(externalId, `${workspace}/notes.md`, "written by the agent\n")
     const pushed = await commitSandboxWork({
       author: { email: "dev@example.com", name: "Dev" },
+      baseBranch: "main",
       branch: "sproutos/agent-live",
       driver: activeDriver,
       externalId,

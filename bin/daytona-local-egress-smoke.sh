@@ -11,8 +11,10 @@ env_file=${1:-"$repo_root/.env"}
 ngrok_api=http://127.0.0.1:4040
 proxy_port=3128
 router_port=18080
+postgres_test_port=25432
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sproutos-daytona-smoke.XXXXXX")
 router_pid=
+postgres_test_pid=
 ngrok_pid=
 tunnel_name=
 tunnel_created=0
@@ -27,6 +29,10 @@ cleanup() {
   if [[ -n "$router_pid" ]]; then
     kill "$router_pid" 2>/dev/null || true
     wait "$router_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$postgres_test_pid" ]]; then
+    kill "$postgres_test_pid" 2>/dev/null || true
+    wait "$postgres_test_pid" 2>/dev/null || true
   fi
   if [[ "$tunnel_created" == 1 && -n "$tunnel_name" ]]; then
     curl --silent --request DELETE "$ngrok_api/api/tunnels/$tunnel_name" >/dev/null || true
@@ -53,6 +59,10 @@ for command in cargo curl jq ngrok openssl pnpm; do
 done
 if lsof -nP -iTCP:"$proxy_port" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "local proxy port $proxy_port is already in use" >&2
+  exit 1
+fi
+if lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "local Postgres transport-test port $postgres_test_port is already in use" >&2
   exit 1
 fi
 
@@ -107,12 +117,25 @@ fi
 live_proxy_url="http://${public_url#tcp://}"
 resolver_proxy_url="https://${public_url#tcp://}"
 
+# The transport assertion needs a real byte after CONNECT, not merely the proxy's 200 response.
+# This tiny listener speaks exactly the first Postgres TLS-negotiation byte; the pg-proxy's own TLS
+# and startup behavior has separate integration coverage.
+node -e 'const net=require("node:net");const port=Number(process.argv[1]);net.createServer(s=>s.once("data",()=>s.end("S"))).listen(port,"127.0.0.1")' "$postgres_test_port" &
+postgres_test_pid=$!
+for _ in {1..30}; do
+  lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
 env \
   DATABASE_URL="$database_url" \
   VALKEY_URL="$valkey_url" \
   FORWARD_PROXY_LISTEN="127.0.0.1:$proxy_port" \
   SANDBOX_FORWARD_PROXY_URL="$resolver_proxy_url" \
   SANDBOX_FORWARD_PROXY_ROOT_KEY="$proxy_root_key" \
+  SERVICE_POSTGRES_PUBLIC_HOST=postgres.sproutos.me \
+  SERVICE_POSTGRES_PUBLIC_PORT=5432 \
+  PG_PROXY_LISTEN="127.0.0.1:$postgres_test_port" \
   ROUTER_PORT="$router_port" \
   AWS_REGION=us-east-1 \
   AWS_ACCESS_KEY_ID=test \

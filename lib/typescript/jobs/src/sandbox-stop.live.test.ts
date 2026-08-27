@@ -186,16 +186,25 @@ describe("an idle sandbox is actually turned off", () => {
             "const transport = await import(proxy.protocol === 'https:' ? 'node:https' : 'node:http')",
             "const credentials = Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64')",
             "const request = transport.request({ host: proxy.hostname, port: Number(proxy.port || (proxy.protocol === 'https:' ? 443 : 80)), method: 'CONNECT', path: 'postgres.sproutos.me:5432', headers: { 'Proxy-Authorization': 'Basic ' + credentials } })",
-            "request.on('connect', (response, socket) => { console.log(response.statusCode); socket.destroy(); process.exit(response.statusCode === 200 ? 0 : 1) })",
+            "request.on('connect', (response, socket) => {",
+            "  console.log(response.statusCode)",
+            "  if (response.statusCode !== 200) { socket.destroy(); process.exit(1); return }",
+            "  const sslRequest = Buffer.alloc(8)",
+            "  sslRequest.writeInt32BE(8, 0)",
+            "  sslRequest.writeInt32BE(80877103, 4)",
+            "  socket.once('data', (chunk) => { console.log(String.fromCharCode(chunk[0])); socket.destroy(); process.exit(chunk[0] === 83 ? 0 : 1) })",
+            "  socket.write(sslRequest)",
+            "})",
             "request.on('error', (error) => { console.error(error.message); process.exit(1) })",
             "request.end()",
           ].join(";"),
         ],
         15_000,
       )
-      // The 200 is the proof: Daytona reached the authenticated boundary and it opened a raw
-      // tunnel to the public Postgres listener. No database credential is needed for that seam.
-      expect(postgresThroughProxy).toMatchObject({ exitCode: 0, stdout: "200\n" })
+      // CONNECT 200 alone proved only that the proxy accepted the request. `S` is the first real
+      // Postgres protocol response to an SSLRequest, so bytes crossed the resulting tunnel too.
+      // No database credential is needed for this transport seam.
+      expect(postgresThroughProxy).toMatchObject({ exitCode: 0, stdout: "200\nS\n" })
       const directBypass = await activeDriver.exec(
         made.externalId,
         [

@@ -367,6 +367,7 @@ const app = new Hono()
                     name: c.var.user.name ?? "SproutOS Agent",
                   },
                   branch: `sproutos/agent-${sessionId.slice(-12)}`,
+                  baseBranch: target.defaultBranch,
                   driver: daytonaClientFromEnv(),
                   externalId: sandbox.externalId,
                   message: `${prompt.split("\n")[0]?.slice(0, 72) ?? "Agent changes"}\n\nWritten by the SproutOS agent in a sandbox.`,
