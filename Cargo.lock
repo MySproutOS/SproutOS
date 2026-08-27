@@ -2602,6 +2602,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "deadpool-postgres",
  "hmac 0.12.1",
  "pg-proxy",
  "redis",
@@ -2614,9 +2615,11 @@ dependencies = [
  "sha2 0.10.9",
  "sproutos-llm-proxy",
  "sproutos-metering-proto",
+ "sproutos-sandbox-forward-proxy",
  "sproutos-service-credentials",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3145,6 +3148,24 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "sproutos-sandbox-forward-proxy"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hmac 0.12.1",
+ "http 1.5.0",
+ "httparse",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

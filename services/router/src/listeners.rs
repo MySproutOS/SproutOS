@@ -463,3 +463,60 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
         }
     })))
 }
+
+/// Start the authenticated HTTP(S) egress boundary used by Daytona.
+///
+/// The listener is optional in development, but once named every dependency is checked at boot.
+/// A public endpoint that accepts credentials while its lifecycle database is unavailable would
+/// turn a control-plane outage into unrestricted internet access, so that configuration is fatal.
+pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+    use base64::Engine as _;
+
+    let Ok(listen) = std::env::var("FORWARD_PROXY_LISTEN") else {
+        return Ok(None);
+    };
+    let encoded_key = std::env::var("SANDBOX_FORWARD_PROXY_ROOT_KEY")
+        .context("SANDBOX_FORWARD_PROXY_ROOT_KEY is required when the forward proxy is enabled")?;
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(&encoded_key)
+        .context("SANDBOX_FORWARD_PROXY_ROOT_KEY is not base64")?;
+    if key.len() != 32 || base64::engine::general_purpose::STANDARD.encode(&key) != encoded_key {
+        anyhow::bail!(
+            "SANDBOX_FORWARD_PROXY_ROOT_KEY must be exactly 32 bytes in canonical base64"
+        );
+    }
+
+    let pool_size = std::env::var("FORWARD_PROXY_DB_POOL")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(8);
+    let authorizer = Arc::new(crate::sandbox_egress::SandboxAuthorizer::connect(
+        database_url,
+        pool_size,
+    )?);
+    authorizer
+        .check()
+        .await
+        .context("the sandbox forward proxy cannot reach the control-plane database")?;
+    let proxy_url = std::env::var("SANDBOX_FORWARD_PROXY_URL")
+        .context("SANDBOX_FORWARD_PROXY_URL is required when the forward proxy is enabled")?;
+    let resolver = Arc::new(crate::sandbox_egress::EgressResolver::new(&proxy_url)?);
+
+    let proxy = Arc::new(sproutos_sandbox_forward_proxy::SandboxForwardProxy::new(
+        key,
+        authorizer,
+        resolver,
+        Arc::new(sproutos_sandbox_forward_proxy::TokioDialer),
+        sproutos_sandbox_forward_proxy::Limits::default(),
+    )?);
+    let listener = TcpListener::bind(&listen)
+        .await
+        .with_context(|| format!("the sandbox forward proxy could not bind {listen}"))?;
+    tracing::info!(%listen, "sandbox forward proxy listening");
+
+    Ok(Some(tokio::spawn(async move {
+        if let Err(cause) = proxy.serve(listener).await {
+            tracing::error!(%cause, "the sandbox forward proxy stopped serving");
+        }
+    })))
+}

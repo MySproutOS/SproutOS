@@ -285,11 +285,11 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener_rule.website.arn,
           # The API's rule moves with the website's — one release, two ports, see `bin/cutover.sh`.
           aws_lb_listener_rule.api.arn,
-          # And both listeners on the tenant load balancer, which the router is the default of.
-          # Postgres and RESP are not HTTP, so they are listeners on a second balancer rather than
-          # rules on the first — but they move with the router exactly as the search rule does.
+          # And the listeners on the tenant load balancer, which the router is the default of.
+          # They move with the router exactly as the search rule does.
           aws_lb_listener.postgres.arn,
           aws_lb_listener.valkey.arn,
+          aws_lb_listener.forward_proxy.arn,
           # The search split's rule moves with the router's listener, for the same reason.
           #
           # Enumerated rather than a wildcard on the listener, so a rule added by hand cannot be

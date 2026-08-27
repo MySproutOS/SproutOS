@@ -121,6 +121,9 @@ SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 # Search query observations and hourly primary-storage samples are isolated from the other
 # emitters, while remaining on the router's persistent state volume.
 SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
+# Daytona reaches this listener through `egress.<domain>` on the tenant NLB. TLS terminates there;
+# the router receives the authenticated HTTP forward-proxy protocol on this private instance port.
+FORWARD_PROXY_LISTEN=0.0.0.0:3128
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.
@@ -140,6 +143,7 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # no listener rule, no target group, no `LLM_PROXY_LISTEN`. Set here so the value comes from the
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
+SANDBOX_FORWARD_PROXY_URL=https://${egress_subdomain}.${control_plane_domain}
 METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/events
 
 # Separate topics because their failure policies differ: runtime logs may be dropped to protect a
@@ -439,7 +443,7 @@ if [ "$SERVICE" = "website" ]; then
     KAFKA_BROKERS KAFKA_USAGE_EVENT_SASL_USERNAME KAFKA_USAGE_EVENT_SASL_PASSWORD \
     DAYTONA_API_KEY DAYTONA_ORGANIZATION_ID \
     SANDBOX_DAYTONA_SNAPSHOT SANDBOX_DAYTONA_API_URL \
-    SANDBOX_DAYTONA_TARGET LLM_PROXY_SECRET \
+    SANDBOX_DAYTONA_TARGET SANDBOX_FORWARD_PROXY_ROOT_KEY LLM_PROXY_SECRET \
     SEARCH_ADMIN_USER SEARCH_ADMIN_PASSWORD NEON_API_KEY NEON_ORG_ID \
     SERVICE_VALKEY_ADMIN_URL"
 fi
@@ -454,7 +458,8 @@ if [ "$SERVICE" = "router" ]; then
   # and `CredentialStore::check()` is fatal at boot, so naming a backend that cannot be reached does
   # not disable a feature — it stops the router, which is the front door.
   write_app_secrets "LLM_PROXY_SECRET OPENAI_KEY METERING_INGEST_HMAC_KEY LOG_TOKEN_SECRET KAFKA_BROKERS KAFKA_SASL_USERNAME KAFKA_SASL_PASSWORD \
-    SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_BACKEND VALKEY_PROXY_ACL_ROOT_KEY"
+    SEARCH_PROXY_SECURITY_ROOT_KEY VALKEY_PROXY_BACKEND VALKEY_PROXY_ACL_ROOT_KEY \
+    SANDBOX_FORWARD_PROXY_ROOT_KEY"
 fi
 
 chmod 0640 /etc/sproutos/env

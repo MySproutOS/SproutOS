@@ -167,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             router::listeners::search(&database_url).await?,
             router::listeners::postgres(&database_url).await?,
             router::listeners::llm(&database_url).await?,
+            router::listeners::forward_proxy(&database_url).await?,
         ]
         .into_iter()
         .flatten()

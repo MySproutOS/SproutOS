@@ -56,6 +56,7 @@ The consolidated schema that these decisions produce is in [`../schema/TABLES.md
 | [0022](0022-tenant-hostnames-carry-a-discriminator.md) | Tenant hostnames carry a project discriminator (amends 0018) | Hostname collisions |
 | [0023](0023-metering-attribution-from-the-api-server.md) | Metering attribution is listed from the API server (amends 0014) | Usage attribution |
 | [0028](0028-kafka-clickhouse-metering.md) | Kafka and ClickHouse are the durable raw metering path (supersedes 0014 storage) | Metering path |
+| [0030](0030-daytona-egress-uses-the-platform-proxy.md) | Daytona sandbox HTTP egress uses the platform proxy | Sandbox egress |
 
 ## Later records
 

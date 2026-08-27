@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { readFileSync } from "node:fs"
 import {
   AUTO_ARCHIVE_AFTER_STOP_MINUTES,
   DAYTONA_DELETE_TIMEOUT_SECONDS,
@@ -7,6 +8,7 @@ import {
   daytonaConfigFromEnv,
   deleteDaytonaSandboxAndWait,
   retryIdempotentDaytonaRead,
+  sandboxForwardProxyPassword,
   type DaytonaConfig,
 } from "./daytona"
 import { SandboxUnavailableError, type CreateSandboxInput } from "./types"
@@ -15,6 +17,8 @@ const config: DaytonaConfig = {
   apiKey: "k",
   organizationId: "org",
   snapshot: "sproutos/agent:1",
+  forwardProxyUrl: "https://egress.sproutos.me",
+  forwardProxyRootKey: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 }
 
 const input: CreateSandboxInput = {
@@ -67,6 +71,13 @@ describe("buildCreateParams", () => {
     const params = buildCreateParams(config, input)
     expect(params.domainAllowList).toBeUndefined()
     expect(params.networkAllowList).toBeUndefined()
+  })
+
+  it("routes all HTTP traffic through the authenticated platform proxy", () => {
+    const proxy = new URL(buildCreateParams(config, input).outboundProxyUrl!)
+    expect(`${proxy.protocol}//${proxy.host}`).toBe("https://egress.sproutos.me")
+    expect(proxy.username).toBe(input.sandboxId)
+    expect(proxy.password).toBe("_OA0k2a79uUCiL9bKly4ERxxh9fl1NChPL2VwVzvDbU")
   })
 
   describe("autostop backstop", () => {
@@ -197,18 +208,23 @@ describe("Daytona deletion", () => {
 })
 
 describe("daytonaConfigFromEnv", () => {
+  const proxyEnv = {
+    SANDBOX_FORWARD_PROXY_URL: "https://egress.sproutos.me",
+    SANDBOX_FORWARD_PROXY_ROOT_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  }
   it("refuses a missing api key", () => {
     expect(() =>
       daytonaConfigFromEnv({
         DAYTONA_ORGANIZATION_ID: "org",
         SANDBOX_DAYTONA_SNAPSHOT: "s",
+        ...proxyEnv,
       }),
     ).toThrow(/DAYTONA_API_KEY/)
   })
 
   it("refuses a missing organization", () => {
     expect(() =>
-      daytonaConfigFromEnv({ DAYTONA_API_KEY: "k", SANDBOX_DAYTONA_SNAPSHOT: "s" }),
+      daytonaConfigFromEnv({ DAYTONA_API_KEY: "k", SANDBOX_DAYTONA_SNAPSHOT: "s", ...proxyEnv }),
     ).toThrow(/DAYTONA_ORGANIZATION_ID/)
   })
 
@@ -218,7 +234,11 @@ describe("daytonaConfigFromEnv", () => {
   */
   it("refuses a missing snapshot", () => {
     expect(() =>
-      daytonaConfigFromEnv({ DAYTONA_API_KEY: "k", DAYTONA_ORGANIZATION_ID: "org" }),
+      daytonaConfigFromEnv({
+        DAYTONA_API_KEY: "k",
+        DAYTONA_ORGANIZATION_ID: "org",
+        ...proxyEnv,
+      }),
     ).toThrow(/SANDBOX_DAYTONA_SNAPSHOT/)
   })
 
@@ -228,6 +248,7 @@ describe("daytonaConfigFromEnv", () => {
         DAYTONA_API_KEY: "",
         DAYTONA_ORGANIZATION_ID: "org",
         SANDBOX_DAYTONA_SNAPSHOT: "s",
+        ...proxyEnv,
       }),
     ).toThrow(/DAYTONA_API_KEY/)
   })
@@ -237,7 +258,45 @@ describe("daytonaConfigFromEnv", () => {
       DAYTONA_API_KEY: "k",
       DAYTONA_ORGANIZATION_ID: "org",
       SANDBOX_DAYTONA_SNAPSHOT: "s",
+      ...proxyEnv,
     })
-    expect(c).toEqual({ apiKey: "k", organizationId: "org", snapshot: "s" })
+    expect(c).toEqual({
+      apiKey: "k",
+      organizationId: "org",
+      snapshot: "s",
+      forwardProxyUrl: proxyEnv.SANDBOX_FORWARD_PROXY_URL,
+      forwardProxyRootKey: proxyEnv.SANDBOX_FORWARD_PROXY_ROOT_KEY,
+    })
+  })
+
+  it("requires and validates the forward proxy configuration", () => {
+    const base = {
+      DAYTONA_API_KEY: "k",
+      DAYTONA_ORGANIZATION_ID: "org",
+      SANDBOX_DAYTONA_SNAPSHOT: "s",
+    }
+    expect(() => daytonaConfigFromEnv(base)).toThrow(/SANDBOX_FORWARD_PROXY_URL/)
+    expect(() =>
+      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "http://proxy" }),
+    ).toThrow(/HTTPS origin/)
+    expect(() =>
+      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_ROOT_KEY: "bad" }),
+    ).toThrow(/32 bytes/)
+  })
+})
+
+describe("sandbox forward proxy credential contract", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("../../../rust/sandbox-forward-proxy/fixtures/credentials.json", import.meta.url),
+      "utf8",
+    ),
+  ) as {
+    rootKeyBase64: string
+    vectors: { sandboxId: string; password: string }[]
+  }
+
+  it.each(fixture.vectors)("matches the Rust vector for $sandboxId", ({ sandboxId, password }) => {
+    expect(sandboxForwardProxyPassword(fixture.rootKeyBase64, sandboxId)).toBe(password)
   })
 })

@@ -17,6 +17,7 @@ pub mod logs;
 pub mod payload;
 pub mod resolve;
 pub mod route;
+pub mod sandbox_egress;
 pub mod serve;
 pub mod site_metering;
 

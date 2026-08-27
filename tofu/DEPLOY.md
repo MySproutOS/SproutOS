@@ -104,8 +104,9 @@ Read it. Expect roughly 127 resources on a first run. The things worth checking 
 takes three more things, in this order:
 
 1. **`tofu output`** → set `LAMBDA_EXECUTION_ROLE_ARN`, `VALKEY_URL` (from
-   `platform_cache_endpoint`), `LISTENER_ARN`, `WEBSITE_RULE_ARN` and `AWS_ACCOUNT_ID` as repository
-   variables for the Deploy workflow.
+   `platform_cache_endpoint`), `LISTENER_ARN`, `WEBSITE_RULE_ARN`, `PG_LISTENER_ARN`,
+   `VALKEY_LISTENER_ARN`, `FORWARD_PROXY_LISTENER_ARN` and `AWS_ACCOUNT_ID` as repository variables
+   for the Deploy workflow.
 2. **Application secrets.** Run `bin/put-app-secrets.sh`, which reads an allowlist of keys out of
    your local `.env` and writes one `SecureString` parameter each under `/sproutos/application`.
    Instances read that path at boot and write it into `/etc/sproutos/env`.

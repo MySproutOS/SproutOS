@@ -1,4 +1,5 @@
 import { Daytona, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytona/sdk"
+import { createHmac } from "node:crypto"
 import { quoteArgv } from "./argv"
 import {
   SandboxNotFoundError,
@@ -27,6 +28,7 @@ export const DAYTONA_DELETE_TIMEOUT_SECONDS = DAYTONA_REQUEST_TIMEOUT_MS / 1000
 export const DAYTONA_READ_MAX_ATTEMPTS = 3
 export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
+export const FORWARD_PROXY_CREDENTIAL_DOMAIN = "sproutos:sandbox-forward-proxy:v1"
 
 export type DaytonaConfig = {
   apiKey: string
@@ -41,6 +43,10 @@ export type DaytonaConfig = {
    * agent in it, and the symptom is the chat silently doing nothing rather than an error.
    */
   snapshot: string
+  /** Public HTTPS forward proxy Daytona must use for all sandbox web traffic. */
+  forwardProxyUrl: string
+  /** 32-byte base64 root used to derive a different proxy password for every sandbox. */
+  forwardProxyRootKey: string
 }
 
 export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): DaytonaConfig {
@@ -69,13 +75,72 @@ export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Dayt
     )
   }
 
+  const forwardProxyUrl = env.SANDBOX_FORWARD_PROXY_URL
+  if (forwardProxyUrl === undefined || forwardProxyUrl === "") {
+    throw new Error(
+      "SANDBOX_FORWARD_PROXY_URL is not set. Daytona must send sandbox internet traffic through " +
+        "the platform proxy so the sandbox cannot bypass lifecycle authorization.",
+    )
+  }
+  validateForwardProxyUrl(forwardProxyUrl)
+
+  const forwardProxyRootKey = env.SANDBOX_FORWARD_PROXY_ROOT_KEY
+  if (forwardProxyRootKey === undefined || forwardProxyRootKey === "") {
+    throw new Error(
+      "SANDBOX_FORWARD_PROXY_ROOT_KEY is not set. It derives the per-sandbox credential used by " +
+        "both Daytona creation and the router's forward-proxy listener.",
+    )
+  }
+  decodeForwardProxyRootKey(forwardProxyRootKey)
+
   return {
     apiKey,
     organizationId,
     snapshot,
+    forwardProxyUrl,
+    forwardProxyRootKey,
     ...(env.SANDBOX_DAYTONA_API_URL ? { apiUrl: env.SANDBOX_DAYTONA_API_URL } : {}),
     ...(env.SANDBOX_DAYTONA_TARGET ? { target: env.SANDBOX_DAYTONA_TARGET } : {}),
   }
+}
+
+function validateForwardProxyUrl(value: string): URL {
+  const url = new URL(value)
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error(
+      "SANDBOX_FORWARD_PROXY_URL must be an HTTPS origin with no credentials, path, query, or fragment",
+    )
+  }
+  return url
+}
+
+function decodeForwardProxyRootKey(value: string): Buffer {
+  const key = Buffer.from(value, "base64")
+  if (key.length !== 32 || key.toString("base64") !== value) {
+    throw new Error("SANDBOX_FORWARD_PROXY_ROOT_KEY must be exactly 32 bytes in canonical base64")
+  }
+  return key
+}
+
+/** Must agree with `lib/rust/sandbox-forward-proxy/fixtures/credentials.json`. */
+export function sandboxForwardProxyPassword(rootKeyBase64: string, sandboxId: string): string {
+  return createHmac("sha256", decodeForwardProxyRootKey(rootKeyBase64))
+    .update(`${FORWARD_PROXY_CREDENTIAL_DOMAIN}\0${sandboxId.toLowerCase()}`, "utf8")
+    .digest("base64url")
+}
+
+export function sandboxForwardProxyUrl(config: DaytonaConfig, sandboxId: string): string {
+  const url = validateForwardProxyUrl(config.forwardProxyUrl)
+  url.username = sandboxId.toLowerCase()
+  url.password = sandboxForwardProxyPassword(config.forwardProxyRootKey, sandboxId)
+  return url.toString()
 }
 
 /**
@@ -124,6 +189,10 @@ export function buildCreateParams(
     // name is deterministic without leaking a repository or user name into Daytona's console.
     name: `sproutos-${input.sandboxId}`,
     snapshot: config.snapshot,
+    // Daytona installs this create-time-only upstream as HTTP_PROXY/HTTPS_PROXY inside the
+    // sandbox. The credential is unique to this sandbox and remains useful only while the router
+    // sees the corresponding control-plane row in a live state.
+    outboundProxyUrl: sandboxForwardProxyUrl(config, input.sandboxId),
     /*
     Attribution, and the reason `organizationId` is required rather than optional.
 

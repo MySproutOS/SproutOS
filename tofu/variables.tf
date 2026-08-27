@@ -335,6 +335,12 @@ variable "postgres_subdomain" {
   default     = "postgres"
 }
 
+variable "egress_subdomain" {
+  description = "The customer-facing HTTPS address of the authenticated sandbox forward proxy."
+  type        = string
+  default     = "egress"
+}
+
 /*
   Which version of AWS's Lambda Web Adapter layer customer functions are published with.
 

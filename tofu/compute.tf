@@ -1042,6 +1042,7 @@ resource "aws_launch_template" "service" {
     tenant_valkey_subdomain = var.tenant_valkey_subdomain
     control_plane_domain    = var.control_plane_domain
     llm_subdomain           = var.llm_subdomain
+    egress_subdomain        = var.egress_subdomain
   }))
 
   metadata_options {
@@ -1124,10 +1125,11 @@ resource "aws_autoscaling_group" "router" {
     # be a target group with no targets: healthy-looking in the console, 503 from the balancer, and
     # nothing in any log saying why every agent turn failed.
     aws_lb_target_group.llm[each.key].arn,
-    # The Postgres and Valkey splits, on the tenant network load balancer rather than the ALB —
-    # see `nlb.tf`. Neither speaks HTTP, which is the whole reason there is a second balancer.
+    # The Postgres, Valkey and authenticated forward-proxy splits, on the tenant network load
+    # balancer rather than the ALB — see `nlb.tf`.
     aws_lb_target_group.postgres[each.key].arn,
     aws_lb_target_group.valkey[each.key].arn,
+    aws_lb_target_group.forward_proxy[each.key].arn,
   ]
 
   min_size         = 0

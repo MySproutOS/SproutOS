@@ -60,6 +60,7 @@ KEYS=(
   SANDBOX_DAYTONA_SNAPSHOT
   SANDBOX_DAYTONA_API_URL
   SANDBOX_DAYTONA_TARGET
+  SANDBOX_FORWARD_PROXY_ROOT_KEY
   # The key the control plane seals a sandbox's model credential under, and the router opens it
   # with. Both halves must hold the same value or every agent turn fails to authenticate — see
   # `@lib/proxy-secret`, and the fixtures both implementations assert against.

@@ -106,6 +106,10 @@ that credential, and cannot be reached from here.
 a live preview. Bind to \`0.0.0.0\`, not \`127.0.0.1\` — a server listening on loopback inside a
 container is invisible from outside it, which looks to the customer like a preview that never loads.
 
+**HTTP and HTTPS internet access is already routed through SproutOS.** Web requests, package
+managers, and HTTPS Git remotes work normally; the proxy settings are already in the environment.
+Use HTTPS rather than SSH for Git. Arbitrary raw TCP protocols are not available from this sandbox.
+
 **Your work is committed for you.** At the end of the turn everything in the checkout is staged,
 committed and pushed to a branch — never to the production branch. So: do not commit secrets, do not
 leave scratch files in the tree, and do not ask whether you may edit files. You may.

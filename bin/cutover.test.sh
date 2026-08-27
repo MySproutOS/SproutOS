@@ -47,6 +47,8 @@ case "$2" in
           *-pg-green) echo "arn:pg-green" ;;
           *-valkey-blue) echo "arn:valkey-blue" ;;
           *-valkey-green) echo "arn:valkey-green" ;;
+          *-egress-blue) echo "arn:egress-blue" ;;
+          *-egress-green) echo "arn:egress-green" ;;
           *-blue) echo "arn:blue" ;;
           *-green) echo "arn:green" ;;
         esac
@@ -96,6 +98,7 @@ run() {
   if [ -n "${SEARCH_RULE_ARN:-}" ]; then export SEARCH_RULE_ARN; fi
   if [ -n "${PG_LISTENER_ARN:-}" ]; then export PG_LISTENER_ARN; fi
   if [ -n "${VALKEY_LISTENER_ARN:-}" ]; then export VALKEY_LISTENER_ARN; fi
+  if [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ]; then export FORWARD_PROXY_LISTENER_ARN; fi
   bash "$HERE/cutover.sh" "$@" 2>&1
 }
 
@@ -208,18 +211,21 @@ check "the router's listener is written after the extras" \
   "$(wc -l < "$STUB_CALLS" | tr -d ' ')" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
-# All four at once, which is what a real router release now moves: the ALB listener it is the
-# default of, the search rule beside it, and two listeners on the tenant balancer.
+# All five at once, which is what a real router release now moves: the ALB listener it is the
+# default of, the search rule beside it, and three listeners on the tenant balancer.
 unset SEARCH_RULE_ARN PG_LISTENER_ARN
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule \
-  PG_LISTENER_ARN=arn:pg-listener VALKEY_LISTENER_ARN=arn:valkey-listener out=$(run router)
-check "moves all four" "4" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
+  PG_LISTENER_ARN=arn:pg-listener VALKEY_LISTENER_ARN=arn:valkey-listener \
+  FORWARD_PROXY_LISTENER_ARN=arn:forward-proxy-listener out=$(run router)
+check "moves all five" "5" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
 check "valkey among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:valkey-green","Weight":100' "$STUB_CALLS")"
-check "and the front door still last" "4" \
+check "forward proxy among them, same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:egress-green","Weight":100' "$STUB_CALLS")"
+check "and the front door still last" "5" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
-unset SEARCH_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN
+unset SEARCH_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN FORWARD_PROXY_LISTENER_ARN
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"
