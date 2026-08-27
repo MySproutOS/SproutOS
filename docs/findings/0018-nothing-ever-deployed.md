@@ -241,13 +241,52 @@ Two faults, and only one is the staleness:
   not worth an outage of their application" — and that rule was applied to sending and not to
   starting, where it matters more: a send failure loses a line, a startup failure loses every
   invocation. Fixed; a sink that cannot be built now drops lines and says so.
-- The extension is attached to every customer function by default, so a bad build of it is a
-  platform-wide outage rather than a degraded feature. It is now behind `LOG_EXTENSION_ENABLED`,
-  off, with the two conditions for turning it back on written next to the flag — the second of which
-  is that something builds and publishes the layer, which is still not true.
+- The extension was attached to every customer function by default, so a bad build of it was a
+  platform-wide outage rather than a degraded feature. Attachment now defaults off and has two
+  explicit stages: `LOG_EXTENSION_CANARY_PROJECT_IDS`, then `LOG_EXTENSION_ENABLED`. Merely leaving
+  an old `LOG_EXTENSION_LAYER_ARN` in Parameter Store cannot attach it.
 
 The rule this leaves: **an observability component must fail quieter than the thing it observes.**
 An extension that can crash the application is not monitoring it, it is a dependency of it.
+
+### 2026-08-27: the repository owns the layer
+
+The hand-published artifact is no longer an acceptable input to production. The Deploy workflow now
+builds `services/log-extension` on the same arm64 runner as the platform, targets
+`aarch64-unknown-linux-musl`, packages the binary at the only path Lambda discovers
+(`/extensions/log-extension`), and refuses an archive that is not an AArch64 ELF, has a dynamic
+interpreter, loses its executable bit, or contains another path. CI builds and checks that exact
+archive independently. Publishing requires an explicit workflow-dispatch input; an ordinary push to
+`main` cannot create or select a layer version. After Lambda accepts it, the workflow records the
+returned version ARN in Parameter Store before the website release can fill an idle colour.
+
+The deployment role gains only `PublishLayerVersion` for the named layer and `PutParameter` for the
+one ARN. That policy must be applied before the first explicit publish. Attachment still does not
+happen then: one project id is allowlisted, its customer function is republished and invoked, and
+only a successful customer response plus both durable `site_request` and `site_gib_second` rows are
+evidence for the global switch. Those two dimensions now share a live integration assertion through
+signed ingest, Kafka, ClickHouse, and the Valkey projection; a generic metering row is not used as a
+substitute for site billing.
+
+Putting Kafka in the TypeScript CI job exposed one more version of the same error. Its bootstrap
+script said its `runtime_log` table was the same statement as the canonical schema, but omitted the
+codecs, three-day TTL, and whole-part expiry setting. The retention test failed against the table the
+bootstrap had actually created. The script now carries the canonical table definition; the comment
+is no longer the only thing keeping them "the same."
+
+This closes the production gap recorded across the legacy launch material without rewriting its
+history: `/Users/andrew/.claude/plans/read-the-readme-md-to-eventual-dusk.md` established that the
+Telemetry extension supplies site billing, `/Users/andrew/.claude/plans/double-sorted-meteor.md`
+moved durable usage to Kafka/ClickHouse with Valkey as the fast view, `private_notes/groups.md`
+records the production request path and its prior false-positive verification, and
+`private_notes/sandbox-handoff.md` records the same rule for provider work: demonstrating an
+interface against a substitute is not production verification. The remaining production proof is
+therefore deliberately a rollout step, not a claim made by this change.
+
+Rollback has an immutable edge: changing either attachment switch prevents future functions from
+receiving the layer, but cannot remove it from a Lambda version already published. A canary that
+fails must be republished without the layer. That is why the rollout begins with one disposable
+project rather than relying on a switch to undo a platform-wide attachment.
 
 ## What it took to serve one request, end to end
 

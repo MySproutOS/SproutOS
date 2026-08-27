@@ -38,6 +38,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_log_extension:
+        description: Build and publish a new log-extension layer (website release only)
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   # One release at a time. Two concurrent runs would write the same pointer object and leave the
@@ -128,6 +133,16 @@ jobs:
           NEXT_PUBLIC_ASSET_BASE: ${{ vars.ASSET_BASE_URL }}
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
           NEXT_PUBLIC_HOST_URL: ${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+
+      - name: Build and verify the Lambda log extension
+        if: matrix.service == 'website' && inputs.publish_log_extension == true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y musl-tools
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --release --target aarch64-unknown-linux-musl -p log-extension
+          bin/package-log-extension.sh \
+            target/aarch64-unknown-linux-musl/release/log-extension \
+            "$RUNNER_TEMP/log-extension.zip"
 
       - name: Package
         run: |
@@ -342,6 +357,26 @@ jobs:
           aws s3 sync apps/website/.next/static "s3://$assets/_next/static" \
             --cache-control "public,max-age=31536000,immutable" \
             --only-show-errors
+
+      - name: Publish the Lambda log extension
+        if: matrix.service == 'website' && inputs.publish_log_extension == true
+        run: |
+          layer_arn=$(aws lambda publish-layer-version \
+            --layer-name "${NAME_PREFIX}-log-extension" \
+            --description "SproutOS log extension ${GITHUB_SHA}" \
+            --zip-file "fileb://$RUNNER_TEMP/log-extension.zip" \
+            --compatible-architectures arm64 \
+            --query LayerVersionArn --output text)
+          case "$layer_arn" in
+            arn:aws:lambda:*:*:layer:"${NAME_PREFIX}-log-extension":*) ;;
+            *) echo "::error::Lambda returned an unexpected layer ARN: $layer_arn"; exit 1 ;;
+          esac
+          aws ssm put-parameter \
+            --name "/${NAME_PREFIX}/application/LOG_EXTENSION_LAYER_ARN" \
+            --type SecureString \
+            --key-id "alias/${NAME_PREFIX}-secrets" \
+            --value "$layer_arn" \
+            --overwrite
 
       - name: Upload
         run: |

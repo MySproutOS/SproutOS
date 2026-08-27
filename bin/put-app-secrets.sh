@@ -67,10 +67,11 @@ KEYS=(
   LLM_PROXY_SECRET
   # Platform-credit turns terminate at the router. This key is never injected into a sandbox.
   OPENAI_KEY
-  # Not derived from OpenTofu because nothing in this repository publishes the layer — the three
-  # versions in the account were published by hand. Pinning it in the launch template would make it
-  # silently stale on the next publish; here a person updates it in the same motion.
+  # The workflow owns the ARN. These two are rollout controls: canary first, then global. They stay
+  # here because an immutable customer function version keeps its layer after a switch is changed.
   LOG_EXTENSION_LAYER_ARN
+  LOG_EXTENSION_CANARY_PROJECT_IDS
+  LOG_EXTENSION_ENABLED
   # OpenSearch validates the reaper's internal admin user. This root key HMAC-derives a different
   # internal password per tenant; neither the derived values nor the key leave the platform.
   SEARCH_PROXY_SECURITY_ROOT_KEY
