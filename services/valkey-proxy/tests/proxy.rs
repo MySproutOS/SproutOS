@@ -79,18 +79,46 @@ impl Client {
     }
 
     async fn send(&mut self, args: &[&str]) -> String {
-        let mut out = format!("*{}\r\n", args.len());
-        for arg in args {
-            out.push_str(&format!("${}\r\n{arg}\r\n", arg.len()));
-        }
-        self.stream.write_all(out.as_bytes()).await.expect("write");
+        self.write(args).await;
 
-        let mut buffer = vec![0u8; 8192];
-        let read = tokio::time::timeout(Duration::from_secs(5), self.stream.read(&mut buffer))
-            .await
-            .expect("the proxy did not reply in time")
-            .expect("read");
-        String::from_utf8_lossy(&buffer[..read]).into_owned()
+        self.read_reply().await
+    }
+
+    async fn write(&mut self, args: &[&str]) {
+        let bytes = args.iter().map(|arg| arg.as_bytes()).collect::<Vec<_>>();
+        self.write_bytes(&bytes).await;
+    }
+
+    async fn write_bytes(&mut self, args: &[&[u8]]) {
+        let mut out = format!("*{}\r\n", args.len()).into_bytes();
+        for arg in args {
+            out.extend_from_slice(format!("${}\r\n", arg.len()).as_bytes());
+            out.extend_from_slice(arg);
+            out.extend_from_slice(b"\r\n");
+        }
+        self.stream.write_all(&out).await.expect("write");
+    }
+
+    async fn read_reply(&mut self) -> String {
+        String::from_utf8_lossy(&self.read_reply_bytes().await).into_owned()
+    }
+
+    async fn read_reply_bytes(&mut self) -> Vec<u8> {
+        let mut buffer = bytes::BytesMut::new();
+        loop {
+            if let Some(framed) = valkey_proxy::reply::frame(&buffer).expect("valid reply") {
+                return buffer.split_to(framed.len).to_vec();
+            }
+            // Read exactly one byte so a second pub/sub acknowledgement cannot be consumed into a
+            // method-local buffer and lost when this call returns the first frame.
+            let mut byte = [0_u8; 1];
+            let read = tokio::time::timeout(Duration::from_secs(5), self.stream.read(&mut byte))
+                .await
+                .expect("the proxy did not reply in time")
+                .expect("read");
+            assert!(read > 0, "the proxy closed before a complete reply");
+            buffer.extend_from_slice(&byte[..read]);
+        }
     }
 
     async fn pipeline(&mut self, commands: &[&[&str]]) -> Vec<String> {
@@ -119,6 +147,344 @@ impl Client {
         }
         replies
     }
+}
+
+fn bulk_payload(reply: &[u8]) -> &[u8] {
+    assert_eq!(reply.first(), Some(&b'$'), "not a bulk reply: {reply:?}");
+    let header = reply
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap()
+        + 2;
+    let len = std::str::from_utf8(&reply[1..header - 2])
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    &reply[header..header + len]
+}
+
+#[tokio::test]
+async fn management_compatibility_commands_are_local_and_safe() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    let info = client.send(&["INFO"]).await;
+    assert!(
+        info.starts_with('$') && info.contains("redis_version:"),
+        "{info:?}"
+    );
+    assert_eq!(
+        client
+            .send(&["CLIENT", "SETINFO", "LIB-NAME", "integration"])
+            .await,
+        "+OK\r\n"
+    );
+    assert_eq!(client.send(&["COMMAND", "DOCS", "GET"]).await, "*0\r\n");
+    assert!(
+        client
+            .send(&["CLIENT", "LIST"])
+            .await
+            .contains("disallowed"),
+        "only CLIENT SETINFO may be local"
+    );
+
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn xread_and_xreadgroup_are_scoped_and_hide_physical_stream_names() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    assert!(
+        client
+            .send(&["XADD", "events", "*", "kind", "one"])
+            .await
+            .starts_with('$')
+    );
+    let read = client.send(&["XREAD", "STREAMS", "events", "0-0"]).await;
+    assert!(read.contains("\r\nevents\r\n"), "{read}");
+    assert!(!read.contains("{kv:"), "physical stream leaked: {read}");
+    let published = format!(
+        "{{kv:{}}}:events",
+        sproutos_tenant_auth::encode_short_id(service)
+    );
+    let published_read = client.send(&["XREAD", "STREAMS", &published, "0-0"]).await;
+    assert!(
+        published_read.contains(&format!("\r\n{published}\r\n")),
+        "a caller's already-prefixed spelling changed: {published_read}"
+    );
+
+    assert_eq!(
+        client
+            .send(&["XGROUP", "CREATE", "jobs", "workers", "0", "MKSTREAM"])
+            .await,
+        "+OK\r\n"
+    );
+    client.send(&["XADD", "jobs", "*", "kind", "two"]).await;
+    let grouped = client
+        .send(&[
+            "XREADGROUP",
+            "GROUP",
+            "workers",
+            "one",
+            "STREAMS",
+            "jobs",
+            ">",
+        ])
+        .await;
+    assert!(grouped.contains("\r\njobs\r\n"), "{grouped}");
+    assert!(
+        !grouped.contains("{kv:"),
+        "physical stream leaked: {grouped}"
+    );
+
+    client.send(&["DEL", "events", "jobs"]).await;
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn rounded_out_key_commands_execute_against_real_valkey() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.send(&["AUTH", &username, &secret]).await, "+OK\r\n");
+
+    assert_eq!(client.send(&["SET", "text", "abcdef"]).await, "+OK\r\n");
+    assert_eq!(
+        client.send(&["GETRANGE", "text", "1", "3"]).await,
+        "$3\r\nbcd\r\n"
+    );
+    assert_eq!(
+        client.send(&["SETRANGE", "text", "2", "XY"]).await,
+        ":6\r\n"
+    );
+    assert!(client.send(&["BITCOUNT", "text"]).await.starts_with(':'));
+    assert!(client.send(&["BITPOS", "text", "1"]).await.starts_with(':'));
+    assert_eq!(client.send(&["PEXPIRE", "text", "60000"]).await, ":1\r\n");
+    assert!(client.send(&["EXPIRETIME", "text"]).await.starts_with(':'));
+    assert!(client.send(&["PEXPIRETIME", "text"]).await.starts_with(':'));
+
+    assert_eq!(
+        client.send(&["SET", "dump-source", "restored"]).await,
+        "+OK\r\n"
+    );
+    client.write(&["DUMP", "dump-source"]).await;
+    let dumped = client.read_reply_bytes().await;
+    let payload = bulk_payload(&dumped).to_vec();
+    client
+        .write_bytes(&[b"RESTORE", b"dump-copy", b"0", &payload])
+        .await;
+    assert_eq!(client.read_reply().await, "+OK\r\n");
+    assert_eq!(
+        client.send(&["GET", "dump-copy"]).await,
+        "$8\r\nrestored\r\n"
+    );
+
+    client.send(&["RPUSH", "list-a", "one"]).await;
+    let lmpop = client.send(&["LMPOP", "1", "list-a", "LEFT"]).await;
+    assert!(lmpop.contains("list-a") && lmpop.contains("one"), "{lmpop}");
+    assert!(!lmpop.contains("{kv:"), "{lmpop}");
+    client.send(&["RPUSH", "list-b", "two"]).await;
+    let blmpop = client.send(&["BLMPOP", "1", "1", "list-b", "LEFT"]).await;
+    assert!(
+        blmpop.contains("list-b") && blmpop.contains("two"),
+        "{blmpop}"
+    );
+    assert!(!blmpop.contains("{kv:"), "{blmpop}");
+    client.send(&["ZADD", "z-a", "1", "one"]).await;
+    let zmpop = client.send(&["ZMPOP", "1", "z-a", "MIN"]).await;
+    assert!(zmpop.contains("z-a") && zmpop.contains("one"), "{zmpop}");
+    assert!(!zmpop.contains("{kv:"), "{zmpop}");
+    client.send(&["ZADD", "z-b", "1", "two"]).await;
+    let bzmpop = client.send(&["BZMPOP", "1", "1", "z-b", "MAX"]).await;
+    assert!(bzmpop.contains("z-b") && bzmpop.contains("two"), "{bzmpop}");
+    assert!(!bzmpop.contains("{kv:"), "{bzmpop}");
+    client.send(&["SADD", "set-a", "x", "shared"]).await;
+    client.send(&["SADD", "set-b", "y", "shared"]).await;
+    assert_eq!(
+        client.send(&["SINTERCARD", "2", "set-a", "set-b"]).await,
+        ":1\r\n"
+    );
+
+    client
+        .send(&[
+            "DEL",
+            "text",
+            "dump-source",
+            "dump-copy",
+            "list-a",
+            "list-b",
+            "z-a",
+            "z-b",
+            "set-a",
+            "set-b",
+        ])
+        .await;
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn pubsub_has_unsolicited_frames_namespaced_channels_and_clean_mode_transitions() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, service, fixtures) = provision(&url).await;
+    let mut subscriber = Client::connect(address).await;
+    let mut publisher = Client::connect(address).await;
+    assert_eq!(
+        subscriber.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(
+        publisher.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(subscriber.send(&["MULTI"]).await, "+OK\r\n");
+    assert!(
+        subscriber
+            .send(&["SUBSCRIBE", "not-queued"])
+            .await
+            .contains("not allowed in MULTI")
+    );
+    assert_eq!(subscriber.send(&["DISCARD"]).await, "+OK\r\n");
+
+    // A normal array can coincidentally have the exact shape of a pub/sub delivery. Because it was
+    // issued before SUBSCRIBE, it remains an ordinary pending response and must consume its slot.
+    publisher
+        .send(&[
+            "RPUSH",
+            "looks-like-message",
+            "message",
+            "events",
+            "payload",
+        ])
+        .await;
+    let transition = subscriber
+        .pipeline(&[
+            &["LRANGE", "looks-like-message", "0", "-1"],
+            &["SUBSCRIBE", "warmup"],
+        ])
+        .await;
+    assert!(transition[0].contains("message") && transition[0].contains("payload"));
+    assert!(transition[1].contains("subscribe") && transition[1].contains("warmup"));
+    assert!(
+        subscriber
+            .send(&["UNSUBSCRIBE", "warmup"])
+            .await
+            .contains("unsubscribe")
+    );
+
+    subscriber.write(&["SUBSCRIBE", "events", "other"]).await;
+    let first_ack = subscriber.read_reply().await;
+    let second_ack = subscriber.read_reply().await;
+    assert!(first_ack.contains("\r\nevents\r\n"), "{first_ack}");
+    assert!(second_ack.contains("\r\nother\r\n"), "{second_ack}");
+    assert!(!first_ack.contains("{kv:") && !second_ack.contains("{kv:"));
+
+    let physical = format!(
+        "{{kv:{}}}:events",
+        sproutos_tenant_auth::encode_short_id(service)
+    );
+    assert_eq!(
+        publisher.send(&["PUBLISH", "events", &physical]).await,
+        ":1\r\n"
+    );
+    let message = subscriber.read_reply().await;
+    assert!(message.contains("\r\nevents\r\n"), "{message}");
+    assert!(
+        message.contains(&format!("\r\n{physical}\r\n")),
+        "payload was rewritten: {message}"
+    );
+
+    let refused_scan = subscriber.send(&["SCAN", "0"]).await;
+    assert!(refused_scan.contains("subscribed mode"), "{refused_scan}");
+
+    subscriber.write(&["UNSUBSCRIBE"]).await;
+    for _ in 0..2 {
+        let ack = subscriber.read_reply().await;
+        assert!(ack.contains("unsubscribe"), "{ack}");
+        assert!(!ack.contains("{kv:"), "{ack}");
+    }
+    assert_eq!(subscriber.send(&["PING"]).await, "+PONG\r\n");
+
+    subscriber.write(&["PSUBSCRIBE", "news*"]).await;
+    let pattern_ack = subscriber.read_reply().await;
+    assert!(pattern_ack.contains("\r\nnews*\r\n"), "{pattern_ack}");
+    assert_eq!(
+        publisher.send(&["PUBLISH", "news1", "hello"]).await,
+        ":1\r\n"
+    );
+    let pattern_message = subscriber.read_reply().await;
+    assert!(
+        pattern_message.contains("\r\nnews*\r\n"),
+        "{pattern_message}"
+    );
+    assert!(
+        pattern_message.contains("\r\nnews1\r\n"),
+        "{pattern_message}"
+    );
+    assert!(!pattern_message.contains("{kv:"), "{pattern_message}");
+    subscriber.write(&["PUNSUBSCRIBE", "news*"]).await;
+    assert!(subscriber.read_reply().await.contains("punsubscribe"));
+    assert_eq!(subscriber.send(&["PING"]).await, "+PONG\r\n");
+
+    // The dynamically granted glob is still an engine boundary, not proxy-only rewriting.
+    let identity = sproutos_tenant_auth::TenantIdentity::new(
+        fixtures[0],
+        sproutos_tenant_auth::ResourceKind::Queue,
+        service,
+    );
+    let acl = valkey_proxy::acl::credentials(b"integration-test-acl-root-key-32-bytes", &identity);
+    let mut direct = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    assert_eq!(
+        direct.send(&["AUTH", &acl.username, &acl.password]).await,
+        "+OK\r\n"
+    );
+    let foreign = direct.send(&["PSUBSCRIBE", "foreign*"]).await;
+    assert!(
+        foreign.contains("NOPERM"),
+        "foreign pattern reached Valkey: {foreign}"
+    );
+    let foreign_publish = direct.send(&["PUBLISH", "foreign", "nope"]).await;
+    assert!(foreign_publish.contains("NOPERM"), "{foreign_publish}");
+    let allowed_pattern = format!(
+        "{{kv:{}}}:news*",
+        sproutos_tenant_auth::encode_short_id(service)
+    );
+    let direct_allowed = direct.send(&["PSUBSCRIBE", &allowed_pattern]).await;
+    assert!(
+        direct_allowed.contains(&allowed_pattern),
+        "the engine did not retain the scoped grant: {direct_allowed}"
+    );
+
+    publisher.send(&["DEL", "looks-like-message"]).await;
+
+    cleanup(&url, &fixtures).await;
 }
 
 fn parse_scan_reply(reply: &str) -> (String, Vec<String>) {

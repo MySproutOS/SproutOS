@@ -1,9 +1,9 @@
 //! Which arguments of a command are keys.
 //!
-//! This is the security boundary. A key the proxy fails to namespace is a key in the shared root
-//! of the keyspace, which every tenant can reach — so the default for an unrecognised command is
-//! **refuse**, not forward. An allowlist that is missing a command produces a support ticket; a
-//! blocklist that is missing one produces a cross-tenant read.
+//! This is the proxy's first boundary; the per-tenant Valkey ACL is the engine-enforced backstop.
+//! A key the proxy fails to namespace would target the shared root, where the ACL must refuse it,
+//! so the default for an unrecognised command is still **refuse**, not forward. A missing allowlist
+//! entry produces a support ticket; a missing blocklist entry asks the engine to catch our bug.
 
 /// Where the keys are in a command's argument list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +20,8 @@ pub enum KeySpec {
     Numkeys { count_at: usize },
     /// The last argument is a timeout, not a key: `BLPOP key... timeout`.
     RangeExceptLast { first: usize, step: usize },
+    /// `XREAD [options] STREAMS key... id...` — keys occupy the first half after `STREAMS`.
+    Streams,
 }
 
 /// Commands which can reach the tenant upstream. The ACL provisioner grants exactly these.
@@ -30,6 +32,7 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "GET",
     "GETDEL",
     "GETEX",
+    "GETRANGE",
     "INCR",
     "DECR",
     "STRLEN",
@@ -38,12 +41,18 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "PERSIST",
     "TYPE",
     "DUMP",
+    "BITCOUNT",
+    "BITPOS",
+    "EXPIRETIME",
+    "PEXPIRETIME",
     "SET",
     "SETNX",
     "SETEX",
     "PSETEX",
     "GETSET",
     "APPEND",
+    "SETRANGE",
+    "RESTORE",
     "INCRBY",
     "DECRBY",
     "INCRBYFLOAT",
@@ -98,6 +107,8 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "BRPOP",
     "BRPOPLPUSH",
     "BLMOVE",
+    "LMPOP",
+    "BLMPOP",
     "SADD",
     "SREM",
     "SMEMBERS",
@@ -110,6 +121,7 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "SINTER",
     "SUNION",
     "SDIFF",
+    "SINTERCARD",
     "ZADD",
     "ZREM",
     "ZSCORE",
@@ -132,6 +144,8 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "ZRANDMEMBER",
     "BZPOPMIN",
     "BZPOPMAX",
+    "ZMPOP",
+    "BZMPOP",
     "XADD",
     "XLEN",
     "XRANGE",
@@ -145,6 +159,13 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "XINFO",
     "XGROUP",
     "XSETID",
+    "XREAD",
+    "XREADGROUP",
+    "PUBLISH",
+    "SUBSCRIBE",
+    "PSUBSCRIBE",
+    "UNSUBSCRIBE",
+    "PUNSUBSCRIBE",
     "EVAL",
     "EVALSHA",
     "EVAL_RO",
@@ -165,7 +186,7 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
 /// `CLIENT`, `CLUSTER`, `ACL`, `REPLICAOF`, and `KEYS` — which scans the whole keyspace and would
 /// walk straight through the namespacing.
 pub fn key_spec(verb: &str) -> Option<KeySpec> {
-    use KeySpec::{Fixed, None as NoKeys, Numkeys, Range, RangeExceptLast};
+    use KeySpec::{Fixed, None as NoKeys, Numkeys, Range, RangeExceptLast, Streams};
 
     // The same list is installed into each tenant's upstream ACL. Keeping it authoritative here
     // prevents a command from being admitted by the proxy but rejected only after reaching Valkey.
@@ -178,12 +199,13 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
         "PING" | "ECHO" | "QUIT" => NoKeys,
 
         // Strings.
-        "GET" | "GETDEL" | "GETEX" | "INCR" | "DECR" | "STRLEN" | "TTL" | "PTTL" | "PERSIST"
-        | "TYPE" | "DUMP" => Fixed { first: 1, count: 1 },
-        "SET" | "SETNX" | "SETEX" | "PSETEX" | "GETSET" | "APPEND" | "INCRBY" | "DECRBY"
-        | "INCRBYFLOAT" | "EXPIRE" | "PEXPIRE" | "EXPIREAT" | "PEXPIREAT" => {
+        "GET" | "GETDEL" | "GETEX" | "GETRANGE" | "INCR" | "DECR" | "STRLEN" | "TTL" | "PTTL"
+        | "PERSIST" | "TYPE" | "DUMP" | "BITCOUNT" | "BITPOS" | "EXPIRETIME" | "PEXPIRETIME" => {
             Fixed { first: 1, count: 1 }
         }
+        "SET" | "SETNX" | "SETEX" | "PSETEX" | "GETSET" | "APPEND" | "INCRBY" | "DECRBY"
+        | "INCRBYFLOAT" | "EXPIRE" | "PEXPIRE" | "EXPIREAT" | "PEXPIREAT" | "SETRANGE"
+        | "RESTORE" => Fixed { first: 1, count: 1 },
         "MGET" | "DEL" | "UNLINK" | "EXISTS" | "TOUCH" | "WATCH" => Range { first: 1, step: 1 },
         "MSET" | "MSETNX" => Range { first: 1, step: 2 },
         "RENAME" | "RENAMENX" | "COPY" | "SMOVE" => Fixed { first: 1, count: 2 },
@@ -201,11 +223,14 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
         // The trailing timeout is not a key, and namespacing it would send `0` as a key name.
         "BLPOP" | "BRPOP" => RangeExceptLast { first: 1, step: 1 },
         "BRPOPLPUSH" | "BLMOVE" => Fixed { first: 1, count: 2 },
+        "LMPOP" => Numkeys { count_at: 1 },
+        "BLMPOP" => Numkeys { count_at: 2 },
 
         // Sets.
         "SADD" | "SREM" | "SMEMBERS" | "SISMEMBER" | "SMISMEMBER" | "SCARD" | "SPOP"
         | "SRANDMEMBER" | "SSCAN" => Fixed { first: 1, count: 1 },
         "SINTER" | "SUNION" | "SDIFF" => Range { first: 1, step: 1 },
+        "SINTERCARD" => Numkeys { count_at: 1 },
 
         // Sorted sets — BullMQ's delayed and prioritised queues.
         "ZADD" | "ZREM" | "ZSCORE" | "ZCARD" | "ZCOUNT" | "ZRANGE" | "ZREVRANGE"
@@ -213,11 +238,18 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
         | "ZINCRBY" | "ZREMRANGEBYSCORE" | "ZREMRANGEBYRANK" | "ZREMRANGEBYLEX" | "ZSCAN"
         | "ZPOPMIN" | "ZPOPMAX" | "ZRANDMEMBER" => Fixed { first: 1, count: 1 },
         "BZPOPMIN" | "BZPOPMAX" => RangeExceptLast { first: 1, step: 1 },
+        "ZMPOP" => Numkeys { count_at: 1 },
+        "BZMPOP" => Numkeys { count_at: 2 },
 
         // Streams.
         "XADD" | "XLEN" | "XRANGE" | "XREVRANGE" | "XDEL" | "XTRIM" | "XACK" | "XPENDING"
         | "XCLAIM" | "XAUTOCLAIM" | "XSETID" => Fixed { first: 1, count: 1 },
         "XINFO" | "XGROUP" => Fixed { first: 2, count: 1 },
+        "XREAD" | "XREADGROUP" => Streams,
+
+        // Channels use the same namespace and are independently constrained by the ACL's `&` rule.
+        "PUBLISH" => Fixed { first: 1, count: 1 },
+        "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" => Range { first: 1, step: 1 },
 
         // Scripting. BullMQ is almost entirely EVALSHA, so this is the important one.
         "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" => {
@@ -284,6 +316,45 @@ pub fn namespace_command(
                 return Err("numkeys is larger than the arguments given");
             }
             (count_at + 1..count_at + 1 + count).collect()
+        }
+        KeySpec::Streams => {
+            let grouped = args[0].eq_ignore_ascii_case(b"XREADGROUP");
+            let mut streams_at = if grouped {
+                if args
+                    .get(1)
+                    .is_none_or(|arg| !arg.eq_ignore_ascii_case(b"GROUP"))
+                    || args.len() < 4
+                {
+                    return Err("XREADGROUP requires GROUP, group, and consumer");
+                }
+                4
+            } else {
+                1
+            };
+            loop {
+                let option = args
+                    .get(streams_at)
+                    .ok_or("XREAD requires a STREAMS section")?;
+                if option.eq_ignore_ascii_case(b"STREAMS") {
+                    break;
+                }
+                if option.eq_ignore_ascii_case(b"COUNT") || option.eq_ignore_ascii_case(b"BLOCK") {
+                    if args.get(streams_at + 1).is_none() {
+                        return Err("XREAD option requires a value");
+                    }
+                    streams_at += 2;
+                } else if grouped && option.eq_ignore_ascii_case(b"NOACK") {
+                    streams_at += 1;
+                } else {
+                    return Err("unknown XREAD option before STREAMS");
+                }
+            }
+            let remaining = args.len().saturating_sub(streams_at + 1);
+            if remaining == 0 || !remaining.is_multiple_of(2) {
+                return Err("XREAD STREAMS needs the same number of keys and ids");
+            }
+            let count = remaining / 2;
+            (streams_at + 1..streams_at + 1 + count).collect()
         }
     };
 
@@ -495,6 +566,63 @@ mod tests {
             namespaced(&["XGROUP", "CREATE", "jobs", "$", "MKSTREAM"]).unwrap(),
             ["XGROUP", "CREATE", "{kv:01hb}:jobs", "$", "MKSTREAM"]
         );
+    }
+
+    #[test]
+    fn xread_namespaces_only_the_keys_before_the_id_half() {
+        assert_eq!(
+            namespaced(&["XREAD", "COUNT", "2", "STREAMS", "one", "two", "$", "0"]).unwrap(),
+            [
+                "XREAD",
+                "COUNT",
+                "2",
+                "STREAMS",
+                "{kv:01hb}:one",
+                "{kv:01hb}:two",
+                "$",
+                "0"
+            ]
+        );
+        assert_eq!(
+            namespaced(&[
+                "XREADGROUP",
+                "GROUP",
+                "STREAMS",
+                "consumer",
+                "NOACK",
+                "STREAMS",
+                "one",
+                ">",
+            ])
+            .unwrap(),
+            [
+                "XREADGROUP",
+                "GROUP",
+                "STREAMS",
+                "consumer",
+                "NOACK",
+                "STREAMS",
+                "{kv:01hb}:one",
+                ">",
+            ]
+        );
+        assert!(namespaced(&["XREAD", "STREAMS", "one", "two", "0"]).is_err());
+    }
+
+    #[test]
+    fn numkeys_management_commands_touch_only_declared_keys() {
+        for parts in [
+            &["LMPOP", "2", "a", "b", "LEFT", "COUNT", "1"][..],
+            &["BLMPOP", "1", "2", "a", "b", "RIGHT"][..],
+            &["ZMPOP", "2", "a", "b", "MIN"][..],
+            &["BZMPOP", "1", "2", "a", "b", "MAX"][..],
+            &["SINTERCARD", "2", "a", "b", "LIMIT", "1"][..],
+        ] {
+            let out = namespaced(parts).unwrap();
+            assert!(out.iter().any(|arg| arg == "{kv:01hb}:a"), "{out:?}");
+            assert!(out.iter().any(|arg| arg == "{kv:01hb}:b"), "{out:?}");
+            assert!(!out.iter().any(|arg| arg == "{kv:01hb}:LEFT"), "{out:?}");
+        }
     }
 }
 

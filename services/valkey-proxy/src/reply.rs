@@ -48,6 +48,144 @@ pub fn frame(buffer: &[u8]) -> Result<Option<Framed>, ReplyError> {
     Ok(Some(Framed { len, first_bulk }))
 }
 
+/// Whether a complete RESP2 pub/sub frame is an unsolicited delivery rather than an acknowledgement.
+pub fn is_pubsub_push(buffer: &[u8]) -> Result<bool, ReplyError> {
+    let Some(elements) = array_elements(buffer, 0)? else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        (
+            array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]),
+            elements.len()
+        ),
+        (Some(b"message"), 3) | (Some(b"pmessage"), 4)
+    ))
+}
+
+/// Strip tenant prefixes from only the channel-bearing fields of a RESP2 pub/sub frame.
+///
+/// Payloads are deliberately never searched or rewritten: a message body is arbitrary customer
+/// data and may legitimately equal a physical channel name.
+pub fn rewrite_pubsub(buffer: &[u8], prefix: &[u8]) -> Result<Vec<u8>, ReplyError> {
+    let kind = array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]);
+    let indices: &[usize] = match kind {
+        Some(b"message" | b"subscribe" | b"unsubscribe" | b"psubscribe" | b"punsubscribe") => &[1],
+        Some(b"pmessage") => &[1, 2],
+        _ => return Ok(buffer.to_vec()),
+    };
+    rewrite_array_bulks(buffer, prefix, indices)
+}
+
+/// Strip the physical stream name from each top-level XREAD/XREADGROUP result row.
+pub fn rewrite_xread_streams(
+    buffer: &[u8],
+    prefix: &[u8],
+    newly_prefixed: &[Vec<u8>],
+) -> Result<Vec<u8>, ReplyError> {
+    let Some(items) = array_elements(buffer, 0)? else {
+        return Ok(buffer.to_vec());
+    };
+    let mut ranges = Vec::new();
+    for (offset, _) in items {
+        if let Some(range) = array_bulk_at(buffer, offset, 0)?
+            && newly_prefixed
+                .iter()
+                .any(|key| key.as_slice() == &buffer[range.0..range.1])
+        {
+            ranges.push(range);
+        }
+    }
+    rewrite_ranges(buffer, prefix, &ranges)
+}
+
+fn rewrite_array_bulks(
+    buffer: &[u8],
+    prefix: &[u8],
+    indices: &[usize],
+) -> Result<Vec<u8>, ReplyError> {
+    let mut ranges = Vec::new();
+    for index in indices {
+        if let Some(range) = array_bulk(buffer, *index)?
+            && buffer[range.0..range.1].starts_with(prefix)
+        {
+            ranges.push(range);
+        }
+    }
+    rewrite_ranges(buffer, prefix, &ranges)
+}
+
+fn rewrite_ranges(
+    buffer: &[u8],
+    prefix: &[u8],
+    ranges: &[(usize, usize)],
+) -> Result<Vec<u8>, ReplyError> {
+    let mut out = buffer.to_vec();
+    for &(start, end) in ranges.iter().rev() {
+        let payload = &buffer[start + prefix.len()..end];
+        let marker = start
+            .checked_sub(1)
+            .and_then(|before| buffer[..before].iter().rposition(|byte| *byte == b'$'))
+            .ok_or(ReplyError::Malformed("bulk payload has no header"))?;
+        out.splice(
+            marker..end,
+            [format!("${}\r\n", payload.len()).as_bytes(), payload].concat(),
+        );
+    }
+    Ok(out)
+}
+
+/// Top-level elements for an array beginning at `offset`, as `(offset, length)` pairs.
+fn array_elements(buffer: &[u8], offset: usize) -> Result<Option<Vec<(usize, usize)>>, ReplyError> {
+    if buffer.get(offset) != Some(&b'*') {
+        return Ok(None);
+    }
+    let Some((count, aggregate_header)) = header(buffer, offset)? else {
+        return Ok(None);
+    };
+    if count < 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let mut cursor = offset + aggregate_header;
+    let mut elements = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let Some(len) = scan(buffer, cursor)? else {
+            return Ok(None);
+        };
+        elements.push((cursor, len));
+        cursor += len;
+    }
+    Ok(Some(elements))
+}
+
+/// Payload range of top-level array element `index` when it is a non-null bulk string.
+fn array_bulk(buffer: &[u8], index: usize) -> Result<Option<(usize, usize)>, ReplyError> {
+    array_bulk_at(buffer, 0, index)
+}
+
+fn array_bulk_at(
+    buffer: &[u8],
+    array_offset: usize,
+    index: usize,
+) -> Result<Option<(usize, usize)>, ReplyError> {
+    let Some(elements) = array_elements(buffer, array_offset)? else {
+        return Ok(None);
+    };
+    let Some(&(offset, _)) = elements.get(index) else {
+        return Ok(None);
+    };
+    if buffer.get(offset) != Some(&b'$') {
+        return Ok(None);
+    }
+    let Some((len, bulk_header)) = header(buffer, offset)? else {
+        return Ok(None);
+    };
+    if len < 0 {
+        return Ok(None);
+    }
+    let start = offset + bulk_header;
+    Ok(Some((start, start + len as usize)))
+}
+
 /// The byte length of one reply starting at `offset`, or `None` if it is incomplete.
 fn scan(buffer: &[u8], offset: usize) -> Result<Option<usize>, ReplyError> {
     let Some(&marker) = buffer.get(offset) else {
@@ -163,7 +301,7 @@ fn header(buffer: &[u8], offset: usize) -> Result<Option<(i64, usize)>, ReplyErr
 pub fn echoes_key(verb: &str) -> bool {
     matches!(
         verb,
-        "BLPOP" | "BRPOP" | "BZPOPMIN" | "BZPOPMAX" | "BLMPOP" | "BZMPOP"
+        "BLPOP" | "BRPOP" | "BZPOPMIN" | "BZPOPMAX" | "LMPOP" | "BLMPOP" | "ZMPOP" | "BZMPOP"
     )
 }
 
@@ -290,11 +428,46 @@ mod tests {
 
     #[test]
     fn only_blocking_pops_echo_a_key() {
-        for verb in ["BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "BLMPOP", "BZMPOP"] {
+        for verb in [
+            "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "LMPOP", "BLMPOP", "ZMPOP", "BZMPOP",
+        ] {
             assert!(echoes_key(verb), "{verb}");
         }
         for verb in ["GET", "LPOP", "EVALSHA", "SMEMBERS", "HGETALL"] {
             assert!(!echoes_key(verb), "{verb}");
         }
+    }
+
+    #[test]
+    fn pubsub_rewrites_channels_without_touching_payloads() {
+        let prefix = b"{kv:01hb}:";
+        let message =
+            b"*3\r\n$7\r\nmessage\r\n$16\r\n{kv:01hb}:events\r\n$16\r\n{kv:01hb}:events\r\n";
+        assert!(is_pubsub_push(message).unwrap());
+        assert_eq!(
+            rewrite_pubsub(message, prefix).unwrap(),
+            b"*3\r\n$7\r\nmessage\r\n$6\r\nevents\r\n$16\r\n{kv:01hb}:events\r\n"
+        );
+
+        let pattern = b"*4\r\n$8\r\npmessage\r\n$15\r\n{kv:01hb}:news*\r\n$15\r\n{kv:01hb}:news1\r\n$2\r\nhi\r\n";
+        assert_eq!(
+            rewrite_pubsub(pattern, prefix).unwrap(),
+            b"*4\r\n$8\r\npmessage\r\n$5\r\nnews*\r\n$5\r\nnews1\r\n$2\r\nhi\r\n"
+        );
+    }
+
+    #[test]
+    fn xread_rewrites_only_each_stream_name() {
+        let reply =
+            b"*2\r\n*2\r\n$13\r\n{kv:01hb}:one\r\n*0\r\n*2\r\n$13\r\n{kv:01hb}:two\r\n*0\r\n";
+        assert_eq!(
+            rewrite_xread_streams(
+                reply,
+                b"{kv:01hb}:",
+                &[b"{kv:01hb}:one".to_vec(), b"{kv:01hb}:two".to_vec()],
+            )
+            .unwrap(),
+            b"*2\r\n*2\r\n$3\r\none\r\n*0\r\n*2\r\n$3\r\ntwo\r\n*0\r\n"
+        );
     }
 }
