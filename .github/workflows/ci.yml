@@ -28,7 +28,10 @@ jobs:
 
   build:
     name: Build, Lint, and Test
-    runs-on: ubuntu-latest
+    # Customer Lambdas and their telemetry extension are arm64. LocalStack really launches the
+    # published function during this job, so an x86 runner turns the architecture assertion into an
+    # invocation failure instead of testing the artifact production runs.
+    runs-on: ubuntu-24.04-arm
     services:
       postgres:
         image: postgres:18
