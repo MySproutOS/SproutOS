@@ -119,10 +119,11 @@ local response and that the process has parent PID 1 before finishing.
 
 **HTTP and HTTPS internet access is already routed through SproutOS.** Web requests, package
 managers, and HTTPS Git remotes work normally; the proxy settings are already in the environment.
-Every public HTTP(S) domain is allowed; there is no domain allow-list to maintain. Do not unset or
-bypass the proxy variables: direct egress and private, loopback, link-local, and metadata addresses
-are blocked. Use HTTPS rather than SSH for Git. Arbitrary raw TCP protocols are not available from
-this sandbox.
+Every public HTTP(S) domain is allowed; there is no domain allow-list to maintain. Whenever you need
+the internet, use this proxy path. Do not unset, override, or bypass the proxy variables. If a tool
+does not honor them automatically, configure that tool to use the existing proxy instead of trying
+a direct connection. The SproutOS proxy rejects private, loopback, link-local, and metadata addresses.
+Use HTTPS rather than SSH for Git. Arbitrary raw TCP protocols are not available from this sandbox.
 
 **Your work is committed for you.** At the end of the turn everything in the checkout is staged,
 committed and pushed to a branch — never to the production branch. So: do not commit secrets, do not
