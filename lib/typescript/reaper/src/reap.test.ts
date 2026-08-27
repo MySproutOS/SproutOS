@@ -30,7 +30,15 @@ import { purgeTenantKeys, tenantKeyPrefix } from "./valkey"
  */
 const valkeyUrl = process.env.SERVICE_VALKEY_ADMIN_URL ?? process.env.VALKEY_URL ?? ""
 const searchUrl = process.env.SEARCH_ADMIN_URL ?? process.env.SEARCH_PROXY_UPSTREAM ?? ""
-const search: SearchAdminConfig = { url: searchUrl.replace(/\/+$/, "") }
+const search: SearchAdminConfig = {
+  url: searchUrl.replace(/\/+$/, ""),
+  ...(process.env.SEARCH_ADMIN_USER === undefined
+    ? {}
+    : { username: process.env.SEARCH_ADMIN_USER }),
+  ...(process.env.SEARCH_ADMIN_PASSWORD === undefined
+    ? {}
+    : { password: process.env.SEARCH_ADMIN_PASSWORD }),
+}
 
 let redis: Redis | undefined
 
@@ -41,7 +49,7 @@ const valkeyUp = await reachable(valkeyUrl !== "", async () => {
 })
 
 const searchUp = await reachable(searchUrl !== "", async () => {
-  const response = await fetch(`${search.url}/`)
+  const response = await searchFetch("/")
   if (!response.ok) throw new Error(`OpenSearch answered ${response.status}`)
 })
 
@@ -236,7 +244,7 @@ describe.skipIf(!valkeyUp || !searchUp)("the reaper pass", () => {
 })
 
 async function createIndex(name: string): Promise<void> {
-  const response = await fetch(`${search.url}/${name}`, {
+  const response = await searchFetch(`/${name}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     // One shard, no replica: a single-node cluster leaves a replica unassigned and the index yellow
@@ -247,5 +255,17 @@ async function createIndex(name: string): Promise<void> {
 }
 
 async function indexExists(name: string): Promise<boolean> {
-  return (await fetch(`${search.url}/${name}`, { method: "HEAD" })).status === 200
+  return (await searchFetch(`/${name}`, { method: "HEAD" })).status === 200
+}
+
+/** Use the same admin identity as the reaper itself for setup, probes, and assertions. */
+async function searchFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers)
+  if (search.username !== undefined) {
+    headers.set(
+      "authorization",
+      `Basic ${Buffer.from(`${search.username}:${search.password ?? ""}`).toString("base64")}`,
+    )
+  }
+  return fetch(`${search.url}${path}`, { ...init, headers })
 }
