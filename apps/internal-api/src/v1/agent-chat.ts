@@ -76,6 +76,38 @@ const errorResponse = {
  */
 const SANDBOX_TURN_TIMEOUT_MS = 30 * 60 * 1000
 
+type SandboxTerminalEvent = Extract<AgentEvent, { type: "done" }>
+
+export function sandboxEventRelay(emit: (event: AgentEvent) => Promise<void>) {
+  let delivery = Promise.resolve()
+  let terminal: SandboxTerminalEvent | undefined
+
+  return {
+    onEvent(event: AgentEvent): void {
+      if (event.type === "done") {
+        terminal ??= event
+        return
+      }
+      delivery = delivery.then(() => emit(event))
+    },
+    async drain(): Promise<void> {
+      await delivery
+    },
+    terminal(exitCode: number): SandboxTerminalEvent {
+      const result =
+        terminal ??
+        ({
+          type: "done",
+          subtype: exitCode === 0 ? "success" : "error",
+          isError: exitCode !== 0,
+          numTurns: 1,
+          durationMs: 0,
+        } satisfies SandboxTerminalEvent)
+      return exitCode === 0 ? result : { ...result, subtype: "error", isError: true }
+    },
+  }
+}
+
 /**
  * The sandbox this project's group has running, if any.
  *
@@ -315,6 +347,7 @@ const app = new Hono()
             stopped container would hang until the timeout.
           */
           if (sandbox !== undefined && sandbox.externalId !== null) {
+            const relay = sandboxEventRelay(emit)
             const proxy = await mintProxyToken(db, {
               agentCredentialId: credential.billing === "byo" ? credential.credentialId : null,
               organizationId: organization.id,
@@ -330,7 +363,7 @@ const app = new Hono()
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
               model: credential.model,
               onEvent: (event) => {
-                void emit(event)
+                relay.onEvent(event)
               },
               prompt,
               proxyBaseUrl: process.env.LLM_PROXY_URL ?? "https://llm.sproutos.me",
@@ -340,6 +373,8 @@ const app = new Hono()
               // Or the reaper stops the sandbox out from under a turn that is still working.
               touch: () => crudSandbox(db).touch(sandbox.id),
             })
+            await relay.drain()
+            const terminal = relay.terminal(exitCode)
 
             /*
               The agent's work leaves the sandbox, or it lives only until the reaper.
@@ -355,7 +390,7 @@ const app = new Hono()
               Never fatal. A turn that produced good work and then failed to push must report the
               push, not discard the answer the customer already watched being written.
             */
-            if (exitCode === 0) {
+            if (exitCode === 0 && !terminal.isError) {
               try {
                 const target =
                   repository ?? (await repositoryFor(organization.id, projectId, c.var.user.id))
@@ -392,10 +427,12 @@ const app = new Hono()
             }
 
             await sessions.closeTurn(turn.id, {
-              resultSubtype: exitCode === 0 ? "success" : "error",
-              numTurns: 1,
+              resultSubtype: terminal.subtype,
+              numTurns: terminal.numTurns,
+              durationMs: terminal.durationMs,
             })
-            await sessions.setStatus(sessionId, exitCode === 0 ? "idle" : "failed")
+            await sessions.setStatus(sessionId, terminal.isError ? "failed" : "idle")
+            await emit(terminal)
             await flush()
             return
           }
