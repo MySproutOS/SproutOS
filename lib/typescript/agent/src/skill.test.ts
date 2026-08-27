@@ -80,6 +80,7 @@ describe("the sandbox's own section", () => {
     apiUrl: "https://api.sproutos.me",
     projectSlug: "reddit-web",
     tenantDomain: "sproutos.run",
+    workspacePath: "/home/daytona/workspace",
   }
 
   it("tells the agent what is true of the machine it is on", () => {
@@ -88,6 +89,11 @@ describe("the sandbox's own section", () => {
     // The three facts that change what the agent does, rather than what it knows.
     expect(body).toContain("DATABASE_URL")
     expect(body).toContain("0.0.0.0")
+    expect(body).toContain("/home/daytona/workspace")
+    expect(body).toContain("setsid -f")
+    expect(body).toContain("run_in_background")
+    expect(body).toContain("Every public HTTP(S) domain is allowed")
+    expect(body).toContain("metadata addresses")
     expect(body).toContain("committed and pushed to a branch")
     expect(body).toContain("fifteen minutes")
   })

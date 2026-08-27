@@ -199,7 +199,7 @@ describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
       [
         "sh",
         "-c",
-        `nohup node -e 'require("http").createServer((_,res)=>res.end("sprout-preview")).listen(3000,"0.0.0.0")' >/tmp/preview.log 2>&1 &`,
+        `setsid -f node -e 'require("http").createServer((_,res)=>res.end("sprout-preview")).listen(3000,"0.0.0.0")' </dev/null >/tmp/preview.log 2>&1`,
       ],
       30_000,
       () => {},

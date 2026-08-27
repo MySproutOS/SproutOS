@@ -458,6 +458,7 @@ async function bootstrap(
         apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me",
         projectSlug: project.slug,
         tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
+        workspacePath: sandboxDriver.workspaceDir,
       }),
     })
 
