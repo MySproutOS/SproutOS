@@ -33,6 +33,12 @@ plus list and repair latency. Repairs are bounded to 100 documents per pass beca
 write reloads configuration. Unknown orphan-shaped documents are reported but never deleted by the
 reconciler: the deletion reaper is the path that has a soft-deleted Postgres row proving ownership.
 
+Valkey follows the same lifecycle with one ACL user per live queue service. The router performs a
+60-second-bounded startup pass after its administrator self-check, and the jobs path repeats a
+bounded pass hourly. Missing users and a rotating window of drifted users are repaired from the
+HMAC root; tenant-shaped unknown users are counted but not deleted. The established service reaper
+remains the only path allowed to delete an ACL user because it carries deletion proof.
+
 The operational cardinality soft limit is **1,000 tenant identities**. It is a warning, not a
 provisioning refusal. The job keeps serving and emits `soft_limit_exceeded=true`; an operator then
 decides whether to raise the measured limit or change the topology.
@@ -61,12 +67,18 @@ and authentication was already hundreds of milliseconds on the small development
 harness on a disposable production-shaped node before raising the threshold. Production itself has
 not been load-tested or verified by this measurement.
 
+Valkey's 1,000/10,000/100,000 local measurements and exact disposable-engine harness are recorded
+in [the Valkey ACL cardinality report](../benchmarks/valkey-acl-cardinality.md). They are explicitly
+development evidence, not ElastiCache or production verification.
+
 ## Consequences
 
 - Drifted-open OpenSearch roles are repaired without waiting for tenant traffic.
 - Initial or widespread drift becomes a bounded backlog (`pending_repairs`) rather than an
   unbounded job lease.
 - Cardinality, reload time, and list time are visible in hourly job logs.
+- Valkey ACL list/repair latency, missing/drifted/orphaned counts, and repair backlog are visible in
+  both startup and hourly logs.
 - The soft limit can be overridden with `SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT`, but changing it
   without a recorded measurement defeats the purpose of the limit.
 - More than one OpenSearch node, a larger heap, a Security plugin upgrade, or an authentication

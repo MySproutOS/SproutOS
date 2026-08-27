@@ -69,4 +69,20 @@ describe("PLATFORM_HANDLERS", () => {
       else process.env.SEARCH_PROXY_SECURITY_ROOT_KEY = previous
     }
   })
+
+  it("fails visibly when Valkey reconciliation has no derivation root", async () => {
+    const previous = process.env.VALKEY_PROXY_ACL_ROOT_KEY
+    delete process.env.VALKEY_PROXY_ACL_ROOT_KEY
+    try {
+      const handler = PLATFORM_HANDLERS[JOB_KINDS.reconcileValkeyAcl]
+      expect(handler).toBeTypeOf("function")
+      if (handler === undefined) throw new Error("Valkey ACL reconciliation is not registered")
+      await expect(handler({} as never, { db: {} } as never)).rejects.toThrow(
+        "VALKEY_PROXY_ACL_ROOT_KEY is not set; Valkey tenant ACL users cannot be reconciled",
+      )
+    } finally {
+      if (previous === undefined) delete process.env.VALKEY_PROXY_ACL_ROOT_KEY
+      else process.env.VALKEY_PROXY_ACL_ROOT_KEY = previous
+    }
+  })
 })
