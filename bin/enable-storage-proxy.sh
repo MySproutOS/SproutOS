@@ -38,21 +38,32 @@ esac
 
 storage_live=$(group_arn storage "$live_colour")
 storage_other=$(group_arn storage "$other_colour")
-attached=$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names "$NAME_PREFIX-router-$live_colour" \
-  --query "contains(AutoScalingGroups[0].TargetGroupARNs, '$storage_live')" \
-  --output text)
-case "$attached" in
-  True|true) ;;
-  False|false)
-    echo "storage target group is not attached to the live router ASG; apply storage_proxy_enabled=true first" >&2
-    exit 1
-    ;;
-  *)
-    echo "could not determine whether storage target group is attached (got: '$attached')" >&2
-    exit 1
-    ;;
-esac
+
+# Both colours must be enrolled before the rule is made live. The idle colour normally has zero
+# instances and therefore cannot be healthy yet, but its ASG must already carry the storage target
+# group. Otherwise the next deployment skips storage on the idle side, moves router traffic there,
+# and drains the only ASG still serving the storage rule.
+for colour in "$live_colour" "$other_colour"; do
+  case "$colour" in
+    "$live_colour") storage_group=$storage_live ;;
+    *) storage_group=$storage_other ;;
+  esac
+  attached=$(aws autoscaling describe-auto-scaling-groups \
+    --auto-scaling-group-names "$NAME_PREFIX-router-$colour" \
+    --query "contains(AutoScalingGroups[0].TargetGroupARNs, '$storage_group')" \
+    --output text)
+  case "$attached" in
+    True|true) ;;
+    False|false)
+      echo "storage target group is not attached to the $colour router ASG; apply storage_proxy_enabled=true first" >&2
+      exit 1
+      ;;
+    *)
+      echo "could not determine whether the $colour storage target group is attached (got: '$attached')" >&2
+      exit 1
+      ;;
+  esac
+done
 
 healthy=$(aws elbv2 describe-target-health --target-group-arn "$storage_live" \
   --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
