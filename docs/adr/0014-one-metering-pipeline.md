@@ -66,6 +66,11 @@ The decision to keep money off the lossy observability path still stands. The Po
 migration, so the accepted pipeline had a built-in end date. ADR 0028 preserves the signed ingest
 contract and replaces the raw store with Kafka and ClickHouse.
 
+The router's later `platform.report` converter does not make ClickHouse runtime-log rows a billing
+source. It verifies an organization-and-project token, constructs usage immediately, and hands it
+to the separate fsynced metering spool. ADR 0028 records the remaining pre-router loss window in
+the extension rather than calling a fail-open telemetry hop durable.
+
 ## Alternatives considered
 
 **OTLP → Kinesis → aggregator** (the compute design). Buys backpressure and replay. Rejected: every

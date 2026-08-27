@@ -64,6 +64,22 @@ The canonical dimension list is a shared fixture asserted by Rust and TypeScript
 `usage_event`, its partitions, and the additive `rollUpUsage` job are removed. Existing billing
 history is intentionally not migrated: production has no customer history that must be preserved.
 
+Site metering uses the router's durable filesystem spool before joining this pipeline. The
+TypeScript-minted log token now signs both project and organization; the extension body can choose
+neither. Once the router verifies that token, each complete Lambda `platform.report` becomes one
+`site_request` event and one `site_gib_second` event using Lambda's billed duration and configured
+memory. The Lambda API response's request id identifies `site_egress_byte` at the decoded response
+body boundary. External ids and observation timestamps are written once into the fsynced record,
+so an HTTP timeout and replay cannot restamp or double-bill them.
+Existing project-only log tokens remain valid for logs during rollout, but cannot emit usage; the
+next project deployment replaces them with the organization-bound shape rather than guessing a
+billing owner for an old credential.
+
+This does not pretend metering can take the front door down. If the bounded spool is full or cannot
+be opened, the router logs the unrecorded observation and serves the tenant response. That is an
+explicit availability-over-revenue failure mode, matching credit enforcement's fail-open rule;
+silently turning capacity exhaustion into a 500 would make a billing outage a customer outage.
+
 ## Consequences
 
 - Kafka and ClickHouse availability are billing-path dependencies and their importer must fail
@@ -84,6 +100,10 @@ history is intentionally not migrated: production has no customer history that m
   dimension emitter and limit enforcement are still separate rollout requirements.
 - Daytona sandbox verification and the LLM proxy's real OAuth/model call remain governed by the
   sandbox handoff. They are not implied by Docker or stub-provider tests.
+- `site_request` and `site_gib_second` become durable only after a verified report reaches the
+  router. The Lambda extension and its in-memory delivery remain fail-open to protect customer
+  invocations, so a process death before delivery can still lose that observation. Production must
+  not describe these dimensions as lossless until that pre-router gap is closed or measured.
 
 ## Alternatives considered
 

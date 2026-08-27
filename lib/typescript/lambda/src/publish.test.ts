@@ -163,6 +163,7 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
 
     const result = await publishFunction(lambda, {
       projectId,
+      organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
       bucket: BUCKET,
       key: "v1.zip",
       handler: "index.handler",
@@ -189,6 +190,7 @@ describe.runIf(reachable)("publishing a build to Lambda", () => {
     await upload("v2.zip", handlerFor("second"))
     const result = await publishFunction(lambda, {
       projectId,
+      organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
       bucket: BUCKET,
       key: "v2.zip",
       handler: "index.handler",

@@ -246,6 +246,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
 
     const published = await publishFunction(clients.lambda, {
       projectId: project.id,
+      organizationId: project.organizationId,
       bucket: options?.bucket ?? process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts",
       key: deployment.artifactKey,
       /*

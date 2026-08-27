@@ -69,12 +69,53 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let metering_key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let site_meter = match (ingest_url, metering_key) {
+        (Some(ingest_url), Some(metering_key)) => {
+            let directory = std::env::var("SITE_METERING_SPOOL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::var("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join("site-metering")
+                });
+            match sproutos_llm_proxy::spool::MeteringSpool::open(
+                directory,
+                sproutos_llm_proxy::spool::SpoolLimits::default(),
+            ) {
+                Ok(spool) => {
+                    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+                        reqwest::Client::new(),
+                        ingest_url,
+                        metering_key.into_bytes(),
+                    ));
+                    Some(router::site_metering::SiteMeter::new(spool))
+                }
+                Err(cause) => {
+                    tracing::error!(%cause, "site metering is disabled; the durable spool could not open");
+                    None
+                }
+            }
+        }
+        _ => {
+            tracing::warn!("site metering is not configured; site usage will not be billed");
+            None
+        }
+    };
+
     let dispatch_manager = manager.clone();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager),
         lambda,
         logs,
         log_token_secret: log_token_secret.into_bytes(),
+        site_meter,
         /*
           The ceiling on any single wait.
 

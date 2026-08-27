@@ -115,6 +115,9 @@ LLM_PROXY_LISTEN=0.0.0.0:8788
 # systemd creates and owns `/var/lib/sproutos` through `StateDirectory=sproutos` below. Metering
 # records live there so a router process or service restart cannot erase an unacknowledged bill.
 LLM_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/llm-metering
+# Site reports and response egress use their own source and spool so delivery cannot combine them
+# with model events. The parent state directory persists across process and service restarts.
+SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 PORT=8080
 API_PORT=3001
 # Not secrets, and not optional either.

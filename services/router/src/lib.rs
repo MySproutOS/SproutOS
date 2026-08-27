@@ -18,6 +18,7 @@ pub mod payload;
 pub mod resolve;
 pub mod route;
 pub mod serve;
+pub mod site_metering;
 
 /// Choose the TLS implementation for this process.
 ///

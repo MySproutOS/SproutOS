@@ -12,18 +12,22 @@ import { mintProjectToken } from "./project-token"
  */
 const fixtures = JSON.parse(
   readFileSync(join(__dirname, "../../../../services/router/fixtures/log-token.json"), "utf8"),
-) as { secret: string; valid: { projectId: string; expiresAt: number; token: string } }
+) as {
+  secret: string
+  valid: { projectId: string; organizationId: string; expiresAt: number; token: string }
+}
 
 describe("mintProjectToken", () => {
   it("produces the token the Rust verifier is tested against", () => {
-    const { projectId, expiresAt, token } = fixtures.valid
-    expect(mintProjectToken(projectId, expiresAt, fixtures.secret)).toBe(token)
+    const { projectId, organizationId, expiresAt, token } = fixtures.valid
+    expect(mintProjectToken(projectId, organizationId, expiresAt, fixtures.secret)).toBe(token)
   })
 
   it("binds the project, so swapping it invalidates the signature", () => {
-    const { expiresAt } = fixtures.valid
+    const { organizationId, expiresAt } = fixtures.valid
     const other = mintProjectToken(
       "01a03b00-0000-7000-8000-00000000dead",
+      organizationId,
       expiresAt,
       fixtures.secret,
     )
@@ -31,12 +35,24 @@ describe("mintProjectToken", () => {
     // Same expiry, same secret, different project — and therefore a different signature. This is
     // the property the whole scheme rests on: a token cannot be edited into another tenant's.
     expect(other).not.toBe(fixtures.valid.token)
-    expect(other.split(".")[2]).not.toBe(fixtures.valid.token.split(".")[2])
+    expect(other.split(".")[3]).not.toBe(fixtures.valid.token.split(".")[3])
+  })
+
+  it("binds the organization, so the extension cannot choose who pays", () => {
+    const { projectId, expiresAt } = fixtures.valid
+    expect(
+      mintProjectToken(
+        projectId,
+        "01912d3f-8a2b-7c4d-9e1f-2a3b4c5ddead",
+        expiresAt,
+        fixtures.secret,
+      ),
+    ).not.toBe(fixtures.valid.token)
   })
 
   it("binds the expiry too", () => {
-    const { projectId, expiresAt } = fixtures.valid
-    expect(mintProjectToken(projectId, expiresAt + 1, fixtures.secret)).not.toBe(
+    const { projectId, organizationId, expiresAt } = fixtures.valid
+    expect(mintProjectToken(projectId, organizationId, expiresAt + 1, fixtures.secret)).not.toBe(
       fixtures.valid.token,
     )
   })
