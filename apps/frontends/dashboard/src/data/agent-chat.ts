@@ -4,7 +4,11 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
-import { baseUrl } from "@lib/api-client/index"
+import {
+  baseUrl,
+  getV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+} from "@lib/api-client/index"
 
 export type AgentSession = {
   id: string
@@ -36,6 +40,56 @@ const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
 })
+
+const SANDBOX_START_TIMEOUT_MS = 120_000
+
+type SandboxStartDependencies = {
+  start: (path: { orgSlug: string; projectId: string }) => Promise<void>
+  read: (path: { orgSlug: string; projectId: string }, signal?: AbortSignal) => Promise<string>
+  wait: (milliseconds: number) => Promise<void>
+  now: () => number
+}
+
+const sandboxStartDependencies: SandboxStartDependencies = {
+  start: async (path) => {
+    await postV1OrgsByOrgSlugProjectsByProjectIdSandbox({ path, throwOnError: true })
+  },
+  read: async (path, signal) => {
+    const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdSandbox({
+      path,
+      throwOnError: true,
+      signal,
+    })
+    return data.state
+  },
+  wait: async (milliseconds) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, milliseconds)
+    })
+  },
+  now: Date.now,
+}
+
+/** Start the rented workspace only when a person actually sends a turn, then wait for bootstrap. */
+export async function ensureSandboxRunning(
+  input: { orgSlug: string; projectId: string },
+  signal?: AbortSignal,
+  dependencies: SandboxStartDependencies = sandboxStartDependencies,
+): Promise<void> {
+  const path = { orgSlug: input.orgSlug, projectId: input.projectId }
+  await dependencies.start(path)
+
+  const deadline = dependencies.now() + SANDBOX_START_TIMEOUT_MS
+  while (dependencies.now() < deadline) {
+    if (signal?.aborted) throw signal.reason ?? new Error("The sandbox start was cancelled")
+    const state = await dependencies.read(path, signal)
+    if (state === "running") return
+    if (state === "failed") throw new Error("The sandbox failed to start")
+    await dependencies.wait(1_000)
+  }
+
+  throw new Error("The sandbox did not become ready within two minutes")
+}
 
 export function useAgentSessions(orgSlug: string, projectId: string) {
   const query = useQuery(

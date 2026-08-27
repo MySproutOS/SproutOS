@@ -461,14 +461,29 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
     if (sandbox === undefined) return
 
     /*
-      Already provisioned.
+      Already created at the provider, but not necessarily bootstrapped.
 
       A job whose lease expired mid-create is retried, and the provider may well have created the
       sandbox before we lost the response. Creating a second one would leave the first running,
       unreferenced and billing — the unique index on `(provider, external_id)` prevents the row, not
-      the container.
+      the container. Finish bootstrap against the recorded object and only then expose it as
+      `running`; the UI treats that state as permission to send a turn immediately.
     */
-    if (sandbox.externalId !== null) return
+    if (sandbox.externalId !== null) {
+      const problems = await bootstrap(db, makeDriver(), {
+        externalId: sandbox.externalId,
+        organizationId: sandbox.organizationId,
+        projectId: sandbox.projectId,
+        userId: sandbox.userId,
+      })
+      if (problems.length > 0) {
+        console.warn(
+          `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
+        )
+      }
+      await crudSandbox(db).update(sandbox.id, { state: "running" })
+      return
+    }
 
     try {
       /*
@@ -504,7 +519,6 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
       await crudSandbox(db).update(sandbox.id, {
         externalId: created.externalId,
         ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
-        state: "running",
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
@@ -535,6 +549,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
           `[jobs] sandbox ${sandbox.id} bootstrapped with problems: ${problems.join("; ")}`,
         )
       }
+      await crudSandbox(db).update(sandbox.id, { state: "running" })
     } catch (error) {
       await crudSandbox(db).update(sandbox.id, { state: "failed" })
       throw error
