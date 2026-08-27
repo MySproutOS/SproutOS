@@ -97,6 +97,15 @@ describe("presetFor", () => {
     expect(presetFor("apps/api")).toBe("hono")
   })
 
+  it("recognises browser-only frontend workspaces", () => {
+    expect(presetFor("apps/frontends/dashboard")).toBe("static")
+    expect(presetFor("apps/frontends/admin")).toBe("static")
+    expect(presetFor("apps/customer-spa")).toBe("static")
+    expect(workflowFor({ ...base, rootDir: "apps/frontends/admin" })).toContain(
+      "directory: apps/frontends/admin/dist",
+    )
+  })
+
   /*
     A guess, and the file says so.
 

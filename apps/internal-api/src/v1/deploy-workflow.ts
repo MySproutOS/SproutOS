@@ -39,6 +39,12 @@ const workflowResponse = Type.Object({
  * and deploying a server-side application as a folder of files.
  */
 export function presetFor(rootDir: string): "next" | "hono" | "static" {
+  // This repository convention is intentionally structural rather than a list of product names:
+  // `apps/frontends/dashboard` and `apps/frontends/admin` are both browser-only Vite builds, while
+  // a directory merely named `dashboard` could still be a Next.js application.
+  if (/(^|\/)frontends(\/|$)/.test(rootDir) || /(^|\/)(?:[^/]+-)?spa$/.test(rootDir)) {
+    return "static"
+  }
   if (/(^|\/)(web|website|frontend|www)$/.test(rootDir)) return "next"
   if (/(^|\/)(api|internal-api|server|backend)$/.test(rootDir)) return "hono"
   return "next"
