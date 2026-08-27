@@ -77,43 +77,47 @@ export async function enqueueSigning(
 /**
  * Claim the oldest pending job, if there is one.
  *
- * The claim is a conditional update rather than a lock held in a process, so two signers polling at
- * the same instant cannot both take the same job — and a signer that dies holding one releases it
- * by timeout rather than by anyone noticing.
+ * The row is selected and locked inside the same statement that records the claim. `SKIP LOCKED`
+ * lets another signer move to the next job instead of waiting, while the timeout makes a claim held
+ * by a dead signer eligible again.
  */
 export async function claimSigningJob(
   db: Kysely<DB>,
   signerId: string,
   now: () => Date = () => new Date(),
 ): Promise<SigningJob | undefined> {
-  const staleBefore = new Date(now().getTime() - CLAIM_TIMEOUT_MS)
+  const claimedAt = now()
+  const staleBefore = new Date(claimedAt.getTime() - CLAIM_TIMEOUT_MS)
 
   const claimed = await db
-    .updateTable("apkSigningJob")
-    .set({ status: "claimed", claimedBy: signerId, claimedAt: now(), updatedAt: now() })
-    .where((eb) =>
-      eb(
-        "id",
-        "=",
-        eb
-          .selectFrom("apkSigningJob as candidate")
-          .select("candidate.id")
-          .where((inner) =>
-            inner.or([
-              inner("candidate.status", "=", "pending"),
-              // A claim that has gone stale is available again. Without this a signer that crashed
-              // mid-job takes that release out of the queue permanently.
-              inner.and([
-                inner("candidate.status", "=", "claimed"),
-                inner("candidate.claimedAt", "<", staleBefore),
-              ]),
-            ]),
-          )
-          .orderBy("candidate.createdAt", "asc")
-          .limit(1),
-      ),
+    .with("candidate", (qb) =>
+      qb
+        .selectFrom("apkSigningJob")
+        .select("id")
+        .where((eb) =>
+          eb.or([
+            eb("status", "=", "pending"),
+            // A claim that has gone stale is available again. Without this a signer that crashed
+            // mid-job takes that release out of the queue permanently.
+            eb.and([eb("status", "=", "claimed"), eb("claimedAt", "<", staleBefore)]),
+          ]),
+        )
+        .orderBy("createdAt", "asc")
+        .limit(1)
+        .forUpdate()
+        .skipLocked(),
     )
-    .returning(["id", "deploymentId", "projectId", "unsignedKey", "unsignedDigest"])
+    .updateTable("apkSigningJob")
+    .from("candidate")
+    .set({ status: "claimed", claimedBy: signerId, claimedAt, updatedAt: claimedAt })
+    .whereRef("apkSigningJob.id", "=", "candidate.id")
+    .returning([
+      "apkSigningJob.id as id",
+      "apkSigningJob.deploymentId as deploymentId",
+      "apkSigningJob.projectId as projectId",
+      "apkSigningJob.unsignedKey as unsignedKey",
+      "apkSigningJob.unsignedDigest as unsignedDigest",
+    ])
     .executeTakeFirst()
 
   return claimed
