@@ -46,6 +46,7 @@ import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
+import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -71,6 +72,7 @@ export const JOB_KINDS = {
   expireCreditHolds: "billing.expire_holds",
   importUsage: "billing.import_clickhouse_usage",
   relayMeteringOutbox: "billing.relay_metering_outbox",
+  reconcileActiveUsage: RECONCILE_ACTIVE_USAGE_KIND,
   chargeUsage: "billing.charge_usage",
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
   purgeExpiredAgentEvents: "agent.purge_events",
@@ -309,6 +311,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.expireCreditHolds]: expireCreditHolds,
   [JOB_KINDS.importUsage]: importUsageJob,
   [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
+  [JOB_KINDS.reconcileActiveUsage]: reconcileActiveUsageJob(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
@@ -365,6 +368,15 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     kind: JOB_KINDS.meterNeonDatabases,
     idempotencyKey: `${JOB_KINDS.meterNeonDatabases}:${hour}`,
     maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Hourly. ClickHouse is authoritative; this generation swap repairs eviction and applies
+      corrected event versions without replacing increments that arrive during the rebuild.
+    */
+    kind: JOB_KINDS.reconcileActiveUsage,
+    idempotencyKey: `${JOB_KINDS.reconcileActiveUsage}:${hour}`,
+    maxAttempts: 5,
   })
   await enqueue(db, {
     /*

@@ -1,6 +1,6 @@
 import {
-  activeUsageKeys,
   canonical,
+  readActiveUsage,
   sign,
   usageEventId,
   usageEventRecord,
@@ -467,11 +467,12 @@ describe.skipIf(!reachable)("metering ingest", () => {
         }
 
         expect(Number(stored?.quantity)).toBe(7)
-        expect(await redis.hget(activeUsageKeys(active)[1], event.dimension)).toBe("7000000000")
+        expect(await readActiveUsage(redis, active)).toBe("7000000000")
       } finally {
         setMeteringSinksForTest(testSinks)
         await closeMeteringSinks()
-        await redis.del(...activeUsageKeys(active))
+        const activeKeys = await redis.keys(`metering:active:v2:{${active.organizationId}}:*`)
+        if (activeKeys.length > 0) await redis.unlink(...activeKeys)
         await redis.quit()
         await clickhouse().command({
           query: "alter table usage_event_raw delete where event_id = {eventId:String}",
