@@ -87,10 +87,10 @@ export function sandboxAgentEnv(input: {
 
         Codex keeps its own state — session files, and the trust entry it writes for a directory
         it has been told to act in — under `$CODEX_HOME`, default `~/.codex`. Pointing it into the
-        workspace keeps that beside the checkout, where `.git/info/exclude` already hides it, rather
-        than in a home directory that a driver may or may not persist.
+        workspace keeps it in the checkout's persistent Git metadata, which can never be staged,
+        rather than in a home directory that a driver may or may not persist.
       */
-      env.CODEX_HOME = `${input.workspace ?? "/workspace"}/.codex`
+      env.CODEX_HOME = `${input.workspace ?? "/workspace"}/.git/sproutos/codex`
       break
   }
 

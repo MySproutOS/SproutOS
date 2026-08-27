@@ -13,11 +13,13 @@ function fakeDriver(
     results?: Record<string, string>
     /** Commands that should come back non-zero, keyed the same way, with their stderr. */
     failures?: Record<string, string>
+    /** Files already present in the cloned repository. */
+    files?: Record<string, string>
   } = {},
 ) {
   const commands: string[][] = []
   const clones: Array<{ url: string; password: string }> = []
-  const files: Record<string, string> = {}
+  const files: Record<string, string> = { ...options.files }
   const driver = {
     workspaceDir: WORKSPACE,
     cloneRepository: (_id: string, input: { url: string; password: string }) => {
@@ -101,24 +103,33 @@ describe("bootstrapSandbox", () => {
     expect(config.some((line) => line.includes("user.email"))).toBe(true)
   })
 
-  it("puts the skill where both harnesses look", async () => {
+  it("puts the skill where both harnesses look without writing into the repository", async () => {
     const { driver, files } = fakeDriver()
     await bootstrapSandbox({ ...base, driver, externalId: "sb" })
 
-    // Claude Code reads `.claude/skills`; Codex reads AGENTS.md and knows nothing about skills. A
-    // skill written only for one silently does not exist for half the customers.
-    expect(files[`${WORKSPACE}/.claude/skills/sproutos/SKILL.md`]).toContain("SproutOS")
-    expect(files[`${WORKSPACE}/AGENTS.md`]).toContain("Deployment is performed by the platform")
+    expect(files[`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`]).toContain(
+      "Deployment is performed by the platform",
+    )
+    expect(files[`${WORKSPACE}/AGENTS.md`]).toBeUndefined()
+    expect(files[`${WORKSPACE}/.claude/skills/sproutos/SKILL.md`]).toBeUndefined()
   })
 
-  it("keeps what we wrote out of the customer's commits", async () => {
+  it("preserves the repository's own AGENTS.md", async () => {
+    const repositoryInstructions = "# Customer instructions\nDo not replace me.\n"
+    const { driver, files } = fakeDriver({
+      files: { [`${WORKSPACE}/AGENTS.md`]: repositoryInstructions },
+    })
+
+    await bootstrapSandbox({ ...base, driver, externalId: "sb" })
+
+    expect(files[`${WORKSPACE}/AGENTS.md`]).toBe(repositoryInstructions)
+    expect(files[`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`]).toContain("SproutOS")
+  })
+
+  it("writes no ignore rule because platform state is outside the worktree", async () => {
     const { driver, files } = fakeDriver()
     await bootstrapSandbox({ ...base, driver, externalId: "sb" })
-    const exclude = files[`${WORKSPACE}/.git/info/exclude`] ?? ""
-    // `.git/info/exclude`, not `.gitignore`: the latter is tracked, so editing it would itself be a
-    // change the customer did not make.
-    expect(exclude).toContain("/.claude/skills/sproutos/")
-    expect(exclude).toContain("/.codex/")
+    expect(files[`${WORKSPACE}/.git/info/exclude`]).toBeUndefined()
   })
 
   it("writes no Codex config at all, for either harness", async () => {
@@ -169,6 +180,14 @@ describe("runSandboxTurn", () => {
     expect(argv).toContain("spa_access")
     expect(argv).not.toContain("ANTHROPIC_API_KEY")
     expect(argv).not.toMatch(/sk-[A-Za-z0-9]/)
+  })
+
+  it("gives Claude Code the platform skill explicitly", async () => {
+    const { commands, driver } = fakeDriver()
+    await runSandboxTurn({ ...base, driver, onEvent: () => {} })
+
+    expect(commands[0]).toContain("--append-system-prompt-file")
+    expect(commands[0]).toContain(`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`)
   })
 
   it("reassembles events split across chunks", async () => {

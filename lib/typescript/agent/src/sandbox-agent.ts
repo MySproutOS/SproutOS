@@ -137,42 +137,25 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   }
 
   /*
-    The skill, in both places, because the two harnesses look in different ones.
+    One platform-owned instruction file, outside the worktree.
 
-    Claude Code reads `.claude/skills`; Codex reads `AGENTS.md` and knows nothing about skills. A
-    skill written only for one is a skill that silently does not exist for half the customers —
-    and the requirement was that it be *referenced a lot*, which starts with being found at all.
+    Claude Code receives it explicitly on every invocation. Codex reads it as global guidance from
+    `$CODEX_HOME/AGENTS.md`, then layers the repository's own `AGENTS.md` after it. Living beneath
+    `.git` means Git cannot stage it and no customer `.claude`, `.codex`, or `AGENTS.md` is touched.
   */
   await write(
     driver,
     externalId,
-    `${workspace}/.claude/skills/sproutos/SKILL.md`,
-    input.skill,
-    problems,
-  )
-  await write(driver, externalId, `${workspace}/AGENTS.md`, agentsPointer(input.skill), problems)
-
-  /*
-    Kept out of the customer's commits.
-
-    These are ours, written into their checkout. `.git/info/exclude` rather than `.gitignore`
-    because the latter is a tracked file and editing it would itself be a change the customer did
-    not make.
-  */
-  await write(
-    driver,
-    externalId,
-    `${workspace}/.git/info/exclude`,
-    ["/.claude/skills/sproutos/", "/.codex/", ""].join("\n"),
+    `${workspace}/.git/sproutos/codex/AGENTS.md`,
+    agentsPointer(input.skill),
     problems,
   )
 
   /*
-    Codex needs no file written here.
-
-    It used to get one, and Codex overwrote it with its own trust entry on the first turn — see
-    `codexOverrides`, which passes the same settings on every invocation instead. What Codex reads
-    from the checkout is `AGENTS.md`, written above.
+    Codex provider configuration still needs no file here. It used to get one, and Codex overwrote
+    it with its own trust entry on the first turn; `codexOverrides` therefore passes provider
+    settings on every invocation. The `AGENTS.md` beside it is guidance, not mutable provider
+    config.
   */
 
   return { cloned, problems }
@@ -193,7 +176,7 @@ async function write(
 }
 
 /**
- * `AGENTS.md`, which both harnesses read and which points at the skill.
+ * The platform's global Codex instructions, which inline the skill.
  *
  * The skill's own body is inlined rather than referenced by path. "Reference it a lot" cannot be
  * satisfied by a link the model may or may not follow — a file it is given at the start of every
@@ -524,6 +507,8 @@ function harnessArgv(
         "stream-json",
         "--verbose",
         "--dangerously-skip-permissions",
+        "--append-system-prompt-file",
+        `${workspace}/.git/sproutos/codex/AGENTS.md`,
         prompt,
       ]
     case "codex":

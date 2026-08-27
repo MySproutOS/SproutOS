@@ -116,14 +116,15 @@ describe("what the harness needs to be able to act at all", () => {
     expect(sandboxAgentEnv({ ...base, harness: "claude-code" }).IS_SANDBOX).toBe("1")
   })
 
-  it("points Codex at the config the bootstrap actually wrote", () => {
-    // Codex reads `$CODEX_HOME/config.toml`, never the working directory. The file naming our proxy
-    // is written into the checkout, so without this Codex would look in `~/.codex`, find nothing,
-    // and try to reach OpenAI directly with no key.
-    expect(sandboxAgentEnv({ ...base, harness: "codex" }).CODEX_HOME).toBe("/workspace/.codex")
+  it("keeps Codex state and global instructions outside the worktree", () => {
+    // Provider settings stay on the argv, while global instructions and Codex-owned state live in
+    // Git metadata: persistent with the checkout and impossible for `git add -A` to stage.
+    expect(sandboxAgentEnv({ ...base, harness: "codex" }).CODEX_HOME).toBe(
+      "/workspace/.git/sproutos/codex",
+    )
     expect(
       sandboxAgentEnv({ ...base, harness: "codex", workspace: "/home/daytona/workspace" })
         .CODEX_HOME,
-    ).toBe("/home/daytona/workspace/.codex")
+    ).toBe("/home/daytona/workspace/.git/sproutos/codex")
   })
 })
