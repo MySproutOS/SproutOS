@@ -65,7 +65,7 @@ const testSinks = {
 
 function batchOf(events: Partial<UsageBatch["events"][number]>[]): UsageBatch {
   return {
-    source: "node-under-test",
+    source: "router-site",
     events: events.map((event, index) => ({
       externalId: `e-${v7()}-${index}`,
       organizationId,
@@ -191,8 +191,36 @@ describe.skipIf(!reachable)("metering ingest", () => {
     const [stored] = storedFor(batch.events[0].externalId)
     expect(stored?.organizationId).toBe(organizationId)
     expect(stored?.dimension).toBe("site_gib_second")
+    expect(stored?.resourceType).toBe("site")
+    expect(stored?.resourceId).toBeNull()
     expect(Number(stored?.quantity)).toBeCloseTo(0.25, 9)
     expect(stored?.nodeId).toBe("node-under-test")
+  })
+
+  it("derives resource attribution from the signed source and dimension", async () => {
+    const searchIndexId = v7()
+    const batch = batchOf([
+      {
+        dimension: "es_search_unit",
+        quantity: 1,
+        attributes: { search_index_id: searchIndexId },
+      },
+    ])
+    batch.source = "search-proxy"
+
+    expect((await post(batch)).status).toBe(202)
+    const [stored] = storedFor(batch.events[0].externalId)
+    expect(stored?.resourceType).toBe("search_index")
+    expect(stored?.resourceId).toBe(searchIndexId)
+  })
+
+  it("rejects a signed source/dimension mismatch instead of misclassifying it", async () => {
+    const batch = batchOf([{ dimension: "es_search_unit" }])
+
+    const response = await post(batch)
+
+    expect(response.status).toBe(400)
+    expect(storedFor(batch.events[0].externalId)).toHaveLength(0)
   })
 
   it("refuses a batch whose quantity was altered after signing", async () => {
@@ -346,6 +374,7 @@ describe.skipIf(!reachable)("metering ingest", () => {
     const [stored] = storedFor(batch.events[0].externalId)
 
     expect(stored?.projectId).toBeNull()
+    expect(stored?.resourceId).toBeNull()
     expect(stored?.organizationId).toBe(organizationId)
   })
 

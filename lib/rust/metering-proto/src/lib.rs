@@ -840,6 +840,36 @@ mod tests {
     }
 
     #[test]
+    fn attribute_keys_match_the_shared_cross_language_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Vectors {
+            valid: Vec<String>,
+            invalid: Vec<String>,
+        }
+
+        let vectors: Vectors =
+            serde_json::from_str(include_str!("../fixtures/attribute-key-vectors.json")).unwrap();
+        let batch = |key: &str| {
+            let event = UsageEvent::new("k", org(), UsageDimension::SiteRequest, 1.0, 1)
+                .with_attribute(key, "value");
+            UsageBatch::new("metering-agent", vec![event])
+        };
+
+        for key in vectors.valid {
+            assert!(
+                batch(&key).validate().is_ok(),
+                "valid key rejected: {key:?}"
+            );
+        }
+        for key in vectors.invalid {
+            assert!(
+                batch(&key).validate().is_err(),
+                "invalid key accepted: {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn builders_populate_optional_fields() {
         let project = Uuid::parse_str("01912d41-0000-7000-8000-0000000000b1").unwrap();
         let event = UsageEvent::new("k", org(), UsageDimension::SiteRequest, 1.0, 5)

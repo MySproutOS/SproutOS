@@ -10,6 +10,29 @@ const fixture = JSON.parse(
   ),
 ) as { dimensions: string[] }
 
+const attributeKeys = JSON.parse(
+  readFileSync(
+    new URL("../../../rust/metering-proto/fixtures/attribute-key-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as { valid: string[]; invalid: string[] }
+
+function batchWithAttribute(key: string) {
+  return {
+    source: "test-meter",
+    events: [
+      {
+        external_id: "event-1",
+        organization_id: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+        dimension: "site_request",
+        quantity: 1,
+        occurred_at: 1_723_459_200_000,
+        attributes: { [key]: "value" },
+      },
+    ],
+  }
+}
+
 describe("billable dimensions", () => {
   it("exactly matches the shared cross-language contract", () => {
     expect(BILLABLE_DIMENSIONS).toEqual(fixture.dimensions)
@@ -42,5 +65,15 @@ describe("billable dimensions", () => {
       ok: false,
       reason: "events[0]: dimension must be a current billable dimension",
     })
+  })
+
+  it("accepts exactly the shared attribute-key vocabulary", () => {
+    for (const key of attributeKeys.valid) expect(parseBatch(batchWithAttribute(key)).ok).toBe(true)
+    for (const key of attributeKeys.invalid) {
+      expect(parseBatch(batchWithAttribute(key))).toEqual({
+        ok: false,
+        reason: "events[0]: attributes must be a flat string map with keys matching [a-z0-9._-]+",
+      })
+    }
   })
 })

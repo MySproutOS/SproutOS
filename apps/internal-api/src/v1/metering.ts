@@ -5,6 +5,7 @@ import {
   parseBatch,
   usageEventRecord,
   verify,
+  type UsageEvent,
   type UsageEventProducer,
   type UsageEventRecord,
 } from "@lib/metering"
@@ -29,6 +30,39 @@ const MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000
 export type MeteringSinks = {
   publish: (events: UsageEventRecord[]) => Promise<void>
   project: (events: UsageEventRecord[]) => Promise<void>
+}
+
+type IngestAttribution = { resourceType: string; resourceId: string | null }
+
+/**
+ * Attribute a signed Rust emitter without pretending every resource is a site.
+ *
+ * Source and dimension are checked together. The HMAC says the batch came from our data plane;
+ * this catches an emitter wired to the wrong counter before a perfectly signed bug becomes durable
+ * financial history. TypeScript control-plane writers carry these fields in their outbox record.
+ */
+export function ingestAttribution(
+  source: string,
+  event: UsageEvent,
+): IngestAttribution | undefined {
+  if (
+    (source === "router-site" || source === "metering-agent") &&
+    event.dimension.startsWith("site_")
+  ) {
+    return { resourceType: "site", resourceId: event.projectId }
+  }
+  if (source === "search-proxy" && event.dimension.startsWith("es_")) {
+    const resourceId = event.attributes.search_index_id
+    if (resourceId === undefined || resourceId === "") return undefined
+    return { resourceType: "search_index", resourceId }
+  }
+  if (source === "llm-proxy" && event.dimension.startsWith("ai_")) {
+    return { resourceType: "model_request", resourceId: null }
+  }
+  if (source === "pg-proxy" && event.dimension.startsWith("db_")) {
+    return { resourceType: "database", resourceId: null }
+  }
+  return undefined
 }
 
 let producer: Promise<UsageEventProducer> | undefined
@@ -149,6 +183,18 @@ const app = new Hono().post(
       return throwUnauthenticated(c, "Invalid signature")
     }
 
+    const attributed = parsed.batch.events.map((event) => ({
+      event,
+      attribution: ingestAttribution(parsed.batch.source, event),
+    }))
+    const invalidAttribution = attributed.findIndex((item) => item.attribution === undefined)
+    if (invalidAttribution !== -1) {
+      return throwBadRequest(
+        c,
+        `Malformed batch: events[${invalidAttribution}] dimension is not valid for source or lacks resource attribution`,
+      )
+    }
+
     // Which organizations actually exist.
     //
     // A pod's labels can name an organization that has since been deleted, or a label can simply be
@@ -199,20 +245,24 @@ const app = new Hono().post(
           )
 
     const now = Date.now()
-    const events = parsed.batch.events
-      .filter((event) => known.has(event.organizationId))
+    const events = attributed
+      .filter(({ event }) => known.has(event.organizationId))
       // A batch buffered through a long outage is still worth having; one dated next year is a
       // clock that is wrong. Old events remain valid because ClickHouse partitions them by event
       // time and discovers affected grains by its separate storage timestamp.
-      .filter((event) => event.occurredAt <= now + MAX_FUTURE_SKEW_MS)
-      .map((event) =>
-        usageEventRecord({
+      .filter(({ event }) => event.occurredAt <= now + MAX_FUTURE_SKEW_MS)
+      .map(({ event, attribution }) => {
+        if (attribution === undefined) throw new Error("validated metering attribution disappeared")
+        const projectId =
+          event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null
+        return usageEventRecord({
           organizationId: event.organizationId,
-          projectId:
-            event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null,
-          // The agent meters pods; every event it sends is a site's compute.
-          resourceType: "site",
-          resourceId: null,
+          projectId,
+          resourceType: attribution.resourceType,
+          // A site is the project deployment reached by the router. Use only the normalized id;
+          // retaining a stale caller-supplied project as resource attribution would undo the
+          // normalization immediately above. Other sources carry their own authoritative id.
+          resourceId: attribution.resourceType === "site" ? projectId : attribution.resourceId,
           dimension: event.dimension,
           quantity: decimalQuantity(event.quantity),
           occurredAt: new Date(event.occurredAt),
@@ -224,8 +274,8 @@ const app = new Hono().post(
           externalId: event.externalId,
           chargedExternally: false,
           attributes: event.attributes,
-        }),
-      )
+        })
+      })
 
     const sinks = sinkOverride ?? defaultSinks()
     // Kafka is the durable acceptance boundary. If it cannot replicate the records, this throws
