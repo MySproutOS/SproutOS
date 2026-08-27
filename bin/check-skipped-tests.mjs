@@ -113,8 +113,9 @@ const KNOWN = [
       provide. They are one entry now, waiting on the thing that actually gates them.
     */
     suite: "@lib/jobs publish",
-    count: 4,
-    waiting: "LOCALSTACK_AUTH_TOKEN — Lambda and S3, via AWS_ENDPOINT_URL",
+    count: 11,
+    waiting:
+      "LOCALSTACK_AUTH_TOKEN — Lambda, S3, CloudFront KVS, and Route53, via AWS_ENDPOINT_URL",
   },
 ]
 
