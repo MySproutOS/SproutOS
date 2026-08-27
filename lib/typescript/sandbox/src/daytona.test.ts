@@ -9,6 +9,7 @@ import {
   deleteDaytonaSandboxAndWait,
   retryIdempotentDaytonaRead,
   sandboxForwardProxyPassword,
+  startDaytonaSandbox,
   type DaytonaConfig,
 } from "./daytona"
 import { SandboxUnavailableError, type CreateSandboxInput } from "./types"
@@ -204,6 +205,55 @@ describe("Daytona deletion", () => {
     await deleteDaytonaSandboxAndWait(sandbox)
 
     expect(calls).toEqual([[DAYTONA_DELETE_TIMEOUT_SECONDS, true]])
+  })
+})
+
+describe("Daytona start reconciliation", () => {
+  it("accepts a start that completes after the SDK response times out", async () => {
+    const states = ["starting", "started"]
+    let now = 0
+    const sandbox = {
+      state: "stopped",
+      start: () => Promise.reject(new Error("request timed out")),
+      refreshData() {
+        this.state = states.shift() ?? "started"
+        return Promise.resolve()
+      },
+    }
+
+    await startDaytonaSandbox(sandbox, {
+      now: () => now,
+      sleep: (delayMs) => {
+        now += delayMs
+        return Promise.resolve()
+      },
+      timeoutMs: 10_000,
+      intervalMs: 1_000,
+    })
+
+    expect(sandbox.state).toBe("started")
+  })
+
+  it("preserves the original start error when Daytona never reaches running", async () => {
+    const startError = new Error("request timed out")
+    let now = 0
+    const sandbox = {
+      state: "starting",
+      start: () => Promise.reject(startError),
+      refreshData: () => Promise.resolve(),
+    }
+
+    await expect(
+      startDaytonaSandbox(sandbox, {
+        now: () => now,
+        sleep: (delayMs) => {
+          now += delayMs
+          return Promise.resolve()
+        },
+        timeoutMs: 2_000,
+        intervalMs: 1_000,
+      }),
+    ).rejects.toBe(startError)
   })
 })
 

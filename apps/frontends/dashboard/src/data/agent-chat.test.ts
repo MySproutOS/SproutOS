@@ -69,6 +69,27 @@ describe("ensureSandboxRunning", () => {
     ).rejects.toThrow("The sandbox failed to start")
   })
 
+  it("allows a slow Daytona resume five minutes before timing out", async () => {
+    let now = 0
+    let waits = 0
+
+    await expect(
+      ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+        preflight: () => Promise.resolve(),
+        start: () => Promise.resolve(),
+        read: () => Promise.resolve("starting"),
+        wait: (milliseconds) => {
+          waits += 1
+          now += milliseconds
+          return Promise.resolve()
+        },
+        now: () => now,
+      }),
+    ).rejects.toThrow("within five minutes")
+
+    expect(waits).toBe(300)
+  })
+
   it("refuses an unconfigured agent before renting a sandbox", async () => {
     const start = vi.fn<() => Promise<void>>()
     await expect(
