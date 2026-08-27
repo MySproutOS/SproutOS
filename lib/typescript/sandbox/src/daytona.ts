@@ -25,6 +25,8 @@ export const SNAPSHOT_RESOURCES = { cpu: 2, memoryGib: 4, diskGib: 10 } as const
 export const AUTO_ARCHIVE_AFTER_STOP_MINUTES = 1
 export const DAYTONA_REQUEST_TIMEOUT_MS = 60_000
 export const DAYTONA_DELETE_TIMEOUT_SECONDS = DAYTONA_REQUEST_TIMEOUT_MS / 1000
+export const DAYTONA_START_RECONCILE_TIMEOUT_MS = 4 * 60_000
+export const DAYTONA_START_RECONCILE_INTERVAL_MS = 2_000
 export const DAYTONA_READ_MAX_ATTEMPTS = 3
 export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
@@ -497,7 +499,7 @@ export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
     },
     start: async (externalId) => {
       const sandbox = await get(externalId)
-      await call(() => sandbox.start())
+      await call(() => startDaytonaSandbox(sandbox))
     },
     stop: async (externalId) => {
       const sandbox = await get(externalId)
@@ -547,6 +549,48 @@ export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
       const sandbox = await get(externalId)
       await call(() => sandbox.refreshActivity())
     },
+  }
+}
+
+/**
+ * Reconcile an ambiguous start response against the provider's actual state.
+ *
+ * Daytona may keep starting a workspace after the SDK request reaches its one-minute transport
+ * timeout. Treating that timeout as a definitive failure leaves the provider running and the
+ * control-plane row failed; the next click then re-runs bootstrap against a checkout that was
+ * already complete. Start is not safe to repeat blindly, so poll the idempotent state read and
+ * accept the mutation only when Daytona itself says it completed.
+ */
+export async function startDaytonaSandbox(
+  sandbox: Pick<Sandbox, "start" | "refreshData"> & { readonly state?: string },
+  options: {
+    now?: () => number
+    sleep?: (delayMs: number) => Promise<void>
+    timeoutMs?: number
+    intervalMs?: number
+  } = {},
+): Promise<void> {
+  try {
+    await sandbox.start()
+    return
+  } catch (startError) {
+    const now = options.now ?? Date.now
+    const sleep = options.sleep ?? delay
+    const timeoutMs = options.timeoutMs ?? DAYTONA_START_RECONCILE_TIMEOUT_MS
+    const intervalMs = options.intervalMs ?? DAYTONA_START_RECONCILE_INTERVAL_MS
+    const deadline = now() + timeoutMs
+
+    while (now() < deadline) {
+      try {
+        await sandbox.refreshData()
+        if (["started", "running"].includes(sandbox.state ?? "unknown")) return
+      } catch {
+        // Preserve the mutation's error. A transient read failure does not prove start failed.
+      }
+      await sleep(intervalMs)
+    }
+
+    throw startError
   }
 }
 

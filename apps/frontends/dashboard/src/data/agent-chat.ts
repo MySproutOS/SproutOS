@@ -45,7 +45,7 @@ const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 })
 
-const SANDBOX_START_TIMEOUT_MS = 120_000
+const SANDBOX_START_TIMEOUT_MS = 5 * 60_000
 const SANDBOX_DELETE_TIMEOUT_MS = 120_000
 
 type SandboxStartDependencies = {
@@ -101,7 +101,7 @@ export async function ensureSandboxRunning(
     await dependencies.wait(1_000)
   }
 
-  throw new Error("The sandbox did not become ready within two minutes")
+  throw new Error("The sandbox did not become ready within five minutes")
 }
 
 export function useAgentSessions(orgSlug: string, projectId: string) {
