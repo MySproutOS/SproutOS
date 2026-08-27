@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 use crate::acl;
 use crate::reply::frame;
 use crate::resp::Command;
+use crate::scan::{self, ScanRequest};
 use crate::upstream::{self, Upstream};
 
 const DEFAULT_CACHE_CAPACITY: usize = 4096;
@@ -89,6 +90,11 @@ impl AclProvisioner {
             }
             Err(cause) => Err(cause),
         }
+    }
+
+    /// Runs the proxy-owned, tenant-filtered SCAN on a fresh administrator connection.
+    pub async fn scan(&self, request: &ScanRequest, prefix: &[u8]) -> Result<Vec<u8>> {
+        scan::execute(&self.backend, request, prefix).await
     }
 
     async fn provision(&self, identity: &TenantIdentity) -> Result<()> {

@@ -23,6 +23,7 @@ pub mod master;
 pub mod provision;
 pub mod reply;
 pub mod resp;
+pub mod scan;
 pub mod upstream;
 
 use std::collections::VecDeque;
@@ -39,6 +40,7 @@ use crate::master::{MasterQueue, Wake};
 use crate::provision::AclProvisioner;
 use crate::reply::{echoes_key, frame};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
+use crate::scan::ScanRequest;
 pub use sproutos_service_credentials::CredentialStore;
 use sproutos_service_credentials::{Authentication, report};
 
@@ -99,6 +101,7 @@ pub async fn serve(
     */
     let mut pending: VecDeque<Pending> = VecDeque::new();
     const MAX_PENDING: usize = 8192;
+    let mut mode = ConnectionMode::Normal;
 
     loop {
         tokio::select! {
@@ -133,6 +136,55 @@ pub async fn serve(
                                 continue;
                             }
 
+                            if verb == "SCAN" {
+                                if let Some(reason) = scan_refusal(mode) {
+                                    pending.push_back(Pending::Local(error(&format!(
+                                        "SCAN is not allowed in {reason}"
+                                    ))));
+                                    drain_local(&mut pending, &mut client_write).await?;
+                                    continue;
+                                }
+
+                                let request = match ScanRequest::parse(&command, &prefix) {
+                                    Ok(request) => request,
+                                    Err(reason) => {
+                                        pending.push_back(Pending::Local(error(reason)));
+                                        drain_local(&mut pending, &mut client_write).await?;
+                                        continue;
+                                    }
+                                };
+
+                                /*
+                                  SCAN uses a separate administrator connection because ACL key
+                                  patterns do not constrain it. That connection would otherwise
+                                  race the tenant connection: `SET x 1; SCAN 0` could scan before
+                                  SET. Finish every earlier reply before opening it, and do not
+                                  parse the next buffered command until its reply is emitted.
+
+                                  MATCH limits what is returned, but Valkey still walks the shared
+                                  keyspace. The capped COUNT in `scan.rs` bounds each turn; it does
+                                  not make scanning free.
+                                */
+                                drain_pending(
+                                    &mut upstream_read,
+                                    &mut upstream_buffer,
+                                    &mut pending,
+                                    &mut client_write,
+                                    &prefix,
+                                )
+                                .await?;
+                                match provisioner.scan(&request, &prefix).await {
+                                    Ok(reply) => client_write.write_all(&reply).await?,
+                                    Err(cause) => {
+                                        warn!(tenant = %identity, %cause, "privileged SCAN failed closed");
+                                        client_write
+                                            .write_all(&error("SCAN is temporarily unavailable"))
+                                            .await?;
+                                    }
+                                }
+                                continue;
+                            }
+
                             /*
                               The queue name, read before namespacing.
 
@@ -152,6 +204,19 @@ pub async fn serve(
                                     upstream_write.write_all(&command.encode()).await?;
                                     let rewrite = if echoes_key(&verb) { ReplyRewrite::FirstKey } else { ReplyRewrite::None };
                                     pending.push_back(Pending::Upstream { rewrite });
+
+                                    match verb.as_str() {
+                                        "MULTI" => mode = ConnectionMode::Multi,
+                                        "EXEC" | "DISCARD" => mode = ConnectionMode::Normal,
+                                        // These commands are still refused by the command table.
+                                        // This transition is intentionally adjacent to the
+                                        // forwarding decision so admitting pub/sub later cannot
+                                        // accidentally make privileged SCAN available there.
+                                        "SUBSCRIBE" | "PSUBSCRIBE" => {
+                                            mode = ConnectionMode::Subscribed
+                                        }
+                                        _ => {}
+                                    }
 
                                     // After the forward, not before. A wake for a command the
                                     // backend never received would start a worker for a job that
@@ -194,35 +259,13 @@ pub async fn serve(
                 loop {
                     match frame(&upstream_buffer) {
                         Ok(Some(framed)) => {
-                            let raw = upstream_buffer.split_to(framed.len);
-                            let rewrite = match pending.pop_front() {
-                                Some(Pending::Upstream { rewrite }) => rewrite,
-                                _ => return Err(anyhow::anyhow!("backend replied without a pending upstream command")),
-                            };
-
-                            match framed.first_bulk.filter(|_| rewrite == ReplyRewrite::FirstKey) {
-                                Some((start, end)) => {
-                                    let key = &raw[start..end];
-                                    match strip(&prefix, key) {
-                                        Some(bare) => {
-                                            // Rebuilt rather than patched in place: the bulk
-                                            // string's declared length changes with the key, so a
-                                            // byte swap would leave a header that lies.
-                                            let mut out = Vec::with_capacity(raw.len());
-                                            out.extend_from_slice(&raw[..start - header_len(key.len())]);
-                                            out.extend_from_slice(format!("${}\r\n", bare.len()).as_bytes());
-                                            out.extend_from_slice(&bare);
-                                            out.extend_from_slice(&raw[end..]);
-                                            client_write.write_all(&out).await?;
-                                        }
-                                        // A key without our prefix is not ours to rewrite. It
-                                        // should not happen, and passing it through unchanged is
-                                        // safer than guessing.
-                                        None => client_write.write_all(&raw).await?,
-                                    }
-                                }
-                                None => client_write.write_all(&raw).await?,
-                            }
+                            forward_reply(
+                                framed,
+                                &mut upstream_buffer,
+                                &mut pending,
+                                &mut client_write,
+                                &prefix,
+                            ).await?;
                             drain_local(&mut pending, &mut client_write).await?;
                         }
                         Ok(None) => break,
@@ -237,10 +280,94 @@ pub async fn serve(
     }
 }
 
+async fn drain_pending<R, W>(
+    upstream: &mut R,
+    buffer: &mut BytesMut,
+    pending: &mut VecDeque<Pending>,
+    client: &mut W,
+    prefix: &[u8],
+) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    drain_local(pending, client).await?;
+    while !pending.is_empty() {
+        match frame(buffer)? {
+            Some(framed) => {
+                forward_reply(framed, buffer, pending, client, prefix).await?;
+                drain_local(pending, client).await?;
+            }
+            None => {
+                anyhow::ensure!(
+                    upstream.read_buf(buffer).await? > 0,
+                    "backend closed while waiting at SCAN barrier"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
+    framed: reply::Framed,
+    buffer: &mut BytesMut,
+    pending: &mut VecDeque<Pending>,
+    client: &mut W,
+    prefix: &[u8],
+) -> anyhow::Result<()> {
+    let raw = buffer.split_to(framed.len);
+    let rewrite = match pending.pop_front() {
+        Some(Pending::Upstream { rewrite }) => rewrite,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "backend replied without a pending upstream command"
+            ));
+        }
+    };
+
+    match framed
+        .first_bulk
+        .filter(|_| rewrite == ReplyRewrite::FirstKey)
+    {
+        Some((start, end)) => {
+            let key = &raw[start..end];
+            match strip(prefix, key) {
+                Some(bare) => {
+                    let mut out = Vec::with_capacity(raw.len());
+                    out.extend_from_slice(&raw[..start - header_len(key.len())]);
+                    out.extend_from_slice(format!("${}\r\n", bare.len()).as_bytes());
+                    out.extend_from_slice(&bare);
+                    out.extend_from_slice(&raw[end..]);
+                    client.write_all(&out).await?;
+                }
+                None => client.write_all(&raw).await?,
+            }
+        }
+        None => client.write_all(&raw).await?,
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 enum Pending {
     Upstream { rewrite: ReplyRewrite },
     Local(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionMode {
+    Normal,
+    Multi,
+    Subscribed,
+}
+
+fn scan_refusal(mode: ConnectionMode) -> Option<&'static str> {
+    match mode {
+        ConnectionMode::Normal => None,
+        ConnectionMode::Multi => Some("MULTI"),
+        ConnectionMode::Subscribed => Some("subscribed mode"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,4 +493,19 @@ fn credentials_from(command: &Command) -> Option<(String, Vec<u8>)> {
     }
     let username = std::str::from_utf8(&command.args[1]).ok()?;
     Some((username.to_owned(), command.args[2].clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_is_only_available_in_normal_protocol_mode() {
+        assert_eq!(scan_refusal(ConnectionMode::Normal), None);
+        assert_eq!(scan_refusal(ConnectionMode::Multi), Some("MULTI"));
+        assert_eq!(
+            scan_refusal(ConnectionMode::Subscribed),
+            Some("subscribed mode")
+        );
+    }
 }

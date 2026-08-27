@@ -121,6 +121,47 @@ impl Client {
     }
 }
 
+fn parse_scan_reply(reply: &str) -> (String, Vec<String>) {
+    let mut lines = reply.split("\r\n");
+    assert_eq!(lines.next(), Some("*2"), "{reply:?}");
+    let cursor_len = lines.next().expect("cursor bulk header");
+    assert!(cursor_len.starts_with('$'), "{reply:?}");
+    let cursor = lines.next().expect("cursor").to_owned();
+    let count = lines
+        .next()
+        .and_then(|line| line.strip_prefix('*'))
+        .and_then(|line| line.parse::<usize>().ok())
+        .expect("key array header");
+    let mut keys = Vec::with_capacity(count);
+    for _ in 0..count {
+        let header = lines.next().expect("key bulk header");
+        assert!(header.starts_with('$'), "{reply:?}");
+        keys.push(lines.next().expect("key").to_owned());
+    }
+    (cursor, keys)
+}
+
+async fn scan_all(client: &mut Client, pattern: Option<&str>) -> Vec<String> {
+    let mut cursor = "0".to_owned();
+    let mut keys = Vec::new();
+    loop {
+        let reply = match pattern {
+            Some(pattern) => {
+                client
+                    .send(&["SCAN", &cursor, "MATCH", pattern, "COUNT", "1000"])
+                    .await
+            }
+            None => client.send(&["SCAN", &cursor, "COUNT", "1000"]).await,
+        };
+        let (next, batch) = parse_scan_reply(&reply);
+        keys.extend(batch);
+        cursor = next;
+        if cursor == "0" {
+            return keys;
+        }
+    }
+}
+
 /// Provisions a tenant in the control-plane database and returns its username and secret.
 ///
 /// Written with raw SQL rather than through the TypeScript driver on purpose: this is the Rust side
@@ -577,7 +618,75 @@ async fn backend_acl_rejects_another_tenants_key_and_admin_commands() {
     assert!(foreign.contains("NOPERM"), "{foreign}");
     let administrative = direct.send(&["DBSIZE"]).await;
     assert!(administrative.contains("NOPERM"), "{administrative}");
+    let script_scan = direct
+        .send(&["EVAL", "return redis.call('SCAN', '0')", "0"])
+        .await;
+    // Valkey wraps an ACL NOPERM raised inside Lua as "ACL failure in script" rather than keeping
+    // the outer error code. The important property is that SCAN did not execute as the tenant.
+    assert!(
+        script_scan.starts_with("-ERR ACL failure in script")
+            && script_scan.contains("no permissions to run the 'scan' command"),
+        "{script_scan}"
+    );
     cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn scan_is_tenant_scoped_unprefixed_and_an_ordering_barrier() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username_a, secret_a, _service_a, fixtures_a) = provision(&url).await;
+    let (username_b, secret_b, _service_b, fixtures_b) = provision(&url).await;
+    let mut a = Client::connect(address).await;
+    let mut b = Client::connect(address).await;
+    assert_eq!(a.send(&["AUTH", &username_a, &secret_a]).await, "+OK\r\n");
+    assert_eq!(b.send(&["AUTH", &username_b, &secret_b]).await, "+OK\r\n");
+
+    for key in ["apple", "apricot", "banana"] {
+        assert_eq!(a.send(&["SET", key, "a"]).await, "+OK\r\n");
+    }
+    assert_eq!(b.send(&["SET", "foreign-only", "b"]).await, "+OK\r\n");
+
+    let mut all = scan_all(&mut a, None).await;
+    all.sort();
+    assert_eq!(all, ["apple", "apricot", "banana"]);
+    assert!(all.iter().all(|key| !key.contains("{kv:")));
+
+    let mut matched = scan_all(&mut a, Some("ap*")).await;
+    matched.sort();
+    assert_eq!(matched, ["apple", "apricot"]);
+
+    // Both commands are written in one syscall. The privileged SCAN connection must not overtake
+    // the tenant connection's SET, and commands after SCAN must not be forwarded ahead of it.
+    let replies = a
+        .pipeline(&[
+            &["SET", "barrier-visible", "yes"],
+            &["SCAN", "0", "MATCH", "barrier-*", "COUNT", "1000"],
+            &["GET", "barrier-visible"],
+        ])
+        .await;
+    assert_eq!(replies[0], "+OK\r\n");
+    assert_eq!(parse_scan_reply(&replies[1]).1, ["barrier-visible"]);
+    assert_eq!(replies[2], "$3\r\nyes\r\n");
+
+    assert_eq!(a.send(&["MULTI"]).await, "+OK\r\n");
+    let refused = a.send(&["SCAN", "0"]).await;
+    assert!(
+        refused.contains("SCAN is not allowed in MULTI"),
+        "{refused}"
+    );
+    assert_eq!(a.send(&["DISCARD"]).await, "+OK\r\n");
+    assert_eq!(a.send(&["PING"]).await, "+PONG\r\n");
+
+    a.send(&["DEL", "apple", "apricot", "banana", "barrier-visible"])
+        .await;
+    b.send(&["DEL", "foreign-only"]).await;
+    cleanup(&url, &fixtures_a).await;
+    cleanup(&url, &fixtures_b).await;
 }
 
 #[tokio::test]
