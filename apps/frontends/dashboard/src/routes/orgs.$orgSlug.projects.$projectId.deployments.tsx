@@ -211,7 +211,7 @@ function Deployments() {
             <DialogTitle>Roll back to {target?.shortSha}?</DialogTitle>
             <DialogDescription>
               {target?.preset === "static"
-                ? "This points the site's edge route at that release. No rebuild — it takes effect immediately."
+                ? "This points the site's edge route at that release. No rebuild — edge locations update shortly."
                 : "This points the live alias at that release. No rebuild — it takes effect immediately."}
             </DialogDescription>
           </DialogHeader>
