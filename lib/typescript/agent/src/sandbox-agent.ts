@@ -4,6 +4,7 @@ import { PLATFORM_FALLBACK_MODEL, type Harness } from "./harness"
 import type { AgentEvent } from "./runner"
 import { codexOverrides, sandboxAgentEnv } from "./sandbox-env"
 import type { MintedProxyToken } from "./proxy-token"
+import { SANDBOX_NETWORK_LAUNCHER, SANDBOX_NETWORK_LAUNCHER_SOURCE } from "./sandbox-network"
 
 /**
  * Running the coding agent **inside the sandbox**.
@@ -150,6 +151,13 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     agentsPointer(input.skill),
     problems,
   )
+  await write(
+    driver,
+    externalId,
+    `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`,
+    SANDBOX_NETWORK_LAUNCHER_SOURCE,
+    problems,
+  )
 
   /*
     Codex provider configuration still needs no file here. It used to get one, and Codex overwrote
@@ -257,6 +265,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     `git add -A` from the customer's own repository.
   */
   const argv = ["env", ...Object.entries(env).map(([key, value]) => `${key}=${value}`)]
+  argv.push("node", `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`, "--")
   argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model, workspace))
 
   /*

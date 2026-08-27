@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import type { AgentEvent } from "./runner"
 import { bootstrapSandbox, commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
+import { SANDBOX_NETWORK_LAUNCHER } from "./sandbox-network"
 
 const WORKSPACE = "/home/daytona/workspace"
 
@@ -110,6 +111,7 @@ describe("bootstrapSandbox", () => {
     expect(files[`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`]).toContain(
       "Deployment is performed by the platform",
     )
+    expect(files[`${WORKSPACE}/${SANDBOX_NETWORK_LAUNCHER}`]).toContain("CONNECT ")
     expect(files[`${WORKSPACE}/AGENTS.md`]).toBeUndefined()
     expect(files[`${WORKSPACE}/.claude/skills/sproutos/SKILL.md`]).toBeUndefined()
   })
@@ -188,6 +190,15 @@ describe("runSandboxTurn", () => {
 
     expect(commands[0]).toContain("--append-system-prompt-file")
     expect(commands[0]).toContain(`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`)
+  })
+
+  it("runs every harness through the platform network launcher", async () => {
+    const { commands, driver } = fakeDriver()
+    await runSandboxTurn({ ...base, driver, onEvent: () => {} })
+
+    expect(commands[0]).toContain("node")
+    expect(commands[0]).toContain(`${WORKSPACE}/${SANDBOX_NETWORK_LAUNCHER}`)
+    expect(commands[0]).toContain("--")
   })
 
   it("reassembles events split across chunks", async () => {

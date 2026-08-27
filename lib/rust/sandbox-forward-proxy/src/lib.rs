@@ -2,7 +2,8 @@
 //!
 //! A sandbox receives only a derived Basic-auth credential. The proxy resolves destinations itself,
 //! refuses every non-public answer before dialing, and forwards either HTTP/1.1 absolute-form
-//! requests or a port-443 `CONNECT` tunnel. It deliberately does not terminate TLS.
+//! requests or a `CONNECT` tunnel to HTTPS or the public SproutOS Postgres listener. It deliberately
+//! does not terminate the tunneled protocol.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -354,13 +355,14 @@ impl RequestHead {
                 return Err(());
             }
             let authority: Authority = self.target.parse().map_err(|_| ())?;
-            if authority.port_u16() != Some(443) {
+            let port = authority.port_u16().ok_or(())?;
+            if !matches!(port, 443 | 5432) {
                 return Err(());
             }
             return Ok(Destination {
                 host: authority.host().to_owned(),
                 authority: authority.as_str().to_owned(),
-                port: 443,
+                port,
                 origin_form: String::new(),
             });
         }
@@ -1041,7 +1043,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_is_only_443_and_tunnels_after_resolution() {
+    async fn connect_allows_https_and_postgres_and_tunnels_after_resolution() {
         let root = &ROOT;
         let (proxy, dialed, mut upstream) = make_proxy(
             root,
@@ -1084,6 +1086,27 @@ mod tests {
             exchange(proxy, bad.as_bytes())
                 .await
                 .starts_with(b"HTTP/1.1 400")
+        );
+
+        let (proxy, dialed, mut upstream) = make_proxy(
+            root,
+            Ok(Some(authorization(SandboxState::Running))),
+            vec!["8.8.4.4".parse().unwrap()],
+        );
+        let postgres = request.replace("example.com:443", "database.example:5432");
+        let (mut client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move { proxy.serve_connection(server).await });
+        client.write_all(postgres.as_bytes()).await.unwrap();
+        client.read_exact(&mut established).await.unwrap();
+        assert_eq!(&established, b"HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.read_exact(&mut eager).await.unwrap();
+        assert_eq!(&eager, b"eager hello");
+        drop(client);
+        drop(upstream);
+        task.await.unwrap().unwrap();
+        assert_eq!(
+            *dialed.lock().unwrap(),
+            vec!["8.8.4.4:5432".parse().unwrap()]
         );
     }
 
