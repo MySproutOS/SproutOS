@@ -538,6 +538,54 @@ function daytona(): DaytonaSandboxClient {
   return daytonaClientFromEnv()
 }
 
+/** Replace a control-plane join whose Daytona object has disappeared. */
+async function reprovisionMissingProviderObject(
+  db: Kysely<DB>,
+  input: { sandboxId: string; externalId: string; organizationId: string },
+): Promise<boolean> {
+  return await db.transaction().execute(async (tx) => {
+    const current = await tx
+      .selectFrom("sandbox")
+      .select(["externalId", "state", "databaseBranchId"])
+      .where("id", "=", input.sandboxId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (
+      current === undefined ||
+      current.externalId !== input.externalId ||
+      !["starting", "failed"].includes(current.state)
+    ) {
+      return false
+    }
+
+    /*
+      The branch credential exists only inside the missing container. Its secret is intentionally
+      stored as a one-way hash, so a replacement cannot reuse it. Drop the branch before severing
+      the row's reference; otherwise every provider-side disappearance leaves a paid Neon branch
+      with no sandbox pointing at it. The protected-primary check in `dropDevBranch` is the final
+      guard if this foreign key is ever wrong.
+    */
+    if (current.databaseBranchId !== null) {
+      await dropDevBranch(tx, neonPostgresConfigFromEnv(), current.databaseBranchId)
+    }
+
+    await crudSandbox(tx).update(input.sandboxId, {
+      externalId: null,
+      databaseBranchId: null,
+      state: "starting",
+      lastActivityAt: sql<Date>`now()` as unknown as Date,
+    })
+    await enqueue(tx, {
+      kind: SANDBOX_KINDS.provision,
+      organizationId: input.organizationId,
+      payload: { sandboxId: input.sandboxId },
+      idempotencyKey: `${SANDBOX_KINDS.provision}:${input.sandboxId}:missing:${input.externalId}`,
+      maxAttempts: 3,
+    })
+    return true
+  })
+}
+
 /** Create the sandbox at the provider and record what it gave back. */
 export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, { db }) => {
@@ -688,6 +736,18 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
         state: "running",
       })
     } catch (error) {
+      if (
+        error instanceof SandboxNotFoundError &&
+        providerExternalId !== null &&
+        (await reprovisionMissingProviderObject(db, {
+          sandboxId: sandbox.id,
+          externalId: providerExternalId,
+          organizationId: sandbox.organizationId,
+        }))
+      ) {
+        return
+      }
+
       let cleanupError: unknown
       if (sandboxDriver !== undefined && providerExternalId !== null) {
         try {
@@ -728,8 +788,9 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
 
     const sandbox = await db
       .selectFrom("sandbox")
-      .select(["id", "externalId", "state"])
-      .where("id", "=", sandboxId)
+      .innerJoin("project", "project.id", "sandbox.projectId")
+      .select(["sandbox.id", "sandbox.externalId", "sandbox.state", "project.organizationId"])
+      .where("sandbox.id", "=", sandboxId)
       .executeTakeFirst()
 
     if (
@@ -778,33 +839,10 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
           collapse into one replacement, and the old provider id is part of the idempotency key so
           a later, genuinely different replacement is not suppressed.
         */
-        await db.transaction().execute(async (tx) => {
-          const current = await tx
-            .selectFrom("sandbox")
-            .select(["externalId", "state"])
-            .where("id", "=", sandbox.id)
-            .forUpdate()
-            .executeTakeFirst()
-          if (
-            current === undefined ||
-            current.externalId !== sandbox.externalId ||
-            !["starting", "failed"].includes(current.state)
-          ) {
-            return
-          }
-
-          await crudSandbox(tx).update(sandbox.id, {
-            externalId: null,
-            state: "starting",
-            lastActivityAt: sql<Date>`now()` as unknown as Date,
-          })
-          await enqueue(tx, {
-            kind: SANDBOX_KINDS.provision,
-            organizationId: job.organizationId,
-            payload: { sandboxId: sandbox.id },
-            idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${sandbox.externalId}`,
-            maxAttempts: 3,
-          })
+        await reprovisionMissingProviderObject(db, {
+          sandboxId: sandbox.id,
+          externalId: sandbox.externalId,
+          organizationId: sandbox.organizationId,
         })
         return
       }

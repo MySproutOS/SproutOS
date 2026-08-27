@@ -701,6 +701,52 @@ describe("sandbox lifecycle requests", () => {
 })
 
 describe("provisionSandbox", () => {
+  it("reprovisions when a failed retry points at a provider object that no longer exists", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const missingExternalId = `daytona-provision-missing-${v7()}`
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: missingExternalId,
+      state: "starting",
+    })
+
+    await provisionSandbox(
+      () =>
+        ({
+          state: () => Promise.reject(new SandboxNotFoundError(missingExternalId)),
+        }) as never,
+    )(
+      {
+        id: v7(),
+        kind: SANDBOX_KINDS.provision,
+        organizationId,
+        payload: { sandboxId: sandbox.id },
+      } as never,
+      context,
+    )
+
+    const row = await db
+      .selectFrom("sandbox")
+      .select(["state", "externalId"])
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ state: "starting", externalId: null })
+
+    const replacement = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "payload", "idempotencyKey"])
+      .where("organizationId", "=", organizationId)
+      .executeTakeFirstOrThrow()
+    expect(replacement).toEqual({
+      kind: SANDBOX_KINDS.provision,
+      payload: { sandboxId: sandbox.id },
+      idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${missingExternalId}`,
+    })
+  })
+
   it("marks an external-id retry failed when driver configuration cannot be built", async ({
     skip,
   }) => {

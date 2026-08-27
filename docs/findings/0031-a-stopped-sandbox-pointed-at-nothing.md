@@ -15,13 +15,19 @@ object as stopped, but it left the external id on the row. `sandbox.start` retri
 marked the row failed, and the reaper turned it back into stopped. Every later request repeated the
 same loop; none could reach provisioning or a model.
 
+The first repair covered `sandbox.start`. The next production retry exposed the other entrance to
+the same state: a `failed` row intentionally selects `sandbox.provision` so it can rerun bootstrap,
+and that handler also trusted a non-null external id. The replacement job therefore retried the
+same missing object before it could create anything.
+
 ## What stops it recurring
 
-`sandbox.start` now treats provider 404 as reconciliation evidence. Under a row lock it clears the
-stale external id, returns the row to `starting`, and enqueues one idempotent `sandbox.provision`
-job keyed by the missing provider id. Concurrent observations collapse into the same replacement.
-A database-backed test starts a row whose provider object is missing and asserts both the cleared
-join and the replacement job.
+Both `sandbox.start` and the existing-object path in `sandbox.provision` now treat provider 404 as
+reconciliation evidence. A shared routine locks the row, drops an attached ephemeral Neon branch
+whose one-way credential cannot be recovered, clears the stale external id, returns the row to
+`starting`, and enqueues one idempotent `sandbox.provision` job keyed by the missing provider id.
+Concurrent observations collapse into the same replacement. Database-backed tests drive both job
+entrances and assert the cleared join and replacement job.
 
 ## Historical context
 
