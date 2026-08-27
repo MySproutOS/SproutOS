@@ -1,11 +1,11 @@
 import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
 import { requestSandboxDestroy, requestSandboxStart, SandboxDeletingError } from "@lib/jobs"
 import {
-  sandboxDriverFromEnv,
+  daytonaClientFromEnv,
   SandboxNotFoundError,
   SandboxUnavailableError,
   WORKSPACE_DIR,
-  type SandboxDriver,
+  type DaytonaSandboxClient,
 } from "@lib/sandbox"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -70,13 +70,13 @@ const DEFAULT_PREVIEW_PORT = 3000
 /**
  * Built per request, not at module load.
  *
- * A driver constructed while this module is imported reads configuration that a process may not
- * have — the OpenAPI generator, for one, imports every route and would then fail to start wherever
+ * A Daytona client constructed while this module is imported reads configuration that a process
+ * may not have — the OpenAPI generator, for one, imports every route and would then fail to start wherever
  * `DAYTONA_API_KEY` is absent. `2249bad` records the same bug with a Redis client, where
  * the generator's process never exited and timed out at three minutes.
  */
-function driver(): SandboxDriver {
-  return sandboxDriverFromEnv()
+function daytona(): DaytonaSandboxClient {
+  return daytonaClientFromEnv()
 }
 
 function serialize(row: Selectable<DB["sandbox"]>) {
@@ -286,7 +286,7 @@ const app = new Hono()
       try {
         // Keep both clocks aligned. Preview HTTP reaches Daytona directly and would otherwise keep
         // only the provider clock alive while Sprout's reaper stopped a page somebody was viewing.
-        await driver().touch(row.externalId)
+        await daytona().touch(row.externalId)
         await crudSandbox(db).touch(row.id)
         return c.body(null, 204)
       } catch (error) {
@@ -329,7 +329,7 @@ const app = new Hono()
           only other way to make one load is marking the sandbox public, which puts a customer's
           work-in-progress behind a guessable URL and no authentication at all.
         */
-        const link = await driver().previewUrl(row.externalId, target, PREVIEW_TTL_S)
+        const link = await daytona().previewUrl(row.externalId, target, PREVIEW_TTL_S)
         if (row.previewPort !== target) {
           await crudSandbox(db).update(row.id, { previewPort: target })
         }
@@ -369,7 +369,7 @@ const app = new Hono()
       if (full === null) return throwBadRequest(c, "Path escapes the workspace")
 
       try {
-        return c.json({ path, contents: await driver().readFile(row.externalId, full) })
+        return c.json({ path, contents: await daytona().readFile(row.externalId, full) })
       } catch (error) {
         return providerError(c, error)
       }
@@ -402,7 +402,7 @@ const app = new Hono()
       if (full === null) return throwBadRequest(c, "Path escapes the workspace")
 
       try {
-        await driver().writeFile(row.externalId, full, contents)
+        await daytona().writeFile(row.externalId, full, contents)
         return c.body(null, 204)
       } catch (error) {
         return providerError(c, error)
@@ -439,7 +439,7 @@ const app = new Hono()
       if (full === null) return throwBadRequest(c, "Path escapes the workspace")
 
       try {
-        const entries = await driver().tree(row.externalId, full)
+        const entries = await daytona().tree(row.externalId, full)
         return c.json({
           path: path ?? "",
           // A trailing slash marks a directory, which is what the schema documents and what the
@@ -488,7 +488,7 @@ const app = new Hono()
       }
 
       try {
-        const result = await driver().exec(row.externalId, command, timeoutMs ?? 30_000)
+        const result = await daytona().exec(row.externalId, command, timeoutMs ?? 30_000)
         return c.json(result)
       } catch (error) {
         return providerError(c, error)

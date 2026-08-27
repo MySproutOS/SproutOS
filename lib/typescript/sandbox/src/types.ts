@@ -1,16 +1,14 @@
 /**
- * One interface for a sandbox, whoever is running it.
+ * The control-plane contract for a Daytona sandbox.
  *
  * A sandbox is where the coding agent lives: a checkout of the customer's repository, a shell, a
  * dev server on a port somebody can look at, and — for an Android project — an emulator with a
  * screen two parties watch at once. ADR 0026 made Lambda the only place customer code runs, and
  * none of that fits a fifteen-minute invocation, so the compute is rented.
  *
- * The provider is Daytona today. This interface exists because their open-source repository stopped
- * being maintained in June 2026 with development moved to a private codebase — we are buying the
- * hosted product, not the project, and the seam is what makes that survivable. It is deliberately
- * the same shape as {@link ../../services/src/types.ts | ServiceDriver}, which already carries
- * every backend service a customer can provision behind one set of verbs.
+ * Daytona is not selected through a driver. Production, development and live tests all exercise
+ * the hosted provider; the interface below only keeps jobs and routes unit-testable without making
+ * paid network calls.
  *
  * What is *not* behind this interface is as important as what is. The control plane keeps the
  * `sandbox` row, the credit hold, the idle timer, the RBAC check and the customer's LLM credential.
@@ -97,9 +95,14 @@ export type PreviewLink = {
   expiresAt: Date
 }
 
-export type SandboxDriver = {
-  /** Matches `sandbox.provider`. */
-  provider: string
+/**
+ * The operations SproutOS uses from Daytona Cloud.
+ *
+ * This remains an interface so jobs can be tested without renting a sandbox. It is deliberately
+ * provider-specific: there is no selector and no local-container implementation that can quietly
+ * stand in for production.
+ */
+export type DaytonaSandboxClient = {
   /** The persistent checkout root inside this provider's sandbox. */
   workspaceDir: string
   create: (input: CreateSandboxInput) => Promise<CreatedSandbox>

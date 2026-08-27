@@ -34,7 +34,7 @@ import {
   userGitHubCredential,
 } from "@lib/github"
 import { srnFor } from "@lib/srn"
-import { sandboxDriverFromEnv } from "@lib/sandbox"
+import { daytonaClientFromEnv } from "@lib/sandbox"
 import { sealForProxy } from "@lib/proxy-secret"
 import { db } from "@sproutos/db"
 import { randomUUID } from "node:crypto"
@@ -325,7 +325,7 @@ const app = new Hono()
             })
 
             const { exitCode } = await runSandboxTurn({
-              driver: sandboxDriverFromEnv(),
+              driver: daytonaClientFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
               model: credential.model,
@@ -367,7 +367,7 @@ const app = new Hono()
                     name: c.var.user.name ?? "SproutOS Agent",
                   },
                   branch: `sproutos/agent-${sessionId.slice(-12)}`,
-                  driver: sandboxDriverFromEnv(),
+                  driver: daytonaClientFromEnv(),
                   externalId: sandbox.externalId,
                   message: `${prompt.split("\n")[0]?.slice(0, 72) ?? "Agent changes"}\n\nWritten by the SproutOS agent in a sandbox.`,
                   repository: `${target.ownerLogin}/${target.name}`,

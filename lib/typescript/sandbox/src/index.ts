@@ -1,10 +1,10 @@
 export { quoteArg, quoteArgv } from "./argv"
 export {
   daytonaConfigFromEnv,
-  daytonaDriver,
+  daytonaClient,
   PROVIDER,
   SNAPSHOT_RESOURCES,
-  sandboxDriverFromEnv,
+  daytonaClientFromEnv,
   WORKSPACE_DIR,
   type DaytonaConfig,
 } from "./daytona"
@@ -17,7 +17,7 @@ export {
   type ExecResult,
   type PreviewLink,
   type SandboxClass,
-  type SandboxDriver,
+  type DaytonaSandboxClient,
   type SandboxResources,
   type TreeEntry,
 } from "./types"

@@ -1,4 +1,4 @@
-import type { SandboxDriver } from "@lib/sandbox"
+import type { DaytonaSandboxClient } from "@lib/sandbox"
 
 import { PLATFORM_FALLBACK_MODEL, type Harness } from "./harness"
 import type { AgentEvent } from "./runner"
@@ -48,7 +48,7 @@ export type SandboxRepository = {
 }
 
 export type BootstrapInput = {
-  driver: SandboxDriver
+  driver: DaytonaSandboxClient
   externalId: string
   repository: SandboxRepository
   /** The SproutOS skill, already rendered. */
@@ -179,7 +179,7 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
 }
 
 async function write(
-  driver: SandboxDriver,
+  driver: DaytonaSandboxClient,
   externalId: string,
   path: string,
   content: string,
@@ -211,7 +211,7 @@ ${skill}
 }
 
 export type TurnInput = {
-  driver: SandboxDriver
+  driver: DaytonaSandboxClient
   externalId: string
   harness: Harness
   prompt: string
@@ -356,7 +356,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
  * without touching a file is the common case.
  */
 export type SandboxCommitInput = {
-  driver: SandboxDriver
+  driver: DaytonaSandboxClient
   externalId: string
   /** `owner/repo`. */
   repository: string
