@@ -42,6 +42,8 @@ case "$2" in
           *-api-green) echo "arn:api-green" ;;
           *-search-blue) echo "arn:search-blue" ;;
           *-search-green) echo "arn:search-green" ;;
+          *-llm-blue) echo "arn:llm-blue" ;;
+          *-llm-green) echo "arn:llm-green" ;;
           *-pg-blue) echo "arn:pg-blue" ;;
           *-pg-green) echo "arn:pg-green" ;;
           *-valkey-blue) echo "arn:valkey-blue" ;;
@@ -128,6 +130,7 @@ run() {
   # a subshell, so an `unset` here dies with it, while `SEARCH_RULE_ARN=… out=$(run router)` assigns
   # in the parent and outlives the case that wrote it. See the `unset` before the no-rule case.
   if [ -n "${SEARCH_RULE_ARN:-}" ]; then export SEARCH_RULE_ARN; fi
+  if [ -n "${LLM_RULE_ARN:-}" ]; then export LLM_RULE_ARN; fi
   if [ -n "${PG_LISTENER_ARN:-}" ]; then export PG_LISTENER_ARN; fi
   if [ -n "${VALKEY_LISTENER_ARN:-}" ]; then export VALKEY_LISTENER_ARN; fi
   if [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ]; then export FORWARD_PROXY_LISTENER_ARN; fi
@@ -140,6 +143,8 @@ echo "cutover.sh"
 # workflow's LLM rule connected to the same atomic router cutover exercised below.
 check "production passes the LLM rule through both deployment stages" "2" \
   "$(grep -c 'LLM_RULE_ARN:.*vars.LLM_RULE_ARN' "$HERE/../.github/workflows/deploy.yml")"
+check "deploy role may move the LLM rule" "1" \
+  "$(grep -c 'aws_lb_listener_rule.llm.arn' "$HERE/../tofu/oidc.tf")"
 
 # Live on blue, so the idle colour is green and nothing has to say so.
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router)
@@ -258,21 +263,23 @@ check "the router's listener is written after the extras" \
   "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
-# All five at once, which is what a real router release now moves: the ALB listener it is the
-# default of, the search rule beside it, and three listeners on the tenant balancer.
+# All six at once, which is what a real router release now moves: the ALB listener it is the
+# default of, the search and LLM rules beside it, and three listeners on the tenant balancer.
 unset SEARCH_RULE_ARN PG_LISTENER_ARN
-STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule \
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule LLM_RULE_ARN=arn:llm-rule \
   PG_LISTENER_ARN=arn:pg-listener VALKEY_LISTENER_ARN=arn:valkey-listener \
   FORWARD_PROXY_LISTENER_ARN=arn:forward-proxy-listener out=$(run router)
-check "moves all five" "5" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
+check "moves all six" "6" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
+check "llm among them, same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:llm-green","Weight":100' "$STUB_CALLS")"
 check "valkey among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:valkey-green","Weight":100' "$STUB_CALLS")"
 check "forward proxy among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:egress-green","Weight":100' "$STUB_CALLS")"
-check "and the front door still last" "5" \
+check "and the front door still last" "6" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
-unset SEARCH_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN FORWARD_PROXY_LISTENER_ARN
+unset SEARCH_RULE_ARN LLM_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN FORWARD_PROXY_LISTENER_ARN
 
 # A transient throttling or control-plane error after traffic moved must not strand the old group
 # at one instance. The mutation is idempotent, so retry it and require a fresh desired-capacity
