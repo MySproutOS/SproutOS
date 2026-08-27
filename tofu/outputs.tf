@@ -103,6 +103,11 @@ output "search_rule_arn" {
   value       = aws_lb_listener_rule.search.arn
 }
 
+output "llm_rule_arn" {
+  description = "Listener rule for llm.<domain>. Set as the LLM_RULE_ARN repository variable."
+  value       = aws_lb_listener_rule.llm.arn
+}
+
 # The tenant balancer's listeners, so the cutover moves them with the router. Without these a
 # release leaves every customer's database, queue and sandbox egress on the colour just drained.
 output "pg_listener_arn" {
