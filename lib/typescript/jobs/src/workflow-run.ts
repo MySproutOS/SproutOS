@@ -6,6 +6,7 @@ import { LambdaClient } from "@aws-sdk/client-lambda"
 import { runNodeInLambda } from "./lambda-node"
 import { sleep } from "./sleep"
 import type { JobHandler } from "./worker"
+import { recordWorkflowExecution } from "./workflow-metering"
 
 /**
  * Running a workflow.
@@ -219,7 +220,7 @@ export async function runWorkflow(
       the top found `status <> 'queued'`, and every retry returned immediately having done nothing.
       A run that cannot finish and cannot be retried is worse than one that failed.
     */
-    await failRun(db, claimed.id, {
+    await finishRun(db, claimed, "failed", {
       code: cause instanceof Error ? cause.name : "Error",
       message: cause instanceof Error ? cause.message : String(cause),
     })
@@ -233,7 +234,7 @@ export async function runWorkflow(
     it does, and a green run list would be the most misleading thing this feature could show.
   */
   if (skipped > 0) {
-    await failRun(db, claimed.id, {
+    await finishRun(db, claimed, "failed", {
       code: "SandboxUnavailable",
       message: `${skipped} of ${steps.length} steps need a tenant namespace this project does not have`,
     })
@@ -248,18 +249,14 @@ export async function runWorkflow(
     is only what makes the run agree with it.
   */
   if (failedStep) {
-    await failRun(db, claimed.id, {
+    await finishRun(db, claimed, "failed", {
       code: "StepFailed",
       message: "A step exited non-zero. Its output is recorded on the step.",
     })
     return
   }
 
-  await db
-    .updateTable("workflowRun")
-    .set({ status: "succeeded", finishedAt: new Date(), updatedAt: new Date(), error: null })
-    .where("id", "=", claimed.id)
-    .execute()
+  await finishRun(db, claimed, "succeeded", null)
 }
 
 /**
@@ -269,21 +266,50 @@ export async function runWorkflow(
  * running, succeeded, failed, dead_lettered, cancelled. The reason goes in `error`, which is what
  * the run detail renders.
  */
-async function failRun(
+async function finishRun(
   db: Kysely<DB>,
-  runId: string,
-  error: { code: string; message: string },
+  run: {
+    id: string
+    workflowId: string
+    startedAt: Date | null
+  },
+  status: "succeeded" | "failed",
+  error: { code: string; message: string } | null,
 ): Promise<void> {
-  await db
-    .updateTable("workflowRun")
-    .set({
-      status: "failed",
-      finishedAt: new Date(),
-      updatedAt: new Date(),
-      error: JSON.stringify(error),
+  const finishedAt = new Date()
+  const startedAt = run.startedAt
+  if (startedAt === null) throw new Error(`workflow run ${run.id} has no start timestamp`)
+
+  const tenant = await tenantNamespaceFor(db, run.workflowId)
+  if (tenant === undefined) throw new Error(`workflow run ${run.id} has no owning project`)
+
+  await db.transaction().execute(async (tx) => {
+    const terminal = await tx
+      .updateTable("workflowRun")
+      .set({
+        status,
+        finishedAt,
+        updatedAt: finishedAt,
+        error: error === null ? null : JSON.stringify(error),
+      })
+      .where("id", "=", run.id)
+      .where("status", "=", "running")
+      .returning("id")
+      .executeTakeFirst()
+
+    // A duplicate delivery sees a terminal row and emits nothing. The update and outbox inserts
+    // share one transaction, so a crash cannot leave one without the other.
+    if (terminal === undefined) return
+
+    await recordWorkflowExecution(tx, {
+      runId: run.id,
+      workflowId: run.workflowId,
+      organizationId: tenant.organizationId,
+      projectId: tenant.projectId,
+      startedAt,
+      finishedAt,
     })
-    .where("id", "=", runId)
-    .execute()
+  })
 }
 
 /** The step rows a new run starts with, in execution order. Exported for the route that creates them. */

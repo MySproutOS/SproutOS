@@ -60,6 +60,7 @@ export {
   workflowRunJob,
   type WorkflowRunPayload,
 } from "./workflow-run"
+export { WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU } from "./workflow-metering"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 export {

@@ -14,7 +14,7 @@ import {
   validateGraph,
   type WorkflowGraph,
 } from "@lib/workflows"
-import { JOB_KINDS, enqueue, stepRowsFor } from "@lib/jobs"
+import { JOB_KINDS, WORKFLOW_EXEC_GIB, WORKFLOW_EXEC_VCPU, enqueue, stepRowsFor } from "@lib/jobs"
 import { crudMeteringOutbox } from "@lib/dao"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { db } from "@sproutos/db"
@@ -375,8 +375,8 @@ app
               jobsEnqueued: stepCounts.get(run.id) ?? 0,
               bytesEnqueued: run.bytesEnqueued === null ? null : BigInt(run.bytesEnqueued),
               dwellMs: run.valkeyDwellMs === null ? null : BigInt(run.valkeyDwellMs),
-              vcpuSeconds: elapsed,
-              gibSeconds: elapsed * 0.5,
+              vcpuSeconds: elapsed * WORKFLOW_EXEC_VCPU,
+              gibSeconds: elapsed * WORKFLOW_EXEC_GIB,
             })
 
             return {
@@ -795,8 +795,8 @@ app
         jobsEnqueued: steps.length,
         bytesEnqueued: run.bytesEnqueued === null ? null : BigInt(run.bytesEnqueued),
         dwellMs: run.valkeyDwellMs === null ? null : BigInt(run.valkeyDwellMs),
-        vcpuSeconds: elapsedSeconds(run.startedAt, run.finishedAt),
-        gibSeconds: elapsedSeconds(run.startedAt, run.finishedAt) * 0.5,
+        vcpuSeconds: elapsedSeconds(run.startedAt, run.finishedAt) * WORKFLOW_EXEC_VCPU,
+        gibSeconds: elapsedSeconds(run.startedAt, run.finishedAt) * WORKFLOW_EXEC_GIB,
       })
 
       return c.json({
