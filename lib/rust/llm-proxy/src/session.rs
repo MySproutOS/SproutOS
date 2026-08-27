@@ -80,6 +80,8 @@ pub struct Session {
     pub token_id: String,
     pub organization_id: String,
     pub project_id: Option<String>,
+    /// True when `agent_proxy_token.agent_credential_id` names a customer-provided credential.
+    pub charged_externally: bool,
     pub upstream: Upstream,
     pub base_url: String,
     /// The upstream credential, already opened. Never leaves this process.

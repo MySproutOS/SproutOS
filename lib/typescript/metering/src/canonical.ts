@@ -19,6 +19,8 @@ export type UsageEvent = {
   externalId: string
   organizationId: string
   projectId: string | null
+  /** Absent only on the legacy signed shape, whose canonical bytes must remain verifiable. */
+  chargedExternally?: boolean
   dimension: BillableDimension
   quantity: number
   occurredAt: number
@@ -112,6 +114,9 @@ export function canonical(batch: UsageBatch): string {
 
     return (
       `{"attributes":{${attributes}}` +
+      (event.chargedExternally === undefined
+        ? ""
+        : `,"charged_externally":${event.chargedExternally}`) +
       `,"dimension":${jsonString(event.dimension)}` +
       `,"external_id":${jsonString(event.externalId)}` +
       `,"occurred_at":${event.occurredAt}` +

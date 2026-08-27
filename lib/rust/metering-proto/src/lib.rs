@@ -188,6 +188,14 @@ pub struct UsageEvent {
     #[serde(default)]
     pub project_id: Option<Uuid>,
 
+    /// Whether this usage was paid directly to an external provider.
+    ///
+    /// `None` is the legacy wire shape. It is intentionally distinct from `Some(false)` so a
+    /// batch durably spooled before this field existed keeps the exact canonical bytes and remains
+    /// verifiable after an ingest upgrade. New emitters that know the answer must set it explicitly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charged_externally: Option<bool>,
+
     /// What was measured.
     pub dimension: UsageDimension,
 
@@ -218,6 +226,7 @@ impl UsageEvent {
             external_id: external_id.into(),
             organization_id,
             project_id: None,
+            charged_externally: None,
             dimension,
             quantity,
             occurred_at,
@@ -229,6 +238,13 @@ impl UsageEvent {
     #[must_use]
     pub fn with_project(mut self, project_id: Uuid) -> Self {
         self.project_id = Some(project_id);
+        self
+    }
+
+    /// Records whether the usage was paid outside SproutOS.
+    #[must_use]
+    pub fn with_charged_externally(mut self, charged_externally: bool) -> Self {
+        self.charged_externally = Some(charged_externally);
         self
     }
 
@@ -393,7 +409,12 @@ fn write_event(out: &mut String, event: &UsageEvent) {
         out.push(':');
         write_json_string(out, value);
     }
-    out.push_str("},\"dimension\":");
+    out.push('}');
+    if let Some(charged_externally) = event.charged_externally {
+        out.push_str(",\"charged_externally\":");
+        out.push_str(if charged_externally { "true" } else { "false" });
+    }
+    out.push_str(",\"dimension\":");
     write_json_string(out, event.dimension.as_str());
     out.push_str(",\"external_id\":");
     write_json_string(out, &event.external_id);
@@ -870,9 +891,11 @@ mod tests {
         let project = Uuid::parse_str("01912d41-0000-7000-8000-0000000000b1").unwrap();
         let event = UsageEvent::new("k", org(), UsageDimension::SiteRequest, 1.0, 5)
             .with_project(project)
+            .with_charged_externally(true)
             .with_attribute("site", "blog")
             .with_attribute("site", "shop");
         assert_eq!(event.project_id, Some(project));
+        assert_eq!(event.charged_externally, Some(true));
         assert_eq!(
             event.attributes.get("site").map(String::as_str),
             Some("shop")
@@ -886,6 +909,24 @@ mod tests {
         );
         let batch: UsageBatch = serde_json::from_str(&wire).unwrap();
         assert_eq!(batch.events[0].project_id, None);
+        assert_eq!(batch.events[0].charged_externally, None);
         assert!(batch.events[0].attributes.is_empty());
+    }
+
+    #[test]
+    fn legacy_and_explicit_billing_shapes_have_distinct_stable_signatures() {
+        let legacy = UsageEvent::new("k", org(), UsageDimension::AiInputToken, 1.0, 1);
+        let external = legacy.clone().with_charged_externally(true);
+        let platform = legacy.clone().with_charged_externally(false);
+
+        let legacy = UsageBatch::new("llm-proxy", vec![legacy]);
+        let external = UsageBatch::new("llm-proxy", vec![external]);
+        let platform = UsageBatch::new("llm-proxy", vec![platform]);
+
+        assert!(!canonical(&legacy).contains("charged_externally"));
+        assert!(canonical(&external).contains("\"charged_externally\":true"));
+        assert!(canonical(&platform).contains("\"charged_externally\":false"));
+        assert_ne!(sign(&legacy, b"key"), sign(&external, b"key"));
+        assert_ne!(sign(&external, b"key"), sign(&platform, b"key"));
     }
 }

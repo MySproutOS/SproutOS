@@ -59,6 +59,26 @@
       "signature": "35eadddfe5339adde702724868c840e2d0037a409786b97a88c9a65d662d6d11"
     },
     {
+      "name": "externally-charged-model-usage",
+      "note": "A customer-provided model credential keeps token usage visible while proving that SproutOS must not charge it. Legacy vectors omit the field so their existing signatures remain valid.",
+      "key_hex": "2b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfe",
+      "batch": {
+        "source": "llm-proxy",
+        "events": [
+          {
+            "external_id": "llm-proxy:token-7:req-4:AiInputToken",
+            "organization_id": "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+            "charged_externally": true,
+            "dimension": "ai_input_token",
+            "quantity": 41.0,
+            "occurred_at": 1723459200000
+          }
+        ]
+      },
+      "canonical": "sproutos.metering.v1\n{\"events\":[{\"attributes\":{},\"charged_externally\":true,\"dimension\":\"ai_input_token\",\"external_id\":\"llm-proxy:token-7:req-4:AiInputToken\",\"occurred_at\":1723459200000,\"organization_id\":\"01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f\",\"project_id\":null,\"quantity\":\"4044800000000000\"}],\"source\":\"llm-proxy\"}",
+      "signature": "7b37f5fe08971b77d0269a1264650281942f34956a76e785f4f572a09609064a"
+    },
+    {
       "name": "multi-event-unordered-attributes",
       "note": "Attribute keys are written out of order here on purpose: the canonical form sorts them, so an implementation that preserves insertion order produces a different signature and fails.",
       "key_hex": "deadbeefcafef00dfeedfacedeadbeefdeadbeefcafef00dfeedfacedeadbeef",

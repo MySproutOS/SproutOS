@@ -42,6 +42,7 @@ function eventFrom(value: unknown): UsageEvent | string {
     external_id: externalId,
     organization_id: organizationId,
     project_id: projectId,
+    charged_externally: chargedExternally,
     dimension,
     quantity,
     occurred_at: occurredAt,
@@ -52,6 +53,9 @@ function eventFrom(value: unknown): UsageEvent | string {
   if (typeof organizationId !== "string") return "organization_id must be a string"
   if (projectId !== null && projectId !== undefined && typeof projectId !== "string") {
     return "project_id must be a string or null"
+  }
+  if (chargedExternally !== undefined && typeof chargedExternally !== "boolean") {
+    return "charged_externally must be a boolean when present"
   }
   if (!isBillableDimension(dimension)) return "dimension must be a current billable dimension"
   // `Number.isFinite` rather than `typeof === "number"`: NaN and the infinities are numbers, they
@@ -73,6 +77,7 @@ function eventFrom(value: unknown): UsageEvent | string {
     externalId,
     organizationId,
     projectId: typeof projectId === "string" ? projectId : null,
+    ...(chargedExternally === undefined ? {} : { chargedExternally }),
     dimension,
     quantity,
     occurredAt,

@@ -80,7 +80,8 @@ pub fn batch_for(
             dimension,
             quantity as f64,
             occurred_at_ms,
-        );
+        )
+        .with_charged_externally(session.charged_externally);
         event.project_id = project_id;
         event
             .attributes
@@ -101,6 +102,7 @@ mod tests {
             token_id: "01a03e5d-8cbf-7415-9ac6-82c3476aeb5c".into(),
             organization_id: "01a03b00-0000-7000-8000-00000000beef".into(),
             project_id: Some("01a03b96-a3d3-71f5-9f1d-af7569938433".into()),
+            charged_externally: true,
             upstream: Upstream::Anthropic,
             base_url: "https://api.anthropic.com".into(),
             secret: "sk-secret".into(),
@@ -125,7 +127,33 @@ mod tests {
         // The cache dimension is absent rather than zero: a zero-quantity event is noise in a
         // ledger somebody reads.
         assert_eq!(batch.events.len(), 2);
+        assert!(
+            batch
+                .events
+                .iter()
+                .all(|event| event.charged_externally == Some(true))
+        );
         batch.validate().expect("the batch should be valid");
+    }
+
+    #[test]
+    fn platform_key_usage_is_explicitly_billable() {
+        let mut platform = session();
+        platform.charged_externally = false;
+        let batch = batch_for(
+            &platform,
+            "req_platform",
+            Usage {
+                input_tokens: 10,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+            },
+            1,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(batch.events[0].charged_externally, Some(false));
     }
 
     #[test]
