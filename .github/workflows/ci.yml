@@ -149,7 +149,7 @@ jobs:
         run: |
           docker run -d --name localstack -p 4566:4566 \
             -e LOCALSTACK_AUTH_TOKEN="$LOCALSTACK_AUTH_TOKEN" \
-            -e SERVICES=kms,s3,secretsmanager,ses,ssm \
+            -e SERVICES=kinesis,kms,s3,secretsmanager,ses,ssm \
             localstack/localstack:2026.07.5
           for _ in $(seq 1 60); do
             curl -sf http://localhost:4566/_localstack/health >/dev/null && break
