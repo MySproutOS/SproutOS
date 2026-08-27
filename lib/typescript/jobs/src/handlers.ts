@@ -36,6 +36,7 @@ import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
 import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
+import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -62,6 +63,7 @@ export const JOB_KINDS = {
   importUsage: "billing.import_clickhouse_usage",
   relayMeteringOutbox: "billing.relay_metering_outbox",
   chargeUsage: "billing.charge_usage",
+  refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   sweepExpired: "platform.retention_sweep",
@@ -228,6 +230,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.importUsage]: importUsageJob,
   [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
+  [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.sweepExpired]: retentionSweep,
@@ -312,6 +315,18 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     */
     kind: JOB_KINDS.chargeUsage,
     idempotencyKey: `${JOB_KINDS.chargeUsage}:${tenMinuteWindow(now)}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes against a fifteen-minute TTL.
+
+      This is a projection, not the ledger: retries simply replace the same key. Three missed
+      windows make the key expire and the router fail open, so a cache or worker outage cannot
+      become a platform-wide 402.
+    */
+    kind: JOB_KINDS.refreshCreditStates,
+    idempotencyKey: `${JOB_KINDS.refreshCreditStates}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
     maxAttempts: 3,
   })
   await enqueue(db, {
