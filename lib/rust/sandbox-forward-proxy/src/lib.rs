@@ -240,27 +240,30 @@ impl SandboxForwardProxy {
         if addresses.iter().any(|address| !is_public_ip(*address)) {
             return respond(&mut client, ResponseKind::DestinationForbidden).await;
         }
-        // DNS answer order is not an availability guarantee. Try every validated public address
-        // within one shared deadline, so a dead first AAAA/A record does not turn an otherwise
-        // reachable public domain into a 502 and a large answer cannot multiply the timeout.
-        let mut upstream = match timeout(self.limits.connect_timeout, async {
-            for ip in addresses {
-                if let Ok(upstream) = self
-                    .dialer
-                    .connect(SocketAddr::new(ip, destination.port))
-                    .await
-                {
-                    return Ok(upstream);
+        // DNS answer order is not an availability guarantee. Start every validated public address
+        // under one shared deadline, so a stalled first AAAA/A record cannot prevent a later answer
+        // from succeeding and a large answer cannot multiply the timeout. The losing attempts are
+        // aborted as soon as one connects or the shared deadline expires.
+        let mut attempts = tokio::task::JoinSet::new();
+        for ip in addresses {
+            let dialer = Arc::clone(&self.dialer);
+            let address = SocketAddr::new(ip, destination.port);
+            attempts.spawn(async move { dialer.connect(address).await });
+        }
+        let upstream = timeout(self.limits.connect_timeout, async {
+            while let Some(attempt) = attempts.join_next().await {
+                if let Ok(Ok(upstream)) = attempt {
+                    return Some(upstream);
                 }
             }
-            Err(io::Error::other(
-                "no resolved address accepted a connection",
-            ))
+            None
         })
         .await
-        {
-            Ok(Ok(upstream)) => upstream,
-            _ => return respond(&mut client, ResponseKind::BadGateway).await,
+        .ok()
+        .flatten();
+        attempts.abort_all();
+        let Some(mut upstream) = upstream else {
+            return respond(&mut client, ResponseKind::BadGateway).await;
         };
 
         if request.method.eq_ignore_ascii_case("CONNECT") {
@@ -744,20 +747,19 @@ mod tests {
         }
     }
 
-    struct FailingFirstDialer {
+    struct StallingFirstDialer {
         addresses: Arc<Mutex<Vec<SocketAddr>>>,
         peer: Mutex<Option<DuplexStream>>,
     }
 
     #[async_trait]
-    impl Dialer for FailingFirstDialer {
+    impl Dialer for StallingFirstDialer {
         async fn connect(&self, address: SocketAddr) -> io::Result<Box<dyn ProxyIo>> {
-            let mut addresses = self.addresses.lock().unwrap();
-            addresses.push(address);
-            if addresses.len() == 1 {
-                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "test"));
+            let is_first = address.ip() == "1.1.1.1".parse::<IpAddr>().unwrap();
+            self.addresses.lock().unwrap().push(address);
+            if is_first {
+                return std::future::pending().await;
             }
-            drop(addresses);
             Ok(Box::new(self.peer.lock().unwrap().take().unwrap()))
         }
     }
@@ -847,21 +849,28 @@ mod tests {
     }
 
     #[test]
-    fn public_address_policy_includes_mapped_ipv6() {
+    fn public_address_policy_tracks_iana_global_reachability() {
         for denied in [
             "127.0.0.1",
             "10.0.0.1",
             "169.254.169.254",
+            "192.0.0.8",
+            "192.0.0.170",
             "192.0.2.1",
+            "192.88.99.2",
+            "198.18.0.1",
             "::1",
             "fc00::1",
             "fe80::1",
             "64:ff9b:1::1",
             "100::1",
+            "2001::1",
             "2001:2::1",
+            "2001:10::1",
             "2001:db8::1",
             "2002::1",
             "3fff::1",
+            "5f00::1",
             "::ffff:127.0.0.1",
         ] {
             assert!(!is_public_ip(denied.parse().unwrap()), "allowed {denied}");
@@ -870,9 +879,17 @@ mod tests {
             "1.1.1.1",
             "8.8.8.8",
             "192.0.0.9",
+            "192.0.0.10",
             "192.0.1.1",
+            "192.31.196.1",
+            "192.52.193.1",
+            "192.175.48.1",
             "64:ff9b::1",
+            "2001:1::1",
             "2001:3::1",
+            "2001:4:112::1",
+            "2001:20::1",
+            "2001:30::1",
             "2606:4700:4700::1111",
             "::ffff:8.8.8.8",
         ] {
@@ -881,7 +898,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_dead_first_public_dns_answer_falls_back_to_the_next() {
+    async fn a_stalled_first_public_dns_answer_does_not_block_the_next() {
         let root = &ROOT;
         let (upstream, mut peer) = tokio::io::duplex(16 * 1024);
         let dialed = Arc::new(Mutex::new(Vec::new()));
@@ -894,11 +911,14 @@ mod tests {
                 "1.1.1.1".parse().unwrap(),
                 "8.8.8.8".parse().unwrap(),
             ])),
-            Arc::new(FailingFirstDialer {
+            Arc::new(StallingFirstDialer {
                 addresses: Arc::clone(&dialed),
                 peer: Mutex::new(Some(upstream)),
             }),
-            Limits::default(),
+            Limits {
+                connect_timeout: Duration::from_millis(500),
+                ..Limits::default()
+            },
         )
         .unwrap();
 
@@ -909,7 +929,10 @@ mod tests {
             .await
             .unwrap();
         let mut forwarded = vec![0; 4096];
-        let read = peer.read(&mut forwarded).await.unwrap();
+        let read = timeout(Duration::from_millis(250), peer.read(&mut forwarded))
+            .await
+            .expect("the second public address was never tried")
+            .unwrap();
         assert!(String::from_utf8_lossy(&forwarded[..read]).starts_with("GET / HTTP/1.1"));
         peer.write_all(
             b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -921,9 +944,15 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
         task.await.unwrap().unwrap();
         assert!(response.starts_with(b"HTTP/1.1 204"));
+        let dialed = dialed
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         assert_eq!(
-            *dialed.lock().unwrap(),
-            vec!["1.1.1.1:80".parse().unwrap(), "8.8.8.8:80".parse().unwrap()]
+            dialed,
+            BTreeSet::from(["1.1.1.1:80".parse().unwrap(), "8.8.8.8:80".parse().unwrap(),])
         );
     }
 
