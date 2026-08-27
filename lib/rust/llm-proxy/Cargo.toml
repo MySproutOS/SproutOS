@@ -15,7 +15,7 @@ futures-util = "0.3"
 # `stream` on top of the workspace features: this is the only caller that reads a response as it
 # arrives rather than as one buffer, which is the difference between an agent watching tokens
 # appear and one watching nothing for a minute.
-reqwest = { workspace = true, features = ["stream"] }
+reqwest = { workspace = true, features = ["stream", "gzip"] }
 base64.workspace = true
 bytes.workspace = true
 deadpool-postgres.workspace = true
@@ -30,6 +30,7 @@ tokio-postgres.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+flate2 = "1"
 # The end-to-end test seeds and cleans its own rows, and talks plain TCP to the compose Postgres —
 # the production path goes through `SessionStore`, which requires TLS.
 tokio-postgres.workspace = true

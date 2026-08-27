@@ -172,6 +172,9 @@ impl UsageAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write as _;
 
     #[test]
     fn counts_an_anthropic_stream() {
@@ -195,6 +198,44 @@ mod tests {
                 cache_read_tokens: 4,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn reqwest_decodes_a_real_gzip_response_before_counting() {
+        let body = concat!(
+            "event: message_start\n",
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":19}}}"#,
+            "\n\nevent: message_delta\n",
+            r#"data: {"type":"message_delta","usage":{"output_tokens":23}}"#,
+            "\n\n",
+        );
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(body.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(|| async move {
+            (
+                [
+                    ("content-type", "text/event-stream"),
+                    ("content-encoding", "gzip"),
+                ],
+                compressed,
+            )
+        });
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+        assert_eq!(response.headers().get("content-encoding"), None);
+        let decoded = response.text().await.unwrap();
+        assert!(decoded.contains("message_start"));
+
+        let mut acc = UsageAccumulator::new();
+        acc.push(&decoded);
+        acc.finish();
+        assert_eq!(acc.usage().input_tokens, 19);
+        assert_eq!(acc.usage().output_tokens, 23);
     }
 
     #[test]
