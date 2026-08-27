@@ -22,6 +22,7 @@ import {
   crudAgentSession,
   crudAuditLog,
   fetchAgentSession,
+  fetchGithubInstallation,
   fetchProject,
   fetchRepository,
 } from "@lib/dao"
@@ -639,12 +640,11 @@ async function repositoryFor(
   )
   if (repository === undefined) return "This project's repository record is missing"
 
-  const installation = await db
-    .selectFrom("githubInstallation")
-    .select("installationId")
-    .where("organizationId", "=", organizationId)
-    .where("suspendedAt", "is", null)
-    .executeTakeFirst()
+  const installation = await fetchGithubInstallation(db).getForRepository(
+    organizationId,
+    project.repositoryId,
+    ["installationId"],
+  )
 
   if (installation !== undefined) {
     const installationId = Number(installation.installationId)

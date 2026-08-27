@@ -10,6 +10,23 @@ import type { Kysely, Selectable } from "kysely"
  * a refusal now.
  */
 export function fetchGithubInstallation(db: Kysely<DB>) {
+  async function getForRepository<T extends (keyof DB["githubInstallation"])[]>(
+    organizationId: string,
+    repositoryId: string,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["githubInstallation"]>, T[number]> | undefined> {
+    const repository = await db
+      .selectFrom("repository")
+      .select("githubInstallationId")
+      .where("id", "=", repositoryId)
+      .where("organizationId", "=", organizationId)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+
+    if (repository === undefined || repository.githubInstallationId === null) return undefined
+    return await getInOrganization(organizationId, repository.githubInstallationId, fields)
+  }
+
   async function getInOrganization<T extends (keyof DB["githubInstallation"])[]>(
     organizationId: string,
     id: string,
@@ -53,5 +70,5 @@ export function fetchGithubInstallation(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { getByAccountLogin, getInOrganization, listUsable }
+  return { getByAccountLogin, getForRepository, getInOrganization, listUsable }
 }
