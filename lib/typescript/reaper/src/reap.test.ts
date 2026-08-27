@@ -3,7 +3,12 @@ import { db } from "@sproutos/db"
 import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { purgeTenantIndices, purgeTenantSearch, type SearchAdminConfig } from "./search"
+import {
+  purgeTenantIndices,
+  purgeTenantSearch,
+  searchAdminRequest,
+  type SearchAdminConfig,
+} from "./search"
 import { reapDeletedOrganizations, reapDeletedServices } from "./reap"
 import { purgeTenantKeys, tenantKeyPrefix } from "./valkey"
 
@@ -441,13 +446,10 @@ async function createSecurityIdentity(
 }
 
 async function securityPut(path: string, body: unknown): Promise<void> {
-  const response = await searchFetch(`/_plugins/_security/api/${path}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  if (!response.ok)
-    throw new Error(`Could not create Security resource ${path}: ${await response.text()}`)
+  // Setup mutates the same Security config document as every parallel test. Exercise the
+  // production helper so its bounded 409 retry protects the fixture too; a bespoke fetch here was
+  // the last unbounded writer and failed CI while every product path was already fixed.
+  await searchAdminRequest(search, "PUT", `/_plugins/_security/api/${path}`, body)
 }
 
 async function securityResourceStatus(path: string): Promise<number> {
