@@ -26,8 +26,6 @@ for service in $SERVICES; do
   # own. It is a second target group on the *website's* instances, which is why the health wait
   # below covers both and why the cutover moves both rules together.
   short=$([ "$service" = "website" ] && echo web || echo router)
-  extra_short=$([ "$service" = "website" ] && echo api || echo "")
-
   if [ "$service" = "website" ]; then
     : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set}"
     live=$(aws elbv2 describe-rules --rule-arns "$WEBSITE_RULE_ARN" \
@@ -135,10 +133,26 @@ for service in $SERVICES; do
   # instances and the release is not up until both answer. Waiting on the website alone would
   # report a healthy release while the API was still failing its readiness probe — and the cutover
   # would then move both rules to it.
-  wait_arns="$idle_arn"
-  if [ -n "$extra_short" ]; then
-    wait_arns="$wait_arns $(group_arn "$NAME_PREFIX-$extra_short-$idle")"
+  wait_shorts=""
+  if [ "$service" = "website" ]; then
+    wait_shorts="api"
+  else
+    # The router binary is one release with several listeners. A healthy HTTP front door says
+    # nothing about the model, search, database, queue, or sandbox-egress ports on the same
+    # instance. Keep this list in the same configuration vocabulary as `cutover.sh`: an unset
+    # endpoint is absent from this estate; a configured endpoint must be healthy before any of the
+    # release moves.
+    [ -n "${SEARCH_RULE_ARN:-}" ] && wait_shorts="$wait_shorts search"
+    [ -n "${LLM_RULE_ARN:-}" ] && wait_shorts="$wait_shorts llm"
+    [ -n "${PG_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts pg"
+    [ -n "${VALKEY_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts valkey"
+    [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts egress"
   fi
+
+  wait_arns="$idle_arn"
+  for wait_short in $wait_shorts; do
+    wait_arns="$wait_arns $(group_arn "$NAME_PREFIX-$wait_short-$idle")"
+  done
 
   deadline=$(( $(date +%s) + TIMEOUT_S ))
   while :; do
