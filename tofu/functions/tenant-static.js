@@ -13,7 +13,7 @@ async function handler(event) {
   let prefix
   try {
     prefix = await routes.get(hostname)
-  } catch {
+  } catch (_error) {
     return { statusCode: 404, statusDescription: "No static deployment for this hostname" }
   }
 
