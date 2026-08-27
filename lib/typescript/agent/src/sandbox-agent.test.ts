@@ -335,6 +335,8 @@ describe("commitSandboxWork", () => {
     const { commands, driver } = fakeDriver({
       results: {
         "status --porcelain": " M src/app.ts\n?? README.md\n",
+        "ls-remote --refs":
+          "0123456789abcdef0123456789abcdef01234567\trefs/heads/sproutos/agent-abc\n",
         "rev-parse HEAD": "abc123\n",
       },
     })
@@ -358,12 +360,32 @@ describe("commitSandboxWork", () => {
     // The clone is off the production branch, so the local branch is called that. An explicit ref
     // is what lets the agent's work land somewhere else without a checkout dance.
     expect(push).toContain("HEAD:refs/heads/sproutos/agent-abc")
-    expect(push).toContain("--force-with-lease")
+    expect(push).toContain(
+      "--force-with-lease=refs/heads/sproutos/agent-abc:0123456789abcdef0123456789abcdef01234567",
+    )
+
+    const observed = commands.find((argv) => argv.includes("ls-remote"))!
+    expect(observed).toContain("refs/heads/sproutos/agent-abc")
+    expect(observed.join(" ")).not.toContain("ghs_installation@")
 
     // An identity on the command itself: `git commit` refuses without one, and the bootstrap's
     // `git config` is a step that is allowed to have failed.
     const commit = commands.find((argv) => argv.includes("commit"))!
     expect(commit.join(" ")).toContain("user.email=dev@example.com")
+  })
+
+  it("creates a branch only when the authenticated remote read says it is absent", async () => {
+    const { commands, driver } = fakeDriver({
+      results: {
+        "status --porcelain": " M src/app.ts\n",
+        "rev-parse HEAD": "abc123\n",
+      },
+    })
+
+    await commitSandboxWork({ ...base, driver })
+
+    const push = commands.find((argv) => argv.includes("push"))!
+    expect(push).toContain("--force-with-lease=refs/heads/sproutos/agent-abc:")
   })
 
   it("reports which step failed, not just that something did", async () => {
