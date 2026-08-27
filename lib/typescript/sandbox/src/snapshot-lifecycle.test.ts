@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { obsoleteManagedSnapshots } from "./snapshot-lifecycle"
+import { deleteSnapshotAndWait, obsoleteManagedSnapshots } from "./snapshot-lifecycle"
 
 describe("obsoleteManagedSnapshots", () => {
   it("keeps the configured base and ignores snapshots this repository does not own", () => {
@@ -32,5 +32,27 @@ describe("obsoleteManagedSnapshots", () => {
         new Set(["sproutos-agent-old", "older-id"]),
       ),
     ).toEqual([])
+  })
+})
+
+describe("deleteSnapshotAndWait", () => {
+  it("waits for the provider read to stop finding the snapshot", async () => {
+    const observations = [true, true, false]
+    const calls: string[] = []
+    let now = 0
+    await deleteSnapshotAndWait(
+      () => {
+        calls.push("delete")
+        return Promise.resolve()
+      },
+      () => Promise.resolve(observations.shift()!),
+      (milliseconds) => {
+        calls.push("wait")
+        now += milliseconds
+        return Promise.resolve()
+      },
+      () => now,
+    )
+    expect(calls).toEqual(["delete", "wait", "wait"])
   })
 })

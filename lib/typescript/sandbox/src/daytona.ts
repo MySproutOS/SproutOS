@@ -9,13 +9,13 @@ import {
   type CreatedSandbox,
   type ExecResult,
   type PreviewLink,
-  type SandboxDriver,
+  type DaytonaSandboxClient,
   type TreeEntry,
 } from "./types"
 
 export const PROVIDER = "daytona"
 
-/** Where the customer's repository is checked out, and the only path that survives a stop. */
+/** The WORKDIR baked into SproutOS's Daytona snapshot. Daytona persists the whole filesystem. */
 export const WORKSPACE_DIR = "/home/daytona/workspace"
 
 /** Daytona snapshots have a fixed machine size; these values must match `build-snapshot.ts`. */
@@ -155,7 +155,7 @@ export function sandboxForwardProxyUrl(config: DaytonaConfig, sandboxId: string)
 /**
  * The exact parameters a create sends, as a pure function.
  *
- * Separated from {@link daytonaDriver} so the properties that matter — that the billed size agrees
+ * Separated from {@link daytonaClient} so the properties that matter — that the billed size agrees
  * with the snapshot's immutable size, that attribution is present, that the preview is not public,
  * and that the autostop backstop is never accidentally disabled — are checkable without a network
  * call or a mocked client.
@@ -231,7 +231,7 @@ export function buildCreateParams(
   }
 }
 
-export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
+export function daytonaClient(config: DaytonaConfig): DaytonaSandboxClient {
   let client: Daytona | undefined
   const persistentSessions = new Map<string, Set<string>>()
 
@@ -488,7 +488,6 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
   }
 
   return {
-    provider: PROVIDER,
     workspaceDir: WORKSPACE_DIR,
     create,
     state: async (externalId) => {
@@ -551,25 +550,25 @@ export function daytonaDriver(config: DaytonaConfig): SandboxDriver {
   }
 }
 
-let processDriver: SandboxDriver | undefined
-let processDriverConfig: string | undefined
+let processClient: DaytonaSandboxClient | undefined
+let processClientConfig: string | undefined
 
 /**
  * Daytona is the production sandbox. There is intentionally no local fallback.
  *
- * One driver per process is also one Daytona SDK event connection per process. Constructing a
- * driver for every route call leaks a persistent provider socket even after the operation ends.
+ * One client per process is also one Daytona SDK event connection per process. Constructing a
+ * client for every route call leaks a persistent provider socket even after the operation ends.
  */
-export function sandboxDriverFromEnv(env: NodeJS.ProcessEnv = process.env): SandboxDriver {
+export function daytonaClientFromEnv(env: NodeJS.ProcessEnv = process.env): DaytonaSandboxClient {
   const config = daytonaConfigFromEnv(env)
   const key = JSON.stringify(config)
-  if (processDriver === undefined) {
-    processDriver = daytonaDriver(config)
-    processDriverConfig = key
-  } else if (processDriverConfig !== key) {
-    throw new Error("Daytona configuration changed after the process driver was initialized")
+  if (processClient === undefined) {
+    processClient = daytonaClient(config)
+    processClientConfig = key
+  } else if (processClientConfig !== key) {
+    throw new Error("Daytona configuration changed after the process client was initialized")
   }
-  return processDriver
+  return processClient
 }
 
 /** A 404 from the provider, however its client happens to have wrapped it. */

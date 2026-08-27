@@ -1,5 +1,5 @@
 import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
-import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
+import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { tearDownDeployment } from "@lib/lambda"
 import { Redis } from "ioredis"
@@ -209,7 +209,7 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       .execute()
 
     if (sandboxes.length > 0) {
-      const driver = sandboxDriverFromEnv()
+      const driver = daytonaClientFromEnv()
       for (const sandbox of sandboxes) {
         if (sandbox.externalId !== null) {
           try {

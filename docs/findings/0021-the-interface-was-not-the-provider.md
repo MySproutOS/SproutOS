@@ -94,5 +94,21 @@ its SSM configuration, and a provider credential to be deployed first.
 
 ## The check that matters
 
-The production driver is now the live test. There is no Docker `SandboxDriver` and no driver
-selector, so a green local-container substitute can no longer be mistaken for Daytona evidence.
+Daytona is now named in the client type and factory. There is no Docker driver, provider selector,
+or `SANDBOX_DRIVER`, so a green local-container substitute can no longer be mistaken for Daytona
+evidence. Dependency injection remains only to keep unit tests from renting paid sandboxes.
+
+The live egress test also uses the sandbox row's real UUID as the Daytona label and proxy username.
+An earlier test invented a non-UUID name and never created the corresponding control-plane row; the
+forward proxy could only reject it, so that was not proof of arbitrary public internet access. The
+current test creates both halves, asserts proxied public HTTPS succeeds, explicitly bypasses proxy
+variables and requires that to fail, and requires a metadata request to fail.
+It is gated by `SANDBOX_LIVE_EGRESS_CONTROL_PLANE=1`: setting that flag asserts that `DATABASE_URL`
+is the same database the configured public proxy authorizes against. Without it the provider-only
+checks still run, but the network test reports skipped instead of presenting a local row as
+production authority.
+
+Explicit Done is similarly an observed lifecycle, not a queued intention: the dashboard waits for
+the sandbox GET to become 404 after DELETE. Daytona sandbox deletion already uses
+`delete(timeout, true)`, and snapshot pruning now polls the provider after the SDK's fire-and-forget
+snapshot delete before it reports success.
