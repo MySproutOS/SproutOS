@@ -32,6 +32,7 @@ import {
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
+import { isProjectRootDir } from "./project-root-dir"
 import { slugify } from "./slug"
 
 /**
@@ -143,6 +144,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
   const [touchedRepoName, setTouchedRepoName] = useState(false)
   const [owner, setOwner] = useState<string | null>(null)
   const [templateRef, setTemplateRef] = useState("")
+  const [rootDir, setRootDir] = useState(".")
   /*
     Public by default, and stated rather than assumed.
 
@@ -229,6 +231,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
     (source !== "store" || listingId !== null) &&
     (source !== "template" || template !== null) &&
     (source !== "repository" || githubRepoId !== null) &&
+    (source !== "repository" || isProjectRootDir(rootDir)) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
   return (
@@ -251,7 +254,10 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                       ...(effectiveOwner === null ? {} : { ownerLogin: effectiveOwner }),
                     }
                   : source === "repository"
-                    ? { type: "repository", githubRepoId: githubRepoId! }
+                    ? {
+                        type: "repository",
+                        githubRepoId: githubRepoId!,
+                      }
                     : {
                         /*
                           `blank` with a template is the copy, and `blank` without one is the empty
@@ -270,6 +276,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                           : {}),
                       },
             },
+            ...(source === "repository" ? { rootDir: rootDir.trim() } : {}),
           },
           {
             onSuccess: (result) => {
@@ -366,32 +373,61 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
       )}
 
       {source === "repository" && (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="np-repo">Repository</Label>
-          {repositories.isError ? (
-            <p className="text-[13px] text-muted-foreground">
-              No GitHub account is connected to this organization yet, so there is nothing to list.
-              Install the SproutOS GitHub App on the account that owns the repository.
-            </p>
-          ) : (
-            <select
-              id="np-repo"
-              value={githubRepoId ?? ""}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="np-repo">Repository</Label>
+            {repositories.isError ? (
+              <p className="text-[13px] text-muted-foreground">
+                No GitHub account is connected to this organization yet, so there is nothing to
+                list. Install the SproutOS GitHub App on the account that owns the repository.
+              </p>
+            ) : (
+              <Select
+                items={(repositories.data?.data ?? []).map((repository) => ({
+                  label: repository.fullName,
+                  value: repository.githubRepoId,
+                }))}
+                value={githubRepoId}
+                onValueChange={(value) => {
+                  setGithubRepoId(value)
+                }}
+              >
+                <SelectTrigger id="np-repo">
+                  <SelectValue
+                    placeholder={repositories.isPending ? "Loading…" : "Choose a repository…"}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {repositories.data?.data.map((repository) => (
+                    <SelectItem key={repository.githubRepoId} value={repository.githubRepoId}>
+                      {repository.fullName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="np-root-dir">Project directory</Label>
+            <Input
+              id="np-root-dir"
+              value={rootDir}
               onChange={(event) => {
-                setGithubRepoId(event.target.value === "" ? null : event.target.value)
+                setRootDir(event.target.value)
               }}
-              className="h-9 rounded-md border border-border bg-background px-2.5 text-[13px] text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/20"
+              placeholder="apps/website"
+              aria-describedby="np-root-dir-help"
+              spellCheck={false}
+            />
+            <p
+              id="np-root-dir-help"
+              className={`text-[13px] ${isProjectRootDir(rootDir) ? "text-muted-foreground" : "text-destructive"}`}
             >
-              <option value="">
-                {repositories.isPending ? "Loading…" : "Choose a repository…"}
-              </option>
-              {repositories.data?.data.map((repository) => (
-                <option key={repository.githubRepoId} value={repository.githubRepoId}>
-                  {repository.fullName}
-                </option>
-              ))}
-            </select>
-          )}
+              {isProjectRootDir(rootDir)
+                ? "Relative to the repository root. Use . for the whole repository; monorepo projects from the same repository stay together as one group."
+                : "Enter . or a relative directory without empty, . or .. segments."}
+            </p>
+          </div>
         </div>
       )}
 
