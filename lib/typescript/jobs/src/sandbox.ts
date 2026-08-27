@@ -487,35 +487,13 @@ async function devDatabase(
   db: Kysely<DB>,
   input: { projectId: string; organizationId: string; sandboxId: string },
 ): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
-  const service = await db
-    .selectFrom("backendService")
-    .select(["id"])
-    .where("kind", "=", "postgres")
-    .where("status", "=", "active")
-    .where("deletedAt", "is", null)
-    .where((eb) =>
-      eb.or([
-        eb("projectId", "=", input.projectId),
-        eb(
-          "projectId",
-          "in",
-          eb
-            .selectFrom("project")
-            .select("parentProjectId")
-            .where("id", "=", input.projectId)
-            .where("parentProjectId", "is not", null)
-            .$castTo<string>(),
-        ),
-      ]),
-    )
-    .orderBy("createdAt", "asc")
-    .executeTakeFirst()
+  const serviceId = await findSandboxPostgresServiceId(db, input.projectId)
 
-  if (service === undefined) return undefined
+  if (serviceId === undefined) return undefined
 
   try {
     const branch = await createDevBranch(db, neonPostgresConfigFromEnv(), {
-      backendServiceId: service.id,
+      backendServiceId: serviceId,
       organizationId: input.organizationId,
       label: input.sandboxId.slice(-12),
     })
@@ -530,6 +508,65 @@ async function devDatabase(
     console.warn(`[jobs] sandbox ${input.sandboxId} has no dev database: ${String(cause)}`)
     return undefined
   }
+}
+
+/**
+ * Resolve the Postgres service visible to a sandbox's project scope.
+ *
+ * A sandbox belongs to the top-level group (`sandboxScopeFor`), while services remain attached to
+ * the deployable child that created them. Resolve the selected project first, its parent group
+ * second, and its children last. The last case is the production group topology; omitting it makes
+ * a group sandbox silently start without the database shown beneath that group in the UI.
+ */
+export async function findSandboxPostgresServiceId(
+  db: Kysely<DB>,
+  projectId: string,
+): Promise<string | undefined> {
+  const service = await db
+    .selectFrom("backendService")
+    .select(["id"])
+    .where("kind", "=", "postgres")
+    .where("status", "=", "active")
+    .where("deletedAt", "is", null)
+    .where((eb) =>
+      eb.or([
+        eb("projectId", "=", projectId),
+        eb(
+          "projectId",
+          "in",
+          eb
+            .selectFrom("project")
+            .select("parentProjectId")
+            .where("id", "=", projectId)
+            .where("deletedAt", "is", null)
+            .where("parentProjectId", "is not", null)
+            .$castTo<string>(),
+        ),
+        eb(
+          "projectId",
+          "in",
+          eb
+            .selectFrom("project")
+            .select("id")
+            .where("parentProjectId", "=", projectId)
+            .where("deletedAt", "is", null),
+        ),
+      ]),
+    )
+    .orderBy(
+      sql<number>`case
+        when project_id = ${projectId} then 0
+        when project_id = (
+          select parent_project_id from project where id = ${projectId}
+        ) then 1
+        else 2
+      end`,
+      "asc",
+    )
+    .orderBy("createdAt", "asc")
+    .executeTakeFirst()
+
+  return service?.id
 }
 
 type SandboxPayload = { sandboxId?: string }
