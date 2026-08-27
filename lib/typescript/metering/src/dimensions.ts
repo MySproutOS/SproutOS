@@ -11,7 +11,6 @@ export const BILLABLE_DIMENSIONS = [
   "site_provisioned_gib_second",
   "site_request",
   "site_egress_byte",
-  "site_ws_connection_second",
   "db_storage_gib_hour",
   "db_compute_cu_second",
   "es_storage_gib_hour",

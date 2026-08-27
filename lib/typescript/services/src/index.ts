@@ -79,11 +79,18 @@ export {
   parseNeonUri,
 } from "./neon-postgres"
 export {
+  NEON_CONSUMPTION_METRICS,
   neonApi,
   neonApiConfigFromEnv,
   NeonApiError,
+  type NeonConfig,
   type NeonBranch,
+  type NeonConsumptionMetric,
+  type NeonConsumptionMetricName,
+  type NeonConsumptionPeriod,
+  type NeonConsumptionTimeframe,
   type NeonProject,
+  type NeonProjectConsumption,
 } from "./neon-api"
 export {
   type AndroidApp,
