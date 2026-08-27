@@ -431,52 +431,62 @@ describe.skipIf(!reachable)("metering ingest", () => {
       await clickhouse().command({ query: usageEventMaterializedViewDdl(database) })
       await clickhouse().command({ query: usageEventDeadLetterViewDdl(database) })
 
-      const batch = batchOf([{ dimension: "site_request", quantity: 7 }])
-      const event = batch.events[0]
-      const eventId = usageEventId({
-        source: batch.source,
-        externalId: event.externalId,
-        occurredAt: event.occurredAt,
-      })
-      const active = {
-        eventId,
+      // These are the two rows derived from one Lambda platform.report by the router. Keeping them
+      // in the same signed batch proves that the actual site-metering pair crosses Kafka and lands
+      // durably in ClickHouse, rather than proving the pipeline with an unrelated generic event.
+      const batch = batchOf([
+        { dimension: "site_request", quantity: 1 },
+        { dimension: "site_gib_second", quantity: 0.125 },
+      ])
+      const active = batch.events.map((event) => ({
+        eventId: usageEventId({
+          source: batch.source,
+          externalId: event.externalId,
+          occurredAt: event.occurredAt,
+        }),
         organizationId,
         projectId: null,
         dimension: event.dimension,
         quantity: event.quantity,
         occurredAt: new Date(event.occurredAt),
-      }
+      }))
       const redis = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
       setMeteringSinksForTest()
 
       try {
         expect((await post(batch)).status).toBe(202)
 
-        let stored: { quantity: string } | undefined
+        let stored: { dimension: string; quantity: string }[] = []
         for (let attempt = 0; attempt < 40; attempt += 1) {
           const result = await clickhouse().query({
             query:
-              "select toString(quantity) as quantity from usage_event_raw final " +
-              "where event_id = {eventId:String}",
-            query_params: { eventId },
+              "select dimension, toString(quantity) as quantity from usage_event_raw final " +
+              "where event_id in ({eventIds:Array(String)}) order by dimension",
+            query_params: { eventIds: active.map((event) => event.eventId) },
             format: "JSONEachRow",
           })
-          ;[stored] = await result.json<{ quantity: string }>()
-          if (stored !== undefined) break
+          stored = await result.json<{ dimension: string; quantity: string }>()
+          if (stored.length === active.length) break
           await new Promise((resolve) => setTimeout(resolve, 250))
         }
 
-        expect(Number(stored?.quantity)).toBe(7)
-        expect(await readActiveUsage(redis, active)).toBe("7000000000")
+        expect(stored.map((row) => [row.dimension, Number(row.quantity)])).toEqual([
+          ["site_gib_second", 0.125],
+          ["site_request", 1],
+        ])
+        expect(await Promise.all(active.map((event) => readActiveUsage(redis, event)))).toEqual([
+          "1000000000",
+          "125000000",
+        ])
       } finally {
         setMeteringSinksForTest(testSinks)
         await closeMeteringSinks()
-        const activeKeys = await redis.keys(`metering:active:v2:{${active.organizationId}}:*`)
+        const activeKeys = await redis.keys(`metering:active:v2:{${organizationId}}:*`)
         if (activeKeys.length > 0) await redis.unlink(...activeKeys)
         await redis.quit()
         await clickhouse().command({
-          query: "alter table usage_event_raw delete where event_id = {eventId:String}",
-          query_params: { eventId },
+          query: "alter table usage_event_raw delete where event_id in ({eventIds:Array(String)})",
+          query_params: { eventIds: active.map((event) => event.eventId) },
           clickhouse_settings: { mutations_sync: "1" },
         })
       }

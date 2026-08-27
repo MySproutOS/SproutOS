@@ -134,6 +134,32 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "${aws_s3_bucket.artifacts.arn}/releases/*"
       },
       {
+        # Publishing requires the workflow's explicit dispatch input. The ARN is versioned by
+        # Lambda and written to the application parameter path only after the upload succeeds, so
+        # a new control-plane boot cannot observe a half-published layer.
+        Sid      = "PublishLogExtensionLayer"
+        Effect   = "Allow"
+        Action   = ["lambda:PublishLayerVersion"]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.aws_account_id}:layer:${var.name_prefix}-log-extension"
+      },
+      {
+        Sid      = "RecordLogExtensionLayer"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/LOG_EXTENSION_LAYER_ARN"
+      },
+      {
+        Sid      = "EncryptLogExtensionParameter"
+        Effect   = "Allow"
+        Action   = ["kms:Encrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
         /*
           The website's hashed assets, which the CDN serves instead of the origin.
 

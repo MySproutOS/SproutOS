@@ -52,35 +52,3 @@ export const CUSTOM_DOMAINS_DISABLED_REASON =
   "Custom domains are not available yet. Each one needs its own certificate attached to the load " +
   "balancer, which carries a hard limit of 25 — so this cannot be offered until SproutOS terminates " +
   "TLS itself at the edge. Your project is reachable on its sproutos.run hostname in the meantime."
-
-/**
- * Whether the log extension is attached to customer functions.
- *
- * **Off, because the layer in the account crashes the application it is attached to.**
- *
- * The extension is a Lambda extension, and an extension process that exits takes the customer's
- * function down with it — `Extension.Crash`, on every invocation, with the cause in the extension's
- * log and nothing in the customer's. The layer published in production is a build old enough to
- * require `KAFKA_BROKERS`, which the platform stopped setting when logs moved to the router's token
- * endpoint. So the first customer application ever to reach an invocation was killed by the
- * observability component watching it.
- *
- * Two things have to be true before this goes back on, and only one of them is code:
- *
- * 1. `services/log-extension` no longer treats a missing sink as fatal — done, and the reasoning is
- *    beside the change.
- * 2. **The layer is rebuilt from that source and published**, which nothing in this repository does.
- *    `services/log-extension` is a crate; the layer in the account was published by hand, once, and
- *    its contents are a fact only AWS knows. That is the same shape as the certificate made by hand
- *    earlier in the week, and it is why the version running in production could drift this far from
- *    the source without anyone being able to see it.
- *
- * Turning this on before (2) restores the outage, because the flag governs attachment and not which
- * build gets attached.
- */
-export const LOG_EXTENSION_ENABLED = false
-
-export const LOG_EXTENSION_DISABLED_REASON =
-  "The log extension layer in production predates the move to the router's log endpoint and exits " +
-  "on startup, which crashes the customer function it is attached to. Re-enable once the layer is " +
-  "rebuilt from services/log-extension and published."

@@ -61,7 +61,7 @@ async fn produces_rows_clickhouse_accepts() {
 
     // The shape the extension posts: no project, because it has no say in one. `stamp` writes the
     // attribution, which is the boundary this whole path was rebuilt around.
-    let incoming: Vec<IncomingRecord> = serde_json::from_str(
+    let mut incoming: Vec<IncomingRecord> = serde_json::from_str(
         r#"[
           {"ts":"2026-08-24 13:00:00.000","request_id":"8a2f4b1c-0000-4000-8000-00000000ffff",
            "level":"info","message":"from the extension"},
@@ -71,6 +71,18 @@ async fn produces_rows_clickhouse_accepts() {
         ]"#,
     )
     .expect("incoming records");
+
+    // These rows travel through the real table, whose three-day TTL is part of the production
+    // contract. A fixed timestamp eventually turns this ingestion test into a retention test: the
+    // materialized view can accept the records and ClickHouse can delete them before the assertion
+    // observes them. Keep the records inside the retention window so zero rows still means the
+    // producer/consumer seam is broken.
+    let now = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+    for record in &mut incoming {
+        record.ts.clone_from(&now);
+    }
 
     let rows: Vec<_> = incoming
         .into_iter()

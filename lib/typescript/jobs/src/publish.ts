@@ -2,7 +2,6 @@ import { DeleteAliasCommand, LambdaClient } from "@aws-sdk/client-lambda"
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { Route53Client } from "@aws-sdk/client-route-53"
 import { S3Client } from "@aws-sdk/client-s3"
-import { LOG_EXTENSION_ENABLED } from "@utils/feature-flags"
 import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
 import {
@@ -25,6 +24,7 @@ import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
 import { withProjectLock } from "./project-lock"
+import { logExtensionLayerForProject } from "./log-extension"
 import { enqueue } from "./queue"
 import {
   deactivateStaticHost,
@@ -688,6 +688,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
             })
             return
           }
+          const logExtensionLayerArn = logExtensionLayerForProject(project.id)
 
           serverlessTrafficMayHaveMoved = true
           const published = await publishFunction(clients.lambda, {
@@ -714,19 +715,10 @@ export function publishRelease(options?: PublishOptions): JobHandler {
             roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
             environment: { ...environment, SPROUTOS_DEPLOYMENT_ID: deploymentId },
             aliasName,
-            // Unset in development, where there is no layer to attach and no Kafka to ship to. A
-            // deployment without it runs and produces no logs, which is why it is set from one place.
-            /*
-        The flag, not just the variable.
-
-        `LOG_EXTENSION_ENABLED` is off because the published layer crashes the function it is
-        attached to — see `@utils/feature-flags`. Gated here rather than by unsetting the variable,
-        so the reason travels with the code instead of living in an instance's environment where
-        the next person to set it has no idea what they are turning back on.
-      */
-            ...(LOG_EXTENSION_ENABLED && process.env.LOG_EXTENSION_LAYER_ARN !== undefined
-              ? { logExtensionLayerArn: process.env.LOG_EXTENSION_LAYER_ARN }
-              : {}),
+            // Default off and canaryable by project. A layer is embedded in an immutable Lambda
+            // version, so a global mistake cannot be undone by flipping an environment variable;
+            // the affected customer functions would all have to be republished without it.
+            ...(logExtensionLayerArn === undefined ? {} : { logExtensionLayerArn }),
             ...(adapterLayerArn === undefined ? {} : { webAdapterLayerArn: adapterLayerArn }),
           })
 

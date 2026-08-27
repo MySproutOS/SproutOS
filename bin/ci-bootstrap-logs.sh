@@ -39,11 +39,19 @@ query "create database if not exists observability"
 # tested on and the one it runs on.
 query "
 create table if not exists observability.runtime_log (
-  ts DateTime64(3), project_id UUID, deployment_id UUID, request_id String,
-  level LowCardinality(String), message String,
+  ts DateTime64(3) CODEC(Delta, ZSTD(1)),
+  project_id UUID,
+  deployment_id UUID,
+  request_id String CODEC(ZSTD(1)),
+  level LowCardinality(String),
+  message String CODEC(ZSTD(3)),
   duration_ms Nullable(Float32), billed_ms Nullable(UInt32), memory_mb Nullable(UInt16),
   init_ms Nullable(Float32), cold_start Nullable(Bool)
-) engine = MergeTree partition by toDate(ts) order by (project_id, ts, request_id)"
+) engine = MergeTree
+partition by toDate(ts)
+order by (project_id, ts, request_id)
+ttl toDateTime(ts) + toIntervalDay(3) delete
+settings index_granularity = 8192, ttl_only_drop_parts = 1"
 
 query "
 create table if not exists observability.runtime_log_queue (

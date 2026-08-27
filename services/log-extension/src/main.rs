@@ -84,13 +84,7 @@ async fn main() -> anyhow::Result<()> {
       invocation was killed by it. An observability component must fail quieter than the thing it
       observes.
     */
-    let sink = match log_extension::sink::Sink::connect() {
-        Ok(sink) => Some(sink),
-        Err(cause) => {
-            tracing::error!(%cause, "logs will be dropped; the extension is not configured");
-            None
-        }
-    };
+    let sink = optional_sink(log_extension::sink::Sink::connect());
 
     loop {
         /*
@@ -133,6 +127,19 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Configuration failure degrades observability and never the customer function.
+fn optional_sink(
+    result: anyhow::Result<log_extension::sink::Sink>,
+) -> Option<log_extension::sink::Sink> {
+    match result {
+        Ok(sink) => Some(sink),
+        Err(cause) => {
+            tracing::error!(%cause, "logs will be dropped; the extension is not configured");
+            None
+        }
+    }
+}
+
 /// One HTTP post carrying a whole batch.
 ///
 /// The channel holds individually encoded rows because that is what the Kafka producer wanted, one
@@ -151,4 +158,13 @@ async fn send_batch(sink: &log_extension::sink::Sink, batch: &[Vec<u8>]) -> anyh
     body.push(b']');
 
     sink.send(&body).await
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn missing_sink_configuration_does_not_become_an_extension_error() {
+        let sink = super::optional_sink(Err(anyhow::anyhow!("SPROUTOS_LOG_ENDPOINT is not set")));
+        assert!(sink.is_none());
+    }
 }

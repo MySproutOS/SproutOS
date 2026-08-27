@@ -57,6 +57,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Raw usage is durable only after Kafka and ClickHouse both accept it. The metering route's
+      # integration test refuses to skip in this job, so losing either service is a red build rather
+      # than a green test of a mock producer.
+      kafka:
+        image: apache/kafka:4.3.1
+        ports:
+          - 29092:29092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       # TASK 34's log store. Same reasoning: the tests that check one project cannot read another's
       # logs are worth nothing if they quietly do not run.
       clickhouse:
@@ -130,6 +149,10 @@ jobs:
       LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
       CLICKHOUSE_USER: sproutos
       CLICKHOUSE_PASSWORD: sproutos
+      KAFKA_BROKERS: localhost:29092
+      # Kafka is present here, so the site-usage durability test is not allowed to disappear behind
+      # its local-development skip.
+      REQUIRE_KAFKA: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Install pnpm
@@ -173,6 +196,9 @@ jobs:
 
       - name: Bootstrap OpenSearch Security
         run: bash bin/bootstrap-opensearch-security.sh
+
+      - name: Bootstrap Kafka and ClickHouse
+        run: bash bin/ci-bootstrap-logs.sh
 
       - name: Cache for Turbo
         uses: rharkor/caching-for-turbo@v2.4.2
@@ -400,6 +426,28 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  log-extension-layer:
+    name: (Lambda) Build log extension layer
+    # This is a native arm64 build, the same runner and target as Deploy. An x86 test can validate
+    # the Rust source while still publishing a binary Lambda reports as `cannot execute`.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          targets: aarch64-unknown-linux-musl
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Build and verify the exact layer archive
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y musl-tools
+          cargo build --release --target aarch64-unknown-linux-musl -p log-extension
+          bin/package-log-extension.sh \
+            target/aarch64-unknown-linux-musl/release/log-extension \
+            "$RUNNER_TEMP/log-extension.zip"
 
   tofu:
     name: (tofu) Format and Validate
