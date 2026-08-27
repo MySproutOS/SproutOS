@@ -68,13 +68,14 @@ const KNOWN = [
   { suite: "@api/internal generate-openapi", count: 1, waiting: "a running API on :3001" },
   {
     suite: "@lib/agent Daytona live",
-    count: 5,
+    count: 4,
     waiting: "DAYTONA_API_KEY, DAYTONA_ORGANIZATION_ID and a built Daytona snapshot",
   },
   {
     suite: "@lib/jobs sandbox-stop live",
-    count: 1,
-    waiting: "Daytona credentials and a reachable control-plane Postgres",
+    count: 2,
+    waiting:
+      "Daytona credentials and a reachable control-plane Postgres; egress also requires SANDBOX_LIVE_EGRESS_CONTROL_PLANE=1 with the proxy's database",
   },
   {
     suite: "@api/internal metering Kafka live",

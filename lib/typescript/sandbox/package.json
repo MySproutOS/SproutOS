@@ -2,7 +2,7 @@
   "name": "@lib/sandbox",
   "version": "1.0.0",
   "private": true,
-  "description": "Interactive sandboxes for the coding agent: one driver interface, one rented provider.",
+  "description": "Daytona Cloud sandboxes for the coding agent.",
   "license": "BSD-3-Clause",
   "type": "module",
   "sideEffects": false,

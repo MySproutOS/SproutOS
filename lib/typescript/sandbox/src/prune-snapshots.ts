@@ -1,7 +1,8 @@
 import { resolve } from "node:path"
 
 import { Daytona } from "@daytona/sdk"
-import { obsoleteManagedSnapshots } from "./snapshot-lifecycle"
+import { sandboxProviderHttpDetails } from "./types"
+import { deleteSnapshotAndWait, obsoleteManagedSnapshots } from "./snapshot-lifecycle"
 
 try {
   process.loadEnvFile(resolve(import.meta.dirname, "../../../..", ".env"))
@@ -48,7 +49,18 @@ try {
   }
   for (const snapshot of obsolete) {
     if (deleteConfirmed) {
-      await client.snapshot.delete(snapshot)
+      await deleteSnapshotAndWait(
+        () => client.snapshot.delete(snapshot),
+        async () => {
+          try {
+            await client.snapshot.get(snapshot.id)
+            return true
+          } catch (cause) {
+            if (sandboxProviderHttpDetails(cause).statusCode === 404) return false
+            throw cause
+          }
+        },
+      )
       process.stdout.write(`deleted obsolete Daytona snapshot ${snapshot.name}\n`)
     } else {
       process.stdout.write(`would delete obsolete Daytona snapshot ${snapshot.name}\n`)

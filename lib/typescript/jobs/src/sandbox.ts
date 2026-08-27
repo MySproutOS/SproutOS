@@ -8,8 +8,8 @@ import { crudMeteringOutbox, crudSandbox, fetchGithubInstallation, fetchSandbox 
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
 import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
-import { sandboxDriverFromEnv, SandboxNotFoundError } from "@lib/sandbox"
-import type { SandboxDriver } from "@lib/sandbox"
+import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
+import type { DaytonaSandboxClient } from "@lib/sandbox"
 import type { DB, JsonValue } from "@sproutos/db"
 import { sql, type Kysely, type Selectable } from "kysely"
 import { v7 } from "uuid"
@@ -329,7 +329,7 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
 }
 
 /** Repair provider-driven state changes before the database can keep metering a stopped machine. */
-export function reconcileSandboxes(makeDriver: () => SandboxDriver = driver): JobHandler {
+export function reconcileSandboxes(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, context) => {
     const candidates = await context.db
       .selectFrom("sandbox")
@@ -380,7 +380,7 @@ export function reconcileSandboxes(makeDriver: () => SandboxDriver = driver): Jo
  */
 async function bootstrap(
   db: Kysely<DB>,
-  sandboxDriver: SandboxDriver,
+  sandboxDriver: DaytonaSandboxClient,
   input: { externalId: string; organizationId: string; projectId: string; userId: string },
 ): Promise<string[]> {
   try {
@@ -534,12 +534,12 @@ async function devDatabase(
 
 type SandboxPayload = { sandboxId?: string }
 
-function driver(): SandboxDriver {
-  return sandboxDriverFromEnv()
+function daytona(): DaytonaSandboxClient {
+  return daytonaClientFromEnv()
 }
 
 /** Create the sandbox at the provider and record what it gave back. */
-export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, { db }) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -576,7 +576,7 @@ export function provisionSandbox(makeDriver: () => SandboxDriver = driver): JobH
       return
     }
 
-    let sandboxDriver: SandboxDriver | undefined
+    let sandboxDriver: DaytonaSandboxClient | undefined
     let providerExternalId = sandbox.externalId
     try {
       sandboxDriver = makeDriver()
@@ -721,7 +721,7 @@ export class SandboxBootstrapError extends Error {
 }
 
 /** Start a stopped provider sandbox without replacing its persistent workspace. */
-export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, { db }) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -783,7 +783,7 @@ export function startSandbox(makeDriver: () => SandboxDriver = driver): JobHandl
 }
 
 /** Stop at the provider, settle the tail, leave the workspace. */
-export function stopSandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, context) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -823,7 +823,7 @@ export function stopSandbox(makeDriver: () => SandboxDriver = driver): JobHandle
 }
 
 /** Destroy at the provider, then drop the row. Order matters — see `teardown.ts`. */
-export function destroySandbox(makeDriver: () => SandboxDriver = driver): JobHandler {
+export function destroySandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
   return async (job, context) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)

@@ -44,6 +44,7 @@ const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
 })
 
 const SANDBOX_START_TIMEOUT_MS = 120_000
+const SANDBOX_DELETE_TIMEOUT_MS = 120_000
 
 type SandboxStartDependencies = {
   preflight: (path: { orgSlug: string }) => Promise<void>
@@ -143,8 +144,46 @@ export function useFinishSandbox(orgSlug: string, projectId: string) {
     ...mutation,
     finish: async (): Promise<void> => {
       await mutation.mutateAsync({ path: { orgSlug, projectId } })
+      await waitForSandboxDeletion({ orgSlug, projectId })
     },
   }
+}
+
+type SandboxDeletionDependencies = {
+  readStatus: (path: { orgSlug: string; projectId: string }) => Promise<number>
+  wait: (milliseconds: number) => Promise<void>
+  now: () => number
+}
+
+const sandboxDeletionDependencies: SandboxDeletionDependencies = {
+  readStatus: async ({ orgSlug, projectId }) => {
+    const response = await fetch(
+      `${baseUrl}/v1/orgs/${encodeURIComponent(orgSlug)}/projects/${encodeURIComponent(projectId)}/sandbox`,
+      { credentials: "include" },
+    )
+    return response.status
+  },
+  wait: async (milliseconds) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, milliseconds)
+    })
+  },
+  now: Date.now,
+}
+
+/** Wait until the destroy job has deleted both Daytona's object and the control-plane row. */
+export async function waitForSandboxDeletion(
+  path: { orgSlug: string; projectId: string },
+  dependencies: SandboxDeletionDependencies = sandboxDeletionDependencies,
+): Promise<void> {
+  const deadline = dependencies.now() + SANDBOX_DELETE_TIMEOUT_MS
+  while (dependencies.now() < deadline) {
+    const status = await dependencies.readStatus(path)
+    if (status === 404) return
+    if (status !== 200) throw new Error(`The sandbox deletion check failed (${status})`)
+    await dependencies.wait(1_000)
+  }
+  throw new Error("Daytona did not confirm sandbox deletion within two minutes")
 }
 
 /**

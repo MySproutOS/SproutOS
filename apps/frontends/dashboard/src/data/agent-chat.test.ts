@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { type AgentEvent, ensureSandboxRunning, streamAgentTurn } from "./agent-chat"
+import {
+  type AgentEvent,
+  ensureSandboxRunning,
+  streamAgentTurn,
+  waitForSandboxDeletion,
+} from "./agent-chat"
 
 /**
  * SSE framing is parsed here rather than by the browser, because EventSource only issues GET
@@ -75,6 +80,42 @@ describe("ensureSandboxRunning", () => {
       }),
     ).rejects.toThrow("No model credential configured (no_config)")
     expect(start).not.toHaveBeenCalled()
+  })
+})
+
+describe("waitForSandboxDeletion", () => {
+  it("does not report Done until the sandbox row has disappeared", async () => {
+    const statuses = [200, 200, 404]
+    const waits: number[] = []
+    let now = 0
+
+    await waitForSandboxDeletion(
+      { orgSlug: "acme", projectId: "p1" },
+      {
+        readStatus: () => Promise.resolve(statuses.shift()!),
+        wait: (milliseconds) => {
+          waits.push(milliseconds)
+          now += milliseconds
+          return Promise.resolve()
+        },
+        now: () => now,
+      },
+    )
+
+    expect(waits).toEqual([1_000, 1_000])
+  })
+
+  it("does not mistake an authorization or server failure for completed deletion", async () => {
+    await expect(
+      waitForSandboxDeletion(
+        { orgSlug: "acme", projectId: "p1" },
+        {
+          readStatus: () => Promise.resolve(503),
+          wait: () => Promise.resolve(),
+          now: () => 0,
+        },
+      ),
+    ).rejects.toThrow(/deletion check failed \(503\)/)
   })
 })
 

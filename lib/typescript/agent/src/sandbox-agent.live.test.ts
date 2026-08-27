@@ -2,12 +2,12 @@ import { afterAll, afterEach, describe, expect, it } from "vitest"
 
 import {
   daytonaConfigFromEnv,
-  sandboxDriverFromEnv,
+  daytonaClientFromEnv,
   SNAPSHOT_RESOURCES,
-  type SandboxDriver,
+  type DaytonaSandboxClient,
 } from "@lib/sandbox"
 
-import { bootstrapSandbox, commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
+import { commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
 
 /** This suite has no Docker substitute: every live assertion crosses Daytona's API. */
 try {
@@ -16,10 +16,10 @@ try {
   // CI may supply variables directly, and a checkout may intentionally have no .env.
 }
 
-let driver: SandboxDriver | undefined
+let driver: DaytonaSandboxClient | undefined
 try {
   daytonaConfigFromEnv()
-  driver = sandboxDriverFromEnv()
+  driver = daytonaClientFromEnv()
 } catch {
   driver = undefined
 }
@@ -38,10 +38,11 @@ afterEach(async () => {
   for (const id of ids) await driver.destroy(id).catch(() => {})
 })
 
-async function sandbox(name: string): Promise<string> {
+async function sandbox(): Promise<string> {
   if (driver === undefined) throw new Error("Daytona is unavailable")
   const made = await driver.create({
-    sandboxId: `${name}-${Date.now()}`,
+    // Daytona's name remains visible through the label; the proxy username itself is a UUID.
+    sandboxId: crypto.randomUUID(),
     organizationId: crypto.randomUUID(),
     projectId: crypto.randomUUID(),
     userId: crypto.randomUUID(),
@@ -54,76 +55,9 @@ async function sandbox(name: string): Promise<string> {
   return made.externalId
 }
 
-describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
-  it("clones, sets an identity, and installs the skill where both harnesses look", async () => {
-    const externalId = await sandbox("bootstrap")
-    const activeDriver = driver!
-    const skill = '# SproutOS\n\nIt\'s "deployment" — `$(not a command)` and a `backtick`.\n'
-    const result = await bootstrapSandbox({
-      author: { email: "agent@sproutos.me", name: "SproutOS Agent" },
-      driver: activeDriver,
-      externalId,
-      harness: "codex",
-      model: "gpt-5.6-terra",
-      proxyBaseUrl: "https://llm.sproutos.me",
-      repository: { branch: "master", fullName: "octocat/Hello-World", token: "" },
-      skill,
-    })
-
-    expect(result.problems).toEqual([])
-    expect(result.cloned).toBe(true)
-    expect((await activeDriver.readFile(externalId, `${workspace}/README`)).length).toBeGreaterThan(
-      0,
-    )
-    expect(
-      await activeDriver.readFile(externalId, `${workspace}/.claude/skills/sproutos/SKILL.md`),
-    ).toBe(skill)
-    expect(await activeDriver.readFile(externalId, `${workspace}/AGENTS.md`)).toContain(
-      "deployment",
-    )
-
-    const identity = await activeDriver.exec(
-      externalId,
-      ["git", "-C", workspace, "config", "user.email"],
-      30_000,
-    )
-    expect(identity.stdout.trim()).toBe("agent@sproutos.me")
-    const remote = await activeDriver.exec(
-      externalId,
-      ["git", "-C", workspace, "remote", "get-url", "origin"],
-      30_000,
-    )
-    expect(remote.stdout).not.toContain("x-access-token")
-
-    const curl = await activeDriver.exec(externalId, ["sh", "-c", "command -v curl"], 30_000)
-    expect({ exitCode: curl.exitCode, stderr: curl.stderr }).toMatchObject({ exitCode: 0 })
-    const arbitraryDomain = await activeDriver.exec(
-      externalId,
-      ["curl", "--fail", "--silent", "--show-error", "https://www.google.com/generate_204"],
-      30_000,
-    )
-    expect({ exitCode: arbitraryDomain.exitCode, stderr: arbitraryDomain.stderr }).toEqual({
-      exitCode: 0,
-      stderr: "",
-    })
-    const metadata = await activeDriver.exec(
-      externalId,
-      [
-        "curl",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--connect-timeout",
-        "3",
-        "http://169.254.169.254/latest/meta-data/",
-      ],
-      10_000,
-    )
-    expect(metadata.exitCode).not.toBe(0)
-  }, 600_000)
-
+describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
   it("streams and parses a harness turn through Daytona", async () => {
-    const externalId = await sandbox("turn")
+    const externalId = await sandbox()
     const activeDriver = driver!
     const stub = `${workspace}/../bin/claude`
     await activeDriver.writeFile(
@@ -179,7 +113,7 @@ describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
   }, 600_000)
 
   it("keeps the checkout across a Daytona stop and start", async () => {
-    const externalId = await sandbox("persistence")
+    const externalId = await sandbox()
     const activeDriver = driver!
     await activeDriver.writeFile(externalId, `${workspace}/survives.txt`, "persistent\n")
     await activeDriver.stop(externalId)
@@ -192,7 +126,7 @@ describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
   }, 600_000)
 
   it("serves a dev port through a signed Daytona preview URL", async () => {
-    const externalId = await sandbox("preview")
+    const externalId = await sandbox()
     const activeDriver = driver!
     const started = await activeDriver.execStream(
       externalId,
@@ -233,7 +167,7 @@ describe.skipIf(driver === undefined)("bootstrapping a Daytona sandbox", () => {
   }, 600_000)
 
   it("commits what the agent wrote and pushes it to a branch", async () => {
-    const externalId = await sandbox("commit")
+    const externalId = await sandbox()
     const activeDriver = driver!
     const home = workspace.slice(0, workspace.lastIndexOf("/"))
     const origin = `${home}/origin.git`

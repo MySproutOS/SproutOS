@@ -14,6 +14,9 @@ Daytona gives Tier 1 and Tier 2 organizations a provider-wide restricted network
 policy cannot be loosened with a sandbox domain or CIDR allowlist; unrestricted direct egress is a
 Tier 3 feature. Daytona also supports a create-time `outboundProxyUrl`: its egress proxy sets the
 sandbox's HTTP proxy variables and chains HTTP and HTTPS requests to an upstream proxy we control.
+Daytona's current network-limits documentation says clients that ignore those variables are blocked
+at egress. The installed 0.207.0 SDK's older JSDoc calls it convenience routing instead, so the live
+test deliberately bypasses proxy variables and treats a successful direct request as a failure.
 The URL may be HTTPS and carry credentials. It cannot be changed after sandbox creation.
 
 On 2026-08-26 a disposable sandbox on the current restricted organization was created with
@@ -98,3 +101,17 @@ the agent instruction does not substitute for provider enforcement.
   credentials with rotating ones without changing the agent-facing network contract.
 - Provider webhooks and telemetry can assist operations but do not replace SproutOS authorization,
   reconciliation, or billing records.
+- `lib/typescript/jobs/src/sandbox-stop.live.test.ts` creates a real control-plane row and Daytona
+  sandbox with the same UUID, then proves public HTTPS succeeds through the authenticated proxy,
+  explicit `--noproxy` access fails, metadata fails, and the provider is stopped. This is the
+  executable production-boundary check; a unit test of create parameters is not equivalent. It
+  requires `SANDBOX_LIVE_EGRESS_CONTROL_PLANE=1`, an explicit assertion that its `DATABASE_URL` is
+  the database read by the configured public proxy.
+
+## Provider references checked against SDK 0.207.0
+
+- [Network limits and outbound proxy](https://www.daytona.io/docs/en/network-limits/)
+- [Signed preview URLs](https://www.daytona.io/docs/en/preview/)
+- [Sandbox lifecycle and deletion](https://www.daytona.io/docs/en/sandboxes/)
+- [Filesystem persistence](https://www.daytona.io/docs/en/persistence/)
+- [Snapshot lifecycle](https://www.daytona.io/docs/snapshots/)
