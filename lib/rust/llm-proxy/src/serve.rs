@@ -481,6 +481,7 @@ mod tests {
                 token_id: "01a03e5d-8cbf-7415-9ac6-82c3476aeb5c".into(),
                 organization_id: "01a03b00-0000-7000-8000-00000000beef".into(),
                 project_id: None,
+                charged_externally: true,
                 upstream: Upstream::Anthropic,
                 base_url: "https://api.anthropic.com".into(),
                 secret: "not-used".into(),

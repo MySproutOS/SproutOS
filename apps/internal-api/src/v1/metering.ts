@@ -195,6 +195,15 @@ const app = new Hono().post(
         `Malformed batch: events[${invalidAttribution}] dimension is not valid for source or lacks resource attribution`,
       )
     }
+    const invalidExternalCharge = parsed.batch.events.findIndex(
+      (event) => event.chargedExternally === true && parsed.batch.source !== "llm-proxy",
+    )
+    if (invalidExternalCharge !== -1) {
+      return throwBadRequest(
+        c,
+        `Malformed batch: events[${invalidExternalCharge}] can only be externally charged when emitted by llm-proxy`,
+      )
+    }
 
     // Which organizations actually exist.
     //
@@ -273,7 +282,7 @@ const app = new Hono().post(
           podUid: event.attributes.pod_uid ?? null,
           source: parsed.batch.source,
           externalId: event.externalId,
-          chargedExternally: false,
+          chargedExternally: event.chargedExternally ?? false,
           attributes: event.attributes,
         })
       })

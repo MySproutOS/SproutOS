@@ -60,10 +60,12 @@ Rules, all of which are structural rather than conventions the writer has to rem
 1. **Domain separator.** `sproutos.metering.v1` and a newline precede the JSON, so a signature made
    for this schema can never be replayed against a future v2 canonical form.
 2. **Sorted keys, no whitespace.** Object keys are written in ascending byte order, always. Batch
-   keys are `events`, `source`. Event keys are `attributes`, `dimension`, `external_id`,
-   `occurred_at`, `organization_id`, `project_id`, `quantity`.
-3. **No optional fields.** `project_id` is written as `null` when absent, `attributes` as `{}` when
-   empty. There is no "omit it" form, so there is nothing to disagree about.
+   keys are `events`, `source`. New event keys are `attributes`, `charged_externally`, `dimension`,
+   `external_id`, `occurred_at`, `organization_id`, `project_id`, `quantity`.
+3. **One compatibility-aware optional field.** `project_id` is written as `null` when absent and
+   `attributes` as `{}` when empty. `charged_externally` is omitted only when parsing the legacy
+   event shape that predates it, preserving the signature of already-spooled batches. New emitters
+   set it explicitly to `true` or `false`; once present, its value is covered by the signature.
 4. **Attribute keys are `[a-z0-9._-]`** (enforced by `UsageBatch::validate`). Restricted to ASCII,
    sorting by byte, by code point and by UTF-16 code unit are the same order, so `BTreeMap` in Rust
    and a sorted `Object.keys()` in TypeScript cannot diverge. Values are arbitrary UTF-8.
@@ -110,13 +112,14 @@ Each vector records the canonical string as well as the signature on purpose: wh
 implementation disagrees, diffing the canonical string tells you _which_ rule it got wrong in
 seconds, where a mismatched hex digest tells you nothing.
 
-The five vectors, and what each one is defending:
+The vectors, and what each one is defending:
 
 | Vector                             | Guards                                                                                                                                                 |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `empty-batch`                      | A heartbeat with no events still signs and must be accepted.                                                                                           |
 | `single-event-no-project`          | The minimal event: `project_id` present as `null`, `attributes` present as `{}`.                                                                       |
 | `unicode-attributes`               | Values carrying astral characters, a control character, a quote and a backslash — the escaping rules.                                                  |
+| `externally-charged-model-usage`   | A BYO billing decision is part of the signature while older vectors remain unchanged.                                                                  |
 | `multi-event-unordered-attributes` | Attribute keys written out of order; an implementation that preserves insertion order fails here. Also fixes event order as significant.               |
 | `float-edge-cases`                 | `1e21`, `1e-7`, `0.0078125`, `0.1`, `0.30000000000000004`, `0` and `2^53` — every quantity whose decimal spelling is a disagreement waiting to happen. |
 

@@ -94,6 +94,7 @@ async function post(batch: UsageBatch, signature?: string) {
         external_id: event.externalId,
         organization_id: event.organizationId,
         project_id: event.projectId,
+        charged_externally: event.chargedExternally,
         dimension: event.dimension,
         quantity: event.quantity,
         occurred_at: event.occurredAt,
@@ -195,6 +196,55 @@ describe.skipIf(!reachable)("metering ingest", () => {
     expect(stored?.resourceId).toBeNull()
     expect(Number(stored?.quantity)).toBeCloseTo(0.25, 9)
     expect(stored?.nodeId).toBe("node-under-test")
+    expect(stored?.chargedExternally).toBe(false)
+  })
+
+  it("keeps BYO model usage visible without marking platform-key usage externally paid", async () => {
+    const byo = batchOf([
+      {
+        dimension: "ai_input_token",
+        quantity: 41,
+        chargedExternally: true,
+      },
+      {
+        dimension: "ai_output_token",
+        quantity: 58,
+        chargedExternally: true,
+      },
+    ])
+    byo.source = "llm-proxy"
+    const platform = batchOf([
+      {
+        dimension: "ai_input_token",
+        quantity: 7,
+        chargedExternally: false,
+      },
+    ])
+    platform.source = "llm-proxy"
+
+    expect((await post(byo)).status).toBe(202)
+    expect((await post(platform)).status).toBe(202)
+
+    expect(byo.events.map((event) => storedFor(event.externalId)[0]?.chargedExternally)).toEqual([
+      true,
+      true,
+    ])
+    expect(storedFor(platform.events[0].externalId)[0]?.chargedExternally).toBe(false)
+  })
+
+  it("covers charged_externally with the signature", async () => {
+    const signed = batchOf([{ dimension: "ai_input_token", quantity: 1, chargedExternally: true }])
+    signed.source = "llm-proxy"
+    const signature = sign(signed, KEY)
+    signed.events[0].chargedExternally = false
+
+    expect((await post(signed, signature)).status).toBe(401)
+  })
+
+  it("refuses externally charged usage from a source that cannot use customer credentials", async () => {
+    const batch = batchOf([{ chargedExternally: true }])
+
+    expect((await post(batch)).status).toBe(400)
   })
 
   it("derives resource attribution from the signed source and dimension", async () => {

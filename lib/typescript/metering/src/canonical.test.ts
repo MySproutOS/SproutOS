@@ -23,6 +23,7 @@ type Vector = {
       external_id: string
       organization_id: string
       project_id: string | null
+      charged_externally?: boolean
       dimension: string
       quantity: number
       occurred_at: number
@@ -105,6 +106,24 @@ describe("verify", () => {
     expect(verify(tampered, key, sign(batch, key))).toBe(false)
   })
 
+  it("keeps legacy signatures valid while signing an explicit external-charge decision", () => {
+    const legacySignature = sign(batch, key)
+    const externallyCharged: UsageBatch = {
+      ...batch,
+      events: [{ ...batch.events[0], chargedExternally: true }],
+    }
+    const platformCharged: UsageBatch = {
+      ...batch,
+      events: [{ ...batch.events[0], chargedExternally: false }],
+    }
+
+    expect(canonical(batch)).not.toContain("charged_externally")
+    expect(verify(batch, key, legacySignature)).toBe(true)
+    expect(canonical(externallyCharged)).toContain('"charged_externally":true')
+    expect(sign(externallyCharged, key)).not.toBe(legacySignature)
+    expect(sign(platformCharged, key)).not.toBe(sign(externallyCharged, key))
+  })
+
   it("rejects a signature made with a different key", () => {
     expect(verify(batch, Buffer.alloc(16), sign(batch, key))).toBe(false)
   })
@@ -121,6 +140,31 @@ describe("verify", () => {
     for (const bad of ["", "zz", "0".repeat(63), "0".repeat(65), "nothex".repeat(11)]) {
       expect(verify(batch, key, bad)).toBe(false)
     }
+  })
+})
+
+describe("parseBatch", () => {
+  it("refuses a non-boolean external-charge decision", () => {
+    const parsed = parseBatch({
+      source: "llm-proxy",
+      events: [
+        {
+          external_id: "event-1",
+          organization_id: "01a01e12-1700-76ac-9713-dd208babdf5a",
+          project_id: null,
+          charged_externally: "true",
+          dimension: "ai_input_token",
+          quantity: 1,
+          occurred_at: 1_700_000_000_000,
+          attributes: {},
+        },
+      ],
+    })
+
+    expect(parsed).toEqual({
+      ok: false,
+      reason: "events[0]: charged_externally must be a boolean when present",
+    })
   })
 })
 

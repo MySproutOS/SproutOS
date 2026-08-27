@@ -82,7 +82,8 @@ impl SessionStore {
         let row = client
             .query_opt(
                 "select id::text, organization_id::text, project_id::text, \
-                 upstream_kind, upstream_base_url, upstream_secret \
+                 upstream_kind, upstream_base_url, upstream_secret, \
+                 agent_credential_id is not null as charged_externally \
                  from agent_proxy_token \
                  where access_token_hash = $1 \
                    and revoked_at is null \
@@ -124,6 +125,7 @@ impl SessionStore {
             token_id: row.get(0),
             organization_id: row.get(1),
             project_id: row.get(2),
+            charged_externally: row.get(6),
             upstream,
             base_url: base_url.unwrap_or_else(|| upstream.default_base_url().to_string()),
             secret,

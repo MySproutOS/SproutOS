@@ -321,6 +321,40 @@ describe("chargeUsage", () => {
     expect(await availableBalance(db, organizationId)).toBe(before)
   })
 
+  it("shows BYO AI usage without debiting it and still charges platform-key AI usage", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+
+    await event("123", { dimension: "ai_cache_read_token", chargedExternally: true })
+    const byo = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity", "externallyChargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "ai_cache_read_token")
+      .where("bucket", "=", CHARGED_BUCKET)
+      .executeTakeFirstOrThrow()
+
+    expect(Number(byo.quantity)).toBe(123)
+    expect(Number(byo.externallyChargedQuantity)).toBe(123)
+    expect(Number(byo.chargedQuantity)).toBe(123)
+    expect(await chargedHere(() => chargeUsage(db))).toBe(0n)
+
+    await event("17", { dimension: "ai_output_token", chargedExternally: false })
+    const platform = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity", "externallyChargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "ai_output_token")
+      .where("bucket", "=", CHARGED_BUCKET)
+      .executeTakeFirstOrThrow()
+
+    expect(Number(platform.quantity)).toBe(17)
+    expect(Number(platform.externallyChargedQuantity)).toBe(0)
+    expect(Number(platform.chargedQuantity)).toBe(0)
+    expect(await chargedHere(() => chargeUsage(db))).toBeGreaterThan(0n)
+  })
+
   /*
     The charge is posted, not spent.
 

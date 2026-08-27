@@ -89,7 +89,7 @@ async fn stub_ingest(State(captured): State<Arc<Captured>>, body: String) -> imp
 }
 
 #[tokio::test]
-async fn proxies_bills_and_never_leaks_the_credential() {
+async fn proxies_byo_usage_as_externally_charged_and_never_leaks_the_credential() {
     let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL is not set; skipping the LLM proxy end-to-end test");
         return;
@@ -127,8 +127,31 @@ async fn proxies_bills_and_never_leaks_the_credential() {
         ingest_url,
         b"test-metering-key".to_vec(),
     ));
+    let store = SessionStore::connect(
+        &database_url,
+        2,
+        PROXY_KEY.to_vec(),
+        Some("sk-platform-test-key".into()),
+    )
+    .unwrap();
+    assert!(
+        store
+            .resolve(&access_token)
+            .await
+            .unwrap()
+            .charged_externally,
+        "an agent_credential_id must classify the session as externally charged"
+    );
+    assert!(
+        !store
+            .resolve(&fixture.platform_access_token)
+            .await
+            .unwrap()
+            .charged_externally,
+        "a null agent_credential_id must keep the platform-key session billable"
+    );
     let state = Arc::new(ProxyState {
-        store: SessionStore::connect(&database_url, 2, PROXY_KEY.to_vec(), None).unwrap(),
+        store,
         http: reqwest::Client::builder().build().unwrap(),
         metering: Some(spool),
     });
@@ -205,6 +228,12 @@ async fn proxies_bills_and_never_leaks_the_credential() {
         "terminal usage must still be counted after the downstream disconnects"
     );
     assert_eq!(quantity("ai_cache_read_token"), Some(7.0));
+    assert!(
+        events
+            .iter()
+            .all(|event| event["charged_externally"] == true),
+        "a customer credential must keep usage visible without making SproutOS charge for it: {batch}"
+    );
 
     // The sandbox's token must not appear in the ledger either — it is a credential, and
     // `audit_log` and the usage tables are both places a secret cannot be deleted from.
@@ -220,7 +249,10 @@ async fn proxies_bills_and_never_leaks_the_credential() {
 struct Fixture {
     user_id: String,
     organization_id: String,
+    credential_id: String,
     token_id: String,
+    platform_token_id: String,
+    platform_access_token: String,
 }
 
 impl Fixture {
@@ -229,7 +261,10 @@ impl Fixture {
 
         let user_id = uuid();
         let organization_id = uuid();
+        let credential_id = uuid();
         let token_id = uuid();
+        let platform_token_id = uuid();
+        let platform_access_token = format!("spa_platform_e2e_{}", std::process::id());
 
         client
             .execute(
@@ -255,19 +290,38 @@ impl Fixture {
             .await
             .expect("seeding an organization");
 
+        client
+            .execute(
+                "insert into agent_credential \
+                 (id, organization_id, kind, label, secret_ciphertext, secret_wrapped_dek, secret_kms_key_id) \
+                 values ($1::text::uuid, $2::text::uuid, 'anthropic_api_key', $3, $4, $5, $6)",
+                &[
+                    &credential_id,
+                    &organization_id,
+                    &format!("llm-proxy-e2e-{credential_id}"),
+                    &"unused-in-proxy-test",
+                    &"unused-in-proxy-test",
+                    &"unused-in-proxy-test",
+                ],
+            )
+            .await
+            .expect("seeding an agent credential");
+
         let sealed = seal(UPSTREAM_SECRET);
         client
             .execute(
                 "insert into agent_proxy_token \
                  (id, organization_id, access_token_hash, refresh_token_hash, \
-                  access_expires_at, refresh_expires_at, upstream_kind, upstream_base_url, upstream_secret) \
+                  access_expires_at, refresh_expires_at, agent_credential_id, upstream_kind, \
+                  upstream_base_url, upstream_secret) \
                  values ($1::text::uuid, $2::text::uuid, $3, $4, now() + interval '10 minutes', \
-                         now() + interval '1 hour', 'anthropic', $5, $6)",
+                         now() + interval '1 hour', $5::text::uuid, 'anthropic', $6, $7)",
                 &[
                     &token_id,
                     &organization_id,
                     &hex_sha256(access_token),
                     &hex_sha256(&format!("refresh-{access_token}")),
+                    &credential_id,
                     &provider_url,
                     &sealed,
                 ],
@@ -275,10 +329,30 @@ impl Fixture {
             .await
             .expect("seeding a proxy token");
 
+        client
+            .execute(
+                "insert into agent_proxy_token \
+                 (id, organization_id, access_token_hash, refresh_token_hash, \
+                  access_expires_at, refresh_expires_at) \
+                 values ($1::text::uuid, $2::text::uuid, $3, $4, now() + interval '10 minutes', \
+                         now() + interval '1 hour')",
+                &[
+                    &platform_token_id,
+                    &organization_id,
+                    &hex_sha256(&platform_access_token),
+                    &hex_sha256(&format!("refresh-{platform_access_token}")),
+                ],
+            )
+            .await
+            .expect("seeding a platform-key proxy token");
+
         Self {
             user_id,
             organization_id,
+            credential_id,
             token_id,
+            platform_token_id,
+            platform_access_token,
         }
     }
 
@@ -286,6 +360,8 @@ impl Fixture {
         let client = connect(database_url).await;
         for (table, id) in [
             ("agent_proxy_token", &self.token_id),
+            ("agent_proxy_token", &self.platform_token_id),
+            ("agent_credential", &self.credential_id),
             ("organization", &self.organization_id),
             ("\"user\"", &self.user_id),
         ] {
