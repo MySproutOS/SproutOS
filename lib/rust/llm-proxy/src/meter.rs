@@ -185,7 +185,8 @@ mod tests {
             },
             1,
         )
-        .unwrap();
+        .unwrap()
+        .expect("billable usage should produce a batch");
 
         assert_eq!(batch.events[0].charged_externally, Some(false));
     }

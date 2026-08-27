@@ -530,7 +530,6 @@ mod tests {
                 upstream: Upstream::Anthropic,
                 base_url: "https://api.anthropic.com".into(),
                 secret: "not-used".into(),
-                charged_externally: true,
             },
             "request-1".into(),
             Some(spool.reserve().unwrap()),
