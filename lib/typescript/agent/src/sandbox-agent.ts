@@ -398,6 +398,24 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
     .filter((line) => line !== "")
   if (files.length === 0) return { committed: false, reason: "no_changes" }
 
+  const url = input.remote ?? `https://${input.host ?? "github.com"}/${input.repository}.git`
+  const remoteRef = `refs/heads/${input.branch}`
+  const auth = Object.entries(sandboxGitAuthEnv(url, input.token)).map(
+    ([key, value]) => `${key}=${value}`,
+  )
+  const observed = await driver.exec(
+    externalId,
+    ["env", ...auth, "git", "ls-remote", "--refs", url, remoteRef],
+    COMMIT_TIMEOUT_MS,
+  )
+  if (observed.exitCode !== 0) {
+    throw new Error(`could not read the agent branch: ${observed.stderr.trim()}`)
+  }
+  const remoteSha = observed.stdout.trim().split(/\s+/)[0] ?? ""
+  if (remoteSha !== "" && !/^[0-9a-f]{40,64}$/i.test(remoteSha)) {
+    throw new Error("could not read the agent branch: git returned an invalid object id")
+  }
+
   const added = await git("add", "-A")
   if (added.exitCode !== 0) throw new Error(`staging failed: ${added.stderr.trim()}`)
 
@@ -437,21 +455,18 @@ export async function commitSandboxWork(input: SandboxCommitInput): Promise<Sand
     `--force-with-lease` rather than `--force`: the branch belongs to this session, and the lease is
     what stops a push racing another turn from silently discarding it.
   */
-  const url = input.remote ?? `https://${input.host ?? "github.com"}/${input.repository}.git`
   const pushed = await driver.exec(
     externalId,
     [
       "env",
-      ...Object.entries(sandboxGitAuthEnv(url, input.token)).map(
-        ([key, value]) => `${key}=${value}`,
-      ),
+      ...auth,
       "git",
       "-C",
       workspace,
       "push",
       url,
       `HEAD:refs/heads/${input.branch}`,
-      "--force-with-lease",
+      `--force-with-lease=${remoteRef}:${remoteSha}`,
     ],
     COMMIT_TIMEOUT_MS,
   )
