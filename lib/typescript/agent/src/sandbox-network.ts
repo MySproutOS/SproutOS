@@ -4,10 +4,12 @@ export const SANDBOX_NETWORK_LAUNCHER = ".git/sproutos/network/run.mjs"
 /**
  * Run an agent with ordinary `DATABASE_URL` semantics through Daytona's HTTPS-only egress.
  *
- * Daytona installs the authenticated proxy as `HTTPS_PROXY`, but Postgres clients do not speak
- * HTTP proxy protocol. The launcher opens a loopback TCP listener, carries each connection through
- * an authenticated CONNECT to the public pg-proxy listener, and rewrites only the host and port in
- * the child environment. The database credential never enters an argument, file, or log.
+ * Daytona installs its local forward-proxy sidecar as `HTTPS_PROXY`, but Postgres clients do not
+ * speak HTTP proxy protocol. The sidecar carries traffic to the authenticated public SproutOS
+ * proxy configured at sandbox creation. The launcher opens a loopback TCP listener, sends CONNECT
+ * through the sidecar, and rewrites only the host and port in the child environment. A direct
+ * harness may instead receive the authenticated HTTPS origin itself. The database credential never
+ * enters an argument, file, or log.
  *
  * The tunnel is a detached descendant of the Daytona process session. A successful turn keeps that
  * session alive for preview processes, so an app the agent starts keeps its database connection;
@@ -37,20 +39,28 @@ async function tunnelMode() {
   if (!proxyValue) fail("HTTPS_PROXY is unavailable")
 
   const proxy = new URL(proxyValue)
-  if (proxy.protocol !== "https:" || !proxy.username || !proxy.password) {
-    fail("HTTPS_PROXY must be an authenticated HTTPS URL")
+  if (proxy.protocol !== "http:" && proxy.protocol !== "https:") {
+    fail("HTTPS_PROXY must be an HTTP or HTTPS URL")
+  }
+  if (Boolean(proxy.username) !== Boolean(proxy.password)) {
+    fail("HTTPS_PROXY must contain both a username and password, or neither")
   }
   const proxyHost = proxy.hostname
-  const proxyPort = Number(proxy.port || 443)
-  const credentials = Buffer.from(
-    decodeURIComponent(proxy.username) + ":" + decodeURIComponent(proxy.password),
-  ).toString("base64")
+  const proxyPort = Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80))
+  const credentials = proxy.username
+    ? Buffer.from(
+        decodeURIComponent(proxy.username) + ":" + decodeURIComponent(proxy.password),
+      ).toString("base64")
+    : undefined
   const destination = authority(targetHost, targetPort)
 
   const server = net.createServer((client) => {
     let established = false
     let response = Buffer.alloc(0)
-    const upstream = tls.connect({ host: proxyHost, port: proxyPort, servername: proxyHost })
+    const upstream =
+      proxy.protocol === "https:"
+        ? tls.connect({ host: proxyHost, port: proxyPort, servername: proxyHost })
+        : net.connect({ host: proxyHost, port: proxyPort })
 
     const close = () => {
       client.destroy()
@@ -58,11 +68,12 @@ async function tunnelMode() {
     }
     client.on("error", close)
     upstream.on("error", close)
-    upstream.on("secureConnect", () => {
+    upstream.on(proxy.protocol === "https:" ? "secureConnect" : "connect", () => {
       upstream.write(
         "CONNECT " + destination + " HTTP/1.1\r\n" +
           "Host: " + destination + "\r\n" +
-          "Proxy-Authorization: Basic " + credentials + "\r\n\r\n",
+          (credentials ? "Proxy-Authorization: Basic " + credentials + "\r\n" : "") +
+          "\r\n",
       )
     })
     upstream.on("data", (chunk) => {
@@ -108,7 +119,10 @@ async function launchMode() {
     const tunnel = spawn(process.execPath, [process.argv[1], "--tunnel", targetHost, String(targetPort)], {
       detached: true,
       env: process.env,
-      stdio: ["ignore", "ignore", "inherit", "pipe"],
+      // A detached tunnel must not retain the command session's stdout/stderr pipes. Daytona waits
+      // for those descriptors to close even after the launcher exits, which would make a successful
+      // turn appear to hang forever. Descriptor 3 is the one bounded startup/readiness channel.
+      stdio: ["ignore", "ignore", "ignore", "pipe"],
     })
     const ready = tunnel.stdio[3]
     const localPort = await new Promise((resolve, reject) => {
