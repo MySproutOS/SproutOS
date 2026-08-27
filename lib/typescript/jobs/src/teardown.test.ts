@@ -1,4 +1,10 @@
 import { db } from "@sproutos/db"
+import {
+  DeleteKeyCommand,
+  DescribeKeyValueStoreCommand,
+} from "@aws-sdk/client-cloudfront-keyvaluestore"
+import { ListResourceRecordSetsCommand } from "@aws-sdk/client-route-53"
+import { ListObjectsV2Command } from "@aws-sdk/client-s3"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
@@ -29,6 +35,7 @@ let repositoryId: string
 */
 const deletedFunctions: string[] = []
 const withdrawn: string[] = []
+const staticCleanup: string[] = []
 
 const lambdaClients = {
   lambda: {
@@ -41,6 +48,39 @@ const lambdaClients = {
     del: (key: string) => {
       withdrawn.push(key)
       return Promise.resolve(1)
+    },
+  },
+  static: {
+    bucket: "tenant-static",
+    tenantZoneId: "tenant-zone",
+    keyValueStoreArn: "arn:kvs",
+    s3: {
+      send: (command: unknown) => {
+        if (command instanceof ListObjectsV2Command) {
+          staticCleanup.push(`list:${command.input.Prefix}`)
+          return Promise.resolve({ Contents: [], IsTruncated: false })
+        }
+        return Promise.reject(new Error("unexpected static S3 command"))
+      },
+    },
+    route53: {
+      send: (command: unknown) => {
+        if (command instanceof ListResourceRecordSetsCommand) {
+          staticCleanup.push(`dns:${command.input.StartRecordType}`)
+          return Promise.resolve({ ResourceRecordSets: [] })
+        }
+        return Promise.reject(new Error("unexpected static Route53 command"))
+      },
+    },
+    keyValueStore: {
+      send: (command: unknown) => {
+        if (command instanceof DescribeKeyValueStoreCommand) return Promise.resolve({ ETag: "v1" })
+        if (command instanceof DeleteKeyCommand) {
+          staticCleanup.push(`edge:${command.input.Key}`)
+          return Promise.resolve({})
+        }
+        return Promise.reject(new Error("unexpected static KVS command"))
+      },
     },
   },
 } as unknown as TeardownClients
@@ -157,6 +197,20 @@ describe("tearing down a deleted project", () => {
       })
       .execute()
     await db
+      .insertInto("deployment")
+      .values({
+        id: v7(),
+        projectId,
+        kind: "production",
+        gitSha: "static",
+        status: "ready",
+        preset: "static",
+        staticArtifactKey: `static/${projectId}/${"a".repeat(64)}.zip`,
+        staticDigest: "a".repeat(64),
+        hostname: "old-static.example.test",
+      })
+      .execute()
+    await db
       .insertInto("projectEnvVar")
       .values({
         id: v7(),
@@ -211,6 +265,9 @@ describe("tearing down a deleted project", () => {
     // Withdrawn by the hostname stored on the deployment, so a project renamed since it deployed
     // does not leave its old host resolving.
     expect(withdrawn.every((key) => key.startsWith("route:"))).toBe(true)
+    expect(staticCleanup).toContain("edge:old-static.example.test")
+    expect(staticCleanup).toContain(`list:sites/${projectId}/`)
+    expect(staticCleanup).toContain(`list:static/${projectId}/`)
 
     // The customer's secrets are gone. Nothing references them and the request was to stop holding
     // the project's data.
