@@ -85,6 +85,10 @@ Query parameters are also allowlisted. In particular, `index`, `source` and
 rewriter. Duplicate parameter names are refused after decoding, so two spellings cannot rely on
 different first-value/last-value behavior in the proxy and OpenSearch.
 
+Request-body compression is refused. The proxy must inspect or rewrite body bytes before
+OpenSearch sees them; forwarding compressed bytes for OpenSearch to decode later would bypass that
+boundary. Search bodies must be JSON and multi-search bodies must be UTF-8 NDJSON.
+
 ## Responses
 
 Every search hit carries `"_index": "t01j…_products"`. A client that reads it and sends it back —
@@ -168,5 +172,9 @@ another customer's data.
   hour the proxy enumerates only managed Security-plugin users and samples primary-store bytes via
   each tenant user's scoped `_stats`, emitting `es_storage_gib_hour`. Delivery retries through the
   signed ingest path and is fail-open when its bounded spool is unavailable.
-- **Scroll and PIT lifecycle.** A point-in-time id is a cluster-wide handle; `_pit` is allowed for
-  creation but the ids are not scoped, so one tenant holding another's id is not yet prevented.
+- **Scroll lifecycle.** Scroll is refused because its id is a cluster-wide handle.
+- **PIT ownership.** Point-in-time create, use and delete operations are refused. A PIT id is a
+  cluster-wide capability rather than an index name the proxy can prefix, so accepting ids safely
+  requires a durable ownership registry shared by every router instance. Until that exists, both
+  OpenSearch's `/_search/point_in_time` and Elasticsearch's `/_pit` spellings fail closed, as do
+  `pit` entries inside `_search` and `_msearch` bodies.

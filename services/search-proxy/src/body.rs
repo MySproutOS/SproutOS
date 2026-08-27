@@ -21,6 +21,44 @@ const MGET_DOC_FIELDS: &[&str] = &[
     "version_type",
 ];
 
+/// Whether a search request body attempts to use a point-in-time handle.
+///
+/// PIT ids are cluster-wide capabilities rather than names that can be tenant-prefixed. Until the
+/// proxy has a durable, shared ownership registry, accepting one would let a tenant who obtained
+/// another tenant's id search that tenant's snapshot. JSON decoding matters here: a textual scan
+/// would miss escaped key spellings and would reject harmless string values containing `"pit"`.
+pub fn search_body_uses_point_in_time(body: &[u8]) -> Result<bool, IndexError> {
+    if body.is_empty() {
+        return Ok(false);
+    }
+    let value = serde_json::from_slice::<Value>(body)
+        .map_err(|_| IndexError::Illegal("_search body must be JSON".into()))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| IndexError::Illegal("_search body must be an object".into()))?;
+    Ok(object.contains_key("pit"))
+}
+
+/// Whether any request body in an `_msearch` NDJSON payload uses a point-in-time handle.
+///
+/// Both metadata and search-body lines are checked. Refusing a harmless metadata key is preferable
+/// to relying on parity after a malformed line, and mirrors the NDJSON index rewriting policy.
+pub fn msearch_body_uses_point_in_time(body: &[u8]) -> Result<bool, IndexError> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| IndexError::Illegal("_msearch body must be UTF-8 NDJSON".into()))?;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let value = serde_json::from_str::<Value>(line)
+            .map_err(|_| IndexError::Illegal("every _msearch line must be JSON".into()))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| IndexError::Illegal("every _msearch line must be an object".into()))?;
+        if object.contains_key("pit") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Validate and namespace the exact JSON shapes accepted by the allowlisted `_mget` route.
 ///
 /// A bare `/_mget` must use `docs` with one `_index` per document. An index-scoped request may
@@ -276,6 +314,29 @@ mod tests {
 
     fn rewrite_mget_text(body: &str, index_in_path: bool) -> String {
         String::from_utf8(rewrite_mget(PREFIX, body.as_bytes(), index_in_path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn search_pit_detection_decodes_json_keys_without_matching_document_text() {
+        assert!(search_body_uses_point_in_time(br#"{"pit":{"id":"tenant-a-handle"}}"#).unwrap());
+        assert!(
+            search_body_uses_point_in_time(br#"{"p\u0069t":{"id":"tenant-a-handle"}}"#).unwrap()
+        );
+        assert!(
+            !search_body_uses_point_in_time(br#"{"query":{"match":{"description":"a pit stop"}}}"#)
+                .unwrap()
+        );
+        assert!(search_body_uses_point_in_time(b"not JSON").is_err());
+    }
+
+    #[test]
+    fn msearch_pit_detection_checks_every_ndjson_object() {
+        assert!(
+            msearch_body_uses_point_in_time(b"{}\n{\"pit\":{\"id\":\"tenant-a-handle\"}}\n")
+                .unwrap()
+        );
+        assert!(!msearch_body_uses_point_in_time(b"{}\n{\"query\":{\"match_all\":{}}}\n").unwrap());
+        assert!(msearch_body_uses_point_in_time(b"{}\nnot JSON\n").is_err());
     }
 
     /// The leak this module exists for: a `_bulk` body names its index per line, so namespacing the

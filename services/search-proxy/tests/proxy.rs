@@ -372,6 +372,131 @@ async fn query_parameters_cannot_override_the_scoped_path_or_body() {
 }
 
 #[tokio::test]
+async fn tenant_b_cannot_search_with_tenant_as_point_in_time_handle() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let a = provision(&url).await;
+    let b = provision(&url).await;
+    let index = unique_index("pit-private");
+
+    let (status, body) = as_tenant(
+        address,
+        &a,
+        reqwest::Method::POST,
+        &format!("/{index}/_doc/1?refresh=true"),
+        Some((
+            "application/json",
+            r#"{"owner":"tenant a pit secret"}"#.into(),
+        )),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {body}");
+
+    // Create the capability outside the proxy, exactly as though tenant B obtained tenant A's id
+    // from a log or another compromised client. The proxy must reject use of the real handle, not
+    // merely prevent B from creating a new one.
+    let physical_index = format!("{}{index}", prefix_for(&a.identity));
+    let created = admin_request(
+        reqwest::Method::POST,
+        &format!("/{physical_index}/_search/point_in_time?keep_alive=1m"),
+    )
+    .send()
+    .await
+    .expect("create tenant a PIT directly");
+    let created_status = created.status();
+    let created_body = created.text().await.unwrap_or_default();
+    assert!(
+        created_status.is_success(),
+        "{created_status} {created_body}"
+    );
+    let pit_id = serde_json::from_str::<serde_json::Value>(&created_body)
+        .expect("PIT response JSON")
+        .get("pit_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("PIT response id")
+        .to_owned();
+
+    for (path, content_type, request_body) in [
+        (
+            "/_search",
+            "application/json",
+            serde_json::json!({ "pit": { "id": pit_id, "keep_alive": "1m" } }).to_string(),
+        ),
+        (
+            "/_msearch",
+            "application/x-ndjson",
+            format!(
+                "{{}}\n{}\n",
+                serde_json::json!({ "pit": { "id": pit_id, "keep_alive": "1m" } })
+            ),
+        ),
+    ] {
+        let (status, body) = as_tenant(
+            address,
+            &b,
+            reqwest::Method::POST,
+            path,
+            Some((content_type, request_body)),
+        )
+        .await;
+        assert_eq!(
+            status, 403,
+            "tenant B used tenant A's PIT at {path}: {body}"
+        );
+        assert!(
+            body.contains("Point-in-time searches are not available"),
+            "request may have reached OpenSearch instead of failing at the proxy: {body}"
+        );
+        assert!(
+            !body.contains("tenant a pit secret"),
+            "cross-tenant read: {body}"
+        );
+    }
+
+    // Compression must not turn an inspected body into opaque bytes that OpenSearch decodes only
+    // after the proxy has approved it. Reject the coding before forwarding regardless of payload.
+    let compressed = reqwest::Client::new()
+        .post(format!("http://{address}/_search"))
+        .basic_auth(&b.username, Some(&b.secret))
+        .header("content-type", "application/json")
+        .header("content-encoding", "gzip")
+        .body(serde_json::json!({ "pit": { "id": pit_id } }).to_string())
+        .send()
+        .await
+        .expect("compressed PIT request");
+    let compressed_status = compressed.status();
+    let compressed_body = compressed.text().await.unwrap_or_default();
+    assert_eq!(
+        compressed_status.as_u16(),
+        415,
+        "compressed PIT body bypassed inspection: {compressed_body}"
+    );
+    assert!(
+        compressed_body.contains("Compressed request bodies are not available"),
+        "compressed body may have reached OpenSearch: {compressed_body}"
+    );
+
+    let deleted = admin_request(reqwest::Method::DELETE, "/_search/point_in_time")
+        .json(&serde_json::json!({ "pit_id": [pit_id] }))
+        .send()
+        .await
+        .expect("delete test PIT directly");
+    let deleted_status = deleted.status();
+    let deleted_body = deleted.text().await.unwrap_or_default();
+    assert!(
+        deleted_status.is_success(),
+        "{deleted_status} {deleted_body}"
+    );
+
+    cleanup(&url, &[&a, &b]).await;
+}
+
+#[tokio::test]
 async fn a_queue_credential_cannot_open_the_search_proxy() {
     let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };

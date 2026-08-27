@@ -33,7 +33,10 @@ use sproutos_service_credentials::{Authentication, CredentialStore, report};
 use sproutos_tenant_auth::{ResourceKind, TenantIdentity};
 use tracing::warn;
 
-use crate::body::{rewrite_mget, rewrite_ndjson, strip_prefix_from_response};
+use crate::body::{
+    msearch_body_uses_point_in_time, rewrite_mget, rewrite_ndjson, search_body_uses_point_in_time,
+    strip_prefix_from_response,
+};
 use crate::routes::{Plan, RouteError, plan, validate_query};
 use crate::security::SecurityManager;
 
@@ -191,6 +194,25 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
         return error(StatusCode::BAD_REQUEST, &cause.to_string());
     }
 
+    // Every body-bearing route below either inspects or rewrites the bytes as JSON. Forwarding a
+    // compressed body unchanged would let OpenSearch decode content the proxy never saw, bypassing
+    // both PIT refusal and index namespacing. `identity` is the only safe content coding here.
+    if parts
+        .headers
+        .get_all("content-encoding")
+        .iter()
+        .any(|value| {
+            !value
+                .to_str()
+                .is_ok_and(|encoding| encoding.trim().eq_ignore_ascii_case("identity"))
+        })
+    {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Compressed request bodies are not available through this endpoint",
+        );
+    }
+
     // Read the body *after* authentication, so an unauthenticated caller never makes us hold 64 MiB.
     let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
         Ok(bytes) => bytes,
@@ -201,6 +223,29 @@ pub async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Respon
             );
         }
     };
+
+    // A PIT id is an opaque cluster-wide capability, not an index name we can namespace. Blocking
+    // only PIT creation is insufficient: a tenant could obtain another tenant's id elsewhere and
+    // submit it in an otherwise ordinary `_search` or `_msearch` body. A distributed ownership
+    // registry can make this safe later; until then every use fails closed before reaching the
+    // cluster.
+    let uses_point_in_time = match &planned {
+        Plan::Path(path) if path.ends_with("/_search") => search_body_uses_point_in_time(&bytes),
+        Plan::PathAndNdjson(path) if path.ends_with("/_msearch") => {
+            msearch_body_uses_point_in_time(&bytes)
+        }
+        _ => Ok(false),
+    };
+    let uses_point_in_time = match uses_point_in_time {
+        Ok(uses_point_in_time) => uses_point_in_time,
+        Err(cause) => return error(StatusCode::BAD_REQUEST, &cause.to_string()),
+    };
+    if uses_point_in_time {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Point-in-time searches are not available through this endpoint",
+        );
+    }
 
     let (path, forwarded) = match planned {
         Plan::Path(path) => (path, bytes),
