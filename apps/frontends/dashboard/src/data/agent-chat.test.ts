@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   type AgentEvent,
   ensureSandboxRunning,
+  latestRestorableAgentSession,
   streamAgentTurn,
   waitForSandboxDeletion,
 } from "./agent-chat"
@@ -80,6 +81,26 @@ describe("ensureSandboxRunning", () => {
       }),
     ).rejects.toThrow("No model credential configured (no_config)")
     expect(start).not.toHaveBeenCalled()
+  })
+})
+
+describe("latestRestorableAgentSession", () => {
+  it("restores the newest resumable session after route navigation", () => {
+    expect(
+      latestRestorableAgentSession([
+        { id: "finished", title: null, status: "completed", createdLabel: "now" },
+        { id: "latest", title: null, status: "active", createdLabel: "earlier" },
+        { id: "older", title: null, status: "active", createdLabel: "oldest" },
+      ])?.id,
+    ).toBe("latest")
+  })
+
+  it("does not revive a completed conversation", () => {
+    expect(
+      latestRestorableAgentSession([
+        { id: "done", title: null, status: "completed", createdLabel: "now" },
+      ]),
+    ).toBeUndefined()
   })
 })
 
