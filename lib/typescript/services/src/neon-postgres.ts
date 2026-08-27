@@ -214,7 +214,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     return Promise.reject(new SecretNotRecoverableError(backendServiceId))
   }
 
-  async function rotateCredentials(backendServiceId: string): Promise<string> {
+  async function rotateCredentials(backendServiceId: string) {
     const service = await db
       .selectFrom("backendService")
       .select(["organizationId"])
@@ -247,11 +247,13 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
         .execute()
     })
 
-    return postgresUri({
-      ...details,
-      password: secret,
-      ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
-    })
+    return {
+      connectionUri: postgresUri({
+        ...details,
+        password: secret,
+        ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+      }),
+    }
   }
 
   /**

@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { hashGeneratedSecret, tenantUsername } from "./tenant-auth"
+import { encodeShortId, hashGeneratedSecret, tenantUsername } from "./tenant-auth"
 import { ServiceNotProvisionedError } from "./types"
 import { SecretNotRecoverableError, valkeyDriver, type ValkeyServiceConfig } from "./valkey"
 
@@ -110,6 +110,8 @@ describe.skipIf(!reachable)("valkey driver", () => {
       tenantUsername({ organizationId, kind: "queue", resourceId: backendServiceId }),
     )
     expect(result.username.startsWith("kv_")).toBe(true)
+    expect(result.keyPrefix).toBe(`{kv:${encodeShortId(backendServiceId)}}:bull`)
+    expect((await driver.details(backendServiceId)).keyPrefix).toBe(result.keyPrefix)
 
     const uri = new URL(result.connectionUri)
     expect(uri.protocol).toBe("rediss:")
@@ -168,11 +170,12 @@ describe.skipIf(!reachable)("valkey driver", () => {
     })
 
     const second = await driver.rotateCredentials(backendServiceId)
-    expect(secretFrom(second)).not.toBe(secretFrom(first.connectionUri))
+    expect(secretFrom(second.connectionUri)).not.toBe(secretFrom(first.connectionUri))
+    expect(second.keyPrefix).toBe(first.keyPrefix)
 
     // The username must not change: it encodes which keyspace the connection lands in, so a
     // rotation that changed it would hand the tenant a URI pointing at an empty namespace.
-    expect(new URL(second).username).toBe(new URL(first.connectionUri).username)
+    expect(new URL(second.connectionUri).username).toBe(new URL(first.connectionUri).username)
 
     const rows = await db
       .selectFrom("serviceCredential")
@@ -184,7 +187,7 @@ describe.skipIf(!reachable)("valkey driver", () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]?.revokedAt).not.toBeNull()
     expect(rows[1]?.revokedAt).toBeNull()
-    expect(rows[1]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second)))
+    expect(rows[1]?.secretHash).toBe(await hashGeneratedSecret(secretFrom(second.connectionUri)))
   })
 
   it("refuses two live credentials for one username and purpose", async ({ skip }) => {

@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -53,7 +54,10 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
+  postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
+  postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
   postV1OrgsByOrgSlugAnalysesResponseTransformer,
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
   postV1OrgsByOrgSlugInvitesResponseTransformer,
@@ -120,6 +124,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
@@ -191,6 +197,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
@@ -317,6 +326,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimErrors,
   PostV1ApkSigningClaimResponses,
@@ -329,6 +341,9 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1DeployMigrateData,
+  PostV1DeployMigrateErrors,
+  PostV1DeployMigrateResponses,
   PostV1DeployReleaseData,
   PostV1DeployReleaseErrors,
   PostV1DeployReleaseResponses,
@@ -363,6 +378,12 @@ import type {
   PostV1OrgsByOrgSlugAgentCredentialsData,
   PostV1OrgsByOrgSlugAgentCredentialsErrors,
   PostV1OrgsByOrgSlugAgentCredentialsResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenData,
+  PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses,
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesErrors,
   PostV1OrgsByOrgSlugAnalysesResponses,
@@ -1583,6 +1604,54 @@ export const putV1OrgsByOrgSlugAgentConfig = <ThrowOnError extends boolean = fal
   })
 
 /**
+ * Mint an access/refresh pair for a sandbox agent to reach the LLM proxy
+ */
+export const postV1OrgsByOrgSlugAgentProxyToken = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugAgentProxyTokenData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugAgentProxyTokenResponses,
+    PostV1OrgsByOrgSlugAgentProxyTokenErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/proxy-token",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Exchange a refresh token for a new pair
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenRefresh = <ThrowOnError extends boolean = false>(
+  options: Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses,
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/proxy-token/refresh",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
  * Lists a project's agent chat sessions
  */
 export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
@@ -1944,6 +2013,24 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId = <
     DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}", ...options })
+
+/**
+ * The GitHub Actions workflow that deploys this project, generated for it
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-workflow", ...options })
 
 /**
  * One workflow and its current graph
@@ -3164,6 +3251,25 @@ export const postV1DeployRelease = <ThrowOnError extends boolean = false>(
   })
 
 /**
+ * Run an uploaded migrator against the project's database, and wait for it
+ */
+export const postV1DeployMigrate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployMigrateData, ThrowOnError>,
+): RequestResult<PostV1DeployMigrateResponses, PostV1DeployMigrateErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1DeployMigrateResponses,
+    PostV1DeployMigrateErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/migrate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
  * Claim the oldest APK awaiting signature. Polled by the on-premises signer.
  */
 export const postV1ApkSigningClaim = <ThrowOnError extends boolean = false>(
@@ -3229,4 +3335,40 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

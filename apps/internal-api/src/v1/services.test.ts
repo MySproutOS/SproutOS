@@ -2,6 +2,37 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { describe, expect, it } from "vitest"
 import { SERVICE_KINDS } from "./services.serializer"
+import { connectionEnvironmentEntries, connectionResponse } from "./services"
+
+describe("service connection contracts", () => {
+  it("adds BullMQ's prefix only for Valkey", () => {
+    expect(
+      connectionEnvironmentEntries({
+        connectionUri: "redis://tenant@example.test:6379",
+        keyPrefix: "{kv:abc}:bull",
+        kind: "valkey",
+      }),
+    ).toEqual([
+      { isSecret: true, key: "REDIS_URL", value: "redis://tenant@example.test:6379" },
+      { isSecret: true, key: "VALKEY_URL", value: "redis://tenant@example.test:6379" },
+      { isSecret: false, key: "BULLMQ_PREFIX", value: "{kv:abc}:bull" },
+    ])
+  })
+
+  it("leaves non-Valkey response and environment shapes unchanged", () => {
+    const result = { connectionUri: "postgresql://tenant@example.test/database" }
+    expect(JSON.stringify(connectionResponse("service-id", result))).toBe(
+      '{"id":"service-id","connectionUri":"postgresql://tenant@example.test/database"}',
+    )
+    expect(connectionEnvironmentEntries({ ...result, kind: "postgres" })).toEqual([
+      {
+        isSecret: true,
+        key: "DATABASE_URL",
+        value: "postgresql://tenant@example.test/database",
+      },
+    ])
+  })
+})
 
 /**
  * What the API accepts and what the database accepts have to be the same list.

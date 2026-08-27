@@ -1240,6 +1240,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
+    isGroup?: boolean
   }
   path: {
     orgSlug: string
@@ -2656,6 +2657,68 @@ export type PutV1OrgsByOrgSlugAgentConfigResponses = {
 export type PutV1OrgsByOrgSlugAgentConfigResponse =
   PutV1OrgsByOrgSlugAgentConfigResponses[keyof PutV1OrgsByOrgSlugAgentConfigResponses]
 
+export type PostV1OrgsByOrgSlugAgentProxyTokenData = {
+  body?: {
+    projectId?: string | null
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/proxy-token"
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenErrors = {
+  409: unknown
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenResponses = {
+  /**
+   * The pair. Both values are returned once and are not recoverable
+   */
+  201: {
+    id: string
+    accessToken: string
+    refreshToken: string
+    accessExpiresAt: Date
+    refreshExpiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenResponse =
+  PostV1OrgsByOrgSlugAgentProxyTokenResponses[keyof PostV1OrgsByOrgSlugAgentProxyTokenResponses]
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshData = {
+  body?: {
+    refreshToken: string
+  }
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/proxy-token/refresh"
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshErrors = {
+  401: unknown
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses = {
+  /**
+   * A new pair. The old refresh token stops working
+   */
+  200: {
+    id: string
+    accessToken: string
+    refreshToken: string
+    accessExpiresAt: Date
+    refreshExpiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse =
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses[keyof PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData = {
   body?: never
   path: {
@@ -2770,6 +2833,7 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
       port: number | null
       database: string | null
       username: string | null
+      keyPrefix?: string
       createdAt: Date
     }>
   }
@@ -2812,6 +2876,7 @@ export type PostV1OrgsByOrgSlugServicesResponses = {
   201: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -2849,6 +2914,7 @@ export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
   200: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -2886,6 +2952,7 @@ export type PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses = {
   200: {
     id: string
     connectionUri: string
+    keyPrefix?: string
   }
 }
 
@@ -3557,6 +3624,41 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses =
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponse =
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-workflow"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowErrors = {
+  /**
+   * A group has nothing to deploy
+   */
+  400: unknown
+  /**
+   * No such project in this organization
+   */
+  404: unknown
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses = {
+  /**
+   * A workflow file to add to the repository
+   */
+  200: {
+    path: string
+    contents: string
+    projectRequired: boolean
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData = {
   body?: never
@@ -5264,6 +5366,7 @@ export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses = {
        * Shown once. It cannot be retrieved again.
        */
       connectionUri: string
+      keyPrefix?: string
     }>
     deleted: Array<{
       id: string
@@ -6214,6 +6317,37 @@ export type PostV1DeployReleaseResponses = {
 export type PostV1DeployReleaseResponse =
   PostV1DeployReleaseResponses[keyof PostV1DeployReleaseResponses]
 
+export type PostV1DeployMigrateData = {
+  body?: {
+    migration_key: string
+    migration_handler?: string
+    runtime?: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/migrate"
+}
+
+export type PostV1DeployMigrateErrors = {
+  /**
+   * Missing or expired deploy token
+   */
+  401: unknown
+}
+
+export type PostV1DeployMigrateResponses = {
+  /**
+   * The migrator ran. `ok` says whether it succeeded
+   */
+  200: {
+    ok: boolean
+    output: string
+  }
+}
+
+export type PostV1DeployMigrateResponse =
+  PostV1DeployMigrateResponses[keyof PostV1DeployMigrateResponses]
+
 export type PostV1ApkSigningClaimData = {
   body?: {
     signer_id: string
@@ -6320,3 +6454,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

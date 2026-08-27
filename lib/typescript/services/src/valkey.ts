@@ -1,7 +1,13 @@
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
+import {
+  encodeShortId,
+  generateSecret,
+  hashGeneratedSecret,
+  lastFour,
+  tenantUsername,
+} from "./tenant-auth"
 import {
   type ConnectionDetails,
   type ProvisionInput,
@@ -88,6 +94,11 @@ export function valkeyUri(parts: {
   return `${parts.scheme}://${auth}@${parts.host}:${parts.port}`
 }
 
+/** The prefix BullMQ must receive so keys constructed inside Lua remain tenant-scoped. */
+export function valkeyKeyPrefix(backendServiceId: string): string {
+  return `{kv:${encodeShortId(backendServiceId)}}:bull`
+}
+
 /**
  * The Valkey driver, and one capability beyond `ServiceDriver`.
  *
@@ -113,7 +124,7 @@ export function valkeyDriver(
     return row
   }
 
-  function detailsFor(username: string): ConnectionDetails {
+  function detailsFor(backendServiceId: string, username: string): ConnectionDetails {
     return {
       host: config.publicHost,
       port: config.publicPort,
@@ -121,6 +132,7 @@ export function valkeyDriver(
       // rather than a numbered database. `0` is the only honest answer.
       database: "0",
       username,
+      keyPrefix: valkeyKeyPrefix(backendServiceId),
     }
   }
 
@@ -212,7 +224,7 @@ export function valkeyDriver(
     const secret = await issue(input.backendServiceId, username)
 
     return {
-      ...detailsFor(username),
+      ...detailsFor(input.backendServiceId, username),
       connectionUri: valkeyUri({
         scheme,
         host: config.publicHost,
@@ -231,10 +243,10 @@ export function valkeyDriver(
   }
 
   async function details(backendServiceId: string): Promise<ConnectionDetails> {
-    return detailsFor((await locate(backendServiceId)).username)
+    return detailsFor(backendServiceId, (await locate(backendServiceId)).username)
   }
 
-  async function rotateCredentials(backendServiceId: string): Promise<string> {
+  async function rotateCredentials(backendServiceId: string) {
     const existing = await locate(backendServiceId)
 
     /*
@@ -274,13 +286,16 @@ export function valkeyDriver(
       return fresh
     })
 
-    return valkeyUri({
-      scheme,
-      host: config.publicHost,
-      port: config.publicPort,
-      username: existing.username,
-      secret,
-    })
+    return {
+      connectionUri: valkeyUri({
+        scheme,
+        host: config.publicHost,
+        port: config.publicPort,
+        username: existing.username,
+        secret,
+      }),
+      keyPrefix: valkeyKeyPrefix(backendServiceId),
+    }
   }
 
   async function suspend(backendServiceId: string): Promise<void> {

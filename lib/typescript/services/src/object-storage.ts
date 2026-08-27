@@ -429,8 +429,8 @@ export function objectStorageDriver(
     })
   }
 
-  async function rotateCredentials(backendServiceId: string): Promise<string> {
-    return uriFor(backendServiceId, await issue(backendServiceId))
+  async function rotateCredentials(backendServiceId: string) {
+    return { connectionUri: uriFor(backendServiceId, await issue(backendServiceId)) }
   }
 
   /**

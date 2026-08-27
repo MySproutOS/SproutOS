@@ -26,6 +26,7 @@ import {
   deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
+  getAdminUsers,
   getV1AndroidCatalogue,
   getV1AuthMe,
   getV1Orgs,
@@ -54,6 +55,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow,
   getV1OrgsByOrgSlugProjectsByProjectIdDomains,
   getV1OrgsByOrgSlugProjectsByProjectIdEnv,
   getV1OrgsByOrgSlugProjectsByProjectIdFiles,
@@ -97,10 +99,12 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
+  postAdminUsersImpersonate,
   postV1ApkSigningClaim,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthLogout,
+  postV1DeployMigrate,
   postV1DeployRelease,
   postV1DeployStaticUploadUrl,
   postV1DeployToken,
@@ -114,6 +118,8 @@ import {
   postV1OauthToken,
   postV1Orgs,
   postV1OrgsByOrgSlugAgentCredentials,
+  postV1OrgsByOrgSlugAgentProxyToken,
+  postV1OrgsByOrgSlugAgentProxyTokenRefresh,
   postV1OrgsByOrgSlugAnalyses,
   postV1OrgsByOrgSlugApiKeys,
   postV1OrgsByOrgSlugBillingTopup,
@@ -202,6 +208,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
+  GetAdminUsersData,
+  GetAdminUsersResponse,
   GetV1AndroidCatalogueData,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
@@ -272,6 +280,8 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvData,
@@ -397,6 +407,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateError,
+  PostAdminUsersImpersonateResponse,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimResponse,
   PostV1ApkSigningCompleteData,
@@ -404,6 +417,8 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
+  PostV1DeployMigrateData,
+  PostV1DeployMigrateResponse,
   PostV1DeployReleaseData,
   PostV1DeployReleaseResponse,
   PostV1DeployStaticUploadUrlData,
@@ -432,6 +447,10 @@ import type {
   PostV1OrgsByOrgSlugAgentCredentialsData,
   PostV1OrgsByOrgSlugAgentCredentialsError,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
+  PostV1OrgsByOrgSlugAgentProxyTokenData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshData,
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+  PostV1OrgsByOrgSlugAgentProxyTokenResponse,
   PostV1OrgsByOrgSlugAnalysesData,
   PostV1OrgsByOrgSlugAnalysesError,
   PostV1OrgsByOrgSlugAnalysesResponse,
@@ -2451,6 +2470,60 @@ export const putV1OrgsByOrgSlugAgentConfigMutation = (
   return mutationOptions
 }
 
+/**
+ * Mint an access/refresh pair for a sandbox agent to reach the LLM proxy
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAgentProxyTokenData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAgentProxyTokenResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugAgentProxyTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAgentProxyTokenResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugAgentProxyTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAgentProxyToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Exchange a refresh token for a new pair
+ */
+export const postV1OrgsByOrgSlugAgentProxyTokenRefreshMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugAgentProxyTokenRefreshData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugAgentProxyTokenRefresh({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData>,
 ) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions", options)
@@ -2943,6 +3016,34 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdMutation =
   }
   return mutationOptions
 }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow", options)
+
+/**
+ * The GitHub Actions workflow that deploys this project, generated for it
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
+    DefaultError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflowQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdData>,
@@ -4955,6 +5056,33 @@ export const postV1DeployReleaseMutation = (
 }
 
 /**
+ * Run an uploaded migrator against the project's database, and wait for it
+ */
+export const postV1DeployMigrateMutation = (
+  options?: Partial<Options<PostV1DeployMigrateData>>,
+): UseMutationOptions<
+  PostV1DeployMigrateResponse,
+  DefaultError,
+  Options<PostV1DeployMigrateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1DeployMigrateResponse,
+    DefaultError,
+    Options<PostV1DeployMigrateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1DeployMigrate({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
  * Claim the oldest APK awaiting signature. Polled by the on-premises signer.
  */
 export const postV1ApkSigningClaimMutation = (
@@ -5046,3 +5174,100 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
+
+export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
+  createQueryKey("getAdminUsers", options)
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsersOptions = (options?: Options<GetAdminUsersData>) =>
+  queryOptions<
+    GetAdminUsersResponse,
+    DefaultError,
+    GetAdminUsersResponse,
+    ReturnType<typeof getAdminUsersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getAdminUsers({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getAdminUsersQueryKey(options),
+  })
+
+export const getAdminUsersInfiniteQueryKey = (
+  options?: Options<GetAdminUsersData>,
+): QueryKey<Options<GetAdminUsersData>> => createQueryKey("getAdminUsers", options, true)
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsersInfiniteOptions = (options?: Options<GetAdminUsersData>) => {
+  const opts = infiniteQueryOptions<
+    GetAdminUsersResponse,
+    DefaultError,
+    InfiniteData<GetAdminUsersResponse>,
+    QueryKey<Options<GetAdminUsersData>>,
+    string | Pick<QueryKey<Options<GetAdminUsersData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetAdminUsersData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getAdminUsers({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getAdminUsersInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonateMutation = (
+  options?: Partial<Options<PostAdminUsersImpersonateData>>,
+): UseMutationOptions<
+  PostAdminUsersImpersonateResponse,
+  PostAdminUsersImpersonateError,
+  Options<PostAdminUsersImpersonateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostAdminUsersImpersonateResponse,
+    PostAdminUsersImpersonateError,
+    Options<PostAdminUsersImpersonateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postAdminUsersImpersonate({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}

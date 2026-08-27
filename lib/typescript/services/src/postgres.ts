@@ -301,7 +301,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
    * would not change anything the customer holds — so both move, and the old URI stops working,
    * which is what rotation means.
    */
-  async function rotateCredentials(backendServiceId: string): Promise<string> {
+  async function rotateCredentials(backendServiceId: string) {
     const row = await locate(backendServiceId)
     assertSafeIdentifier(row.roleName)
     const password = generatePassword()
@@ -345,11 +345,13 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
         .execute()
     })
 
-    return postgresUri({
-      ...details,
-      password: secret,
-      ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
-    })
+    return {
+      connectionUri: postgresUri({
+        ...details,
+        password: secret,
+        ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+      }),
+    }
   }
 
   async function suspend(backendServiceId: string): Promise<void> {

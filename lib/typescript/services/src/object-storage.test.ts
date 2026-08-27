@@ -381,7 +381,8 @@ describe.runIf(reachable)("a provisioned bucket", () => {
     const second = await driver.rotateCredentials(backendServiceId)
 
     const before = parseObjectStorageUri(first.connectionUri).accessKeyId
-    const after = parseObjectStorageUri(second).accessKeyId
+    const after = parseObjectStorageUri(second.connectionUri).accessKeyId
+    expect(second.keyPrefix).toBeUndefined()
 
     expect(versionOf(after)).toBe(versionOf(before) + 1)
 

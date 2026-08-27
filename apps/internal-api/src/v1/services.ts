@@ -12,6 +12,7 @@ import {
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
   valkeyDriver,
+  valkeyKeyPrefix,
   valkeyServiceConfigFromEnv,
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
@@ -68,6 +69,32 @@ const CONNECTION_ENV_KEYS: Record<string, string[]> = {
   elasticsearch: ["ELASTICSEARCH_URL"],
 }
 
+export function connectionEnvironmentEntries(input: {
+  connectionUri: string
+  keyPrefix?: string
+  kind: string
+}): { isSecret: boolean; key: string; value: string }[] {
+  const keys = CONNECTION_ENV_KEYS[input.kind]
+  if (keys === undefined) return []
+  return [
+    ...keys.map((key) => ({ isSecret: true, key, value: input.connectionUri })),
+    ...(input.kind === "valkey" && input.keyPrefix !== undefined
+      ? [{ isSecret: false, key: "BULLMQ_PREFIX", value: input.keyPrefix }]
+      : []),
+  ]
+}
+
+export function connectionResponse(
+  id: string,
+  result: { connectionUri: string; keyPrefix?: string },
+) {
+  return {
+    id,
+    connectionUri: result.connectionUri,
+    ...(result.keyPrefix === undefined ? {} : { keyPrefix: result.keyPrefix }),
+  }
+}
+
 /**
  * Put the connection URI where the application will actually find it.
  *
@@ -85,19 +112,19 @@ const CONNECTION_ENV_KEYS: Record<string, string[]> = {
  */
 async function injectConnectionUri(input: {
   connectionUri: string
+  keyPrefix?: string
   kind: string
   projectId: string | null
 }): Promise<void> {
   if (input.projectId === null) return
-  const keys = CONNECTION_ENV_KEYS[input.kind]
-  if (keys === undefined) return
+  const entries = connectionEnvironmentEntries(input)
 
-  for (const key of keys) {
+  for (const entry of entries) {
     try {
-      const sealed = await sealEnvVarValue(input.projectId, key, input.connectionUri)
+      const sealed = await sealEnvVarValue(input.projectId, entry.key, entry.value)
       await crudProjectEnvVar(db).upsert({
-        isSecret: true,
-        key,
+        isSecret: entry.isSecret,
+        key: entry.key,
         projectId: input.projectId,
         // Every environment: a preview deployment that cannot reach the database is a preview that
         // proves nothing. A branch-scoped URI replaces this when the ephemeral-environment work
@@ -111,7 +138,7 @@ async function injectConnectionUri(input: {
       console.error(
         JSON.stringify({
           error: String(error),
-          key,
+          key: entry.key,
           level: "error",
           message: "could not write the connection URI into the project environment",
           projectId: input.projectId,
@@ -271,6 +298,7 @@ const app = new Hono()
           port: row.host === null ? null : config.publicPort,
           database: row.username === null ? null : databaseNameOf(row.id),
           username: row.username,
+          ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
           createdAt: row.createdAt.toISOString(),
         })),
       })
@@ -370,6 +398,7 @@ const app = new Hono()
         // is stored as a hash on purpose.
         await injectConnectionUri({
           connectionUri: result.connectionUri,
+          keyPrefix: result.keyPrefix,
           kind: body.kind,
           projectId: body.projectId ?? null,
         })
@@ -383,7 +412,7 @@ const app = new Hono()
           ...auditContext(c),
         })
 
-        return c.json({ id: backendServiceId, connectionUri: result.connectionUri }, 201)
+        return c.json(connectionResponse(backendServiceId, result), 201)
       } catch (error) {
         // The row stays, marked `error`, rather than being deleted: provisioning may have created
         // a database before it failed, and a row is what `destroy` needs to clean that up.
@@ -507,7 +536,8 @@ const app = new Hono()
       if (service === undefined) return throwNotFound(c, "Service not found")
 
       try {
-        const connectionUri = await driverFor(service.kind).rotateCredentials(serviceId)
+        const result = await driverFor(service.kind).rotateCredentials(serviceId)
+        const { connectionUri } = result
 
         // The replacement belongs to whoever rotated it. An application rotating its own credential
         // keeps it revocable; a user rotating takes ownership, which is how they take a database
@@ -526,6 +556,13 @@ const app = new Hono()
           await captureQueueSecret(c.var.organization.id, serviceId, connectionUri)
         }
 
+        await injectConnectionUri({
+          connectionUri,
+          keyPrefix: result.keyPrefix,
+          kind: service.kind,
+          projectId: service.projectId,
+        })
+
         await crudAuditLog(db).record({
           organizationId: c.var.organization.id,
           actorUserId: c.var.user.id,
@@ -535,7 +572,7 @@ const app = new Hono()
           ...auditContext(c),
         })
 
-        return c.json({ id: serviceId, connectionUri })
+        return c.json(connectionResponse(serviceId, result))
       } catch (error) {
         if (error instanceof ServiceNotProvisionedError) {
           return throwBadRequest(c, "That service has not finished provisioning")
@@ -590,7 +627,7 @@ const app = new Hono()
 async function owned(organizationId: string, serviceId: string) {
   return await db
     .selectFrom("backendService")
-    .select(["id", "kind", "name"])
+    .select(["id", "kind", "name", "projectId"])
     .where("id", "=", serviceId)
     .where("organizationId", "=", organizationId)
     .where("deletedAt", "is", null)

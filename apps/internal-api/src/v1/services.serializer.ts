@@ -28,6 +28,7 @@ export const servicesSchemaService = Type.Object({
   port: Nullable(Type.Number()),
   database: Nullable(Type.String()),
   username: Nullable(Type.String()),
+  keyPrefix: Type.Optional(Type.String()),
   createdAt: Type.String({ format: "date-time" }),
 })
 
@@ -46,6 +47,7 @@ export const servicesSchemaCreateRequest = Type.Object({
 export const servicesSchemaConnectionResponse = Type.Object({
   id: UUID7String,
   connectionUri: Type.String(),
+  keyPrefix: Type.Optional(Type.String()),
 })
 
 export const servicesSchemaIdParam = Type.Object({

@@ -45,12 +45,14 @@ export {
 export {
   SecretNotRecoverableError,
   valkeyDriver,
+  valkeyKeyPrefix,
   valkeyServiceConfigFromEnv,
   valkeyUri,
   type ValkeyServiceConfig,
 } from "./valkey"
 export {
   type ConnectionDetails,
+  type CredentialRotationResult,
   type ProvisionInput,
   type ProvisionResult,
   type ServiceDriver,

@@ -157,7 +157,8 @@ export const DOCS: Doc[] = [
       {
         heading: "Valkey and queues",
         body: [
-          "A `redis://` URI. BullMQ and Celery both work against it unmodified.",
+          "A `redis://` URI. BullMQ must use the `keyPrefix` returned with the URI: `new Queue(name, { connection, prefix: process.env.BULLMQ_PREFIX })`. For project-attached services, SproutOS injects `BULLMQ_PREFIX` automatically alongside `REDIS_URL` and `VALKEY_URL`.",
+          "Celery is unaffected and works without a prefix because its broker keys are ordinary Valkey keys rather than keys constructed inside Lua arguments.",
           "You do not need to run a worker process. Adding a job invokes your function; see Background workers for what the event looks like.",
         ],
       },

@@ -140,7 +140,7 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
     return detailsFor((await locate(backendServiceId)).username)
   }
 
-  async function rotateCredentials(backendServiceId: string): Promise<string> {
+  async function rotateCredentials(backendServiceId: string) {
     const existing = await locate(backendServiceId)
 
     /*
@@ -172,13 +172,15 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
       return fresh
     })
 
-    return searchUri({
-      scheme,
-      host: config.publicHost,
-      port: config.publicPort,
-      username: existing.username,
-      secret,
-    })
+    return {
+      connectionUri: searchUri({
+        scheme,
+        host: config.publicHost,
+        port: config.publicPort,
+        username: existing.username,
+        secret,
+      }),
+    }
   }
 
   async function suspend(backendServiceId: string): Promise<void> {
