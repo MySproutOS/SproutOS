@@ -122,6 +122,28 @@ export type NeonBranch = {
 }
 export type NeonConnectionUri = { connection_uri: string }
 
+export const NEON_CONSUMPTION_METRICS = [
+  "compute_unit_seconds",
+  "root_branch_bytes_month",
+  "child_branch_bytes_month",
+] as const
+
+export type NeonConsumptionMetricName = (typeof NEON_CONSUMPTION_METRICS)[number]
+export type NeonConsumptionMetric = { metric_name: string; value: number }
+export type NeonConsumptionTimeframe = {
+  timeframe_start: string
+  timeframe_end: string
+  metrics: NeonConsumptionMetric[]
+}
+export type NeonConsumptionPeriod = {
+  period_id: string
+  period_plan: string
+  period_start: string
+  period_end?: string
+  consumption: NeonConsumptionTimeframe[]
+}
+export type NeonProjectConsumption = { project_id: string; periods: NeonConsumptionPeriod[] }
+
 export function neonApi(config: NeonConfig) {
   async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms))
@@ -210,6 +232,64 @@ export function neonApi(config: NeonConfig) {
   }
 
   /**
+   * Neon's invoice-aligned consumption, in closed timeframes.
+   *
+   * This is deliberately the current `/v2` consumption endpoint rather than counters on project
+   * details. The latter reset at billing boundaries and cannot distinguish a retry from new usage;
+   * this endpoint returns stable time windows and does not wake suspended computes.
+   */
+  async function projectConsumption(input: {
+    projectIds: string[]
+    from: Date
+    to: Date
+  }): Promise<NeonProjectConsumption[]> {
+    if (input.projectIds.length === 0 || input.projectIds.length > 100) {
+      throw new RangeError("Neon consumption accepts between 1 and 100 project ids")
+    }
+    if (
+      !Number.isFinite(input.from.getTime()) ||
+      !Number.isFinite(input.to.getTime()) ||
+      input.from >= input.to
+    ) {
+      throw new RangeError("Neon consumption requires a valid, increasing time range")
+    }
+
+    const projects: NeonProjectConsumption[] = []
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const query = new URLSearchParams({
+        from: input.from.toISOString(),
+        to: input.to.toISOString(),
+        granularity: "hourly",
+        org_id: config.orgId,
+        metrics: NEON_CONSUMPTION_METRICS.join(","),
+        project_ids: input.projectIds.join(","),
+        limit: "100",
+      })
+      if (cursor !== undefined) query.set("cursor", cursor)
+      const response = await call<{
+        projects: NeonProjectConsumption[]
+        pagination?: { cursor?: string | null }
+      }>(config, "GET", `/consumption_history/v2/projects?${query.toString()}`)
+      projects.push(...response.projects)
+
+      const next = response.pagination?.cursor ?? undefined
+      if (next !== undefined && seenCursors.has(next)) {
+        throw new NeonApiError(
+          200,
+          "/consumption_history/v2/projects",
+          `repeated pagination cursor ${JSON.stringify(next)}`,
+        )
+      }
+      if (next !== undefined) seenCursors.add(next)
+      cursor = next
+    } while (cursor !== undefined)
+
+    return projects
+  }
+
+  /**
    * Branch a database, copy-on-write.
    *
    * Omitting `parent_lsn` branches from where the parent is now, which is what a customer asking for
@@ -266,6 +346,7 @@ export function neonApi(config: NeonConfig) {
     deleteProject,
     listBranches,
     listProjects,
+    projectConsumption,
     waitForOperations,
   }
 }

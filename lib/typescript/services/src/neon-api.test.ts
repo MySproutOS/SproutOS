@@ -1,4 +1,5 @@
 import "@sproutos/db"
+import { createServer } from "node:http"
 import { afterAll, describe, expect, it } from "vitest"
 import { neonApi, neonApiConfigFromEnv } from "./neon-api"
 
@@ -50,6 +51,64 @@ describe("neonApiConfigFromEnv", () => {
 
   it("refuses to create projects outside the organization", () => {
     expect(() => neonApiConfigFromEnv({ NEON_API_KEY: "napi_x" })).toThrow(/NEON_ORG_ID/)
+  })
+})
+
+describe("project consumption", () => {
+  it("requests invoice-aligned metrics and follows provider pagination", async () => {
+    const requests: URL[] = []
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1")
+      requests.push(url)
+      response.setHeader("Content-Type", "application/json")
+      response.end(
+        JSON.stringify(
+          url.searchParams.has("cursor")
+            ? {
+                projects: [{ project_id: "project-b", periods: [] }],
+                pagination: {},
+              }
+            : {
+                projects: [{ project_id: "project-a", periods: [] }],
+                pagination: { cursor: "next-page" },
+              },
+        ),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    try {
+      const address = server.address()
+      if (address === null || typeof address === "string") throw new Error("server did not listen")
+      const api = neonApi({
+        apiKey: "test-key",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        orgId: "org-test",
+        regionId: "aws-us-east-1",
+      })
+      const projects = await api.projectConsumption({
+        projectIds: ["project-a", "project-b"],
+        from: new Date("2026-08-26T00:00:00.000Z"),
+        to: new Date("2026-08-26T01:00:00.000Z"),
+      })
+
+      expect(projects.map((project) => project.project_id)).toEqual(["project-a", "project-b"])
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.pathname).toBe("/consumption_history/v2/projects")
+      expect(requests[0]?.searchParams.get("org_id")).toBe("org-test")
+      expect(requests[0]?.searchParams.get("granularity")).toBe("hourly")
+      expect(requests[0]?.searchParams.get("project_ids")).toBe("project-a,project-b")
+      expect(requests[0]?.searchParams.get("metrics")).toBe(
+        "compute_unit_seconds,root_branch_bytes_month,child_branch_bytes_month",
+      )
+      expect(requests[1]?.searchParams.get("cursor")).toBe("next-page")
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => {
+          if (error === undefined) resolve()
+          else reject(error)
+        }),
+      )
+    }
   })
 })
 

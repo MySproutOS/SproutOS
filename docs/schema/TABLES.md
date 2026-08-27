@@ -69,6 +69,7 @@ All ids are app-supplied UUIDv7 (`v7()`) unless noted. Timestamps are `timestamp
 | `usage_rollup`              | billing        | minute → hour → day cascade                                                                    | `organization`, `project`, `credit_transaction`                              |
 | `metering_outbox`           | billing        | transactional control-plane usage awaiting Kafka publication                                   | —                                                                            |
 | `metering_import_state`     | billing        | ClickHouse import cursor per consumer                                                          | —                                                                            |
+| `neon_metering_state`       | billing        | last closed Neon consumption window committed per Postgres service                             | `backend_service`                                                            |
 | `valkey_metering_state`     | billing        | last successful per-service queue-memory observation                                           | `backend_service`                                                            |
 | `statement`                 | billing        | the monthly explicable bill                                                                    | `organization`                                                               |
 | `statement_line_item`       | billing        | per-dimension legs plus the visible overhead row                                               | `statement`, `project`                                                       |
@@ -172,11 +173,11 @@ openrouter_api_key`. Auto-update defaults ON only for `claude_subscription`
 (see [Conflicts resolved](#conflicts-resolved)). `agent_event` holds customer source code and
 possibly secrets the agent read — a 30-day default TTL is set **before** the first run, not after.
 
-### Billing — 18 tables
+### Billing — 19 tables
 
 `payment_method`, `stripe_customer`, `credit_account`, `credit_transaction`, `credit_ledger_entry`,
 `credit_balance_cache`, `credit_hold`, `price_book`, `price_book_item`, `usage_rollup`,
-`metering_outbox`, `metering_import_state`, `valkey_metering_state`, `statement`,
+`metering_outbox`, `metering_import_state`, `neon_metering_state`, `valkey_metering_state`, `statement`,
 `statement_line_item`, `topup`,
 `stripe_webhook_event`, `refund`.
 

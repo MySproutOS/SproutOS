@@ -100,6 +100,18 @@ export {
   type ValkeyMemorySample,
 } from "./valkey-metering"
 export {
+  meterNeonDatabases,
+  meterNeonDatabasesJob,
+  METER_NEON_DATABASES_KIND,
+  neonByteMonthsToGibHours,
+  neonConsumptionCutoff,
+  NEON_CONSUMPTION_BATCH_SIZE,
+  NEON_CONSUMPTION_LAG_MS,
+  NEON_CONSUMPTION_LOOKBACK_MS,
+  NEON_CONSUMPTION_MAX_BATCHES,
+  type NeonMeteringOptions,
+} from "./neon-metering"
+export {
   CLAIM_TIMEOUT_MS,
   claimSigningJob,
   completeSigning,

@@ -28,6 +28,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const reconcileUsageKey = `${JOB_KINDS.reconcileActiveUsage}:2099-12-31T23`
     const importKey = `${JOB_KINDS.importUsage}:${now.toISOString().slice(0, 15)}`
     const creditKey = `${JOB_KINDS.refreshCreditStates}:2099-12-31T23:55`
+    const neonMeteringKey = `${JOB_KINDS.meterNeonDatabases}:2099-12-31T23`
     const valkeyMeteringKey = `${JOB_KINDS.meterValkeyQueues}:2099-12-31T23:55`
     const searchSecurityKey = `${JOB_KINDS.reconcileSearchSecurity}:2099-12-31T23`
     const valkeyAclKey = `${JOB_KINDS.reconcileValkeyAcl}:2099-12-31T23`
@@ -45,6 +46,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
         reconcileUsageKey,
         importKey,
         creditKey,
+        neonMeteringKey,
         valkeyMeteringKey,
         searchSecurityKey,
         valkeyAclKey,
@@ -54,6 +56,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
 
     expect(scheduled).toEqual([
       { kind: JOB_KINDS.importUsage, idempotencyKey: importKey },
+      { kind: JOB_KINDS.meterNeonDatabases, idempotencyKey: neonMeteringKey },
       { kind: JOB_KINDS.meterValkeyQueues, idempotencyKey: valkeyMeteringKey },
       { kind: JOB_KINDS.reconcileActiveUsage, idempotencyKey: reconcileUsageKey },
       { kind: JOB_KINDS.refreshCreditStates, idempotencyKey: creditKey },
