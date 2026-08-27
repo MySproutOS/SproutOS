@@ -276,8 +276,10 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
                           ? { templateOwner: template.owner, templateRepo: template.repo }
                           : {}),
                       },
+              // This is part of the API JSON body. Putting it beside `body` makes it client
+              // metadata, which the generated client accepts and silently omits from the request.
+              ...(source === "repository" ? { rootDir: rootDir.trim() } : {}),
             },
-            ...(source === "repository" ? { rootDir: rootDir.trim() } : {}),
           },
           {
             onSuccess: (result) => {
