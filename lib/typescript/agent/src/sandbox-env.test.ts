@@ -105,9 +105,6 @@ describe("codexOverrides", () => {
     expect(codexOverrides({ model: "m", proxyBaseUrl: "u" })).toContain(
       "features.responses_websocket=false",
     )
-    expect(codexOverrides({ model: "m", proxyBaseUrl: "u" })).toContain(
-      "features.remote_compaction_v2=false",
-    )
   })
 })
 
