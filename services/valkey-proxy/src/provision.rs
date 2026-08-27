@@ -97,6 +97,41 @@ impl AclProvisioner {
         scan::execute(&self.backend, request, prefix).await
     }
 
+    /// Grant exact tenant-scoped glob patterns before PSUBSCRIBE/PUNSUBSCRIBE.
+    ///
+    /// Valkey does not infer that a requested `tenant:news*` pattern is contained by the static
+    /// `&tenant:*` ACL rule. It requires the subscription glob itself as a channel rule. The proxy
+    /// has already prepended the immutable tenant prefix before this method is called, so adding
+    /// these rules preserves the engine boundary while allowing useful pattern subscriptions.
+    pub async fn allow_channel_patterns(
+        &self,
+        identity: &TenantIdentity,
+        patterns: &[Vec<u8>],
+    ) -> Result<()> {
+        if patterns.is_empty() {
+            return Ok(());
+        }
+        let prefix = crate::keyspace::prefix_for(identity);
+        anyhow::ensure!(
+            patterns.iter().all(|pattern| pattern.starts_with(&prefix)),
+            "refusing a channel pattern outside the tenant namespace"
+        );
+        let mut args = vec![
+            b"ACL".to_vec(),
+            b"SETUSER".to_vec(),
+            identity.username().into_bytes(),
+        ];
+        args.extend(patterns.iter().map(|pattern| {
+            let mut rule = Vec::with_capacity(pattern.len() + 1);
+            rule.push(b'&');
+            rule.extend_from_slice(pattern);
+            rule
+        }));
+        self.admin_bytes(args)
+            .await
+            .context("could not grant a tenant Valkey channel pattern")
+    }
+
     async fn provision(&self, identity: &TenantIdentity) -> Result<()> {
         let args = acl::setuser_args(&self.root_key, identity);
         if let Err(cause) = self.admin_bytes(args).await {
