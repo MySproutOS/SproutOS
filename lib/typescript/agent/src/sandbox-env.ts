@@ -135,16 +135,5 @@ export function codexOverrides(input: { proxyBaseUrl: string; model: string }): 
     */
     "-c",
     "features.responses_websocket=false",
-    /*
-      Codex 0.150 enables remote compaction by default and consequently adds a
-      `context_management` field to the first Responses request. The public OpenAI endpoint
-      currently rejects that field for this provider/model combination with
-      `400 context_management: Extra inputs are not permitted`, before the model can execute a
-      single tool. SproutOS turns are bounded and start with a fresh CLI process, so client-side
-      context replay is sufficient here; disable the optional remote-compaction transport until
-      the upstream accepts it consistently.
-    */
-    "-c",
-    "features.remote_compaction_v2=false",
   ]
 }

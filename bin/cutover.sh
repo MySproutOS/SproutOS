@@ -38,6 +38,17 @@ esac
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${LISTENER_ARN:?LISTENER_ARN is not set}"
 
+ASG_SCALE_RETRIES="${CUTOVER_ASG_SCALE_RETRIES:-5}"
+ASG_SCALE_RETRY_DELAY="${CUTOVER_ASG_SCALE_RETRY_DELAY:-5}"
+if ! [[ "$ASG_SCALE_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CUTOVER_ASG_SCALE_RETRIES must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "$ASG_SCALE_RETRY_DELAY" =~ ^[0-9]+$ ]]; then
+  echo "CUTOVER_ASG_SCALE_RETRY_DELAY must be a non-negative integer" >&2
+  exit 2
+fi
+
 # The website and the API are listener *rules* matched on host; the router is the listener's
 # *default* action. That is the only place in this script the services differ, and it is why the
 # rule ARN is required for two of the three and meaningless for the last.
@@ -215,4 +226,40 @@ if [ "$settled" != "$target_arn" ]; then
   exit 1
 fi
 
+echo "$SERVICE traffic is on $TARGET; scaling drained $other_colour capacity to zero"
+
+# The old group is no longer serving, so keeping its desired capacity is both a second set of
+# background workers consuming jobs and an instance bill for the idle colour. OpenTofu deliberately
+# ignores desired-capacity drift because fill and cutover own it; this is cutover's half of that
+# contract. Scale only after the fresh listener read above proves traffic moved.
+drained_asg="$NAME_PREFIX-$short-$other_colour"
+attempt=1
+scaled=""
+while [ "$attempt" -le "$ASG_SCALE_RETRIES" ]; do
+  if aws autoscaling set-desired-capacity \
+    --auto-scaling-group-name "$drained_asg" \
+    --desired-capacity 0 >/dev/null; then
+    desired=$(aws autoscaling describe-auto-scaling-groups \
+      --auto-scaling-group-names "$drained_asg" \
+      --query 'AutoScalingGroups[0].DesiredCapacity' \
+      --output text 2>/dev/null || true)
+    if [ "$desired" = "0" ]; then
+      scaled=1
+      break
+    fi
+    echo "$SERVICE: desired capacity read-back for $drained_asg was '$desired' (attempt $attempt/$ASG_SCALE_RETRIES)" >&2
+  else
+    echo "$SERVICE: could not scale $drained_asg to 0 (attempt $attempt/$ASG_SCALE_RETRIES)" >&2
+  fi
+
+  if [ "$attempt" -lt "$ASG_SCALE_RETRIES" ]; then sleep "$ASG_SCALE_RETRY_DELAY"; fi
+  attempt=$((attempt + 1))
+done
+
+if [ -z "$scaled" ]; then
+  echo "$SERVICE traffic moved to $TARGET, but drained group $drained_asg did not reach desired capacity 0" >&2
+  exit 1
+fi
+
+echo "$SERVICE: scaled drained $other_colour group $drained_asg to 0"
 echo "$SERVICE is on $TARGET"

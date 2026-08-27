@@ -117,17 +117,12 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     /*
       Whatever else the credential's kind requires — today, Anthropic's OAuth opt-in.
 
-      Inserted rather than appended, so a client that sent its own value for one of these does not
-      end up with two. The proxy is the side that knows what kind of credential this is; the client
-      only knows it has a token.
+      The proxy is the side that knows what kind of credential this is; the client only knows it
+      has a token. Ordinary headers replace client values. Anthropic's feature list is the exception:
+      its OAuth opt-in is merged with the protocol features selected by Claude Code.
     */
     for (name, value) in session.upstream.extra_headers() {
-        if let (Ok(name), Ok(value)) = (
-            HeaderName::from_bytes(name.as_bytes()),
-            HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, value);
-        }
+        merge_upstream_header(&mut headers, name, value);
     }
 
     let bytes: bytes::Bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
@@ -218,6 +213,42 @@ async fn forward(state: Arc<ProxyState>, session: Session, request: Request) -> 
     *response.status_mut() = status;
     *response.headers_mut() = response_headers;
     response
+}
+
+/// Add a provider-required header without erasing feature opt-ins sent by the harness.
+///
+/// Anthropic uses one comma-separated `anthropic-beta` header for multiple independent features.
+/// Claude Code sends the betas matching fields in its request body; an OAuth subscription adds a
+/// separate authentication beta here. Replacing the former with the latter makes valid body fields
+/// fail upstream as unknown inputs. Other provider headers retain ordinary replacement semantics.
+fn merge_upstream_header(headers: &mut HeaderMap, name: &str, required: &str) {
+    let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+        return;
+    };
+
+    let value = if name.as_str() == "anthropic-beta" {
+        let existing = headers
+            .get(&name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        let already_present = existing
+            .split(',')
+            .map(str::trim)
+            .any(|value| value == required);
+        if existing.is_empty() {
+            required.to_string()
+        } else if already_present {
+            existing.to_string()
+        } else {
+            format!("{existing},{required}")
+        }
+    } else {
+        required.to_string()
+    };
+
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        headers.insert(name, value);
+    }
 }
 
 fn drain_to_client<S, E>(
@@ -398,6 +429,38 @@ mod tests {
         assert!(HOP_BY_HOP.contains(&"authorization"));
         assert!(HOP_BY_HOP.contains(&"x-api-key"));
         assert!(HOP_BY_HOP.contains(&"host"));
+    }
+
+    #[test]
+    fn oauth_authentication_preserves_claude_codes_beta_features() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "anthropic-beta",
+            HeaderValue::from_static("context-management-2025-06-27"),
+        );
+
+        merge_upstream_header(&mut headers, "anthropic-beta", "oauth-2025-04-20");
+
+        assert_eq!(
+            headers.get("anthropic-beta").unwrap(),
+            "context-management-2025-06-27,oauth-2025-04-20"
+        );
+    }
+
+    #[test]
+    fn oauth_authentication_does_not_duplicate_its_beta() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "anthropic-beta",
+            HeaderValue::from_static("context-management-2025-06-27, oauth-2025-04-20"),
+        );
+
+        merge_upstream_header(&mut headers, "anthropic-beta", "oauth-2025-04-20");
+
+        assert_eq!(
+            headers.get("anthropic-beta").unwrap(),
+            "context-management-2025-06-27, oauth-2025-04-20"
+        );
     }
 
     #[tokio::test]

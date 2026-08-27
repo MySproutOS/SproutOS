@@ -2,10 +2,9 @@
 #
 # `cutover.sh` against a stubbed `aws`.
 #
-# The AWS calls are three describes and one modify, and what is worth testing is the decision
-# between them: which colour is idle, whether it is healthy, and what happens when the answer is
-# neither. A real load balancer would test the same logic more slowly and only in an account nobody
-# has yet.
+# The fake covers both load-balancer movement and the drained Auto Scaling group. What is worth
+# testing is the decision between them: which colour is idle, whether it is healthy, whether the
+# traffic write stuck, and whether the old desired capacity reached zero afterwards.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -66,6 +65,28 @@ case "$2" in
       | sed 's/"TargetGroupArn":"//; s/","Weight":100//')
     [ -n "$live" ] && echo "$live" > "$STUB_STATE"
     ;;
+  set-desired-capacity)
+    echo "$*" >> "$STUB_CALLS"
+    attempts=$(cat "$STUB_SCALE_ATTEMPTS")
+    attempts=$((attempts + 1))
+    echo "$attempts" > "$STUB_SCALE_ATTEMPTS"
+    if [ "$attempts" -le "$STUB_SCALE_FAILS" ]; then exit 1; fi
+    for ((i = 1; i <= $#; i++)); do
+      if [ "${!i}" = "--auto-scaling-group-name" ]; then
+        j=$((i + 1))
+        group=${!j}
+      fi
+    done
+    echo 0 > "$STUB_ASG_STATE/$group"
+    ;;
+  describe-auto-scaling-groups)
+    for ((i = 1; i <= $#; i++)); do
+      if [ "${!i}" = "--auto-scaling-group-names" ]; then
+        j=$((i + 1))
+        cat "$STUB_ASG_STATE/${!j}"
+      fi
+    done
+    ;;
 esac
 STUB
 chmod +x "$STUB_DIR/aws"
@@ -77,15 +98,26 @@ export WEBSITE_RULE_ARN=arn:rule
 export API_RULE_ARN=arn:api-rule
 export STUB_CALLS="$STUB_DIR/calls"
 export STUB_STATE="$STUB_DIR/live"
+export STUB_ASG_STATE="$STUB_DIR/asg"
+export STUB_SCALE_ATTEMPTS="$STUB_DIR/scale-attempts"
+export CUTOVER_ASG_SCALE_RETRY_DELAY=0
+mkdir -p "$STUB_ASG_STATE"
 
 # `live` is the colour the listener starts on for this case; the stub file carries it from there.
 run() {
   : > "$STUB_CALLS"
   echo "$STUB_LIVE" > "$STUB_STATE"
+  echo 0 > "$STUB_SCALE_ATTEMPTS"
+  for service in web router; do
+    for colour in blue green; do
+      echo 1 > "$STUB_ASG_STATE/sproutos-$service-$colour"
+    done
+  done
   # Exported, not merely set. The stub is a child process, and a `STUB_HEALTHY` that never reached
   # it left the script comparing an empty string — which errors, and an error in a `[` test reads as
   # false, so every health check passed without checking anything.
   export STUB_HEALTHY
+  export STUB_SCALE_FAILS="${STUB_SCALE_FAILS:-0}"
   # `SEARCH_RULE_ARN` the same way, and for the same reason the comment above gives: a variable
   # merely *set* on the `run` line is a shell variable, and `cutover.sh` runs in a child process
   # that never sees it. Set-and-not-exported is how the search rule silently stopped being moved —
@@ -114,6 +146,12 @@ check "modifies the listener, not a rule" "1" "$(grep -c 'modify-listener' "$STU
 # `Type=forward,TargetGroupArn=…` would cause on the next apply.
 check "sends the idle colour to zero, not off the listener" "1" \
   "$(grep -c '"TargetGroupArn":"arn:blue","Weight":0' "$STUB_CALLS")"
+check "scales the drained router colour to zero after cutover" "1" \
+  "$(grep -c 'set-desired-capacity --auto-scaling-group-name sproutos-router-blue --desired-capacity 0' "$STUB_CALLS")"
+check "reads back the drained router desired capacity" "0" \
+  "$(cat "$STUB_ASG_STATE/sproutos-router-blue")"
+check "leaves the serving router colour running" "1" \
+  "$(cat "$STUB_ASG_STATE/sproutos-router-green")"
 
 STUB_LIVE="arn:green" STUB_HEALTHY=2 out=$(run router)
 check "moves back the other way with the same command" "1" "$(grep -c 'router is on blue' <<<"$out")"
@@ -124,6 +162,8 @@ STUB_LIVE="arn:blue" STUB_HEALTHY=1 out=$(run website)
 check "modifies rules for the website, never the listener" "0" \
   "$(grep -c 'modify-listener' "$STUB_CALLS")"
 check "one healthy target is enough to move" "2" "$(grep -c 'modify-rule' "$STUB_CALLS")"
+check "scales the drained website colour, not a router group" "1" \
+  "$(grep -c 'set-desired-capacity --auto-scaling-group-name sproutos-web-blue --desired-capacity 0' "$STUB_CALLS")"
 
 # The two refusals.
 #
@@ -143,6 +183,7 @@ check "changes nothing when it cannot tell" "0" "$(wc -l < "$STUB_CALLS" | tr -d
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router --to blue); status=$?
 check "is a no-op when already there" "0" "$status"
 check "and changes nothing" "0" "$(wc -l < "$STUB_CALLS" | tr -d ' ')"
+check "and does not scale either colour" "0" "$(grep -c 'set-desired-capacity' "$STUB_CALLS")"
 
 # The read-back guard: if something else moved the listener between the check and the write, the
 # cutover must fail loudly rather than report a success that did not happen.
@@ -153,6 +194,7 @@ check "reports success when the write sticks" "0" "$status"
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router --dry-run)
 check "dry run sends no mutation" "0" "$(wc -l < "$STUB_CALLS" | tr -d ' ')"
 check "dry run still says what it would do" "1" "$(grep -c 'dry run' <<<"$out")"
+check "dry run does not scale the idle group" "0" "$(grep -c 'set-desired-capacity' "$STUB_CALLS")"
 
 # `website` is one deployment on two ports, so the cutover moves two rules. If it moved only the
 # apex, the API would be left pointing at the colour the website had just drained — and the site's
@@ -208,7 +250,7 @@ check "postgres goes to the same colour as the router" "1" \
 # this asserted `1` and failed with `3` — the code was right and the check was written backwards,
 # which is the direction worth catching early.
 check "the router's listener is written after the extras" \
-  "$(wc -l < "$STUB_CALLS" | tr -d ' ')" \
+  "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
 # All five at once, which is what a real router release now moves: the ALB listener it is the
@@ -226,6 +268,25 @@ check "and the front door still last" "5" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
 unset SEARCH_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN FORWARD_PROXY_LISTENER_ARN
+
+# A transient throttling or control-plane error after traffic moved must not strand the old group
+# at one instance. The mutation is idempotent, so retry it and require a fresh desired-capacity
+# read-back before reporting success.
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 STUB_SCALE_FAILS=2 out=$(run router); status=$?
+check "retries a failed drained-group scale-down" "0" "$status"
+check "needed three scale attempts after two failures" "3" "$(cat "$STUB_SCALE_ATTEMPTS")"
+check "eventually reads the drained group at zero" "0" \
+  "$(cat "$STUB_ASG_STATE/sproutos-router-blue")"
+unset STUB_SCALE_FAILS
+
+STUB_LIVE="arn:blue" STUB_HEALTHY=2 STUB_SCALE_FAILS=99 out=$(run website); status=$?
+check "fails after bounded scale-down retries" "1" "$status"
+check "reports that traffic moved but capacity did not" "1" \
+  "$(grep -c 'traffic moved to green, but drained group' <<<"$out")"
+check "does not falsely report the whole cutover complete" "0" \
+  "$(grep -c 'website is on green' <<<"$out")"
+check "leaves the listener on the confirmed new colour" "arn:green" "$(cat "$STUB_STATE")"
+unset STUB_SCALE_FAILS
 
 out=$(run nonsense); status=$?
 check "rejects an unknown service" "2" "$status"
