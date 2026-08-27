@@ -25,4 +25,11 @@ delete_status=$(curl -sS -o /dev/null -w '%{http_code}' \
 case "$delete_status" in 200|204) ;; *)
   echo "OpenSearch proxy manager role DELETE returned $delete_status" >&2; exit 1;;
 esac
+config_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -u "sproutos_search_proxy_manager:$SEARCH_PROXY_SECURITY_ROOT_KEY" \
+  http://127.0.0.1:9200/_plugins/_security/api/securityconfig)
+[ "$config_status" = 403 ] || {
+  echo "OpenSearch proxy manager read securityconfig with HTTP $config_status, expected 403" >&2
+  exit 1
+}
 echo "OpenSearch Security initialized; anonymous denied, admin authenticated, proxy manager scoped"

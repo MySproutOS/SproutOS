@@ -35,6 +35,15 @@ if ! grep -Fq '# SproutOS security certificate identities' "$OPENSEARCH_CONFIG";
     'plugins.security.restapi.roles_enabled:' \
     '  - sproutos_search_admin' \
     '  - sproutos_search_proxy_manager' >> "$OPENSEARCH_CONFIG"
+
+  # A role listed above can reach every Security REST endpoint by default. The manager needs only
+  # roles, internal users, and role mappings; explicitly close every other 3.3 management family.
+  # Security-config mutation is separately disabled by default, but reads still expose internals.
+  for endpoint in ACTIONGROUPS CACHE CONFIG LICENSE NODESDN PERMISSIONSINFO SSL SYSTEMINFO TENANTS; do
+    printf '%s\n' \
+      "plugins.security.restapi.endpoints_disabled.sproutos_search_proxy_manager.$endpoint: [\"GET\",\"PUT\",\"POST\",\"DELETE\",\"PATCH\"]" \
+      >> "$OPENSEARCH_CONFIG"
+  done
 fi
 
 exec /usr/share/opensearch/opensearch-docker-entrypoint.sh "$@"
