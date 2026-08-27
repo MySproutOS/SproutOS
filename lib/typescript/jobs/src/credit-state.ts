@@ -1,6 +1,8 @@
 import { availableBalance } from "@lib/billing"
 import { clearCreditState, publishCreditState } from "@lib/lambda"
 import { Redis } from "ioredis"
+import type { DB } from "@sproutos/db"
+import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
 
 /**
@@ -32,21 +34,29 @@ export function refreshCreditStates(options?: { valkey: Redis }): JobHandler {
     for (const organization of organizations) {
       // Keep writes bounded instead of bursting every organization at the cache simultaneously.
       // eslint-disable-next-line no-await-in-loop
-      const balance = await availableBalance(db, organization.id)
-      if (balance <= 0n) {
-        // eslint-disable-next-line no-await-in-loop
-        await publishCreditState(client, organization.id, "exhausted")
-        exhausted += 1
-      } else {
-        // A top-up must actively remove an earlier refusal; waiting for the TTL would leave a
-        // paying customer offline for up to fifteen minutes.
-        // eslint-disable-next-line no-await-in-loop
-        await clearCreditState(client, organization.id)
-      }
+      if (await refreshOrganizationCreditState(db, client, organization.id)) exhausted += 1
     }
 
     console.info(
       `[billing] refreshed credit state for ${organizations.length} organization(s), ${exhausted} exhausted`,
     )
   }
+}
+
+/** Refresh one organization immediately after a balance-changing operation such as a top-up. */
+export async function refreshOrganizationCreditState(
+  db: Kysely<DB>,
+  client: Redis,
+  organizationId: string,
+): Promise<boolean> {
+  const balance = await availableBalance(db, organizationId)
+  if (balance <= 0n) {
+    await publishCreditState(client, organizationId, "exhausted")
+    return true
+  }
+
+  // A top-up must actively remove an earlier refusal; waiting for the TTL would leave a paying
+  // customer offline after Stripe has already confirmed their payment.
+  await clearCreditState(client, organizationId)
+  return false
 }

@@ -1,5 +1,9 @@
 export { ANALYSIS_KIND, analyzeRepositoryJob } from "./analysis"
-export { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
+export {
+  REFRESH_CREDIT_STATES_KIND,
+  refreshCreditStates,
+  refreshOrganizationCreditState,
+} from "./credit-state"
 export {
   decideUpkeepAction,
   type UpkeepAction,

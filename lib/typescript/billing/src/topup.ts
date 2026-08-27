@@ -123,15 +123,17 @@ export async function begin(
 export async function settle(
   db: Kysely<DB>,
   paymentIntentId: string,
-): Promise<{ credited: boolean }> {
+): Promise<{ credited: boolean; organizationId: string | null }> {
   const topup = await db
     .selectFrom("topup")
     .selectAll()
     .where("stripePaymentIntentId", "=", paymentIntentId)
     .executeTakeFirst()
 
-  if (!topup) return { credited: false }
-  if (topup.status === "succeeded") return { credited: false }
+  if (!topup) return { credited: false, organizationId: null }
+  if (topup.status === "succeeded") {
+    return { credited: false, organizationId: topup.organizationId }
+  }
 
   const charge = BigInt(topup.amountMicroUsd)
   const credit = BigInt(topup.creditedMicroUsd)
@@ -157,7 +159,7 @@ export async function settle(
     .where("id", "=", topup.id)
     .execute()
 
-  return { credited: true }
+  return { credited: true, organizationId: topup.organizationId }
 }
 
 export async function fail(
