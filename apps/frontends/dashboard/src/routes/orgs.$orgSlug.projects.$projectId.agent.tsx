@@ -22,6 +22,7 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   type AgentEvent,
+  ensureSandboxRunning,
   streamAgentTurn,
   useAgentSessions,
   useCreateAgentSession,
@@ -70,6 +71,7 @@ function AgentChat() {
     abort.current = controller
 
     try {
+      await ensureSandboxRunning({ orgSlug, projectId }, controller.signal)
       const id = sessionId ?? (await createSession())
       setSessionId(id)
 

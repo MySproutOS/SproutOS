@@ -22,6 +22,7 @@ import {
   crudAgentSession,
   crudAuditLog,
   fetchAgentSession,
+  fetchGithubInstallation,
   fetchProject,
   fetchRepository,
 } from "@lib/dao"
@@ -271,7 +272,8 @@ const app = new Hono()
 
         let workspace: Awaited<ReturnType<typeof checkout>> | null = null
         try {
-          if (onPlatformCredit) {
+          const sandbox = await runningSandbox(organization.id, projectId, c.var.user.id)
+          if (sandbox === undefined && onPlatformCredit) {
             const history = await priorMessages(sessionId)
             const outcome = await runPlatformChat(
               db,
@@ -315,7 +317,6 @@ const app = new Hono()
             the ordinary state of a sandbox somebody used yesterday, and routing a turn into a
             stopped container would hang until the timeout.
           */
-          const sandbox = await runningSandbox(organization.id, projectId, c.var.user.id)
           if (sandbox !== undefined && sandbox.externalId !== null) {
             const proxy = await mintProxyToken(db, {
               agentCredentialId: credential.billing === "byo" ? credential.credentialId : null,
@@ -639,12 +640,11 @@ async function repositoryFor(
   )
   if (repository === undefined) return "This project's repository record is missing"
 
-  const installation = await db
-    .selectFrom("githubInstallation")
-    .select("installationId")
-    .where("organizationId", "=", organizationId)
-    .where("suspendedAt", "is", null)
-    .executeTakeFirst()
+  const installation = await fetchGithubInstallation(db).getForRepository(
+    organizationId,
+    project.repositoryId,
+    ["installationId"],
+  )
 
   if (installation !== undefined) {
     const installationId = Number(installation.installationId)

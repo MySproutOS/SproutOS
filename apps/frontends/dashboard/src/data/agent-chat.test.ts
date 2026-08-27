@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { type AgentEvent, streamAgentTurn } from "./agent-chat"
+import { type AgentEvent, ensureSandboxRunning, streamAgentTurn } from "./agent-chat"
 
 /**
  * SSE framing is parsed here rather than by the browser, because EventSource only issues GET
@@ -28,6 +28,38 @@ const input = { orgSlug: "acme", projectId: "p1", sessionId: "s1", prompt: "hi" 
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe("ensureSandboxRunning", () => {
+  it("starts the sandbox and waits through provisioning before returning", async () => {
+    const states = ["starting", "starting", "running"]
+    const start = vi.fn<() => Promise<void>>(() => Promise.resolve())
+    const read = vi.fn<() => Promise<string>>(() => Promise.resolve(states.shift() ?? "running"))
+    const wait = vi.fn<() => Promise<void>>(() => Promise.resolve())
+    let now = 0
+
+    await ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+      start,
+      read,
+      wait,
+      now: () => now++,
+    })
+
+    expect(start).toHaveBeenCalledOnce()
+    expect(read).toHaveBeenCalledTimes(3)
+    expect(wait).toHaveBeenCalledTimes(2)
+  })
+
+  it("reports a provider-side start failure without opening an agent stream", async () => {
+    await expect(
+      ensureSandboxRunning({ orgSlug: "acme", projectId: "p1" }, undefined, {
+        start: () => Promise.resolve(),
+        read: () => Promise.resolve("failed"),
+        wait: () => Promise.resolve(),
+        now: () => 0,
+      }),
+    ).rejects.toThrow("The sandbox failed to start")
+  })
 })
 
 describe("streamAgentTurn", () => {
