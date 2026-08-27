@@ -62,6 +62,44 @@ pub fn is_pubsub_push(buffer: &[u8]) -> Result<bool, ReplyError> {
     ))
 }
 
+/// The number of live subscriptions reported by a RESP2 pub/sub acknowledgement.
+///
+/// `message` and `pmessage` frames deliberately return `None`: their final element is customer
+/// payload, not protocol state. An error reply also returns `None`, so a refused subscription does
+/// not make the proxy believe it entered subscribed mode.
+pub fn pubsub_subscription_count(buffer: &[u8]) -> Result<Option<usize>, ReplyError> {
+    let Some(elements) = array_elements(buffer, 0)? else {
+        return Ok(None);
+    };
+    let kind = array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]);
+    if !matches!(
+        kind,
+        Some(b"subscribe" | b"unsubscribe" | b"psubscribe" | b"punsubscribe")
+    ) {
+        return Ok(None);
+    }
+    let Some(&(offset, _)) = elements.get(2) else {
+        return Err(ReplyError::Malformed(
+            "pub/sub acknowledgement has no subscription count",
+        ));
+    };
+    if buffer.get(offset) != Some(&b':') {
+        return Err(ReplyError::Malformed(
+            "pub/sub subscription count is not an integer",
+        ));
+    }
+    let Some(end) = line_end(buffer, offset)? else {
+        return Err(ReplyError::Malformed(
+            "pub/sub subscription count is incomplete",
+        ));
+    };
+    let count = std::str::from_utf8(&buffer[offset + 1..end - 2])
+        .map_err(|_| ReplyError::Malformed("pub/sub subscription count is not a number"))?
+        .parse::<usize>()
+        .map_err(|_| ReplyError::Malformed("pub/sub subscription count is not a number"))?;
+    Ok(Some(count))
+}
+
 /// Strip tenant prefixes from only the channel-bearing fields of a RESP2 pub/sub frame.
 ///
 /// Payloads are deliberately never searched or rewritten: a message body is arbitrary customer
@@ -453,6 +491,28 @@ mod tests {
         assert_eq!(
             rewrite_pubsub(pattern, prefix).unwrap(),
             b"*4\r\n$8\r\npmessage\r\n$5\r\nnews*\r\n$5\r\nnews1\r\n$2\r\nhi\r\n"
+        );
+    }
+
+    #[test]
+    fn pubsub_acknowledgements_report_confirmed_protocol_state() {
+        assert_eq!(
+            pubsub_subscription_count(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nevents\r\n:1\r\n").unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            pubsub_subscription_count(b"*3\r\n$11\r\nunsubscribe\r\n$6\r\nevents\r\n:0\r\n")
+                .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            pubsub_subscription_count(b"*3\r\n$7\r\nmessage\r\n$6\r\nevents\r\n$1\r\nx\r\n")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            pubsub_subscription_count(b"-NOPERM denied\r\n").unwrap(),
+            None
         );
     }
 

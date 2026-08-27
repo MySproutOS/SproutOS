@@ -39,7 +39,10 @@ use crate::commands::{adds_work, namespace_command, queue_of};
 use crate::keyspace::{prefix_for, strip};
 use crate::master::{MasterQueue, Wake};
 use crate::provision::AclProvisioner;
-use crate::reply::{echoes_key, frame, is_pubsub_push, rewrite_pubsub, rewrite_xread_streams};
+use crate::reply::{
+    echoes_key, frame, is_pubsub_push, pubsub_subscription_count, rewrite_pubsub,
+    rewrite_xread_streams,
+};
 use crate::resp::{Command, RespError, error, parse_command, simple_string};
 use crate::scan::ScanRequest;
 pub use sproutos_service_credentials::CredentialStore;
@@ -105,6 +108,10 @@ pub async fn serve(
     let mut mode = ConnectionMode::Normal;
     let mut subscriptions = BTreeSet::new();
     let mut patterns = BTreeSet::new();
+    // Desired subscription sets are updated when a command is sent so zero-argument unsubscribe
+    // has the right acknowledgement count. Push-vs-reply classification needs a different fact:
+    // whether Valkey has actually acknowledged at least one subscription.
+    let mut pubsub_confirmed = false;
 
     loop {
         tokio::select! {
@@ -179,6 +186,7 @@ pub async fn serve(
                                     &mut pending,
                                     &mut client_write,
                                     &prefix,
+                                    &mut pubsub_confirmed,
                                 )
                                 .await?;
                                 match provisioner.scan(&request, &prefix).await {
@@ -335,6 +343,7 @@ pub async fn serve(
                                 &mut pending,
                                 &mut client_write,
                                 &prefix,
+                                &mut pubsub_confirmed,
                             ).await?;
                             drain_local(&mut pending, &mut client_write).await?;
                         }
@@ -356,6 +365,7 @@ async fn drain_pending<R, W>(
     pending: &mut VecDeque<Pending>,
     client: &mut W,
     prefix: &[u8],
+    pubsub_confirmed: &mut bool,
 ) -> anyhow::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -365,7 +375,7 @@ where
     while !pending.is_empty() {
         match frame(buffer)? {
             Some(framed) => {
-                forward_reply(framed, buffer, pending, client, prefix).await?;
+                forward_reply(framed, buffer, pending, client, prefix, pubsub_confirmed).await?;
                 drain_local(pending, client).await?;
             }
             None => {
@@ -385,23 +395,20 @@ async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
     pending: &mut VecDeque<Pending>,
     client: &mut W,
     prefix: &[u8],
+    pubsub_confirmed: &mut bool,
 ) -> anyhow::Result<()> {
     let raw = buffer.split_to(framed.len);
-    let pubsub_ack_waiting = pending.iter().any(|entry| {
-        matches!(
-            entry,
-            Pending::Upstream {
-                rewrite: ReplyRewrite::Pubsub
-            }
-        )
-    });
-    let pubsub_ack_is_next = matches!(
-        pending.front(),
-        Some(Pending::Upstream {
-            rewrite: ReplyRewrite::Pubsub
-        })
-    );
-    if is_pubsub_push(&raw)? && (!pubsub_ack_waiting || pubsub_ack_is_next) {
+    /*
+      A RESP2 array beginning `message` is not intrinsically an unsolicited delivery: an ordinary
+      LRANGE can return the same bytes. Before the first SUBSCRIBE acknowledgement it must consume
+      its normal pending slot. After Valkey has confirmed a subscription, subscribed mode forbids
+      ordinary commands that could produce that shape, so it is a push and must consume no slot.
+
+      Looking ahead for any pending SUBSCRIBE is insufficient. On an already-subscribed connection
+      a real message may arrive between an ordinary PING and a later SUBSCRIBE acknowledgement;
+      treating it as PING's reply shifts every response after it. Track the server-confirmed count.
+    */
+    if *pubsub_confirmed && is_pubsub_push(&raw)? {
         client.write_all(&rewrite_pubsub(&raw, prefix)?).await?;
         return Ok(());
     }
@@ -415,6 +422,9 @@ async fn forward_reply<W: tokio::io::AsyncWrite + Unpin>(
     };
 
     if rewrite == ReplyRewrite::Pubsub {
+        if let Some(count) = pubsub_subscription_count(&raw)? {
+            *pubsub_confirmed = count > 0;
+        }
         client.write_all(&rewrite_pubsub(&raw, prefix)?).await?;
         return Ok(());
     }
@@ -669,5 +679,83 @@ mod tests {
             scan_refusal(ConnectionMode::Subscribed),
             Some("subscribed mode")
         );
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_pubsub_push_does_not_consume_a_pending_reply() {
+        let prefix = b"{kv:01hb}:";
+        let message = b"*3\r\n$7\r\nmessage\r\n$16\r\n{kv:01hb}:events\r\n$2\r\nhi\r\n";
+        let mut buffer = BytesMut::from(&message[..]);
+        let framed = frame(&buffer).unwrap().unwrap();
+        let mut pending = VecDeque::from([
+            Pending::Upstream {
+                rewrite: ReplyRewrite::None,
+            },
+            Pending::Upstream {
+                rewrite: ReplyRewrite::Pubsub,
+            },
+        ]);
+        let mut confirmed = true;
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+
+        forward_reply(
+            framed,
+            &mut buffer,
+            &mut pending,
+            &mut writer,
+            prefix,
+            &mut confirmed,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        let mut observed = Vec::new();
+        reader.read_to_end(&mut observed).await.unwrap();
+
+        assert_eq!(pending.len(), 2, "a push consumed an ordinary reply slot");
+        assert_eq!(
+            observed,
+            b"*3\r\n$7\r\nmessage\r\n$6\r\nevents\r\n$2\r\nhi\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_message_shaped_reply_before_first_subscribe_consumes_its_slot() {
+        let raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nevents\r\n$7\r\npayload\r\n";
+        let mut buffer = BytesMut::from(&raw[..]);
+        let framed = frame(&buffer).unwrap().unwrap();
+        let mut pending = VecDeque::from([
+            Pending::Upstream {
+                rewrite: ReplyRewrite::None,
+            },
+            Pending::Upstream {
+                rewrite: ReplyRewrite::Pubsub,
+            },
+        ]);
+        let mut confirmed = false;
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+
+        forward_reply(
+            framed,
+            &mut buffer,
+            &mut pending,
+            &mut writer,
+            b"{kv:01hb}:",
+            &mut confirmed,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        let mut observed = Vec::new();
+        reader.read_to_end(&mut observed).await.unwrap();
+
+        assert_eq!(pending.len(), 1);
+        assert!(matches!(
+            pending.front(),
+            Some(Pending::Upstream {
+                rewrite: ReplyRewrite::Pubsub
+            })
+        ));
+        assert_eq!(observed, raw);
     }
 }
