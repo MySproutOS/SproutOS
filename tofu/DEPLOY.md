@@ -195,7 +195,7 @@ immutable image:
 ```bash
 IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
   NAME_PREFIX=sproutos \
-  bin/handoff-ecs-task-definitions.sh
+  bin/handoff-ecs-task-definitions.sh <current-phase-A-through-D>
 ```
 
 Do not continue merely because the apply or ECS waiter succeeded. Read both services back and
@@ -210,9 +210,34 @@ or apply:
 bin/check-acme-worker-rollout-plan.sh tofu/<saved-plan>.tfplan
 ```
 
-It rejects isolated ownership without capacity, platform ownership without fallback IAM, deletion
-of the live fallback attachment during the overlap phases, and replacement of the shared
-application policy.
+It reads the saved plan's output `before` and `after`, accepts only
+`A -> B -> C -> D` or the exact reverse, and compares every non-no-op resource/action to the exact
+allowlist for that adjacent phase. Direct `A -> D` and `D -> A`, an unchanged phase, a target-group
+change during an ACME gate transition, deletion of the fallback attachment before `C -> D`, and
+replacement of the shared application policy all fail.
+
+The one-time `NONE -> A` foundation allowlist contains all four existing tenant-edge target-group
+PPv2/readiness updates together. Immediately before applying, the wrapper reads their exact ARNs
+from the saved plan and refuses unless every group is both empty and unassociated with a load
+balancer; a mixed or live target-group mutation cannot proceed.
+
+Do not run `tofu apply` separately for an ACME phase. The rollout wrapper checks the saved plan,
+proves the current live ECS/IAM state implements the `before` phase, applies that exact plan, hands
+off task definitions where required, and proves the `after` phase:
+
+```bash
+IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
+  NAME_PREFIX=sproutos \
+  bin/apply-acme-worker-rollout.sh tofu/<saved-plan>.tfplan
+```
+
+At every phase it requires the web service at desired/running `2`, pending `0`, one completed
+PRIMARY deployment, and exactly two running tasks on the service's exact revision. Phase A requires
+the isolated service at `0/0/0`; phases B-D require `2/2/0` and two exact-revision running tasks.
+Both serving definitions must use the chosen immutable image and the exact roles from the reviewed
+OpenTofu definitions. The platform worker's two gate environment values, the isolated profile, the
+fallback policy attachment, and the live application-policy Route 53 statement must all match the
+phase.
 
 ### Wiring the first Sprout CLI release
 
@@ -308,21 +333,22 @@ production custom-domain activation, separate reviewed changes must prove all of
 - static CloudFront log reconciliation and delayed-delivery credit safeguards are deployed and
   verified independently of this dynamic edge.
 
-1. Apply with `acme_worker_enabled`, `acme_handler_ownership_enabled`,
+1. Save a foundation plan with `acme_worker_enabled`, `acme_handler_ownership_enabled`,
    `tenant_edge_preview_enabled`, and `tenant_edge_enabled` false, and
    `acme_fallback_iam_enabled` true. Then seed the account key once with
    `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an existing secret version.
-   The worker stays at desired count zero during this apply: the old web task reserves 768 MiB and
+   Apply it only through `bin/apply-acme-worker-rollout.sh`; this is the one-time `NONE -> A`
+   allowlist. The worker stays at desired count zero during this apply: the old web task reserves 768 MiB and
    must retain the second host for its replacement.
-2. Deploy the edge-capable release with the exact two-task handoff above and prove the live web task
-   uses the new 640 MiB task definition. It must expose `ACME_JOBS_ENABLED=0` and
+2. Treat the `NONE -> A` wrapper as incomplete until it proves the live web task uses the new 640
+   MiB contract and the chosen edge-capable image. It must expose `ACME_JOBS_ENABLED=0` and
    `ACME_HANDLER_OWNERSHIP_ENABLED=0`; the platform worker remains the live fallback owner with its
    legacy privileged IAM.
 3. Set only `acme_worker_enabled = true`, leaving ownership false and fallback IAM true. Save and
-   review a plan, apply it, and wait explicitly for two healthy isolated tasks before any handoff;
-   the ECS service does not make OpenTofu wait for steady state. Both tasks must use the exact
+   review the exact `A -> B` plan, then run the rollout wrapper. It applies, hands off, and refuses
+   success until two healthy isolated tasks are live. Both tasks must use the exact
    immutable image and task role, occupy the same two hosts as the web tasks, and leave the rolling
-   spare empty. Then repeat the exact two-task handoff so the platform scheduler receives
+   spare empty. The wrapper's exact two-task handoff gives the platform scheduler
    `ACME_JOBS_ENABLED=1` while it still owns the fallback handler map.
    The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
    rollout if it instead pins the spare host. Rebuild the exact production Linux/arm64 image from
@@ -332,14 +358,14 @@ production custom-domain activation, separate reviewed changes must prove all of
    reaches its poll loop. While the edge flags remain false the worker may issue and store a Let's
    Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it from refreshing
    either router Auto Scaling group.
-4. Set `acme_handler_ownership_enabled = true`, save/review a plan which changes only the web task
-   contract, apply it, and repeat the exact two-task handoff. During the rolling handoff, old
+4. Set `acme_handler_ownership_enabled = true`, save/review the exact `B -> C` plan which changes
+   only the web task contract, and run the rollout wrapper. During the rolling handoff, old
    platform tasks and the already-healthy isolated tasks overlap; `FOR UPDATE SKIP LOCKED` prevents
    a double claim. Verify every serving platform task exposes
    `ACME_HANDLER_OWNERSHIP_ENABLED=1`, both isolated tasks remain healthy, and a real privileged job
    is claimed before continuing.
-5. Set `acme_fallback_iam_enabled = false`, save/review a plan which only removes the gated
-   platform permissions, and apply it. The application policy must update in place; refuse any plan
+5. Set `acme_fallback_iam_enabled = false`, save/review the exact `C -> D` plan which only removes
+   the gated platform permissions, and run the rollout wrapper. The application policy must update in place; refuse any plan
    that replaces `aws_iam_policy.application`. Verify the platform task and router roles cannot
    mutate Route 53 or read/write ACME material, while the isolated task role retains its exact
    grants.

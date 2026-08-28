@@ -123,6 +123,16 @@ output "acme_worker_rollout_state" {
   }
 }
 
+output "acme_worker_policy_arn" {
+  description = "Exact privileged policy whose platform-task attachment is controlled by the fallback-IAM phase."
+  value       = aws_iam_policy.acme_worker.arn
+}
+
+output "application_policy_arn" {
+  description = "Shared application policy checked in place during the final fallback-IAM transition."
+  value       = aws_iam_policy.application.arn
+}
+
 # The search split's rule, so the cutover moves it with the router. Without it a release leaves
 # every customer's search service on the colour the router just drained, and the router looks fine.
 output "search_rule_arn" {

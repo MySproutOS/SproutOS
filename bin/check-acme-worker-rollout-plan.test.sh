@@ -11,64 +11,65 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir "$TMP/bin"
-cat >"$TMP/bin/tofu" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$PLAN_JSON"
-STUB
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$PLAN_JSON"' >"$TMP/bin/tofu"
 chmod +x "$TMP/bin/tofu"
+
+state() {
+  case "$1" in
+    A) printf '%s' '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' ;;
+    B) printf '%s' '{"capacity_enabled":true,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' ;;
+    C) printf '%s' '{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":true}' ;;
+    D) printf '%s' '{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":false}' ;;
+  esac
+}
+
+plan() {
+  local before=$1 after=$2 changes=$3 before_json
+  if [ "$before" = NONE ]; then before_json=null; else before_json=$(state "$before"); fi
+  jq -nc --argjson before "$before_json" --argjson after "$(state "$after")" \
+    --argjson changes "$changes" '{
+      output_changes: {acme_worker_rollout_state: {before: $before, after: $after}},
+      resource_changes: [$changes[] | {address: .[0], change: {actions: .[1]}}]
+    }'
+}
 
 run_check() {
   PLAN_JSON=$1 PATH="$TMP/bin:$PATH" "$ROOT/bin/check-acme-worker-rollout-plan.sh" ignored.tfplan
 }
 
-safe_plan() {
-  jq -nc --argjson state "$1" --argjson actions "$2" --argjson attachment "$3" '{
-    planned_values: {outputs: {acme_worker_rollout_state: {value: $state}}},
-    resource_changes: [
-      {address: "aws_iam_policy.application", change: {actions: $actions}},
-      {address: "aws_iam_role_policy_attachment.task_acme_worker[0]", change: {actions: $attachment}}
-    ]
-  }'
-}
+capacity='[["aws_ecs_service.acme_worker",["update"]],["aws_ecs_task_definition.web",["delete","create"]]]'
+ownership='[["aws_ecs_task_definition.web",["delete","create"]]]'
+remove_iam='[["aws_iam_policy.application",["update"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["delete"]]]'
+restore_iam='[["aws_iam_policy.application",["update"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["create"]]]'
 
-run_check "$(safe_plan \
-  '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' \
-  '["update"]' '["no-op"]')"
-run_check "$(safe_plan \
-  '{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":false}' \
-  '["update"]' '["delete"]')"
+test "$(run_check "$(plan A B "$capacity")")" = 'A->B'
+test "$(run_check "$(plan B C "$ownership")")" = 'B->C'
+test "$(run_check "$(plan C D "$remove_iam")")" = 'C->D'
+test "$(run_check "$(plan D C "$restore_iam")")" = 'D->C'
+test "$(run_check "$(plan C B "$ownership")")" = 'C->B'
+test "$(run_check "$(plan B A "$capacity")")" = 'B->A'
 
-if run_check "$(safe_plan \
-  '{"capacity_enabled":false,"handler_ownership_enabled":true,"fallback_iam_enabled":true}' \
-  '["update"]' '["no-op"]')" >"$TMP/zero-owner.out" 2>&1; then
-  echo "plan check accepted isolated ownership without capacity" >&2
+for transition in 'A D' 'D A' 'A C' 'C A' 'B D' 'D B' 'A A'; do
+  set -- $transition
+  if run_check "$(plan "$1" "$2" '[]')" >"$TMP/skip.out" 2>&1; then
+    echo "plan guard accepted non-adjacent $1->$2" >&2
+    exit 1
+  fi
+  grep -q 'only adjacent transitions are allowed' "$TMP/skip.out"
+done
+
+unexpected=$(jq -nc --argjson base "$capacity" '$base + [["aws_lb_target_group.tenant_http[\"blue\"]",["update"]]]')
+if run_check "$(plan A B "$unexpected")" >"$TMP/resource.out" 2>&1; then
+  echo "plan guard accepted an out-of-phase target-group change" >&2
   exit 1
 fi
-grep -q "zero owners" "$TMP/zero-owner.out"
+grep -q 'outside the exact A->B allowlist' "$TMP/resource.out"
 
-if run_check "$(safe_plan \
-  '{"capacity_enabled":true,"handler_ownership_enabled":false,"fallback_iam_enabled":false}' \
-  '["update"]' '["delete"]')" >"$TMP/no-iam.out" 2>&1; then
-  echo "plan check accepted platform ownership without fallback IAM" >&2
+replacement='[["aws_iam_policy.application",["delete","create"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["delete"]]]'
+if run_check "$(plan C D "$replacement")" >"$TMP/replacement.out" 2>&1; then
+  echo "plan guard accepted an application-policy replacement" >&2
   exit 1
 fi
-grep -q "removes fallback IAM" "$TMP/no-iam.out"
+grep -Eq 'outside the exact C->D allowlist|replaces aws_iam_policy.application' "$TMP/replacement.out"
 
-if run_check "$(safe_plan \
-  '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' \
-  '["delete","create"]' '["no-op"]')" >"$TMP/replacement.out" 2>&1; then
-  echo "plan check accepted application policy replacement" >&2
-  exit 1
-fi
-grep -q "replaces aws_iam_policy.application" "$TMP/replacement.out"
-
-if run_check "$(safe_plan \
-  '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' \
-  '["update"]' '["delete"]')" >"$TMP/attachment.out" 2>&1; then
-  echo "plan check accepted fallback attachment deletion" >&2
-  exit 1
-fi
-grep -q "does not preserve the platform task ACME policy attachment" "$TMP/attachment.out"
-
-echo "ACME saved-plan guard rejects every unsafe rollout state"
+echo "ACME saved-plan guard enforces adjacent phases and exact resource allowlists"

@@ -3,12 +3,18 @@
 # This is configuration handoff only: it deliberately never passes --cutover.
 set -euo pipefail
 
+if [ "$#" -ne 1 ] || [[ ! "$1" =~ ^[A-D]$ ]]; then
+  echo "usage: handoff-ecs-task-definitions.sh <A|B|C|D>" >&2
+  exit 2
+fi
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${IMAGE:?IMAGE is not set}"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOFU_DIR="${TOFU_DIR:-$HERE/../tofu}"
 DEPLOY_SCRIPT="${ECS_DEPLOY_SCRIPT:-$HERE/deploy-ecs-web.sh}"
+VERIFY_SCRIPT="${ACME_ROLLOUT_VERIFY_SCRIPT:-$HERE/verify-acme-worker-rollout.sh}"
+EXPECTED_PHASE=$1
 
 web_task_arn=$(tofu -chdir="$TOFU_DIR" output -raw ecs_web_task_definition_arn)
 acme_task_arn=$(tofu -chdir="$TOFU_DIR" output -raw ecs_acme_worker_task_definition_arn)
@@ -31,6 +37,16 @@ if [ "$handler_ownership_enabled" = "false" ] && [ "$fallback_iam_enabled" != "t
   echo "refusing no-IAM handoff: platform fallback handlers lack privileged IAM" >&2
   exit 1
 fi
+case "$EXPECTED_PHASE" in
+  A) expected_state='false false true' ;;
+  B) expected_state='true false true' ;;
+  C) expected_state='true true true' ;;
+  D) expected_state='true true false' ;;
+esac
+if [ "$capacity_enabled $handler_ownership_enabled $fallback_iam_enabled" != "$expected_state" ]; then
+  echo "OpenTofu rollout state does not match requested phase $EXPECTED_PHASE" >&2
+  exit 1
+fi
 
 valid_task_arn() {
   local arn=$1 family=$2 revision
@@ -51,3 +67,5 @@ fi
 ECS_BASE_TASK_DEFINITION="$web_task_arn" \
   ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn" \
   "$DEPLOY_SCRIPT"
+
+TOFU_DIR="$TOFU_DIR" "$VERIFY_SCRIPT" "$EXPECTED_PHASE"

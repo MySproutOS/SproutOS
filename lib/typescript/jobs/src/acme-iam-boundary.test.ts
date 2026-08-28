@@ -18,6 +18,14 @@ const planGuard = await readFile(
   new URL("../../../../bin/check-acme-worker-rollout-plan.sh", import.meta.url),
   "utf8",
 )
+const rolloutApply = await readFile(
+  new URL("../../../../bin/apply-acme-worker-rollout.sh", import.meta.url),
+  "utf8",
+)
+const rolloutVerify = await readFile(
+  new URL("../../../../bin/verify-acme-worker-rollout.sh", import.meta.url),
+  "utf8",
+)
 
 function resourceFrom(source: string, type: string, name: string): string {
   const marker = `resource "${type}" "${name}"`
@@ -177,14 +185,14 @@ describe("tenant-edge IAM boundary", () => {
     expect(deploy).toContain("bin/handoff-ecs-task-definitions.sh")
     expect(deploy).toContain("ACME_JOBS_ENABLED")
     expect(deploy).toContain("ACME_HANDLER_OWNERSHIP_ENABLED")
-    expect(deploy).toContain("wait explicitly for two healthy isolated tasks before any handoff")
+    expect(deploy).toContain("success until two healthy isolated tasks are live")
     expect(deploy).toContain("`ACME_JOBS_ENABLED=1`")
     expect(deploy).toContain("ACME_DIRECTORY_URL")
     expect(deploy).toContain("PLATFORM_EDGE_ROLLOUT_ENABLED")
     expect(deploy).toContain("CUSTOM_DOMAINS_ENABLED")
   })
 
-  it("makes zero-owner and platform-owner-without-IAM plans invalid", () => {
+  it("enforces adjacent phases, exact plan resources, and live ECS/IAM proof", () => {
     const ownership = variables.slice(
       variables.indexOf('variable "acme_handler_ownership_enabled"'),
       variables.indexOf('variable "custom_domain_issuance_enabled"'),
@@ -195,8 +203,14 @@ describe("tenant-edge IAM boundary", () => {
     )
     expect(handoff).toContain("refusing zero-owner handoff")
     expect(handoff).toContain("refusing no-IAM handoff")
-    expect(planGuard).toContain("saved plan has zero owners")
-    expect(planGuard).toContain("saved plan removes fallback IAM")
+    expect(planGuard).toContain('"NONE->A"|"A->B"|"B->C"|"C->D"|"D->C"|"C->B"|"B->A"')
+    expect(planGuard).toContain("outside the exact $transition allowlist")
     expect(planGuard).toContain("saved plan replaces aws_iam_policy.application")
+    expect(rolloutApply).toContain('"$HERE/verify-acme-worker-rollout.sh" "$before"')
+    expect(rolloutApply).toContain('tofu -chdir="$TOFU_DIR" apply "$PLAN"')
+    expect(rolloutVerify).toContain(".desiredCount == $count")
+    expect(rolloutVerify).toContain('.rolloutState == "COMPLETED"')
+    expect(rolloutVerify).toContain(".taskDefinitionArn == $task")
+    expect(rolloutVerify).toContain("platform task ACME policy attachment")
   })
 })

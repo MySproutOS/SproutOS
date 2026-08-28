@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+TMP=$(mktemp -d)
+cleanup() {
+  find "$TMP" -type f -delete
+  rmdir "$TMP/bin" 2>/dev/null || true
+  rmdir "$TMP" 2>/dev/null || true
+}
+trap cleanup EXIT
+mkdir "$TMP/bin"
+
+cat >"$TMP/bin/tofu" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${*: -1}" in
+  acme_worker_rollout_state) printf '%s\n' "$ROLLOUT_STATE" ;;
+  ecs_web_task_definition_arn) echo 'arn:aws:ecs:r:a:task-definition/sproutos-web:base' ;;
+  ecs_acme_worker_task_definition_arn) echo 'arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:base' ;;
+  acme_worker_policy_arn) echo 'arn:aws:iam::a:policy/sproutos-acme-worker' ;;
+  application_policy_arn) echo 'arn:aws:iam::a:policy/sproutos-application' ;;
+  *) exit 98 ;;
+esac
+STUB
+
+cat >"$TMP/bin/aws" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+  'ecs describe-services')
+    web='arn:aws:ecs:r:a:task-definition/sproutos-web:51'
+    acme='arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:9'
+    pending=${BAD_PENDING:-0}
+    rollout=${BAD_ROLLOUT:-COMPLETED}
+    jq -nc --arg web "$web" --arg acme "$acme" --arg rollout "$rollout" \
+      --argjson pending "$pending" --argjson acmeCount "$ACME_COUNT" '{
+      services: [
+        {serviceName:"sproutos-web",status:"ACTIVE",taskDefinition:$web,desiredCount:2,runningCount:2,pendingCount:$pending,
+         deployments:[{status:"PRIMARY",taskDefinition:$web,desiredCount:2,runningCount:2,pendingCount:$pending,rolloutState:$rollout}]},
+        {serviceName:"sproutos-acme-worker",status:"ACTIVE",taskDefinition:$acme,desiredCount:$acmeCount,runningCount:$acmeCount,pendingCount:0,
+         deployments:[{status:"PRIMARY",taskDefinition:$acme,desiredCount:$acmeCount,runningCount:$acmeCount,pendingCount:0,rolloutState:$rollout}]}
+      ], failures:[]}'
+    ;;
+  'ecs describe-task-definition')
+    task=''; query=''
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --task-definition) task=$2; shift 2 ;; --query) query=$2; shift 2 ;; *) shift ;; esac
+    done
+    if [ -n "$query" ]; then echo 'arn:aws:iam::a:role/sproutos-task'; exit; fi
+    if [[ "$task" == *acme-worker* ]]; then
+      family=sproutos-acme-worker; container=acme-worker; role=arn:aws:iam::a:role/sproutos-acme-task
+      environment='[{"name":"WORKER_PROFILE","value":"acme"}]'
+    else
+      family=sproutos-web; container=worker; role=arn:aws:iam::a:role/sproutos-task
+      environment=$(jq -nc --arg capacity "$CAPACITY_ENV" --arg ownership "$OWNERSHIP_ENV" '[
+        {name:"ACME_JOBS_ENABLED",value:$capacity},
+        {name:"ACME_HANDLER_OWNERSHIP_ENABLED",value:$ownership}
+      ]')
+    fi
+    image=$IMAGE
+    [[ "$task" == *:base ]] && image=tofu:image
+    [ "${BAD_IMAGE:-}" = 1 ] && [[ "$task" != *:base ]] && image=wrong:image
+    [ "${BAD_ROLE:-}" = 1 ] && [[ "$task" != *:base ]] && role=arn:aws:iam::a:role/wrong
+    [ "${BAD_ENV:-}" = 1 ] && [ "$container" = worker ] && environment='[]'
+    jq -nc --arg arn "$task" --arg family "$family" --arg role "$role" --arg image "$image" \
+      --arg container "$container" --argjson environment "$environment" '{taskDefinition:{
+        taskDefinitionArn:$arn,family:$family,taskRoleArn:$role,executionRoleArn:"arn:aws:iam::a:role/execution",
+        containerDefinitions:[{name:$container,image:$image,environment:$environment}]}}'
+    ;;
+  'ecs list-tasks')
+    service=''
+    while [ "$#" -gt 0 ]; do [ "$1" = --service-name ] && service=$2; shift; done
+    if [ "$service" = sproutos-web ]; then count=2; prefix=web; else count=$ACME_COUNT; prefix=acme; fi
+    if [ "$count" = 0 ]; then echo '{"taskArns":[]}'; else
+      jq -nc --arg prefix "$prefix" --argjson count "$count" '{taskArns:[range(0;$count)|("arn:task/"+$prefix+(.|tostring))]}'
+    fi
+    ;;
+  'ecs describe-tasks')
+    if [[ " $* " == *web0* ]]; then count=2; task='arn:aws:ecs:r:a:task-definition/sproutos-web:51'
+    else count=$ACME_COUNT; task='arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:9'; fi
+    [ "${BAD_TASK_REV:-}" = 1 ] && task='arn:wrong'
+    jq -nc --arg task "$task" --argjson count "$count" '{failures:[],tasks:[range(0;$count)|{taskDefinitionArn:$task,lastStatus:"RUNNING",desiredStatus:"RUNNING"}]}'
+    ;;
+  'iam list-attached-role-policies')
+    if [ "$FALLBACK" = true ]; then echo '{"AttachedPolicies":[{"PolicyArn":"arn:aws:iam::a:policy/sproutos-acme-worker"}]}'
+    else echo '{"AttachedPolicies":[]}'; fi
+    ;;
+  'iam get-policy') echo '{"Policy":{"DefaultVersionId":"v3"}}' ;;
+  'iam get-policy-version')
+    if [ "$FALLBACK" = true ]; then action='["route53:ChangeResourceRecordSets"]'; else action='["s3:GetObject"]'; fi
+    jq -nc --argjson action "$action" '{PolicyVersion:{Document:{Statement:[{Action:$action}]}}}'
+    ;;
+  *) echo "unexpected aws call: $*" >&2; exit 98 ;;
+esac
+STUB
+chmod +x "$TMP/bin/tofu" "$TMP/bin/aws"
+
+run_phase() {
+  local phase=$1
+  case "$phase" in
+    A) state='{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}'; capacity=0; ownership=0; fallback=true; count=0 ;;
+    C) state='{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":true}'; capacity=1; ownership=1; fallback=true; count=2 ;;
+    D) state='{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":false}'; capacity=1; ownership=1; fallback=false; count=2 ;;
+  esac
+  ROLLOUT_STATE=$state CAPACITY_ENV=$capacity OWNERSHIP_ENV=$ownership FALLBACK=$fallback ACME_COUNT=$count \
+    PATH="$TMP/bin:$PATH" NAME_PREFIX=sproutos IMAGE=ghcr.io/mysproutos/sproutos-web:0123456789ab \
+    "$ROOT/bin/verify-acme-worker-rollout.sh" "$phase"
+}
+
+run_phase A
+run_phase C
+run_phase D
+
+for failure in BAD_PENDING BAD_ROLLOUT BAD_IMAGE BAD_ROLE BAD_ENV BAD_TASK_REV; do
+  export "$failure=1"
+  if run_phase C >"$TMP/$failure.out" 2>&1; then
+    echo "live verifier accepted $failure" >&2
+    exit 1
+  fi
+  unset "$failure"
+done
+
+echo "live ACME rollout verifier rejects unstable counts, deployments, contracts, and tasks"
