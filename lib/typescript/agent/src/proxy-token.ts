@@ -66,6 +66,11 @@ export async function mintProxyToken(
   input: {
     organizationId: string
     projectId: string | null
+    /** The person whose live RBAC is re-evaluated for any agent control-plane action. */
+    actorUserId?: string | null
+    /** Present only when this token was minted inside an actual chat turn. */
+    agentSessionId?: string | null
+    agentTurnId?: string | null
     /** Absent means the platform's own key, billed to credit. */
     agentCredentialId: string | null
     /*
@@ -93,6 +98,9 @@ export async function mintProxyToken(
     accessExpiresAt,
     accessTokenHash: access.hash,
     agentCredentialId: input.agentCredentialId,
+    actorUserId: input.actorUserId ?? null,
+    agentSessionId: input.agentSessionId ?? null,
+    agentTurnId: input.agentTurnId ?? null,
     id: v7(),
     organizationId: input.organizationId,
     projectId: input.projectId,
@@ -110,6 +118,12 @@ export async function mintProxyToken(
     refreshExpiresAt,
     refreshToken: refresh.token,
   }
+}
+
+/** Resolve the short-lived access half without ever storing or logging the bearer itself. */
+export async function resolveProxyAccessToken(db: Kysely<DB>, token: string) {
+  if (!token.startsWith("spa_")) return undefined
+  return await fetchAgentProxyToken(db).liveByAccessHash(await hashToken(token))
 }
 
 export class RefreshRejectedError extends Error {

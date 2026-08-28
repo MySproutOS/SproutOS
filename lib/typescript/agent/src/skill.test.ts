@@ -47,6 +47,11 @@ describe("installSproutosSkill", () => {
     expect(body).toContain("ELASTICSEARCH_URL")
     expect(body).toContain("queue.drain")
     expect(body).toContain("sproutos.run")
+    expect(body).toContain("Choose the group's customer-facing project")
+    expect(body).toContain("SPROUTOS_AGENT_GROUP_PRIMARY_URL")
+    expect(body).toContain("SPROUTOS_AGENT_ACTION_TOKEN")
+    expect(body).toContain("primaryProjectSlug")
+    expect(body).toContain("project has no group primary and is refused")
   })
 
   /** The one that matters: the platform must not commit its own scaffolding into a user's repo. */

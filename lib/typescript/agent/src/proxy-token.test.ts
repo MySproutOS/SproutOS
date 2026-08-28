@@ -6,7 +6,10 @@ import {
   refreshProxyToken,
   RefreshRejectedError,
   REFRESH_TTL_MS,
+  resolveProxyAccessToken,
 } from "./proxy-token"
+
+const done = () => Promise.resolve()
 
 /**
  * A fake database that records what was written, so the tests can assert the properties that
@@ -14,7 +17,6 @@ import {
  */
 function fakeDb() {
   const rows: Record<string, Record<string, unknown>> = {}
-  const done = () => Promise.resolve()
   const db = {
     insertInto: () => ({
       values: (input: Record<string, unknown>) => ({
@@ -32,8 +34,8 @@ function fakeDb() {
         executeTakeFirst: () => Promise.resolve(match),
         selectAll: () => q,
         where: (column: string, _op: string, value: unknown) => {
-          if (column === "refreshTokenHash") {
-            match = Object.values(rows).find((row) => row.refreshTokenHash === value)
+          if (column === "refreshTokenHash" || column === "accessTokenHash") {
+            match = Object.values(rows).find((row) => row[column] === value)
           }
           return q
         },
@@ -69,6 +71,32 @@ describe("mintProxyToken", () => {
     expect(stored).not.toContain(minted.accessToken)
     expect(stored).not.toContain(minted.refreshToken)
     expect(rows[minted.id]?.accessTokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(rows[minted.id]).toMatchObject({
+      actorUserId: null,
+      agentSessionId: null,
+      agentTurnId: null,
+    })
+  })
+
+  it("binds and resolves the access token's action scope without storing the bearer", async () => {
+    const { db, rows } = fakeDb()
+    const minted = await mintProxyToken(db, {
+      actorUserId: "user",
+      agentCredentialId: null,
+      agentSessionId: "session",
+      agentTurnId: "turn",
+      organizationId: "org",
+      projectId: "proj",
+    })
+
+    await expect(resolveProxyAccessToken(db, minted.accessToken)).resolves.toMatchObject({
+      actorUserId: "user",
+      agentSessionId: "session",
+      agentTurnId: "turn",
+      organizationId: "org",
+      projectId: "proj",
+    })
+    expect(JSON.stringify(rows[minted.id])).not.toContain(minted.accessToken)
   })
 
   it("gives the two tokens different values and different lifetimes", async () => {

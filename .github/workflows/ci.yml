@@ -507,7 +507,9 @@ jobs:
           bash bin/cutover.test.sh
           bash bin/deploy-ecs-web.test.sh
           bash bin/deploy-workflow.test.sh
+          bash bin/cli-release-workflow.test.sh
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
+          bash bin/bootstrap-localstack.test.sh
           bash bin/user-data.test.sh
           bash .claude/hooks/check-direction.test.sh

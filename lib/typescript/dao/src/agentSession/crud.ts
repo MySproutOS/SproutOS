@@ -9,6 +9,44 @@ export type AgentEventRow = {
 }
 
 /**
+ * Append events while holding the per-session sequence lock.
+ *
+ * Agent actions arrive on a second HTTP request while the chat stream is still buffering harness
+ * events. Deriving `max(seq) + 1` outside a shared lock lets both requests claim the same sequence
+ * and makes the later insert fail. The transaction-scoped advisory lock serializes only writers to
+ * this one transcript; unrelated sessions never wait on it.
+ */
+export async function appendAgentEventsInTransaction(
+  tx: Transaction<DB>,
+  agentSessionId: string,
+  events: readonly AgentEventRow[],
+): Promise<void> {
+  if (events.length === 0) return
+
+  await sql`select pg_advisory_xact_lock(hashtextextended(${agentSessionId}, 0))`.execute(tx)
+  const row = await tx
+    .selectFrom("agentEvent")
+    .select((eb) => eb.fn.max("seq").as("maxSeq"))
+    .where("agentSessionId", "=", agentSessionId)
+    .executeTakeFirst()
+  const startSeq = BigInt(row?.maxSeq ?? 0) + 1n
+
+  await tx
+    .insertInto("agentEvent")
+    .values(
+      events.map((event, index) => ({
+        id: v7(),
+        agentSessionId,
+        agentTurnId: event.agentTurnId ?? null,
+        seq: startSeq + BigInt(index),
+        type: event.type,
+        payload: JSON.stringify(event.payload),
+      })),
+    )
+    .execute()
+}
+
+/**
  * How many times `openTurn` re-derives its sequence after losing the race.
  *
  * Three, because the losers of a collision are bounded by how many messages a single session has in
@@ -106,34 +144,11 @@ export function crudAgentSession(db: Kysely<DB>) {
    */
   async function appendEvents(
     agentSessionId: string,
-    startSeq: bigint,
     events: readonly AgentEventRow[],
   ): Promise<void> {
-    if (events.length === 0) return
-
     await db
-      .insertInto("agentEvent")
-      .values(
-        events.map((event, index) => ({
-          id: v7(),
-          agentSessionId,
-          agentTurnId: event.agentTurnId ?? null,
-          seq: startSeq + BigInt(index),
-          type: event.type,
-          payload: JSON.stringify(event.payload),
-        })),
-      )
-      .execute()
-  }
-
-  async function nextEventSeq(agentSessionId: string): Promise<bigint> {
-    const row = await db
-      .selectFrom("agentEvent")
-      .select((eb) => eb.fn.max("seq").as("maxSeq"))
-      .where("agentSessionId", "=", agentSessionId)
-      .executeTakeFirst()
-
-    return BigInt(row?.maxSeq ?? 0) + 1n
+      .transaction()
+      .execute((tx) => appendAgentEventsInTransaction(tx, agentSessionId, events))
   }
 
   async function setSdkSessionId(id: string, sdkSessionId: string): Promise<void> {
@@ -172,7 +187,6 @@ export function crudAgentSession(db: Kysely<DB>) {
     appendEvents,
     closeTurn,
     createSession,
-    nextEventSeq,
     openTurn,
     setSdkSessionId,
     setStatus,
@@ -256,5 +270,20 @@ export function fetchAgentSession(db: Kysely<DB> | Transaction<DB>) {
       .execute()
   }
 
-  return { getInOrganization, listEvents, listForProject, listTurns }
+  async function getTurnInSession(agentSessionId: string, agentTurnId: string) {
+    return await db
+      .selectFrom("agentTurn")
+      .select(["id", "agentSessionId", "resultSubtype"])
+      .where("id", "=", agentTurnId)
+      .where("agentSessionId", "=", agentSessionId)
+      .executeTakeFirst()
+  }
+
+  return {
+    getInOrganization,
+    getTurnInSession,
+    listEvents,
+    listForProject,
+    listTurns,
+  }
 }

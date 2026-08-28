@@ -160,6 +160,36 @@ SproutOS runs each deployable target in this repository as its own **project**. 
 web app and a separate API is one repository and two projects, grouped under a parent that holds
 them and deploys nothing itself.
 
+## Choose the group's customer-facing project
+
+When a repository has several deployable projects, the group needs one **primary project**. Its
+active custom domain is the group's customer-facing domain; until one is active, its generated
+SproutOS hostname is used. Choose the web UI or other entry point a customer should open — never a
+private API, worker, or database-only project.
+
+After you know the deployable child's SproutOS project slug, set it with the scoped platform action:
+
+The current project is \`$SPROUTOS_AGENT_PROJECT_SLUG\`. If it is a group, inspect
+\`$SPROUTOS_AGENT_GROUP_PROJECTS\`; it is JSON listing each eligible child's display name, slug,
+and repository root. Choose the customer-facing child and assign its slug below.
+
+\`\`\`bash
+primary_project_slug="$SPROUTOS_AGENT_PROJECT_SLUG" # replace from SPROUTOS_AGENT_GROUP_PROJECTS when this is a group
+curl --silent --show-error --fail-with-body \\
+  --request POST \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  --header "Content-Type: application/json" \\
+  --data "{\\"primaryProjectSlug\\":\\"$primary_project_slug\\"}" \\
+  "$SPROUTOS_AGENT_GROUP_PRIMARY_URL"
+\`\`\`
+
+Do this once the project layout is settled. If this session is on the group itself, select one of
+the exact slugs in \`SPROUTOS_AGENT_GROUP_PROJECTS\`. The
+endpoint accepts only a direct deployable child of this session's group and checks the person who
+started the turn still has permission. A standalone project has no group primary and is refused.
+Never print or persist
+\`SPROUTOS_AGENT_ACTION_TOKEN\`; it is a short-lived bearer supplied only to this turn.
+
 ## What a deploy actually is
 
 The \`sprout\` CLI is the only deployment orchestrator. It packages output deterministically,
