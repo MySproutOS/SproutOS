@@ -1,6 +1,6 @@
 /* oxlint-disable no-await-in-loop */
 import { db } from "@sproutos/db"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { v7 } from "uuid"
 import app from "../index"
 import {
@@ -306,11 +306,32 @@ describe.skipIf(!reachable)("store routes", () => {
     })
 
     it("publishes a draft, records the reviewer, and audits it", async () => {
-      const response = await call(
-        "POST",
-        `/v1/orgs/${slug}/store/listings/${draftId}/publish`,
-        moderator,
-      )
+      const github = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        const url = input instanceof Request ? input.url : input.toString()
+        if (url.startsWith("https://api.github.com/repos/")) {
+          return Promise.resolve(
+            Response.json({
+              behind_by: 0,
+              files: [{ filename: "SPROUT_OS_DEPLOY.md", status: "added" }],
+            }),
+          )
+        }
+        if (url.endsWith("/SPROUT_OS_DEPLOY.md") && !url.includes("/.config/")) {
+          return Promise.resolve(new Response("# Deploy", { status: 200 }))
+        }
+        return Promise.resolve(new Response("missing", { status: 404 }))
+      })
+
+      let response: Awaited<ReturnType<typeof call>>
+      try {
+        response = await call(
+          "POST",
+          `/v1/orgs/${slug}/store/listings/${draftId}/publish`,
+          moderator,
+        )
+      } finally {
+        github.mockRestore()
+      }
       expect(response.status).toBe(200)
       expect(response.json.status).toBe("published")
       expect(response.json.reviewedByUserId).toBe(moderator.id)
