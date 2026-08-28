@@ -114,6 +114,30 @@ output "ecs_acme_worker_task_definition_arn" {
   value       = aws_ecs_task_definition.acme_worker.arn
 }
 
+output "acme_worker_rollout_state" {
+  description = "Capacity, handler ownership, and fallback-IAM gates checked by the exact ECS task handoff."
+  value = {
+    capacity_enabled          = var.acme_worker_enabled
+    handler_ownership_enabled = var.acme_handler_ownership_enabled
+    fallback_iam_enabled      = var.acme_fallback_iam_enabled
+  }
+}
+
+output "acme_worker_policy_arn" {
+  description = "Exact privileged policy whose platform-task attachment is controlled by the fallback-IAM phase."
+  value       = aws_iam_policy.acme_worker.arn
+}
+
+output "application_policy_arn" {
+  description = "Shared application policy checked in place during the final fallback-IAM transition."
+  value       = aws_iam_policy.application.arn
+}
+
+output "application_policy_document" {
+  description = "Reviewed application-policy semantics used for exact live IAM verification."
+  value       = aws_iam_policy.application.policy
+}
+
 # The search split's rule, so the cutover moves it with the router. Without it a release leaves
 # every customer's search service on the colour the router just drained, and the router looks fine.
 output "search_rule_arn" {

@@ -122,20 +122,28 @@ describe("PLATFORM_HANDLERS", () => {
 describe("worker-profile handler ownership", () => {
   it.each([
     {
-      enabled: false,
+      capacity: false,
+      ownership: false,
       runningProfiles: ["platform" as const],
-      owner: "platform" as const,
+      owners: ["platform" as const],
     },
     {
-      enabled: true,
+      capacity: true,
+      ownership: false,
       runningProfiles: ["platform" as const, "acme" as const],
-      owner: "acme" as const,
+      owners: ["platform" as const, "acme" as const],
     },
-  ])("gives every privileged kind exactly one live owner when enabled=$enabled", (state) => {
+    {
+      capacity: true,
+      ownership: true,
+      runningProfiles: ["platform" as const, "acme" as const],
+      owners: ["acme" as const],
+    },
+  ])("keeps a privileged owner while capacity=$capacity ownership=$ownership", (state) => {
     const profiles = Object.fromEntries(
       state.runningProfiles.map((profile) => [
         profile,
-        handlersForWorkerProfile(profile, state.enabled),
+        handlersForWorkerProfile(profile, state.ownership),
       ]),
     )
 
@@ -143,7 +151,7 @@ describe("worker-profile handler ownership", () => {
       const owners = state.runningProfiles.filter(
         (profile) => profiles[profile]?.[kind] !== undefined,
       )
-      expect(owners, `${kind} must have no ownership gap or overlap`).toEqual([state.owner])
+      expect(owners, `${kind} must have no ownership gap`).toEqual(state.owners)
     }
   })
 
@@ -167,8 +175,8 @@ describe("worker-profile handler ownership", () => {
   })
 
   it.each(["true", "yes", "", "2"])("rejects malformed worker flag %j", (value) => {
-    expect(() => parseWorkerFlag("ACME_JOBS_ENABLED", value)).toThrow(
-      "ACME_JOBS_ENABLED must be 0 or 1",
+    expect(() => parseWorkerFlag("ACME_HANDLER_OWNERSHIP_ENABLED", value)).toThrow(
+      "ACME_HANDLER_OWNERSHIP_ENABLED must be 0 or 1",
     )
   })
 

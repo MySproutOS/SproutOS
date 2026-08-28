@@ -8,9 +8,22 @@ const ecsHostBootstrap = await readFile(
   "utf8",
 )
 const outputs = await readFile(new URL("../../../../tofu/outputs.tf", import.meta.url), "utf8")
+const variables = await readFile(new URL("../../../../tofu/variables.tf", import.meta.url), "utf8")
 const deploy = await readFile(new URL("../../../../tofu/DEPLOY.md", import.meta.url), "utf8")
 const handoff = await readFile(
   new URL("../../../../bin/handoff-ecs-task-definitions.sh", import.meta.url),
+  "utf8",
+)
+const planGuard = await readFile(
+  new URL("../../../../bin/check-acme-worker-rollout-plan.sh", import.meta.url),
+  "utf8",
+)
+const rolloutApply = await readFile(
+  new URL("../../../../bin/apply-acme-worker-rollout.sh", import.meta.url),
+  "utf8",
+)
+const rolloutVerify = await readFile(
+  new URL("../../../../bin/verify-acme-worker-rollout.sh", import.meta.url),
   "utf8",
 )
 
@@ -27,19 +40,25 @@ function resource(type: string, name: string): string {
 }
 
 describe("tenant-edge IAM boundary", () => {
-  it("never gives the public router's shared application policy Route 53 mutation", () => {
-    expect(resource("aws_iam_policy", "application")).not.toContain(
-      "route53:ChangeResourceRecordSets",
+  it("retains legacy platform IAM only behind the explicit fallback gate", () => {
+    const application = resource("aws_iam_policy", "application")
+    expect(application).toContain(
+      'description = "What the website, API and worker may do. Attached to the instance role and the task role."',
     )
-    expect(resource("aws_iam_policy", "application")).not.toContain(
-      "aws_s3_bucket.tenant_certificates",
-    )
+    expect(application).toContain("var.acme_fallback_iam_enabled ?")
+    expect(application).toContain("route53:ChangeResourceRecordSets")
+    expect(application).not.toContain("aws_s3_bucket.tenant_certificates")
+    const fallbackAttachment = resource("aws_iam_role_policy_attachment", "task_acme_worker")
+    expect(fallbackAttachment).toContain("var.acme_fallback_iam_enabled ? 1 : 0")
+    expect(fallbackAttachment).toContain("aws_iam_role.task.name")
+    expect(compute).toContain("from = aws_iam_role_policy_attachment.task_acme_worker")
+    expect(compute).toContain("to   = aws_iam_role_policy_attachment.task_acme_worker[0]")
     expect(resource("aws_iam_role_policy_attachment", "instance_application")).toContain(
       "aws_iam_policy.application.arn",
     )
   })
 
-  it("attaches ACME authority only to the dedicated certificate task role", () => {
+  it("gives the dedicated certificate task permanent ACME authority", () => {
     expect(resource("aws_iam_policy", "control_plane_dns")).toContain(
       "route53:ChangeResourceRecordSets",
     )
@@ -70,6 +89,9 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain("task_role_arn      = aws_iam_role.acme_task.arn")
     expect(ecs).toContain('{ name = "WORKER_PROFILE", value = "acme" }')
     expect(ecs).toContain("var.acme_worker_enabled ? var.ecs_instance_count : 0")
+    expect(ecs).toContain(
+      '{ name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = var.acme_handler_ownership_enabled ? "1" : "0" }',
+    )
     const acmeTask = resourceFrom(ecs, "aws_ecs_task_definition", "acme_worker")
     expect(ecs).toContain("ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names")
     expect(acmeTask).toContain("local.ecs_acme_worker_parameter_secrets")
@@ -156,17 +178,41 @@ describe("tenant-edge IAM boundary", () => {
   it("hands both exact applied task contracts to the release before rollout continues", () => {
     expect(outputs).toContain('output "ecs_web_task_definition_arn"')
     expect(outputs).toContain('output "ecs_acme_worker_task_definition_arn"')
+    expect(outputs).toContain('output "acme_worker_rollout_state"')
     expect(handoff).toContain('ECS_BASE_TASK_DEFINITION="$web_task_arn"')
     expect(handoff).toContain('ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn"')
     expect(handoff).toContain('"$DEPLOY_SCRIPT"')
     expect(deploy).toContain("bin/handoff-ecs-task-definitions.sh")
     expect(deploy).toContain("ACME_JOBS_ENABLED")
-    expect(deploy).toContain(
-      "Immediately after that apply, repeat the exact two-task handoff above",
-    )
+    expect(deploy).toContain("ACME_HANDLER_OWNERSHIP_ENABLED")
+    expect(deploy).toContain("success until two healthy isolated tasks are live")
     expect(deploy).toContain("`ACME_JOBS_ENABLED=1`")
     expect(deploy).toContain("ACME_DIRECTORY_URL")
     expect(deploy).toContain("PLATFORM_EDGE_ROLLOUT_ENABLED")
     expect(deploy).toContain("CUSTOM_DOMAINS_ENABLED")
+  })
+
+  it("enforces adjacent phases, exact plan resources, and live ECS/IAM proof", () => {
+    const ownership = variables.slice(
+      variables.indexOf('variable "acme_handler_ownership_enabled"'),
+      variables.indexOf('variable "custom_domain_issuance_enabled"'),
+    )
+    expect(ownership).toContain("!var.acme_handler_ownership_enabled || var.acme_worker_enabled")
+    expect(ownership).toContain(
+      "var.acme_fallback_iam_enabled || var.acme_handler_ownership_enabled",
+    )
+    expect(handoff).toContain("refusing zero-owner handoff")
+    expect(handoff).toContain("refusing no-IAM handoff")
+    expect(planGuard).toContain('"NONE->A"|"A->B"|"B->C"|"C->D"|"D->C"|"C->B"|"B->A"')
+    expect(planGuard).toContain("outside the exact $transition allowlist")
+    expect(planGuard).toContain("saved plan replaces aws_iam_policy.application")
+    expect(rolloutApply).toContain('"$HERE/verify-acme-worker-rollout.sh" "$before"')
+    expect(rolloutApply).toContain('tofu -chdir="$TOFU_DIR" apply "$VERIFIED_PLAN"')
+    expect(rolloutApply).toContain("verified_digest=$(plan_digest)")
+    expect(rolloutVerify).toContain(".desiredCount == $count")
+    expect(rolloutVerify).toContain('.rolloutState == "COMPLETED"')
+    expect(rolloutVerify).toContain(".taskDefinitionArn == $task")
+    expect(rolloutVerify).toContain("platform task ACME policy attachment")
+    expect(rolloutVerify).toContain("live application policy is not semantically identical")
   })
 })

@@ -316,6 +316,9 @@ case "${*: -1}" in
       printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17\n'
     fi
     ;;
+  acme_worker_rollout_state)
+    printf '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}\n'
+    ;;
   *) exit 1 ;;
 esac
 TOFU
@@ -330,7 +333,7 @@ HANDOFF
 chmod +x "$TEST_DIR/bin/tofu" "$TEST_DIR/bin/capture-task-handoff"
 export TASK_HANDOFF_CAPTURE="$TEST_DIR/task-handoff"
 ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" TOFU_DIR="$TEST_DIR/tofu" \
-  "$HERE/handoff-ecs-task-definitions.sh"
+  ACME_ROLLOUT_VERIFY_SCRIPT=/usr/bin/true "$HERE/handoff-ecs-task-definitions.sh" A
 sed -n '1p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
   'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-web:42'
 sed -n '2p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
@@ -338,7 +341,8 @@ sed -n '2p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
 sed -n '3p' "$TASK_HANDOFF_CAPTURE" | grep -qx '<no-argument>'
 unlink "$TASK_HANDOFF_CAPTURE"
 if BAD_ACME_OUTPUT=1 ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" \
-  TOFU_DIR="$TEST_DIR/tofu" "$HERE/handoff-ecs-task-definitions.sh" \
+  TOFU_DIR="$TEST_DIR/tofu" ACME_ROLLOUT_VERIFY_SCRIPT=/usr/bin/true \
+  "$HERE/handoff-ecs-task-definitions.sh" A \
   >"$TEST_DIR/task-handoff-failure.out" 2>&1; then
   echo "a non-versioned ACME task output reached the deploy script" >&2
   exit 1

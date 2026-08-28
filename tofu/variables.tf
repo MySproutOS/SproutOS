@@ -172,7 +172,7 @@ variable "tenant_edge_preview_enabled" {
 }
 
 variable "acme_worker_enabled" {
-  description = "Run the IAM-isolated certificate/deployment worker after the smaller web task is live. Keep false for the first infrastructure apply so the old 768 MiB web task retains the spare rollout host."
+  description = "Run and schedule work for the IAM-isolated certificate/deployment worker after the smaller web task is live. Capacity is staged before handler ownership moves."
   type        = bool
   default     = false
 
@@ -181,6 +181,28 @@ variable "acme_worker_enabled" {
       var.tenant_edge_preview_enabled || var.tenant_edge_enabled || var.custom_domain_issuance_enabled
     )
     error_message = "The isolated ACME worker must be enabled before preview edge, tenant edge, or custom-domain issuance."
+  }
+}
+
+variable "acme_handler_ownership_enabled" {
+  description = "Make the isolated ACME profile the sole owner of privileged handlers. Enable only after its ECS capacity is running and healthy."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.acme_handler_ownership_enabled || var.acme_worker_enabled
+    error_message = "Privileged handler ownership cannot move until isolated ACME worker capacity is enabled."
+  }
+}
+
+variable "acme_fallback_iam_enabled" {
+  description = "Retain privileged IAM on the platform task while it owns fallback ACME/deployment handlers. Disable only after ownership has moved to healthy isolated workers."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.acme_fallback_iam_enabled || var.acme_handler_ownership_enabled
+    error_message = "Fallback ACME IAM cannot be removed while the platform worker still owns privileged handlers."
   }
 }
 

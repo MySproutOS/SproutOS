@@ -781,12 +781,14 @@ resource "aws_iam_role" "acme_task" {
   bounded by this statement.
 */
 resource "aws_iam_policy" "application" {
-  name        = "${var.name_prefix}-application"
-  description = "Shared application permissions for legacy services and ordinary ECS tasks."
+  name = "${var.name_prefix}-application"
+  # IAM policy descriptions are immutable. Keep the exact live text: changing prose here forces a
+  # delete/create replacement that detaches every application principal during the apply.
+  description = "What the website, API and worker may do. Attached to the instance role and the task role."
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect = "Allow"
         Action = ["lambda:InvokeFunction"]
@@ -1054,7 +1056,19 @@ resource "aws_iam_policy" "application" {
         Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = aws_kms_key.envelope.arn
       },
-    ]
+      ], var.acme_fallback_iam_enabled ? [
+      {
+        # Temporary compatibility for the platform worker's fallback deployment/teardown
+        # handlers. Remove only after healthy isolated capacity owns every privileged kind.
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets",
+        ]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+      },
+      ] : []
+    )
   })
 }
 
@@ -1274,6 +1288,25 @@ resource "aws_iam_policy" "acme_worker" {
 resource "aws_iam_role_policy_attachment" "acme_task_worker" {
   role       = aws_iam_role.acme_task.name
   policy_arn = aws_iam_policy.acme_worker.arn
+}
+
+/*
+  The live platform task still claims ACME/deployment handlers until ownership moves explicitly.
+  Keep its existing attachment during capacity staging; the final IAM phase removes it only after
+  both isolated workers are healthy and every platform task has relinquished those kinds.
+*/
+resource "aws_iam_role_policy_attachment" "task_acme_worker" {
+  count = var.acme_fallback_iam_enabled ? 1 : 0
+
+  role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.acme_worker.arn
+}
+
+# The attachment already exists in production at the unindexed address. Preserve it rather than
+# detaching and reattaching it during the first staged plan.
+moved {
+  from = aws_iam_role_policy_attachment.task_acme_worker
+  to   = aws_iam_role_policy_attachment.task_acme_worker[0]
 }
 
 resource "aws_iam_role_policy_attachment" "instance_ssm" {

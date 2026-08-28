@@ -13,8 +13,11 @@ const profile = process.env.WORKER_PROFILE ?? "platform"
 if (profile !== "platform" && profile !== "acme") {
   throw new Error("WORKER_PROFILE must be platform or acme")
 }
-const isolatedAcmeJobsEnabled = parseWorkerFlag("ACME_JOBS_ENABLED", process.env.ACME_JOBS_ENABLED)
-const handlers = handlersForWorkerProfile(profile, isolatedAcmeJobsEnabled)
+const isolatedAcmeHandlerOwnershipEnabled = parseWorkerFlag(
+  "ACME_HANDLER_OWNERSHIP_ENABLED",
+  process.env.ACME_HANDLER_OWNERSHIP_ENABLED,
+)
+const handlers = handlersForWorkerProfile(profile, isolatedAcmeHandlerOwnershipEnabled)
 const workerId = `${profile}:${hostname()}:${process.pid}`
 const controller = new AbortController()
 
