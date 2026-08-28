@@ -13,6 +13,7 @@ members = [
   "services/valkey-proxy",
   "services/search-proxy",
   "services/storage-proxy",
+  "services/android-signer",
 ]
 
 [workspace.package]
