@@ -5,6 +5,9 @@ export type AgentProxyTokenInsert = {
   id: string
   organizationId: string
   projectId: string | null
+  actorUserId: string | null
+  agentSessionId: string | null
+  agentTurnId: string | null
   agentCredentialId: string | null
   accessTokenHash: string
   refreshTokenHash: string

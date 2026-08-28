@@ -131,11 +131,47 @@ export function fetchProject(db: Kysely<DB>) {
       .execute()
   }
 
+  /** The hostname a selected primary child currently serves, preferring its oldest active claim. */
+  async function primaryDestination(
+    organizationId: string,
+    projectId: string,
+  ): Promise<{ hostname: string | null; url: string | null }> {
+    const row = await db
+      .selectFrom("project")
+      .leftJoin("deployment", "deployment.id", "project.liveDeploymentId")
+      .leftJoin("customDomain", (join) =>
+        join
+          .onRef("customDomain.projectId", "=", "project.id")
+          .on("customDomain.status", "in", ["active", "renewal_warning"])
+          .on("customDomain.deletedAt", "is", null),
+      )
+      .select([
+        "deployment.url as url",
+        "deployment.hostname as hostname",
+        "customDomain.hostname as customHostname",
+      ])
+      .where("project.id", "=", projectId)
+      .where("project.organizationId", "=", organizationId)
+      .where("project.deletedAt", "is", null)
+      .where((eb) =>
+        eb.or([eb("deployment.id", "is", null), eb("deployment.deletedAt", "is", null)]),
+      )
+      .orderBy("customDomain.createdAt", "asc")
+      .executeTakeFirst()
+
+    if (row === undefined) return { hostname: null, url: null }
+    return {
+      hostname: row.customHostname ?? row.hostname ?? null,
+      url: row.customHostname === null ? (row.url ?? null) : `https://${row.customHostname}`,
+    }
+  }
+
   return {
     findConflictingTarget,
     getBySlug,
     getInOrganization,
     listChildren,
     listInOrganizationQuery,
+    primaryDestination,
   }
 }

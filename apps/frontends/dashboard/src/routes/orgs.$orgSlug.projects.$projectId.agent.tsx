@@ -3,6 +3,7 @@ import {
   ArrowLeftIcon,
   BotIcon,
   CircleAlertIcon,
+  CircleCheckIcon,
   MessageSquarePlusIcon,
   SendIcon,
   Trash2Icon,
@@ -61,6 +62,7 @@ type Bubble =
   | { kind: "you"; text: string }
   | { kind: "agent"; text: string }
   | { kind: "tool"; name: string }
+  | { kind: "platform"; message: string; hostname: string | null }
   | { kind: "failed"; message: string }
 
 function AgentChat() {
@@ -403,6 +405,11 @@ function append(bubbles: Bubble[], event: AgentEvent): Bubble[] {
       return [...bubbles, { kind: "tool", name: event.name }]
     case "error":
       return [...bubbles, { kind: "failed", message: event.message }]
+    case "platform_action":
+      return [
+        ...bubbles,
+        { kind: "platform", message: event.message, hostname: event.primaryHostname },
+      ]
     default:
       // tool_result, thinking, session, done — state the transcript does not show.
       return bubbles
@@ -437,6 +444,22 @@ function BubbleView({ bubble }: { bubble: Bubble }) {
       <div className="flex items-start gap-2 self-start rounded-lg border border-destructive/40 bg-destructive/8 px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground">
         <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
         {bubble.message}
+      </div>
+    )
+  }
+
+  if (bubble.kind === "platform") {
+    return (
+      <div className="flex items-start gap-2 self-start rounded-lg border border-primary/35 bg-primary/8 px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground">
+        <CircleCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" />
+        <span>
+          {bubble.message}
+          {bubble.hostname === null ? null : (
+            <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">
+              {bubble.hostname}
+            </span>
+          )}
+        </span>
       </div>
     )
   }

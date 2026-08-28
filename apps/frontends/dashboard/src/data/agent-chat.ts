@@ -38,6 +38,15 @@ export type AgentEvent =
   | { type: "session"; sdkSessionId: string }
   | { type: "done"; subtype: string; isError: boolean; numTurns: number; durationMs: number }
   | { type: "error"; message: string }
+  | {
+      type: "platform_action"
+      action: "set_group_primary_project"
+      message: string
+      groupProjectId: string
+      primaryProjectId: string
+      primaryHostname: string | null
+      primaryUrl: string | null
+    }
 
 export type AgentTranscript = {
   session: { id: string; status: string }

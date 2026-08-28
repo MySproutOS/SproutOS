@@ -284,11 +284,14 @@ describe("bootstrapSandbox", () => {
 
 describe("runSandboxTurn", () => {
   const base = {
+    actionUrl: "https://api.sproutos.me/v1/agent/action",
+    groupPrimaryCandidates: [],
     externalId: "sb",
     harness: "claude-code" as const,
     model: null,
     prompt: "add a health route",
     proxyBaseUrl: "https://llm.sproutos.me",
+    projectSlug: "product-web",
     refreshUrl: "https://api.sproutos.me/refresh",
     timeoutMs: 60_000,
     token,
@@ -535,10 +538,13 @@ describe("a turn that was refused its tools", () => {
       driver,
       externalId: "sandbox",
       harness,
+      actionUrl: "https://api.sproutos.me/v1/agent/action",
+      groupPrimaryCandidates: [],
       model: null,
       onEvent: (event) => events.push(event),
       prompt: "write a file",
       proxyBaseUrl: "https://llm.sproutos.me",
+      projectSlug: "product-web",
       refreshUrl: "https://api.sproutos.me/refresh",
       timeoutMs: 60_000,
       token,

@@ -28,6 +28,10 @@ export function sandboxAgentEnv(input: {
   token: MintedProxyToken
   /** Reserved for a future harness wrapper; stock Claude Code and Codex do not consume it. */
   refreshUrl: string
+  /** The one control-plane action this exact chat turn may perform. */
+  actionUrl: string
+  projectSlug: string
+  groupPrimaryCandidates: readonly { name: string; slug: string; rootDir: string | null }[]
   model?: string | null
   /**
    * The checkout, which is also where Codex's configuration lives.
@@ -46,6 +50,10 @@ export function sandboxAgentEnv(input: {
     SPROUTOS_AGENT_REFRESH_TOKEN: input.token.refreshToken,
     SPROUTOS_AGENT_REFRESH_URL: input.refreshUrl,
     SPROUTOS_AGENT_TOKEN_EXPIRES_AT: input.token.accessExpiresAt.toISOString(),
+    SPROUTOS_AGENT_ACTION_TOKEN: input.token.accessToken,
+    SPROUTOS_AGENT_GROUP_PRIMARY_URL: input.actionUrl,
+    SPROUTOS_AGENT_PROJECT_SLUG: input.projectSlug,
+    SPROUTOS_AGENT_GROUP_PROJECTS: JSON.stringify(input.groupPrimaryCandidates),
   }
 
   if (input.model != null && input.model !== "") {

@@ -43,6 +43,11 @@ describe("installSproutosSkill", () => {
     // The project is interpolated so the snippet is copy-pasteable, not a form to fill in.
     expect(body).toContain("project: reddit-clone-web")
     expect(body).toContain("sproutos.run")
+    expect(body).toContain("Choose the group's customer-facing project")
+    expect(body).toContain("SPROUTOS_AGENT_GROUP_PRIMARY_URL")
+    expect(body).toContain("SPROUTOS_AGENT_ACTION_TOKEN")
+    expect(body).toContain("primaryProjectSlug")
+    expect(body).toContain("project has no group primary and is refused")
   })
 
   /** The one that matters: the platform must not commit its own scaffolding into a user's repo. */
