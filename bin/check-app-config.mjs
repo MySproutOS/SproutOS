@@ -82,9 +82,10 @@ function envNames(text) {
 /**
  * The allowlist `put-app-secrets.sh` copies into Parameter Store.
  *
+ * @param {boolean} includeModeSpecific
  * @returns {Set<string>}
  */
-function parameterStoreKeys() {
+function parameterStoreKeys(includeModeSpecific) {
   const blocks = [...putSecrets.matchAll(/(?:^|\n)\s*KEYS=\(([\s\S]*?)\n\s*\)/g)]
   if (blocks.length === 0) {
     throw new Error("bin/put-app-secrets.sh no longer declares KEYS=( ... )")
@@ -100,7 +101,8 @@ function parameterStoreKeys() {
   */
   // Include mode-specific allowlists as well as the ordinary one. Android custody is intentionally
   // writable only through ANDROID_CUSTODY_ONLY, but it is still a reachable Parameter Store input.
-  const declarations = blocks
+  const selectedBlocks = includeModeSpecific ? blocks : blocks.slice(0, 1)
+  const declarations = selectedBlocks
     .map((block) => block[1] ?? "")
     .join("\n")
     .replaceAll(/#[^\n]*/g, "")
@@ -251,7 +253,12 @@ const NOT_OUR_CONFIGURATION = new Set([
   "VITEST",
 ])
 
-const inParameterStore = parameterStoreKeys()
+const inApplicationParameterStore = parameterStoreKeys(false)
+// Normal upload mode routes this one key to /android-worker instead of PARAMETER_PATH. It is in
+// the ordinary-mode allowlist, but it is deliberately not reachable through legacy
+// write_app_secrets, which reads only /application.
+inApplicationParameterStore.delete("ANDROID_DEVELOPER_ID_STATUS_API_KEY")
+const inParameterStore = parameterStoreKeys(true)
 const requested = requestedAtBoot()
 const requestedEcs = requestedByEcs()
 const direct = writtenDirectly()
@@ -308,10 +315,26 @@ if (
   nobody happened to need on this boot.
 */
 for (const key of [...requested].sort((a, b) => a.localeCompare(b))) {
-  if (!inParameterStore.has(key)) {
+  if (!inApplicationParameterStore.has(key)) {
     problems.push(
-      `${key} is requested by write_app_secrets but is not in put-app-secrets.sh's allowlist, ` +
-        `so nothing ever writes it to Parameter Store. The instance will boot without it.`,
+      `${key} is requested by write_app_secrets but put-app-secrets.sh does not deliver it under ` +
+        `/application. The legacy instance will boot without it.`,
+    )
+  }
+}
+
+// These credentials intentionally live outside /application. Keep this direct invariant in
+// addition to the set comparison so a future parser refactor cannot make a stale legacy request
+// appear reachable by unioning mode-specific paths again.
+for (const key of [
+  "APK_SIGNER_TOKEN",
+  "APK_SIGNER_OPERATOR_TOKEN",
+  "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
+]) {
+  if (requested.has(key)) {
+    problems.push(
+      `${key} must not be requested by legacy write_app_secrets; its isolated Parameter Store ` +
+        `path is delivered only through ECS.`,
     )
   }
 }
