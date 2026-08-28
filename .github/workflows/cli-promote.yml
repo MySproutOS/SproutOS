@@ -61,7 +61,9 @@ jobs:
       - name: Deploy the reviewed SSM task contract without changing the image
         env:
           ECS_BASE_TASK_DEFINITION: ${{ inputs.ecs_base_task_definition }}
-          ECS_WEB_DESIRED_COUNT: ${{ vars.ECS_WEB_DESIRED_COUNT || '1' }}
+          # This is a high-availability invariant, not an operator-tunable repository variable.
+          # Keep it aligned with deploy.yml and deploy-ecs-web.sh's fail-closed contract.
+          ECS_WEB_DESIRED_COUNT: "2"
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
         run: |
           set -euo pipefail

@@ -133,6 +133,9 @@ if grep -q '^    environment: production$' <<<"$manual_workflow"; then
   echo "CLI promotion shares the automatic deployment environment" >&2
   exit 1
 fi
+# The production service is deliberately fixed at two replicas. A stale repository variable must
+# not make an otherwise verified promotion fail after the release pointer has already been written.
+grep -q 'ECS_WEB_DESIRED_COUNT: "2"' <<<"$manual_workflow"
 # shellcheck disable=SC2016
 test "$(grep -Fc 'run: bin/promote-cli-release.sh "$VERSION"' <<<"$manual_workflow")" -eq 2
 # shellcheck disable=SC2016
