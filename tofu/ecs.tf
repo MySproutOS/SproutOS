@@ -505,11 +505,14 @@ resource "aws_ecs_service" "web" {
     weight            = 100
   }
 
-  # 100/0 rather than the default 200/100: there is one instance, so there is nowhere to put a
-  # second copy of the task while the first drains. A brief gap on deploy is the cost of a
-  # single-instance free-tier deployment, and pretending otherwise would just make deploys hang.
-  deployment_maximum_percent         = 100
-  deployment_minimum_healthy_percent = 0
+  # Keep the old task healthy until its replacement is healthy. The capacity provider may grow the
+  # ASG from one instance to its existing maximum of two while the fixed host ports are occupied,
+  # then scales the empty instance back in after ECS drains the old task and its managed scale-in
+  # alarm settles. That bounded overlap incurs a second instance's normal per-second cost; stopping
+  # the sole healthy task first incurred a customer-visible outage on every release and is not an
+  # acceptable saving.
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
 
   # A waiter timing out is only CI noticing a broken deployment. The circuit breaker is ECS acting
   # on it: stop launching the bad revision and restore the last completed task definition without
