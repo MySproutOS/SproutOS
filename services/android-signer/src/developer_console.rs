@@ -557,21 +557,31 @@ impl GoogleDeveloperConsole {
             }
         };
         let justification = policy_justification(&policy, fingerprint)?;
-        if justification == Some("REQUIRED") {
+        if justification == Some("REQUIRED") && justification_can_be_submitted(&key)? {
             let rationale = self.config.justification.as_deref().context(
                 "Android package-name registration requires an operator-approved justification",
             )?;
-            let key_name = resource_name(&key, "Android package key")?;
-            session
+            let key_name = resource_name(&key, "Android package key")?.to_owned();
+            let submission = session
                 .call(
                     "JustifyAndroidPackageKeyRegistration",
-                    bindings(&[("name", key_name), ("parent", key_name)]),
+                    bindings(&[("name", &key_name), ("parent", &key_name)]),
                     json!({ "justification": rationale }),
                 )
-                .await?;
-            key = list_key(&session, &package, fingerprint)
+                .await;
+            let reconciled = list_key(&session, &package, fingerprint)
                 .await?
                 .context("justified signing key disappeared")?;
+            if let Err(error) = submission {
+                // A transport failure or provider failed-precondition can arrive after Google
+                // durably accepted the justification. The provider state is the idempotency
+                // record: only a still-mutable state may report the original error. Never replay
+                // once review or registration has begun.
+                if justification_can_be_submitted(&reconciled)? {
+                    return Err(error).context("Android package-key justification failed");
+                }
+            }
+            key = reconciled;
         }
         Ok(RegistrationOutcome {
             developer_account: account,
@@ -821,6 +831,15 @@ fn registration_step(key: &Value) -> anyhow::Result<RegistrationStep> {
     }
 }
 
+fn justification_can_be_submitted(key: &Value) -> anyhow::Result<bool> {
+    match string_field(key, &["registrationState"]) {
+        Some("DRAFT" | "OWNERSHIP_VERIFIED") => Ok(true),
+        Some("IN_REVIEW" | "REGISTERED" | "REGISTERED_ACTIVE" | "PENDING_TRANSFER") => Ok(false),
+        Some(_) => bail!("Android package key returned an unknown registration state"),
+        None => bail!("Android package key omitted registrationState"),
+    }
+}
+
 fn known_fingerprint(policy: &Value, fingerprint: &str) -> bool {
     array_field(policy, &["knownKeys"]).iter().any(|key| {
         string_field(key, &["certificateFingerprintSha256"])
@@ -1050,9 +1069,10 @@ mod tests {
         Json, Router,
         body::Bytes,
         extract::Query,
+        http::StatusCode,
         routing::{get, post},
     };
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -1231,6 +1251,7 @@ mod tests {
         let root = format!("http://{}/", listener.local_addr().unwrap());
         let discovery_root = root.clone();
         let fingerprint = "a".repeat(64);
+        let policy_fingerprint = fingerprint.clone();
         let key_fingerprint = fingerprint.clone();
         let app = Router::new()
             .route(
@@ -1300,7 +1321,18 @@ mod tests {
             )
             .route(
                 "/v1/developerAccounts/123/androidPackages/com.sproutos.store/registrationPolicy",
-                get(|| async { Json(json!({ "keySelectionStrategy": "USE_ANY_KEY" })) }),
+                get(move || {
+                    let fingerprint = policy_fingerprint.clone();
+                    async move {
+                        Json(json!({
+                            "keySelectionStrategy": "SELECT_KEY_FROM_LIST",
+                            "knownKeys": [{
+                                "certificateFingerprintSha256": fingerprint,
+                                "justificationRequired": "REQUIRED"
+                            }]
+                        }))
+                    }
+                }),
             )
             .route(
                 "/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys",
@@ -1332,6 +1364,166 @@ mod tests {
         server.abort();
         assert_eq!(result.developer_account, "developerAccounts/123");
         assert_eq!(result.step, RegistrationStep::Registered);
+    }
+
+    #[tokio::test]
+    async fn lost_justification_response_reconciles_without_duplicate_submission() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let root = format!("http://{}/", listener.local_addr().unwrap());
+        let discovery_root = root.clone();
+        let fingerprint = "d".repeat(64);
+        let policy_fingerprint = fingerprint.clone();
+        let listed_fingerprint = fingerprint.clone();
+        let committed = Arc::new(AtomicBool::new(false));
+        let committed_for_list = committed.clone();
+        let committed_for_post = committed.clone();
+        let submissions = Arc::new(AtomicUsize::new(0));
+        let submissions_for_post = submissions.clone();
+        let app = Router::new()
+            .route(
+                "/token",
+                post(|| async {
+                    Json(json!({
+                        "access_token": "short-lived",
+                        "token_type": "Bearer",
+                        "scope": SCOPE
+                    }))
+                }),
+            )
+            .route(
+                "/discovery",
+                get(move || {
+                    let root = discovery_root.clone();
+                    async move {
+                        Json(json!({
+                            "rootUrl": root,
+                            "servicePath": "",
+                            "resources": { "developerAccounts": {
+                                "methods": { "list": {
+                                    "id": "androiddeveloperconsole.developerAccounts.list",
+                                    "path": "v1/developerAccounts", "httpMethod": "GET"
+                                }},
+                                "resources": { "androidPackages": {
+                                    "methods": {
+                                        "list": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.list",
+                                            "path": "v1/{parent=developerAccounts/*}/androidPackages",
+                                            "httpMethod": "GET",
+                                            "parameters": { "parent": { "location": "path", "required": true } }
+                                        },
+                                        "policy": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.getRegistrationPolicy",
+                                            "path": "v1/{name=developerAccounts/*/androidPackages/*}/registrationPolicy",
+                                            "httpMethod": "GET",
+                                            "parameters": { "name": { "location": "path", "required": true } }
+                                        }
+                                    },
+                                    "resources": { "androidPackageKeys": { "methods": {
+                                        "list": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.list",
+                                            "path": "v1/{parent=developerAccounts/*/androidPackages/*}/androidPackageKeys",
+                                            "httpMethod": "GET",
+                                            "parameters": { "parent": { "location": "path", "required": true } }
+                                        },
+                                        "justify": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.justifyRegistration",
+                                            "path": "v1/{name=developerAccounts/*/androidPackages/*/androidPackageKeys/*}:justifyRegistration",
+                                            "httpMethod": "POST",
+                                            "parameters": { "name": { "location": "path", "required": true } }
+                                        }
+                                    }}}
+                                }}
+                            }}
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts",
+                get(|| async {
+                    Json(json!({ "developerAccounts": [{
+                        "name": "developerAccounts/123", "verificationState": "VERIFIED"
+                    }] }))
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages",
+                get(|| async {
+                    Json(json!({ "androidPackages": [{
+                        "name": "developerAccounts/123/androidPackages/com.sproutos.store",
+                        "packageName": "com.sproutos.store"
+                    }] }))
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/registrationPolicy",
+                get(move || {
+                    let fingerprint = policy_fingerprint.clone();
+                    async move {
+                        Json(json!({
+                            "keySelectionStrategy": "SELECT_KEY_FROM_LIST",
+                            "knownKeys": [{
+                                "certificateFingerprintSha256": fingerprint,
+                                "justificationRequired": "REQUIRED"
+                            }]
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys",
+                get(move || {
+                    let fingerprint = listed_fingerprint.clone();
+                    let committed = committed_for_list.clone();
+                    async move {
+                        Json(json!({ "androidPackageKeys": [{
+                            "name": "developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7",
+                            "certificateFingerprintSha256": fingerprint,
+                            "registrationState": if committed.load(Ordering::SeqCst) {
+                                "IN_REVIEW"
+                            } else {
+                                "DRAFT"
+                            }
+                        }] }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7:justifyRegistration",
+                post(move || {
+                    let committed = committed_for_post.clone();
+                    let submissions = submissions_for_post.clone();
+                    async move {
+                        if submissions.fetch_add(1, Ordering::SeqCst) != 0 {
+                            return StatusCode::CONFLICT;
+                        }
+                        committed.store(true, Ordering::SeqCst);
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let console = GoogleDeveloperConsole::new(DeveloperConsoleConfig {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+            developer_account: None,
+            package_display_name: "SproutOS".into(),
+            justification: Some("Existing off-Play SproutOS package and managed key".into()),
+            token_url: format!("{root}token"),
+            discovery_url: format!("{root}discovery"),
+        })
+        .unwrap();
+
+        for _ in 0..2 {
+            let result = console
+                .begin_registration("com.sproutos.store", &fingerprint, "Y2VydA==")
+                .await
+                .unwrap();
+            assert_eq!(result.step, RegistrationStep::PendingReview);
+        }
+        server.abort();
+        assert_eq!(submissions.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
