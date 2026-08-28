@@ -79,7 +79,7 @@ ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /p' "$ECS_TF")
 ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 NORMAL_UPLOAD_KEYS=$(sed -n '/^KEYS=(/,/^)/p' "$ROOT/bin/put-app-secrets.sh")
-LEGACY_BOOT_KEYS=$(grep 'write_app_secrets' "$ROOT/tofu/user-data.sh.tftpl")
+LEGACY_USER_DATA=$(<"$ROOT/tofu/user-data.sh.tftpl")
 for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
   require "\"$token\"" <(printf '%s\n' "$ANDROID_API_PARAMETERS") \
     "$token must reach only the API verifier from Parameter Store"
@@ -93,10 +93,10 @@ for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
     "$token must use the out-of-state Parameter Store delivery path"
   reject "^[[:space:]]*$token$" <(printf '%s\n' "$NORMAL_UPLOAD_KEYS") \
     "$token must not be copied to /application by an ordinary secret refresh"
-  reject "$token" <(printf '%s\n' "$LEGACY_BOOT_KEYS") \
+  reject "$token" <(printf '%s\n' "$LEGACY_USER_DATA") \
     "$token must not be requested from /application by legacy instance bootstrap"
 done
-reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$LEGACY_BOOT_KEYS") \
+reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$LEGACY_USER_DATA") \
   'the worker-only Google key must not be requested by legacy instance bootstrap'
 require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_PARAMETERS") \
   'the Android Developer Console credential must reach only the worker'
