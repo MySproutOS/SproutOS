@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { createHash } from "node:crypto"
-import { callbackIdempotencyKey, signerAuthorized, signerOperatorAuthorized } from "./apk-signing"
+import {
+  assertSignerCredentialConfiguration,
+  callbackIdempotencyKey,
+  signerAuthorized,
+  signerOperatorAuthorized,
+} from "./apk-signing"
 
 /**
  * The signer is the one caller that is neither a session nor inside the VPC, so this bearer check
@@ -11,7 +16,6 @@ const TOKEN = "signer-token-value"
 afterEach(() => {
   delete process.env.APK_SIGNER_TOKEN
   delete process.env.APK_SIGNER_OPERATOR_TOKEN
-  delete process.env.APK_SIGNER_OPERATOR_ID
 })
 
 describe("the signer credential", () => {
@@ -48,17 +52,33 @@ describe("the signer credential", () => {
   it("uses a distinct fail-closed credential for canonical-client operator actions", () => {
     process.env.APK_SIGNER_TOKEN = TOKEN
     process.env.APK_SIGNER_OPERATOR_TOKEN = "operator-token-value"
-    process.env.APK_SIGNER_OPERATOR_ID = "release-operator"
 
     expect(signerAuthorized(`Bearer ${TOKEN}`)).toBe(true)
     expect(signerAuthorized("Bearer operator-token-value")).toBe(false)
-    expect(signerOperatorAuthorized("Bearer operator-token-value", "release-operator")).toBe(true)
-    expect(signerOperatorAuthorized("Bearer operator-token-value", "forged-operator")).toBe(false)
-    expect(signerOperatorAuthorized(`Bearer ${TOKEN}`, "release-operator")).toBe(false)
+    expect(signerOperatorAuthorized("Bearer operator-token-value")).toBe(true)
+    expect(signerOperatorAuthorized(`Bearer ${TOKEN}`)).toBe(false)
 
     process.env.APK_SIGNER_OPERATOR_TOKEN = TOKEN
     expect(signerAuthorized(`Bearer ${TOKEN}`)).toBe(false)
-    expect(signerOperatorAuthorized(`Bearer ${TOKEN}`, "release-operator")).toBe(false)
+    expect(signerOperatorAuthorized(`Bearer ${TOKEN}`)).toBe(false)
+  })
+
+  it("rejects missing or shared credentials during production startup", () => {
+    expect(() => {
+      assertSignerCredentialConfiguration({})
+    }).toThrow(/required/)
+    expect(() => {
+      assertSignerCredentialConfiguration({
+        APK_SIGNER_TOKEN: TOKEN,
+        APK_SIGNER_OPERATOR_TOKEN: TOKEN,
+      })
+    }).toThrow(/distinct/)
+    expect(() => {
+      assertSignerCredentialConfiguration({
+        APK_SIGNER_TOKEN: TOKEN,
+        APK_SIGNER_OPERATOR_TOKEN: "operator-token-value",
+      })
+    }).not.toThrow()
   })
 })
 

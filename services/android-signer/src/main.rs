@@ -50,7 +50,7 @@ struct ClientApiArgs {
         default_value = "https://api.sproutos.me"
     )]
     api_url: String,
-    #[arg(long, env = "APK_SIGNER_OPERATOR_ID")]
+    #[arg(long, env = "APK_SIGNER_ID")]
     signer_id: String,
 }
 
