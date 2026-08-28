@@ -187,6 +187,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # This invokes the same esbuild entrypoint as the production migration task. It belongs after
+      # dependency installation rather than in the dependency-free deploy-script job.
+      - name: Production seed artifacts are self-contained
+        run: bash bin/build-db-seeds.test.sh
+
       # The TypeScript integration tests drive this binary with a real AWS SDK client. Building it
       # here makes the shared-bucket tenant boundary part of the required test job instead of a
       # local-only assertion hidden behind `describe.runIf`.
@@ -525,7 +530,6 @@ jobs:
           bash bin/cutover.test.sh
           bash bin/deploy-ecs-web.test.sh
           bash bin/deploy-workflow.test.sh
-          bash bin/build-db-seeds.test.sh
           bash bin/cli-release-workflow.test.sh
           bash bin/promote-cli-release.test.sh
           bash bin/clickhouse-database.test.sh
