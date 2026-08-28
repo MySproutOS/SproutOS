@@ -46,7 +46,11 @@ describe("PLATFORM_HANDLERS", () => {
       [
         JOB_KINDS.customDomainReconcile,
         JOB_KINDS.customDomainScan,
+        JOB_KINDS.publishRelease,
         JOB_KINDS.reconcilePlatformEdgeCertificate,
+        JOB_KINDS.tearDownPreview,
+        JOB_KINDS.cleanUpStaticPreview,
+        JOB_KINDS.tearDownProject,
       ].toSorted(),
     )
     for (const kind of Object.keys(ACME_HANDLERS)) {

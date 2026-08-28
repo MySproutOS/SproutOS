@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -23,6 +23,13 @@ pub const INVALIDATION_CHANNEL: &str = "certificates:invalidate";
 pub const SERVING_REPLICAS_KEY: &str = "cert:serving-replicas";
 const MAX_CERTIFICATE_OBJECT_BYTES: i64 = 1024 * 1024;
 const INVENTORY_IO_TIMEOUT: Duration = Duration::from_secs(10);
+const SERVING_ACK_SCRIPT: &str = r#"
+local clock = redis.call('TIME')
+local now_ms = (clock[1] * 1000) + math.floor(clock[2] / 1000)
+redis.call('SET', KEYS[2], '1', 'PX', ARGV[2])
+redis.call('ZADD', KEYS[1], now_ms + tonumber(ARGV[2]), ARGV[1])
+return 1
+"#;
 
 /// Repeated proof that this process parsed and is serving one immutable platform certificate
 /// version. Platform wildcard certificates do not use the exact-host hot-reload inventory: a
@@ -56,22 +63,17 @@ impl PlatformCertificateAck {
 
     async fn acknowledge(&self) -> anyhow::Result<()> {
         let mut connection = self.valkey.clone();
-        let expires_at = serving_expiry_ms(SystemTime::now(), self.ttl)?;
-        let mut pipeline = redis::pipe();
-        pipeline
-            .atomic()
-            .cmd("SET")
-            .arg(platform_ack_key(&self.object_version, &self.instance_id))
-            .arg("1")
-            .arg("EX")
-            .arg(self.ttl.as_secs())
-            .ignore()
-            .cmd("ZADD")
+        let ttl_ms = u64::try_from(self.ttl.as_millis())
+            .context("certificate acknowledgement TTL exceeds u64 milliseconds")?;
+        redis::cmd("EVAL")
+            .arg(SERVING_ACK_SCRIPT)
+            .arg(2)
             .arg(SERVING_REPLICAS_KEY)
-            .arg(expires_at)
+            .arg(platform_ack_key(&self.object_version, &self.instance_id))
             .arg(&self.instance_id)
-            .ignore();
-        pipeline.query_async::<()>(&mut connection).await?;
+            .arg(ttl_ms)
+            .query_async::<i32>(&mut connection)
+            .await?;
         Ok(())
     }
 
@@ -80,29 +82,26 @@ impl PlatformCertificateAck {
     /// deregistration and gives reconciliation durable serving membership rather than a static
     /// replica count or boot history. The worker expires old sorted-set members atomically while
     /// checking that every remaining member acknowledged the exact version.
-    pub async fn start(self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    pub async fn start(
+        self,
+        readiness: Arc<crate::edge_readiness::EdgeReadiness>,
+    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         self.acknowledge().await?;
+        readiness.set_tls_certificate_membership(true);
         Ok(tokio::spawn(async move {
             let mut interval = tokio::time::interval(self.interval);
             interval.tick().await;
             loop {
                 interval.tick().await;
                 if let Err(cause) = self.acknowledge().await {
+                    readiness.set_tls_certificate_membership(false);
                     tracing::error!(%cause, "platform certificate acknowledgement failed");
+                } else {
+                    readiness.set_tls_certificate_membership(true);
                 }
             }
         }))
     }
-}
-
-fn serving_expiry_ms(now: SystemTime, ttl: Duration) -> anyhow::Result<u64> {
-    let milliseconds = now
-        .duration_since(UNIX_EPOCH)
-        .context("system clock precedes the Unix epoch")?
-        .checked_add(ttl)
-        .context("serving-replica expiry overflowed")?
-        .as_millis();
-    u64::try_from(milliseconds).context("serving-replica expiry exceeds u64 milliseconds")
 }
 
 fn platform_ack_key(object_version: &str, instance_id: &str) -> String {
@@ -603,15 +602,6 @@ mod tests {
         for vector in fixture.vectors {
             assert_eq!(certificate_version_key(&vector.version), vector.sha256);
         }
-    }
-
-    #[test]
-    fn serving_membership_expiry_tracks_the_ack_ttl() {
-        let now = UNIX_EPOCH + Duration::from_secs(1_000);
-        assert_eq!(
-            serving_expiry_ms(now, Duration::from_secs(90)).unwrap(),
-            1_090_000
-        );
     }
 
     #[test]

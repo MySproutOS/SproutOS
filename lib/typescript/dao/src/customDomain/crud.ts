@@ -30,6 +30,23 @@ export function crudCustomDomain(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
+  /** Update only while this worker still owns the lease and deletion has not been requested. */
+  async function updateReconciliation(
+    id: string,
+    leaseToken: string,
+    data: Updateable<DB["customDomain"]>,
+    allowDeleting = false,
+  ): Promise<Selectable<DB["customDomain"]> | undefined> {
+    let query = db
+      .updateTable("customDomain")
+      .set({ ...data, updatedAt: new Date() })
+      .where("id", "=", id)
+      .where("reconcileLeaseToken", "=", leaseToken)
+      .where("deletedAt", "is", null)
+    if (!allowDeleting) query = query.where("status", "!=", "deleting")
+    return await query.returningAll().executeTakeFirst()
+  }
+
   /** Claim reconciliation without holding a transaction or connection during ACME network work. */
   async function claimReconciliation(
     id: string,
@@ -94,7 +111,13 @@ export function crudCustomDomain(db: Kysely<DB>) {
     const now = new Date()
     return await db
       .updateTable("customDomain")
-      .set({ status: "deleting", nextRetryAt: now, updatedAt: now })
+      .set({
+        status: "deleting",
+        nextRetryAt: now,
+        reconcileLeaseToken: null,
+        reconcileLeaseExpiresAt: null,
+        updatedAt: now,
+      })
       .where("id", "=", id)
       .where("organizationId", "=", organizationId)
       .where("deletedAt", "is", null)
@@ -128,5 +151,6 @@ export function crudCustomDomain(db: Kysely<DB>) {
     heartbeatReconciliation,
     releaseReconciliation,
     update,
+    updateReconciliation,
   }
 }

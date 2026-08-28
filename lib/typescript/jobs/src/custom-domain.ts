@@ -1,11 +1,5 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import {
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-  ListObjectVersionsCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3"
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import {
@@ -16,11 +10,12 @@ import {
 import * as acme from "acme-client"
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises"
 import { Redis } from "ioredis"
-import type { Kysely } from "kysely"
+import type { Kysely, Updateable } from "kysely"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 import { certificateVersionKey } from "./certificate-version"
+import { deleteCertificateObjectVersions } from "./certificate-objects"
 import { certificateDeploymentQuorum } from "./certificate-quorum"
 import {
   configuredAcmeDirectoryUrl,
@@ -38,6 +33,8 @@ const CHALLENGE_TTL_SECONDS = 15 * 60
 const RETRY_AFTER_MS = 60_000
 const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_RETRY_MS = 24 * 60 * 60 * 1000
+
+class ReconciliationCancelledError extends Error {}
 
 type Resolver = {
   resolve4(hostname: string): Promise<string[]>
@@ -252,69 +249,41 @@ async function deleteCustomDomainResources(
     hostname: string
     certificateObjectKey: string | null
     certificateObjectVersion: string | null
+    deployedCertificateObjectKey: string | null
   },
   leaseToken: string,
   dependencies: CustomDomainDeletionDependencies,
 ): Promise<void> {
-  await withdrawLambdaRoute(dependencies.valkey, domain.hostname)
-  await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
-
-  if (domain.certificateObjectKey !== null) {
-    await deleteCertificateObjectVersions(
-      dependencies.s3,
-      dependencies.bucket,
-      domain.certificateObjectKey,
-      domain.certificateObjectVersion,
-    )
-  }
-  await dependencies.valkey.publish(
-    "certificates:invalidate",
-    JSON.stringify({ hostname: domain.hostname, deleted: true }),
-  )
-  if (!(await crudCustomDomain(db).finishDelete(domain.id, leaseToken))) {
-    throw new Error(`Custom domain ${domain.id} lost its deletion lease`)
-  }
-}
-
-/** Remove the private key from every retained S3 version, not just the version routers loaded. */
-export async function deleteCertificateObjectVersions(
-  s3: Pick<S3Client, "send">,
-  bucket: string,
-  key: string,
-  currentVersion: string | null,
-): Promise<void> {
-  if (currentVersion === null) {
-    // Local/non-versioned compatibility. Production issuance refuses a missing VersionId.
-    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
-    return
-  }
-
-  for (;;) {
-    const listed = await s3.send(
-      new ListObjectVersionsCommand({ Bucket: bucket, Prefix: key, MaxKeys: 1000 }),
-    )
-    const versions = [...(listed.Versions ?? []), ...(listed.DeleteMarkers ?? [])].flatMap(
-      ({ Key, VersionId }) => (Key === key && VersionId !== undefined ? [{ Key, VersionId }] : []),
-    )
-    if (versions.length === 0) {
-      if (listed.IsTruncated === true) {
-        throw new Error(`S3 truncated certificate versions for ${key} without deletable entries`)
+  await deleteCustomDomain({
+    withdrawRoute: () => withdrawLambdaRoute(dependencies.valkey, domain.hostname),
+    clearPending: async () => {
+      await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
+    },
+    deleteObjects: async () => {
+      const keys = new Set(
+        [
+          `custom-domains/${domain.id}/current.json`,
+          domain.certificateObjectKey,
+          domain.deployedCertificateObjectKey,
+        ].filter((key): key is string => key !== null),
+      )
+      for (const key of keys) {
+        // eslint-disable-next-line no-await-in-loop -- each exact certificate key is independent.
+        await deleteCertificateObjectVersions(dependencies.s3, dependencies.bucket, key)
       }
-      return
-    }
-
-    const deleted = await s3.send(
-      new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: versions, Quiet: true } }),
-    )
-    if ((deleted.Errors?.length ?? 0) > 0) {
-      const failures = deleted
-        .Errors!.map(
-          ({ VersionId, Code }) => `${VersionId ?? "unknown version"}: ${Code ?? "unknown error"}`,
-        )
-        .join(", ")
-      throw new Error(`S3 failed to delete certificate versions for ${key}: ${failures}`)
-    }
-  }
+    },
+    invalidateCertificates: async () => {
+      await dependencies.valkey.publish(
+        "certificates:invalidate",
+        JSON.stringify({ hostname: domain.hostname, deleted: true }),
+      )
+    },
+    finishDelete: async () => {
+      if (!(await crudCustomDomain(db).finishDelete(domain.id, leaseToken))) {
+        throw new Error(`Custom domain ${domain.id} lost its deletion lease`)
+      }
+    },
+  })
 }
 
 export async function activateCustomDomain(callbacks: {
@@ -377,6 +346,11 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
     const leaseToken = v7()
     const domain = await crudCustomDomain(db).claimReconciliation(payload.domainId, leaseToken)
     if (domain === undefined) return
+    const updateOwned = async (data: Updateable<DB["customDomain"]>) => {
+      const updated = await crudCustomDomain(db).updateReconciliation(domain.id, leaseToken, data)
+      if (updated === undefined) throw new ReconciliationCancelledError()
+      return updated
+    }
     let failureStatus: "failed" | "renewal_warning" | "propagating" =
       domain.certificateExpiresAt !== null ? "renewal_warning" : "failed"
 
@@ -392,7 +366,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
 
       if (domain.verifiedAt === null && domain.claimExpiresAt <= deps.now()) {
         await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
-        await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+        await updateOwned({
           status: "deleting",
           statusReason: "The unverified hostname claim expired after 30 days.",
           nextRetryAt: deps.now(),
@@ -416,7 +390,6 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         const quorum = await certificateDeploymentQuorum(
           deps.valkey,
           `cert:loaded:${domain.hostname}:${certificateVersionKey(domain.certificateObjectVersion)}:`,
-          deps.now(),
         )
         if (quorum.ready) {
           const project = await fetchProject(db).getInOrganization(
@@ -446,49 +419,71 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             organizationId: domain.organizationId,
             deploymentId: deployment.id,
           }
-          await activateCustomDomain({
-            publishRoute: () => deps.publishRoute(deps.valkey, domain.hostname, route),
-            clearPending: async () => {
-              await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
-            },
-            cleanupObsolete: async () => {
-              if (
-                domain.deployedCertificateObjectKey !== null &&
-                domain.deployedCertificateObjectVersion !== null &&
-                (domain.deployedCertificateObjectKey !== domain.certificateObjectKey ||
-                  domain.deployedCertificateObjectVersion !== domain.certificateObjectVersion)
-              ) {
-                await deps.s3.send(
-                  new DeleteObjectCommand({
-                    Bucket: required("TENANT_CERTIFICATE_BUCKET"),
-                    Key: domain.deployedCertificateObjectKey,
-                    VersionId: domain.deployedCertificateObjectVersion,
-                  }),
+          await db.transaction().execute(async (trx) => {
+            const current = await trx
+              .selectFrom("customDomain")
+              .select("id")
+              .where("id", "=", domain.id)
+              .where("status", "=", "propagating")
+              .where("reconcileLeaseToken", "=", leaseToken)
+              .where("deletedAt", "is", null)
+              .forUpdate()
+              .executeTakeFirst()
+            if (current === undefined) return
+            // The row lock serializes this short external cutover with beginDelete. A deletion
+            // requested first prevents publication; one requested after publication waits, then
+            // durably enters deleting and withdraws the route on its reconciliation pass.
+            await activateCustomDomain({
+              publishRoute: () => deps.publishRoute(deps.valkey, domain.hostname, route),
+              clearPending: async () => {
+                await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
+              },
+              cleanupObsolete: async () => {
+                const keys = new Set(
+                  [domain.certificateObjectKey, domain.deployedCertificateObjectKey].filter(
+                    (key): key is string => key !== null,
+                  ),
                 )
-              }
-            },
-            markActive: async () => {
-              const nextRetryAt =
-                domain.nextRenewalAt === null
-                  ? null
-                  : nextCertificateWorkAt({
-                      nextRenewalAt: domain.nextRenewalAt,
-                      renewalInfoRetryAt: domain.renewalInfoRetryAt,
-                      renewalInfoExplanationUrl: domain.renewalInfoExplanationUrl,
-                      source: domain.renewalInfoRetryAt === null ? "unsupported" : "ari",
-                    })
-              await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-                status: "active",
-                statusReason: null,
-                deployedCertificateObjectKey: domain.certificateObjectKey,
-                deployedCertificateObjectVersion: domain.certificateObjectVersion,
-                nextRetryAt,
-                consecutiveFailures: 0,
-              })
-            },
+                for (const key of keys) {
+                  // eslint-disable-next-line no-await-in-loop -- exact certificate keys are independent.
+                  await deleteCertificateObjectVersions(
+                    deps.s3,
+                    required("TENANT_CERTIFICATE_BUCKET"),
+                    key,
+                    key === domain.certificateObjectKey && domain.certificateObjectVersion !== null
+                      ? new Set([domain.certificateObjectVersion])
+                      : new Set(),
+                  )
+                }
+              },
+              markActive: async () => {
+                const nextRetryAt =
+                  domain.nextRenewalAt === null
+                    ? null
+                    : nextCertificateWorkAt({
+                        nextRenewalAt: domain.nextRenewalAt,
+                        renewalInfoRetryAt: domain.renewalInfoRetryAt,
+                        renewalInfoExplanationUrl: domain.renewalInfoExplanationUrl,
+                        source: domain.renewalInfoRetryAt === null ? "unsupported" : "ari",
+                      })
+                const updated = await crudCustomDomain(trx).updateReconciliation(
+                  domain.id,
+                  leaseToken,
+                  {
+                    status: "active",
+                    statusReason: null,
+                    deployedCertificateObjectKey: domain.certificateObjectKey,
+                    deployedCertificateObjectVersion: domain.certificateObjectVersion,
+                    nextRetryAt,
+                    consecutiveFailures: 0,
+                  },
+                )
+                if (updated === undefined) throw new ReconciliationCancelledError()
+              },
+            })
           })
         } else {
-          await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+          await updateOwned({
             statusReason: `Certificate stored; waiting for every serving Rust edge replica (${quorum.loaded}/${quorum.serving} loaded).`,
             nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
             consecutiveFailures: 0,
@@ -516,7 +511,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             expiresAt: domain.certificateExpiresAt,
             now: deps.now(),
           })
-          await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+          await updateOwned({
             nextRenewalAt: schedule.nextRenewalAt,
             renewalInfoRetryAt: schedule.renewalInfoRetryAt,
             renewalInfoExplanationUrl: schedule.renewalInfoExplanationUrl,
@@ -542,7 +537,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             ...(pointsToIngress ? [] : ["traffic record"]),
           ].join(" and ")
           await markPending(deps.valkey, domain.hostname)
-          await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+          await updateOwned({
             status: "pending_dns",
             statusReason: `Waiting for the ${missing} to resolve publicly.`,
             lastCheckedAt: deps.now(),
@@ -553,7 +548,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         }
       }
 
-      await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+      await updateOwned({
         status: "issuing",
         statusReason: renewing
           ? provenanceMatches
@@ -614,22 +609,49 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         throw new Error("Certificate bucket versioning is not enabled; S3 returned no VersionId")
       }
 
-      await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-        certificateObjectKey: objectKey,
-        certificateObjectVersion: stored.VersionId,
-        certificateIssuer: renewal.issuer,
-        certificateDirectoryUrl: directoryUrl,
-        certificateIssuedAt: certificate.issuedAt,
-        certificateExpiresAt: certificate.expiresAt,
-        renewalInfoCertificateId: renewal.certificateId,
-        renewalInfoRetryAt: renewal.renewalInfoRetryAt,
-        renewalInfoExplanationUrl: renewal.renewalInfoExplanationUrl,
-        nextRenewalAt: renewal.nextRenewalAt,
-        nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
-        status: "propagating",
-        statusReason: "Certificate issued; waiting for every active Rust edge replica to load it.",
-        consecutiveFailures: 0,
-      })
+      try {
+        await updateOwned({
+          certificateObjectKey: objectKey,
+          certificateObjectVersion: stored.VersionId,
+          certificateIssuer: renewal.issuer,
+          certificateDirectoryUrl: directoryUrl,
+          certificateIssuedAt: certificate.issuedAt,
+          certificateExpiresAt: certificate.expiresAt,
+          renewalInfoCertificateId: renewal.certificateId,
+          renewalInfoRetryAt: renewal.renewalInfoRetryAt,
+          renewalInfoExplanationUrl: renewal.renewalInfoExplanationUrl,
+          nextRenewalAt: renewal.nextRenewalAt,
+          nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
+          status: "propagating",
+          statusReason:
+            "Certificate issued; waiting for every active Rust edge replica to load it.",
+          consecutiveFailures: 0,
+        })
+      } catch (error) {
+        if (error instanceof ReconciliationCancelledError) {
+          await deps.s3.send(
+            new DeleteObjectCommand({
+              Bucket: required("TENANT_CERTIFICATE_BUCKET"),
+              Key: objectKey,
+              VersionId: stored.VersionId,
+            }),
+          )
+        }
+        throw error
+      }
+      await deleteCertificateObjectVersions(
+        deps.s3,
+        required("TENANT_CERTIFICATE_BUCKET"),
+        objectKey,
+        new Set(
+          [
+            stored.VersionId,
+            domain.deployedCertificateObjectKey === objectKey
+              ? domain.deployedCertificateObjectVersion
+              : null,
+          ].filter((version): version is string => version !== null),
+        ),
+      )
       await deps.valkey.publish(
         "certificates:invalidate",
         JSON.stringify({
@@ -639,14 +661,21 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         }),
       )
     } catch (error) {
+      if (error instanceof ReconciliationCancelledError) return
       const failures = domain.consecutiveFailures + 1
-      await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-        status: failureStatus,
-        statusReason:
-          error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
-        consecutiveFailures: failures,
-        nextRetryAt: customDomainRetryAfter(deps.now(), failures),
-      })
+      const updated = await crudCustomDomain(db).updateReconciliation(
+        domain.id,
+        leaseToken,
+        {
+          status: domain.status === "deleting" ? "deleting" : failureStatus,
+          statusReason:
+            error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+          consecutiveFailures: failures,
+          nextRetryAt: customDomainRetryAfter(deps.now(), failures),
+        },
+        domain.status === "deleting",
+      )
+      if (updated === undefined) return
       throw error
     } finally {
       await crudCustomDomain(db).releaseReconciliation(domain.id, leaseToken)

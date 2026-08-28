@@ -400,11 +400,17 @@ const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
 }
 
 /**
- * Certificate handlers run in their own ECS task role. Keeping the map separate is part of the
- * IAM boundary: the ordinary worker cannot claim an ACME job and the privileged worker cannot
- * claim unrelated customer work.
+ * Certificate and DNS-mutating deployment handlers run in their own ECS task role. Keeping the
+ * map separate is part of the IAM boundary: the ordinary worker cannot claim privileged work and
+ * the privileged worker cannot claim unrelated customer work.
  */
 export const ACME_HANDLERS: Record<string, JobHandler> = {
+  // These four are the only non-certificate jobs that mutate tenant DNS. They share the isolated
+  // deployment/certificate worker so the public website/API task role has no Route53 authority.
+  [JOB_KINDS.publishRelease]: publishRelease(),
+  [JOB_KINDS.tearDownPreview]: tearDownPreview(),
+  [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
+  [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
@@ -436,13 +442,9 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.upkeepResolveConflict]: resolveUpkeepConflict(),
-  [JOB_KINDS.publishRelease]: publishRelease(),
-  [JOB_KINDS.tearDownPreview]: tearDownPreview(),
-  [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
-  [JOB_KINDS.tearDownProject]: tearDownProject(),
   [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.workflowScheduleScan]: async (_job, { db }) => {
@@ -502,12 +504,12 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
       idempotencyKey: `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
       maxAttempts: 5,
     })
+    await enqueue(db, {
+      kind: JOB_KINDS.customDomainScan,
+      idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
   }
-  await enqueue(db, {
-    kind: JOB_KINDS.customDomainScan,
-    idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
-    maxAttempts: 5,
-  })
   if (process.env.TENANT_STATIC_DISTRIBUTION_ID !== undefined) {
     await enqueue(db, {
       /*

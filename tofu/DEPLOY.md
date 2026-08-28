@@ -276,11 +276,15 @@ production custom-domain activation, separate reviewed changes must prove all of
 - static CloudFront log reconciliation and delayed-delivery credit safeguards are deployed and
   verified independently of this dynamic edge.
 
-1. Apply with both `tenant_edge_preview_enabled` and `tenant_edge_enabled` false, then seed the
-   account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an
-   existing secret version.
-2. Deploy the edge-capable release normally. While both flags are false the worker may issue and
-   store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
+1. Apply with `acme_worker_enabled`, `tenant_edge_preview_enabled`, and `tenant_edge_enabled` false,
+   then seed the account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to
+   overwrite an existing secret version. The worker stays at desired count zero during this apply:
+   the old web task reserves 768 MiB and must retain the second host for its replacement.
+2. Deploy the edge-capable release normally and prove the live web task uses the new 640 MiB task
+   definition. Only then set `acme_worker_enabled = true`, save/review another plan, and apply it.
+   The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
+   rollout if it instead pins the spare host. While the edge flags remain false the worker may issue
+   and store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
    from refreshing either router Auto Scaling group.
 3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
    contains the new release. Apply a reviewed plan. This creates a separate dual-stack, EIP-backed
@@ -313,6 +317,7 @@ production custom-domain activation, separate reviewed changes must prove all of
    run the production browser and protocol smoke suite. Set `custom_domain_issuance_enabled = true`
    only after production-directory provenance and the remaining certificate lifecycle gates pass.
 
+`acme_worker_enabled` is the explicit capacity/IAM rollout gate for the isolated worker.
 `tenant_edge_enabled` controls generated traffic and the egress DNS cutover;
 `custom_domain_issuance_enabled` controls API claim/check operations. Keep both decisions explicit
 in persistent tfvars. Reverting the edge flag in a later apply would attempt to move generated and

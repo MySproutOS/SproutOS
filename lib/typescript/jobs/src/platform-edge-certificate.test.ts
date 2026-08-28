@@ -1,4 +1,8 @@
-import { StartInstanceRefreshCommand, type AutoScalingClient } from "@aws-sdk/client-auto-scaling"
+import {
+  DescribeInstanceRefreshesCommand,
+  StartInstanceRefreshCommand,
+  type AutoScalingClient,
+} from "@aws-sdk/client-auto-scaling"
 import {
   ChangeResourceRecordSetsCommand,
   GetChangeCommand,
@@ -260,16 +264,20 @@ describe("platform certificate lifecycle", () => {
   })
 
   it("submits a safe rolling refresh for every router ASG", async () => {
-    const send = vi.fn<(command: unknown) => Promise<unknown>>(() =>
-      Promise.resolve({ InstanceRefreshId: "refresh" }),
+    let refresh = 0
+    const send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
+      Promise.resolve(
+        command instanceof DescribeInstanceRefreshesCommand
+          ? { InstanceRefreshes: [] }
+          : { InstanceRefreshId: `refresh-${++refresh}` },
+      ),
     )
-    await requestPlatformRestart(
-      { send } as unknown as AutoScalingClient,
-      platformCertificateConfig(),
-    )
+    await expect(
+      requestPlatformRestart({ send } as unknown as AutoScalingClient, platformCertificateConfig()),
+    ).resolves.toEqual({ "router-blue": "refresh-1", "router-green": "refresh-2" })
 
-    expect(send).toHaveBeenCalledTimes(2)
-    for (const [command] of send.mock.calls) {
+    expect(send).toHaveBeenCalledTimes(4)
+    for (const [command] of send.mock.calls.slice(2)) {
       expect(command).toBeInstanceOf(StartInstanceRefreshCommand)
       if (!(command instanceof StartInstanceRefreshCommand)) throw new Error("missing refresh")
       expect(command.input.Preferences).toMatchObject({
@@ -282,18 +290,16 @@ describe("platform certificate lifecycle", () => {
     }
   })
 
-  it("treats an already-running refresh as the accepted idempotent handoff", async () => {
-    const inProgress = new Error("already running")
-    inProgress.name = "InstanceRefreshInProgressFault"
-    const send = vi
-      .fn<(command: unknown) => Promise<unknown>>()
-      .mockRejectedValueOnce(inProgress)
-      .mockResolvedValueOnce({ InstanceRefreshId: "refresh" })
+  it("refuses to adopt an unrelated already-running refresh", async () => {
+    const send = vi.fn<(command: unknown) => Promise<unknown>>(() =>
+      Promise.resolve({ InstanceRefreshes: [{ Status: "InProgress" }] }),
+    )
 
     await expect(
       requestPlatformRestart({ send } as unknown as AutoScalingClient, platformCertificateConfig()),
     ).resolves.toBeUndefined()
-    expect(send).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(DescribeInstanceRefreshesCommand)
   })
 })
 
@@ -379,14 +385,17 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
     await handler({} as never, context)
     const restarting = await db
       .selectFrom("platformEdgeCertificate")
-      .select(["status", "restartRequestedObjectVersion"])
+      .select(["status", "restartRequestedObjectVersion", "restartRequestIds"])
       .where("id", "=", "platform")
       .executeTakeFirstOrThrow()
     expect(restarting).toEqual({
       status: "awaiting_deployment",
       restartRequestedObjectVersion: "s3-version-1",
+      restartRequestIds: { router: "refresh-1" },
     })
-    expect(autoScalingSend).toHaveBeenCalledOnce()
+    expect(autoScalingSend).toHaveBeenCalledTimes(2)
+    expect(autoScalingSend.mock.calls[0]?.[0]).toBeInstanceOf(DescribeInstanceRefreshesCommand)
+    expect(autoScalingSend.mock.calls[1]?.[0]).toBeInstanceOf(StartInstanceRefreshCommand)
 
     loaded = true
     await handler({} as never, context)
@@ -396,7 +405,7 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
       .where("id", "=", "platform")
       .executeTakeFirstOrThrow()
     expect(active).toEqual({ status: "active", deployedObjectVersion: "s3-version-1" })
-    expect(autoScalingSend).toHaveBeenCalledOnce()
+    expect(autoScalingSend).toHaveBeenCalledTimes(2)
   })
 
   it("forces staging material through a production order before it can be activated", async () => {
@@ -510,7 +519,18 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
         nextRetryAt: new Date("2099-01-01T00:00:00Z"),
       })
       .execute()
-    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>(() => Promise.resolve({}))
+    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
+      Promise.resolve(
+        command instanceof DeleteObjectCommand
+          ? {}
+          : {
+              Versions: [
+                { Key: "platform-edge/current.json", VersionId: "replacement-version" },
+                { Key: "platform-edge/current.json", VersionId: "obsolete-version" },
+              ],
+            },
+      ),
+    )
     const handler = reconcilePlatformEdgeCertificate({
       now: () => new Date("2099-01-01T00:00:00Z"),
       autoScaling: {
@@ -538,8 +558,8 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
       signal: new AbortController().signal,
     })
 
-    expect(s3Send).toHaveBeenCalledOnce()
-    const deletion = s3Send.mock.calls[0]?.[0]
+    expect(s3Send).toHaveBeenCalledTimes(2)
+    const deletion = s3Send.mock.calls[1]?.[0]
     expect(deletion).toBeInstanceOf(DeleteObjectCommand)
     if (!(deletion instanceof DeleteObjectCommand)) throw new Error("missing version deletion")
     expect(deletion.input).toMatchObject({
@@ -554,6 +574,73 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
         .where("id", "=", "platform")
         .executeTakeFirstOrThrow(),
     ).toEqual({ status: "active", deployedObjectVersion: "replacement-version" })
+  })
+
+  it("tracks the exact refresh and resubmits when it completes without certificate quorum", async () => {
+    vi.stubEnv("PLATFORM_EDGE_ROLLOUT_ENABLED", "1")
+    await db
+      .insertInto("platformEdgeCertificate")
+      .values({
+        id: "platform",
+        status: "awaiting_deployment",
+        certificateObjectKey: "platform-edge/current.json",
+        certificateObjectVersion: "replacement-version",
+        restartRequestedObjectVersion: "replacement-version",
+        restartRequestIds: { router: "refresh-old" },
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateIssuedAt: new Date("2099-01-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2099-04-01T00:00:00Z"),
+        nextRenewalAt: new Date("2099-03-02T00:00:00Z"),
+        nextRetryAt: new Date("2099-01-01T00:00:00Z"),
+      })
+      .execute()
+    const autoScalingSend = vi.fn<(command: unknown) => Promise<unknown>>((command) => {
+      if (command instanceof DescribeInstanceRefreshesCommand) {
+        return Promise.resolve(
+          command.input.InstanceRefreshIds === undefined
+            ? { InstanceRefreshes: [] }
+            : { InstanceRefreshes: [{ InstanceRefreshId: "refresh-old", Status: "Successful" }] },
+        )
+      }
+      return Promise.resolve({ InstanceRefreshId: "refresh-new" })
+    })
+    const handler = reconcilePlatformEdgeCertificate({
+      now: () => new Date("2099-01-01T00:00:00Z"),
+      autoScaling: { send: autoScalingSend } as unknown as AutoScalingClient,
+      valkey: {
+        eval: vi.fn<(...arguments_: unknown[]) => Promise<[number, number]>>(() =>
+          Promise.resolve([1, 0]),
+        ),
+      } as unknown as Redis,
+    })
+    const context = {
+      db,
+      keepAlive: () => Promise.resolve(true),
+      signal: new AbortController().signal,
+    }
+
+    await handler({} as never, context)
+    expect(
+      await db
+        .selectFrom("platformEdgeCertificate")
+        .select(["restartRequestedObjectVersion", "restartRequestIds"])
+        .where("id", "=", "platform")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ restartRequestedObjectVersion: null, restartRequestIds: null })
+
+    await handler({} as never, context)
+    expect(
+      await db
+        .selectFrom("platformEdgeCertificate")
+        .select(["restartRequestedObjectVersion", "restartRequestIds"])
+        .where("id", "=", "platform")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      restartRequestedObjectVersion: "replacement-version",
+      restartRequestIds: { router: "refresh-new" },
+    })
   })
 
   it("refreshes ARI without issuing before the selected renewal time", async () => {

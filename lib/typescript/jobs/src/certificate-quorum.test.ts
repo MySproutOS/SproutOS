@@ -33,21 +33,21 @@ afterAll(async () => {
 
 describe.runIf(reachable)("certificate serving quorum", () => {
   it("refuses zero replicas and requires every live serving replica", async () => {
-    const now = new Date("2026-08-28T12:00:00Z")
-    expect(await certificateDeploymentQuorum(valkey, prefix, now)).toEqual({
+    const now = new Date()
+    expect(await certificateDeploymentQuorum(valkey, prefix)).toEqual({
       serving: 0,
       loaded: 0,
       ready: false,
     })
 
     await valkey.zadd(ROUTER_SERVING_REPLICAS_KEY, now.getTime() + 90_000, "blue-1")
-    expect(await certificateDeploymentQuorum(valkey, prefix, now)).toMatchObject({
+    expect(await certificateDeploymentQuorum(valkey, prefix)).toMatchObject({
       serving: 1,
       loaded: 0,
       ready: false,
     })
     await valkey.set(`${prefix}blue-1`, "1", "EX", 90)
-    expect(await certificateDeploymentQuorum(valkey, prefix, now)).toMatchObject({
+    expect(await certificateDeploymentQuorum(valkey, prefix)).toMatchObject({
       serving: 1,
       loaded: 1,
       ready: true,
@@ -55,26 +55,26 @@ describe.runIf(reachable)("certificate serving quorum", () => {
   })
 
   it("makes scale-out join the quorum before activation", async () => {
-    const now = new Date("2026-08-28T12:00:00Z")
+    const now = new Date()
     await valkey.zadd(ROUTER_SERVING_REPLICAS_KEY, now.getTime() + 90_000, "blue-1")
     await valkey.set(`${prefix}blue-1`, "1", "EX", 90)
-    expect((await certificateDeploymentQuorum(valkey, prefix, now)).ready).toBe(true)
+    expect((await certificateDeploymentQuorum(valkey, prefix)).ready).toBe(true)
 
     await valkey.zadd(ROUTER_SERVING_REPLICAS_KEY, now.getTime() + 90_000, "green-1")
-    expect(await certificateDeploymentQuorum(valkey, prefix, now)).toMatchObject({
+    expect(await certificateDeploymentQuorum(valkey, prefix)).toMatchObject({
       serving: 2,
       loaded: 1,
       ready: false,
     })
     await valkey.set(`${prefix}green-1`, "1", "EX", 90)
-    expect((await certificateDeploymentQuorum(valkey, prefix, now)).ready).toBe(true)
+    expect((await certificateDeploymentQuorum(valkey, prefix)).ready).toBe(true)
   })
 
   it("lets a stopped replica age out during a rolling restart", async () => {
-    const now = new Date("2026-08-28T12:00:00Z")
+    const now = new Date()
     await valkey.zadd(
       ROUTER_SERVING_REPLICAS_KEY,
-      now.getTime() - 1,
+      0,
       "old-blue",
       now.getTime() + 90_000,
       "new-blue",
@@ -82,7 +82,7 @@ describe.runIf(reachable)("certificate serving quorum", () => {
     await valkey.set(`${prefix}old-blue`, "1", "EX", 90)
     await valkey.set(`${prefix}new-blue`, "1", "EX", 90)
 
-    expect(await certificateDeploymentQuorum(valkey, prefix, now)).toEqual({
+    expect(await certificateDeploymentQuorum(valkey, prefix)).toEqual({
       serving: 1,
       loaded: 1,
       ready: true,
@@ -91,7 +91,7 @@ describe.runIf(reachable)("certificate serving quorum", () => {
   })
 
   it("takes membership and acknowledgements in one atomic server-side snapshot", async () => {
-    const now = new Date("2026-08-28T12:00:00Z")
+    const now = new Date()
     await valkey.zadd(ROUTER_SERVING_REPLICAS_KEY, now.getTime() + 90_000, "blue-1")
     await valkey.set(`${prefix}blue-1`, "1", "EX", 90)
 
@@ -99,7 +99,7 @@ describe.runIf(reachable)("certificate serving quorum", () => {
     // when no writer changes the snapshot. The Lua boundary evaluates expiry, members, and ACKs as
     // one Valkey command; concurrent heartbeats are ordered entirely before or after it.
     const results = await Promise.all(
-      Array.from({ length: 20 }, () => certificateDeploymentQuorum(valkey, prefix, now)),
+      Array.from({ length: 20 }, () => certificateDeploymentQuorum(valkey, prefix)),
     )
     expect(results.every((result) => result.ready && result.serving === 1)).toBe(true)
   })

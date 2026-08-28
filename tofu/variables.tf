@@ -171,6 +171,19 @@ variable "tenant_edge_preview_enabled" {
   default     = false
 }
 
+variable "acme_worker_enabled" {
+  description = "Run the IAM-isolated certificate/deployment worker after the smaller web task is live. Keep false for the first infrastructure apply so the old 768 MiB web task retains the spare rollout host."
+  type        = bool
+  default     = false
+
+  validation {
+    condition = var.acme_worker_enabled || !(
+      var.tenant_edge_preview_enabled || var.tenant_edge_enabled || var.custom_domain_issuance_enabled
+    )
+    error_message = "The isolated ACME worker must be enabled before preview edge, tenant edge, or custom-domain issuance."
+  }
+}
+
 variable "custom_domain_issuance_enabled" {
   description = "Allow custom-domain claims and asynchronous ACME work independently of the generated-traffic DNS cutover. Enable first against staging on the preview edge."
   type        = bool

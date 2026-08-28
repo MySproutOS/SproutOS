@@ -835,6 +835,7 @@ export interface PlatformEdgeCertificate {
   renewalInfoExplanationUrl: string | null
   renewalInfoRetryAt: Timestamp | null
   restartRequestedObjectVersion: string | null
+  restartRequestIds: Json | null
   status: Generated<string>
   statusReason: string | null
   updatedAt: Generated<Timestamp>
