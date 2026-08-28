@@ -27,6 +27,7 @@ let organizationId = ""
 let organizationSlug = ""
 let grantId = ""
 let projectId = ""
+let projectSlug = ""
 
 async function code(scopes = ["project:read", "deployment:write"]): Promise<string> {
   return await createAuthorizationCode(db, {
@@ -67,6 +68,7 @@ beforeAll(async () => {
   organizationSlug = organization.slug
   const repositoryId = v7()
   projectId = v7()
+  projectSlug = `cli-deploy-${projectId.slice(-8)}`
   await db
     .insertInto("repository")
     .values({
@@ -88,7 +90,7 @@ beforeAll(async () => {
       organizationId,
       repositoryId,
       name: "CLI deploy target",
-      slug: `cli-deploy-${projectId.slice(-8)}`,
+      slug: projectSlug,
       kind: "site",
     })
     .execute()
@@ -176,7 +178,7 @@ describe.skipIf(!reachable)("Sprout CLI PKCE exchange", () => {
     })
 
     const deploy = await app.request(
-      `/v1/orgs/${organizationSlug}/projects/${projectId}/deploy-token`,
+      `/v1/orgs/${organizationSlug}/projects/${projectSlug}/deploy-token`,
       { method: "POST", headers: { Authorization: `Bearer ${result.key}` } },
     )
     expect(deploy.status).toBe(200)
