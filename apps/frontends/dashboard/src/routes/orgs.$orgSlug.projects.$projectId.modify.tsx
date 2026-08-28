@@ -27,6 +27,7 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { Switch } from "@ui/base/ui/switch"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
+import { PrimaryProjectSelect } from "@frontends/dashboard/components/projects/primary-project-select"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   useProject,
@@ -252,28 +253,12 @@ function ModifyForm({
           {isGroup && (
             <div className="flex flex-col gap-1.5">
               <Label>Primary project</Label>
-              <Select
+              <PrimaryProjectSelect
+                projectId={projectId}
+                projects={projects.data}
                 value={primaryChildProjectId}
-                onValueChange={(value: string | null) => {
-                  if (value !== null) setPrimaryChildProjectId(value)
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="No primary project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No primary project</SelectItem>
-                  {(projects.data ?? [])
-                    .filter(
-                      (candidate) => candidate.parentProjectId === projectId && !candidate.isGroup,
-                    )
-                    .map((candidate) => (
-                      <SelectItem key={candidate.id} value={candidate.id}>
-                        {candidate.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                onValueChange={setPrimaryChildProjectId}
+              />
               <p className="text-[11px] text-muted-foreground">
                 The group uses this child project’s custom domain or SproutOS hostname.
               </p>

@@ -44,7 +44,7 @@ import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
-import type { Selectable } from "kysely"
+import type { Kysely, Selectable } from "kysely"
 import type { Context } from "hono"
 import { authMiddleware } from "../middleware"
 import {
@@ -312,6 +312,8 @@ const TORN_DOWN_BY_JOB = [
   "tenant_queue",
   "observability_stream",
   "project_env_var",
+  "custom_domain",
+  "database_branch",
 ] as const
 
 type JobRow = Pick<Selectable<DB["projectJob"]>, (typeof JOB_FIELDS)[number]>
@@ -342,6 +344,7 @@ function serializeJob(job: JobRow) {
  * topology into a loud failure instead of unbounded recursion.
  */
 async function listDescendantsDeepestFirst(
+  database: Kysely<DB>,
   organizationId: string,
   rootProjectId: string,
 ): Promise<{ id: string; isGroup: boolean }[]> {
@@ -350,7 +353,7 @@ async function listDescendantsDeepestFirst(
   const visited = new Set<string>()
 
   async function visit(parentProjectId: string): Promise<void> {
-    const children = await fetchProject(db).listChildren(organizationId, parentProjectId, [
+    const children = await fetchProject(database).listChildren(organizationId, parentProjectId, [
       "id",
       "isGroup",
     ])
@@ -1476,30 +1479,46 @@ const app = new Hono()
       ])
       if (deleting === undefined) return throwNotFound(c, "Project not found")
 
-      const childResults = []
-      if (deleting.isGroup) {
-        const descendants = await listDescendantsDeepestFirst(organization.id, projectId)
-        for (const descendant of descendants) {
-          const removed = await provisionProject(db).remove({
-            actorUserId: user.id,
-            audit: auditContext(c),
-            organizationId: organization.id,
-            projectId: descendant.id,
-            preserveEmptyGroups: true,
-          })
-          if (removed !== null) childResults.push(removed)
+      const deleted = await db.transaction().execute(async (tx) => {
+        const childResults = []
+        if (deleting.isGroup) {
+          const descendants = await listDescendantsDeepestFirst(tx, organization.id, projectId)
+          for (const descendant of descendants) {
+            const removed = await provisionProject(tx).removeInTransaction(tx, {
+              actorUserId: user.id,
+              audit: auditContext(c),
+              organizationId: organization.id,
+              projectId: descendant.id,
+              preserveEmptyGroups: true,
+            })
+            if (removed !== null) childResults.push(removed)
+          }
         }
-      }
 
-      const result = await provisionProject(db).remove({
-        actorUserId: user.id,
-        audit: auditContext(c),
-        organizationId: organization.id,
-        projectId,
-        preserveEmptyGroups: deleting.isGroup,
+        const result = await provisionProject(tx).removeInTransaction(tx, {
+          actorUserId: user.id,
+          audit: auditContext(c),
+          organizationId: organization.id,
+          projectId,
+          preserveEmptyGroups: deleting.isGroup,
+        })
+
+        if (result === null) return null
+
+        for (const removed of [...childResults, result]) {
+          await enqueue(tx, {
+            kind: JOB_KINDS.tearDownProject,
+            idempotencyKey: `${JOB_KINDS.tearDownProject}:${removed.project.id}:${removed.job.id}`,
+            payload: { projectId: removed.project.id, projectJobId: removed.job.id },
+            maxAttempts: 5,
+          })
+        }
+
+        return { childResults, result }
       })
 
-      if (result === null) return throwNotFound(c, "Project not found")
+      if (deleted === null) return throwNotFound(c, "Project not found")
+      const { childResults, result } = deleted
 
       /*
         The teardown this route has always claimed to queue.
@@ -1511,18 +1530,10 @@ const app = new Hono()
         traffic and billing, its sandbox went on holding a node, and its backend services stayed
         provisioned with live credentials.
 
-        Keyed on the project, so a second delete of the same project collides rather than tearing
-        it down twice.
+        Keyed on the immutable deletion progress row. A retry of this database transaction
+        collides safely, while a later cleanup adoption gets a fresh key instead of being absorbed
+        by an old terminal job for the same project.
       */
-      for (const removed of [...childResults, result]) {
-        await enqueue(db, {
-          kind: JOB_KINDS.tearDownProject,
-          idempotencyKey: `${JOB_KINDS.tearDownProject}:${removed.project.id}`,
-          payload: { projectId: removed.project.id, projectJobId: removed.job.id },
-          maxAttempts: 5,
-        })
-      }
-
       const repositoryNote = result.repositoryReleased
         ? "The repository was released with it."
         : `The repository is still used by ${result.remainingProjectsOnRepository} other project(s) and was kept.`
