@@ -98,6 +98,12 @@ export {
 } from "./workflow-metering"
 export { TEARDOWN_KIND, tearDownProject, type TeardownResult } from "./teardown"
 export {
+  customDomainTeardownClientsFromEnv,
+  tearDownCustomDomain,
+  type CustomDomainTeardownClients,
+} from "./custom-domain-teardown"
+export { ACCOUNT_TEARDOWN_KIND, tearDownAccount } from "./account-teardown"
+export {
   deactivateStaticHost,
   pointStaticSite,
   staticPlatformFromEnv,

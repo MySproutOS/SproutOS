@@ -8,6 +8,7 @@ import { tearDownDeployment } from "@lib/lambda"
 import { Redis } from "ioredis"
 import {
   neonPostgresDriverFromEnv,
+  objectStorageDriverFromEnv,
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
   searchDriver,
@@ -15,6 +16,11 @@ import {
   valkeyDriver,
   valkeyServiceConfigFromEnv,
 } from "@lib/services"
+import {
+  customDomainTeardownClientsFromEnv,
+  tearDownCustomDomain,
+  type CustomDomainTeardownClients,
+} from "./custom-domain-teardown"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
@@ -57,6 +63,7 @@ import { withProjectLock } from "./project-lock"
 export const TEARDOWN_KIND = "project.teardown"
 
 export type TeardownResult = {
+  customDomains: number
   deployments: number
   services: number
   sandboxes: number
@@ -74,6 +81,7 @@ export type TeardownResult = {
 export type TeardownClients = {
   lambda: LambdaClient
   valkey: Redis
+  customDomains?: Omit<CustomDomainTeardownClients, "valkey">
   static?: StaticPublisherClients & {
     bucket: string
     tenantZoneId: string
@@ -82,6 +90,7 @@ export type TeardownClients = {
 }
 
 export function tearDownProject(clients?: TeardownClients): JobHandler {
+  let resolvedClients = clients
   return async (job, { db, keepAlive, signal }) => {
     const { projectId, projectJobId } = job.payload as {
       projectId?: string
@@ -137,11 +146,12 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
             ? {}
             : { endpoint: process.env.AWS_ENDPOINT_URL }),
         }
-        const aws: TeardownClients = clients ?? {
+        const aws: TeardownClients = (resolvedClients ??= {
           lambda: new LambdaClient(awsConfig),
           valkey: new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
-        }
+        })
         const result: TeardownResult = {
+          customDomains: 0,
           deployments: 0,
           services: 0,
           sandboxes: 0,
@@ -219,6 +229,21 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
           await tearDownDeployment(aws, { projectId, hostname: deployment.hostname })
           await crudDeployment(db).update(deployment.id, { status: "torn_down" })
           result.deployments += 1
+        }
+
+        const customDomains = await db
+          .selectFrom("customDomain")
+          .select(["id", "hostname", "isApex", "acmCertificateArn"])
+          .where("projectId", "=", projectId)
+          .where("deletedAt", "is", null)
+          .execute()
+        const customDomainClients = aws.customDomains
+          ? { valkey: aws.valkey, ...aws.customDomains }
+          : customDomainTeardownClientsFromEnv(aws.valkey)
+        for (const domain of customDomains) {
+          await ownLease()
+          await tearDownCustomDomain(db, domain, customDomainClients)
+          result.customDomains += 1
         }
 
         /*
@@ -380,6 +405,7 @@ async function driverFor(db: Kysely<DB>, kind: string, backendServiceId: string)
   }
   if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
   if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
+  if (kind === "object_storage") return objectStorageDriverFromEnv(db)
   throw new Error(`No driver for backend service kind "${kind}"`)
 }
 

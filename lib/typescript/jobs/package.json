@@ -16,6 +16,7 @@
   "dependencies": {
     "@aws-sdk/client-auto-scaling": "catalog:",
     "@aws-sdk/client-cloudfront-keyvaluestore": "catalog:",
+    "@aws-sdk/client-elastic-load-balancing-v2": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
     "@aws-sdk/client-route-53": "catalog:",
     "@aws-sdk/client-s3": "catalog:",

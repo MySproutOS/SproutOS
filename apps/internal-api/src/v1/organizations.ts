@@ -7,7 +7,9 @@ import {
   fetchOrganizationMember,
   isValidOrganizationSlug,
   provisionOrganization,
+  prepareOrganizationTeardown,
 } from "@lib/dao"
+import { enqueue, JOB_KINDS } from "@lib/jobs"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -299,24 +301,32 @@ const app = new Hono()
       const user = c.var.user
       const organization = c.var.organization
 
-      const deleted = await db.transaction().execute(async (tx) => {
-        const ok = await crudOrganization(tx).softDelete(organization.id)
-        if (!ok) return false
-
-        await crudAuditLog(tx).record({
-          organizationId: organization.id,
-          actorUserId: user.id,
-          action: "org:delete",
-          resourceSrn: srnFor("org", organization.id, "organization", organization.id),
-          before: { slug: organization.slug, name: organization.name, deletedAt: null },
-          after: { deletedAt: new Date().toISOString() },
-          ...auditContext(c),
-        })
-
-        return true
+      const prepared = await prepareOrganizationTeardown(db, {
+        organizationId: organization.id,
       })
+      if (!prepared.ok) return throwNotFound(c, "Organization not found")
 
-      if (!deleted) return throwNotFound(c, "Organization not found")
+      for (const project of prepared.projects) {
+        await enqueue(db, {
+          kind: JOB_KINDS.tearDownProject,
+          idempotencyKey: `${JOB_KINDS.tearDownProject}:${project.projectId}`,
+          payload: project,
+          maxAttempts: 5,
+        })
+      }
+
+      await crudAuditLog(db).record({
+        organizationId: organization.id,
+        actorUserId: user.id,
+        action: "org:delete",
+        resourceSrn: srnFor("org", organization.id, "organization", organization.id),
+        before: { slug: organization.slug, name: organization.name, deletedAt: null },
+        after: {
+          deletedAt: new Date().toISOString(),
+          projectsScheduledForTeardown: prepared.projects.length,
+        },
+        ...auditContext(c),
+      })
 
       await crudUserPreference(db).setLastOrganization(user.id, null)
 

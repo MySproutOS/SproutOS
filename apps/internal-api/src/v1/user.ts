@@ -5,8 +5,10 @@ import {
   fetchOrganization,
   fetchUserPreference,
   impersonation,
+  prepareAccountOrganizationsForTeardown,
 } from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
+import { enqueue, JOB_KINDS } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
 import { Hono } from "hono"
@@ -436,29 +438,29 @@ const app = new Hono()
     async (c) => {
       const user = c.var.user
 
-      const result = await crudUser(db).deleteUser(user.id)
-
-      if (!result.ok && result.reason === "not_found") {
-        return throwNotFound(c, "User not found")
-      }
-      if (!result.ok) {
-        /*
-          409, and it names the organizations.
-
-          Someone has to be responsible for a team's data and its bill. Orphaning them or cascading
-          the delete are both worse than saying so, and a message that does not say *which* teams
-          leaves the person to guess.
-        */
+      const prepared = await prepareAccountOrganizationsForTeardown(db, user.id)
+      if (!prepared.ok) {
         return throwConflict(
           c,
-          `Transfer or delete these organizations first: ${result.organizations
-            .map((organization) => organization.slug)
-            .join(", ")}`,
+          `Transfer these shared organizations before deleting your account: ${prepared.organizations.join(", ")}`,
         )
       }
 
-      // The cookie goes with the account. Without this the browser keeps a session token whose
-      // row was just deleted, and the next request is a confusing 401 rather than a sign-out.
+      if (prepared.projects.length === 0) {
+        // Nothing external can fail, so there is no reason to leave a tombstone job between the
+        // request and anonymisation.
+        await crudUser(db).deleteUser(user.id)
+      } else {
+        await enqueue(db, {
+          kind: JOB_KINDS.tearDownAccount,
+          idempotencyKey: `${JOB_KINDS.tearDownAccount}:${user.id}`,
+          payload: { userId: user.id, projects: prepared.projects },
+          maxAttempts: 10,
+        })
+      }
+
+      // Sign out immediately. The durable job anonymises the row only after every provider
+      // teardown succeeds, so a failed cleanup never becomes an unowned resource.
       deleteCookie(c, "session", { path: "/", domain: cookieDomain() })
 
       return c.json({}, 200)

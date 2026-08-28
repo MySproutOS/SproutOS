@@ -36,6 +36,7 @@ let repositoryId: string
 const deletedFunctions: string[] = []
 const withdrawn: string[] = []
 const staticCleanup: string[] = []
+const certificateCleanup: string[] = []
 
 const lambdaClients = {
   lambda: {
@@ -48,6 +49,21 @@ const lambdaClients = {
     del: (key: string) => {
       withdrawn.push(key)
       return Promise.resolve(1)
+    },
+  },
+  customDomains: {
+    listenerArn: "arn:listener:test",
+    acm: {
+      send: (command: unknown) => {
+        certificateCleanup.push(command?.constructor.name ?? "unknown")
+        return Promise.resolve({})
+      },
+    },
+    elb: {
+      send: (command: unknown) => {
+        certificateCleanup.push(command?.constructor.name ?? "unknown")
+        return Promise.resolve({})
+      },
     },
   },
   static: {
@@ -222,6 +238,20 @@ describe("tearing down a deleted project", () => {
         valueKmsKeyId: "test-key",
       })
       .execute()
+    const customDomainId = v7()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: customDomainId,
+        organizationId,
+        projectId,
+        hostname: "deleted.example.test",
+        isApex: true,
+        verificationToken: "test-token",
+        acmCertificateArn: "arn:certificate:test",
+        status: "active",
+      })
+      .execute()
 
     // A billing grain, which must survive: a statement has to resolve its line items to a project.
     const rollupId = v7()
@@ -268,6 +298,16 @@ describe("tearing down a deleted project", () => {
     expect(staticCleanup).toContain("edge:old-static.example.test")
     expect(staticCleanup).toContain(`list:sites/${projectId}/`)
     expect(staticCleanup).toContain(`list:static/${projectId}/`)
+    expect(withdrawn).toContain("route:deleted.example.test")
+    expect(withdrawn).toContain("route:www.deleted.example.test")
+    expect(certificateCleanup).toContain("RemoveListenerCertificatesCommand")
+    expect(certificateCleanup).toContain("DeleteCertificateCommand")
+    const deletedDomain = await db
+      .selectFrom("customDomain")
+      .select("deletedAt")
+      .where("id", "=", customDomainId)
+      .executeTakeFirstOrThrow()
+    expect(deletedDomain.deletedAt).toBeInstanceOf(Date)
 
     // The customer's secrets are gone. Nothing references them and the request was to stop holding
     // the project's data.

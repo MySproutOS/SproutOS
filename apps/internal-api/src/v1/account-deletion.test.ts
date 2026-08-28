@@ -59,12 +59,11 @@ afterAll(async () => {
 })
 
 describe.skipIf(!up)("closing an account", () => {
-  it("refuses while the person still owns an organization, and names it", async ({ skip }) => {
+  it("automatically deletes an organization the person owns alone", async ({ skip }) => {
     if (!up) skip()
     /*
-      Someone has to be responsible for a team's data and its bill. Orphaning it or cascading the
-      delete are both worse than saying so — and a message that does not say *which* team leaves
-      the person to guess.
+      There is nobody to transfer a one-person organization to. Its provider resources are part of
+      the account deletion, while GitHub repositories remain untouched unless separately requested.
     */
     const user = await person("close-owner")
     const created = await app.request("/v1/orgs", {
@@ -76,17 +75,59 @@ describe.skipIf(!up)("closing an account", () => {
     trackOrganization(organization.id as string)
 
     const response = await call("DELETE", "/v1/user/me/delete", user)
-    expect(response.status).toBe(409)
-    expect(JSON.stringify(response.json)).toContain(organization.slug as string)
+    expect(response.status).toBe(200)
 
-    // And the account is untouched — a refusal must not half-close it.
     const row = await db
       .selectFrom("user")
       .select(["deletedAt", "email"])
       .where("id", "=", user.id)
       .executeTakeFirstOrThrow()
+    expect(row.deletedAt).not.toBeNull()
+    expect(row.email.endsWith("@invalid")).toBe(true)
+    expect(
+      (
+        await db
+          .selectFrom("organization")
+          .select("deletedAt")
+          .where("id", "=", organization.id as string)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).not.toBeNull()
+  })
+
+  it("requires ownership transfer for an organization with another member", async ({ skip }) => {
+    if (!up) skip()
+    const owner = await person("close-shared-owner")
+    const member = await person("close-shared-member")
+    const created = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: authHeaders(owner),
+      body: JSON.stringify({ name: `Shared ${v7()}` }),
+    })
+    const organization = (await created.json()) as Json
+    trackOrganization(organization.id as string)
+    const role = await db
+      .selectFrom("role")
+      .select("id")
+      .where("organizationId", "=", organization.id as string)
+      .where("name", "=", "member")
+      .executeTakeFirstOrThrow()
+    const invite = await call("POST", `/v1/orgs/${organization.slug as string}/invites`, owner, {
+      email: member.email,
+      roleId: role.id,
+    })
+    await call("POST", "/v1/invites/accept", member, { token: invite.json.token })
+
+    const response = await call("DELETE", "/v1/user/me/delete", owner)
+    expect(response.status).toBe(409)
+    expect(JSON.stringify(response.json)).toContain(organization.slug as string)
+
+    const row = await db
+      .selectFrom("user")
+      .select("deletedAt")
+      .where("id", "=", owner.id)
+      .executeTakeFirstOrThrow()
     expect(row.deletedAt).toBeNull()
-    expect(row.email).toBe(user.email)
   })
 
   it("closes an account that owns nothing", async ({ skip }) => {
