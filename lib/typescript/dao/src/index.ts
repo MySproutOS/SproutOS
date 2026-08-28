@@ -114,9 +114,13 @@ import { crudUserPreference } from "./userPreference/crud"
 import { fetchUserPreference } from "./userPreference/fetch"
 import { crudCustomDomain } from "./customDomain/crud"
 import { CUSTOM_DOMAIN_FIELDS, fetchCustomDomain } from "./customDomain/fetch"
+import { crudPlatformEdgeCertificate } from "./platformEdgeCertificate/crud"
+import { fetchPlatformEdgeCertificate } from "./platformEdgeCertificate/fetch"
 
 export {
   ADMIN_ROLE_NAME,
+  crudPlatformEdgeCertificate,
+  fetchPlatformEdgeCertificate,
   AgentConfigUpsert,
   AgentCredentialKind,
   AgentEventRow,

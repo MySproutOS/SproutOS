@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { hasOwnershipTxt, nextRenewal, trafficPointsToIngress } from "./custom-domain"
+import {
+  activateCustomDomain,
+  customDomainRetryAfter,
+  hasOwnershipTxt,
+  nextRenewal,
+  trafficPointsToIngress,
+} from "./custom-domain"
 
 const absent = (): Promise<never> => Promise.reject(new Error("not found"))
 
@@ -54,5 +60,52 @@ describe("certificate renewal fallback", () => {
     expect(nextRenewal(new Date("2027-01-31T00:00:00.000Z"))).toEqual(
       new Date("2027-01-01T00:00:00.000Z"),
     )
+  })
+
+  it("backs failures off durably and caps retries", () => {
+    const now = new Date("2026-08-28T00:00:00Z")
+    expect(customDomainRetryAfter(now, 1)).toEqual(new Date("2026-08-28T00:02:00Z"))
+    expect(customDomainRetryAfter(now, 100)).toEqual(new Date("2026-08-28T17:04:00Z"))
+  })
+})
+
+describe("custom-domain activation ordering", () => {
+  it("publishes the route before marking the domain active", async () => {
+    const routeKeys = new Set<string>()
+    const order: string[] = []
+
+    await activateCustomDomain({
+      publishRoute: () => {
+        routeKeys.add("route:app.example.com")
+        order.push("route")
+        return Promise.resolve()
+      },
+      clearPending: () => {
+        order.push("pending")
+        return Promise.resolve()
+      },
+      markActive: () => {
+        expect(routeKeys.has("route:app.example.com")).toBe(true)
+        order.push("active")
+        return Promise.resolve()
+      },
+    })
+
+    expect(order).toEqual(["route", "pending", "active"])
+  })
+
+  it("never marks active when route publication fails", async () => {
+    let markedActive = false
+    await expect(
+      activateCustomDomain({
+        publishRoute: () => Promise.reject(new Error("Valkey unavailable")),
+        clearPending: () => Promise.resolve(),
+        markActive: () => {
+          markedActive = true
+          return Promise.resolve()
+        },
+      }),
+    ).rejects.toThrow("Valkey unavailable")
+    expect(markedActive).toBe(false)
   })
 })

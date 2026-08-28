@@ -52,6 +52,10 @@ import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-meterin
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
 import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 import {
+  PLATFORM_EDGE_CERTIFICATE_KIND,
+  reconcilePlatformEdgeCertificate,
+} from "./platform-edge-certificate"
+import {
   importStaticCloudFrontLog,
   scanStaticCloudFrontLogs,
   STATIC_CLOUDFRONT_METERING_KINDS,
@@ -112,6 +116,7 @@ export const JOB_KINDS = {
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
   customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
+  reconcilePlatformEdgeCertificate: PLATFORM_EDGE_CERTIFICATE_KIND,
   scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
   importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
   /*
@@ -410,6 +415,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
+  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
 }
@@ -424,6 +430,20 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
+    await enqueue(db, {
+      /*
+        Every minute. Most runs are a cheap durable-state check. During issuance this converges the
+        DNS-01 order; after issuance it keeps the restart handoff visible until live router replicas
+        acknowledge the exact immutable S3 version they loaded at boot. The explicit 0/1 rollout
+        variable is also the enablement signal, so an ordinary local worker with no platform AWS
+        resources does not create a permanently failing singleton job.
+      */
+      kind: JOB_KINDS.reconcilePlatformEdgeCertificate,
+      idempotencyKey: `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
+  }
   await enqueue(db, {
     kind: JOB_KINDS.customDomainScan,
     idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,

@@ -1,12 +1,14 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
-import { crudCustomDomain, fetchCustomDomain } from "@lib/dao"
+import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
+import { publishRoute as publishLambdaRoute, type Route } from "@lib/lambda"
 import * as acme from "acme-client"
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises"
 import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
+import { certificateVersionKey } from "./certificate-version"
 
 export const CUSTOM_DOMAIN_KINDS = {
   scan: "platform.custom_domain_scan",
@@ -16,6 +18,7 @@ export const CUSTOM_DOMAIN_KINDS = {
 const CHALLENGE_TTL_SECONDS = 15 * 60
 const RETRY_AFTER_MS = 60_000
 const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+const MAX_RETRY_MS = 24 * 60 * 60 * 1000
 
 type Resolver = {
   resolve4(hostname: string): Promise<string[]>
@@ -30,6 +33,7 @@ type Dependencies = {
   s3: S3Client
   secrets: SecretsManagerClient
   valkey: Redis
+  publishRoute: typeof publishLambdaRoute
 }
 
 function awsConfig() {
@@ -51,6 +55,7 @@ function defaults(): Dependencies {
     s3: new S3Client({ ...config, forcePathStyle: process.env.AWS_ENDPOINT_URL !== undefined }),
     secrets: new SecretsManagerClient(config),
     valkey: sharedValkey,
+    publishRoute: publishLambdaRoute,
   }
 }
 
@@ -172,8 +177,9 @@ async function loadedReplicaCount(
 ): Promise<number> {
   let cursor = "0"
   let count = 0
-  const pattern = `cert:loaded:${hostname}:${objectVersion}:*`
+  const pattern = `cert:loaded:${hostname}:${certificateVersionKey(objectVersion)}:*`
   do {
+    // eslint-disable-next-line no-await-in-loop -- Redis SCAN is cursor based.
     const [next, keys] = await valkey.scan(cursor, "MATCH", pattern, "COUNT", 100)
     cursor = next
     count += keys.length
@@ -188,6 +194,22 @@ export function nextRenewal(expiresAt: Date): Date {
    * mistaken for a permanent assumption that certificates always have a 90-day lifetime.
    */
   return new Date(expiresAt.getTime() - RENEWAL_WINDOW_MS)
+}
+
+export function customDomainRetryAfter(now: Date, consecutiveFailures: number): Date {
+  const exponent = Math.min(Math.max(consecutiveFailures, 0), 10)
+  return new Date(now.getTime() + Math.min(MAX_RETRY_MS, RETRY_AFTER_MS * 2 ** exponent))
+}
+
+export async function activateCustomDomain(callbacks: {
+  publishRoute: () => Promise<void>
+  clearPending: () => Promise<void>
+  markActive: () => Promise<void>
+}): Promise<void> {
+  // The database must never claim a hostname is active before the request hot path can resolve it.
+  await callbacks.publishRoute()
+  await callbacks.clearPending()
+  await callbacks.markActive()
 }
 
 export function scanCustomDomains(): JobHandler {
@@ -216,6 +238,8 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
     const leaseToken = v7()
     const domain = await crudCustomDomain(db).claimReconciliation(payload.domainId, leaseToken)
     if (domain === undefined) return
+    let failureStatus: "failed" | "renewal_warning" | "propagating" =
+      domain.certificateExpiresAt !== null ? "renewal_warning" : "failed"
 
     try {
       if (domain.status === "deleting") {
@@ -242,11 +266,13 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
           status: "deleting",
           statusReason: "The unverified hostname claim expired after 30 days.",
           nextRetryAt: deps.now(),
+          consecutiveFailures: 0,
         })
         return
       }
 
       if (domain.status === "propagating" && domain.certificateObjectVersion !== null) {
+        failureStatus = "propagating"
         const minimum = minimumCertificateAcks()
         const loaded = await loadedReplicaCount(
           deps.valkey,
@@ -254,16 +280,52 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
           domain.certificateObjectVersion,
         )
         if (loaded >= minimum) {
-          await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
-          await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-            status: "active",
-            statusReason: null,
-            nextRetryAt: null,
+          const project = await fetchProject(db).getInOrganization(
+            domain.organizationId,
+            domain.projectId,
+            ["liveDeploymentId"],
+          )
+          if (project?.liveDeploymentId === null || project?.liveDeploymentId === undefined) {
+            throw new Error("The custom domain's project has no live deployment")
+          }
+          const deployment = await fetchDeployment(db).getForProject(
+            domain.projectId,
+            project.liveDeploymentId,
+            ["id", "lambdaVersion", "preset", "status"],
+          )
+          if (
+            deployment === undefined ||
+            deployment.status !== "ready" ||
+            deployment.preset === "static" ||
+            deployment.lambdaVersion === null
+          ) {
+            throw new Error("The custom domain's live deployment is not a routable Lambda release")
+          }
+          const route: Route = {
+            arn: `arn:aws:lambda:${process.env.AWS_REGION ?? "us-east-1"}:${required("AWS_ACCOUNT_ID")}:function:sproutos-app-${domain.projectId}:live`,
+            projectId: domain.projectId,
+            organizationId: domain.organizationId,
+            deploymentId: deployment.id,
+          }
+          await activateCustomDomain({
+            publishRoute: () => deps.publishRoute(deps.valkey, domain.hostname, route),
+            clearPending: async () => {
+              await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
+            },
+            markActive: async () => {
+              await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+                status: "active",
+                statusReason: null,
+                nextRetryAt: null,
+                consecutiveFailures: 0,
+              })
+            },
           })
         } else {
           await crudCustomDomain(db).update(domain.organizationId, domain.id, {
             statusReason: `Certificate stored; waiting for the Rust edge (${loaded}/${minimum} replicas loaded).`,
             nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
+            consecutiveFailures: 0,
           })
         }
         return
@@ -290,6 +352,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             statusReason: `Waiting for the ${missing} to resolve publicly.`,
             lastCheckedAt: deps.now(),
             nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
+            consecutiveFailures: 0,
           })
           return
         }
@@ -355,6 +418,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
         status: "propagating",
         statusReason: "Certificate issued; waiting for every active Rust edge replica to load it.",
+        consecutiveFailures: 0,
       })
       await deps.valkey.publish(
         "certificates:invalidate",
@@ -365,11 +429,13 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         }),
       )
     } catch (error) {
+      const failures = domain.consecutiveFailures + 1
       await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-        status: domain.certificateExpiresAt !== null ? "renewal_warning" : "failed",
+        status: failureStatus,
         statusReason:
           error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
-        nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
+        consecutiveFailures: failures,
+        nextRetryAt: customDomainRetryAfter(deps.now(), failures),
       })
       throw error
     } finally {

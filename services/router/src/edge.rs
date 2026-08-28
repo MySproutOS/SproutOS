@@ -373,6 +373,7 @@ pub async fn start_from_env(
                 "ROUTER_TLS_EDGE_SNI_NAMES",
                 "ROUTER_TLS_EDGE_EGRESS_SNI",
                 "ROUTER_TLS_EDGE_MAX_CONNECTIONS",
+                "ROUTER_TLS_EDGE_PLATFORM_CERT_VERSION",
             ]
             .into_iter()
             .find(|name| std::env::var(name).is_ok());
@@ -417,12 +418,18 @@ pub async fn start_from_env(
     )?);
     let certificate_runtime = certificate_runtime
         .context("custom certificate inventory is required when the TLS edge is enabled")?;
+    let platform_ack =
+        crate::certificates::PlatformCertificateAck::from_runtime(&certificate_runtime)?;
     let _inventory = crate::certificates::start(edge.resolver(), certificate_runtime)
         .await
         .context("initial custom certificate inventory failed")?;
     let listener = TcpListener::bind(&listen)
         .await
         .with_context(|| format!("could not bind {listen} for the TLS edge"))?;
+    let _platform_ack = platform_ack
+        .start()
+        .await
+        .context("initial platform certificate acknowledgement failed")?;
     tracing::info!(%listen, "opt-in TLS edge listening");
     Ok(Some(tokio::spawn(async move {
         if let Err(cause) = edge.serve(listener).await {

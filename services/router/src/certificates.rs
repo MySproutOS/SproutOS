@@ -13,6 +13,7 @@ use redis::aio::ConnectionManager;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::ResolvesServerCertUsingSni;
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::Mutex;
 
@@ -21,6 +22,79 @@ use crate::edge::ConfiguredResolver;
 pub const INVALIDATION_CHANNEL: &str = "certificates:invalidate";
 const MAX_CERTIFICATE_OBJECT_BYTES: i64 = 1024 * 1024;
 const INVENTORY_IO_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Repeated proof that this process parsed and is serving one immutable platform certificate
+/// version. Platform wildcard certificates do not use the exact-host hot-reload inventory: a
+/// rolling restart fetches the new version before boot, and the control plane stays in
+/// `awaiting_deployment` until enough live instances publish these expiring acknowledgements.
+pub struct PlatformCertificateAck {
+    valkey: ConnectionManager,
+    object_version: String,
+    instance_id: String,
+    interval: Duration,
+    ttl: Duration,
+}
+
+impl PlatformCertificateAck {
+    pub fn from_runtime(runtime: &Runtime) -> anyhow::Result<Self> {
+        let object_version = std::env::var("ROUTER_TLS_EDGE_PLATFORM_CERT_VERSION").context(
+            "ROUTER_TLS_EDGE_PLATFORM_CERT_VERSION is required when the TLS edge is enabled",
+        )?;
+        anyhow::ensure!(
+            !object_version.is_empty(),
+            "platform certificate version is empty"
+        );
+        Ok(Self {
+            valkey: runtime.valkey.clone(),
+            object_version,
+            instance_id: runtime.instance_id.clone(),
+            interval: runtime.poll_interval,
+            ttl: runtime.ack_ttl,
+        })
+    }
+
+    async fn acknowledge(&self) -> anyhow::Result<()> {
+        let mut connection = self.valkey.clone();
+        redis::cmd("SET")
+            .arg(platform_ack_key(&self.object_version, &self.instance_id))
+            .arg("1")
+            .arg("EX")
+            .arg(self.ttl.as_secs())
+            .query_async::<()>(&mut connection)
+            .await?;
+        Ok(())
+    }
+
+    /// Acknowledge only after the edge parsed the PEM, loaded exact certificates, and bound its
+    /// listener. The recurring refresh makes a crashed instance disappear without explicit
+    /// deregistration and gives reconciliation a live-replica count rather than a boot-history
+    /// count.
+    pub async fn start(self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        self.acknowledge().await?;
+        Ok(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(self.interval);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if let Err(cause) = self.acknowledge().await {
+                    tracing::error!(%cause, "platform certificate acknowledgement failed");
+                }
+            }
+        }))
+    }
+}
+
+fn platform_ack_key(object_version: &str, instance_id: &str) -> String {
+    format!(
+        "cert:platform-loaded:{}:{instance_id}",
+        certificate_version_key(object_version)
+    )
+}
+
+fn certificate_version_key(object_version: &str) -> String {
+    let digest = Sha256::digest(object_version.as_bytes());
+    format!("{digest:x}")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredCertificate {
@@ -84,10 +158,9 @@ impl CertificateSource for PostgresCertificateSource {
         let rows = client
             .query(
                 r#"
-                select hostname, certificate_object_key, certificate_object_version
+                select hostname, status, certificate_object_key, certificate_object_version
                   from custom_domain
                  where deleted_at is null
-                   and status in ('propagating', 'active', 'renewal_warning')
                    and certificate_object_key is not null
                    and certificate_object_version is not null
                 "#,
@@ -96,6 +169,7 @@ impl CertificateSource for PostgresCertificateSource {
             .await?;
         Ok(rows
             .into_iter()
+            .filter(|row| certificate_status_is_serving(row.get("status")))
             .map(|row| DesiredCertificate {
                 hostname: row.get("hostname"),
                 object_key: row.get("certificate_object_key"),
@@ -103,6 +177,13 @@ impl CertificateSource for PostgresCertificateSource {
             })
             .collect())
     }
+}
+
+fn certificate_status_is_serving(status: &str) -> bool {
+    matches!(
+        status,
+        "issuing" | "propagating" | "active" | "renewal_warning"
+    )
 }
 
 pub struct S3CertificateObjects {
@@ -166,7 +247,10 @@ impl ReadinessAcks for ConnectionManager {
         let mut connection = self.clone();
         let mut pipeline = redis::pipe();
         for (hostname, object_version) in loaded {
-            let key = format!("cert:loaded:{hostname}:{object_version}:{instance_id}");
+            let key = format!(
+                "cert:loaded:{hostname}:{}:{instance_id}",
+                certificate_version_key(object_version)
+            );
             pipeline
                 .cmd("SET")
                 .arg(key)
@@ -479,6 +563,36 @@ mod tests {
     use axum::Router as AxumRouter;
     use rcgen::{CertifiedKey, generate_simple_self_signed};
     use rustls::ClientConfig;
+
+    #[derive(serde::Deserialize)]
+    struct VersionKeyFixture {
+        vectors: Vec<VersionKeyVector>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct VersionKeyVector {
+        version: String,
+        sha256: String,
+    }
+
+    #[test]
+    fn certificate_version_keys_match_the_typescript_consumer_fixture() {
+        let fixture: VersionKeyFixture =
+            serde_json::from_str(include_str!("../fixtures/certificate-version-key.json")).unwrap();
+        for vector in fixture.vectors {
+            assert_eq!(certificate_version_key(&vector.version), vector.sha256);
+        }
+    }
+
+    #[test]
+    fn renewal_keeps_the_previous_certificate_in_the_desired_inventory() {
+        // `issuing` with a non-null object pair is a renewal. Initial issuance has no object pair
+        // and is excluded in SQL before this predicate runs.
+        assert!(certificate_status_is_serving("issuing"));
+        assert!(certificate_status_is_serving("propagating"));
+        assert!(!certificate_status_is_serving("pending_dns"));
+        assert!(!certificate_status_is_serving("failed"));
+    }
     use rustls::pki_types::ServerName;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::{TcpListener, TcpStream};

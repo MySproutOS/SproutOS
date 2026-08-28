@@ -29,6 +29,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("certificate_expires_at", "timestamptz")
     .addColumn("next_renewal_at", "timestamptz")
     .addColumn("next_retry_at", "timestamptz")
+    .addColumn("consecutive_failures", "integer", (col) => col.notNull().defaultTo(0))
     .addColumn("last_checked_at", "timestamptz")
     .addColumn("claim_expires_at", "timestamptz", (column) =>
       column.notNull().defaultTo(sql`now() + interval '30 days'`),
@@ -81,6 +82,7 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     .dropColumn("certificate_expires_at")
     .dropColumn("next_renewal_at")
     .dropColumn("next_retry_at")
+    .dropColumn("consecutive_failures")
     .dropColumn("last_checked_at")
     .dropColumn("claim_expires_at")
     .dropColumn("reconcile_lease_token")

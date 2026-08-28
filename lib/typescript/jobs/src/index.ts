@@ -107,6 +107,18 @@ export { ProjectBusyError, withProjectLock } from "./project-lock"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
 export { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 export {
+  nextPlatformRenewal,
+  PLATFORM_EDGE_CERTIFICATE_KIND,
+  PLATFORM_CERTIFICATE_OBJECT_KEY,
+  platformCertificateConfig,
+  platformCertificateNames,
+  platformCertificateObject,
+  platformVersionKey,
+  reconcilePlatformEdgeCertificate,
+  requestPlatformRestart,
+  retryAfter,
+} from "./platform-edge-certificate"
+export {
   METERING_OUTBOX_BATCH_SIZE,
   METERING_OUTBOX_PUBLISH_TIMEOUT_MS,
   METERING_OUTBOX_PROJECT_TIMEOUT_MS,
