@@ -25,9 +25,9 @@ jobs:
   promote:
     name: Verify and promote production pointer
     runs-on: ubuntu-24.04
-    # This path exists for the first release, which predates automatic promotion, and for an
-    # explicitly retried failed rollout. Every production pointer change goes through this
-    # environment; the promotion role does not trust tag subjects directly.
+    # Publication and promotion are separate on purpose: an immutable tag cannot select the exact
+    # task revision registered by a reviewed OpenTofu apply. Every production pointer change goes
+    # through this environment; the promotion role does not trust tag subjects directly.
     environment: production
     steps:
       - uses: actions/checkout@v5

@@ -35,4 +35,11 @@ if grep -Fq 'commitSha:$commitSha' "$WORKFLOW"; then
   exit 1
 fi
 
+# A release tag publishes immutable artifacts but cannot select production configuration. The
+# separately reviewed workflow_dispatch path requires the exact OpenTofu task revision.
+if grep -q 'configure-aws-credentials\|promote-cli-release' "$WORKFLOW"; then
+  echo "CLI publication workflow gained production mutation authority" >&2
+  exit 1
+fi
+
 echo "CLI release workflow tests passed"

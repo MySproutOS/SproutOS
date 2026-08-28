@@ -10,7 +10,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$TEST_DIR/bin" "$TEST_DIR/release" "$TEST_DIR/state" "$TEST_DIR/capture"
-version=0.1.0
+version=0.1.1
 tag="cli-v${version}"
 assets=(
   "sprout-v${version}-aarch64-apple-darwin.tar.gz"
@@ -50,7 +50,7 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$CALLS"
 case "$1 $2" in
   "release view")
-    printf '{"tagName":"cli-v0.1.0","isDraft":false,"isPrerelease":false,"isImmutable":%s}\n' "${MUTABLE:-true}"
+    printf '{"tagName":"cli-v0.1.1","isDraft":false,"isPrerelease":false,"isImmutable":%s}\n' "${MUTABLE:-true}"
     ;;
   "release download")
     destination=""
@@ -116,7 +116,7 @@ AWS
 
 cat >"$TEST_DIR/bin/curl" <<'CURL'
 #!/usr/bin/env bash
-printf '<p>Version 0.1.0</p><a href="releases/download/cli-v0.1.0/sprout">download</a>\n'
+printf '<p>Version 0.1.1</p><a href="releases/download/cli-v0.1.1/sprout">download</a>\n'
 CURL
 
 chmod +x "$TEST_DIR/bin/gh" "$TEST_DIR/bin/git" "$TEST_DIR/bin/aws" "$TEST_DIR/bin/curl"
@@ -198,7 +198,7 @@ ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:
   "$HERE/promote-cli-release.sh" "$version" --record-only
 
 [ "$(cat "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION")" = "$version" ]
-jq -e '.version == "0.1.0" and .commitSha == "0123456789abcdef0123456789abcdef01234567"' \
+jq -e '.version == "0.1.1" and .commitSha == "0123456789abcdef0123456789abcdef01234567"' \
   "$TEST_DIR/state/$version" >/dev/null
 [ "$(grep -c '^attestation verify ' "$CALLS")" -eq 7 ]
 if grep -q '^ecs update-service\|^ecs wait\|^ecs register-task-definition' "$CALLS"; then

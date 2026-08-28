@@ -189,25 +189,26 @@ parameters:
 - `/<name>/application/SPROUT_CLI_RELEASE_VERSION` is the small current-release pointer consumed by
   the website container.
 
-The first five-platform release, `cli-v0.1.0`, is published and GitHub reports it immutable. The
-application change in PR #161 that renders the manifest on `/download` must be merged and deployed
-before promotion, otherwise the rollout cannot prove its public result. Keep both promotion
-workflows undispatched until that dependency is serving.
+The first authenticated five-platform release is `cli-v0.1.1`. The application change in the same
+pull request renders its manifest on `/download`; it must be merged and deployed before the tag is
+created, otherwise the rollout cannot prove its public result. Keep the promotion workflow
+undispatched until that dependency is serving.
 
-For the first release, save and review a plan after both dependencies are on `main`. It should add
-the least-privilege `${name_prefix}-cli-release-promotion` OIDC role/policy and register one web task
-definition revision whose website container references the exact SSM pointer ARN. It must not
-create either parameter, change the ECS service revision, or contain an invented version. Apply
-that exact saved plan, inspect the role trust/policy and registered task definition, then run the
-protected **Promote an existing CLI release** workflow with the published version and that exact
+For the first release, wait until this change is on `main` and its application image is serving,
+then save and review a plan. It should add the least-privilege
+`${name_prefix}-cli-release-promotion` OIDC role/policy and register one web task definition revision
+whose website container references the exact SSM pointer ARN. It must not create either parameter,
+change the ECS service revision, or contain an invented version. Apply that exact saved plan, inspect
+the role trust/policy and registered task definition, and publish the immutable `cli-v0.1.1` release.
+Then run the protected **Promote an existing CLI release** workflow with `0.1.1` and that exact
 registered task-definition ARN. It first verifies and records the release. The existing deployment
 role—not the much smaller promotion role—then combines the reviewed task contract with the image
 already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
 rolling application code backward and stops a tag workflow gaining code-deployment authority.
 
-The GitHub `production` environment must have required reviewers before either workflow is used.
-Both manual and tag-triggered promotions assume their AWS roles only through that environment;
-the promotion role does not trust an unprotected `cli-v*` ref directly.
+The GitHub `production` environment must have required reviewers before the promotion workflow is
+used. Promotion assumes its AWS role only through that environment; the promotion role does not
+trust an unprotected `cli-v*` ref directly, and the tag publication workflow has no AWS authority.
 
 After promotion, require all of these before calling it complete:
 
