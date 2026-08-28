@@ -155,11 +155,23 @@ pub struct ProjectSourceArgs {
         required_unless_present_any = ["store", "repository_id", "github_repo_id"]
     )]
     pub blank: bool,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub owner: Option<String>,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub repository_name: Option<String>,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub private: bool,
 }
 
@@ -733,6 +745,35 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn blank_repository_modifiers_conflict_with_every_nonblank_source() {
+        let sources: &[&[&str]] = &[
+            &["--store", "listing"],
+            &["--repository-id", "repository"],
+            &["--github-repo-id", "123"],
+        ];
+        let modifiers: &[&[&str]] = &[
+            &["--owner", "MySproutOS"],
+            &["--repository-name", "example"],
+            &["--private"],
+        ];
+
+        for source in sources {
+            for modifier in modifiers {
+                let args = [
+                    &["sprout", "project", "create", "--name", "n"][..],
+                    *source,
+                    *modifier,
+                ]
+                .concat();
+                assert!(
+                    Cli::try_parse_from(&args).is_err(),
+                    "accepted source {source:?} with blank modifier {modifier:?}",
+                );
+            }
+        }
     }
 
     #[test]
