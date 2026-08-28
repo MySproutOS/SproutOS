@@ -177,7 +177,7 @@ suite asserts the retained half by inserting a `usage_rollup`, deleting the proj
 showing both that the billing grain still resolves to the project's name and that a raw
 `DELETE FROM project` is refused by Postgres.
 
-## The auto-update default keys on the credential
+## Upstream update policy
 
 TASK 17. `auto_update_enabled` is not a product setting or a tier — it is resolved from
 `agent_credential.kind` at creation:
@@ -188,11 +188,29 @@ TASK 17. `auto_update_enabled` is not a product setting or a tier — it is reso
 | `anthropic_api_key` / `openai_api_key` / `openrouter_api_key` | off     |
 | none connected                                                | off     |
 
-A subscription is flat-rate, so nightly upkeep costs the customer nothing beyond what they already
+A subscription is flat-rate, so scheduled upkeep costs the customer nothing beyond what they already
 pay. Every other kind is metered per token, and an agent that wakes up to reconcile a fork against
 upstream would spend real money nobody authorized. `autoUpdateDefaultFor()` in
 `@lib/dao` is the single expression of that rule; an explicit `autoUpdateEnabled` in the request
 still wins.
+
+`auto_update_enabled = false` is the canonical Off state. `auto_update_cadence` separately stores
+`tag`, `daily`, `weekly`, or `monthly`, so switching Off does not erase the customer's interval.
+Daily, weekly, and monthly mean complete 1-, 7-, and 30-day intervals since the last recorded run;
+an overdue repository stays due, so a worker outage cannot lose its window. If several projects
+share one repository, the shortest due cadence wins and the repository is still reconciled once.
+
+Tag mode polls daily and fingerprints the complete set of upstream tag names and target commits.
+It triggers the ordinary guarded sync when that fingerprint changes; it is not a SemVer parser or
+a request to pin the fork at one release. An unchanged tag poll updates only the repository's
+checked-at timestamp and does not create a fictitious successful sync run.
+
+Both forks and template-generated copies retain `repository.upstream_full_name`. Eligibility keys
+on that recorded provenance, not GitHub's `is_fork` bit, so a template copy is not silently omitted
+from scheduling. Forks use GitHub's guarded `merge-upstream`; copies use a trusted, non-checkout
+three-way tree merge because their generated root has unrelated Git history. The worker proves the
+base by matching that root tree to upstream history, records the applied upstream SHA for later
+runs, and refuses conflicts or an unprovable base rather than overwriting customer changes.
 
 When no credential is named, `getDefaultForOrganization` prefers a subscription over an API key —
 the one whose marginal cost is already paid for.

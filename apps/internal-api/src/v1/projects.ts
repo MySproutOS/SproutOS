@@ -9,6 +9,7 @@ import {
   allocateProjectSlug,
   autoUpdateDefaultFor,
   crudAuditLog,
+  crudAgentSession,
   crudProject,
   crudProjectEnvVar,
   crudProjectFile,
@@ -44,7 +45,7 @@ import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
-import type { Kysely, Selectable } from "kysely"
+import { sql, type Kysely, type Selectable } from "kysely"
 import type { Context } from "hono"
 import { authMiddleware } from "../middleware"
 import {
@@ -265,6 +266,7 @@ const PROJECT_FIELDS = [
   "scaleMode",
   "productionBranch",
   "autoUpdateEnabled",
+  "autoUpdateCadence",
   "autoUpdateMode",
   "repositoryId",
   "storeListingId",
@@ -394,6 +396,7 @@ function serializeProject(
     scaleMode: project.scaleMode,
     productionBranch: project.productionBranch,
     autoUpdateEnabled: project.autoUpdateEnabled,
+    autoUpdateCadence: project.autoUpdateCadence,
     autoUpdateMode: project.autoUpdateMode,
     repositoryId: project.repositoryId,
     storeListingId: project.storeListingId,
@@ -461,38 +464,109 @@ async function resolveSuggestion(
   ])
   if (!project) return throwNotFound(c, "Project not found")
 
-  const resolved = await crudProjectUpdateSuggestion(db).resolve({
-    id: suggestionId,
-    projectId: project.id,
-    status,
-    userId: user.id,
-  })
+  const accepted = await db.transaction().execute(async (tx) => {
+    const authority = await tx
+      .selectFrom("projectUpdateSuggestion")
+      .innerJoin(
+        "upstreamSyncRun",
+        "upstreamSyncRun.id",
+        "projectUpdateSuggestion.upstreamSyncRunId",
+      )
+      .select([
+        "projectUpdateSuggestion.upstreamSyncRunId",
+        "upstreamSyncRun.upstreamSha",
+        "upstreamSyncRun.forkSha",
+        "upstreamSyncRun.outcome",
+      ])
+      .where("projectUpdateSuggestion.id", "=", suggestionId)
+      .where("projectUpdateSuggestion.projectId", "=", project.id)
+      .where("projectUpdateSuggestion.status", "=", "pending")
+      .forUpdate()
+      .executeTakeFirst()
+    if (authority === undefined) return undefined
+    if (
+      status === "accepted" &&
+      (authority.outcome !== "conflict" ||
+        authority.upstreamSha === null ||
+        authority.forkSha === null)
+    ) {
+      return { invalidConflict: true as const }
+    }
 
-  if (resolved === undefined) {
-    return throwNotFound(c, "No pending suggestion with that id")
-  }
-
-  let job: JobRow | undefined
-  if (status === "accepted") {
-    job = await crudProjectJob(db).create({
-      kind: "sync_upstream",
-      organizationId: organization.id,
+    const resolved = await crudProjectUpdateSuggestion(tx).resolve({
+      id: suggestionId,
       projectId: project.id,
-      repositoryId: project.repositoryId,
-      state: "queued",
-      steps: JSON.stringify(initialSteps("sync_upstream")),
+      status,
+      userId: user.id,
     })
-  }
+    if (resolved === undefined) return undefined
 
-  await crudAuditLog(db).record({
-    action: "project:update",
-    actorUserId: user.id,
-    after: { status: resolved.status, syncJobId: job?.id ?? null },
-    before: { status: "pending" },
-    organizationId: organization.id,
-    resourceSrn: srnFor("project", organization.id, "update_suggestion", resolved.id),
-    ...auditContext(c),
+    let job: JobRow | undefined
+    if (status === "accepted") {
+      const idempotencyKey = `upkeep.resolve:${authority.upstreamSyncRunId}`
+      // Suggestions fan out per project, but resolution is one repository operation. Serialize
+      // accepts for the same immutable run before creating its one agent session.
+      await sql`select pg_advisory_xact_lock(hashtext(${idempotencyKey}))`.execute(tx)
+      job = await tx
+        .selectFrom("projectJob")
+        .selectAll()
+        .where("idempotencyKey", "=", idempotencyKey)
+        .executeTakeFirst()
+      if (job === undefined) {
+        const session = await crudAgentSession(tx).createSession({
+          projectId: project.id,
+          createdByUserId: user.id,
+          title: `Resolve upstream conflict ${authority.upstreamSha!.slice(0, 12)}`,
+        })
+        job = await crudProjectJob(tx).enqueueOnce({
+          kind: "sync_upstream",
+          organizationId: organization.id,
+          projectId: project.id,
+          repositoryId: project.repositoryId,
+          state: "queued",
+          steps: JSON.stringify(initialSteps("sync_upstream")),
+          idempotencyKey,
+          details: {
+            upstreamSyncRunId: authority.upstreamSyncRunId,
+            expectedUpstreamSha: authority.upstreamSha!,
+            expectedTargetSha: authority.forkSha!,
+            agentSessionId: session.id,
+            userId: user.id,
+          },
+        })
+        if (job === undefined) throw new Error("upkeep resolution serialization failed")
+        await enqueue(tx, {
+          kind: JOB_KINDS.upkeepResolveConflict,
+          organizationId: organization.id,
+          payload: { projectJobId: job.id },
+          idempotencyKey: `${JOB_KINDS.upkeepResolveConflict}:${authority.upstreamSyncRunId}`,
+          maxAttempts: 3,
+        })
+      }
+    }
+
+    await crudAuditLog(tx).record({
+      action: "project:update",
+      actorUserId: user.id,
+      after: {
+        status: resolved.status,
+        syncJobId: job?.id ?? null,
+        upstreamSyncRunId: authority.upstreamSyncRunId,
+        expectedUpstreamSha: authority.upstreamSha,
+        expectedTargetSha: authority.forkSha,
+      },
+      before: { status: "pending" },
+      organizationId: organization.id,
+      resourceSrn: srnFor("project", organization.id, "update_suggestion", resolved.id),
+      ...auditContext(c),
+    })
+    return { invalidConflict: false as const, resolved, job }
   })
+  if (accepted === undefined) return throwNotFound(c, "No pending suggestion with that id")
+  if (accepted.invalidConflict) {
+    return throwBadRequest(c, "Only a recorded conflict can be accepted for agent resolution")
+  }
+  const { resolved } = accepted
 
   const detail = await fetchProjectUpdateSuggestion(db)
     .listForProjectQuery(project.id)
@@ -947,7 +1021,7 @@ const app = new Hono()
       }
 
       // Auto-update defaults to the credential, not to a product setting. A Claude subscription
-      // is flat-rate, so nightly upkeep costs the customer nothing they are not already paying;
+      // is flat-rate, so scheduled upkeep costs the customer nothing they are not already paying;
       // any per-token API key would spend real money they never authorized. TASK 17.
       const credential =
         json.agentCredentialId === undefined || json.agentCredentialId === null
@@ -979,6 +1053,7 @@ const app = new Hono()
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),
+        autoUpdateCadence: json.autoUpdateCadence ?? "daily",
         autoUpdateMode: json.autoUpdateMode ?? "suggest",
         idempotencyKey:
           json.idempotencyKey === undefined
@@ -1398,6 +1473,9 @@ const app = new Hono()
           ...(json.autoUpdateEnabled === undefined
             ? {}
             : { autoUpdateEnabled: json.autoUpdateEnabled }),
+          ...(json.autoUpdateCadence === undefined
+            ? {}
+            : { autoUpdateCadence: json.autoUpdateCadence }),
           ...(json.autoUpdateMode === undefined ? {} : { autoUpdateMode: json.autoUpdateMode }),
           ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
           ...(json.parentProjectId === undefined ? {} : { parentProjectId: json.parentProjectId }),
@@ -1415,6 +1493,7 @@ const app = new Hono()
           actorUserId: user.id,
           after: {
             autoUpdateEnabled: row.autoUpdateEnabled,
+            autoUpdateCadence: row.autoUpdateCadence,
             autoUpdateMode: row.autoUpdateMode,
             name: row.name,
             productionBranch: row.productionBranch,
@@ -1423,6 +1502,7 @@ const app = new Hono()
           },
           before: {
             autoUpdateEnabled: before.autoUpdateEnabled,
+            autoUpdateCadence: before.autoUpdateCadence,
             autoUpdateMode: before.autoUpdateMode,
             name: before.name,
             productionBranch: before.productionBranch,
@@ -1614,6 +1694,88 @@ const app = new Hono()
       if (!job || job.projectId !== projectId) return throwNotFound(c, "Job not found")
 
       return c.json(serializeJob(job))
+    },
+  )
+  .post(
+    "/:orgSlug/projects/:projectId/jobs/:jobId/cancel",
+    describeRoute({
+      description: "Cancels a queued or running agent-assisted upstream resolution",
+      responses: {
+        200: {
+          description: "The canceled job",
+          content: { "application/json": { schema: resolver(projectSchemaJobResponse) } },
+        },
+        403: { description: "Caller lacks project:update", ...errorResponse },
+        404: { description: "No such cancellable job for this project", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaJobParam),
+    requirePermission("project:update", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const organization = c.var.organization
+      const user = c.var.user
+      const { jobId, projectId } = c.req.valid("param")
+      const canceled = await db.transaction().execute(async (tx) => {
+        const prior = await tx
+          .selectFrom("projectJob")
+          .select("state")
+          .where("id", "=", jobId)
+          .where("organizationId", "=", organization.id)
+          .where("projectId", "=", projectId)
+          .where("kind", "=", "sync_upstream")
+          .where("state", "in", ["queued", "running"])
+          .forUpdate()
+          .executeTakeFirst()
+        if (prior === undefined) return undefined
+        const job = await tx
+          .updateTable("projectJob")
+          .set({ state: "canceled", finishedAt: new Date(), updatedAt: new Date() })
+          .where("id", "=", jobId)
+          .where("organizationId", "=", organization.id)
+          .where("projectId", "=", projectId)
+          .where("kind", "=", "sync_upstream")
+          .where("state", "in", ["queued", "running"])
+          .returningAll()
+          .executeTakeFirst()
+        if (job === undefined) return undefined
+        const details =
+          typeof job.details === "object" && job.details !== null
+            ? (job.details as Record<string, unknown>)
+            : {}
+        if (typeof details.upstreamSyncRunId === "string") {
+          await tx
+            .updateTable("backgroundJob")
+            .set({
+              state: "cancelled",
+              finishedAt: new Date(),
+              leaseExpiresAt: null,
+              lockedBy: null,
+              updatedAt: new Date(),
+            })
+            .where(
+              "idempotencyKey",
+              "=",
+              `${JOB_KINDS.upkeepResolveConflict}:${details.upstreamSyncRunId}`,
+            )
+            .where("state", "in", ["queued", "leased", "running"])
+            .execute()
+        }
+        if (typeof details.agentSessionId === "string") {
+          await crudAgentSession(tx).setStatus(details.agentSessionId, "archived")
+        }
+        await crudAuditLog(tx).record({
+          action: "project:update",
+          actorUserId: user.id,
+          after: { state: "canceled" },
+          before: { state: prior.state },
+          organizationId: organization.id,
+          resourceSrn: srnFor("project", organization.id, "job", job.id),
+          ...auditContext(c),
+        })
+        return job
+      })
+      if (canceled === undefined) return throwNotFound(c, "Cancellable job not found")
+      return c.json(serializeJob(canceled))
     },
   )
   .get(

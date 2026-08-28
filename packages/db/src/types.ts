@@ -790,6 +790,7 @@ export interface PriceBookItem {
 
 export interface Project {
   agentCredentialId: string | null
+  autoUpdateCadence: Generated<string>
   autoUpdateEnabled: Generated<boolean>
   autoUpdateMode: Generated<string>
   createdAt: Generated<Timestamp>
@@ -847,6 +848,7 @@ export interface ProjectFile {
 export interface ProjectJob {
   attempt: Generated<number>
   createdAt: Generated<Timestamp>
+  details: Generated<Json>
   errorCode: string | null
   errorMessage: string | null
   finishedAt: Timestamp | null
@@ -935,6 +937,8 @@ export interface Repository {
   upstreamDefaultBranch: string | null
   upstreamFullName: string | null
   upstreamGithubRepoId: Int8 | null
+  upstreamTagCheckedAt: Timestamp | null
+  upstreamTagFingerprint: string | null
 }
 
 export interface RepositoryCommitter {
@@ -984,6 +988,7 @@ export interface Sandbox {
   previewPort: number | null
   projectId: string
   provider: Generated<string>
+  purpose: Generated<string>
   sandboxClass: Generated<string>
   state: Generated<string>
   updatedAt: Generated<Timestamp>

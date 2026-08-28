@@ -55,6 +55,7 @@ export function fetchProject(db: Kysely<DB>) {
         "project.rootDir as rootDir",
         "project.productionBranch as productionBranch",
         "project.autoUpdateEnabled as autoUpdateEnabled",
+        "project.autoUpdateCadence as autoUpdateCadence",
         "project.autoUpdateMode as autoUpdateMode",
         "project.repositoryId as repositoryId",
         "project.storeListingId as storeListingId",

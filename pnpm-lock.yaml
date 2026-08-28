@@ -919,6 +919,9 @@ importers:
       '@lib/observability':
         specifier: workspace:*
         version: link:../observability
+      '@lib/proxy-secret':
+        specifier: workspace:*
+        version: link:../proxy-secret
       '@lib/reaper':
         specifier: workspace:*
         version: link:../reaper

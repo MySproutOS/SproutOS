@@ -88,6 +88,18 @@ export {
 } from "./worker"
 export { type UpkeepDeps, upkeepRepository } from "./upkeep-repository"
 export {
+  resolveUpkeepConflict,
+  type UpkeepResolutionDeps,
+  type UpkeepResolutionPayload,
+  UPKEEP_RESOLUTION_KIND,
+} from "./upkeep-resolution"
+export {
+  assertSupportedTemplateGit,
+  reconcileTemplateUpstream,
+  type TemplateUpstreamInput,
+  type TemplateUpstreamResult,
+} from "./template-upstream"
+export {
   NoUsableCredentialError,
   PROVISION_KIND,
   provisionProjectJob,

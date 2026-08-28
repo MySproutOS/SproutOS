@@ -24,7 +24,7 @@ export const CREDENTIAL_KINDS = [
     /*
       Flat-rate, which is why this is the one kind that turns fork auto-update on by default —
       see `autoUpdateDefaultFor`. Worth saying on the form, because the consequence lands later,
-      on a different screen, as nightly runs the customer did not ask for.
+      on a different screen, as scheduled runs the customer did not ask for.
     */
     hint: "Flat-rate. Fork auto-update defaults to on for projects using this.",
   },

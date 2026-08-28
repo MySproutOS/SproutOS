@@ -3,7 +3,13 @@ import { sql } from "kysely"
 import { afterAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { crudUpstreamSyncRun } from "./crud"
-import { CONSECUTIVE_FAILURE_LIMIT, fetchUpkeepStatus, type UpkeepOutcome } from "./policy"
+import {
+  cadenceIsDue,
+  CONSECUTIVE_FAILURE_LIMIT,
+  fetchUpkeepStatus,
+  type AutoUpdateCadence,
+  type UpkeepOutcome,
+} from "./policy"
 
 const reachable = await (async () => {
   try {
@@ -28,7 +34,15 @@ afterAll(async () => {
 })
 
 /** A repository that is a fork, with one project asking for upkeep. */
-async function fixture(options: { autoUpdate?: boolean; isFork?: boolean } = {}) {
+async function fixture(
+  options: {
+    autoUpdate?: boolean
+    cadence?: AutoUpdateCadence
+    tracksUpstream?: boolean
+    isFork?: boolean
+    upstreamTagCheckedAt?: Date | null
+  } = {},
+) {
   const userId = v7()
   const organizationId = v7()
   const repositoryId = v7()
@@ -67,7 +81,8 @@ async function fixture(options: { autoUpdate?: boolean; isFork?: boolean } = {})
       defaultBranch: "main",
       provenance: "fork",
       isFork: options.isFork ?? true,
-      upstreamFullName: (options.isFork ?? true) ? "upstream/original" : null,
+      upstreamFullName: (options.tracksUpstream ?? true) ? "upstream/original" : null,
+      upstreamTagCheckedAt: options.upstreamTagCheckedAt ?? null,
     })
     .execute()
 
@@ -84,6 +99,7 @@ async function fixture(options: { autoUpdate?: boolean; isFork?: boolean } = {})
       productionBranch: "main",
       state: "ready",
       autoUpdateEnabled: options.autoUpdate ?? true,
+      autoUpdateCadence: options.cadence ?? "daily",
       autoUpdateMode: "suggest",
     })
     .execute()
@@ -96,6 +112,21 @@ async function recordRuns(repositoryId: string, outcomes: UpkeepOutcome[]) {
     await crudUpstreamSyncRun(db).create({ repositoryId, branch: "main", outcome })
   }
 }
+
+describe("cadence windows", () => {
+  const now = new Date("2026-08-28T12:00:00.000Z")
+
+  it("runs a never-checked cadence immediately", () => {
+    expect(cadenceIsDue("daily", null, now)).toBe(true)
+  })
+
+  it("catches up after each complete interval and not before", () => {
+    expect(cadenceIsDue("daily", new Date("2026-08-27T12:00:00.001Z"), now)).toBe(false)
+    expect(cadenceIsDue("daily", new Date("2026-08-27T12:00:00.000Z"), now)).toBe(true)
+    expect(cadenceIsDue("weekly", new Date("2026-08-21T12:00:00.000Z"), now)).toBe(true)
+    expect(cadenceIsDue("monthly", new Date("2026-07-29T12:00:00.000Z"), now)).toBe(true)
+  })
+})
 
 describe.skipIf(!reachable)("upkeep status", () => {
   it("counts only the failures at the end of the history", async ({ skip }) => {
@@ -133,7 +164,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
     // repositories that are being used.
     const status = await fetchUpkeepStatus(db).forRepository(repositoryId)
     expect(status.consecutiveFailures).toBe(0)
-    expect(await isDue(repositoryId)).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
   })
 
   it("comes back once a run succeeds", async ({ skip }) => {
@@ -144,7 +175,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
 
     // Derived from history rather than a counter, so nothing has to remember to reset it.
     await recordRuns(repositoryId, ["up_to_date"])
-    expect(await isDue(repositoryId)).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
   })
 })
 
@@ -159,8 +190,42 @@ describe.skipIf(!reachable)("what is due", () => {
     if (!reachable) skip()
     // Nothing upstream to reconcile against; running the agent would bill for a comparison
     // against nothing.
-    const { repositoryId } = await fixture({ isFork: false })
+    const { repositoryId } = await fixture({ tracksUpstream: false })
     expect(await isDue(repositoryId)).toBe(false)
+  })
+
+  it("keeps template copies eligible when their original upstream is recorded", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const { repositoryId } = await fixture({ isFork: false, tracksUpstream: true })
+    expect(await isDue(repositoryId)).toBe(true)
+  })
+
+  it("waits for the chosen weekly interval, then catches up", async ({ skip }) => {
+    if (!reachable) skip()
+    const now = new Date("2026-08-28T12:00:00.000Z")
+    const { repositoryId } = await fixture({ cadence: "weekly" })
+    await crudUpstreamSyncRun(db).create({
+      repositoryId,
+      branch: "main",
+      outcome: "up_to_date",
+      createdAt: new Date("2026-08-22T12:00:00.000Z"),
+    })
+    expect(await isDue(repositoryId, now)).toBe(false)
+    expect(await isDue(repositoryId, new Date("2026-08-29T12:00:00.000Z"))).toBe(true)
+  })
+
+  it("polls tag policies daily without creating interval work", async ({ skip }) => {
+    if (!reachable) skip()
+    const now = new Date("2026-08-28T12:00:00.000Z")
+    const { repositoryId } = await fixture({
+      cadence: "tag",
+      upstreamTagCheckedAt: new Date("2026-08-27T13:00:00.000Z"),
+    })
+    expect(await isDue(repositoryId, now)).toBe(false)
+    const due = await fetchUpkeepStatus(db).dueForUpkeep(new Date("2026-08-28T13:00:00.000Z"))
+    expect(due.find((row) => row.id === repositoryId)?.trigger).toBe("tag")
   })
 
   it("lists a repository once even when several projects want upkeep", async ({ skip }) => {
@@ -194,7 +259,7 @@ describe.skipIf(!reachable)("what is due", () => {
   })
 })
 
-async function isDue(repositoryId: string): Promise<boolean> {
-  const due = await fetchUpkeepStatus(db).dueForUpkeep()
+async function isDue(repositoryId: string, now: Date = new Date()): Promise<boolean> {
+  const due = await fetchUpkeepStatus(db).dueForUpkeep(now)
   return due.some((row) => row.id === repositoryId)
 }

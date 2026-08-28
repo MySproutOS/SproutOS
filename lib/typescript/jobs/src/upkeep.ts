@@ -27,7 +27,7 @@ export function scanForUpkeep(day: string): JobHandler {
       await enqueue(db, {
         kind: UPKEEP_KINDS.repository,
         organizationId: repository.organizationId,
-        payload: { repositoryId: repository.id },
+        payload: { repositoryId: repository.id, trigger: repository.trigger },
         idempotencyKey: `${UPKEEP_KINDS.repository}:${repository.id}:${day}`,
         // Two attempts, not five. A reconciliation that fails is usually going to keep failing,
         // and each attempt costs the customer tokens; the consecutive-failure rule is the real

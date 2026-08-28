@@ -48,6 +48,7 @@ export type ProvisionProjectInput = {
   productionBranch: string
   agentCredentialId: string | null
   autoUpdateEnabled: boolean
+  autoUpdateCadence: string
   autoUpdateMode: string
   storeListingId: string | null
   repository: RepositoryPlan
@@ -165,6 +166,7 @@ export function provisionProject(db: Kysely<DB>) {
         // See `isGroup` above: a group has nothing to provision, so `creating` would never end.
         state: input.isGroup === true ? "ready" : "creating",
         autoUpdateEnabled: input.autoUpdateEnabled,
+        autoUpdateCadence: input.autoUpdateCadence,
         autoUpdateMode: input.autoUpdateMode,
         isGroup: input.isGroup ?? false,
         parentProjectId: input.parentProjectId ?? null,
@@ -194,6 +196,7 @@ export function provisionProject(db: Kysely<DB>) {
           repositoryMode: input.repository.mode,
           storeListingId: input.storeListingId,
           autoUpdateEnabled: project.autoUpdateEnabled,
+          autoUpdateCadence: project.autoUpdateCadence,
           jobId: job.id,
         },
         ...input.audit,

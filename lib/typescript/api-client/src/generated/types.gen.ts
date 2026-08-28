@@ -989,6 +989,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
+      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1035,6 +1036,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
+    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
@@ -1108,6 +1110,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
+      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1282,6 +1285,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
+    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -1341,6 +1345,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
+    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
@@ -1393,6 +1398,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
+    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -1529,6 +1535,58 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse =
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    jobId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}/cancel"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors = {
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such cancellable job for this project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses = {
+  /**
+   * The canceled job
+   */
+  200: {
+    id: string
+    projectId: string
+    kind: string
+    state: string
+    progress: number
+    attempt: number
+    errorCode: string | null
+    errorMessage: string | null
+    steps: Array<{
+      key: string
+      label: string
+      state: string
+    }>
+    startedAt: Date | null
+    finishedAt: Date | null
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdEnvData = {
   body?: never

@@ -1,6 +1,7 @@
 import type { GitHubClient } from "./client"
 import { GitHubCredentialError } from "./errors"
 import type { GitHubCredential } from "./types"
+import { createHash } from "node:crypto"
 
 /** Where a fork and the repository it came from can be compared. */
 export type CompareTarget = {
@@ -34,6 +35,64 @@ export type UpstreamPosition = {
   upstreamSha: string
   forkSha: string
   changedFiles: number
+}
+
+export type RepositoryTagState = { fingerprint: string; hasTags: boolean }
+
+/**
+ * A stable fingerprint of all tags GitHub reports for an upstream repository.
+ *
+ * Tag cadence is intentionally a trigger, not a SemVer parser: upstreams use many versioning
+ * schemes. GitHub does not document a useful ordering for repository tags, so choosing the first
+ * page's first item would miss changes elsewhere in the set. We page the complete set, sort it,
+ * and hash name plus target SHA. That detects a new, removed, or moved tag.
+ */
+export async function repositoryTagState(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  upstreamFullName: string,
+): Promise<RepositoryTagState> {
+  const [owner, repo, extra] = upstreamFullName.split("/")
+  if (
+    owner === undefined ||
+    repo === undefined ||
+    extra !== undefined ||
+    owner === "" ||
+    repo === ""
+  ) {
+    throw new GitHubCredentialError(`Upstream "${upstreamFullName}" is not in owner/name form`)
+  }
+
+  const tags: { name: string; sha: string }[] = []
+  for (let page = 1; page <= 100; page += 1) {
+    const response = await client.request<{ name?: unknown; commit?: { sha?: unknown } }[]>({
+      method: "GET",
+      path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tags`,
+      credential,
+      query: { per_page: 100, page },
+    })
+    const rows = Array.isArray(response.data) ? response.data : []
+    for (const row of rows) {
+      if (typeof row.name === "string" && typeof row.commit?.sha === "string") {
+        tags.push({ name: row.name, sha: row.commit.sha })
+      }
+    }
+    if (rows.length < 100) {
+      tags.sort((left, right) =>
+        left.name === right.name
+          ? left.sha.localeCompare(right.sha)
+          : left.name.localeCompare(right.name),
+      )
+      return {
+        fingerprint: createHash("sha256").update(JSON.stringify(tags)).digest("hex"),
+        hasTags: tags.length > 0,
+      }
+    }
+  }
+
+  throw new GitHubCredentialError(
+    `Upstream "${upstreamFullName}" has more than 10,000 tags; refusing an incomplete tag fingerprint`,
+  )
 }
 
 function count(value: unknown): number {

@@ -30,6 +30,7 @@
     "@lib/lambda": "workspace:*",
     "@lib/metering": "workspace:*",
     "@lib/observability": "workspace:*",
+    "@lib/proxy-secret": "workspace:*",
     "@lib/reaper": "workspace:*",
     "@lib/sandbox": "workspace:*",
     "@lib/services": "workspace:*",

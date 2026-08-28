@@ -42,6 +42,12 @@ export const projectSchemaListQuery = Type.Object({
 
 const ProjectKind = Type.Union([Type.Literal("site"), Type.Literal("workflow")])
 const AutoUpdateMode = Type.Union([Type.Literal("suggest"), Type.Literal("auto_merge")])
+const AutoUpdateCadence = Type.Union([
+  Type.Literal("tag"),
+  Type.Literal("daily"),
+  Type.Literal("weekly"),
+  Type.Literal("monthly"),
+])
 const ScaleMode = Type.Union([Type.Literal("cold"), Type.Literal("warm")])
 const EnvTarget = Type.Union([
   Type.Literal("production"),
@@ -104,6 +110,7 @@ export const projectSchemaCreateRequest = Type.Object({
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
+  autoUpdateCadence: Type.Optional(AutoUpdateCadence),
   /**
    * `cold` scales to zero; `warm` keeps one instance running. ADR 0024.
    *
@@ -141,6 +148,7 @@ export const projectSchemaUpdateRequest = Type.Object({
   productionBranch: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
+  autoUpdateCadence: Type.Optional(AutoUpdateCadence),
   /**
    * `cold` scales to zero; `warm` keeps one instance running. ADR 0024.
    *
@@ -180,6 +188,7 @@ const projectEntry = Type.Object({
   dockerfilePath: Type.String(),
   productionBranch: Type.String(),
   autoUpdateEnabled: Type.Boolean(),
+  autoUpdateCadence: AutoUpdateCadence,
   autoUpdateMode: Type.String(),
   scaleMode: Type.String(),
   repositoryId: UUID7String,

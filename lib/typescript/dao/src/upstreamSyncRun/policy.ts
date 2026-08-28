@@ -16,6 +16,26 @@ export type UpkeepStatus = {
   consecutiveFailures: number
   paused: boolean
   lastOutcome: UpkeepOutcome | null
+  lastRunAt: Date | null
+}
+
+export type AutoUpdateCadence = "tag" | "daily" | "weekly" | "monthly"
+export type UpkeepTrigger = "interval" | "tag"
+
+const CADENCE_MS: Record<Exclude<AutoUpdateCadence, "tag">, number> = {
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+  // A stable interval, rather than a calendar boundary whose length varies by month and timezone.
+  monthly: 30 * 24 * 60 * 60 * 1000,
+}
+
+/** A missed interval remains due until a run is recorded, so worker downtime is caught up. */
+export function cadenceIsDue(
+  cadence: Exclude<AutoUpdateCadence, "tag">,
+  lastRunAt: Date | null,
+  now: Date,
+): boolean {
+  return lastRunAt === null || now.getTime() - lastRunAt.getTime() >= CADENCE_MS[cadence]
 }
 
 /**
@@ -34,7 +54,7 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
   async function forRepository(repositoryId: string): Promise<UpkeepStatus> {
     const runs = await db
       .selectFrom("upstreamSyncRun")
-      .select("outcome")
+      .select(["outcome", "createdAt"])
       .where("repositoryId", "=", repositoryId)
       .orderBy("createdAt", "desc")
       .limit(CONSECUTIVE_FAILURE_LIMIT)
@@ -50,6 +70,7 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
       consecutiveFailures,
       paused: consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT,
       lastOutcome: (runs[0]?.outcome as UpkeepOutcome | undefined) ?? null,
+      lastRunAt: runs[0]?.createdAt ?? null,
     }
   }
 
@@ -61,10 +82,17 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
    * repository, and reconciling the same fork three times because three projects point at it
    * would bill three times for one piece of work.
    */
-  async function dueForUpkeep(limit = 200): Promise<{ id: string; organizationId: string }[]> {
+  async function dueForUpkeep(
+    now: Date = new Date(),
+    limit = 200,
+  ): Promise<{ id: string; organizationId: string; trigger: UpkeepTrigger }[]> {
     const candidates = await db
       .selectFrom("repository")
-      .select(["repository.id as id", "repository.organizationId as organizationId"])
+      .select([
+        "repository.id as id",
+        "repository.organizationId as organizationId",
+        "repository.upstreamTagCheckedAt as upstreamTagCheckedAt",
+      ])
       .where("repository.deletedAt", "is", null)
       .where("repository.upstreamFullName", "is not", null)
       .where((eb) =>
@@ -81,10 +109,39 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
       .limit(limit)
       .execute()
 
-    const due: { id: string; organizationId: string }[] = []
+    const due: { id: string; organizationId: string; trigger: UpkeepTrigger }[] = []
     for (const candidate of candidates) {
       const status = await forRepository(candidate.id)
-      if (!status.paused) due.push(candidate)
+      if (status.paused) continue
+
+      const cadenceRows = await db
+        .selectFrom("project")
+        .select("autoUpdateCadence")
+        .distinct()
+        .where("repositoryId", "=", candidate.id)
+        .where("autoUpdateEnabled", "=", true)
+        .where("deletedAt", "is", null)
+        .execute()
+      const cadences = cadenceRows.map((row) => row.autoUpdateCadence as AutoUpdateCadence)
+
+      if (
+        cadences.some(
+          (cadence) => cadence !== "tag" && cadenceIsDue(cadence, status.lastRunAt, now),
+        )
+      ) {
+        due.push({
+          id: candidate.id,
+          organizationId: candidate.organizationId,
+          trigger: "interval",
+        })
+        continue
+      }
+
+      // Tag mode polls once daily. An unchanged tag advances only the checked-at timestamp in the
+      // repository handler; it does not manufacture an upstream_sync_run.
+      if (cadences.includes("tag") && cadenceIsDue("daily", candidate.upstreamTagCheckedAt, now)) {
+        due.push({ id: candidate.id, organizationId: candidate.organizationId, trigger: "tag" })
+      }
     }
     return due
   }

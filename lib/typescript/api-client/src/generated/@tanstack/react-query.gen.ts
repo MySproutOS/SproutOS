@@ -141,6 +141,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity,
@@ -514,6 +515,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealError,
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
@@ -1584,6 +1588,33 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdOptions = (
     },
     queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdQueryKey(options),
   })
+
+/**
+ * Cancels a queued or running agent-assisted upstream resolution
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdEnvQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdEnvData>,

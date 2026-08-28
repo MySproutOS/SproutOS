@@ -67,6 +67,16 @@ RUN mkdir -p /prod/migrator/migrations /prod/migrator/seeds \
 # ---------------------------------------------------------------------------
 FROM node:24.14.0-slim AS runtime
 
+# Template-generated repositories are not GitHub forks, so the background worker cannot use
+# GitHub's merge-upstream endpoint. It performs a trusted, non-checkout three-way tree merge with
+# `git merge-tree --write-tree` instead. Debian's Git is new enough for that interface;
+# application code also checks the version before touching a repository so a future base-image
+# downgrade fails as an actionable job error rather than as an unsafe two-way merge.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git merge-tree -h 2>&1 | grep -q -- '--write-tree'
+
 # Everything the instances used to be missing.
 #
 # The EC2 release was a tarball, and each of these had to be arranged by hand on a stock Amazon

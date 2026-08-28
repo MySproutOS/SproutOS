@@ -909,16 +909,35 @@ describe.skipIf(!reachable)("project routes", () => {
         name: "Explicit Choice",
         rootDir: "apps/explicit",
         autoUpdateEnabled: true,
+        autoUpdateCadence: "weekly",
         autoUpdateMode: "auto_merge",
         source: { type: "repository", repositoryId },
       })
 
       const project = response.json.project as Json
       expect(project.autoUpdateEnabled).toBe(true)
+      expect(project.autoUpdateCadence).toBe("weekly")
       expect(project.autoUpdateMode).toBe("auto_merge")
+
+      const updated = await call(
+        "PATCH",
+        `/v1/orgs/${orgA}/projects/${project.id as string}`,
+        alice,
+        { autoUpdateEnabled: false, autoUpdateCadence: "monthly" },
+      )
+      expect(updated.status).toBe(200)
+      expect(updated.json.autoUpdateEnabled).toBe(false)
+      expect(updated.json.autoUpdateCadence).toBe("monthly")
 
       await call("DELETE", `/v1/orgs/${orgA}/projects/${project.id as string}`, alice)
       await db.deleteFrom("agentCredential").where("id", "=", credentialId).execute()
+    })
+
+    it("rejects an invented cadence instead of silently changing its meaning", async () => {
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${forkedProjectId}`, alice, {
+        autoUpdateCadence: "hourly",
+      })
+      expect(response.status).toBe(400)
     })
   })
 
@@ -939,10 +958,10 @@ describe.skipIf(!reachable)("project routes", () => {
           branch: "main",
           behindBy: 4,
           aheadBy: 1,
-          outcome: "pr_opened",
+          outcome: "conflict",
+          upstreamSha: "a".repeat(40),
+          forkSha: "b".repeat(40),
           mergeType: "merge",
-          pullRequestNumber: 12,
-          pullRequestUrl: "https://github.com/acme-test/x/pull/12",
         })
         .execute()
 
@@ -970,7 +989,7 @@ describe.skipIf(!reachable)("project routes", () => {
         const rows = response.json.data as Json[]
         expect(rows).toHaveLength(1)
         expect(rows[0].behindBy).toBe(4)
-        expect(rows[0].pullRequestNumber).toBe(12)
+        expect(rows[0].pullRequestNumber).toBeNull()
         expect(rows[0].upstreamSyncRunId).toBe(syncRunId)
       }
     })
@@ -993,13 +1012,25 @@ describe.skipIf(!reachable)("project routes", () => {
 
       const job = await db
         .selectFrom("projectJob")
-        .select(["kind", "repositoryId", "state"])
+        .select(["id", "kind", "repositoryId", "state", "details"])
         .where("projectId", "=", forkedProjectId)
         .where("kind", "=", "sync_upstream")
         .executeTakeFirstOrThrow()
 
       expect(job.repositoryId).toBe(repositoryId)
       expect(job.state).toBe("queued")
+      expect(job.details).toMatchObject({
+        upstreamSyncRunId: syncRunId,
+        expectedUpstreamSha: "a".repeat(40),
+        expectedTargetSha: "b".repeat(40),
+      })
+      const background = await db
+        .selectFrom("backgroundJob")
+        .select(["kind", "payload", "state"])
+        .where("kind", "=", "upkeep.resolve_conflict")
+        .executeTakeFirstOrThrow()
+      expect(background.payload).toEqual({ projectJobId: job.id })
+      expect(background.state).toBe("queued")
 
       const other = await call(
         "GET",
@@ -1007,6 +1038,28 @@ describe.skipIf(!reachable)("project routes", () => {
         alice,
       )
       expect(other.json.data as Json[]).toHaveLength(1)
+    })
+
+    it("cancels the queued resolution and its background work", async () => {
+      const job = await db
+        .selectFrom("projectJob")
+        .select("id")
+        .where("projectId", "=", forkedProjectId)
+        .where("kind", "=", "sync_upstream")
+        .executeTakeFirstOrThrow()
+      const canceled = await call(
+        "POST",
+        `/v1/orgs/${orgA}/projects/${forkedProjectId}/jobs/${job.id}/cancel`,
+        alice,
+      )
+      expect(canceled.status).toBe(200)
+      expect(canceled.json.state).toBe("canceled")
+      const background = await db
+        .selectFrom("backgroundJob")
+        .select("state")
+        .where("kind", "=", "upkeep.resolve_conflict")
+        .executeTakeFirstOrThrow()
+      expect(background.state).toBe("cancelled")
     })
 
     it("is idempotent: a second accept finds nothing pending", async () => {
