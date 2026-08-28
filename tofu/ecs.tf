@@ -24,6 +24,82 @@
  * from the load balancer either way.
  */
 
+locals {
+  # The EC2 release loaded this allowlist from Parameter Store at boot. Moving the same processes
+  # into ECS without carrying the allowlist forward produced containers that were healthy at the
+  # load balancer while every credential-backed operation failed at its point of use. Keep the
+  # names explicit: an unrelated parameter added under the application path must not silently
+  # become available to every container.
+  ecs_website_parameter_names = [
+    "GITHUB_OAUTH_CLIENT_ID",
+    "GITHUB_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GITHUB_APP_ID",
+    "GITHUB_APP_CLIENT_ID",
+    "GITHUB_APP_CLIENT_SECRET",
+    "GITHUB_APP_PRIVATE_KEY",
+  ]
+
+  ecs_api_parameter_names = [
+    "CLICKHOUSE_PASSWORD",
+    "DAYTONA_API_KEY",
+    "DAYTONA_ORGANIZATION_ID",
+    "DEPLOY_TOKEN_SECRET",
+    "GITHUB_APP_ID",
+    "GITHUB_APP_PRIVATE_KEY",
+    "GITHUB_WEBHOOK_SECRET",
+    "KAFKA_BROKERS",
+    "KAFKA_USAGE_EVENT_SASL_PASSWORD",
+    "KAFKA_USAGE_EVENT_SASL_USERNAME",
+    "LLM_PROXY_SECRET",
+    "LOG_TOKEN_SECRET",
+    "METERING_INGEST_HMAC_KEY",
+    "NEON_API_KEY",
+    "NEON_ORG_ID",
+    "OPENAI_KEY",
+    "SANDBOX_DAYTONA_SNAPSHOT",
+    "SANDBOX_FORWARD_PROXY_ROOT_KEY",
+    "SERVICE_OBJECT_STORAGE_ROOT_KEY",
+    "SERVICE_VALKEY_ADMIN_URL",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+  ]
+
+  ecs_worker_parameter_names = [
+    "CLICKHOUSE_PASSWORD",
+    "DAYTONA_API_KEY",
+    "DAYTONA_ORGANIZATION_ID",
+    "GITHUB_APP_ID",
+    "GITHUB_APP_PRIVATE_KEY",
+    "KAFKA_BROKERS",
+    "KAFKA_USAGE_EVENT_SASL_PASSWORD",
+    "KAFKA_USAGE_EVENT_SASL_USERNAME",
+    "LOG_EXTENSION_CANARY_PROJECT_IDS",
+    "LOG_EXTENSION_LAYER_ARN",
+    "LOG_TOKEN_SECRET",
+    "NEON_API_KEY",
+    "NEON_ORG_ID",
+    "OPENAI_KEY",
+    "SANDBOX_DAYTONA_SNAPSHOT",
+    "SANDBOX_FORWARD_PROXY_ROOT_KEY",
+    "SEARCH_ADMIN_PASSWORD",
+    "SEARCH_ADMIN_USER",
+    "SEARCH_PROXY_SECURITY_ROOT_KEY",
+    "SERVICE_OBJECT_STORAGE_ROOT_KEY",
+    "SERVICE_VALKEY_ADMIN_URL",
+    "VALKEY_PROXY_ACL_ROOT_KEY",
+  ]
+
+  ecs_application_parameter_arns = [
+    for name in toset(concat(
+      local.ecs_website_parameter_names,
+      local.ecs_api_parameter_names,
+      local.ecs_worker_parameter_names,
+    )) : "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+  ]
+}
+
 resource "aws_ecs_cluster" "main" {
   name = var.name_prefix
 
@@ -196,7 +272,20 @@ resource "aws_ecs_task_definition" "web" {
         { name = "PORT", value = "8080" },
         { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
         { name = "NEXT_PUBLIC_HOST_URL", value = "https://${var.control_plane_domain}" },
+        { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
+        { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
+        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
+        { name = "SESSION_COOKIE_DOMAIN", value = ".${var.control_plane_domain}" },
+        { name = "SPA_ASSET_ORIGIN", value = "https://${aws_cloudfront_distribution.spa.domain_name}" },
       ]
+
+      secrets = concat(
+        [{ name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn }],
+        [for name in local.ecs_website_parameter_names : {
+          name      = name
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+        }],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -243,14 +332,38 @@ resource "aws_ecs_task_definition" "web" {
         { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
         { name = "CLICKHOUSE_DATABASE", value = "observability" },
         { name = "CLICKHOUSE_USER", value = "sproutos" },
+        { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
+        { name = "NEXT_PUBLIC_HOST_URL", value = "https://${var.control_plane_domain}" },
+        { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
+        { name = "SESSION_COOKIE_DOMAIN", value = ".${var.control_plane_domain}" },
+        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
+        { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
+        { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
+        { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
+        { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
+        { name = "SERVICE_POSTGRES_PROVIDER", value = "neon" },
+        { name = "SERVICE_POSTGRES_PUBLIC_HOST", value = "${var.postgres_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_POSTGRES_PUBLIC_PORT", value = "5432" },
+        { name = "SERVICE_SEARCH_PUBLIC_HOST", value = "${var.search_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_SEARCH_PUBLIC_PORT", value = "443" },
+        { name = "SERVICE_VALKEY_PUBLIC_HOST", value = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_VALKEY_PUBLIC_PORT", value = "6379" },
+        { name = "SERVICE_OBJECT_STORAGE_ENABLED", value = tostring(var.storage_proxy_enabled) },
+        { name = "SERVICE_OBJECT_STORAGE_REGION", value = var.aws_region },
+        { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
+        { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
       ]
 
-      secrets = [
+      secrets = concat([
         # Assembled by the API from the secret RDS manages, rather than written into this file. A
         # connection string in a task definition is a connection string in `describe-task-definition`
         # output, which is readable by anything with ECS read access.
         { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-      ]
+        ], [for name in local.ecs_api_parameter_names : {
+          name      = name
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+      }])
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -306,11 +419,39 @@ resource "aws_ecs_task_definition" "web" {
         { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
         { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
+        { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
+        { name = "CLICKHOUSE_DATABASE", value = "observability" },
+        { name = "CLICKHOUSE_USER", value = "sproutos" },
+        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
+        { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
+        { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
+        { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
+        { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
+        { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
+        { name = "SEARCH_ADMIN_URL", value = "https://${var.opensearch_subdomain}.${var.control_plane_domain}" },
+        { name = "LAMBDA_WEB_ADAPTER_LAYER_VERSION", value = tostring(var.lambda_web_adapter_layer_version) },
+        # Safe only because project teardown resolves the recorded database_instance.provider.
+        # Never let the worker choose a destructive driver from DATABASE_URL alone.
+        { name = "SERVICE_POSTGRES_PROVIDER", value = "neon" },
+        { name = "SERVICE_POSTGRES_PUBLIC_HOST", value = "${var.postgres_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_POSTGRES_PUBLIC_PORT", value = "5432" },
+        { name = "SERVICE_SEARCH_PUBLIC_HOST", value = "${var.search_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_SEARCH_PUBLIC_PORT", value = "443" },
+        { name = "SERVICE_VALKEY_PUBLIC_HOST", value = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_VALKEY_PUBLIC_PORT", value = "6379" },
+        { name = "SERVICE_OBJECT_STORAGE_ENABLED", value = tostring(var.storage_proxy_enabled) },
+        { name = "SERVICE_OBJECT_STORAGE_REGION", value = var.aws_region },
+        { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
+        { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
+        { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
       ]
 
-      secrets = [
+      secrets = concat([
         { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-      ]
+        ], [for name in local.ecs_worker_parameter_names : {
+          name      = name
+          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+      }])
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -436,6 +577,14 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         Resource = aws_db_instance.control_plane.master_user_secret[0].secret_arn
       },
       {
+        # ECS resolves task-definition `secrets` before a container starts. The application task
+        # role is therefore irrelevant here; this execution role needs the exact Parameter Store
+        # calls itself or the task fails as `ResourceInitializationError`.
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameters"]
+        Resource = local.ecs_application_parameter_arns
+      },
+      {
         # The same pairing the instance role needed: a secret encrypted with a customer-managed key
         # takes two permissions, and the missing one reports as AccessDenied on the *other* service.
         Effect   = "Allow"
@@ -444,6 +593,16 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
           }
         }
       },

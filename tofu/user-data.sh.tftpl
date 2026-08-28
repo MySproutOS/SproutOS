@@ -507,7 +507,8 @@ PYTHON
 # tenant Lambda. An empty list would mean "everything under the path", which is what this used to
 # do; naming them means a key added for some future service does not silently appear here too.
 if [ "$SERVICE" = "website" ]; then
-  write_app_secrets "GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET GITHUB_APP_ID \
+  write_app_secrets "GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET \
+    GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GITHUB_APP_ID \
     GITHUB_APP_CLIENT_ID GITHUB_APP_CLIENT_SECRET GITHUB_APP_PRIVATE_KEY GITHUB_WEBHOOK_SECRET \
     STRIPE_PUBLIC_KEY STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET APK_SIGNER_TOKEN \
     DEPLOY_TOKEN_SECRET LOG_TOKEN_SECRET \

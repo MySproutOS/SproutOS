@@ -7,6 +7,7 @@ import { S3Client } from "@aws-sdk/client-s3"
 import { tearDownDeployment } from "@lib/lambda"
 import { Redis } from "ioredis"
 import {
+  neonPostgresDriverFromEnv,
   sproutPostgresConfigFromEnv,
   sproutPostgresDriver,
   searchDriver,
@@ -250,7 +251,7 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         — see `sandbox_state_check`, `sandbox_runtime_class_check` and `workflow_run_step_status_check`.
         `services.test.ts` now reads this one out of `pg_constraint`.
       */
-          await driverFor(db, service.kind).destroy(service.id)
+          await (await driverFor(db, service.kind, service.id)).destroy(service.id)
           result.services += 1
 
           // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
@@ -349,9 +350,51 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
   }
 }
 
-function driverFor(db: Kysely<DB>, kind: string) {
-  if (kind === "postgres") return sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
+async function driverFor(db: Kysely<DB>, kind: string, backendServiceId: string) {
+  if (kind === "postgres") {
+    /*
+      Destruction follows the provider recorded on the database, never today's provisioning flag.
+
+      The old dispatch always constructed the shared-cluster driver. On Neon, giving the worker
+      the otherwise-correct public proxy hostname completed that driver's configuration with
+      `DATABASE_URL` as its admin connection — the control-plane RDS master connection. A project
+      teardown could therefore execute DROP DATABASE/DROP ROLE against the control plane.
+
+      `SERVICE_POSTGRES_PROVIDER` says what a *new* database should be. It cannot answer what an
+      existing database was during a migration, so read the durable provider on the instance.
+    */
+    const instance = await db
+      .selectFrom("databaseInstance")
+      .select(["provider"])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+
+    if (instance === undefined) {
+      throw new Error(`Postgres service ${backendServiceId} has no live database instance`)
+    }
+    return postgresTeardownDriver(instance.provider, backendServiceId, {
+      neon: () => neonPostgresDriverFromEnv(db),
+      sprout: () => sproutPostgresDriver(db, sproutPostgresConfigFromEnv()),
+    })
+  }
   if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
   if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
   throw new Error(`No driver for backend service kind "${kind}"`)
+}
+
+/**
+ * Resolve the destructive Postgres implementation from durable instance state.
+ *
+ * Kept as a tiny injectable seam so the safety decision is unit-testable without constructing a
+ * real Neon client or opening the shared-cluster administrator connection.
+ */
+export function postgresTeardownDriver<T>(
+  provider: string,
+  backendServiceId: string,
+  factories: { neon: () => T; sprout: () => T },
+): T {
+  if (provider === "neon") return factories.neon()
+  if (provider === "sprout") return factories.sprout()
+  throw new Error(`Postgres service ${backendServiceId} uses unsupported provider "${provider}"`)
 }
