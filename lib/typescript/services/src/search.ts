@@ -236,12 +236,27 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
       .execute()
   }
 
+  async function recoverProvision(input: ProvisionInput): Promise<ProvisionResult> {
+    try {
+      const service = await details(input.backendServiceId)
+      return {
+        ...service,
+        ...(await rotateCredentials(input.backendServiceId, input.credentialOwner)),
+      }
+    } catch (error) {
+      // Search provisioning has no provider create: the credential row is the whole resource.
+      if (!(error instanceof ServiceNotProvisionedError)) throw error
+      return await provision(input)
+    }
+  }
+
   return {
     kind: "elasticsearch",
     connectionUri,
     destroy,
     details,
     provision,
+    recoverProvision,
     rotateCredentials,
     suspend,
   }

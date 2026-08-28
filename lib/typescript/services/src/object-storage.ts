@@ -2,6 +2,7 @@ import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
+  HeadBucketCommand,
   ListObjectVersionsCommand,
   ListObjectsV2Command,
   PutBucketCorsCommand,
@@ -304,6 +305,41 @@ export function parseObjectStorageUri(uri: string): {
   }
 }
 
+/** Read/adopt the physical storage created before a provision response was lost. */
+export async function reconcileObjectStorageProvider(
+  s3: Pick<S3Client, "send">,
+  config: Pick<ObjectStorageConfig, "sharedBucket">,
+  logicalBucket: string,
+): Promise<void> {
+  if (config.sharedBucket === undefined) {
+    await s3.send(new HeadBucketCommand({ Bucket: logicalBucket }))
+    await s3.send(
+      new PutBucketCorsCommand({
+        Bucket: logicalBucket,
+        CORSConfiguration: {
+          CORSRules: [
+            {
+              AllowedOrigins: VAULT_ORIGINS,
+              AllowedMethods: ["GET", "PUT", "POST", "DELETE", "HEAD"],
+              AllowedHeaders: ["*"],
+              ExposeHeaders: ["ETag", "Content-Length"],
+              MaxAgeSeconds: 3000,
+            },
+          ],
+        },
+      }),
+    )
+    return
+  }
+  await s3.send(
+    new ListObjectsV2Command({
+      Bucket: config.sharedBucket,
+      Prefix: `${logicalBucket}/`,
+      MaxKeys: 1,
+    }),
+  )
+}
+
 export function objectStorageDriver(
   db: Kysely<DB>,
   config: ObjectStorageConfig,
@@ -449,6 +485,40 @@ export function objectStorageDriver(
     }
   }
 
+  async function recoverProvision(input: ProvisionInput): Promise<ProvisionResult> {
+    const bucket = bucketNameFor(input.backendServiceId)
+
+    // A GET/HEAD against the deterministic physical identity is the adoption boundary. In
+    // particular, never replay CreateBucket here: its response may have been the only thing lost.
+    await reconcileObjectStorageProvider(s3, config, bucket)
+
+    const live = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", input.backendServiceId)
+      .where("revokedAt", "is", null)
+      .orderBy("createdAt", "desc")
+      .executeTakeFirst()
+    const credential =
+      live === undefined
+        ? await issue(input.backendServiceId, input.credentialOwner)
+        : {
+            accessKeyId: live.username,
+            secretAccessKey: await deriveObjectStorageSecret(config.rootKey, live.username),
+          }
+
+    await db
+      .updateTable("backendService")
+      .set({ status: "active", updatedAt: new Date() })
+      .where("id", "=", input.backendServiceId)
+      .execute()
+
+    return {
+      ...details(input.backendServiceId, credential.accessKeyId),
+      connectionUri: uriFor(input.backendServiceId, credential),
+    }
+  }
+
   /**
    * The live connection URI, reconstructed rather than stored.
    *
@@ -554,6 +624,7 @@ export function objectStorageDriver(
       return details(id, live?.username ?? objectStorageAccessKeyId(id, 1))
     },
     provision,
+    recoverProvision,
     resume,
     rotateCredentials,
     suspend,

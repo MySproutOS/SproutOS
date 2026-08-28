@@ -1,10 +1,39 @@
 import { describe, expect, it } from "vitest"
+import type { ServiceDriver } from "@lib/services"
 import {
   catalogueTemplateApplyRequest,
   orchestrateCatalogueTemplate,
+  reconcileTemplateServiceProvision,
+  recoverTemplateService,
   validateCatalogueUserInputs,
   type CatalogueTemplateContext,
 } from "./catalogue-template"
+
+function serializedExecutor(): <T>(work: () => Promise<T>) => Promise<T> {
+  let tail = Promise.resolve()
+  return async <T>(work: () => Promise<T>): Promise<T> => {
+    const previous = tail
+    const next = deferred()
+    tail = next.promise
+    await previous
+    try {
+      return await work()
+    } finally {
+      next.resolve()
+    }
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let complete: (() => void) | undefined
+  const promise = new Promise<void>((resolve) => {
+    complete = resolve
+  })
+  return {
+    promise,
+    resolve: () => complete?.(),
+  }
+}
 
 describe("catalogue template lifecycle", () => {
   it("provisions services before forking and applies core before deployment", async () => {
@@ -64,6 +93,189 @@ describe("catalogue template lifecycle", () => {
       }),
     ).rejects.toThrow("database unavailable")
     expect(events).not.toContain("fork")
+  })
+})
+
+describe("catalogue template service recovery", () => {
+  const first = {
+    connectionUri: "postgres://tenant:first@example.test/database",
+    host: "example.test",
+    port: 5432,
+    database: "database",
+    username: "tenant",
+  }
+  const recovered = {
+    ...first,
+    connectionUri: "postgres://tenant:recovered@example.test/database",
+  }
+
+  function driver(overrides: Partial<ServiceDriver>): ServiceDriver {
+    return {
+      kind: "postgres",
+      provision: () => Promise.reject(new Error("must not provision")),
+      connectionUri: () => Promise.reject(new Error("connection unavailable")),
+      details: () => Promise.resolve(first),
+      rotateCredentials: () => Promise.reject(new Error("must not rotate")),
+      suspend: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+      ...overrides,
+    }
+  }
+
+  const recoveryInput = {
+    backendServiceId: "service-1",
+    organizationId: "organization-1",
+    projectId: "project-1",
+    name: "database",
+  }
+
+  it("delegates interrupted provisioning to the provider-specific adoption path", async () => {
+    let recoveries = 0
+    const result = await recoverTemplateService(
+      driver({
+        recoverProvision: (input) => {
+          expect(input).toEqual(recoveryInput)
+          recoveries += 1
+          return Promise.resolve(recovered)
+        },
+      }),
+      recoveryInput,
+    )
+
+    expect(result).toEqual(recovered)
+    expect(recoveries).toBe(1)
+  })
+
+  it("refuses generic recovery when a driver has no adoption implementation", async () => {
+    await expect(recoverTemplateService(driver({}), recoveryInput)).rejects.toThrow(
+      /cannot reconcile an interrupted provision safely/,
+    )
+  })
+
+  it("resumes the persisted service after a crash without provisioning another provider resource", async () => {
+    let record: { backendServiceId: string; provisioned: boolean } | undefined
+    let provisionCalls = 0
+    let recoveryCalls = 0
+    let bindingAttempts = 0
+    const bindings = new Map<string, string>()
+
+    const operations = {
+      serialized: serializedExecutor(),
+      load: () => Promise.resolve(record),
+      create: () => {
+        record = { backendServiceId: "service-1", provisioned: false }
+        return Promise.resolve(record)
+      },
+      provision: () => {
+        provisionCalls += 1
+        return Promise.resolve(first)
+      },
+      recover: () => {
+        recoveryCalls += 1
+        return Promise.resolve(recovered)
+      },
+      persistBindings: (result: typeof first) => {
+        bindingAttempts += 1
+        bindings.set("DATABASE_URL", result.connectionUri)
+        if (bindingAttempts === 1) return Promise.reject(new Error("worker crashed"))
+        return Promise.resolve()
+      },
+      finish: () => {
+        record!.provisioned = true
+        return Promise.resolve()
+      },
+      fail: () => Promise.resolve(),
+    }
+
+    await expect(reconcileTemplateServiceProvision(operations)).rejects.toThrow("worker crashed")
+    await reconcileTemplateServiceProvision(operations)
+    await reconcileTemplateServiceProvision(operations)
+
+    expect(provisionCalls).toBe(1)
+    expect(recoveryCalls).toBe(1)
+    expect(bindingAttempts).toBe(2)
+    expect(bindings.get("DATABASE_URL")).toBe(recovered.connectionUri)
+    expect(record?.provisioned).toBe(true)
+  })
+
+  it("keeps a failed recovery retryable and never falls back to a second provision", async () => {
+    const record = { backendServiceId: "service-1", provisioned: false }
+    let recoveryCalls = 0
+    let failCalls = 0
+    const operations = {
+      serialized: serializedExecutor(),
+      load: () => Promise.resolve(record),
+      create: () => Promise.reject(new Error("must not create")),
+      provision: () => Promise.reject(new Error("must not provision")),
+      recover: () => {
+        recoveryCalls += 1
+        return recoveryCalls === 1
+          ? Promise.reject(new Error("provider state unavailable"))
+          : Promise.resolve(recovered)
+      },
+      persistBindings: () => Promise.resolve(),
+      finish: () => {
+        record.provisioned = true
+        return Promise.resolve()
+      },
+      fail: () => {
+        failCalls += 1
+        return Promise.resolve()
+      },
+    }
+
+    await expect(reconcileTemplateServiceProvision(operations)).rejects.toThrow(
+      "provider state unavailable",
+    )
+    await reconcileTemplateServiceProvision(operations)
+
+    expect(recoveryCalls).toBe(2)
+    expect(failCalls).toBe(1)
+    expect(record.provisioned).toBe(true)
+  })
+
+  it("serializes concurrent retries so only one credential reaches the bindings", async () => {
+    let record: { backendServiceId: string; provisioned: boolean } | undefined
+    let createCalls = 0
+    let provisionCalls = 0
+    let recoveryCalls = 0
+    const provisionStarted = deferred()
+    const provisionBlocked = deferred()
+    const operations = {
+      serialized: serializedExecutor(),
+      load: () => Promise.resolve(record),
+      create: () => {
+        createCalls += 1
+        record = { backendServiceId: "service-1", provisioned: false }
+        return Promise.resolve(record)
+      },
+      provision: async () => {
+        provisionCalls += 1
+        provisionStarted.resolve()
+        await provisionBlocked.promise
+        return first
+      },
+      recover: () => {
+        recoveryCalls += 1
+        return Promise.resolve(recovered)
+      },
+      persistBindings: () => Promise.resolve(),
+      finish: () => {
+        record!.provisioned = true
+        return Promise.resolve()
+      },
+      fail: () => Promise.resolve(),
+    }
+
+    const one = reconcileTemplateServiceProvision(operations)
+    const two = reconcileTemplateServiceProvision(operations)
+    await provisionStarted.promise
+    provisionBlocked.resolve()
+    await Promise.all([one, two])
+
+    expect(createCalls).toBe(1)
+    expect(provisionCalls).toBe(1)
+    expect(recoveryCalls).toBe(0)
   })
 })
 
