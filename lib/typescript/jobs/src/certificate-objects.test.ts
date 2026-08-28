@@ -32,7 +32,12 @@ describe("certificate object version cleanup", () => {
     )
 
     expect(send.mock.calls[0]?.[0]).toBeInstanceOf(ListObjectVersionsCommand)
-    expect(send.mock.calls[3]?.[0]).toBeInstanceOf(ListObjectVersionsCommand)
+    const secondPage = send.mock.calls[1]?.[0]
+    expect(secondPage).toBeInstanceOf(ListObjectVersionsCommand)
+    expect((secondPage as ListObjectVersionsCommand).input).toMatchObject({
+      KeyMarker: "custom-domains/id/current.json",
+      VersionIdMarker: "marker",
+    })
     expect(
       send.mock.calls
         .map(([command]) => command)

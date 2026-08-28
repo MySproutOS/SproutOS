@@ -59,16 +59,38 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain("local.ecs_worker_parameter_names")
   })
 
-  it("keeps private-key reads on router instances rather than the public ECS task role", () => {
+  it("keeps private-key reads on a router-only instance role", () => {
     const reader = resource("aws_iam_policy", "router_certificate_read")
     expect(reader).toContain("s3:GetObjectVersion")
     expect(reader).toContain("aws_s3_bucket.tenant_certificates")
     expect(
-      resource("aws_iam_role_policy_attachment", "instance_router_certificate_read"),
-    ).toContain("aws_iam_role.instance.name")
+      resource("aws_iam_role_policy_attachment", "router_instance_certificate_read"),
+    ).toContain("aws_iam_role.router_instance.name")
+    expect(resource("aws_iam_instance_profile", "router")).toContain(
+      "aws_iam_role.router_instance.name",
+    )
+    expect(compute.match(/aws_iam_policy\.router_certificate_read\.arn/g)).toHaveLength(1)
+    expect(resource("aws_iam_role_policy_attachment", "instance_application")).not.toContain(
+      "router_certificate_read",
+    )
     expect(resource("aws_iam_role_policy_attachment", "task_application")).not.toContain(
       "router_certificate_read",
     )
+    expect(resource("aws_launch_template", "service")).toContain(
+      'each.key == "router" ? aws_iam_instance_profile.router.arn : aws_iam_instance_profile.instance.arn',
+    )
+  })
+
+  it("blocks bridge-networked ECS tasks from the host credential endpoint", () => {
+    expect(ecs).toContain('http_protocol_ipv6 = "disabled"')
+    expect(ecs).toContain(
+      "/usr/sbin/iptables -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP",
+    )
+    expect(ecs).toContain(
+      "/usr/sbin/iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP",
+    )
+    expect(ecs).toContain("ExecStartPost=/usr/local/sbin/sproutos-block-container-imds")
+    expect(ecs).toContain("systemctl restart docker")
   })
 
   it("limits Route 53 writes to the two exact ACME TXT names", () => {

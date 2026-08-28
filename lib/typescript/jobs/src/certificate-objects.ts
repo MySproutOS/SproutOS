@@ -9,6 +9,7 @@ export async function deleteCertificateObjectVersions(
 ): Promise<void> {
   let keyMarker: string | undefined
   let versionIdMarker: string | undefined
+  const versionsToDelete: Array<{ key: string; versionId: string }> = []
   do {
     const page = await s3.send(
       new ListObjectVersionsCommand({
@@ -18,20 +19,31 @@ export async function deleteCertificateObjectVersions(
         VersionIdMarker: versionIdMarker,
       }),
     )
-    const versions = [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])].filter(
-      (version) =>
+    versionsToDelete.push(
+      ...[...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])].flatMap((version) =>
         version.Key === key &&
         version.VersionId !== undefined &&
-        !keepVersions.has(version.VersionId),
-    )
-    await Promise.all(
-      versions.map((version) =>
-        s3.send(
-          new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: version.VersionId }),
-        ),
+        !keepVersions.has(version.VersionId)
+          ? [{ key: version.Key, versionId: version.VersionId }]
+          : [],
       ),
     )
     keyMarker = page.NextKeyMarker
     versionIdMarker = page.NextVersionIdMarker
   } while (keyMarker !== undefined)
+
+  // Collect every page before deleting anything. S3's continuation markers identify versions in
+  // the current listing; deleting a marker version before requesting the next page can invalidate
+  // the traversal and silently leave an older private key behind.
+  await Promise.all(
+    versionsToDelete.map((version) =>
+      s3.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: version.key,
+          VersionId: version.versionId,
+        }),
+      ),
+    ),
+  )
 }

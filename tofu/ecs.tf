@@ -175,7 +175,8 @@ resource "aws_launch_template" "ecs" {
   vpc_security_group_ids = [aws_security_group.service.id]
 
   metadata_options {
-    http_tokens = "required"
+    http_tokens        = "required"
+    http_protocol_ipv6 = "disabled"
     # Two hops, not one: the ECS agent runs in a container and its request to the metadata service
     # crosses a network namespace, which counts as a hop. At one, the agent cannot read the
     # instance's credentials and the instance never joins the cluster — with no error that mentions
@@ -183,11 +184,37 @@ resource "aws_launch_template" "ecs" {
     http_put_response_hop_limit = 2
   }
 
-  # The only thing an ECS instance needs at boot: which cluster to join.
+  # Bridge-networked tasks can otherwise reach the host's instance-profile credentials. IMDSv2's
+  # token requirement does not isolate a container that can issue PUT, and the ECS task-role block
+  # setting applies only to awsvpc tasks. Install the DOCKER-USER rule as a Docker ExecStartPost so
+  # it is restored after every daemon restart, before the ECS agent may launch public containers.
   user_data = base64encode(<<-EOT
     #!/usr/bin/env bash
+    set -euo pipefail
+
     echo "ECS_CLUSTER=${aws_ecs_cluster.main.name}" >> /etc/ecs/ecs.config
     echo "ECS_ENABLE_CONTAINER_METADATA=true" >> /etc/ecs/ecs.config
+
+    systemctl stop ecs || true
+
+    install -d -m 0755 /usr/local/sbin /etc/systemd/system/docker.service.d
+    tee /usr/local/sbin/sproutos-block-container-imds >/dev/null <<'IMDS_SCRIPT'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! /usr/sbin/iptables -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP; then
+      /usr/sbin/iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP
+    fi
+    IMDS_SCRIPT
+    chmod 0755 /usr/local/sbin/sproutos-block-container-imds
+
+    tee /etc/systemd/system/docker.service.d/20-sproutos-block-container-imds.conf >/dev/null <<'IMDS_UNIT'
+    [Service]
+    ExecStartPost=/usr/local/sbin/sproutos-block-container-imds
+    IMDS_UNIT
+
+    systemctl daemon-reload
+    systemctl restart docker
+    systemctl start ecs
   EOT
   )
 
