@@ -255,8 +255,10 @@ jq -e --arg task "$task_arn" '
 
 if [ -n "${CLI_DOWNLOAD_URL:-}" ]; then
   for attempt in $(seq 1 12); do
+    # React may place a hydration comment between the literal "Version " and its dynamic value in
+    # server HTML. The immutable tag URL is the stronger assertion and contains the same version.
     if page=$(curl --fail --silent --show-error "$CLI_DOWNLOAD_URL") &&
-      grep -Fq "Version ${VERSION}" <<<"$page" &&
+      grep -Fq "$VERSION" <<<"$page" &&
       grep -Fq "releases/download/${TAG}/" <<<"$page"; then
       echo "promoted immutable CLI $VERSION and verified $CLI_DOWNLOAD_URL"
       exit 0
