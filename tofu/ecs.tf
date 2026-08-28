@@ -50,7 +50,15 @@ locals {
     "SPROUT_CLI_RELEASE_VERSION",
   ]
 
-  ecs_api_parameter_names = [
+  # These parameters are intentionally absent until the Android custody rollout. A default
+  # OpenTofu apply must remain able to register and launch an unrelated ECS task revision before
+  # they exist; the later custody change supplies an explicit, preflighted enable plan.
+  ecs_android_api_parameter_names = var.android_custody_delivery_enabled ? [
+    "APK_SIGNER_OPERATOR_TOKEN",
+    "APK_SIGNER_TOKEN",
+  ] : []
+
+  ecs_api_parameter_names = concat(local.ecs_android_api_parameter_names, [
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
@@ -73,10 +81,13 @@ locals {
     "SERVICE_VALKEY_ADMIN_URL",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
-  ]
+  ])
 
-  ecs_worker_parameter_names = [
+  ecs_android_worker_parameter_names = var.android_custody_delivery_enabled ? [
     "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
+  ] : []
+
+  ecs_worker_parameter_names = concat(local.ecs_android_worker_parameter_names, [
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
@@ -99,7 +110,7 @@ locals {
     "SERVICE_OBJECT_STORAGE_ROOT_KEY",
     "SERVICE_VALKEY_ADMIN_URL",
     "VALKEY_PROXY_ACL_ROOT_KEY",
-  ]
+  ])
 
   ecs_application_parameter_arns = [
     for name in toset(concat(
