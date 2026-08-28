@@ -43,6 +43,13 @@ case "$DESIRED" in
   ''|*[!0-9]*) echo "ECS_WEB_DESIRED_COUNT must be a non-negative integer" >&2; exit 2 ;;
 esac
 
+# These values are repeated on update-service deliberately. OpenTofu is the durable declaration,
+# but deploys do not run `tofu apply`; carrying the strategy on the release command prevents an old
+# live service configuration from stopping its sole healthy task before a replacement is ready.
+# With fixed host ports, ECS asks the managed capacity provider for the ASG's one spare instance.
+# The AWS services-stable waiter is bounded (40 attempts at 15 seconds), as is the rollback waiter.
+DEPLOYMENT_CONFIGURATION="maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+
 tmp_dir=$(mktemp -d)
 cleanup() {
   unlink "$tmp_dir/service-task.json" 2>/dev/null || true
@@ -180,14 +187,44 @@ if [ "$migration_exit" != "0" ]; then
   exit 1
 fi
 
+rollback_service() {
+  echo "rolling $CLUSTER/$SERVICE back to $current_task_arn" >&2
+  aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$SERVICE" \
+    --task-definition "$current_task_arn" \
+    --desired-count "$DESIRED" \
+    --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
+    --force-new-deployment >/dev/null
+
+  if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
+    echo "rollback did not stabilize within the bounded ECS waiter" >&2
+    return 1
+  fi
+
+  rollback_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+  rollback_task=$(jq -r '.services[0].taskDefinition // empty' <<<"$rollback_json")
+  rollback_running=$(jq -r '.services[0].runningCount // -1' <<<"$rollback_json")
+  if [ "$rollback_task" != "$current_task_arn" ] || [ "$rollback_running" != "$DESIRED" ]; then
+    echo "rollback waiter returned without restoring the previous release" >&2
+    return 1
+  fi
+  echo "rollback restored $current_task_arn" >&2
+}
+
 echo "migration succeeded; updating $CLUSTER/$SERVICE to $service_task_arn"
 aws ecs update-service \
   --cluster "$CLUSTER" \
   --service "$SERVICE" \
   --task-definition "$service_task_arn" \
   --desired-count "$DESIRED" \
+  --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
   --force-new-deployment >/dev/null
-aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
+  echo "release did not stabilize within the bounded ECS waiter" >&2
+  rollback_service || true
+  exit 1
+fi
 
 settled_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
 settled_task=$(jq -r '.services[0].taskDefinition // empty' <<<"$settled_json")
@@ -196,6 +233,11 @@ if [ "$settled_task" != "$service_task_arn" ] || [ "$settled_running" != "$DESIR
   echo "ECS waiter returned but the requested release did not settle" >&2
   echo "  task:    $settled_task (wanted $service_task_arn)" >&2
   echo "  running: $settled_running (wanted $DESIRED)" >&2
+  # A completed circuit-breaker rollback already restored the prior revision. Anything else is an
+  # incomplete or unexpected state, so restore the exact revision observed before this deploy.
+  if [ "$settled_task" != "$current_task_arn" ] || [ "$settled_running" != "$DESIRED" ]; then
+    rollback_service || true
+  fi
   exit 1
 fi
 
@@ -207,6 +249,7 @@ if [ "$DESIRED" -gt 0 ]; then
       --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
     if ! [[ "$healthy" =~ ^[0-9]+$ ]] || [ "$healthy" -lt "$DESIRED" ]; then
       echo "target group $target_group has $healthy healthy target(s), wanted $DESIRED" >&2
+      rollback_service || true
       exit 1
     fi
   done < <(jq -r '.services[0].loadBalancers[].targetGroupArn' <<<"$settled_json")

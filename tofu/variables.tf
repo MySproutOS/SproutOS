@@ -343,7 +343,7 @@ variable "web_image" {
 }
 
 variable "ecs_instance_count" {
-  description = "Instances backing the ECS cluster. One, because the free tier is 750 instance-hours a month in total."
+  description = "Steady-state instances backing ECS. Deployments may briefly add one instance so the old task stays healthy until its replacement is ready."
   type        = number
   default     = 1
 }
