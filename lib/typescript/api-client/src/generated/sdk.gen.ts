@@ -24,6 +24,7 @@ import {
   getV1OrgsByOrgSlugMembersResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
@@ -65,6 +66,8 @@ import {
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
   postV1OrgsByOrgSlugInvitesResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponseTransformer,
@@ -208,6 +211,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
@@ -344,9 +350,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
-  PostV1ApkSigningClaimData,
-  PostV1ApkSigningClaimErrors,
-  PostV1ApkSigningClaimResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -438,6 +441,12 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
@@ -1423,6 +1432,76 @@ export const getV1OrgsByOrgSlugRepositories = <ThrowOnError extends boolean = fa
     responseTransformer: getV1OrgsByOrgSlugRepositoriesResponseTransformer,
     url: "/v1/orgs/{orgSlug}/repositories",
     ...options,
+  })
+
+/**
+ * Create the immutable Android app identity and request its per-app key.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/setup",
+    ...options,
+  })
+
+/**
+ * Read key, registration, setup-commit, release, and signer-job state.
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatus = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/status",
+    ...options,
+  })
+
+/**
+ * Verify that the setup commit is the connected repository's production-branch HEAD.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerify = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/verify",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   })
 
 /**
@@ -3572,26 +3651,7 @@ export const postV1DeployMigrate = <ThrowOnError extends boolean = false>(
   })
 
 /**
- * Claim the oldest APK awaiting signature. Polled by the on-premises signer.
- */
-export const postV1ApkSigningClaim = <ThrowOnError extends boolean = false>(
-  options?: Options<PostV1ApkSigningClaimData, ThrowOnError>,
-): RequestResult<PostV1ApkSigningClaimResponses, PostV1ApkSigningClaimErrors, ThrowOnError> =>
-  (options?.client ?? client).post<
-    PostV1ApkSigningClaimResponses,
-    PostV1ApkSigningClaimErrors,
-    ThrowOnError
-  >({
-    url: "/v1/apk-signing/claim",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  })
-
-/**
- * Record a signed APK against the job that produced it.
+ * Complete a key-provisioning or signed-release job.
  */
 export const postV1ApkSigningComplete = <ThrowOnError extends boolean = false>(
   options?: Options<PostV1ApkSigningCompleteData, ThrowOnError>,
@@ -3610,7 +3670,7 @@ export const postV1ApkSigningComplete = <ThrowOnError extends boolean = false>(
   })
 
 /**
- * Report a signing failure. The job returns to the queue until it has run out of attempts.
+ * Report a signer failure; terminal failure marks its Android deployment failed.
  */
 export const postV1ApkSigningFail = <ThrowOnError extends boolean = false>(
   options?: Options<PostV1ApkSigningFailData, ThrowOnError>,
@@ -3629,7 +3689,7 @@ export const postV1ApkSigningFail = <ThrowOnError extends boolean = false>(
   })
 
 /**
- * Everything the SproutOS Android client shows: public apps, and the caller's own apps and sites.
+ * The verified public and caller-owned Android apps and deployed sites.
  */
 export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1AndroidCatalogueData, ThrowOnError>,

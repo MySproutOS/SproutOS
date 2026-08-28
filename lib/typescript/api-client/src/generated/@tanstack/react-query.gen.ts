@@ -58,6 +58,7 @@ import {
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId,
+  getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatus,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow,
   getV1OrgsByOrgSlugProjectsByProjectIdDomains,
@@ -104,7 +105,6 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
-  postV1ApkSigningClaim,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthCliRevoke,
@@ -138,6 +138,8 @@ import {
   postV1OrgsByOrgSlugProjects,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
+  postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup,
+  postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerify,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployToken,
   postV1OrgsByOrgSlugProjectsByProjectIdDomains,
@@ -297,6 +299,9 @@ import type {
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
@@ -431,8 +436,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
-  PostV1ApkSigningClaimData,
-  PostV1ApkSigningClaimResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
   PostV1AuthCliRevokeData,
@@ -510,6 +513,12 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
@@ -2119,6 +2128,88 @@ export const getV1OrgsByOrgSlugRepositoriesInfiniteOptions = (
     },
   )
   return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Create the immutable Android app identity and request its per-app key.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatus", options)
+
+/**
+ * Read key, registration, setup-commit, release, and signer-job state.
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatus({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusQueryKey(options),
+  })
+
+/**
+ * Verify that the setup commit is the connected repository's production-branch HEAD.
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerify({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
 }
 
 /**
@@ -5446,34 +5537,7 @@ export const postV1DeployMigrateMutation = (
 }
 
 /**
- * Claim the oldest APK awaiting signature. Polled by the on-premises signer.
- */
-export const postV1ApkSigningClaimMutation = (
-  options?: Partial<Options<PostV1ApkSigningClaimData>>,
-): UseMutationOptions<
-  PostV1ApkSigningClaimResponse,
-  DefaultError,
-  Options<PostV1ApkSigningClaimData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostV1ApkSigningClaimResponse,
-    DefaultError,
-    Options<PostV1ApkSigningClaimData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postV1ApkSigningClaim({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
-/**
- * Record a signed APK against the job that produced it.
+ * Complete a key-provisioning or signed-release job.
  */
 export const postV1ApkSigningCompleteMutation = (
   options?: Partial<Options<PostV1ApkSigningCompleteData>>,
@@ -5496,7 +5560,7 @@ export const postV1ApkSigningCompleteMutation = (
 }
 
 /**
- * Report a signing failure. The job returns to the queue until it has run out of attempts.
+ * Report a signer failure; terminal failure marks its Android deployment failed.
  */
 export const postV1ApkSigningFailMutation = (
   options?: Partial<Options<PostV1ApkSigningFailData>>,
@@ -5522,7 +5586,7 @@ export const getV1AndroidCatalogueQueryKey = (options?: Options<GetV1AndroidCata
   createQueryKey("getV1AndroidCatalogue", options)
 
 /**
- * Everything the SproutOS Android client shows: public apps, and the caller's own apps and sites.
+ * The verified public and caller-owned Android apps and deployed sites.
  */
 export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatalogueData>) =>
   queryOptions<unknown, DefaultError, unknown, ReturnType<typeof getV1AndroidCatalogueQueryKey>>({

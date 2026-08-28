@@ -11,6 +11,7 @@ import regions from "./regions"
 import metering from "./metering"
 import deploy from "./deploy"
 import android from "./android"
+import androidApps from "./android-apps"
 import apkSigning from "./apk-signing"
 import pgResolve from "./pg-resolve"
 import auth from "./auth"
@@ -58,6 +59,7 @@ orgs.route("/", organizations)
 orgs.route("/", members)
 orgs.route("/", roles)
 orgs.route("/", projects)
+orgs.route("/", androidApps)
 orgs.route("/", sandboxes)
 orgs.route("/", githubRepos)
 orgs.route("/", agent)

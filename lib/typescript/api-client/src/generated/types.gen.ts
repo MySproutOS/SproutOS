@@ -2226,6 +2226,192 @@ export type GetV1OrgsByOrgSlugRepositoriesResponses = {
 export type GetV1OrgsByOrgSlugRepositoriesResponse =
   GetV1OrgsByOrgSlugRepositoriesResponses[keyof GetV1OrgsByOrgSlugRepositoriesResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/setup"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors = {
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * Project not found
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses = {
+  /**
+   * Android setup state
+   */
+  200: {
+    androidAppId: string
+    packageName: string
+    state: "configuring" | "ready_for_signing" | "ready" | "failed"
+    developerConsoleState: string
+    developerConsoleProviderState:
+      | "NOT_REGISTERED"
+      | "REGISTERED"
+      | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
+      | null
+    developerConsoleCheckAttempts: number
+    developerConsoleLastCheckedAt: Date | null
+    developerConsoleNextCheckAt: Date
+    developerConsoleLastFailure: string | null
+    certificateSha256: string | null
+    verifiedSetupCommit: string | null
+    latestGoodDeploymentId: string | null
+    lastAcceptedVersionCode: number
+    lastError: string | null
+    jobs: Array<{
+      id: string
+      kind: "provision_key" | "sign_release"
+      state: "queued" | "running" | "succeeded" | "failed"
+      error: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/status"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * Android setup not found
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses = {
+  /**
+   * Android setup state
+   */
+  200: {
+    androidAppId: string
+    packageName: string
+    state: "configuring" | "ready_for_signing" | "ready" | "failed"
+    developerConsoleState: string
+    developerConsoleProviderState:
+      | "NOT_REGISTERED"
+      | "REGISTERED"
+      | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
+      | null
+    developerConsoleCheckAttempts: number
+    developerConsoleLastCheckedAt: Date | null
+    developerConsoleNextCheckAt: Date
+    developerConsoleLastFailure: string | null
+    certificateSha256: string | null
+    verifiedSetupCommit: string | null
+    latestGoodDeploymentId: string | null
+    lastAcceptedVersionCode: number
+    lastError: string | null
+    jobs: Array<{
+      id: string
+      kind: "provision_key" | "sign_release"
+      state: "queued" | "running" | "succeeded" | "failed"
+      error: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyData = {
+  body?: {
+    commit: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/android/verify"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors = {
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * Project or Android setup not found
+   */
+  404: ErrorResponseT
+  /**
+   * Commit is not production HEAD
+   */
+  409: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses = {
+  /**
+   * Verified Android setup state
+   */
+  200: {
+    androidAppId: string
+    packageName: string
+    state: "configuring" | "ready_for_signing" | "ready" | "failed"
+    developerConsoleState: string
+    developerConsoleProviderState:
+      | "NOT_REGISTERED"
+      | "REGISTERED"
+      | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
+      | null
+    developerConsoleCheckAttempts: number
+    developerConsoleLastCheckedAt: Date | null
+    developerConsoleNextCheckAt: Date
+    developerConsoleLastFailure: string | null
+    certificateSha256: string | null
+    verifiedSetupCommit: string | null
+    latestGoodDeploymentId: string | null
+    lastAcceptedVersionCode: number
+    lastError: string | null
+    jobs: Array<{
+      id: string
+      kind: "provision_key" | "sign_release"
+      state: "queued" | "running" | "succeeded" | "failed"
+      error: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses]
+
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
   body?: never
   path: {
@@ -6838,7 +7024,7 @@ export type PostV1DeployTokenResponse = PostV1DeployTokenResponses[keyof PostV1D
 
 export type PostV1DeployUploadUrlData = {
   body?: {
-    project: string
+    project?: string
     digest: string
     preset: string
   }
@@ -6898,7 +7084,7 @@ export type PostV1DeployStaticUploadUrlResponse =
 
 export type PostV1DeployReleaseData = {
   body?: {
-    project: string
+    project?: string
     key: string
     digest: string
     static_key?: string
@@ -6912,6 +7098,7 @@ export type PostV1DeployReleaseData = {
     migration_key?: string
     migration_handler?: string
     message?: string
+    version_code?: number
   }
   path?: never
   query?: never
@@ -7006,51 +7193,30 @@ export type PostV1DeployMigrateResponses = {
 export type PostV1DeployMigrateResponse =
   PostV1DeployMigrateResponses[keyof PostV1DeployMigrateResponses]
 
-export type PostV1ApkSigningClaimData = {
-  body?: {
-    signer_id: string
-  }
-  path?: never
-  query?: never
-  url: "/v1/apk-signing/claim"
-}
-
-export type PostV1ApkSigningClaimErrors = {
-  /**
-   * Missing or invalid signer token
-   */
-  401: unknown
-}
-
-export type PostV1ApkSigningClaimResponses = {
-  /**
-   * A job, with URLs to download the unsigned APK and upload the signed one
-   */
-  200: {
-    job_id: string
-    project_id: string
-    deployment_id: string
-    download_url: string
-    unsigned_digest: string
-    upload_url: string
-    signed_key: string
-  }
-  /**
-   * Nothing to sign
-   */
-  204: void
-}
-
-export type PostV1ApkSigningClaimResponse =
-  PostV1ApkSigningClaimResponses[keyof PostV1ApkSigningClaimResponses]
-
 export type PostV1ApkSigningCompleteData = {
-  body?: {
-    job_id: string
-    signer_id: string
-    signed_key: string
-    signed_digest: string
-  }
+  body?:
+    | {
+        job_id: string
+        signer_id: string
+        kind: "provision_key"
+        encrypted_key_object_key: string
+        encrypted_key_object_version: string
+        certificate_sha256: string
+        developer_console_state: "pending_registration"
+      }
+    | {
+        job_id: string
+        signer_id: string
+        kind: "sign_release"
+        signed_key: string
+        signed_object_version: string
+        signed_digest: string
+        size_bytes: number
+        package_name: string
+        version_code: number
+        version_name: string
+        certificate_sha256: string
+      }
   path?: never
   query?: never
   url: "/v1/apk-signing/complete"
@@ -7058,11 +7224,15 @@ export type PostV1ApkSigningCompleteData = {
 
 export type PostV1ApkSigningCompleteErrors = {
   /**
+   * Missing or malformed idempotency key
+   */
+  400: unknown
+  /**
    * Missing or invalid signer token
    */
   401: unknown
   /**
-   * The claim is no longer held by this signer
+   * The claim or reported identity no longer matches
    */
   409: unknown
 }
@@ -7079,6 +7249,7 @@ export type PostV1ApkSigningFailData = {
     job_id: string
     signer_id: string
     error: string
+    developer_console_state?: "ownership_required" | "failed"
   }
   path?: never
   query?: never
@@ -7087,9 +7258,17 @@ export type PostV1ApkSigningFailData = {
 
 export type PostV1ApkSigningFailErrors = {
   /**
+   * Missing or malformed idempotency key
+   */
+  400: unknown
+  /**
    * Missing or invalid signer token
    */
   401: unknown
+  /**
+   * The signer no longer holds the claim
+   */
+  409: unknown
 }
 
 export type PostV1ApkSigningFailResponses = {
@@ -7108,7 +7287,7 @@ export type GetV1AndroidCatalogueData = {
 
 export type GetV1AndroidCatalogueResponses = {
   /**
-   * The catalogue
+   * Catalogue version 2
    */
   200: unknown
 }

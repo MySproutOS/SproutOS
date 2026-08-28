@@ -28,17 +28,17 @@ the VPC", and this caller is not.
   "project_id": "01a0…",
   "deployment_id": "01a0…",
   "download_url": "https://…",
-  "unsigned_digest": "<sha256 of the archive>",
+  "unsigned_digest": "<sha256 of the raw APK>",
   "upload_url": "https://…",
   "signed_key": "signed/<project>/<deployment>.apk"
 }
 ```
 
-Both URLs are pre-signed and valid for an hour. `download_url` is the build archive the customer's
-GitHub Action uploaded — a **zip** of the release output directory, which for the `android` preset
-contains the unsigned APK. (Zip, not tar.gz: Lambda reads only zip, and one archive format across
-every preset is simpler than two.) **Verify `unsigned_digest` against what you downloaded before you sign
-anything** — that digest is the only thing tying the bytes to the release they claim to be.
+Both URLs are pre-signed and valid for an hour. For the `android` preset, `download_url` is exactly
+one raw unsigned APK with `application/vnd.android.package-archive`; a ZIP, directory, or multiple
+APK output is rejected before a signing job exists. **Verify `unsigned_digest` against the raw APK
+before signing anything** — that digest is the only thing tying the bytes to the release they claim
+to be.
 
 ### `POST /v1/apk-signing/complete`
 
@@ -89,6 +89,60 @@ not defence against a hostile one.
 Give each machine a stable id. A signer that restarts under a new id every boot cannot reclaim its
 own in-flight job and will wait out the ten-minute timeout instead.
 
+## Android developer verification is a separate durable wait
+
+Signing proves which key produced an APK. It does not prove that Google has registered the package
+name and that exact certificate to a verified developer. After key provisioning, the control plane
+keeps the canonical `android_app` row in `pending_registration` and checks the pair with Google's
+Android Developer ID Status API. Only the exact `REGISTERED` response advances the row to
+`registered`; `REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT` fails closed. A successful row is
+checked again after seven days so revocation or a certificate mismatch cannot remain trusted
+forever.
+
+The ten-minute signer claim is unrelated to review time. A status check holds a short claim, records
+`last_checked_at`, `next_check_at`, the provider state, and any bounded failure, then releases the
+claim. Google's review can therefore take hours or days without a worker holding a job lease. The
+singleton reconciler row records worker `last_seen_at`, last completion, and last failure even when
+the registration queue is empty. It also atomically reserves the Status API's project-wide 1,000
+checks per provider day before making a call. The provider day resets at midnight in
+`America/Los_Angeles`, matching Google Cloud quota accounting; this assumes the worker fleet uses
+one GCP project and one API key.
+
+HTTP 400, 401, and 403 responses indicate a request or credential problem and stop the current
+batch and open a durable terminal circuit. Later minute-scheduled jobs observe that circuit before
+reserving quota and make no provider calls. After correcting the credential, request, or provider
+contract, rotate the restricted API key or deliberately increment
+`ANDROID_REGISTRATION_CIRCUIT_VERSION` in the worker code and deploy the correction. Either changes
+the stored configuration fingerprint and reopens the circuit. HTTP 429 also stops the batch so the
+fleet does not continue sending after provider quota is exhausted, but remains retryable. HTTP 5xx
+and network failures are retried with bounded backoff. Untouched rows are unclaimed on a batch
+stop, while already reserved quota remains consumed conservatively.
+
+The project Android status API exposes provider state, last failure, and next-check timestamps for
+CLI and future dashboard consumers. This backend change does not add an Android setup/status screen
+to the dashboard; that management surface remains separately scoped.
+
+A signed deployment remains queued, and its APK remains absent from both public and personal
+catalogues, until both conditions are durable:
+
+- the status API returned `REGISTERED` for the package name and exact SHA-256 certificate;
+- the connected repository's setup commit was independently verified and recorded.
+
+Whichever condition arrives second promotes the signed deployment in the same database transaction
+that records it. This avoids a crash window where all prerequisites are true but the release stays
+queued forever.
+
+The status API uses an API key restricted to the Android Developer ID Status API. Registration and
+key management use the separate Android Developer Console API, which requires a user OAuth Web
+Server flow and does not support service accounts, workload identity, or API-key authentication.
+The signer integration must not guess unpublished mutation schemas; until its OAuth-backed provider
+adapter is contract-tested, registration is completed through the existing verified Play Console
+account and this reconciler supplies the authoritative readiness transition.
+
+Official references: [Android Developer Console API](https://developer.android.com/developer-verification/guides/developer-console-api),
+[Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
+and [Play Console package-name registration](https://support.google.com/googleplay/android-developer/answer/16761053).
+
 ## The loop
 
 ```bash
@@ -100,7 +154,7 @@ while true; do
 
   [ -z "$job" ] && { sleep 30; continue; }   # 204: nothing to do
 
-  # download, verify unsigned_digest, unzip the APK, zipalign, apksigner sign,
+  # download the raw APK, verify unsigned_digest and structure, zipalign, apksigner sign,
   # upload to upload_url, then complete with the digest of what you uploaded.
   # On any failure: POST /fail with the error and go round again.
 done
@@ -115,3 +169,6 @@ minute for a signed build will not notice, and the queue costs one index lookup 
 default for a deployment that has no signer — the empty string is never compared as a value, so a
 forgotten environment variable fails closed rather than opening the queue to anyone who sends
 `Bearer `.
+
+`ANDROID_DEVELOPER_ID_STATUS_API_KEY` belongs only on the background worker. When it is absent, the
+recurring provider check is not scheduled and no registration can advance to `registered`.

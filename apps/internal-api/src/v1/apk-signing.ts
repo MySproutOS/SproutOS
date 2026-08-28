@@ -1,6 +1,12 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
-import { claimSigningJob, completeSigning, failSigning } from "@lib/jobs"
+import {
+  APK_MIME,
+  claimSigningJob,
+  completeKeyProvision,
+  completeSigning,
+  failSigning,
+} from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { constantTimeEqualUtf8 } from "@utils/crypto"
 import { Hono } from "hono"
@@ -9,76 +15,80 @@ import { resolver } from "hono-typebox-openapi/typebox"
 import { Type } from "typebox"
 import { validator } from "../utils/validator"
 
-/**
- * The three calls an on-premises APK signer makes.
- *
- * **The platform does not hold the Android signing key.** A machine on somebody's premises does. It
- * polls `/claim`, downloads the unsigned APK, signs it, uploads the result, and calls `/complete` —
- * or `/fail`. The key never reaches AWS, a CI runner, or this repository.
- *
- * ## Why these are not on the `/internal` prefix
- *
- * `pg-resolve` and the metering ingest sit behind `/internal` because their callers are inside the
- * VPC. This caller is not: it is behind a firewall on somebody's premises, it reaches out over the
- * public internet, and nothing can reach in. So these routes are exposed and carry their own
- * credential rather than relying on the network.
- *
- * ## What `signer_id` is and is not
- *
- * It is a label on a claim, used to decide who may complete it — not an authorization principal.
- * One token covers the whole signing fleet, so any holder could assert any id. That is fine because
- * the token *is* the trust boundary: a machine holding it is already permitted to sign. What the id
- * buys is that a signer whose claim expired mid-upload cannot overwrite the artifact its successor
- * produced, which is a correctness property among cooperating signers, not a defence against one.
- */
-
-const claimRequest = Type.Object({
-  signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+const digest = Type.String({ pattern: "^[0-9a-f]{64}$" })
+const claimRequest = Type.Object({ signer_id: Type.String({ minLength: 1, maxLength: 200 }) })
+const provisionClaimResponse = Type.Object({
+  job_id: Type.String({ format: "uuid" }),
+  kind: Type.Literal("provision_key"),
+  android_app_id: Type.String({ format: "uuid" }),
+  package_name: Type.String(),
+  encrypted_key_upload_url: Type.String(),
+  encrypted_key_object_key: Type.String(),
 })
-
-const claimResponse = Type.Object({
-  job_id: Type.String(),
-  project_id: Type.String(),
-  deployment_id: Type.String(),
-  /** Where to GET the unsigned APK, and the digest it must have. */
+const signClaimResponse = Type.Object({
+  job_id: Type.String({ format: "uuid" }),
+  kind: Type.Literal("sign_release"),
+  android_app_id: Type.String({ format: "uuid" }),
+  package_name: Type.String(),
+  project_id: Type.String({ format: "uuid" }),
+  deployment_id: Type.String({ format: "uuid" }),
   download_url: Type.String(),
-  unsigned_digest: Type.String(),
-  /** Where to PUT the signed one. The key is recorded on `/complete`. */
+  unsigned_digest: digest,
+  input_mime: Type.Literal(APK_MIME),
+  version_code: Type.Integer({ minimum: 1 }),
+  previous_version_code: Type.Integer({ minimum: 0 }),
+  expected_certificate_sha256: digest,
+  key_download_url: Type.String(),
+  encrypted_key_object_key: Type.String(),
+  encrypted_key_object_version: Type.String(),
   upload_url: Type.String(),
   signed_key: Type.String(),
 })
+const claimResponse = Type.Union([provisionClaimResponse, signClaimResponse])
 
-const completeRequest = Type.Object({
+const provisionComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
-  signed_key: Type.String({ minLength: 1 }),
-  signed_digest: Type.String({ minLength: 64, maxLength: 64 }),
+  kind: Type.Literal("provision_key"),
+  encrypted_key_object_key: Type.String({ minLength: 1 }),
+  encrypted_key_object_version: Type.String({ minLength: 1 }),
+  certificate_sha256: digest,
+  developer_console_state: Type.Literal("pending_registration"),
 })
-
+const signComplete = Type.Object({
+  job_id: Type.String({ format: "uuid" }),
+  signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  kind: Type.Literal("sign_release"),
+  signed_key: Type.String({ minLength: 1 }),
+  signed_object_version: Type.String({ minLength: 1 }),
+  signed_digest: digest,
+  size_bytes: Type.Integer({ minimum: 1 }),
+  package_name: Type.String({ minLength: 1 }),
+  version_code: Type.Integer({ minimum: 1 }),
+  version_name: Type.String({ minLength: 1, maxLength: 255 }),
+  certificate_sha256: digest,
+})
+const completeRequest = Type.Union([provisionComplete, signComplete])
 const failRequest = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
-  error: Type.String({ maxLength: 4000 }),
+  error: Type.String({ minLength: 1, maxLength: 4000 }),
+  developer_console_state: Type.Optional(
+    Type.Union([Type.Literal("ownership_required"), Type.Literal("failed")]),
+  ),
 })
 
-/**
- * The signer's credential, compared in constant time.
- *
- * Returns `false` when the variable is unset rather than letting an empty token match an empty
- * header — an unconfigured deployment must refuse every signer, not accept every caller.
- */
 export function signerAuthorized(header: string | undefined): boolean {
   const expected = process.env.APK_SIGNER_TOKEN
-  if (expected === undefined || expected === "") return false
-  if (header === undefined) return false
-
-  const prefix = "Bearer "
-  if (!header.startsWith(prefix)) return false
-
-  return constantTimeEqualUtf8(header.slice(prefix.length), expected)
+  if (expected === undefined || expected === "" || header?.startsWith("Bearer ") !== true)
+    return false
+  return constantTimeEqualUtf8(header.slice(7), expected)
 }
 
 function bucket(): string {
+  const configured = process.env.ANDROID_ARTIFACT_BUCKET
+  if (configured !== undefined && configured !== "") return configured
+  if (process.env.NODE_ENV === "production") throw new Error("ANDROID_ARTIFACT_BUCKET is required")
   return process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
 }
 
@@ -91,63 +101,92 @@ function s3(): S3Client {
   })
 }
 
-/*
-  Long enough that a slow domestic uplink can move an APK, short enough that a URL captured from a
-  log is useless before anyone reads it. The signer is on a home or office connection rather than in
-  a datacentre, so this is more generous than the deploy action's.
-*/
 const URL_TTL_S = 3600
+const IDEMPOTENCY_KEY = /^[0-9a-f]{64}$/
+
+export function callbackIdempotencyKey(header: string | undefined): string | undefined {
+  return header !== undefined && IDEMPOTENCY_KEY.test(header) ? header : undefined
+}
 
 const app: Hono = new Hono()
   .post(
     "/apk-signing/claim",
     describeRoute({
-      description: "Claim the oldest APK awaiting signature. Polled by the on-premises signer.",
+      // The signer consumes this machine endpoint directly. Hey API cannot safely transform the
+      // tagged provision/sign union, so the dashboard client must not generate an incomplete
+      // operation for it. Runtime validation and signer contract tests remain authoritative.
+      hide: true,
+      description: "Claim the oldest Android key-provisioning or APK-signing job.",
       responses: {
         200: {
-          description: "A job, with URLs to download the unsigned APK and upload the signed one",
+          description: "A signer job",
           content: { "application/json": { schema: resolver(claimResponse) } },
         },
-        204: { description: "Nothing to sign" },
+        204: { description: "Nothing is ready" },
         401: { description: "Missing or invalid signer token" },
       },
     }),
     validator("json", claimRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization"))) {
+      if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
-      }
-
-      const { signer_id } = c.req.valid("json")
-      const job = await claimSigningJob(db, signer_id)
-      // An idle queue is the common case — the signer polls on a timer and most polls find nothing.
-      // 204 rather than an empty 200 so that is cheap and unambiguous.
+      const job = await claimSigningJob(db, c.req.valid("json").signer_id)
       if (job === undefined) return c.body(null, 204)
-
       const client = s3()
-      const signedKey = `signed/${job.projectId}/${job.deploymentId}.apk`
-
-      const [downloadUrl, uploadUrl] = await Promise.all([
+      if (job.kind === "provision_key") {
+        const key = `keys/${job.androidAppId}/signing.keystore.enc`
+        const upload = await getSignedUrl(
+          client,
+          new PutObjectCommand({ Bucket: bucket(), Key: key }),
+          { expiresIn: URL_TTL_S },
+        )
+        client.destroy()
+        return c.json({
+          job_id: job.id,
+          kind: job.kind,
+          android_app_id: job.androidAppId,
+          package_name: job.packageName,
+          encrypted_key_upload_url: upload,
+          encrypted_key_object_key: key,
+        })
+      }
+      const signedKey = `signed/${job.androidAppId}/${job.id}.apk`
+      const [downloadUrl, keyDownloadUrl, uploadUrl] = await Promise.all([
         getSignedUrl(client, new GetObjectCommand({ Bucket: bucket(), Key: job.unsignedKey }), {
           expiresIn: URL_TTL_S,
         }),
         getSignedUrl(
           client,
-          new PutObjectCommand({
+          new GetObjectCommand({
             Bucket: bucket(),
-            Key: signedKey,
-            ContentType: "application/vnd.android.package-archive",
+            Key: job.keyObjectKey,
+            VersionId: job.keyObjectVersion,
           }),
           { expiresIn: URL_TTL_S },
         ),
+        getSignedUrl(
+          client,
+          new PutObjectCommand({ Bucket: bucket(), Key: signedKey, ContentType: APK_MIME }),
+          { expiresIn: URL_TTL_S },
+        ),
       ])
-
+      client.destroy()
       return c.json({
         job_id: job.id,
+        kind: job.kind,
+        android_app_id: job.androidAppId,
+        package_name: job.packageName,
         project_id: job.projectId,
         deployment_id: job.deploymentId,
         download_url: downloadUrl,
         unsigned_digest: job.unsignedDigest,
+        input_mime: APK_MIME,
+        version_code: job.versionCode,
+        previous_version_code: job.previousVersionCode,
+        expected_certificate_sha256: job.certificateSha256,
+        key_download_url: keyDownloadUrl,
+        encrypted_key_object_key: job.keyObjectKey,
+        encrypted_key_object_version: job.keyObjectVersion,
         upload_url: uploadUrl,
         signed_key: signedKey,
       })
@@ -156,59 +195,99 @@ const app: Hono = new Hono()
   .post(
     "/apk-signing/complete",
     describeRoute({
-      description: "Record a signed APK against the job that produced it.",
+      description: "Complete a key-provisioning or signed-release job.",
       responses: {
         200: { description: "Recorded" },
+        400: { description: "Missing or malformed idempotency key" },
         401: { description: "Missing or invalid signer token" },
-        409: { description: "The claim is no longer held by this signer" },
+        409: { description: "The claim or reported identity no longer matches" },
       },
     }),
     validator("json", completeRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization"))) {
+      if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
-      }
-
+      const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"))
+      if (idempotencyKey === undefined)
+        return c.json({ message: "A SHA-256 Idempotency-Key is required" }, 400)
       const json = c.req.valid("json")
-      const recorded = await completeSigning(db, {
-        jobId: json.job_id,
-        signerId: json.signer_id,
-        signedKey: json.signed_key,
-        signedDigest: json.signed_digest,
-      })
-
-      // 409 rather than 404: the job exists, the signer simply lost the claim while it was working.
-      // The distinction matters to the signer, which should discard its artifact and poll again
-      // rather than retry a completion that will never be accepted.
-      if (!recorded) return c.json({ message: "The claim is no longer held by this signer" }, 409)
-
-      return c.json({ ok: true })
+      const client = s3()
+      const uploaded = await client.send(
+        new HeadObjectCommand({
+          Bucket: bucket(),
+          Key: json.kind === "provision_key" ? json.encrypted_key_object_key : json.signed_key,
+          ...(json.kind === "provision_key"
+            ? { VersionId: json.encrypted_key_object_version }
+            : { VersionId: json.signed_object_version }),
+        }),
+      )
+      client.destroy()
+      if (
+        json.kind === "sign_release" &&
+        (uploaded.ContentLength !== json.size_bytes || uploaded.ContentType !== APK_MIME)
+      ) {
+        return c.json(
+          { message: "The uploaded signed APK metadata does not match completion" },
+          409,
+        )
+      }
+      const recorded =
+        json.kind === "provision_key"
+          ? await completeKeyProvision(db, {
+              jobId: json.job_id,
+              signerId: json.signer_id,
+              keyObjectKey: json.encrypted_key_object_key,
+              keyObjectVersion: json.encrypted_key_object_version,
+              certificateSha256: json.certificate_sha256,
+              developerConsoleState: json.developer_console_state,
+              idempotencyKey,
+            })
+          : await completeSigning(db, {
+              jobId: json.job_id,
+              signerId: json.signer_id,
+              signedKey: json.signed_key,
+              signedObjectVersion: json.signed_object_version,
+              signedDigest: json.signed_digest,
+              signedSizeBytes: BigInt(json.size_bytes),
+              packageName: json.package_name,
+              versionCode: json.version_code,
+              versionName: json.version_name,
+              certificateSha256: json.certificate_sha256,
+              idempotencyKey,
+            })
+      if (!recorded)
+        return c.json({ message: "The claim or reported app identity no longer matches" }, 409)
+      return c.json({})
     },
   )
   .post(
     "/apk-signing/fail",
     describeRoute({
-      description:
-        "Report a signing failure. The job returns to the queue until it has run out of attempts.",
+      description: "Report a signer failure; terminal failure marks its Android deployment failed.",
       responses: {
         200: { description: "Recorded" },
+        400: { description: "Missing or malformed idempotency key" },
         401: { description: "Missing or invalid signer token" },
+        409: { description: "The signer no longer holds the claim" },
       },
     }),
     validator("json", failRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization"))) {
+      if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
-      }
-
+      const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"))
+      if (idempotencyKey === undefined)
+        return c.json({ message: "A SHA-256 Idempotency-Key is required" }, 400)
       const json = c.req.valid("json")
-      await failSigning(db, {
+      const recorded = await failSigning(db, {
         jobId: json.job_id,
         signerId: json.signer_id,
         error: json.error,
+        developerConsoleState: json.developer_console_state,
+        idempotencyKey,
       })
-
-      return c.json({ ok: true })
+      if (!recorded) return c.json({ message: "The signer no longer holds the claim" }, 409)
+      return c.json({})
     },
   )
 
