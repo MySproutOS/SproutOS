@@ -190,8 +190,9 @@ parameters:
   the website container.
 
 The first five-platform release, `cli-v0.1.0`, is published and GitHub reports it immutable. The
-application change that renders the manifest on `/download` is also on `main`; it must be deployed
-before promotion, otherwise the rollout cannot prove its public result.
+application change in PR #161 that renders the manifest on `/download` must be merged and deployed
+before promotion, otherwise the rollout cannot prove its public result. Keep both promotion
+workflows undispatched until that dependency is serving.
 
 For the first release, save and review a plan after both dependencies are on `main`. It should add
 the least-privilege `${name_prefix}-cli-release-promotion` OIDC role/policy and register one web task
@@ -203,6 +204,10 @@ registered task-definition ARN. It first verifies and records the release. The e
 role—not the much smaller promotion role—then combines the reviewed task contract with the image
 already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
 rolling application code backward and stops a tag workflow gaining code-deployment authority.
+
+The GitHub `production` environment must have required reviewers before either workflow is used.
+Both manual and tag-triggered promotions assume their AWS roles only through that environment;
+the promotion role does not trust an unprotected `cli-v*` ref directly.
 
 After promotion, require all of these before calling it complete:
 

@@ -26,8 +26,8 @@ jobs:
     name: Verify and promote production pointer
     runs-on: ubuntu-24.04
     # This path exists for the first release, which predates automatic promotion, and for an
-    # explicitly retried failed rollout. Environment approval does not weaken the tag workflow's
-    # OIDC subject because the least-privilege IAM role trusts both subjects independently.
+    # explicitly retried failed rollout. Every production pointer change goes through this
+    # environment; the promotion role does not trust tag subjects directly.
     environment: production
     steps:
       - uses: actions/checkout@v5
@@ -42,6 +42,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ vars.AWS_REGION }}
+          ECS_BASE_TASK_DEFINITION: ${{ inputs.ecs_base_task_definition }}
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
           VERSION: ${{ inputs.version }}
         run: bin/promote-cli-release.sh "$VERSION" --record-only

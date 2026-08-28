@@ -101,11 +101,12 @@ case "$1 $2" in
     printf '{"services":[{"taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","desiredCount":1,"runningCount":1,"deployments":[{"status":"PRIMARY","taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","rolloutState":"COMPLETED"}]}]}\n' "$task" "$task"
     ;;
   "ecs describe-task-definition")
-    if [ -f "$STATE/updated" ]; then
+    if [ -f "$STATE/updated" ] || [[ "$*" == *sproutos-web:8* ]]; then
       secret=',"secrets":[{"name":"SPROUT_CLI_RELEASE_VERSION","valueFrom":"arn:aws:ssm:us-east-1:123:parameter/sproutos/application/SPROUT_CLI_RELEASE_VERSION"}]'
-    else secret=''
+      revision=8
+    else secret=''; revision=7
     fi
-    printf '{"taskDefinition":{"taskDefinitionArn":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7","family":"sproutos-web","taskRoleArn":"arn:task","executionRoleArn":"arn:execution","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"image:current"%s},{"name":"api","image":"image:current"}]}}\n' "$secret"
+    printf '{"taskDefinition":{"taskDefinitionArn":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","family":"sproutos-web","taskRoleArn":"arn:task","executionRoleArn":"arn:execution","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"image:current"%s},{"name":"api","image":"image:current"}]}}\n' "$revision" "$secret"
     ;;
   "ecs update-service") : >"$STATE/updated" ;;
   "ecs wait") ;;
@@ -139,28 +140,34 @@ fi
 # is edited or compromised. Evidence records are append-only at IAM, not just by convention.
 promotion_policy=$(sed -n '/resource "aws_iam_role_policy" "github_actions_cli_release_promotion"/,$p' \
   "$HERE/../tofu/oidc.tf")
+promotion_role=$(sed -n '/resource "aws_iam_role" "github_actions_cli_release_promotion"/,/resource "aws_iam_role_policy" "github_actions_cli_release_promotion"/p' \
+  "$HERE/../tofu/oidc.tf")
+grep -q 'environment:production' <<<"$promotion_role"
+if grep -q 'refs/tags/cli-v' <<<"$promotion_role"; then
+  echo "CLI promotion role trusts tag refs outside the production environment" >&2
+  exit 1
+fi
 grep -q '"ssm:Overwrite" = "false"' <<<"$promotion_policy"
 grep -q '"ssm:Overwrite" = "true"' <<<"$promotion_policy"
-grep -q '"ecs:task-definition" = "true"' <<<"$promotion_policy"
-if grep -q 'ecs:RegisterTaskDefinition\|iam:PassRole' <<<"$promotion_policy"; then
-  echo "CLI promotion role can deploy a task definition" >&2
+if grep -q 'ecs:UpdateService\|ecs:RegisterTaskDefinition\|iam:PassRole' <<<"$promotion_policy"; then
+  echo "CLI promotion role can mutate ECS" >&2
   exit 1
 fi
 
-"$HERE/promote-cli-release.sh" "$version" --record-only
+ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8 \
+  "$HERE/promote-cli-release.sh" "$version" --record-only
 
 [ "$(cat "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION")" = "$version" ]
 jq -e '.version == "0.1.0" and .commitSha == "0123456789abcdef0123456789abcdef01234567"' \
   "$TEST_DIR/state/$version" >/dev/null
 [ "$(grep -c '^attestation verify ' "$CALLS")" -eq 7 ]
-if grep -q '^ecs ' "$CALLS"; then
-  echo "record-only release touched ECS" >&2
+if grep -q '^ecs update-service\|^ecs wait\|^ecs register-task-definition' "$CALLS"; then
+  echo "record-only release mutated ECS" >&2
   exit 1
 fi
 
 # Simulate the normal deploy role carrying the reviewed OpenTofu SSM reference into the serving
-# image. A retry proves the public result without another pointer write, but still restarts ECS so
-# it can recover from an earlier run that moved SSM and failed before task replacement.
+# image. A retry proves the public result without another pointer write or any ECS mutation.
 : >"$TEST_DIR/state/updated"
 : >"$CALLS"
 "$HERE/promote-cli-release.sh" "$version"
@@ -168,16 +175,18 @@ if grep -q '^ssm put-parameter' "$CALLS"; then
   echo "idempotent release rewrote the pointer" >&2
   exit 1
 fi
-grep -q '^ecs update-service .*--force-new-deployment' "$CALLS"
+if grep -q '^ecs update-service\|^ecs wait\|^ecs register-task-definition' "$CALLS"; then
+  echo "idempotent verification mutated ECS" >&2
+  exit 1
+fi
 
-# A later verified pointer change force-restarts the serving task without registering or selecting
-# a task definition. That is the entire ECS authority the promotion role needs.
+# A later verified pointer change remains read-only in ECS. The normal deployment role owns the
+# rollout that reloads the pointer.
 printf 0.0.9 >"$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION"
 : >"$CALLS"
 "$HERE/promote-cli-release.sh" "$version"
-grep -q '^ecs update-service .*--force-new-deployment' "$CALLS"
-if grep -q '^ecs register-task-definition\|^ecs update-service .*--task-definition' "$CALLS"; then
-  echo "CLI promotion gained task-definition deployment authority" >&2
+if grep -q '^ecs update-service\|^ecs wait\|^ecs register-task-definition' "$CALLS"; then
+  echo "CLI promotion mutated ECS" >&2
   exit 1
 fi
 

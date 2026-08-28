@@ -11,7 +11,20 @@
 set -euo pipefail
 
 VERSION=${1:-}
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+if ! python3 - "$VERSION" <<'PYTHON'
+import re, sys
+
+pattern = re.compile(
+    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+)
+match = pattern.fullmatch(sys.argv[1])
+if match is None or any(part.isdigit() and len(part) > 1 and part[0] == "0"
+                        for part in (match.group(4) or "").split(".") if part):
+    raise SystemExit(1)
+PYTHON
+then
   echo "usage: promote-cli-release.sh <semver>" >&2
   exit 2
 fi
@@ -93,6 +106,13 @@ jq -e --arg version "$VERSION" --arg tag "$TAG" '
     "x86_64-unknown-linux-gnu"
   ] | sort) and
   ([.assets[].target] | unique | length) == 5
+  and all(.assets[];
+    (.target == "aarch64-apple-darwin" and .os == "macos" and .arch == "arm64") or
+    (.target == "aarch64-unknown-linux-gnu" and .os == "linux" and .arch == "arm64") or
+    (.target == "x86_64-apple-darwin" and .os == "macos" and .arch == "x86_64") or
+    (.target == "x86_64-pc-windows-msvc" and .os == "windows" and .arch == "x86_64") or
+    (.target == "x86_64-unknown-linux-gnu" and .os == "linux" and .arch == "x86_64")
+  )
 ' "$manifest" >/dev/null || {
   echo "release manifest has the wrong version, tag, schema, or platform set" >&2
   exit 1
@@ -107,8 +127,7 @@ for asset in "${expected_assets[@]}"; do
   url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
   jq -e --arg target "$target" --arg sha256 "$sha256" --argjson size "$size" --arg url "$url" '
     [.assets[] | select(
-      .target == $target and .sha256 == $sha256 and .sizeBytes == $size and .url == $url and
-      (.os | type == "string" and length > 0) and (.arch | type == "string" and length > 0)
+      .target == $target and .sha256 == $sha256 and .sizeBytes == $size and .url == $url
     )] | length == 1
   ' "$manifest" >/dev/null || {
     echo "manifest metadata does not match downloaded asset $asset" >&2
@@ -159,6 +178,41 @@ else
     --description "Verified immutable Sprout CLI release evidence" >/dev/null
 fi
 
+# Validate the task contract before the pointer can move. The first promotion passes the exact
+# OpenTofu revision that the next deploy will use; later promotions validate the serving revision.
+service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+serving_task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
+task_arn=${ECS_BASE_TASK_DEFINITION:-$serving_task_arn}
+if [ -z "$task_arn" ]; then
+  echo "ECS service $CLUSTER/$SERVICE has no task definition" >&2
+  exit 1
+fi
+task_json=$(aws ecs describe-task-definition --task-definition "$task_arn" --output json)
+resolved_task_arn=$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$task_json")
+if [ -n "${ECS_BASE_TASK_DEFINITION:-}" ] && [ "$resolved_task_arn" != "$ECS_BASE_TASK_DEFINITION" ]; then
+  echo "ECS_BASE_TASK_DEFINITION must resolve to its exact revision ARN" >&2
+  exit 1
+fi
+
+wrong_ref=$(jq -r --arg arn "$POINTER_ARN" '
+  [.taskDefinition.containerDefinitions[] | select(.name == "website") | .secrets[]? |
+    select(.name == "SPROUT_CLI_RELEASE_VERSION" and .valueFrom != $arn)] | length
+' <<<"$task_json")
+if [ "$wrong_ref" != 0 ]; then
+  echo "task contract has a conflicting SPROUT_CLI_RELEASE_VERSION source" >&2
+  exit 1
+fi
+
+has_ref=$(jq -r --arg arn "$POINTER_ARN" '
+  [.taskDefinition.containerDefinitions[] | select(.name == "website") | .secrets[]? |
+    select(.name == "SPROUT_CLI_RELEASE_VERSION" and .valueFrom == $arn)] | length
+' <<<"$task_json")
+if [ "$has_ref" != 1 ]; then
+  echo "task contract does not contain the exact SPROUT_CLI_RELEASE_VERSION SSM reference" >&2
+  echo "apply the reviewed OpenTofu task contract and deploy it from that exact base revision" >&2
+  exit 1
+fi
+
 pointer_error="$work_dir/pointer-error"
 current_version=""
 pointer_changed=1
@@ -172,7 +226,12 @@ if current_version=$(get_parameter "$POINTER" "$pointer_error"); then
 import re, sys
 
 def parse(value):
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?", value)
+    match = re.fullmatch(
+        r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+        r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+        value,
+    )
     if match is None:
         raise SystemExit(f"current CLI pointer is not semantic version: {value}")
     core = tuple(map(int, match.group(1, 2, 3)))
@@ -199,47 +258,9 @@ if [ "$pointer_changed" = 1 ]; then
 fi
 
 if [ "$MODE" = --record-only ]; then
-  echo "recorded verified immutable CLI $VERSION; ECS rollout intentionally deferred"
+  echo "recorded verified immutable CLI $VERSION and moved its pointer; ECS rollout deferred"
   exit 0
 fi
-
-service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
-task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
-if [ -z "$task_arn" ]; then
-  echo "ECS service $CLUSTER/$SERVICE has no task definition" >&2
-  exit 1
-fi
-task_json=$(aws ecs describe-task-definition --task-definition "$task_arn" --output json)
-
-wrong_ref=$(jq -r --arg arn "$POINTER_ARN" '
-  [.taskDefinition.containerDefinitions[] | select(.name == "website") | .secrets[]? |
-    select(.name == "SPROUT_CLI_RELEASE_VERSION" and .valueFrom != $arn)] | length
-' <<<"$task_json")
-if [ "$wrong_ref" != 0 ]; then
-  echo "serving task has a conflicting SPROUT_CLI_RELEASE_VERSION source" >&2
-  exit 1
-fi
-
-has_ref=$(jq -r --arg arn "$POINTER_ARN" '
-  [.taskDefinition.containerDefinitions[] | select(.name == "website") | .secrets[]? |
-    select(.name == "SPROUT_CLI_RELEASE_VERSION" and .valueFrom == $arn)] | length
-' <<<"$task_json")
-if [ "$has_ref" != 1 ]; then
-  echo "serving task does not contain the exact SPROUT_CLI_RELEASE_VERSION SSM reference" >&2
-  echo "apply the reviewed OpenTofu task contract and deploy it from that exact base revision" >&2
-  exit 1
-fi
-
-# Always restart, including an idempotent retry. The previous run can fail after moving SSM but
-# before ECS starts a new task; treating an equal pointer as complete would then leave the process
-# on its old startup value forever. Deliberately omit --task-definition. IAM enforces that omission
-# too: this authority can force the serving image to reread SSM, but cannot deploy another image or
-# task contract.
-aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
-  --force-new-deployment >/dev/null
-# The AWS waiter itself is bounded (40 attempts, 15 seconds apart); do not turn a failed rollout
-# into a workflow that waits forever.
-aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
 
 settled=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
 jq -e --arg task "$task_arn" '
