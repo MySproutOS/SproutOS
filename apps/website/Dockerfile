@@ -74,6 +74,10 @@ COPY --from=build /prod/api/node_modules ./api/node_modules
 # database rather than a missing root.
 ADD --chmod=0644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
     /etc/ssl/rds-global-bundle.pem
+# BuildKit applies the file mode to a newly materialised parent directory too. Without restoring
+# traversal on `/etc/ssl`, the non-root process cannot read either OpenSSL's own configuration or
+# the RDS bundle: all three ECS containers exit 13 before application code starts.
+RUN chmod 0755 /etc/ssl && chmod 0644 /etc/ssl/rds-global-bundle.pem
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/rds-global-bundle.pem
 
 COPY --chmod=0755 apps/website/docker-entrypoint.sh /usr/local/bin/entrypoint
@@ -81,6 +85,10 @@ COPY --chmod=0755 apps/website/docker-entrypoint.sh /usr/local/bin/entrypoint
 # The `node` user ships with the base image and owns nothing here. Running as root would give a
 # process that only serves HTTP the ability to rewrite its own code.
 USER node
+
+# Assert the property that matters as the actual runtime user. A root-owned build check would pass
+# even when directory traversal is missing and reproduce the production-only failure.
+RUN node -e 'require("node:crypto").randomBytes(1)'
 
 EXPOSE 8080 3001
 
