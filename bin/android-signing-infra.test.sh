@@ -56,7 +56,7 @@ reject 's3:DeleteObject' <(sed -n '/Android release custody/,/A PUT needs Genera
   'the application task must not be able to delete Android signing material'
 require 'kms:EncryptionContext:aws:s3:arn' "$COMPUTE_TF" \
   'KMS use must be bound to the Android bucket encryption context'
-ANDROID_POLICY=$(sed -n '/Android release custody/,/Versioned rustls certificate objects/p' "$COMPUTE_TF")
+ANDROID_POLICY=$(sed -n '/Android release custody/,/Tenant object storage/p' "$COMPUTE_TF")
 reject 'cloudwatch:PutMetricData' <(printf '%s\n' "$ANDROID_POLICY") \
   'do not grant metric publication before the durable signer-health producer exists'
 API_PARAMETERS=$(sed -n '/ecs_api_parameter_names = \[/,/^  ]/p' "$ECS_TF")
@@ -79,12 +79,19 @@ require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_P
 reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$API_PARAMETERS$WEBSITE_PARAMETERS") \
   'the Android Developer Console credential must not reach the API or website'
 require 'var.android_custody_delivery_enabled[[:space:]]*\?' "$ECS_TF" \
-  'all Android task-secret references must remain behind the explicit second-stage gate'
+  'both signer task-secret references must remain behind their explicit second-stage gate'
+require 'var.android_developer_registration_delivery_enabled[[:space:]]*\?' "$ECS_TF" \
+  'the independent Google credential must remain behind its own second-stage gate'
 require 'variable "android_custody_delivery_enabled"' "$ROOT/tofu/variables.tf" \
   'Android custody delivery needs an explicit rollout variable'
 require 'default[[:space:]]*=[[:space:]]*false' \
   <(sed -n '/variable "android_custody_delivery_enabled"/,/^}/p' "$ROOT/tofu/variables.tf") \
   'a normal first apply must not register missing Android SSM references'
+require 'variable "android_developer_registration_delivery_enabled"' "$ROOT/tofu/variables.tf" \
+  'the Google developer credential must not be coupled to signer-token delivery'
+require 'default[[:space:]]*=[[:space:]]*false' \
+  <(sed -n '/variable "android_developer_registration_delivery_enabled"/,/^}/p' "$ROOT/tofu/variables.tf") \
+  'Google developer credential delivery must stay disabled by default'
 require 'ANDROID_CUSTODY_ONLY' "$ROOT/bin/put-app-secrets.sh" \
   'custody parameters need an all-or-nothing out-of-state upload mode'
 require 'APK_SIGNER_TOKEN.*APK_SIGNER_OPERATOR_TOKEN must differ' "$ROOT/bin/put-app-secrets.sh" \
@@ -96,10 +103,34 @@ for dependency in \
   aws_s3_bucket_server_side_encryption_configuration.android_artifacts \
   aws_s3_bucket_policy.android_artifacts \
   aws_iam_role_policy_attachment.task_application \
-  aws_iam_role_policy.ecs_execution_secrets; do
+  aws_iam_role_policy.ecs_execution_secrets \
+  aws_iam_role_policy.ecs_task_no_parameter_store; do
   require "$dependency" "$ECS_TF" \
     "the ECS task definition must wait for $dependency before registration"
 done
+TASK_PARAMETER_DENY=$(sed -n \
+  '/resource "aws_iam_role_policy" "ecs_task_no_parameter_store"/,/^}/p' "$ECS_TF")
+require 'role[[:space:]]*=[[:space:]]*aws_iam_role.task.id' \
+  <(printf '%s\n' "$TASK_PARAMETER_DENY") \
+  'the shared application task role itself must carry the Parameter Store deny'
+require 'Action[[:space:]]*=[[:space:]]*local.ecs_task_parameter_store_deny_actions' \
+  <(printf '%s\n' "$TASK_PARAMETER_DENY") \
+  'the task role deny must consume the exact actions evaluated by the staging test'
+for action in ssm:GetParameter ssm:GetParameters ssm:GetParametersByPath; do
+  require "\"$action\"" "$ECS_TF" \
+    "the task role must deny $action so sibling containers cannot fetch API-only tokens"
+done
+require 'Resource[[:space:]]*=[[:space:]]*local.ecs_task_parameter_store_deny_resources' \
+  <(printf '%s\n' "$TASK_PARAMETER_DENY") \
+  'the runtime deny must cover the entire application parameter path, including not-yet-enabled tokens'
+EXECUTION_POLICY=$(sed -n \
+  '/resource "aws_iam_role_policy" "ecs_execution_secrets"/,/^}/p' "$ECS_TF")
+require 'Action[[:space:]]*=[[:space:]]*\["ssm:GetParameters"\]' \
+  <(printf '%s\n' "$EXECUTION_POLICY") \
+  'the ECS execution role may use only the batch read needed for injected secrets'
+require 'Resource[[:space:]]*=[[:space:]]*local.ecs_application_parameter_arns' \
+  <(printf '%s\n' "$EXECUTION_POLICY") \
+  'the ECS execution role must remain scoped to exact enabled task-secret ARNs'
 if git -C "$ROOT" grep -E 'APK_SIGNER_MASTER_IDENTITY|master\.pem|PKCS.?8' -- \
   'tofu/*.tf' 'tofu/*.tftpl' '.github/workflows/*.yml' >/dev/null; then
   echo 'android signing infrastructure invariant failed: the offline master identity must not enter AWS or CI configuration' >&2

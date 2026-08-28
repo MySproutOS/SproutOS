@@ -54,7 +54,9 @@ locals {
 
   # These parameters are intentionally absent until the Android custody rollout. A default
   # OpenTofu apply must remain able to register and launch an unrelated ECS task revision before
-  # they exist; the later custody change supplies an explicit, preflighted enable plan.
+  # they exist; the later custody change supplies an explicit, preflighted enable plan. Keep this
+  # independent of the Google registration credential: #192 needs these two tokens at API startup,
+  # while registration can remain disabled until its separate external credential exists.
   ecs_android_api_parameter_names = var.android_custody_delivery_enabled ? [
     "APK_SIGNER_OPERATOR_TOKEN",
     "APK_SIGNER_TOKEN",
@@ -85,7 +87,7 @@ locals {
     "STRIPE_WEBHOOK_SECRET",
   ])
 
-  ecs_android_worker_parameter_names = var.android_custody_delivery_enabled ? [
+  ecs_android_worker_parameter_names = var.android_developer_registration_delivery_enabled ? [
     "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
   ] : []
 
@@ -121,6 +123,15 @@ locals {
       local.ecs_worker_parameter_names,
     )) : "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
   ]
+
+  # Every container in one ECS task receives the same task-role credentials. Keep this deny as
+  # data so the staging test can evaluate its exact AWS IAM surface without contacting AWS.
+  ecs_task_parameter_store_deny_actions = [
+    "ssm:GetParameter",
+    "ssm:GetParameters",
+    "ssm:GetParametersByPath",
+  ]
+  ecs_task_parameter_store_deny_resources = local.application_parameter_arns
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -300,6 +311,7 @@ resource "aws_ecs_task_definition" "web" {
     aws_s3_bucket_policy.android_artifacts,
     aws_iam_role_policy_attachment.task_application,
     aws_iam_role_policy.ecs_execution_secrets,
+    aws_iam_role_policy.ecs_task_no_parameter_store,
   ]
 
   # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
@@ -986,5 +998,24 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         }
       },
     ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_task_no_parameter_store" {
+  name = "deny-runtime-parameter-store"
+  role = aws_iam_role.task.id
+
+  # The application policy is still shared with the legacy EC2 roles and grants path reads for
+  # their boot script. ECS does not need that runtime authority: its execution role resolves the
+  # exact task-definition secret ARNs before containers start. Without this explicit deny, every
+  # container in the shared task could fetch the API-only operator token from Parameter Store even
+  # though ECS injects it into the API container alone.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Deny"
+      Action   = local.ecs_task_parameter_store_deny_actions
+      Resource = local.ecs_task_parameter_store_deny_resources
+    }]
   })
 }

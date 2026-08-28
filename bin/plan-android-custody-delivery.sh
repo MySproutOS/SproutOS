@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Produce, but never apply, the second-stage plan that injects Android custody credentials.
 #
-# The first OpenTofu apply must leave android_custody_delivery_enabled=false. After the three
+# The first OpenTofu apply must leave android_custody_delivery_enabled=false. After the two
 # SecureString parameters are written out of band, this script proves their exact names exist using
 # metadata-only DescribeParameters calls, produces a saved enable plan, and verifies that the task
-# definition places each credential in only its intended container.
+# definition places each credential in only the API and the execution role reads only exact names.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -29,7 +29,6 @@ esac
 required_parameters=(
   APK_SIGNER_TOKEN
   APK_SIGNER_OPERATOR_TOKEN
-  ANDROID_DEVELOPER_ID_STATUS_API_KEY
 )
 
 for short_name in "${required_parameters[@]}"; do
@@ -51,6 +50,7 @@ done
 "$TOFU_BIN" -chdir="$ROOT/tofu" plan \
   "$@" \
   -var=android_custody_delivery_enabled=true \
+  -var=android_developer_registration_delivery_enabled=false \
   -out="$PLAN_FILE"
 
 plan_json=$(mktemp)
@@ -77,6 +77,17 @@ task = next(
 if not task or not task.get("container_definitions"):
     sys.exit("Android custody delivery refused: saved plan has no web task definition.")
 
+execution = next(
+    (
+        change["change"]["after"]
+        for change in plan.get("resource_changes", [])
+        if change.get("address") == "aws_iam_role_policy.ecs_execution_secrets"
+    ),
+    None,
+)
+if not execution or not execution.get("policy"):
+    sys.exit("Android custody delivery refused: saved plan has no ECS execution-role policy.")
+
 containers = {
     container["name"]: container
     for container in json.loads(task["container_definitions"])
@@ -84,9 +95,9 @@ containers = {
 expected = {
     "APK_SIGNER_TOKEN": "api",
     "APK_SIGNER_OPERATOR_TOKEN": "api",
-    "ANDROID_DEVELOPER_ID_STATUS_API_KEY": "worker",
 }
 parameter_path = os.environ["PARAMETER_PATH"]
+task_secret_arns = {}
 
 for secret, intended_container in expected.items():
     occurrences = []
@@ -104,8 +115,42 @@ for secret, intended_container in expected.items():
         sys.exit(
             f"Android custody delivery refused: {secret} does not reference its exact Parameter Store name."
         )
+    task_secret_arns[secret] = occurrences[0][1]
 
-print("Android custody parameter metadata and saved task-definition plan verified.")
+for container_name, container in containers.items():
+    if any(
+        candidate.get("name") == "ANDROID_DEVELOPER_ID_STATUS_API_KEY"
+        for candidate in container.get("secrets", [])
+    ):
+        sys.exit(
+            "Android custody delivery refused: the independent Google credential entered "
+            f"the {container_name} container."
+        )
+
+policy = json.loads(execution["policy"])
+android_parameter_arns = []
+for statement in policy.get("Statement", []):
+    actions = statement.get("Action", [])
+    if isinstance(actions, str):
+        actions = [actions]
+    if "ssm:GetParameters" not in actions:
+        continue
+    resources = statement.get("Resource", [])
+    if isinstance(resources, str):
+        resources = [resources]
+    android_parameter_arns.extend(
+        arn for arn in resources
+        if "APK_SIGNER" in arn or "ANDROID_DEVELOPER" in arn
+    )
+
+expected_arns = sorted(task_secret_arns.values())
+if sorted(android_parameter_arns) != expected_arns:
+    sys.exit(
+        "Android custody delivery refused: execution-role Android SSM resources must be the two "
+        f"exact signer names; found {sorted(android_parameter_arns)!r}."
+    )
+
+print("Android custody metadata, task placement, and exact execution-role SSM plan verified.")
 PYTHON
 
 echo "Saved enable plan: $PLAN_FILE"

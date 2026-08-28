@@ -37,6 +37,7 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$TOFU_CALLS"
 if [[ " $* " == *" plan "* ]]; then
   [[ " $* " == *" -var=android_custody_delivery_enabled=true "* ]]
+  [[ " $* " == *" -var=android_developer_registration_delivery_enabled=false "* ]]
   for arg in "$@"; do
     case "$arg" in
       -out=*) : >"${arg#-out=}" ;;
@@ -47,6 +48,7 @@ fi
 if [[ " $* " == *" show -json "* ]]; then
   python3 <<'PYTHON'
 import json
+import os
 
 base = "arn:aws:ssm:us-east-1:123456789012:parameter/sproutos/application/"
 containers = [
@@ -60,19 +62,50 @@ containers = [
     },
     {
         "name": "worker",
-        "secrets": [
-            {
-                "name": "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
-                "valueFrom": base + "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
-            }
-        ],
+        "secrets": [],
     },
 ]
+defect = os.environ.get("MOCK_PLAN_DEFECT")
+if defect == "operator-in-worker":
+    containers[1]["secrets"] = [
+        secret for secret in containers[1]["secrets"]
+        if secret["name"] != "APK_SIGNER_OPERATOR_TOKEN"
+    ]
+    containers[2]["secrets"].append({
+        "name": "APK_SIGNER_OPERATOR_TOKEN",
+        "valueFrom": base + "APK_SIGNER_OPERATOR_TOKEN",
+    })
+if defect == "google-in-worker":
+    containers[2]["secrets"].append({
+        "name": "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
+        "valueFrom": base + "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
+    })
+execution_policy = {
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Action": ["ssm:GetParameters"],
+        "Resource": [
+            base + "APK_SIGNER_TOKEN",
+            base + "APK_SIGNER_OPERATOR_TOKEN",
+        ],
+    }],
+}
+if defect == "broad-execution-role":
+    execution_policy["Statement"][0]["Resource"].append(
+        base + "ANDROID_DEVELOPER_ID_STATUS_API_KEY"
+    )
 print(json.dumps({
-    "resource_changes": [{
-        "address": "aws_ecs_task_definition.web",
-        "change": {"after": {"container_definitions": json.dumps(containers)}},
-    }]
+    "resource_changes": [
+        {
+            "address": "aws_ecs_task_definition.web",
+            "change": {"after": {"container_definitions": json.dumps(containers)}},
+        },
+        {
+            "address": "aws_iam_role_policy.ecs_execution_secrets",
+            "change": {"after": {"policy": json.dumps(execution_policy)}},
+        },
+    ]
 }))
 PYTHON
   exit 0
@@ -87,7 +120,6 @@ export TOFU_CALLS="$WORK_DIR/tofu.calls"
 
 cat >"$WORK_DIR/missing.env" <<'ENV'
 APK_SIGNER_TOKEN=runtime-only
-ANDROID_DEVELOPER_ID_STATUS_API_KEY=developer-status
 ENV
 if ANDROID_CUSTODY_ONLY=1 AWS_BIN="$WORK_DIR/aws" \
   "$ROOT/bin/put-app-secrets.sh" "$WORK_DIR/missing.env" >/dev/null 2>&1; then
@@ -98,7 +130,6 @@ fi
 cat >"$WORK_DIR/equal.env" <<'ENV'
 APK_SIGNER_TOKEN=same-token
 APK_SIGNER_OPERATOR_TOKEN=same-token
-ANDROID_DEVELOPER_ID_STATUS_API_KEY=developer-status
 ENV
 if ANDROID_CUSTODY_ONLY=1 AWS_BIN="$WORK_DIR/aws" \
   "$ROOT/bin/put-app-secrets.sh" "$WORK_DIR/equal.env" >/dev/null 2>&1; then
@@ -119,6 +150,15 @@ fi
 
 "$ROOT/bin/plan-android-custody-delivery.sh" "$WORK_DIR/ready.plan" >/dev/null
 grep -q -- '-var=android_custody_delivery_enabled=true' "$TOFU_CALLS"
+grep -q -- '-var=android_developer_registration_delivery_enabled=false' "$TOFU_CALLS"
 grep -q 'show -json' "$TOFU_CALLS"
+
+for defect in operator-in-worker google-in-worker broad-execution-role; do
+  if MOCK_PLAN_DEFECT=$defect \
+    "$ROOT/bin/plan-android-custody-delivery.sh" "$WORK_DIR/$defect.plan" >/dev/null 2>&1; then
+    echo "delivery test failed: saved-plan defect $defect was accepted" >&2
+    exit 1
+  fi
+done
 
 echo "Android custody delivery staging tests passed"
