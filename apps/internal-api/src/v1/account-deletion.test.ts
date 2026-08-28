@@ -1,6 +1,6 @@
 /* oxlint-disable no-await-in-loop */
 import { db } from "@sproutos/db"
-import { accountTeardown, JOB_KINDS } from "@lib/jobs"
+import { accountTeardown, enqueue, JOB_KINDS } from "@lib/jobs"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import app from "../index"
@@ -162,10 +162,44 @@ describe.skipIf(!up)("closing an account", () => {
       })
       .execute()
 
+    // A dead-lettered project-only deletion must not consume the organization deletion's enqueue.
+    // Reusing the project-only idempotency key would return this terminal row without reviving it.
+    const oldTeardownId = await enqueue(db, {
+      kind: JOB_KINDS.tearDownProject,
+      organizationId,
+      idempotencyKey: `${JOB_KINDS.tearDownProject}:${projectId}`,
+      payload: { projectId, projectJobId: v7() },
+    })
+    await db
+      .updateTable("backgroundJob")
+      .set({ state: "dead_lettered", finishedAt: new Date() })
+      .where("id", "=", oldTeardownId)
+      .execute()
+
     // A person can delete the organization and immediately delete their account before its first
     // project job runs. Account deletion must adopt that in-flight teardown instead of seeing no
     // active organization and anonymising the owner while resources remain.
     expect((await call("DELETE", `/v1/orgs/${organization.slug as string}`, user)).status).toBe(200)
+
+    const adoptedProjectJob = await db
+      .selectFrom("projectJob")
+      .select("id")
+      .where("projectId", "=", projectId)
+      .where("kind", "=", "delete")
+      .orderBy("createdAt", "desc")
+      .executeTakeFirstOrThrow()
+    const adoptedTeardown = await db
+      .selectFrom("backgroundJob")
+      .select(["id", "idempotencyKey", "state"])
+      .where(
+        "idempotencyKey",
+        "=",
+        `${JOB_KINDS.tearDownProject}:${projectId}:${adoptedProjectJob.id}`,
+      )
+      .executeTakeFirstOrThrow()
+    expect(adoptedTeardown.id).not.toBe(oldTeardownId)
+    expect(adoptedTeardown.state).toBe("queued")
+
     expect((await call("DELETE", "/v1/user/me/delete", user)).status).toBe(200)
 
     const queued = await db

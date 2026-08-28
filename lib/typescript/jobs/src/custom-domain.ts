@@ -1,5 +1,11 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectVersionsCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
 import { publishRoute as publishLambdaRoute, type Route, withdrawRoute } from "@lib/lambda"
 import type { DB } from "@sproutos/db"
@@ -254,12 +260,11 @@ async function deleteCustomDomainResources(
   await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
 
   if (domain.certificateObjectKey !== null) {
-    await dependencies.s3.send(
-      new DeleteObjectCommand({
-        Bucket: dependencies.bucket,
-        Key: domain.certificateObjectKey,
-        VersionId: domain.certificateObjectVersion ?? undefined,
-      }),
+    await deleteCertificateObjectVersions(
+      dependencies.s3,
+      dependencies.bucket,
+      domain.certificateObjectKey,
+      domain.certificateObjectVersion,
     )
   }
   await dependencies.valkey.publish(
@@ -268,6 +273,47 @@ async function deleteCustomDomainResources(
   )
   if (!(await crudCustomDomain(db).finishDelete(domain.id, leaseToken))) {
     throw new Error(`Custom domain ${domain.id} lost its deletion lease`)
+  }
+}
+
+/** Remove the private key from every retained S3 version, not just the version routers loaded. */
+export async function deleteCertificateObjectVersions(
+  s3: Pick<S3Client, "send">,
+  bucket: string,
+  key: string,
+  currentVersion: string | null,
+): Promise<void> {
+  if (currentVersion === null) {
+    // Local/non-versioned compatibility. Production issuance refuses a missing VersionId.
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
+    return
+  }
+
+  for (;;) {
+    const listed = await s3.send(
+      new ListObjectVersionsCommand({ Bucket: bucket, Prefix: key, MaxKeys: 1000 }),
+    )
+    const versions = [...(listed.Versions ?? []), ...(listed.DeleteMarkers ?? [])].flatMap(
+      ({ Key, VersionId }) => (Key === key && VersionId !== undefined ? [{ Key, VersionId }] : []),
+    )
+    if (versions.length === 0) {
+      if (listed.IsTruncated === true) {
+        throw new Error(`S3 truncated certificate versions for ${key} without deletable entries`)
+      }
+      return
+    }
+
+    const deleted = await s3.send(
+      new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: versions, Quiet: true } }),
+    )
+    if ((deleted.Errors?.length ?? 0) > 0) {
+      const failures = deleted
+        .Errors!.map(
+          ({ VersionId, Code }) => `${VersionId ?? "unknown version"}: ${Code ?? "unknown error"}`,
+        )
+        .join(", ")
+      throw new Error(`S3 failed to delete certificate versions for ${key}: ${failures}`)
+    }
   }
 }
 

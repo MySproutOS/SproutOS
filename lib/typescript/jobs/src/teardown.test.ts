@@ -4,7 +4,11 @@ import {
   DescribeKeyValueStoreCommand,
 } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { ListResourceRecordSetsCommand } from "@aws-sdk/client-route-53"
-import { ListObjectsV2Command } from "@aws-sdk/client-s3"
+import {
+  DeleteObjectsCommand,
+  ListObjectVersionsCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
@@ -38,6 +42,7 @@ const withdrawn: string[] = []
 const staticCleanup: string[] = []
 const certificateCleanup: string[] = []
 const certificateInvalidations: string[] = []
+let certificateVersionPages = 0
 const destroyedServices: string[] = []
 const destroyedSandboxes: string[] = []
 
@@ -63,19 +68,25 @@ const lambdaClients = {
     s3: {
       send: (command: unknown) => {
         certificateCleanup.push(command?.constructor.name ?? "unknown")
+        if (command instanceof ListObjectVersionsCommand) {
+          certificateVersionPages += 1
+          return Promise.resolve({
+            Versions:
+              certificateVersionPages === 1
+                ? [{ Key: command.input.Prefix, VersionId: "version-1" }]
+                : [],
+          })
+        }
+        if (command instanceof DeleteObjectsCommand) return Promise.resolve({})
         return Promise.resolve({})
       },
     },
   },
-  serviceDriver: (database: typeof db, kind: string, backendServiceId: string) =>
+  serviceDriver: (_database: typeof db, kind: string, backendServiceId: string) =>
     Promise.resolve({
-      destroy: async () => {
+      destroy: () => {
         destroyedServices.push(`${kind}:${backendServiceId}`)
-        await database
-          .updateTable("backendService")
-          .set({ deletedAt: new Date(), status: "deleting" })
-          .where("id", "=", backendServiceId)
-          .execute()
+        return Promise.resolve()
       },
     }),
   sandbox: async (job: { payload: unknown }, context: { db: typeof db }) => {
@@ -343,7 +354,7 @@ describe("tearing down a deleted project", () => {
           .executeTakeFirstOrThrow()
       ).state,
     ).toBe("deleting")
-    expect(certificateCleanup).not.toContain("DeleteObjectCommand")
+    expect(certificateCleanup).not.toContain("DeleteObjectsCommand")
     expect(deletedFunctions).toHaveLength(0)
     await db
       .updateTable("customDomain")
@@ -380,7 +391,8 @@ describe("tearing down a deleted project", () => {
     expect(staticCleanup).toContain(`list:sites/${projectId}/`)
     expect(staticCleanup).toContain(`list:static/${projectId}/`)
     expect(withdrawn).toContain("route:deleted.example.test")
-    expect(certificateCleanup).toContain("DeleteObjectCommand")
+    expect(certificateCleanup).toContain("ListObjectVersionsCommand")
+    expect(certificateCleanup).toContain("DeleteObjectsCommand")
     expect(certificateInvalidations.some((entry) => entry.includes("deleted.example.test"))).toBe(
       true,
     )

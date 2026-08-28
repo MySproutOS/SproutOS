@@ -310,7 +310,11 @@ const app = new Hono()
         for (const project of result.projects) {
           await enqueue(transaction, {
             kind: JOB_KINDS.tearDownProject,
-            idempotencyKey: `${JOB_KINDS.tearDownProject}:${project.projectId}`,
+            // A previous project teardown may be dead-lettered. `prepareOrganizationTeardown`
+            // adopts that cleanup debt with a new progress row, so its durable job must be new too;
+            // colliding on project id would merely return the terminal job and strand the resource.
+            idempotencyKey:
+              `${JOB_KINDS.tearDownProject}:${project.projectId}:` + project.projectJobId,
             payload: project,
             maxAttempts: 5,
           })

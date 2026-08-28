@@ -302,6 +302,24 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
             ? await aws.serviceDriver(db, service.kind, service.id)
             : await driverFor(db, service.kind, service.id)
           await driver.destroy(service.id)
+
+          /*
+            The API's one-service delete route owns this write, not every provider driver.
+
+            Valkey and OpenSearch happen to write it themselves, while both Postgres drivers and
+            object storage only remove their provider resource. Assuming otherwise let a project
+            teardown finish with those `backend_service` rows still active. Besides being false in
+            the control plane, that made a later retry select and destroy the same service again.
+
+            `deleting` is the durable tombstone vocabulary from ADR 0017; there is deliberately no
+            `deleted` status in the database constraint.
+          */
+          const now = new Date()
+          await db
+            .updateTable("backendService")
+            .set({ status: "deleting", deletedAt: now, updatedAt: now })
+            .where("id", "=", service.id)
+            .execute()
           result.services += 1
 
           // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
