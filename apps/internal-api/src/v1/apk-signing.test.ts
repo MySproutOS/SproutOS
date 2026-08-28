@@ -130,8 +130,9 @@ describe("signer callback idempotency", () => {
           version_code: 2,
           version_name: "0.2.0",
           certificate_sha256: "c".repeat(64),
+          developer_console_account: "developerAccounts/123",
         },
-        "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+        "e576b2de42c014df42371b621e6a9d5b8d1a6adcf8a1677794abf94833a8b3cf",
       ],
       [
         { job_id: jobId, signer_id: "signer-01", error: "verification failed" },

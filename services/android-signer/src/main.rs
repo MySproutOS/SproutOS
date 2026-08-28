@@ -3,6 +3,9 @@ use std::time::Duration;
 
 use android_signer::api::SignerApi;
 use android_signer::crypto::MasterIdentity;
+use android_signer::developer_console::{
+    DEFAULT_TOKEN_URL, DeveloperConsoleConfig, GoogleDeveloperConsole, write_refresh_token,
+};
 use android_signer::process::{AndroidTools as _, CommandAndroidTools};
 use android_signer::state::StateStore;
 use android_signer::{CLIENT_PACKAGE_NAME, Signer, SignerConfig, apk};
@@ -39,6 +42,22 @@ enum Command {
         android_sdk_root: Option<PathBuf>,
         #[arg(long, env = "APK_SIGNER_MAX_APK_BYTES", default_value_t = 536_870_912)]
         max_apk_bytes: u64,
+    },
+    /// Print the one-time Google consent URL. The URL contains no client secret.
+    GoogleOauthUrl {
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID")]
+        client_id: String,
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REDIRECT_URI")]
+        redirect_uri: String,
+    },
+    /// Read an authorization code from stdin and save the offline refresh token mode 0600.
+    GoogleOauthExchange {
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID")]
+        client_id: String,
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REDIRECT_URI")]
+        redirect_uri: String,
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE")]
+        output: PathBuf,
     },
 }
 
@@ -164,6 +183,38 @@ async fn main() -> anyhow::Result<()> {
             println!("unsigned_sha256={digest}");
             Ok(())
         }
+        Command::GoogleOauthUrl {
+            client_id,
+            redirect_uri,
+        } => {
+            println!(
+                "{}",
+                DeveloperConsoleConfig::authorization_url(&client_id, &redirect_uri)?
+            );
+            Ok(())
+        }
+        Command::GoogleOauthExchange {
+            client_id,
+            redirect_uri,
+            output,
+        } => {
+            let client_secret = std::env::var("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET")
+                .context("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET is not set")?;
+            let mut code = String::new();
+            std::io::stdin().read_line(&mut code)?;
+            let token = DeveloperConsoleConfig::exchange_authorization_code(
+                &client_id,
+                &client_secret,
+                code.trim(),
+                &redirect_uri,
+                &std::env::var("APK_SIGNER_GOOGLE_OAUTH_TOKEN_URL")
+                    .unwrap_or_else(|_| DEFAULT_TOKEN_URL.to_owned()),
+            )
+            .await?;
+            write_refresh_token(&output, &token)?;
+            println!("stored Google OAuth refresh token at {}", output.display());
+            Ok(())
+        }
     }
 }
 
@@ -180,6 +231,9 @@ async fn runtime(args: RuntimeArgs) -> anyhow::Result<Signer<SignerApi, CommandA
     // Read the credential here rather than through clap so it is never represented in help output
     // or a command line visible to another local user.
     let token = std::env::var("APK_SIGNER_TOKEN").context("APK_SIGNER_TOKEN is not set")?;
+    // Validate custody configuration before claiming anything. A signer without registration
+    // authority must stay down instead of consuming release attempts that can never be published.
+    let _developer_console = GoogleDeveloperConsole::new(DeveloperConsoleConfig::from_env()?)?;
     let api = SignerApi::new(args.api_url, token, args.signer_id)?;
     let identity = MasterIdentity::load(&args.master_identity)?;
     let state = StateStore::open(args.state_dir)?;

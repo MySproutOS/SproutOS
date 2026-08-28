@@ -9,6 +9,7 @@ import {
   recordDeveloperConsoleState,
 } from "./apk-signing"
 import type { JobHandler } from "./worker"
+import { CLIENT_PACKAGE_NAME, reconcileClientDeveloperRegistration } from "./client-apk-signing"
 
 export const ANDROID_REGISTRATION_RECONCILE_KIND =
   "android.reconcile_developer_registration" as const
@@ -291,6 +292,47 @@ export function reconcileAndroidDeveloperRegistrationsJob(
         : new GoogleAndroidDeveloperStatusChecker(apiKey))
     if (provider === undefined) {
       throw new Error("ANDROID_DEVELOPER_ID_STATUS_API_KEY is not configured")
+    }
+    const clientIdentity = await db
+      .selectFrom("clientSigningIdentity")
+      .select([
+        "certificateSha256",
+        "developerConsoleAccount",
+        "developerConsoleState",
+        "developerConsoleLastCheckedAt",
+      ])
+      .where("packageName", "=", CLIENT_PACKAGE_NAME)
+      .executeTakeFirst()
+    const clientNow = new Date()
+    const clientDelay =
+      clientIdentity?.developerConsoleState === "registered"
+        ? ANDROID_REGISTRATION_REVALIDATE_MS
+        : 15 * 60 * 1000
+    if (
+      clientIdentity !== undefined &&
+      clientIdentity.certificateSha256 !== null &&
+      clientIdentity.developerConsoleAccount !== null &&
+      (clientIdentity.developerConsoleLastCheckedAt === null ||
+        clientNow.getTime() - clientIdentity.developerConsoleLastCheckedAt.getTime() >= clientDelay)
+    ) {
+      try {
+        const clientProviderState = await provider.check(
+          CLIENT_PACKAGE_NAME,
+          clientIdentity.certificateSha256,
+        )
+        await reconcileClientDeveloperRegistration(db, clientProviderState, clientNow)
+      } catch (cause) {
+        const error = cause instanceof Error ? cause.message : String(cause)
+        await db
+          .updateTable("clientSigningIdentity")
+          .set({
+            developerConsoleLastCheckedAt: clientNow,
+            developerConsoleError: error,
+            updatedAt: clientNow,
+          })
+          .where("packageName", "=", CLIENT_PACKAGE_NAME)
+          .execute()
+      }
     }
     const result = await reconcileAndroidDeveloperRegistrations(db, provider, {
       workerId: `background-job:${job.id}`,

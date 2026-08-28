@@ -122,6 +122,7 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
+        developer_console_account: String,
     },
     ProvisionClientKey {
         job_id: String,
@@ -141,6 +142,7 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
+        developer_console_account: String,
     },
 }
 
@@ -649,6 +651,7 @@ mod tests {
             version_code: 2,
             version_name: "2.0".into(),
             certificate_sha256: "c".repeat(64),
+            developer_console_account: "developerAccounts/123".into(),
         }
     }
 
@@ -817,6 +820,7 @@ mod tests {
             version_code: 2,
             version_name: "0.2.0".into(),
             certificate_sha256: "c".repeat(64),
+            developer_console_account: "developerAccounts/123".into(),
         };
         let fail = FailRequest {
             job_id,
@@ -831,7 +835,7 @@ mod tests {
             ),
             (
                 serde_json::to_string(&complete).unwrap(),
-                "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+                "e576b2de42c014df42371b621e6a9d5b8d1a6adcf8a1677794abf94833a8b3cf",
             ),
             (
                 serde_json::to_string(&fail).unwrap(),

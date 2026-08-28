@@ -32,6 +32,7 @@ export const androidAppSchemaResponse = Type.Object({
     Type.Literal("ready"),
     Type.Literal("failed"),
   ]),
+  developerConsoleAccount: Nullable(Type.String({ pattern: "^developerAccounts/[0-9]+$" })),
   developerConsoleState: Type.String(),
   developerConsoleProviderState: Nullable(
     Type.Union([

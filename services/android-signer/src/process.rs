@@ -48,6 +48,7 @@ pub trait AndroidTools: Send + Sync {
         key: &AppSigningSecret,
     ) -> anyhow::Result<()>;
     fn verify_signed(&self, apk: &Path) -> anyhow::Result<String>;
+    fn certificate_der_base64(&self, key: &AppSigningSecret) -> anyhow::Result<String>;
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +134,8 @@ impl AndroidTools for CommandAndroidTools {
             pkcs12_base64: base64::engine::general_purpose::STANDARD.encode(pkcs12),
             password,
             alias,
-            certificate_sha256: hex::encode(Sha256::digest(cert)),
+            certificate_sha256: hex::encode(Sha256::digest(&cert)),
+            certificate_der_base64: base64::engine::general_purpose::STANDARD.encode(cert),
         })
     }
 
@@ -221,6 +223,46 @@ impl AndroidTools for CommandAndroidTools {
             ],
         )?;
         parse_certificate_sha256(&output.stdout)
+    }
+
+    fn certificate_der_base64(&self, key: &AppSigningSecret) -> anyhow::Result<String> {
+        if !key.certificate_der_base64.is_empty() {
+            return Ok(key.certificate_der_base64.clone());
+        }
+        let temp = tempfile::Builder::new()
+            .prefix("sproutos-cert-export-")
+            .tempdir()?;
+        restrict_directory(temp.path())?;
+        let keystore = temp.path().join("app.p12");
+        let password_file = temp.path().join("password");
+        let certificate = temp.path().join("certificate.der");
+        let mut pkcs12 = base64::engine::general_purpose::STANDARD
+            .decode(&key.pkcs12_base64)
+            .context("keystore payload is malformed")?;
+        std::fs::write(&keystore, &pkcs12)?;
+        zeroize::Zeroize::zeroize(&mut pkcs12);
+        std::fs::write(&password_file, format!("{}\n", key.password))?;
+        restrict_file(&keystore)?;
+        restrict_file(&password_file)?;
+        run_checked(
+            &self.keytool,
+            &[
+                "-exportcert".into(),
+                "-keystore".into(),
+                keystore.as_os_str().to_owned(),
+                "-storepass:file".into(),
+                password_file.as_os_str().to_owned(),
+                "-alias".into(),
+                key.alias.clone().into(),
+                "-file".into(),
+                certificate.as_os_str().to_owned(),
+            ],
+        )?;
+        let certificate = std::fs::read(certificate)?;
+        if hex::encode(Sha256::digest(&certificate)) != key.certificate_sha256 {
+            bail!("exported public certificate does not match the protected identity")
+        }
+        Ok(base64::engine::general_purpose::STANDARD.encode(certificate))
     }
 }
 
