@@ -4,7 +4,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use sproutos_tenant_auth::TenantIdentity;
 
-use crate::commands::FORWARDED_COMMANDS;
+use crate::commands::{FORWARDED_COMMANDS, FORWARDED_SUBCOMMANDS};
 use crate::keyspace::prefix_for;
 use crate::upstream::Credentials;
 
@@ -70,12 +70,18 @@ pub fn setuser_args(root_key: &[u8], identity: &TenantIdentity) -> Vec<Vec<u8>> 
             .iter()
             .map(|command| format!("+{command}").into_bytes()),
     );
-    // These are deliberately last. ACL rules are evaluated left-to-right and a later broad grant
-    // must never accidentally restore one of the no-key administrative commands.
+    // Broad denials precede the narrow subcommand grants below. `-SCRIPT` removes every script
+    // administration operation; `+SCRIPT|LOAD` then restores only the non-executing operation a
+    // Celery worker needs after EVALSHA reports NOSCRIPT.
     args.extend(
         DENIED_COMMANDS
             .iter()
             .map(|command| format!("-{command}").into_bytes()),
+    );
+    args.extend(
+        FORWARDED_SUBCOMMANDS
+            .iter()
+            .map(|command| format!("+{command}").into_bytes()),
     );
     args
 }
@@ -134,10 +140,12 @@ mod tests {
         );
         let prefix = String::from_utf8(prefix_for(&identity())).unwrap();
         assert!(!prefix.contains(['*', '?', '[', '\\']));
-        let tail = &text[text.len() - DENIED_COMMANDS.len()..];
+        let denial_start = text.len() - DENIED_COMMANDS.len() - FORWARDED_SUBCOMMANDS.len();
+        let tail = &text[denial_start..denial_start + DENIED_COMMANDS.len()];
         for command in DENIED_COMMANDS {
             assert!(tail.contains(&format!("-{command}").into()));
         }
+        assert_eq!(text.last().map(|rule| rule.as_ref()), Some("+SCRIPT|LOAD"));
         assert!(!text.contains(&"+AUTH".into()));
         assert!(!text.contains(&"+HELLO".into()));
     }
@@ -158,6 +166,7 @@ mod tests {
         };
         assert_eq!(strings("forwardedCommands"), FORWARDED_COMMANDS);
         assert_eq!(strings("deniedCommands"), DENIED_COMMANDS);
+        assert_eq!(strings("forwardedSubcommands"), FORWARDED_SUBCOMMANDS);
         let vector = &fixture["credentialVector"];
         let identity = TenantIdentity::new(
             Uuid::parse_str(vector["organizationId"].as_str().unwrap()).unwrap(),

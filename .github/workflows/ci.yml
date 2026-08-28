@@ -424,6 +424,24 @@ jobs:
       - name: Seed reference data
         run: pnpm --filter=dbmigrator run seed:run
 
+      # This is the customer-side queue contract, not a Python unit test: the Rust integration
+      # suite starts the proxy and drives a real Celery producer and worker through it. Installing
+      # the hashed lock here means that test cannot quietly become a raw-RESP approximation again.
+      - name: Setup Python for Celery acceptance
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: services/valkey-proxy/tests/fixtures/celery-requirements.txt
+      - name: Install pinned Celery acceptance client
+        run: >-
+          python -m pip install --require-hashes
+          -r services/valkey-proxy/tests/fixtures/celery-requirements.txt
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      - name: Select Celery acceptance Python
+        run: echo "CELERY_ACCEPTANCE_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+
       - name: Test
         run: cargo test --workspace
 

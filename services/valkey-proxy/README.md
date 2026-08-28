@@ -47,9 +47,15 @@ can reach. Forwarding an unrecognised command hoping it has no keys is a bet tha
 so the default is no.
 
 Deliberately absent, and refused: `SELECT`, `FLUSHALL`, `FLUSHDB`, `KEYS`, `SCAN`, `RANDOMKEY`,
-`CONFIG`, `SHUTDOWN`, `DEBUG`, `SCRIPT`, `CLIENT`, `CLUSTER`, `ACL`, `REPLICAOF`, `MONITOR`,
+`CONFIG`, `SHUTDOWN`, `DEBUG`, `CLIENT`, `CLUSTER`, `ACL`, `REPLICAOF`, `MONITOR`,
 `SWAPDB`, `MIGRATE`. Each is either a way to reach past a namespace or a way to take the instance
 down for everyone sharing it.
+
+One administrative subcommand is admitted narrowly: `SCRIPT LOAD`. Celery's Redis transport uses
+redis-py's script helper for its visibility-timeout mutex, so a fresh worker must load the script
+after `EVALSHA` reports `NOSCRIPT`. Loading does not execute it. `SCRIPT FLUSH`, `SCRIPT KILL`, and
+every other subcommand remain refused; execution still goes through namespaced `EVALSHA` and the
+upstream tenant ACL.
 
 A refused command is an error the tenant can read; **the connection stays open**, because one stray
 command from a library should not take a worker down.
@@ -164,6 +170,10 @@ unnamespaced would still pass an inside-the-proxy check, because the tenant that
 read its own value back.
 
 The integration tests skip rather than fail when the services are not running.
+They also launch the hash-locked Celery fixture as a real producer and worker, assert the task's
+result, and verify its publish reached the master wake set. Celery may be absent in an ordinary
+local Rust-only run; CI installs it from `tests/fixtures/celery-requirements.txt` and treats its
+absence as a failure.
 
 ## The master queue
 

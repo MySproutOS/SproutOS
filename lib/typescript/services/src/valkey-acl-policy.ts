@@ -27,6 +27,7 @@ export function valkeyAclSetUserArgs(identity: ValkeyAclIdentity, rootKey: strin
     `&${prefix}*`,
     ...policy.forwardedCommands.map((command) => `+${command}`),
     ...policy.deniedCommands.map((command) => `-${command}`),
+    ...policy.forwardedSubcommands.map((command) => `+${command}`),
   ]
 }
 
