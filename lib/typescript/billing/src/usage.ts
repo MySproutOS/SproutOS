@@ -22,6 +22,13 @@ export class NoActivePriceBookError extends Error {
   }
 }
 
+/** Historical meters retained for reconciliation but deliberately absent from the active book. */
+export const RETIRED_UNBILLABLE_DIMENSIONS = [
+  "site_vcpu_second",
+  "site_active_cpu_second",
+  "site_ws_connection_second",
+] as const
+
 export type RatedUsage = {
   byDimension: Record<string, MicroUsd>
   usage: MicroUsd
@@ -79,6 +86,7 @@ export async function rateProjectsForOrganization(
     ])
     .where("organizationId", "=", organizationId)
     .where("projectId", "is not", null)
+    .where("dimension", "not in", RETIRED_UNBILLABLE_DIMENSIONS)
     .where("bucket", "=", "day")
     .where("bucketStart", ">=", since)
     .where("bucketStart", "<", at)
