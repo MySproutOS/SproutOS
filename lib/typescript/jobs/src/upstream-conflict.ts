@@ -34,7 +34,9 @@ export type UpstreamConflictInput = {
   projectJobId: string
   agentSessionId: string
   organizationId: string
+  organizationSlug: string
   projectId: string
+  projectSlug: string
   userId: string
   owner: string
   repo: string
@@ -440,10 +442,13 @@ async function runResolutionAgent(
     result = await runSandboxTurn({
       driver,
       externalId,
+      actionUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(input.organizationSlug)}/projects/${encodeURIComponent(input.projectId)}/agent/actions/group-primary`,
+      groupPrimaryCandidates: [],
       harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
       model: credential.model,
       prompt,
       proxyBaseUrl: process.env.LLM_PROXY_URL ?? "https://llm.sproutos.me",
+      projectSlug: input.projectSlug,
       refreshUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/agent/proxy-token/refresh`,
       timeoutMs: TURN_TIMEOUT_MS,
       token: proxy,
@@ -456,11 +461,7 @@ async function runResolutionAgent(
   } finally {
     await crudAgentProxyToken(input.db).revoke(proxy.id)
   }
-  await sessions.appendEvents(
-    input.agentSessionId,
-    await sessions.nextEventSeq(input.agentSessionId),
-    events,
-  )
+  await sessions.appendEvents(input.agentSessionId, events)
   await sessions.closeTurn(turn.id, { resultSubtype: result.exitCode === 0 ? "resolved" : "error" })
   if (result.exitCode !== 0)
     throw new Error(`the conflict-resolution agent exited ${result.exitCode}`)

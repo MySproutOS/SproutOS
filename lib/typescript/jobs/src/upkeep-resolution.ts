@@ -96,11 +96,14 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
 
     const facts = await context.db
       .selectFrom("project")
+      .innerJoin("organization", "organization.id", "project.organizationId")
       .innerJoin("repository", "repository.id", "project.repositoryId")
       .innerJoin("githubInstallation", "githubInstallation.id", "repository.githubInstallationId")
       .select([
         "project.organizationId",
+        "organization.slug as organizationSlug",
         "project.id as projectId",
+        "project.slug as projectSlug",
         "repository.ownerLogin",
         "repository.name",
         "repository.defaultBranch",
@@ -146,8 +149,10 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
         expectedTargetSha: details.expectedTargetSha,
         expectedUpstreamSha: details.expectedUpstreamSha,
         organizationId: facts.organizationId,
+        organizationSlug: facts.organizationSlug,
         owner: facts.ownerLogin,
         projectId: facts.projectId,
+        projectSlug: facts.projectSlug,
         projectJobId: projectJob.id,
         provenance: facts.provenance,
         repo: facts.name,
