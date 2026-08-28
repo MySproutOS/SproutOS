@@ -411,6 +411,9 @@ export const ACME_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.tearDownPreview]: tearDownPreview(),
   [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
   [JOB_KINDS.tearDownProject]: tearDownProject(),
+  // Account teardown invokes project teardown inline before anonymising the user. It therefore
+  // needs the same certificate-object and tenant-DNS authority as a direct project teardown.
+  [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
@@ -445,7 +448,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
-  [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.workflowScheduleScan]: async (_job, { db }) => {
     const runs = await runDueWorkflowSchedules(db)

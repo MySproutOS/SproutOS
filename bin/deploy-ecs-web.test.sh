@@ -299,4 +299,52 @@ if [ "$web_update_line" -ge "$acme_update_line" ]; then
   exit 1
 fi
 
+# An infrastructure apply only registers task definitions because both ECS services ignore that
+# drift. The handoff wrapper must read both exact OpenTofu revisions and pass them into one release;
+# otherwise rollout and ACME-directory flags remain stale on the running API/worker tasks.
+cat > "$TEST_DIR/bin/tofu" <<'TOFU'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${*: -1}" in
+  ecs_web_task_definition_arn)
+    printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-web:42\n'
+    ;;
+  ecs_acme_worker_task_definition_arn)
+    if [ "${BAD_ACME_OUTPUT:-}" = 1 ]; then
+      printf 'sproutos-acme-worker\n'
+    else
+      printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17\n'
+    fi
+    ;;
+  *) exit 1 ;;
+esac
+TOFU
+cat > "$TEST_DIR/bin/capture-task-handoff" <<'HANDOFF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n%s\n%s\n' \
+  "$ECS_BASE_TASK_DEFINITION" \
+  "$ECS_BASE_ACME_TASK_DEFINITION" \
+  "${1:-<no-argument>}" > "$TASK_HANDOFF_CAPTURE"
+HANDOFF
+chmod +x "$TEST_DIR/bin/tofu" "$TEST_DIR/bin/capture-task-handoff"
+export TASK_HANDOFF_CAPTURE="$TEST_DIR/task-handoff"
+ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" TOFU_DIR="$TEST_DIR/tofu" \
+  "$HERE/handoff-ecs-task-definitions.sh"
+sed -n '1p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
+  'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-web:42'
+sed -n '2p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
+  'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17'
+sed -n '3p' "$TASK_HANDOFF_CAPTURE" | grep -qx '<no-argument>'
+unlink "$TASK_HANDOFF_CAPTURE"
+if BAD_ACME_OUTPUT=1 ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" \
+  TOFU_DIR="$TEST_DIR/tofu" "$HERE/handoff-ecs-task-definitions.sh" \
+  >"$TEST_DIR/task-handoff-failure.out" 2>&1; then
+  echo "a non-versioned ACME task output reached the deploy script" >&2
+  exit 1
+fi
+grep -q 'ecs_acme_worker_task_definition_arn is not an exact' \
+  "$TEST_DIR/task-handoff-failure.out"
+[ ! -e "$TASK_HANDOFF_CAPTURE" ]
+
 echo "deploy-ecs-web tests passed"

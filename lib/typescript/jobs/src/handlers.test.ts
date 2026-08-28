@@ -50,12 +50,18 @@ describe("PLATFORM_HANDLERS", () => {
         JOB_KINDS.reconcilePlatformEdgeCertificate,
         JOB_KINDS.tearDownPreview,
         JOB_KINDS.cleanUpStaticPreview,
+        JOB_KINDS.tearDownAccount,
         JOB_KINDS.tearDownProject,
       ].toSorted(),
     )
     for (const kind of Object.keys(ACME_HANDLERS)) {
       expect(PLATFORM_HANDLERS[kind]).toBeUndefined()
     }
+  })
+
+  it("keeps account teardown with the privileged project teardown it invokes", () => {
+    expect(ACME_HANDLERS[JOB_KINDS.tearDownAccount]).toBeTypeOf("function")
+    expect(PLATFORM_HANDLERS[JOB_KINDS.tearDownAccount]).toBeUndefined()
   })
 
   it("fails visibly when the authoritative ClickHouse importer is unconfigured", async () => {

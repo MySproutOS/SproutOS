@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest"
 
 const compute = await readFile(new URL("../../../../tofu/compute.tf", import.meta.url), "utf8")
 const ecs = await readFile(new URL("../../../../tofu/ecs.tf", import.meta.url), "utf8")
+const outputs = await readFile(new URL("../../../../tofu/outputs.tf", import.meta.url), "utf8")
+const deploy = await readFile(new URL("../../../../tofu/DEPLOY.md", import.meta.url), "utf8")
+const handoff = await readFile(
+  new URL("../../../../bin/handoff-ecs-task-definitions.sh", import.meta.url),
+  "utf8",
+)
 
 function resource(type: string, name: string): string {
   const marker = `resource "${type}" "${name}"`
@@ -117,5 +123,17 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain('availability_zone_rebalancing      = "ENABLED"')
     expect(ecs).toContain("deployment_maximum_percent         = 150")
     expect(ecs).toContain("deployment_minimum_healthy_percent = 100")
+  })
+
+  it("hands both exact applied task contracts to the release before rollout continues", () => {
+    expect(outputs).toContain('output "ecs_web_task_definition_arn"')
+    expect(outputs).toContain('output "ecs_acme_worker_task_definition_arn"')
+    expect(handoff).toContain('ECS_BASE_TASK_DEFINITION="$web_task_arn"')
+    expect(handoff).toContain('ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn"')
+    expect(handoff).toContain('"$DEPLOY_SCRIPT"')
+    expect(deploy).toContain("bin/handoff-ecs-task-definitions.sh")
+    expect(deploy).toContain("ACME_DIRECTORY_URL")
+    expect(deploy).toContain("PLATFORM_EDGE_ROLLOUT_ENABLED")
+    expect(deploy).toContain("CUSTOM_DOMAINS_ENABLED")
   })
 })
