@@ -29,6 +29,13 @@ export const servicesSchemaService = Type.Object({
   database: Nullable(Type.String()),
   username: Nullable(Type.String()),
   keyPrefix: Type.Optional(Type.String()),
+  /** Application whose OAuth grant created the service, if any. */
+  managedByOauthApp: Nullable(
+    Type.Object({
+      clientId: UUID7String,
+      name: Type.String(),
+    }),
+  ),
   createdAt: Type.String({ format: "date-time" }),
 })
 
@@ -43,7 +50,7 @@ export const servicesSchemaCreateRequest = Type.Object({
   projectId: Type.Optional(Nullable(UUID7String)),
 })
 
-/** The one response that carries a credential, returned once at creation and on explicit reveal. */
+/** The one response that carries a credential, returned once at creation or rotation. */
 export const servicesSchemaConnectionResponse = Type.Object({
   id: UUID7String,
   connectionUri: Type.String(),

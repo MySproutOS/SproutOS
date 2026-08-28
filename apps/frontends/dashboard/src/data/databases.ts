@@ -3,7 +3,6 @@ import {
   deleteV1OrgsByOrgSlugServicesByServiceIdMutation,
   getV1OrgsByOrgSlugServicesOptions,
   getV1OrgsByOrgSlugServicesQueryKey,
-  postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation,
   postV1OrgsByOrgSlugServicesByServiceIdRotateMutation,
   postV1OrgsByOrgSlugServicesMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -79,6 +78,7 @@ export type BackendService = {
   port: number | null
   database: string | null
   username: string | null
+  managedByOauthApp: { clientId: string; name: string } | null
   createdLabel: string
 }
 
@@ -103,6 +103,7 @@ export function useBackendServices(orgSlug: string) {
       port: service.port,
       database: service.database,
       username: service.username,
+      managedByOauthApp: service.managedByOauthApp ?? null,
       // The generated type says Date; without transformers.gen.ts it is an ISO string.
       createdLabel: CREATED_FORMAT.format(new Date(service.createdAt)),
     })),
@@ -138,22 +139,6 @@ export function useCreateBackendService(orgSlug: string) {
       await invalidate()
       return created.connectionUri
     },
-  }
-}
-
-/**
- * Revealing and rotating are mutations, never queries.
- *
- * Both write an `audit_log` row, so a cached read would make the trail claim one look when there
- * were five. Neither result enters the query cache — the URI lives in the component that asked for
- * it and goes away when that unmounts.
- */
-export function useRevealConnection(orgSlug: string) {
-  const mutation = useMutation(postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation())
-  return {
-    ...mutation,
-    reveal: async (serviceId: string): Promise<string> =>
-      (await mutation.mutateAsync({ path: { orgSlug, serviceId } })).connectionUri,
   }
 }
 

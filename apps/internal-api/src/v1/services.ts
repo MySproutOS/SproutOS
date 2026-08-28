@@ -1,9 +1,9 @@
+import { availableBalance } from "@lib/billing"
 import { crudAuditLog, crudProjectEnvVar } from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
   ServiceNotConfiguredError,
-  SecretNotRecoverableError,
   ServiceNotProvisionedError,
   neonPostgresDriverFromEnv,
   objectStorageDriverFromEnv,
@@ -105,6 +105,10 @@ export function connectionResponse(
     connectionUri: result.connectionUri,
     ...(result.keyPrefix === undefined ? {} : { keyPrefix: result.keyPrefix }),
   }
+}
+
+export function hasProvisioningCredit(availableMicroUsd: bigint): boolean {
+  return availableMicroUsd > 0n
 }
 
 /**
@@ -244,13 +248,10 @@ async function attributeToGrant(auth: AuthContext, backendServiceId: string): Pr
     revoked ones as the historical record of who held what. Matching on `revoked_at is null` is
     what keeps a rotation from rewriting the past.
   */
-  await db
-    .updateTable("serviceCredential")
-    .set({ oauthGrantId: auth.oauthGrantId })
-    .where("backendServiceId", "=", backendServiceId)
-    .where("revokedAt", "is", null)
-    .where("oauthGrantId", "is", null)
-    .execute()
+}
+
+function credentialOwner(auth: AuthContext): { oauthGrantId: string | null } {
+  return { oauthGrantId: auth.kind === "oauth" ? auth.oauthGrantId : null }
 }
 
 const app = new Hono()
@@ -282,6 +283,8 @@ const app = new Hono()
             .on("databaseBranch.kind", "=", "primary"),
         )
         .leftJoin("databaseRole", "databaseRole.databaseBranchId", "databaseBranch.id")
+        .leftJoin("oauthGrant", "oauthGrant.id", "backendService.createdByOauthGrantId")
+        .leftJoin("oauthClient", "oauthClient.id", "oauthGrant.oauthClientId")
         .select([
           "backendService.id as id",
           "backendService.name as name",
@@ -291,6 +294,8 @@ const app = new Hono()
           "backendService.createdAt as createdAt",
           "databaseBranch.host as host",
           "databaseRole.roleName as username",
+          "oauthClient.id as managedByOauthClientId",
+          "oauthClient.name as managedByOauthAppName",
         ])
         .where("backendService.organizationId", "=", c.var.organization.id)
         .where("backendService.deletedAt", "is", null)
@@ -310,6 +315,10 @@ const app = new Hono()
           port: row.host === null ? null : config.publicPort,
           database: row.username === null ? null : databaseNameOf(row.id),
           username: row.username,
+          managedByOauthApp:
+            row.managedByOauthClientId === null || row.managedByOauthAppName === null
+              ? null
+              : { clientId: row.managedByOauthClientId, name: row.managedByOauthAppName },
           ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
           createdAt: row.createdAt.toISOString(),
         })),
@@ -331,6 +340,7 @@ const app = new Hono()
           description: "Unsupported kind, or the project is not this organization's",
           ...errorResponse,
         },
+        402: { description: "The organization has no spendable credit", ...errorResponse },
         403: { description: "Caller lacks database:create", ...errorResponse },
       },
     }),
@@ -339,6 +349,15 @@ const app = new Hono()
     async (c) => {
       const body = c.req.valid("json")
       const organization = c.var.organization
+
+      if (!hasProvisioningCredit(await availableBalance(db, organization.id))) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before creating a database. Granting database access does not itself charge anything.",
+        )
+      }
 
       if (body.projectId != null) {
         // The foreign key proves the project exists, not that it is this organization's.
@@ -377,6 +396,7 @@ const app = new Hono()
           organizationId: organization.id,
           projectId: body.projectId ?? null,
           name: body.name,
+          credentialOwner: credentialOwner(c.var.auth),
         })
 
         await db
@@ -467,65 +487,6 @@ const app = new Hono()
     },
   )
   .post(
-    "/:orgSlug/services/:serviceId/connection",
-    describeRoute({
-      description: "Reveals the connection URI. Audited, because a credential leaves the system",
-      responses: {
-        200: {
-          description: "Connection URI",
-          content: {
-            "application/json": { schema: resolver(servicesSchemaConnectionResponse) },
-          },
-        },
-        403: { description: "Caller lacks database:connect", ...errorResponse },
-        404: { description: "No such service", ...errorResponse },
-      },
-    }),
-    requirePermission("database:connect"),
-    validator("param", servicesSchemaIdParam),
-    async (c) => {
-      const { serviceId } = c.req.valid("param")
-      const service = await owned(c.var.organization.id, serviceId)
-      if (service === undefined) return throwNotFound(c, "Service not found")
-
-      try {
-        const connectionUri = await driverFor(service.kind).connectionUri(serviceId)
-
-        await crudAuditLog(db).record({
-          organizationId: c.var.organization.id,
-          actorUserId: c.var.user.id,
-          action: "database:connect",
-          resourceSrn: srnFor("db", c.var.organization.id, "service", serviceId),
-          // Records that the credential was read and by whom — never the credential.
-          after: { revealed: true },
-          ...auditContext(c),
-        })
-
-        return c.json({ id: serviceId, connectionUri })
-      } catch (error) {
-        if (error instanceof ServiceNotProvisionedError) {
-          return throwBadRequest(c, "That service has not finished provisioning")
-        }
-        /*
-          Designed, explainable, and it was reaching the customer as a 500.
-
-          The driver throws this deliberately: what a customer connects with is hashed, by us and
-          by anyone who steals the table, so there is nothing here to reveal. The route did not
-          catch it, so asking for a URI that cannot exist produced `Internal Server Error` — which
-          says the platform is broken rather than that the answer is "rotate".
-        */
-        if (error instanceof SecretNotRecoverableError) {
-          return throwBadRequest(
-            c,
-            "This service's credential is stored as a one-way hash and cannot be shown again. " +
-              "Rotate it to issue a new one — that returns a URI, and invalidates the old.",
-          )
-        }
-        throw error
-      }
-    },
-  )
-  .post(
     "/:orgSlug/services/:serviceId/rotate",
     describeRoute({
       description: "Issues a new password and invalidates the old URI",
@@ -548,7 +509,10 @@ const app = new Hono()
       if (service === undefined) return throwNotFound(c, "Service not found")
 
       try {
-        const result = await driverFor(service.kind).rotateCredentials(serviceId)
+        const result = await driverFor(service.kind).rotateCredentials(
+          serviceId,
+          credentialOwner(c.var.auth),
+        )
         const { connectionUri } = result
 
         // The replacement belongs to whoever rotated it. An application rotating its own credential

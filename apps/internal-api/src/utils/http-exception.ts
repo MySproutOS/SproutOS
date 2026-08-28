@@ -12,7 +12,7 @@ import { ErrorCode } from "./errors.enum"
   a documented response nothing could produce. 502 is the honest code for it: the request was fine
   and an upstream we depend on refused it, which is not the same as this service being broken.
 */
-type HTTPStatusCode = 400 | 401 | 403 | 404 | 405 | 409 | 422 | 429 | 500 | 502 | 503
+type HTTPStatusCode = 400 | 401 | 402 | 403 | 404 | 405 | 409 | 422 | 429 | 500 | 502 | 503
 
 export function throwHTTPException(
   status: HTTPStatusCode,

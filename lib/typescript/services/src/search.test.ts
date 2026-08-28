@@ -30,12 +30,24 @@ const config: SearchServiceConfig = {
   scheme: "https",
 }
 
-const fixtures = { users: [] as string[], organizations: [] as string[], services: [] as string[] }
+const fixtures = {
+  users: [] as string[],
+  organizations: [] as string[],
+  services: [] as string[],
+  clients: [] as string[],
+  grants: [] as string[],
+}
 
 afterAll(async () => {
   if (!reachable) return
   if (fixtures.services.length > 0) {
     await db.deleteFrom("backendService").where("id", "in", fixtures.services).execute()
+  }
+  if (fixtures.grants.length > 0) {
+    await db.deleteFrom("oauthGrant").where("id", "in", fixtures.grants).execute()
+  }
+  if (fixtures.clients.length > 0) {
+    await db.deleteFrom("oauthClient").where("id", "in", fixtures.clients).execute()
   }
   if (fixtures.organizations.length > 0) {
     await db.deleteFrom("organization").where("id", "in", fixtures.organizations).execute()
@@ -46,7 +58,11 @@ afterAll(async () => {
   await db.destroy()
 })
 
-async function service(): Promise<{ backendServiceId: string; organizationId: string }> {
+async function service(): Promise<{
+  backendServiceId: string
+  organizationId: string
+  userId: string
+}> {
   const userId = v7()
   const organizationId = v7()
   const backendServiceId = v7()
@@ -85,7 +101,38 @@ async function service(): Promise<{ backendServiceId: string; organizationId: st
     .execute()
   fixtures.services.push(backendServiceId)
 
-  return { backendServiceId, organizationId }
+  return { backendServiceId, organizationId, userId }
+}
+
+async function grant(organizationId: string, userId: string): Promise<string> {
+  const clientId = v7()
+  const grantId = v7()
+  await db
+    .insertInto("oauthClient")
+    .values({
+      id: clientId,
+      ownerUserId: userId,
+      organizationId,
+      name: "Database app",
+      homepageUrl: "https://example.test",
+      clientType: "public",
+      defaultScopes: ["database:create"],
+      isFirstParty: false,
+    })
+    .execute()
+  await db
+    .insertInto("oauthGrant")
+    .values({
+      id: grantId,
+      oauthClientId: clientId,
+      organizationId,
+      userId,
+      scopes: ["database:create"],
+    })
+    .execute()
+  fixtures.clients.push(clientId)
+  fixtures.grants.push(grantId)
+  return grantId
 }
 
 function secretFrom(uri: string): string {
@@ -194,6 +241,33 @@ describe.skipIf(!reachable)("search driver", () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]?.revokedAt).not.toBeNull()
     expect(rows[1]?.revokedAt).toBeNull()
+  })
+
+  it("rotates one principal without invalidating another", async ({ skip }) => {
+    if (!reachable) skip()
+    const driver = searchDriver(db, config)
+    const { backendServiceId, organizationId, userId } = await service()
+    const grantId = await grant(organizationId, userId)
+
+    await driver.provision({
+      backendServiceId,
+      organizationId,
+      projectId: null,
+      name: "App-created search",
+      credentialOwner: { oauthGrantId: grantId },
+    })
+    await driver.rotateCredentials(backendServiceId, { oauthGrantId: null })
+    await driver.rotateCredentials(backendServiceId, { oauthGrantId: null })
+
+    const live = await db
+      .selectFrom("serviceCredential")
+      .select(["oauthGrantId", "revokedAt"])
+      .where("backendServiceId", "=", backendServiceId)
+      .where("revokedAt", "is", null)
+      .execute()
+
+    expect(live).toHaveLength(2)
+    expect(new Set(live.map((row) => row.oauthGrantId))).toEqual(new Set([grantId, null]))
   })
 
   it("suspending revokes the credential", async ({ skip }) => {

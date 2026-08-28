@@ -8,6 +8,7 @@ import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from ".
 import { SecretNotRecoverableError } from "./valkey"
 import {
   type ConnectionDetails,
+  type CredentialOwner,
   type ProvisionInput,
   type ProvisionResult,
   ServiceNotProvisionedError,
@@ -257,6 +258,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
         username: details.username,
         secretHash: await hashGeneratedSecret(secret),
         lastFour: lastFour(secret),
+        oauthGrantId: input.credentialOwner?.oauthGrantId ?? null,
       })
       .execute()
 
@@ -301,37 +303,23 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
    * would not change anything the customer holds — so both move, and the old URI stops working,
    * which is what rotation means.
    */
-  async function rotateCredentials(backendServiceId: string) {
+  async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
     const row = await locate(backendServiceId)
-    assertSafeIdentifier(row.roleName)
-    const password = generatePassword()
-
-    await withAdmin(config, async (client) => {
-      await client.query(`alter role ${row.roleName} password ${quoteLiteral(password)}`)
-    })
-
-    const sealed = await seal(password, rolePasswordContext(row.roleId))
     const details = detailsFor({ organizationId: row.organizationId, backendServiceId })
     const secret = generateSecret()
 
     await db.transaction().execute(async (tx) => {
-      await tx
-        .updateTable("databaseRole")
-        .set({
-          passwordCiphertext: sealed.ciphertext,
-          passwordWrappedDek: sealed.wrappedDek,
-          passwordKmsKeyId: sealed.kmsKeyId,
-          rotatedAt: new Date(),
-        })
-        .where("id", "=", row.roleId)
-        .execute()
-
-      // Replaced rather than added to: two live credentials for one service would mean a rotation
-      // that does not revoke, which is the half of rotation that matters.
-      await tx
-        .deleteFrom("serviceCredential")
+      let revoke = tx
+        .updateTable("serviceCredential")
+        .set({ revokedAt: new Date() })
         .where("backendServiceId", "=", backendServiceId)
-        .execute()
+        .where("purpose", "=", "tenant")
+        .where("revokedAt", "is", null)
+      revoke =
+        owner?.oauthGrantId == null
+          ? revoke.where("oauthGrantId", "is", null)
+          : revoke.where("oauthGrantId", "=", owner.oauthGrantId)
+      await revoke.execute()
 
       await tx
         .insertInto("serviceCredential")
@@ -341,6 +329,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
           username: details.username,
           secretHash: await hashGeneratedSecret(secret),
           lastFour: lastFour(secret),
+          oauthGrantId: owner?.oauthGrantId ?? null,
         })
         .execute()
     })

@@ -4,6 +4,7 @@ import { v7 } from "uuid"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
 import {
   type ConnectionDetails,
+  type CredentialOwner,
   type ProvisionInput,
   type ProvisionResult,
   ServiceNotProvisionedError,
@@ -72,12 +73,17 @@ export function searchUri(parts: {
 export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): ServiceDriver {
   const scheme = config.scheme ?? "https"
 
-  async function locate(backendServiceId: string) {
+  async function locate(backendServiceId: string, owner?: CredentialOwner) {
     const row = await db
       .selectFrom("serviceCredential")
       .select(["id", "username", "lastFour"])
       .where("backendServiceId", "=", backendServiceId)
       .where("revokedAt", "is", null)
+      .$if(owner !== undefined, (query) =>
+        owner?.oauthGrantId === null
+          ? query.where("oauthGrantId", "is", null)
+          : query.where("oauthGrantId", "=", owner!.oauthGrantId),
+      )
       .executeTakeFirst()
 
     if (row === undefined) throw new ServiceNotProvisionedError(backendServiceId)
@@ -114,6 +120,7 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
         username,
         secretHash: await hashGeneratedSecret(secret),
         lastFour: lastFour(secret),
+        oauthGrantId: input.credentialOwner?.oauthGrantId ?? null,
       })
       .execute()
 
@@ -140,7 +147,7 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
     return detailsFor((await locate(backendServiceId)).username)
   }
 
-  async function rotateCredentials(backendServiceId: string) {
+  async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
     const existing = await locate(backendServiceId)
 
     /*
@@ -154,11 +161,17 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
     */
     const secret = await db.transaction().execute(async (trx) => {
       const fresh = generateSecret()
-      await trx
+      let revoke = trx
         .updateTable("serviceCredential")
         .set({ revokedAt: new Date() })
-        .where("id", "=", existing.id)
-        .execute()
+        .where("backendServiceId", "=", backendServiceId)
+        .where("purpose", "=", "tenant")
+        .where("revokedAt", "is", null)
+      revoke =
+        owner?.oauthGrantId == null
+          ? revoke.where("oauthGrantId", "is", null)
+          : revoke.where("oauthGrantId", "=", owner.oauthGrantId)
+      await revoke.execute()
       await trx
         .insertInto("serviceCredential")
         .values({
@@ -167,6 +180,7 @@ export function searchDriver(db: Kysely<DB>, config: SearchServiceConfig): Servi
           username: existing.username,
           secretHash: await hashGeneratedSecret(fresh),
           lastFour: lastFour(fresh),
+          oauthGrantId: owner?.oauthGrantId ?? null,
         })
         .execute()
       return fresh

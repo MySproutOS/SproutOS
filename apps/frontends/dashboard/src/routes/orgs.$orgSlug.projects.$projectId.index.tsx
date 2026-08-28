@@ -145,6 +145,9 @@ function ProjectDetail() {
                   <Badge variant={data.status === "ready" ? "success" : "outline"}>
                     {PROJECT_STATUS_LABELS[data.status]}
                   </Badge>
+                  {data.managedByOauthApp !== null && (
+                    <Badge variant="outline">Managed by {data.managedByOauthApp.name}</Badge>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">

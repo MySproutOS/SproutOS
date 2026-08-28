@@ -228,6 +228,40 @@ describe.skipIf(!reachable)("authorized applications", () => {
     expect(service?.deletedAt).toBeNull()
   })
 
+  it("does not rotate an existing user credential when revoking the app", async ({ skip }) => {
+    if (!reachable) skip()
+    const { grantId, serviceId } = await grantWithDatabase()
+    const appCredential = await db
+      .selectFrom("serviceCredential")
+      .select("username")
+      .where("backendServiceId", "=", serviceId)
+      .executeTakeFirstOrThrow()
+    const userCredentialId = v7()
+    await db
+      .insertInto("serviceCredential")
+      .values({
+        id: userCredentialId,
+        backendServiceId: serviceId,
+        username: appCredential.username,
+        secretHash: `sha256$${"1".repeat(64)}`,
+        lastFour: "user",
+        oauthGrantId: null,
+      })
+      .execute()
+
+    const revoked = await call(
+      "POST",
+      `/v1/orgs/${orgSlug}/oauth-grants/${grantId}/revoke`,
+      owner!,
+      { services: [{ id: serviceId, action: "keep" }] },
+    )
+    expect(revoked.status).toBe(200)
+    expect((revoked.json.kept as Json[])[0]?.connectionUri).toBeUndefined()
+
+    const live = await liveCredentials(serviceId)
+    expect(live).toEqual([{ id: userCredentialId, oauthGrantId: null, revokedAt: null }])
+  })
+
   it("refuses to revoke while a database is unaccounted for", async ({ skip }) => {
     if (!reachable) skip()
     const { grantId } = await grantWithDatabase()

@@ -34,6 +34,8 @@ export type RepositoryPlan =
 export type ProvisionProjectInput = {
   organizationId: string
   actorUserId: string
+  /** OAuth grant that created this project; null for a person using the dashboard. */
+  createdByOauthGrantId: string | null
   name: string
   slug: string
   kind: string
@@ -140,6 +142,7 @@ export function provisionProject(db: Kysely<DB>) {
         repositoryId: repository.id,
         storeListingId: input.storeListingId,
         agentCredentialId: input.agentCredentialId,
+        createdByOauthGrantId: input.createdByOauthGrantId,
         name: input.name,
         slug: input.slug,
         kind: input.kind,

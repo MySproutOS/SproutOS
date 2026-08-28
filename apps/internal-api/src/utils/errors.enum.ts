@@ -31,6 +31,7 @@ export enum ErrorCode {
 
   // Business logic errors
   OperationFailed = "OperationFailed",
+  InsufficientCredit = "InsufficientCredit",
 
   // Data errors
   DataIntegrityViolation = "DataIntegrityViolation",

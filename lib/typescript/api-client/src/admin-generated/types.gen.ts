@@ -30,6 +30,7 @@ export type ErrorObjectT = {
     | "ResourceAlreadyExists"
     | "ResourceLocked"
     | "OperationFailed"
+    | "InsufficientCredit"
     | "DataIntegrityViolation"
     | "RateLimitExceeded"
     | string

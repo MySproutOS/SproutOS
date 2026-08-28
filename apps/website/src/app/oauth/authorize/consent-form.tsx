@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@ui/base/ui/button"
+import { Checkbox } from "@ui/base/ui/checkbox"
 
 /**
  * What the person actually decides, and the only screen where they can.
@@ -37,6 +38,8 @@ export function ConsentForm({
   client,
   organizations,
   scopes,
+  optionalScopes,
+  databaseIntent,
   redirectUri,
   state,
   codeChallenge,
@@ -45,8 +48,10 @@ export function ConsentForm({
   apiBase,
 }: {
   client: Client
-  organizations: { id: string; name: string }[]
+  organizations: { id: string; name: string; slug: string; availableCredit: string }[]
   scopes: string[]
+  optionalScopes: string[]
+  databaseIntent: boolean
   redirectUri: string
   state: string | null
   codeChallenge: string
@@ -58,13 +63,20 @@ export function ConsentForm({
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? "")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [grantedOptionalScopes, setGrantedOptionalScopes] = useState<string[]>([])
+  const selectedOrganization = organizations.find(
+    (organization) => organization.id === organizationId,
+  )
+
+  const mandatoryScopes = scopes.filter((scope) => !optionalScopes.includes(scope))
+  const grantedScopes = [...mandatoryScopes, ...grantedOptionalScopes]
 
   function deny() {
     const target = new URL(redirectUri)
     target.searchParams.set("error", "access_denied")
     target.searchParams.set("error_description", "The user declined the request")
     if (state !== null) target.searchParams.set("state", state)
-    window.location.href = target.toString()
+    window.location.assign(target.toString())
   }
 
   async function approve() {
@@ -81,7 +93,7 @@ export function ConsentForm({
         body: JSON.stringify({
           clientId: client.id,
           redirectUri,
-          scopes,
+          scopes: grantedScopes,
           state,
           codeChallenge,
           codeChallengeMethod,
@@ -97,7 +109,7 @@ export function ConsentForm({
         return
       }
 
-      window.location.href = body.redirectTo
+      window.location.assign(body.redirectTo)
     } catch {
       setError("Could not reach SproutOS. Nothing was granted.")
       setBusy(false)
@@ -155,7 +167,7 @@ export function ConsentForm({
         </p>
 
         <ul className="mt-3 flex flex-col gap-1.5">
-          {scopes.map((scope) => {
+          {mandatoryScopes.map((scope) => {
             const { resource, action } = describe(scope)
             return (
               <li key={scope} className="flex items-baseline gap-2 text-sm">
@@ -171,6 +183,45 @@ export function ConsentForm({
             )
           })}
         </ul>
+
+        {databaseIntent && optionalScopes.includes("database:create") && (
+          <div className="mt-5 rounded-lg border rule-soft bg-background/40 p-4">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="database-create"
+                checked={grantedOptionalScopes.includes("database:create")}
+                onCheckedChange={(checked) => {
+                  setGrantedOptionalScopes(checked ? ["database:create"] : [])
+                }}
+              />
+              <div className="flex flex-col gap-1">
+                <label htmlFor="database-create" className="text-sm font-medium">
+                  Allow this application to create a database
+                </label>
+                <p className="text-xs text-muted-foreground text-pretty">
+                  Optional. Creating and running a database uses your SproutOS credit. You can
+                  continue without database access, and permission alone does not charge you.
+                </p>
+                {selectedOrganization !== undefined && (
+                  <p className="text-xs text-muted-foreground text-pretty">
+                    <span className="font-medium text-foreground">
+                      {selectedOrganization.availableCredit} available
+                    </span>{" "}
+                    for {selectedOrganization.name}.{" "}
+                    <a
+                      href={`/orgs/${selectedOrganization.slug}/settings/billing`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline underline-offset-4 hover:text-foreground"
+                    >
+                      View billing
+                    </a>
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <p className="mt-4 text-xs text-muted-foreground text-pretty">
           It can never do more than you can. Anything you are not permitted to do yourself stays

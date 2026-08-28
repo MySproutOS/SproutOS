@@ -34,7 +34,8 @@ export const Route = createFileRoute("/orgs/$orgSlug/settings/connected-apps")({
   component: ConnectedApps,
 })
 
-type KeptUri = { id: string; name: string; kind: string; connectionUri: string }
+type KeptService = { id: string; name: string; kind: string; connectionUri?: string }
+type KeptUri = KeptService & { connectionUri: string }
 
 function ConnectedApps() {
   const { orgSlug } = Route.useParams()
@@ -79,7 +80,9 @@ function ConnectedApps() {
       {
         onSuccess: (result) => {
           setRevoking(null)
-          const list = (result as { kept?: KeptUri[] }).kept ?? []
+          const list = ((result as { kept?: KeptService[] }).kept ?? []).filter(
+            (service): service is KeptUri => service.connectionUri !== undefined,
+          )
           // Only worth a dialog if there is something that can never be shown again.
           setKept(list.length > 0 ? list : null)
         },

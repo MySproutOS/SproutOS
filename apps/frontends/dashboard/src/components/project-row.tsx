@@ -92,6 +92,11 @@ export function ProjectRow({ orgSlug, project }: { orgSlug: string; project: Pro
           <ExternalLinkIcon className="size-3 shrink-0" aria-hidden="true" />
           <span className="sr-only">Open on GitHub</span>
         </a>
+        {project.managedByOauthApp !== null && (
+          <span className="text-[11px] text-muted-foreground">
+            Managed by {project.managedByOauthApp.name}
+          </span>
+        )}
       </div>
 
       <div className="hidden w-[108px] shrink-0 flex-col items-end gap-[3px] sm:flex">

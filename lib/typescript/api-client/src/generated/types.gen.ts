@@ -30,6 +30,7 @@ export type ErrorObjectT = {
     | "ResourceAlreadyExists"
     | "ResourceLocked"
     | "OperationFailed"
+    | "InsufficientCredit"
     | "DataIntegrityViolation"
     | "RateLimitExceeded"
     | string
@@ -950,6 +951,10 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       hasUpstreamUpdate: boolean
       isGroup: boolean
       parentProjectId: string | null
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -1058,6 +1063,10 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       hasUpstreamUpdate: boolean
       isGroup: boolean
       parentProjectId: string | null
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -1203,6 +1212,10 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     hasUpstreamUpdate: boolean
     isGroup: boolean
     parentProjectId: string | null
+    managedByOauthApp: {
+      clientId: string
+      name: string
+    } | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1302,6 +1315,10 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     hasUpstreamUpdate: boolean
     isGroup: boolean
     parentProjectId: string | null
+    managedByOauthApp: {
+      clientId: string
+      name: string
+    } | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -2613,6 +2630,56 @@ export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses = {
 export type DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse =
   DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses[keyof DeleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses]
 
+export type PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData = {
+  body?: {
+    label: string
+  }
+  path: {
+    orgSlug: string
+    credentialId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/agent/credentials/{credentialId}"
+}
+
+export type PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors = {
+  /**
+   * Label already used
+   */
+  400: ErrorResponseT
+  /**
+   * Caller may not write credentials
+   */
+  403: ErrorResponseT
+  /**
+   * No such live credential
+   */
+  404: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdError =
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors[keyof PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors]
+
+export type PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses = {
+  /**
+   * Updated credential metadata
+   */
+  200: {
+    id: string
+    kind: "claude_subscription" | "anthropic_api_key" | "openai_api_key" | "openrouter_api_key"
+    label: string
+    lastFour: string | null
+    baseUrl: string | null
+    expiresAt: Date | null
+    lastVerifiedAt: Date | null
+    revokedAt: Date | null
+    createdAt: Date
+  }
+}
+
+export type PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse =
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses[keyof PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses]
+
 export type GetV1OrgsByOrgSlugAgentConfigData = {
   body?: never
   path: {
@@ -2872,6 +2939,10 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
       database: string | null
       username: string | null
       keyPrefix?: string
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       createdAt: Date
     }>
   }
@@ -2899,6 +2970,10 @@ export type PostV1OrgsByOrgSlugServicesErrors = {
    */
   400: ErrorResponseT
   /**
+   * The organization has no spendable credit
+   */
+  402: ErrorResponseT
+  /**
    * Caller lacks database:create
    */
   403: ErrorResponseT
@@ -2920,44 +2995,6 @@ export type PostV1OrgsByOrgSlugServicesResponses = {
 
 export type PostV1OrgsByOrgSlugServicesResponse =
   PostV1OrgsByOrgSlugServicesResponses[keyof PostV1OrgsByOrgSlugServicesResponses]
-
-export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionData = {
-  body?: never
-  path: {
-    orgSlug: string
-    serviceId: string
-  }
-  query?: never
-  url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection"
-}
-
-export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors = {
-  /**
-   * Caller lacks database:connect
-   */
-  403: ErrorResponseT
-  /**
-   * No such service
-   */
-  404: ErrorResponseT
-}
-
-export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionError =
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors]
-
-export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
-  /**
-   * Connection URI
-   */
-  200: {
-    id: string
-    connectionUri: string
-    keyPrefix?: string
-  }
-}
-
-export type PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse =
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses]
 
 export type PostV1OrgsByOrgSlugServicesByServiceIdRotateData = {
   body?: never
@@ -5499,9 +5536,9 @@ export type PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses = {
       name: string
       kind: string
       /**
-       * Shown once. It cannot be retrieved again.
+       * Present only when a user credential had to be issued.
        */
-      connectionUri: string
+      connectionUri?: string
       keyPrefix?: string
     }>
     deleted: Array<{

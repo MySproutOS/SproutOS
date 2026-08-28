@@ -195,7 +195,7 @@ const routes = app
         id: string
         name: string
         kind: string
-        connectionUri: string
+        connectionUri?: string
         keyPrefix?: string
       }[] = []
       const deleted: { id: string; name: string; kind: string }[] = []
@@ -215,16 +215,25 @@ const routes = app
         }
 
         /*
-          Kept means rotated, not left alone.
+          A kept service must have a user credential before the grant credential is revoked.
 
-          The application minted the only credential this database has, so leaving it would hand the
-          user a database the application they just cut off can still reach. Rotation revokes the old
-          secret and issues one with no grant on it — the user's own — which is the same operation as
-          the rotate button on the Databases page and has the same consequence: anything still using
-          the old URI stops working now.
+          If one already exists, leave it byte-for-byte alone. Otherwise issue one and return it
+          once. The grant's own credential is revoked below after every service has been handled.
         */
         // eslint-disable-next-line no-await-in-loop
-        const result = await driverFor(service.kind).rotateCredentials(service.id)
+        const existingUserCredential = await db
+          .selectFrom("serviceCredential")
+          .select("id")
+          .where("backendServiceId", "=", service.id)
+          .where("purpose", "=", "tenant")
+          .where("oauthGrantId", "is", null)
+          .where("revokedAt", "is", null)
+          .executeTakeFirst()
+        // eslint-disable-next-line no-await-in-loop -- issuance is conditional per service
+        const result =
+          existingUserCredential === undefined
+            ? await driverFor(service.kind).rotateCredentials(service.id, { oauthGrantId: null })
+            : null
         // eslint-disable-next-line no-await-in-loop
         await db
           .updateTable("backendService")
@@ -235,8 +244,8 @@ const routes = app
           id: service.id,
           name: service.name,
           kind: service.kind,
-          connectionUri: result.connectionUri,
-          ...(result.keyPrefix === undefined ? {} : { keyPrefix: result.keyPrefix }),
+          ...(result === null ? {} : { connectionUri: result.connectionUri }),
+          ...(result?.keyPrefix === undefined ? {} : { keyPrefix: result.keyPrefix }),
         })
       }
 

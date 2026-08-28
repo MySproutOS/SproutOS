@@ -50,6 +50,7 @@ import {
   getV1UserMeExportResponseTransformer,
   getV1UserMeImpersonationResponseTransformer,
   getV1UserMeProfileResponseTransformer,
+  patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponseTransformer,
   patchV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
@@ -308,6 +309,9 @@ import type {
   GetV1UserMePreferencesResponses,
   GetV1UserMeProfileData,
   GetV1UserMeProfileResponses,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugErrors,
   PatchV1OrgsByOrgSlugOauthClientsByClientIdData,
@@ -455,9 +459,6 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesErrors,
   PostV1OrgsByOrgSlugRolesResponses,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionData,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses,
@@ -1585,6 +1586,32 @@ export const deleteV1OrgsByOrgSlugAgentCredentialsByCredentialId = <
   >({ url: "/v1/orgs/{orgSlug}/agent/credentials/{credentialId}", ...options })
 
 /**
+ * Changes a model credential's display label without replacing its secret
+ */
+export const patchV1OrgsByOrgSlugAgentCredentialsByCredentialId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData, ThrowOnError>,
+): RequestResult<
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
+    PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
+    ThrowOnError
+  >({
+    responseTransformer: patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/agent/credentials/{credentialId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
  * Reads the organization's agent configuration and what a run would do now
  */
 export const getV1OrgsByOrgSlugAgentConfig = <ThrowOnError extends boolean = false>(
@@ -1761,24 +1788,6 @@ export const postV1OrgsByOrgSlugServices = <ThrowOnError extends boolean = false
       ...options.headers,
     },
   })
-
-/**
- * Reveals the connection URI. Audited, because a credential leaves the system
- */
-export const postV1OrgsByOrgSlugServicesByServiceIdConnection = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData, ThrowOnError>,
-): RequestResult<
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).post<
-    PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
-    PostV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
-    ThrowOnError
-  >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection", ...options })
 
 /**
  * Issues a new password and invalidates the old URI

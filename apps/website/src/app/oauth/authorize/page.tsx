@@ -1,4 +1,6 @@
 import { db } from "@sproutos/db"
+import { availableBalance } from "@lib/billing/ledger"
+import { formatBalanceMicroUsd } from "@lib/billing/money"
 import { redirect } from "next/navigation"
 import { getCurrentSession } from "@website/lib/auth"
 import { ConsentForm } from "./consent-form"
@@ -29,6 +31,10 @@ function one(value: string | string[] | undefined): string | null {
   return value ?? null
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 /** Rendered when the request is too broken to answer, and too broken to answer *to*. */
 function Refusal({ title, detail }: { title: string; detail: string }) {
   return (
@@ -56,12 +62,22 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
   const state = one(params.state)
   const codeChallenge = one(params.code_challenge)
   const codeChallengeMethod = one(params.code_challenge_method) ?? "S256"
+  const intent = one(params.intent)
 
   if (clientId === null || redirectUri === null) {
     return (
       <Refusal
         title="Something is missing from this request"
         detail="An authorization request must name the application and where to send you back to. This one did not."
+      />
+    )
+  }
+
+  if (!isUuid(clientId)) {
+    return (
+      <Refusal
+        title="That application cannot ask for access"
+        detail="It is not registered here, or it has been suspended. If you were sent from somewhere claiming to be a SproutOS application, treat that link with suspicion."
       />
     )
   }
@@ -157,10 +173,17 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
   const memberships = await db
     .selectFrom("organizationMember")
     .innerJoin("organization", "organization.id", "organizationMember.organizationId")
-    .select(["organization.id as id", "organization.name as name"])
+    .select(["organization.id as id", "organization.name as name", "organization.slug as slug"])
     .where("organizationMember.userId", "=", authenticated.user.id)
     .orderBy("organization.name")
     .execute()
+
+  const organizations = await Promise.all(
+    memberships.map(async (organization) => ({
+      ...organization,
+      availableCredit: formatBalanceMicroUsd(await availableBalance(db, organization.id)),
+    })),
+  )
 
   if (memberships.length === 0) {
     return (
@@ -206,8 +229,14 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
         homepageUrl: client.homepageUrl,
         trusted: client.isFirstParty || client.isVerified,
       }}
-      organizations={memberships}
+      organizations={organizations}
       scopes={scopes}
+      optionalScopes={
+        intent === "create_personal_database" && scopes.includes("database:create")
+          ? ["database:create"]
+          : []
+      }
+      databaseIntent={intent === "create_personal_database"}
       redirectUri={redirectUri}
       state={state}
       codeChallenge={codeChallenge}

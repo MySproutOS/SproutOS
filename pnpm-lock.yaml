@@ -607,6 +607,9 @@ importers:
       '@lib/api-client':
         specifier: workspace:*
         version: link:../../lib/typescript/api-client
+      '@lib/billing':
+        specifier: workspace:*
+        version: link:../../lib/typescript/billing
       '@lib/dao':
         specifier: workspace:*
         version: link:../../lib/typescript/dao

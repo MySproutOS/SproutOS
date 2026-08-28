@@ -16,7 +16,10 @@ export type ProvisionInput = {
   projectId: string | null
   /** The customer's name for it, already validated. Drivers derive real identifiers from the id. */
   name: string
+  credentialOwner?: CredentialOwner
 }
+
+export type CredentialOwner = { oauthGrantId: string | null }
 
 /**
  * What a driver hands back, exactly once.
@@ -46,7 +49,10 @@ export type ServiceDriver = {
   connectionUri: (backendServiceId: string) => Promise<string>
   details: (backendServiceId: string) => Promise<ConnectionDetails>
   /** A new password, invalidating the old URI. The only recovery from a leaked one. */
-  rotateCredentials: (backendServiceId: string) => Promise<CredentialRotationResult>
+  rotateCredentials: (
+    backendServiceId: string,
+    credentialOwner?: CredentialOwner,
+  ) => Promise<CredentialRotationResult>
   suspend: (backendServiceId: string) => Promise<void>
   /**
    * Undo a suspension, where the driver can.
