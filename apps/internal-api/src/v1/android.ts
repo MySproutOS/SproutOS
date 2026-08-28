@@ -1,17 +1,20 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
-import { fetchAndroidApp } from "@lib/dao"
+import { fetchAndroidApp, fetchClientRelease } from "@lib/dao"
 import {
   type AndroidApp,
   type AndroidSite,
   buildCatalogue,
   CATALOGUE_TTL_SECONDS,
   toApp,
+  toClientUpdate,
 } from "@lib/services"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
-import { authNoThrowMiddleware } from "../middleware"
+import { optionalAuthMiddleware } from "../middleware"
+import { actionsCover } from "../rbac"
+import { throwForbidden } from "../utils/http-exception"
 
 function bucket(): string {
   const configured = process.env.ANDROID_ARTIFACT_BUCKET
@@ -56,25 +59,48 @@ const app: Hono = new Hono().get(
     description: "The verified public and caller-owned Android apps and deployed sites.",
     responses: { 200: { description: "Catalogue version 2" } },
   }),
-  authNoThrowMiddleware,
+  optionalAuthMiddleware,
   async (c) => {
     const user = c.var.user
-    const [publicRows, personalRows, siteRows] = await Promise.all([
+    const auth = c.var.auth
+    if (auth !== null && auth.kind !== "session" && !actionsCover(auth.scopes, "project:read")) {
+      return throwForbidden(c, "The credential does not grant project:read")
+    }
+    const organizationId = auth === null || auth.kind === "session" ? null : auth.organizationId
+    const [publicRows, personalRows, siteRows, clientRelease] = await Promise.all([
       fetchAndroidApp(db).listPublicCatalogue(),
-      user === null ? [] : fetchAndroidApp(db).listPersonalCatalogue(user.id),
-      user === null ? [] : fetchAndroidApp(db).listPersonalSites(user.id),
+      user === null ? [] : fetchAndroidApp(db).listPersonalCatalogue(user.id, organizationId),
+      user === null ? [] : fetchAndroidApp(db).listPersonalSites(user.id, organizationId),
+      fetchClientRelease(db).latest([
+        "packageName",
+        "versionName",
+        "versionCode",
+        "apkObjectKey",
+        "apkObjectVersion",
+        "apkSha256",
+        "apkSizeBytes",
+        "certificateSha256",
+        "required",
+      ]),
     ])
     const client = s3()
     let urls: Map<string, string>
     try {
-      urls = await signAll(
-        client,
-        [...publicRows, ...personalRows].flatMap((row) =>
+      urls = await signAll(client, [
+        ...[...publicRows, ...personalRows].flatMap((row) =>
           row.signedKey === null || row.signedObjectVersion === null
             ? []
             : [{ key: row.signedKey, version: row.signedObjectVersion }],
         ),
-      )
+        ...(clientRelease === undefined
+          ? []
+          : [
+              {
+                key: clientRelease.apkObjectKey,
+                version: clientRelease.apkObjectVersion,
+              },
+            ]),
+      ])
     } finally {
       client.destroy()
     }
@@ -117,6 +143,29 @@ const app: Hono = new Hono().get(
         (key) => urls.get(`${key}:${row.signedObjectVersion}`) ?? "",
       )
 
+    const clientSizeBytes =
+      clientRelease === undefined ||
+      BigInt(clientRelease.apkSizeBytes) <= 0n ||
+      BigInt(clientRelease.apkSizeBytes) > BigInt(Number.MAX_SAFE_INTEGER)
+        ? null
+        : Number(clientRelease.apkSizeBytes)
+    const clientUpdate =
+      clientRelease === undefined || clientSizeBytes === null
+        ? undefined
+        : toClientUpdate(
+            {
+              packageName: clientRelease.packageName,
+              versionName: clientRelease.versionName,
+              versionCode: clientRelease.versionCode,
+              sha256: clientRelease.apkSha256,
+              sizeBytes: clientSizeBytes,
+              certificateSha256: clientRelease.certificateSha256,
+              objectKey: clientRelease.apkObjectKey,
+              required: clientRelease.required,
+            },
+            (key) => urls.get(`${key}:${clientRelease.apkObjectVersion}`) ?? "",
+          )
+
     const catalogue = buildCatalogue({
       publicApps: publicRows.map(asApp).filter((entry): entry is AndroidApp => entry !== undefined),
       personalApps: personalRows
@@ -125,6 +174,7 @@ const app: Hono = new Hono().get(
       personalSites: siteRows
         .filter((row) => row.url !== null)
         .map((row): AndroidSite => ({ name: row.name, url: row.url!, summary: "" })),
+      clientUpdate,
     })
     c.header("Cache-Control", "private, no-store")
     return c.json(catalogue)
