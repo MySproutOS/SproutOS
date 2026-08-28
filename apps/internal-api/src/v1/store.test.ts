@@ -135,6 +135,15 @@ describe.skipIf(!reachable)("store routes", () => {
       expect(screenshots[0].url).toBe("https://cdn.example.com/shot.png")
     })
 
+    it("serves Twenty's customer-facing pitch with its original application links", async () => {
+      const response = await call("GET", "/v1/store/listings/twenty", null)
+      expect(response.status).toBe(200)
+      expect(response.json.descriptionMd).toContain("Fork Twenty")
+      expect(response.json.descriptionMd).not.toMatch(/largest application|real database|instance/i)
+      expect(response.json.upstreamRepoUrl).toBe("https://github.com/twentyhq/twenty")
+      expect(response.json.homepageUrl).toBe("https://twenty.com")
+    })
+
     it("serves the categories and tag facets anonymously", async () => {
       const categories = await call("GET", "/v1/store/categories", null)
       expect(categories.status).toBe(200)

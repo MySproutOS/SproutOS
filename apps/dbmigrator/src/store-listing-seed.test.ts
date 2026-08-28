@@ -1,7 +1,25 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { describe, expect, it } from "vitest"
-import { LISTING_ARCHIVED } from "./seeds/0004_store_listing"
+import { LISTING_ARCHIVED, TWENTY_STORE_COPY } from "./seeds/0004_store_listing"
+
+describe("Twenty's store copy", () => {
+  it("pitches why a customer would fork it without infrastructure commentary", () => {
+    expect(TWENTY_STORE_COPY.descriptionMd).toContain("Fork Twenty")
+    expect(TWENTY_STORE_COPY.descriptionMd).toContain("shared sales workspace")
+    expect(TWENTY_STORE_COPY.descriptionMd).not.toMatch(
+      /largest application|real database|instance/i,
+    )
+  })
+
+  it("keeps the original application and repository links", () => {
+    expect(TWENTY_STORE_COPY).toMatchObject({
+      upstreamOwner: "twentyhq",
+      upstreamRepo: "twenty",
+      homepageUrl: "https://twenty.com",
+    })
+  })
+})
 
 /**
  * The status the seed writes has to be one the table accepts.
