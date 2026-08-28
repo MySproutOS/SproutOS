@@ -8,6 +8,7 @@ mod isolation;
 mod oci;
 mod package;
 mod plugin;
+mod provenance;
 mod resolve;
 mod workspace;
 
@@ -30,5 +31,6 @@ pub use plugin::{
     ApplyLimits, ApplyResult, CanonicalProtocol, IsolationProvider, PluginRunner, ProtocolOutcome,
     TemplateProtocol,
 };
+pub use provenance::CosignProvenanceVerifier;
 pub use resolve::{CatalogueResolver, ResolvedTemplate, TemplateSelector};
 pub use workspace::{ChangeKind, DeclaredChange, DiffLimits, WorkspaceChange};

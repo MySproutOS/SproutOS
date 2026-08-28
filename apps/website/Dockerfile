@@ -9,6 +9,30 @@
 # instance-hours a month in aggregate, which is one instance running continuously, so three
 # processes share it rather than three instances sitting mostly idle.
 
+# Immutable supply-chain tools used by the worker. The Cosign image is pinned by its multi-arch
+# index digest; this build is linux/arm64, so BuildKit selects the attested arm64 executable. The
+# GitHub CLI archive is pinned by GitHub's published asset digest rather than downloaded by tag.
+FROM ghcr.io/sigstore/cosign/cosign:v3.0.2@sha256:b29487e48205d875c324c79583e2806d9d269c0fa299e0861bbec023d8430c8b AS cosign
+
+FROM node:24.14.0-slim AS worker-tools
+ADD --checksum=sha256:cf689084f3a3618f7eae4a2420d335d74626d65f5e594b9828d125d69f800d86 \
+    https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_arm64.tar.gz \
+    /tmp/gh.tar.gz
+RUN tar -xzf /tmp/gh.tar.gz -C /tmp \
+    && install -o root -g root -m 0755 /tmp/gh_2.98.0_linux_arm64/bin/gh /usr/local/bin/gh
+
+# A native GNU addon, built inside the same arm64/glibc family as the Node runtime that loads it.
+# Building it on the developer's macOS host would produce a valid `.node` file for the wrong ABI.
+FROM rust:1.93.0-slim-bookworm AS sprout-node-build
+WORKDIR /src
+RUN apt-get update && apt-get install --yes --no-install-recommends file && rm -rf /var/lib/apt/lists/*
+COPY . .
+RUN cargo build --locked --release -p sprout-node \
+    && mkdir -p /out \
+    && install -m 0755 target/release/libsprout_node.so \
+      /out/sprout-node.linux-arm64-gnu.node \
+    && file /out/sprout-node.linux-arm64-gnu.node | grep -Eq 'ELF 64-bit LSB.*(ARM aarch64|ARM64)'
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
@@ -35,6 +59,9 @@ COPY packages/ packages/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+# Override any host artifact in the build context with the one built for the image's exact ABI.
+COPY --from=sprout-node-build /out/sprout-node.linux-arm64-gnu.node \
+  /src/packages/sprout-node/sprout-node.linux-arm64-gnu.node
 RUN pnpm run build --filter=website --filter=@api/internal
 
 # The production dependency tree, resolved here so it is resolved for *this* platform. A tree built
@@ -79,6 +106,20 @@ ENV NODE_ENV=production \
     HOME=/home/node
 
 WORKDIR /opt/sproutos
+
+# `git` prepares the upstream checkout. Bubblewrap is the root-owned namespace boundary for the
+# only executable the Rust core launches. No package-manager Cosign/GitHub CLI versions are used:
+# both verified binaries come from the immutable stages above.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends bubblewrap ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(stat -c '%u:%a' /usr/bin/bwrap)" = "0:755"
+COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
+COPY --from=worker-tools /usr/local/bin/gh /usr/local/bin/gh
+RUN test "$(stat -c '%u:%a' /usr/local/bin/cosign)" = "0:755" \
+    && test "$(stat -c '%u:%a' /usr/local/bin/gh)" = "0:755" \
+    && cosign version >/dev/null \
+    && gh version >/dev/null
 
 COPY --from=build /src/apps/website/.next/standalone/ ./
 # `.next/static` and `public/` are excluded from standalone output on purpose — Next assumes a CDN

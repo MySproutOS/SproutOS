@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "packages/sprout-template-protocol",
   "packages/sprout-core",
+  "packages/sprout-node",
   "lib/rust/srn",
   "lib/rust/metering-proto",
   "lib/rust/tenant-auth",
