@@ -22,6 +22,23 @@ fn current_target() -> &'static str {
     }
 }
 
+fn published_umami_platform_manifest() -> &'static str {
+    match current_target() {
+        "darwin_arm64" => "sha256:efb88a3089d4b14b12d155f09c360227f0de2f3dd21ccce42df2c901036f16e9",
+        "darwin_amd64" => "sha256:a19fad8d53f268fcf504ae61e9bb01f27e07e6ad7d16930250324bd9ee855ced",
+        "linux_arm64_musl" => {
+            "sha256:fab6e3d341c5b5283d6691510c16b21220b0395fee678ac23f268376429dfc67"
+        }
+        "linux_amd64_musl" => {
+            "sha256:02e78f31193bf7de4e1ac511617de7e646932c38fb016547ba3fb2eeb1e17c27"
+        }
+        "windows_amd64" => {
+            "sha256:3fc4dfd7673da178aadade00261a9089a7bbe467dbbc14de324cd6f9780e8af0"
+        }
+        target => panic!("unsupported published target: {target}"),
+    }
+}
+
 fn resolution(target: &str) -> Value {
     let plugin_digest = format!("sha256:{}", "a".repeat(64));
     json!({
@@ -372,9 +389,10 @@ fn published_oci_attestation_isolation_and_plugin_apply_end_to_end() {
             .unwrap()
             .as_str()
             .unwrap();
-        assert_ne!(
-            selected, "sha256:1f2b4dffa39090d78aeebbd9596ed887d7950259ee5091cdcc0952ca684bf15e",
-            "the result must store the selected Linux platform manifest, not the root index"
+        assert_eq!(
+            selected,
+            published_umami_platform_manifest(),
+            "the result must store the exact selected platform manifest, not the root index"
         );
         assert!(!String::from_utf8_lossy(&output.stdout).contains("signed-e2e-redaction-canary"));
     }

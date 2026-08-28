@@ -105,15 +105,13 @@ jobs:
           "$binary" deploy --help >/dev/null
 
       - name: Install Linux template isolation and provenance verifier
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.os == 'linux'
         shell: bash
         run: sudo apt-get update && sudo apt-get install --yes bubblewrap
       - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22
-        if: matrix.os == 'macos' || matrix.os == 'windows' || matrix.target == 'x86_64-unknown-linux-gnu'
         with:
           install-dir: ${{ matrix.os == 'windows' && 'C:\Program Files\cosign' || (matrix.os == 'macos' && matrix.arch == 'arm64' && '/opt/homebrew/bin' || '/usr/local/bin') }}
       - name: Exercise published OCI through attestation, isolation, and plugin apply
-        if: matrix.os == 'macos' || matrix.os == 'windows' || matrix.target == 'x86_64-unknown-linux-gnu'
         shell: bash
         env:
           SPROUT_CLI_RUN_SIGNED_TEMPLATE_E2E: "1"
