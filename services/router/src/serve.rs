@@ -7,7 +7,7 @@ use aws_sdk_lambda::Client as LambdaClient;
 use aws_sdk_lambda::primitives::Blob;
 use aws_types::request_id::RequestId as _;
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -56,8 +56,10 @@ pub async fn handle(
     method: axum::http::Method,
     uri: Uri,
     headers: HeaderMap,
+    trusted: Option<Extension<crate::edge::ConnectionContext>>,
     body: Bytes,
 ) -> Response {
+    let trusted = trusted.as_deref();
     let host = headers.get("host").and_then(|value| value.to_str().ok());
 
     /*
@@ -126,9 +128,9 @@ pub async fn handle(
         method: method.as_str(),
         path: uri.path(),
         query: uri.query().unwrap_or(""),
-        headers: forwarded_headers(&headers),
+        headers: forwarded_headers(&headers, trusted),
         host,
-        source_ip: &source_ip(&headers),
+        source_ip: &source_ip(&headers, trusted),
         request_id: &route.deployment_id,
         body: &body,
     });
@@ -320,24 +322,54 @@ mod response_tests {
     }
 }
 
-fn forwarded_headers(headers: &HeaderMap) -> HashMap<String, String> {
-    headers
+fn forwarded_headers(
+    headers: &HeaderMap,
+    trusted: Option<&crate::edge::ConnectionContext>,
+) -> HashMap<String, String> {
+    let mut forwarded = headers
         .iter()
         .filter(|(name, _)| !HOP_BY_HOP.contains(&name.as_str()))
+        .filter(|(name, _)| {
+            trusted.is_none()
+                || (name.as_str() != "forwarded" && !name.as_str().starts_with("x-forwarded-"))
+        })
         .filter_map(|(name, value)| {
             value
                 .to_str()
                 .ok()
                 .map(|text| (name.as_str().to_string(), text.to_string()))
         })
-        .collect()
+        .collect::<HashMap<_, _>>();
+    if let Some(context) = trusted {
+        let peer = context.peer.ip();
+        let forwarding_identifier = if peer.is_ipv6() {
+            format!("\"[{peer}]\"")
+        } else {
+            peer.to_string()
+        };
+        forwarded.insert("x-forwarded-for".into(), peer.to_string());
+        forwarded.insert("x-forwarded-host".into(), context.sni.to_string());
+        forwarded.insert("x-forwarded-proto".into(), context.scheme.into());
+        forwarded.insert("x-forwarded-port".into(), "443".into());
+        forwarded.insert(
+            "forwarded".into(),
+            format!(
+                "for={forwarding_identifier};proto={};host=\"{}\"",
+                context.scheme, context.sni
+            ),
+        );
+    }
+    forwarded
 }
 
 /// The client's address, from the ALB.
 ///
 /// `X-Forwarded-For` is a list and the ALB appends, so the **first** entry is the client. Taking
 /// the last would be taking the load balancer's own address on every request.
-fn source_ip(headers: &HeaderMap) -> String {
+fn source_ip(headers: &HeaderMap, trusted: Option<&crate::edge::ConnectionContext>) -> String {
+    if let Some(context) = trusted {
+        return context.peer.ip().to_string();
+    }
     headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
@@ -472,12 +504,12 @@ mod tests {
         // The ALB appends its own hop. The last entry is the load balancer; the first is the person.
         let headers = headers_from(&[("x-forwarded-for", "203.0.113.7, 10.0.1.4, 10.0.2.9")]);
 
-        assert_eq!(source_ip(&headers), "203.0.113.7");
+        assert_eq!(source_ip(&headers, None), "203.0.113.7");
     }
 
     #[test]
     fn has_no_source_ip_rather_than_a_wrong_one() {
-        assert_eq!(source_ip(&HeaderMap::new()), "");
+        assert_eq!(source_ip(&HeaderMap::new(), None), "");
     }
 
     #[test]
@@ -489,7 +521,7 @@ mod tests {
             ("x-real-header", "kept"),
         ]);
 
-        let forwarded = forwarded_headers(&headers);
+        let forwarded = forwarded_headers(&headers, None);
 
         // Forwarding these makes a handler believe it owns a framing it does not.
         assert!(!forwarded.contains_key("connection"));
@@ -502,5 +534,36 @@ mod tests {
             forwarded.get("host").map(String::as_str),
             Some("myapp.sproutos.me")
         );
+    }
+
+    #[test]
+    fn tls_edge_replaces_untrusted_forwarding_headers_with_socket_context() {
+        let headers = headers_from(&[
+            ("host", "app.example.test"),
+            ("forwarded", "for=198.51.100.9;proto=http"),
+            ("x-forwarded-for", "198.51.100.9"),
+            ("x-forwarded-host", "attacker.example"),
+            ("x-forwarded-proto", "http"),
+            ("x-forwarded-port", "80"),
+            ("x-real-header", "kept"),
+        ]);
+        let context = crate::edge::ConnectionContext {
+            peer: "203.0.113.7:49152".parse().unwrap(),
+            sni: Arc::from("app.example.test"),
+            scheme: "https",
+        };
+
+        let forwarded = forwarded_headers(&headers, Some(&context));
+
+        assert_eq!(source_ip(&headers, Some(&context)), "203.0.113.7");
+        assert_eq!(forwarded["x-forwarded-for"], "203.0.113.7");
+        assert_eq!(forwarded["x-forwarded-host"], "app.example.test");
+        assert_eq!(forwarded["x-forwarded-proto"], "https");
+        assert_eq!(forwarded["x-forwarded-port"], "443");
+        assert_eq!(
+            forwarded["forwarded"],
+            "for=203.0.113.7;proto=https;host=\"app.example.test\""
+        );
+        assert_eq!(forwarded["x-real-header"], "kept");
     }
 }

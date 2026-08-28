@@ -16,6 +16,8 @@ aws-types = "1"
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["http1", "http2", "server", "service", "tokio"] }
 reqwest.workspace = true
 # `tokio-rustls-comp` is not optional: the platform Valkey is ElastiCache with
 # `TransitEncryptionMode = required`, so its URL is `rediss://` and a client built without TLS
@@ -33,6 +35,7 @@ redis = { version = "0.27", default-features = false, features = [
 # Direct, only so `main` can name a provider — see the `install_default` call there. Both providers
 # are already in the graph via the AWS SDK and redis; nothing here adds one.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+rustls-pemfile.workspace = true
 # The router now owns the only Kafka connection in the platform — it used to be one per Lambda
 # sandbox. lz4 because runtime log text compresses to a fraction of itself and this crosses the
 # public internet to OVH.
@@ -59,7 +62,9 @@ sproutos-service-credentials.workspace = true
 valkey-proxy = { path = "../valkey-proxy" }
 thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 tokio-postgres.workspace = true
+tower = { version = "0.5", features = ["util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
@@ -86,3 +91,4 @@ serde_json.workspace = true
 tokio.workspace = true
 # A zip writer for the fixture function. Lambda takes a zip and Rust's std has none.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+rcgen = { version = "0.13", features = ["pem"] }

@@ -8,8 +8,10 @@
 //! today — the tenant splits for Valkey, OpenSearch and S3. Those move in; this module is the piece
 //! that had no prior art in the repository.
 
+pub mod acme_http;
 pub mod credit;
 pub mod dispatch;
+pub mod edge;
 pub mod listeners;
 pub mod log_kafka;
 pub mod log_token;

@@ -128,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
         .context("the router cannot reach its durable route source")?;
 
     let dispatch_manager = manager.clone();
+    let acme_manager = manager.clone();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager, durable_routes),
         lambda,
@@ -175,12 +176,15 @@ async fn main() -> anyhow::Result<()> {
       not there. A deployment with no tenant Valkey and no OpenSearch — a developer working on
       request routing — starts with neither and says so in the log.
     */
+    let forward_proxy = router::listeners::forward_proxy_service(&database_url).await?;
     let splits = [
         router::listeners::valkey(&database_url).await?,
         router::listeners::search(&database_url).await?,
         router::listeners::postgres(&database_url).await?,
         router::listeners::llm(&database_url).await?,
-        router::listeners::forward_proxy(&database_url).await?,
+        router::listeners::forward_proxy_listener(forward_proxy.clone()).await?,
+        router::acme_http::start_from_env(acme_manager).await?,
+        router::edge::start_from_env(forward_proxy, app.clone()).await?,
     ]
     .into_iter()
     .flatten()
