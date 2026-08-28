@@ -5,6 +5,7 @@ import type { AgentEvent } from "./runner"
 import { codexOverrides, sandboxAgentEnv } from "./sandbox-env"
 import type { MintedProxyToken } from "./proxy-token"
 import { SANDBOX_NETWORK_LAUNCHER, SANDBOX_NETWORK_LAUNCHER_SOURCE } from "./sandbox-network"
+import { claudeDelegationAgents, codexDelegationRoles } from "./delegation"
 
 /**
  * Running the coding agent **inside the sandbox**.
@@ -152,6 +153,22 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     agentsPointer(input.skill),
     problems,
   )
+  await Promise.all(
+    Object.entries(
+      codexDelegationRoles(
+        input.harness === "codex" &&
+          (input.model ?? PLATFORM_FALLBACK_MODEL) === PLATFORM_FALLBACK_MODEL,
+      ),
+    ).map(([role, content]) =>
+      write(
+        driver,
+        externalId,
+        `${workspace}/.git/sproutos/codex/agents/${role}.toml`,
+        content,
+        problems,
+      ),
+    ),
+  )
   await write(
     driver,
     externalId,
@@ -249,6 +266,28 @@ const COMMIT_TIMEOUT_MS = 5 * 60 * 1000
  */
 export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: number }> {
   const workspace = input.driver.workspaceDir
+  const platformInstructions =
+    input.harness === "claude-code"
+      ? await input.driver.readFile(input.externalId, `${workspace}/.git/sproutos/codex/AGENTS.md`)
+      : undefined
+  if (input.harness === "codex") {
+    /*
+      A credential or model can change while a sandbox is stopped. Refreshing these tiny files at
+      the turn boundary both upgrades pre-existing sandboxes and prevents a platform Terra effort
+      override from following a later BYO model that may not support it.
+    */
+    await Promise.all(
+      Object.entries(
+        codexDelegationRoles((input.model ?? PLATFORM_FALLBACK_MODEL) === PLATFORM_FALLBACK_MODEL),
+      ).map(([role, content]) =>
+        input.driver.writeFile(
+          input.externalId,
+          `${workspace}/.git/sproutos/codex/agents/${role}.toml`,
+          content,
+        ),
+      ),
+    )
+  }
   const env = sandboxAgentEnv({
     harness: input.harness,
     model: input.model,
@@ -260,7 +299,16 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
 
   const argv: string[] = []
   argv.push("node", `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`, "--")
-  argv.push(...harnessArgv(input.harness, input.prompt, input.proxyBaseUrl, input.model, workspace))
+  argv.push(
+    ...harnessArgv(
+      input.harness,
+      input.prompt,
+      input.proxyBaseUrl,
+      input.model,
+      workspace,
+      platformInstructions,
+    ),
+  )
 
   /*
     A heartbeat for as long as the turn runs.
@@ -511,6 +559,7 @@ function harnessArgv(
   proxyBaseUrl: string,
   model: string | null,
   workspace: string,
+  platformInstructions?: string,
 ): string[] {
   switch (harness) {
     case "claude-code":
@@ -539,6 +588,15 @@ function harnessArgv(
         "--dangerously-skip-permissions",
         "--append-system-prompt-file",
         `${workspace}/.git/sproutos/codex/AGENTS.md`,
+        /*
+          Claude subagents do not inherit the main system prompt. This flag appends the exact same
+          platform guidance to every child and propagates it to nested children. It takes text, not
+          a file path, so the platform file is read immediately before the turn.
+        */
+        "--append-subagent-system-prompt",
+        platformInstructions ?? "",
+        "--agents",
+        claudeDelegationAgents(model === PLATFORM_FALLBACK_MODEL),
         prompt,
       ]
     case "codex":

@@ -66,6 +66,8 @@ function fakeDriver(
       files[path] = content
       return Promise.resolve()
     },
+    readFile: (_id: string, path: string) =>
+      Promise.resolve(files[path] ?? "# SproutOS platform instructions\nVerify your work.\n"),
   } as never
   return { clones, commands, driver, files, secretEnvironments }
 }
@@ -127,6 +129,44 @@ describe("bootstrapSandbox", () => {
     expect(files[`${WORKSPACE}/${SANDBOX_NETWORK_LAUNCHER}`]).toContain("CONNECT ")
     expect(files[`${WORKSPACE}/AGENTS.md`]).toBeUndefined()
     expect(files[`${WORKSPACE}/.claude/skills/sproutos/SKILL.md`]).toBeUndefined()
+  })
+
+  it("installs inherited-model Codex roles outside the customer's worktree", async () => {
+    const { driver, files } = fakeDriver()
+    await bootstrapSandbox({
+      ...base,
+      driver,
+      externalId: "sb",
+      harness: "codex",
+      model: "gpt-5.6-terra",
+    })
+
+    const small = files[`${WORKSPACE}/.git/sproutos/codex/agents/small.toml`] ?? ""
+    const large = files[`${WORKSPACE}/.git/sproutos/codex/agents/large.toml`] ?? ""
+    expect(small).toContain('name = "small"')
+    expect(small).toContain('model_reasoning_effort = "low"')
+    expect(large).toContain('name = "large"')
+    expect(large).toContain('model_reasoning_effort = "high"')
+    // The parent selection is Terra for platform credit and the customer's selection for BYO.
+    expect(`${small}\n${large}`).not.toMatch(/^model\s*=/m)
+    expect(files[`${WORKSPACE}/.codex/agents/small.toml`]).toBeUndefined()
+  })
+
+  it("leaves a BYO Codex model's reasoning effort inherited", async () => {
+    const { driver, files } = fakeDriver()
+    await bootstrapSandbox({
+      ...base,
+      driver,
+      externalId: "sb",
+      harness: "codex",
+      model: "openrouter/customer-model",
+    })
+
+    const roles = `${files[`${WORKSPACE}/.git/sproutos/codex/agents/small.toml`]}\n${
+      files[`${WORKSPACE}/.git/sproutos/codex/agents/large.toml`]
+    }`
+    expect(roles).not.toMatch(/^model\s*=/m)
+    expect(roles).not.toContain("model_reasoning_effort")
   })
 
   it("preserves the repository's own AGENTS.md", async () => {
@@ -205,11 +245,81 @@ describe("runSandboxTurn", () => {
   })
 
   it("gives Claude Code the platform skill explicitly", async () => {
-    const { commands, driver } = fakeDriver()
+    const platformInstructions = "# Platform-owned\nNever deploy by hand.\n"
+    const { commands, driver } = fakeDriver({
+      files: { [`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`]: platformInstructions },
+    })
     await runSandboxTurn({ ...base, driver, onEvent: () => {} })
 
     expect(commands[0]).toContain("--append-system-prompt-file")
     expect(commands[0]).toContain(`${WORKSPACE}/.git/sproutos/codex/AGENTS.md`)
+    const childPrompt = commands[0]?.indexOf("--append-subagent-system-prompt") ?? -1
+    expect(childPrompt).toBeGreaterThan(-1)
+    expect(commands[0]?.[childPrompt + 1]).toBe(platformInstructions)
+  })
+
+  it("caps Claude children and provides small and large inherited-model roles", async () => {
+    const { commands, driver, secretEnvironments } = fakeDriver()
+    await runSandboxTurn({ ...base, driver, model: "gpt-5.6-terra", onEvent: () => {} })
+
+    expect(secretEnvironments[0]).toMatchObject({
+      CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "2",
+      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "2",
+    })
+    const agentsAt = commands[0]?.indexOf("--agents") ?? -1
+    const agents = JSON.parse(commands[0]?.[agentsAt + 1] ?? "{}") as Record<
+      string,
+      Record<string, unknown>
+    >
+    expect(agents.small).toMatchObject({ effort: "low", maxTurns: 8, model: "inherit" })
+    expect(agents.large).toMatchObject({ effort: "high", maxTurns: 24, model: "inherit" })
+    expect(JSON.stringify(agents)).not.toContain("gpt-5.6-terra")
+  })
+
+  it("does not force platform effort settings onto a BYO model", async () => {
+    const { commands, driver } = fakeDriver()
+    await runSandboxTurn({ ...base, driver, model: "claude-opus-byo", onEvent: () => {} })
+
+    const agentsAt = commands[0]?.indexOf("--agents") ?? -1
+    const agents = JSON.parse(commands[0]?.[agentsAt + 1] ?? "{}") as Record<
+      string,
+      Record<string, unknown>
+    >
+    expect(agents.small).toMatchObject({ maxTurns: 8, model: "inherit" })
+    expect(agents.large).toMatchObject({ maxTurns: 24, model: "inherit" })
+    expect(agents.small).not.toHaveProperty("effort")
+    expect(agents.large).not.toHaveProperty("effort")
+  })
+
+  it("enables Codex delegation with the same two-child cap", async () => {
+    const { commands, driver, files } = fakeDriver()
+    await runSandboxTurn({ ...base, harness: "codex", driver, onEvent: () => {} })
+
+    const argv = commands[0]?.join(" ") ?? ""
+    expect(argv).toContain("agents.enabled=true")
+    expect(argv).toContain("agents.max_concurrent_threads_per_session=2")
+    expect(files[`${WORKSPACE}/.git/sproutos/codex/agents/small.toml`]).toContain(
+      'model_reasoning_effort = "low"',
+    )
+  })
+
+  it("refreshes Codex roles without a Terra-only effort when a sandbox changes to BYO", async () => {
+    const { driver, files } = fakeDriver({
+      files: {
+        [`${WORKSPACE}/.git/sproutos/codex/agents/small.toml`]: 'model_reasoning_effort = "low"\n',
+      },
+    })
+    await runSandboxTurn({
+      ...base,
+      harness: "codex",
+      model: "openrouter/customer-model",
+      driver,
+      onEvent: () => {},
+    })
+
+    expect(files[`${WORKSPACE}/.git/sproutos/codex/agents/small.toml`]).not.toContain(
+      "model_reasoning_effort",
+    )
   })
 
   it("runs every harness through the platform network launcher", async () => {

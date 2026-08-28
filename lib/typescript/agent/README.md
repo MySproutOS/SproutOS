@@ -97,6 +97,34 @@ already carry the provider cost. A charge with no matching events is a bill nobo
 `runAgentTurn` drives `@anthropic-ai/claude-agent-sdk`, which spawns a Claude Code subprocess.
 Everything below follows from that one fact.
 
+### Delegation belongs inside the sandbox
+
+Daytona turns may split independent work between the stock harness's child agents. Both Claude Code
+and Codex receive platform-owned `small` and `large` roles, and both are capped at two concurrent
+children. Claude also enforces two nested layers; Codex does not currently document a depth control,
+so the shared instruction policy limits depth there without pretending an unsupported setting is a
+hard boundary. Claude supports real per-role turn limits (8 and 24). On platform Terra, the roles
+also use low and high reasoning effort; other models inherit the parent's effort because the
+available levels are model-specific. Codex's current custom-agent schema has no per-role turn-limit
+field, so its roles use bounded instructions instead.
+
+The roles deliberately inherit the parent model and only override reasoning effort when that model
+is Terra. For platform credit that is Terra; for BYO it is the customer's selected provider, model,
+and effort. Putting a platform model or model-specific effort in every child definition would
+silently break that billing and credential boundary.
+
+Claude children do not inherit the main system prompt by default. Every turn therefore reads the
+platform-owned `AGENTS.md` from Git metadata and passes the exact text through
+`--append-subagent-system-prompt`, which also reaches nested children. Codex reads that same file as
+global guidance from `CODEX_HOME`, including in spawned threads. The role files live alongside it
+under `.git/sproutos/codex/agents`, outside the customer's worktree.
+They are refreshed before each Codex turn so an existing sandbox picks up the roles and a later
+switch from platform credit to BYO cannot retain Terra-specific effort settings.
+
+This does not loosen the development-only in-process runner. Its `Task` tool remains refused because
+that process shares the control-plane host; delegation is supported where the sandbox, rather than
+the prompt, is the security boundary.
+
 ### The subprocess environment is built, not inherited
 
 `Options.env` **replaces** the subprocess environment rather than merging with `process.env`, and

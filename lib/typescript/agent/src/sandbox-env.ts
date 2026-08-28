@@ -1,5 +1,6 @@
 import type { Harness } from "./harness"
 import type { MintedProxyToken } from "./proxy-token"
+import { MAX_CHILD_AGENT_DEPTH, MAX_CONCURRENT_CHILD_AGENTS } from "./delegation"
 
 /**
  * The environment a sandbox agent runs with.
@@ -72,6 +73,13 @@ export function sandboxAgentEnv(input: {
         when it does not apply.
       */
       env.IS_SANDBOX = "1"
+      /*
+        Claude's stock defaults are twenty concurrent children and three nested layers. A Daytona
+        sandbox has two vCPUs and 4 GiB; two children and two layers preserve delegation without
+        letting one turn exhaust the machine. These are the CLI's documented environment names.
+      */
+      env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS = String(MAX_CONCURRENT_CHILD_AGENTS)
+      env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH = String(MAX_CHILD_AGENT_DEPTH)
       break
     case "codex":
       /*
@@ -135,5 +143,9 @@ export function codexOverrides(input: { proxyBaseUrl: string; model: string }): 
     */
     "-c",
     "features.responses_websocket=false",
+    "-c",
+    "agents.enabled=true",
+    "-c",
+    `agents.max_concurrent_threads_per_session=${MAX_CONCURRENT_CHILD_AGENTS}`,
   ]
 }
