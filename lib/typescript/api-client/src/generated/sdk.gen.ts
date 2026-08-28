@@ -342,9 +342,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
-  PostV1ApkSigningClaimData,
-  PostV1ApkSigningClaimErrors,
-  PostV1ApkSigningClaimResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -3432,25 +3429,6 @@ export const postV1DeployMigrate = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({
     url: "/v1/deploy/migrate",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  })
-
-/**
- * Claim the oldest Android key-provisioning or APK-signing job.
- */
-export const postV1ApkSigningClaim = <ThrowOnError extends boolean = false>(
-  options?: Options<PostV1ApkSigningClaimData, ThrowOnError>,
-): RequestResult<PostV1ApkSigningClaimResponses, PostV1ApkSigningClaimErrors, ThrowOnError> =>
-  (options?.client ?? client).post<
-    PostV1ApkSigningClaimResponses,
-    PostV1ApkSigningClaimErrors,
-    ThrowOnError
-  >({
-    url: "/v1/apk-signing/claim",
     ...options,
     headers: {
       "Content-Type": "application/json",

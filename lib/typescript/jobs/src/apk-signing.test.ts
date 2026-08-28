@@ -127,8 +127,10 @@ afterAll(async () => {
     await db.deleteFrom("androidSignerJob").where("projectId", "in", projects).execute()
     await db.deleteFrom("androidApp").where("projectId", "in", projects).execute()
   }
-  for (const row of [...created].toReversed())
+  for (const row of [...created].toReversed()) {
+    // eslint-disable-next-line no-await-in-loop -- reverse creation order preserves FK cleanup.
     await db.deleteFrom(row.table).where("id", "=", row.id).execute()
+  }
   await db.destroy()
 })
 

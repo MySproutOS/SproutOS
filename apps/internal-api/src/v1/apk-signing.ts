@@ -110,6 +110,11 @@ const app: Hono = new Hono()
   .post(
     "/apk-signing/claim",
     describeRoute({
+      // The signer uses this machine endpoint directly. Hey API cannot transform the tagged
+      // provision/sign union safely and warns that it will emit an incomplete response
+      // transformer, so do not publish a generated dashboard-client operation that can misread a
+      // valid claim. Runtime TypeBox validation and the signer contract tests remain authoritative.
+      hide: true,
       description: "Claim the oldest Android key-provisioning or APK-signing job.",
       responses: {
         200: {

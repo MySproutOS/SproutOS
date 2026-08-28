@@ -103,7 +103,6 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
-  postV1ApkSigningClaim,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthLogout,
@@ -423,8 +422,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
-  PostV1ApkSigningClaimData,
-  PostV1ApkSigningClaimResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
   PostV1AuthLogoutData,
@@ -5282,33 +5279,6 @@ export const postV1DeployMigrateMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1DeployMigrate({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
-/**
- * Claim the oldest Android key-provisioning or APK-signing job.
- */
-export const postV1ApkSigningClaimMutation = (
-  options?: Partial<Options<PostV1ApkSigningClaimData>>,
-): UseMutationOptions<
-  PostV1ApkSigningClaimResponse,
-  DefaultError,
-  Options<PostV1ApkSigningClaimData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostV1ApkSigningClaimResponse,
-    DefaultError,
-    Options<PostV1ApkSigningClaimData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postV1ApkSigningClaim({
         ...options,
         ...fnOptions,
         throwOnError: true,

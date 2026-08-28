@@ -6821,63 +6821,6 @@ export type PostV1DeployMigrateResponses = {
 export type PostV1DeployMigrateResponse =
   PostV1DeployMigrateResponses[keyof PostV1DeployMigrateResponses]
 
-export type PostV1ApkSigningClaimData = {
-  body?: {
-    signer_id: string
-  }
-  path?: never
-  query?: never
-  url: "/v1/apk-signing/claim"
-}
-
-export type PostV1ApkSigningClaimErrors = {
-  /**
-   * Missing or invalid signer token
-   */
-  401: unknown
-}
-
-export type PostV1ApkSigningClaimResponses = {
-  /**
-   * A signer job
-   */
-  200:
-    | {
-        job_id: string
-        kind: "provision_key"
-        android_app_id: string
-        package_name: string
-        encrypted_key_upload_url: string
-        encrypted_key_object_key: string
-      }
-    | {
-        job_id: string
-        kind: "sign_release"
-        android_app_id: string
-        package_name: string
-        project_id: string
-        deployment_id: string
-        download_url: string
-        unsigned_digest: string
-        input_mime: "application/vnd.android.package-archive"
-        version_code: number
-        previous_version_code: number
-        expected_certificate_sha256: string
-        key_download_url: string
-        encrypted_key_object_key: string
-        encrypted_key_object_version: string
-        upload_url: string
-        signed_key: string
-      }
-  /**
-   * Nothing is ready
-   */
-  204: void
-}
-
-export type PostV1ApkSigningClaimResponse =
-  PostV1ApkSigningClaimResponses[keyof PostV1ApkSigningClaimResponses]
-
 export type PostV1ApkSigningCompleteData = {
   body?:
     | {
