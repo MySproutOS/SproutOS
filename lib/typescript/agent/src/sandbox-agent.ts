@@ -377,8 +377,21 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
       (chunk) => {
         // The CLI's own diagnostics. Surfaced rather than swallowed: "nothing happened" is the least
         // debuggable outcome, and a missing binary reports itself here and nowhere else.
-        const text = chunk.trim()
-        if (text !== "") input.onEvent({ type: "error", message: text.slice(0, 500) })
+        const diagnostics = chunk
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(
+            (line) =>
+              line !== "" &&
+              // `codex exec` reads a possible prompt suffix from stdin even when the complete
+              // prompt is already positional. With Daytona's deliberately closed stdin it reports
+              // this informational line on stderr, then completes normally. Showing it as an
+              // error made a successful platform turn look broken in the chat.
+              !(input.harness === "codex" && line === "Reading additional input from stdin..."),
+          )
+        for (const diagnostic of diagnostics) {
+          input.onEvent({ type: "error", message: diagnostic.slice(0, 500) })
+        }
       },
     )
 
@@ -672,6 +685,12 @@ function emit(line: string, onEvent: (event: AgentEvent) => void): void {
     return
   }
 
+  if (type === "thread.started") {
+    const id = parsed.thread_id
+    if (typeof id === "string") onEvent({ type: "session", sdkSessionId: id })
+    return
+  }
+
   if (type === "assistant" || type === "item.completed") {
     for (const event of textAndTools(parsed)) onEvent(event)
     return
@@ -715,6 +734,14 @@ function textAndTools(parsed: Record<string, unknown>): AgentEvent[] {
   const events: AgentEvent[] = []
   const message = (parsed.message ?? parsed.item) as Record<string, unknown> | undefined
   const content = message?.content
+
+  // Current `codex exec --json` agent messages are `{ type: "agent_message", text: "..." }`.
+  // They have no `content` field. Reading only the older/content-shaped form completed the turn
+  // successfully while silently dropping the answer the customer was waiting for.
+  if (message?.type === "agent_message" && typeof message.text === "string") {
+    if (message.text !== "") events.push({ type: "text", text: message.text })
+    return events
+  }
 
   if (typeof content === "string") {
     if (content !== "") events.push({ type: "text", text: content })
