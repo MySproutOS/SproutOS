@@ -1,6 +1,6 @@
 import { balances, BelowMinimumTopupError, begin, MINIMUM_TOPUP, quote, stripe } from "@lib/billing"
 import { groupedOverhead, rateTimesQuantity } from "@lib/billing/money"
-import { startOfMonth } from "@lib/billing/usage"
+import { RETIRED_UNBILLABLE_DIMENSIONS, startOfMonth } from "@lib/billing/usage"
 import { crudAuditLog } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
@@ -457,7 +457,7 @@ const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: 
   site_provisioned_gib_second: { label: "Provisioned memory", unit: "GiB-hours", divisor: 3600 },
   site_request: { label: "Requests", unit: "requests", divisor: 1 },
   site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },
-  db_storage_gib_hour: { label: "Postgres storage", unit: "GiB-months", divisor: 730 },
+  db_storage_gib_hour: { label: "Postgres storage (legacy)", unit: "GiB-months", divisor: 730 },
   db_storage_gb_month: { label: "Postgres storage", unit: "GB-months", divisor: 1 },
   db_history_storage_gb_month: { label: "History storage", unit: "GB-months", divisor: 1 },
   db_compute_cu_second: { label: "Postgres compute", unit: "CU-hours", divisor: 3600 },
@@ -568,6 +568,7 @@ app
           ),
         ])
         .where("organizationId", "=", organizationId)
+        .where("dimension", "not in", RETIRED_UNBILLABLE_DIMENSIONS)
         .where("bucket", "=", "day")
         .where("bucketStart", ">=", periodStart)
         .where("bucketStart", "<", periodEnd)
