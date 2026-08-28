@@ -27,7 +27,7 @@ Every command supports human output and `--json`. Machine output is exactly one 
 stdout:
 
 ```json
-{"schema_version":1,"ok":true,"command":"project.list","data":{}}
+{ "schema_version": 1, "ok": true, "command": "project.list", "data": {} }
 ```
 
 Failures use the same version and a stable error object. Progress and prompts never enter JSON
