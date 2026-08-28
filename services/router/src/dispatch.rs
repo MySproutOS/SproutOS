@@ -42,6 +42,9 @@ pub const MAX_JOBS_PER_INVOCATION: u32 = 25;
 /// against, and a second or two is not what anyone notices about a background job.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// A transient refusal must not hot-loop, but it also must not require another customer enqueue.
+pub const RETRY_DELAY: Duration = Duration::from_secs(30);
+
 /// One queue that needs a worker.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Pending {
@@ -170,6 +173,21 @@ async fn preserve_delayed_wake(valkey: &ConnectionManager, pending: &Pending) {
     }
 }
 
+async fn rearm_wake(valkey: &ConnectionManager, pending: &Pending) {
+    let retry_at = now_ms().saturating_add(RETRY_DELAY.as_millis() as u64);
+    let mut connection = valkey.clone();
+    let result: Result<(), redis::RedisError> = redis::cmd("ZADD")
+        .arg(MASTER_WAKE_KEY)
+        .arg("GT")
+        .arg(retry_at)
+        .arg(format!("{}/{}", pending.resource, pending.queue))
+        .query_async(&mut connection)
+        .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, queue = pending.queue, "could not rearm queue wake");
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -218,6 +236,8 @@ impl WorkerInvoker for LambdaClient {
 pub struct QueueBinding {
     #[serde(rename = "functionArn")]
     pub function_arn: Option<String>,
+    #[serde(rename = "projectId")]
+    pub project_id: Option<String>,
     #[serde(rename = "organizationId")]
     pub organization_id: String,
 }
@@ -254,6 +274,16 @@ pub async fn dispatch_once<I: WorkerInvoker>(valkey: &ConnectionManager, invoker
         // deployment can appear; neither should require the customer to enqueue another job.
         preserve_delayed_wake(valkey, &pending).await;
 
+        let Some(arn) = binding.function_arn.as_deref() else {
+            // An attached service can exist before its first production deployment, or while a
+            // failed release rolls back. Keep its wake until a live alias appears. A standalone
+            // queue intentionally has no worker target and should not poll forever.
+            if binding.project_id.is_some() {
+                rearm_wake(valkey, &pending).await;
+            }
+            continue;
+        };
+
         /*
           Credit before starting work, the same as a web request.
 
@@ -268,17 +298,13 @@ pub async fn dispatch_once<I: WorkerInvoker>(valkey: &ConnectionManager, invoker
                 organization = binding.organization_id,
                 "not dispatching a queue for an organization out of credit"
             );
+            rearm_wake(valkey, &pending).await;
             continue;
         }
 
-        let Some(arn) = binding.function_arn.as_deref() else {
-            // A standalone queue with no project has no function to run a worker in. Not an
-            // error: a customer can use a Valkey without deploying anything to consume it.
-            continue;
-        };
-
         if let Err(cause) = invoker.invoke(arn, &pending).await {
             tracing::error!(%cause, queue = pending.queue, "could not start a worker");
+            rearm_wake(valkey, &pending).await;
         }
     }
 }
@@ -294,7 +320,12 @@ pub async fn run(valkey: ConnectionManager, lambda: LambdaClient) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, OnceLock};
+
+    fn dispatcher_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     #[derive(Default)]
     struct RecordingInvoker(Mutex<Vec<(String, Pending)>>);
@@ -307,6 +338,15 @@ mod tests {
                 .expect("recording invoker")
                 .push((function_arn.to_owned(), pending.clone()));
             Ok(())
+        }
+    }
+
+    struct FailingInvoker;
+
+    #[async_trait]
+    impl WorkerInvoker for FailingInvoker {
+        async fn invoke(&self, _function_arn: &str, _pending: &Pending) -> anyhow::Result<()> {
+            anyhow::bail!("deterministic invocation failure")
         }
     }
 
@@ -404,6 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_real_valkey_binding_dispatches_exactly_the_live_alias() {
+        let _guard = dispatcher_test_lock().lock().await;
         // Database 15 keeps this master queue independent from the proxy integration suite, whose
         // producers intentionally use the same key name in database 0.
         let url = std::env::var("ROUTER_DISPATCH_TEST_VALKEY_URL")
@@ -483,5 +524,121 @@ mod tests {
             .query_async(&mut connection)
             .await
             .expect("remove fixture binding");
+    }
+
+    #[tokio::test]
+    async fn transient_dispatch_refusals_rearm_the_exact_wake() {
+        let _guard = dispatcher_test_lock().lock().await;
+        let url = std::env::var("ROUTER_DISPATCH_TEST_VALKEY_URL")
+            .unwrap_or_else(|_| "redis://localhost:41023/15".into());
+        let client = redis::Client::open(url).expect("ROUTER_DISPATCH_TEST_VALKEY_URL is invalid");
+        let manager =
+            tokio::time::timeout(Duration::from_secs(1), ConnectionManager::new(client)).await;
+        let Ok(Ok(manager)) = manager else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "the real Valkey dispatcher recovery test is required in CI"
+            );
+            eprintln!("skipping real dispatcher recovery: Valkey is unavailable");
+            return;
+        };
+
+        let resource = format!("rearm{}", uuid::Uuid::now_v7().simple());
+        let queue = format!("celery-{}", uuid::Uuid::now_v7().simple());
+        let member = format!("{resource}/{queue}");
+        let binding = binding_key(&resource);
+        let project_id = uuid::Uuid::now_v7().to_string();
+        let organization_id = uuid::Uuid::now_v7().to_string();
+        let mut connection = manager.clone();
+        let seed = |function_arn: Option<&str>| {
+            serde_json::json!({
+                "uri": "rediss://tenant:redacted@example.test:6379/0",
+                "backendServiceId": uuid::Uuid::now_v7(),
+                "projectId": project_id,
+                "organizationId": organization_id,
+                "functionArn": function_arn,
+            })
+            .to_string()
+        };
+
+        let _: () = redis::pipe()
+            .atomic()
+            .set(&binding, seed(None))
+            .zadd(MASTER_WAKE_KEY, &member, now_ms())
+            .query_async(&mut connection)
+            .await
+            .expect("seed an attached queue without a live target");
+        dispatch_once(&manager, &RecordingInvoker::default()).await;
+        let absent_target_retry: Option<u64> = redis::cmd("ZSCORE")
+            .arg(MASTER_WAKE_KEY)
+            .arg(&member)
+            .query_async(&mut connection)
+            .await
+            .expect("read absent-target retry");
+        assert!(
+            absent_target_retry.is_some_and(|score| score > now_ms()),
+            "an attached queue without a function lost its wake"
+        );
+
+        let _: () = redis::pipe()
+            .atomic()
+            .set(
+                &binding,
+                seed(Some(
+                    "arn:aws:lambda:us-east-1:123456789012:function:sproutos-app:live",
+                )),
+            )
+            .zadd(MASTER_WAKE_KEY, &member, now_ms())
+            .query_async(&mut connection)
+            .await
+            .expect("make the invocation-failure wake due");
+        dispatch_once(&manager, &FailingInvoker).await;
+        let invocation_retry: Option<u64> = redis::cmd("ZSCORE")
+            .arg(MASTER_WAKE_KEY)
+            .arg(&member)
+            .query_async(&mut connection)
+            .await
+            .expect("read invocation retry");
+        assert!(
+            invocation_retry.is_some_and(|score| score > now_ms()),
+            "a failed invocation lost its wake"
+        );
+
+        let _: () = redis::pipe()
+            .atomic()
+            .set(crate::credit::credit_key(&organization_id), "exhausted")
+            .zadd(MASTER_WAKE_KEY, &member, now_ms())
+            .query_async(&mut connection)
+            .await
+            .expect("make the credit-refusal wake due");
+        let invoker = RecordingInvoker::default();
+        dispatch_once(&manager, &invoker).await;
+        assert!(
+            invoker.0.lock().expect("recorded invocation").is_empty(),
+            "an exhausted tenant was invoked"
+        );
+        let credit_retry: Option<u64> = redis::cmd("ZSCORE")
+            .arg(MASTER_WAKE_KEY)
+            .arg(&member)
+            .query_async(&mut connection)
+            .await
+            .expect("read credit retry");
+        assert!(
+            credit_retry.is_some_and(|score| score > now_ms()),
+            "an out-of-credit refusal lost its wake"
+        );
+
+        let _: () = redis::cmd("DEL")
+            .arg(&binding)
+            .arg(crate::credit::credit_key(&organization_id))
+            .query_async(&mut connection)
+            .await
+            .expect("remove recovery fixture keys");
+        let _: () = redis::cmd("ZREM")
+            .arg(MASTER_WAKE_KEY)
+            .arg(member)
+            .query_async(&mut connection)
+            .await
+            .expect("remove recovery fixture wake");
     }
 }

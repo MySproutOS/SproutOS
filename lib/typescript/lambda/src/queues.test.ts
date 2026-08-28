@@ -25,25 +25,24 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
     const original = {
       uri: "rediss://tenant:one-time-secret@queue.example.test:6379/0",
       backendServiceId: crypto.randomUUID(),
-      projectId: null,
+      projectId: "project-one",
       organizationId: crypto.randomUUID(),
     }
     await publishQueue(valkey, resource, original)
 
     expect(
-      await setQueueTarget(valkey, resource, {
-        projectId: "project-one",
-        functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
-      }),
+      await setQueueTarget(valkey, resource, "arn:aws:lambda:us-east-1:123:function:app:live"),
     ).toBe(true)
     expect(await readQueue(valkey, resource)).toEqual({
       ...original,
-      projectId: "project-one",
       functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
     })
 
     expect(await setQueueTarget(valkey, resource, null)).toBe(true)
-    expect(await readQueue(valkey, resource)).toEqual(original)
+    expect(await readQueue(valkey, resource)).toEqual({
+      ...original,
+      projectId: "project-one",
+    })
     await withdrawQueue(valkey, resource)
   })
 
@@ -57,10 +56,17 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
     })
     await withdrawQueue(valkey, resource)
 
+    expect(await setQueueTarget(valkey, resource, "arn:deleted")).toBe(false)
+    expect(await readQueue(valkey, resource)).toBeUndefined()
+
+    // Force the dangerous race ordering deterministically: deletion commits its withdrawal while
+    // a credential rotation that began earlier returns from the provider afterward.
     expect(
-      await setQueueTarget(valkey, resource, {
+      await publishQueue(valkey, resource, {
+        uri: "rediss://tenant:late-rotated-secret@queue.example.test:6379/0",
+        backendServiceId: crypto.randomUUID(),
         projectId: "deleted-project",
-        functionArn: "arn:deleted",
+        organizationId: crypto.randomUUID(),
       }),
     ).toBe(false)
     expect(await readQueue(valkey, resource)).toBeUndefined()

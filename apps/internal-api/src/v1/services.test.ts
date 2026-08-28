@@ -7,6 +7,7 @@ import {
   connectionResponse,
   hasProvisioningCredit,
   servicePublicEndpoint,
+  withQueueLifecycleLock,
 } from "./services"
 
 describe("service connection contracts", () => {
@@ -136,6 +137,30 @@ async function allowedKinds(): Promise<string[]> {
 }
 
 describe.runIf(reachable)("the backend service kinds", () => {
+  it("serializes attached queue mutation with deployment publication", async () => {
+    const projectId = crypto.randomUUID()
+    let entered = false
+
+    await db.connection().execute(async (connection) => {
+      const key = `sproutos:project:${projectId}`
+      await sql`select pg_advisory_lock(hashtextextended(${key}, 0))`.execute(connection)
+      const mutation = withQueueLifecycleLock(
+        { id: crypto.randomUUID(), kind: "valkey", projectId },
+        () => {
+          entered = true
+          return Promise.resolve()
+        },
+      )
+
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(entered).toBe(false)
+      await sql`select pg_advisory_unlock(hashtextextended(${key}, 0))`.execute(connection)
+      await mutation
+    })
+
+    expect(entered).toBe(true)
+  }, 10_000)
+
   it("match the constraint, in both directions", async () => {
     expect(await allowedKinds()).toEqual([...SERVICE_KINDS].sort())
   })

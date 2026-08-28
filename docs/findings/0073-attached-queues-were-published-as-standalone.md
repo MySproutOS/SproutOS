@@ -3,9 +3,9 @@
 **Found:** 2026-08-28, while running the production Celery acceptance required by
 `private_notes/ADDITIONS_1.md`.
 
-A disposable Python project deployed successfully and its attached Valkey service accepted real
-Celery traffic, but publishing a task could never wake the project's Lambda. The service creation
-route discarded the submitted `projectId` when it wrote the router's queue binding:
+A disposable Python project deployed successfully and its attached Valkey service became active,
+but the binding the control plane published could never wake the project's Lambda. The service
+creation route discarded the submitted `projectId` when it wrote the router's queue binding:
 
 ```json
 { "projectId": null, "functionArn": null }
@@ -20,20 +20,25 @@ did not prove the control plane ever created that binding.
 
 Queue binding is a lifecycle rather than a one-time provision side effect:
 
-- service creation preserves the project target only when the durable live deployment and the
-  router's live route agree;
+- service creation always preserves attachment identity, while adding an executable target only
+  when the durable live deployment and the router's live route agree;
 - a successful production release moves every active attached Valkey binding to that exact live
   alias, preserving the one-time broker credential in place;
 - rollback moves the bindings back with HTTP traffic, while preview releases never receive
   production queue work;
-- service and project deletion withdraw the credential-bearing binding before provider teardown;
-- the update is an atomic compare-and-set, so deployment cannot resurrect a credential concurrently
-  rotated or deleted by another request.
+- attached service mutations take the same project lock as publication, and standalone mutations
+  take a service-specific lock;
+- service and project deletion replace the credential-bearing binding with a permanent,
+  credential-free tombstone before provider teardown;
+- target updates are atomic compare-and-sets and credential publication refuses a tombstone, so
+  neither deployment nor a late rotation can resurrect deleted credentials;
+- a transient missing target, exhausted balance, or Lambda invocation error rearms the exact wake
+  after a bounded delay. Celery and immediate BullMQ jobs no longer need another enqueue to recover.
 
-The release integration test starts with a real standalone-shaped binding and proves publication
-attaches it to the same alias as HTTP without changing its URI. The queue lifecycle tests prove
-target removal and deletion races. The router test drives a real Valkey wake through one dispatcher
-iteration and records the exact alias it would invoke.
+The release integration test starts with an attached binding that has no function and proves
+publication points it at the same alias as HTTP without changing its URI or project identity. The
+queue lifecycle tests force the delete-then-late-rotation interleaving. Router tests drive real
+Valkey wakes through success, absent-target, exhausted-credit, and failed-invocation paths.
 
 Production acceptance remains incomplete until this change is deployed and the disposable Celery
 producer receives its result through the public tenant credential.

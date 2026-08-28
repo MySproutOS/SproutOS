@@ -11,6 +11,7 @@ import {
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
 import { publishQueue, readRoute, withdrawQueue } from "@lib/lambda"
+import { withProjectLock } from "@lib/jobs/project-lock"
 import { encodeShortId } from "@lib/services"
 import { Redis } from "ioredis"
 import { db } from "@sproutos/db"
@@ -496,19 +497,26 @@ const app = new Hono()
       const service = await owned(c.var.organization.id, serviceId)
       if (service === undefined) return throwNotFound(c, "Service not found")
 
-      try {
-        const result = await driverFor(service.kind).rotateCredentials(
-          serviceId,
-          credentialOwner(c.var.auth),
-        )
-        const { connectionUri } = result
+      return await withQueueLifecycleLock(service, async () => {
+        const current = await owned(c.var.organization.id, serviceId)
+        if (current === undefined) return throwNotFound(c, "Service not found")
+        if (current.kind === "valkey" && current.status !== "active") {
+          return throwBadRequest(c, "That service has not finished provisioning")
+        }
 
-        // The replacement belongs to whoever rotated it. An application rotating its own credential
-        // keeps it revocable; a user rotating takes ownership, which is how they take a database
-        // back from an application without deleting it.
-        await attributeToGrant(c.var.auth, serviceId)
+        try {
+          const result = await driverFor(current.kind).rotateCredentials(
+            serviceId,
+            credentialOwner(c.var.auth),
+          )
+          const { connectionUri } = result
 
-        /*
+          // The replacement belongs to whoever rotated it. An application rotating its own credential
+          // keeps it revocable; a user rotating takes ownership, which is how they take a database
+          // back from an application without deleting it.
+          await attributeToGrant(c.var.auth, serviceId)
+
+          /*
           Rotation is also how a queue provisioned before workers existed gets a Secret.
 
           There is no way to make one from a hash, so the platform cannot repair it silently — and
@@ -516,38 +524,39 @@ const app = new Hono()
           quietly. A customer who wants a worker rotates, which they already understand as "the old
           URI stops working".
         */
-        if (service.kind === "valkey") {
-          await captureQueueSecret(
-            c.var.organization.id,
-            serviceId,
-            service.projectId,
+          if (current.kind === "valkey") {
+            await captureQueueSecret(
+              c.var.organization.id,
+              serviceId,
+              current.projectId,
+              connectionUri,
+            )
+          }
+
+          await injectConnectionUri({
             connectionUri,
-          )
+            keyPrefix: result.keyPrefix,
+            kind: current.kind,
+            projectId: current.projectId,
+          })
+
+          await crudAuditLog(db).record({
+            organizationId: c.var.organization.id,
+            actorUserId: c.var.user.id,
+            action: "database:admin",
+            resourceSrn: srnFor("db", c.var.organization.id, "service", serviceId),
+            after: { rotated: true },
+            ...auditContext(c),
+          })
+
+          return c.json(connectionResponse(serviceId, result))
+        } catch (error) {
+          if (error instanceof ServiceNotProvisionedError) {
+            return throwBadRequest(c, "That service has not finished provisioning")
+          }
+          throw error
         }
-
-        await injectConnectionUri({
-          connectionUri,
-          keyPrefix: result.keyPrefix,
-          kind: service.kind,
-          projectId: service.projectId,
-        })
-
-        await crudAuditLog(db).record({
-          organizationId: c.var.organization.id,
-          actorUserId: c.var.user.id,
-          action: "database:admin",
-          resourceSrn: srnFor("db", c.var.organization.id, "service", serviceId),
-          after: { rotated: true },
-          ...auditContext(c),
-        })
-
-        return c.json(connectionResponse(serviceId, result))
-      } catch (error) {
-        if (error instanceof ServiceNotProvisionedError) {
-          return throwBadRequest(c, "That service has not finished provisioning")
-        }
-        throw error
-      }
+      })
     },
   )
   .delete(
@@ -570,47 +579,64 @@ const app = new Hono()
       const service = await owned(c.var.organization.id, serviceId)
       if (service === undefined) return throwNotFound(c, "Service not found")
 
-      /*
-        Revoke the router's copy before destroying the provider resource.
+      return await withQueueLifecycleLock(service, async () => {
+        const current = await owned(c.var.organization.id, serviceId)
+        if (current === undefined) return throwNotFound(c, "Service not found")
 
-        A queue binding contains the one-time tenant URI. Leaving it behind after deletion is both
-        a retained credential and a route a later wake can still ask the dispatcher to use. This is
-        deliberately fail-closed: if platform Valkey is unavailable, the delete is retried instead
-        of reporting success while that credential-bearing copy remains live.
-      */
-      if (service.kind === "valkey") await revokeQueueBinding(serviceId)
+        /*
+          Mark the row first while holding the same project lock publication uses. The binding's
+          credential is then replaced by a permanent tombstone before the provider is destroyed.
+          A retry can safely resume a row already in `deleting`; rotation only accepts `active`.
+        */
+        if (current.kind === "valkey") {
+          await db
+            .updateTable("backendService")
+            .set({ status: "deleting", updatedAt: new Date() })
+            .where("id", "=", serviceId)
+            .execute()
+          await revokeQueueBinding(serviceId)
+        }
 
-      await driverFor(service.kind).destroy(serviceId)
+        await driverFor(current.kind).destroy(serviceId)
 
-      // Soft delete, per ADR 0017: usage_event references this service and a hard delete would
-      // take the billing history with it.
-      await db
-        .updateTable("backendService")
-        .set({ status: "deleting", deletedAt: new Date(), updatedAt: new Date() })
-        .where("id", "=", serviceId)
-        .execute()
+        // Soft delete, per ADR 0017: usage_event references this service and a hard delete would
+        // take the billing history with it.
+        await db
+          .updateTable("backendService")
+          .set({ status: "deleting", deletedAt: new Date(), updatedAt: new Date() })
+          .where("id", "=", serviceId)
+          .execute()
 
-      await crudAuditLog(db).record({
-        organizationId: c.var.organization.id,
-        actorUserId: c.var.user.id,
-        action: "database:delete",
-        resourceSrn: srnFor("db", c.var.organization.id, "service", serviceId),
-        after: { destroyed: true },
-        ...auditContext(c),
+        await crudAuditLog(db).record({
+          organizationId: c.var.organization.id,
+          actorUserId: c.var.user.id,
+          action: "database:delete",
+          resourceSrn: srnFor("db", c.var.organization.id, "service", serviceId),
+          after: { destroyed: true },
+          ...auditContext(c),
+        })
+
+        return c.json({})
       })
-
-      return c.json({})
     },
   )
 
 async function owned(organizationId: string, serviceId: string) {
   return await db
     .selectFrom("backendService")
-    .select(["id", "kind", "name", "projectId"])
+    .select(["id", "kind", "name", "projectId", "status"])
     .where("id", "=", serviceId)
     .where("organizationId", "=", organizationId)
     .where("deletedAt", "is", null)
     .executeTakeFirst()
+}
+
+export async function withQueueLifecycleLock<T>(
+  service: { id: string; kind: string; projectId: string | null },
+  work: () => Promise<T>,
+): Promise<T> {
+  if (service.kind !== "valkey") return await work()
+  return await withProjectLock(db, service.projectId ?? `queue:${service.id}`, work)
 }
 
 /**
@@ -692,13 +718,14 @@ async function captureQueueSecret(
   try {
     const target = projectId === null ? undefined : await liveQueueTarget(projectId, valkey)
     // Keyed by the short id the proxy reports, which is what the tenant's key prefix carries.
-    await publishQueue(valkey, encodeShortId(backendServiceId), {
+    const published = await publishQueue(valkey, encodeShortId(backendServiceId), {
       uri: connectionUri,
       backendServiceId,
-      projectId: target === undefined ? null : projectId,
+      projectId,
       organizationId,
       ...(target === undefined ? {} : { functionArn: target }),
     })
+    if (!published) return
 
     /*
       Recorded after the write, not before.

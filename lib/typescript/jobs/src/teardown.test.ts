@@ -59,6 +59,10 @@ const lambdaClients = {
       withdrawn.push(key)
       return Promise.resolve(1)
     },
+    set: (key: string, value: string) => {
+      if (value === "deleted") withdrawn.push(key)
+      return Promise.resolve("OK")
+    },
     publish: (channel: string, payload: string) => {
       certificateInvalidations.push(`${channel}:${payload}`)
       return Promise.resolve(1)

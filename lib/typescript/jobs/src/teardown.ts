@@ -168,7 +168,8 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
 
           Each binding contains the tenant's one-time URI. Querying all Valkey services, including
           already-soft-deleted rows, also adopts stale bindings left by the old one-service delete
-          path. `DEL` is idempotent, so a retried teardown and a concurrent service delete agree.
+          path. The credential-free tombstone is idempotent, so a retried teardown and a concurrent
+          service delete agree and a late credential rotation cannot recreate the binding.
         */
         const queueServices = await db
           .selectFrom("backendService")

@@ -263,7 +263,7 @@ describe.runIf(reachable)("publishing a release", () => {
     await publishQueue(valkey, queueResource, {
       uri: "rediss://tenant:one-time-secret@queue.example.test:6379/0",
       backendServiceId,
-      projectId: null,
+      projectId,
       organizationId,
     })
 

@@ -199,11 +199,7 @@ export async function syncProjectQueueTargets(
     .execute()
 
   for (const queue of queues) {
-    await setQueueTarget(
-      valkey,
-      encodeShortId(queue.id),
-      functionArn === null ? null : { projectId, functionArn },
-    )
+    await setQueueTarget(valkey, encodeShortId(queue.id), functionArn)
   }
 }
 
@@ -875,17 +871,6 @@ export function publishRelease(options?: PublishOptions): JobHandler {
           })
 
           /*
-            A queue becomes executable only after the production function and route are valid.
-
-            Preview aliases must never receive customer background work, and a failed publication
-            must leave the prior live alias in place. The queue binding uses that same alias ARN,
-            so a rollback and HTTP traffic cannot disagree about which code is live.
-          */
-          if (deployment.kind === "production") {
-            await syncProjectQueueTargets(db, clients.valkey, project.id, published.aliasArn)
-          }
-
-          /*
       And durably, on the project.
 
       `publishLiveDeployment` above writes `live:<project id>` into Valkey with a 24-hour expiry,
@@ -896,6 +881,15 @@ export function publishRelease(options?: PublishOptions): JobHandler {
     */
           if (deployment.kind === "production") {
             await markProductionProjectReady(db, project.id, deploymentId)
+            /*
+              Queue target last, after both the route and durable live-deployment pointer agree.
+
+              Service creation can now safely publish its one-time credential without waiting on a
+              long deployment lock: before this point it either sees the old agreeing target or no
+              target, and this final sync repairs the latter. After this point it sees the new
+              agreeing target directly. Preview aliases never receive production queue work.
+            */
+            await syncProjectQueueTargets(db, clients.valkey, project.id, published.aliasArn)
           }
           await retirePreviousPreview()
         } catch (error) {

@@ -32,11 +32,6 @@ export type QueueBinding = {
   functionArn?: string
 }
 
-export type QueueTarget = {
-  projectId: string
-  functionArn: string
-}
-
 /**
  * Keyed by the resource's **short id**, not its UUID.
  *
@@ -57,12 +52,31 @@ function key(resourceShortId: string): string {
  * error anywhere — the failure mode of forgetting is much worse here than the failure mode of
  * remembering, and teardown withdraws it explicitly.
  */
+const DELETED = "deleted"
+
+const REPLACE_UNLESS_DELETED = `
+local current = redis.call('GET', KEYS[1])
+if current == ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`
+
 export async function publishQueue(
   valkey: Redis,
   resourceShortId: string,
   binding: QueueBinding,
-): Promise<void> {
-  await valkey.set(key(resourceShortId), JSON.stringify(binding))
+): Promise<boolean> {
+  return (
+    Number(
+      await valkey.eval(
+        REPLACE_UNLESS_DELETED,
+        1,
+        key(resourceShortId),
+        DELETED,
+        JSON.stringify(binding),
+      ),
+    ) === 1
+  )
 }
 
 export async function readQueue(
@@ -100,13 +114,14 @@ return 1
 export async function setQueueTarget(
   valkey: Redis,
   resourceShortId: string,
-  target: QueueTarget | null,
+  functionArn: string | null,
 ): Promise<boolean> {
   const bindingKey = key(resourceShortId)
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const raw = await valkey.get(bindingKey)
     if (raw === null) return false
+    if (raw === DELETED) return false
 
     let current: QueueBinding
     try {
@@ -122,10 +137,7 @@ export async function setQueueTarget(
       throw new Error(`Queue binding ${resourceShortId} is incomplete`)
     }
 
-    const next: QueueBinding =
-      target === null
-        ? { ...current, projectId: null, functionArn: undefined }
-        : { ...current, projectId: target.projectId, functionArn: target.functionArn }
+    const next: QueueBinding = { ...current, functionArn: functionArn ?? undefined }
     // JSON.stringify omits the explicit `undefined`, which removes a stale function ARN while
     // keeping the one-time URI and the resource identity intact.
     const moved = Number(await valkey.eval(MOVE_TARGET, 1, bindingKey, raw, JSON.stringify(next)))
@@ -136,7 +148,13 @@ export async function setQueueTarget(
   throw new Error(`Queue binding ${resourceShortId} kept changing while its target was updated`)
 }
 
-/** Stop the router watching a queue. Called when the service is destroyed. */
+/**
+ * Stop the router watching a queue, permanently.
+ *
+ * The marker contains no credential. Keeping it prevents a credential rotation that began before
+ * deletion from publishing its late result after teardown. Backend service IDs are UUIDv7s and
+ * never reused, so there is no valid operation that needs to recreate this exact key.
+ */
 export async function withdrawQueue(valkey: Redis, resourceShortId: string): Promise<void> {
-  await valkey.del(key(resourceShortId))
+  await valkey.set(key(resourceShortId), DELETED)
 }
