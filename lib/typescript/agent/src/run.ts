@@ -162,8 +162,8 @@ async function settleFrom(
 ): Promise<bigint> {
   const rated = await rateTokens(db, usage)
 
-  await db.transaction().execute(async (tx) => {
-    await settleHoldWithin(tx, {
+  return await db.transaction().execute(async (tx) => {
+    const settlement = await settleHoldWithin(tx, {
       holdId,
       actual: rated.usage,
       overheadAmount: rated.overhead,
@@ -174,8 +174,8 @@ async function settleFrom(
       description: input.description ?? null,
     })
     await recordRunUsage(tx, input, usage, runId, startedAt, true)
+    return settlement.chargedMicroUsd
   })
-  return rated.total
 }
 
 /**
