@@ -25,11 +25,11 @@ import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { Type } from "typebox"
+import { validate as validateUUID } from "uuid"
 import { validator } from "../utils/validator"
 import { authMiddleware } from "../middleware"
-import { paramResource, requirePermission } from "../rbac"
+import { requirePermission } from "../rbac"
 import { throwBadRequest, throwNotFound } from "../utils/http-exception"
-import { UUID7String } from "../utils/common.serializer"
 import { deployStatusSchemaParam, deployStatusSchemaResponse } from "./deploy.serializer"
 
 /**
@@ -124,7 +124,16 @@ const tokenRequest = Type.Object({
   project: Type.Optional(Type.String({ minLength: 1 })),
 })
 const tokenResponse = Type.Object({ token: Type.String(), expires_in: Type.Integer() })
-const interactiveTokenParam = Type.Object({ orgSlug: Type.String(), projectId: UUID7String })
+const interactiveTokenParam = Type.Object({
+  orgSlug: Type.String(),
+  projectId: Type.String({ minLength: 1 }),
+})
+
+async function resolveInteractiveProject(organizationId: string, project: string) {
+  return validateUUID(project)
+    ? await fetchProject(db).getInOrganization(organizationId, project, ["id", "isGroup"])
+    : await fetchProject(db).getBySlug(organizationId, project, ["id", "isGroup"])
+}
 
 const catalogueImportRequest = Type.Object({
   oidc_token: Type.String({ minLength: 1 }),
@@ -299,13 +308,14 @@ const deploy: Hono = new Hono()
     }),
     authMiddleware,
     validator("param", interactiveTokenParam),
-    requirePermission("deployment:write", paramResource("project", "project", "projectId")),
+    requirePermission("deployment:write", async (c, organization) => {
+      const projectReference = c.req.param("projectId") ?? ""
+      const project = await resolveInteractiveProject(organization.id, projectReference)
+      return { service: "project", type: "project", id: project?.id ?? projectReference }
+    }),
     async (c) => {
       const { projectId } = c.req.valid("param")
-      const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
-        "id",
-        "isGroup",
-      ])
+      const project = await resolveInteractiveProject(c.var.organization.id, projectId)
       if (project === undefined) return throwNotFound(c, "Project not found")
       if (project.isGroup) return throwBadRequest(c, "A project group cannot be deployed")
 
