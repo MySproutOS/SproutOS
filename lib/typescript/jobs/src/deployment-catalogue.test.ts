@@ -1,11 +1,15 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import {
+  DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
+  DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  discoverDeploymentCatalogue,
   isTrustedDeploymentCatalogueWorkflow,
   reconcileSignedDeploymentCatalogue,
 } from "./deployment-catalogue"
 import type { DeploymentCatalogueArtifact } from "./deployment-catalogue-oci"
+import { enqueue } from "./queue"
 import {
   deploymentCatalogueSchemaInternals,
   parseCatalogueAppManifest,
@@ -160,6 +164,63 @@ describe("signed manifest structural preflight", () => {
       ],
     }
     expect(() => parseCatalogueAppManifest(fixture)).toThrow("must be strictly sorted")
+  })
+})
+
+describe("scheduled catalogue discovery", () => {
+  const coordinates = { ociDigest: FIRST_OCI_DIGEST, sourceSha: SOURCE_SHA }
+  const job = {
+    id: "catalogue-discovery-test",
+    organizationId: null,
+    kind: DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
+    payload: { window: "2099-01-02" },
+    attempt: 1,
+    maxAttempts: 5,
+  }
+  const context = {
+    db,
+    keepAlive: () => Promise.resolve(true),
+    signal: new AbortController().signal,
+  }
+
+  it("verifies discovered provenance before idempotently enqueueing the importer", async () => {
+    const events: string[] = []
+    let queued: { kind: string; payload?: unknown; idempotencyKey?: string | null } | undefined
+    await discoverDeploymentCatalogue({
+      discover: () => {
+        events.push("discover")
+        return Promise.resolve(coordinates)
+      },
+      verify: () => {
+        events.push("verify")
+        return Promise.resolve([{ verified: true }])
+      },
+      queue: (_database, input) => {
+        events.push("queue")
+        queued = input
+        return Promise.resolve("import-job")
+      },
+    })(job, context)
+
+    expect(events).toEqual(["discover", "verify", "queue"])
+    expect(queued).toMatchObject({
+      kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+      payload: coordinates,
+      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:2099-01-02:${FIRST_OCI_DIGEST}`,
+      maxAttempts: 5,
+    })
+  })
+
+  it("does not queue an import when trusted provenance verification fails", async () => {
+    const queue = vi.fn<typeof enqueue>()
+    await expect(
+      discoverDeploymentCatalogue({
+        discover: () => Promise.resolve(coordinates),
+        verify: () => Promise.reject(new Error("untrusted workflow")),
+        queue,
+      })(job, context),
+    ).rejects.toThrow("untrusted workflow")
+    expect(queue).not.toHaveBeenCalled()
   })
 })
 

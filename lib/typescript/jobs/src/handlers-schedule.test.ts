@@ -21,6 +21,28 @@ afterAll(async () => {
 })
 
 describe.skipIf(!reachable)("metering schedules", () => {
+  it("schedules catalogue discovery once per day without requiring an existing import", async () => {
+    const now = new Date(`${TEST_YEAR}-12-29T23:58:45.000Z`)
+    const key = `${JOB_KINDS.discoverDeploymentCatalogue}:${now.toISOString().slice(0, 10)}`
+
+    await scheduleRecurring(db, now)
+    await scheduleRecurring(db, now)
+
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select(["kind", "payload", "idempotencyKey"])
+        .where("idempotencyKey", "=", key)
+        .execute(),
+    ).toEqual([
+      {
+        kind: JOB_KINDS.discoverDeploymentCatalogue,
+        payload: { window: "2099-12-29" },
+        idempotencyKey: key,
+      },
+    ])
+  })
+
   it("schedules Android registration reconciliation only when provider verification is configured", async () => {
     const now = new Date(`${TEST_YEAR}-12-30T23:58:45.000Z`)
     const key = `${JOB_KINDS.reconcileAndroidDeveloperRegistration}:${now.toISOString().slice(0, 16)}`

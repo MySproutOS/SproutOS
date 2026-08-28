@@ -12,11 +12,17 @@ export const DEPLOYMENT_TEMPLATES_WORKFLOW_REF =
 export const DEPLOYMENT_TEMPLATES_SIGNER_IDENTITY =
   "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main" as const
 export const GITHUB_ACTIONS_OIDC_ISSUER = "https://token.actions.githubusercontent.com" as const
+export const DEPLOYMENT_CATALOGUE_RELEASE_API =
+  "https://api.github.com/repos/MySproutOS/Deployment-Templates/releases?per_page=20" as const
 
 const execFileAsync = promisify(execFile)
 const MAX_MANIFEST_BYTES = 512 * 1024
 const MAX_LAYER_BYTES = 8 * 1024 * 1024
+const MAX_RELEASE_BYTES = 256 * 1024
+const MAX_SUBJECTS_BYTES = 64 * 1024
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
+const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/
+const GITHUB_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 
 type OciDescriptor = {
   digest: string
@@ -38,12 +44,24 @@ export type DeploymentCatalogueArtifact = {
   pluginLock: Uint8Array
 }
 
+export type DeploymentCatalogueCoordinates = {
+  ociDigest: string
+  sourceSha: string
+}
+
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`
 }
 
 function assertDigest(value: string, label: string): void {
   if (!DIGEST_PATTERN.test(value)) throw new Error(`${label} is not a sha256 OCI digest`)
+}
+
+function object(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} is not an object`)
+  }
+  return value as Record<string, unknown>
 }
 
 function bearerChallenge(header: string | null): URL {
@@ -101,6 +119,140 @@ async function boundedBytes(response: Response, limit: number, label: string): P
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (bytes.byteLength > limit) throw new Error(`${label} exceeds ${limit} bytes`)
   return bytes
+}
+
+function parseJson(bytes: Uint8Array, label: string): unknown {
+  try {
+    return JSON.parse(Buffer.from(bytes).toString("utf8")) as unknown
+  } catch {
+    throw new Error(`${label} is not valid JSON`)
+  }
+}
+
+async function githubGet(url: string, limit: number, label: string): Promise<Uint8Array> {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!response.ok) throw new Error(`${label} returned ${response.status}`)
+  return await boundedBytes(response, limit, label)
+}
+
+/**
+ * Resolve the latest completed catalogue publication without relying on an earlier database row.
+ *
+ * The immutable release is only a discovery pointer. Its asset digest and exact subject shape
+ * prevent transport ambiguity; the caller must still verify the discovered OCI digest's Cosign
+ * signature and GitHub provenance before enqueueing it, and the importer verifies them again.
+ */
+export async function discoverCurrentDeploymentCatalogue(): Promise<DeploymentCatalogueCoordinates> {
+  const releasesValue = parseJson(
+    await githubGet(
+      DEPLOYMENT_CATALOGUE_RELEASE_API,
+      MAX_RELEASE_BYTES,
+      "Deployment-Templates releases",
+    ),
+    "Deployment-Templates releases",
+  )
+  if (!Array.isArray(releasesValue))
+    throw new Error("Deployment-Templates releases is not an array")
+  const releases = releasesValue.map((value) => object(value, "Deployment-Templates release"))
+  const catalogueReleases = releases.filter(
+    (candidate) =>
+      candidate.draft === false &&
+      candidate.prerelease === false &&
+      typeof candidate.tag_name === "string" &&
+      /^catalogue-[0-9a-f]{40}$/.test(candidate.tag_name),
+  )
+  if (catalogueReleases.length === 0)
+    throw new Error("Deployment-Templates has no final catalogue release")
+  for (const candidate of catalogueReleases) {
+    if (
+      typeof candidate.published_at !== "string" ||
+      !GITHUB_TIMESTAMP_PATTERN.test(candidate.published_at)
+    ) {
+      throw new Error("Deployment-Templates catalogue release has no valid publication time")
+    }
+  }
+  catalogueReleases.sort((left, right) =>
+    (right.published_at as string).localeCompare(left.published_at as string),
+  )
+  const release = catalogueReleases[0]
+  if (release.draft !== false || release.prerelease !== false || release.immutable !== true) {
+    throw new Error("Deployment-Templates catalogue release is not a final immutable release")
+  }
+
+  const tag = release.tag_name
+  const target = release.target_commitish
+  if (typeof tag !== "string" || !/^catalogue-[0-9a-f]{40}$/.test(tag)) {
+    throw new Error("Deployment-Templates release is not a catalogue release")
+  }
+  const sourceSha = tag.slice("catalogue-".length)
+  if (target !== sourceSha || !SOURCE_SHA_PATTERN.test(sourceSha)) {
+    throw new Error("deployment catalogue release tag and source commit do not match")
+  }
+
+  if (!Array.isArray(release.assets)) {
+    throw new Error("deployment catalogue release has no assets")
+  }
+  const assets = release.assets.map((value) => object(value, "deployment catalogue release asset"))
+  const matchingAssets = assets.filter((asset) => asset.name === "subjects.json")
+  if (matchingAssets.length !== 1) {
+    throw new Error("deployment catalogue release must contain exactly one subjects.json asset")
+  }
+  const asset = matchingAssets[0]
+  const expectedUrl = `https://github.com/MySproutOS/Deployment-Templates/releases/download/${tag}/subjects.json`
+  if (
+    asset.state !== "uploaded" ||
+    asset.content_type !== "application/json" ||
+    asset.browser_download_url !== expectedUrl ||
+    typeof asset.digest !== "string" ||
+    !DIGEST_PATTERN.test(asset.digest) ||
+    typeof asset.size !== "number" ||
+    !Number.isSafeInteger(asset.size) ||
+    asset.size <= 0 ||
+    asset.size > MAX_SUBJECTS_BYTES
+  ) {
+    throw new Error("deployment catalogue subjects.json asset metadata is invalid")
+  }
+
+  const subjectsBytes = await githubGet(expectedUrl, MAX_SUBJECTS_BYTES, "catalogue subjects.json")
+  if (subjectsBytes.byteLength !== asset.size || sha256(subjectsBytes) !== asset.digest) {
+    throw new Error("catalogue subjects.json bytes do not match the immutable release asset")
+  }
+  const subjects = object(
+    parseJson(subjectsBytes, "catalogue subjects.json"),
+    "catalogue subjects.json",
+  )
+  if (
+    subjects.schemaVersion !== 1 ||
+    subjects.sourceCommit !== sourceSha ||
+    !Array.isArray(subjects.subjects)
+  ) {
+    throw new Error("catalogue subjects.json does not match the release source commit")
+  }
+  const catalogues = subjects.subjects
+    .map((value) => object(value, "catalogue subject"))
+    .filter((subject) => subject.kind === "catalogue")
+  if (catalogues.length !== 1) {
+    throw new Error("catalogue subjects.json must contain exactly one catalogue subject")
+  }
+  const catalogue = catalogues[0]
+  if (
+    catalogue.id !== "catalogue" ||
+    catalogue.name !== DEPLOYMENT_CATALOGUE_REPOSITORY ||
+    catalogue.tag !== `sha-${sourceSha}` ||
+    catalogue.layout !== "oci/catalogue" ||
+    typeof catalogue.digest !== "string" ||
+    !DIGEST_PATTERN.test(catalogue.digest)
+  ) {
+    throw new Error("catalogue subjects.json does not name the trusted catalogue artifact")
+  }
+  return { ociDigest: catalogue.digest, sourceSha }
 }
 
 function parseManifest(bytes: Uint8Array): OciManifest {
@@ -171,6 +323,30 @@ export async function pullDeploymentCatalogue(
 
 export type VerifiedAttestation = Record<string, unknown>
 
+function githubAttestationVerifyArguments(reference: string, sourceSha: string): string[] {
+  return [
+    "attestation",
+    "verify",
+    `oci://${reference}`,
+    "--repo",
+    DEPLOYMENT_TEMPLATES_REPOSITORY,
+    "--signer-workflow",
+    "MySproutOS/Deployment-Templates/.github/workflows/publish.yml",
+    // GitHub CLI treats --signer-workflow and --cert-identity as mutually exclusive identity
+    // policies. Cosign immediately above enforces the exact certificate SAN; this verifier pins
+    // the repository, workflow, source ref/SHA, hosted runner, and default GitHub OIDC issuer.
+    "--cert-oidc-issuer",
+    GITHUB_ACTIONS_OIDC_ISSUER,
+    "--source-ref",
+    DEPLOYMENT_TEMPLATES_REF,
+    "--source-digest",
+    sourceSha,
+    "--deny-self-hosted-runners",
+    "--bundle-from-oci",
+    "--format=json",
+  ]
+}
+
 export async function verifyDeploymentCatalogueProvenance(
   ociDigest: string,
   sourceSha: string,
@@ -192,30 +368,10 @@ export async function verifyDeploymentCatalogueProvenance(
     { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
   )
 
-  const result = await execFileAsync(
-    "gh",
-    [
-      "attestation",
-      "verify",
-      `oci://${reference}`,
-      "--repo",
-      DEPLOYMENT_TEMPLATES_REPOSITORY,
-      "--signer-workflow",
-      "MySproutOS/Deployment-Templates/.github/workflows/publish.yml",
-      "--cert-identity",
-      DEPLOYMENT_TEMPLATES_SIGNER_IDENTITY,
-      "--cert-oidc-issuer",
-      GITHUB_ACTIONS_OIDC_ISSUER,
-      "--source-ref",
-      DEPLOYMENT_TEMPLATES_REF,
-      "--source-digest",
-      sourceSha,
-      "--deny-self-hosted-runners",
-      "--bundle-from-oci",
-      "--format=json",
-    ],
-    { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
-  )
+  const result = await execFileAsync("gh", githubAttestationVerifyArguments(reference, sourceSha), {
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+  })
   const attestations = JSON.parse(result.stdout) as unknown
   if (!Array.isArray(attestations) || attestations.length === 0) {
     throw new Error("GitHub returned no verified catalogue provenance attestation")
@@ -223,4 +379,8 @@ export async function verifyDeploymentCatalogueProvenance(
   return attestations as VerifiedAttestation[]
 }
 
-export const deploymentCatalogueInternals = { parseManifest, sha256 }
+export const deploymentCatalogueInternals = {
+  githubAttestationVerifyArguments,
+  parseManifest,
+  sha256,
+}

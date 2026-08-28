@@ -1,9 +1,5 @@
 import { createHash } from "node:crypto"
-import {
-  crudDeploymentCatalogueImport,
-  fetchDeploymentCatalogueImport,
-  type CatalogueListingInput,
-} from "@lib/dao"
+import { crudDeploymentCatalogueImport, type CatalogueListingInput } from "@lib/dao"
 import type { DB, Json } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
@@ -13,6 +9,7 @@ import {
   DEPLOYMENT_TEMPLATES_REPOSITORY,
   DEPLOYMENT_TEMPLATES_SIGNER_IDENTITY,
   DEPLOYMENT_TEMPLATES_WORKFLOW_REF,
+  discoverCurrentDeploymentCatalogue,
   GITHUB_ACTIONS_OIDC_ISSUER,
   pullDeploymentCatalogue,
   verifyDeploymentCatalogueProvenance,
@@ -28,6 +25,7 @@ import {
 import { enqueue } from "./queue"
 
 export const DEPLOYMENT_CATALOGUE_IMPORT_KIND = "catalogue.import_signed" as const
+export const DEPLOYMENT_CATALOGUE_DISCOVERY_KIND = "catalogue.discover_signed" as const
 
 export function isTrustedDeploymentCatalogueWorkflow(claims: {
   repository: string
@@ -48,9 +46,21 @@ type CatalogueImportDependencies = {
   verify: (digest: string, sourceSha: string) => Promise<VerifiedAttestation[]>
 }
 
+type CatalogueDiscoveryDependencies = {
+  discover: typeof discoverCurrentDeploymentCatalogue
+  verify: typeof verifyDeploymentCatalogueProvenance
+  queue: typeof enqueue
+}
+
 const defaultDependencies: CatalogueImportDependencies = {
   pull: pullDeploymentCatalogue,
   verify: verifyDeploymentCatalogueProvenance,
+}
+
+const defaultDiscoveryDependencies: CatalogueDiscoveryDependencies = {
+  discover: discoverCurrentDeploymentCatalogue,
+  verify: verifyDeploymentCatalogueProvenance,
+  queue: enqueue,
 }
 
 function json(value: unknown): Json {
@@ -162,16 +172,43 @@ export function importDeploymentCatalogue(
   }
 }
 
+/**
+ * Resolve the latest immutable release without trusting prior database state, prove that exact OCI
+ * digest came from the pinned Deployment-Templates workflow, then hand it to the normal importer.
+ * The importer deliberately repeats provenance verification immediately before its transaction.
+ */
+export function discoverDeploymentCatalogue(
+  dependencies: CatalogueDiscoveryDependencies = defaultDiscoveryDependencies,
+): JobHandler {
+  return async (job, { db }) => {
+    const payload = job.payload as { window?: unknown }
+    if (typeof payload.window !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(payload.window)) {
+      throw new Error("catalogue discovery job requires a UTC day window")
+    }
+
+    const discovered = await dependencies.discover()
+    await dependencies.verify(discovered.ociDigest, discovered.sourceSha)
+    const importId = await dependencies.queue(db, {
+      kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+      payload: discovered,
+      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${payload.window}:${discovered.ociDigest}`,
+      maxAttempts: 5,
+    })
+    console.info(
+      `[catalogue] discovered ${discovered.ociDigest} from ${discovered.sourceSha}, import=${importId}`,
+    )
+  }
+}
+
 export async function scheduleDeploymentCatalogueReconciliation(
   db: Kysely<DB>,
   now: Date = new Date(),
-): Promise<string | undefined> {
-  const latest = await fetchDeploymentCatalogueImport(db).latest(["ociDigest", "sourceSha"])
-  if (latest === undefined) return undefined
+): Promise<string> {
+  const window = now.toISOString().slice(0, 10)
   return await enqueue(db, {
-    kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
-    payload: latest,
-    idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:reconcile:${now.toISOString().slice(0, 10)}:${latest.ociDigest}`,
+    kind: DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
+    payload: { window },
+    idempotencyKey: `${DEPLOYMENT_CATALOGUE_DISCOVERY_KIND}:${window}`,
     maxAttempts: 5,
   })
 }
