@@ -11,6 +11,11 @@
 #   IMAGE=ghcr.io/mysproutos/sproutos-web:<git-sha> \
 #   NAME_PREFIX=sproutos bin/deploy-ecs-web.sh [--cutover]
 #
+# `ECS_BASE_TASK_DEFINITION` may be an exact task-definition ARN registered by OpenTofu. This is
+# the handoff for infrastructure-only container contract changes: the service intentionally ignores
+# task-definition drift, so the deploy must derive its migration and service revisions from the
+# newly registered revision rather than the revision that is still serving traffic.
+#
 # `--cutover` is for a push-to-main release (or an explicitly approved manual cutover). It pins the
 # website and API rules to ECS's permanent green target groups. Re-running it is idempotent; unlike
 # the legacy blue/green command without `--to`, it never tries to send ECS traffic back to blue.
@@ -53,17 +58,30 @@ if [ "$service_status" != "ACTIVE" ]; then
   exit 1
 fi
 
-base_task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
+current_task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
 capacity_provider=$(jq -r '.services[0].capacityProviderStrategy[0].capacityProvider // empty' <<<"$service_json")
-if [ -z "$base_task_arn" ] || [ -z "$capacity_provider" ]; then
+if [ -z "$current_task_arn" ] || [ -z "$capacity_provider" ]; then
   echo "ECS service has no task definition or capacity provider" >&2
   exit 1
 fi
 
+base_task_arn="${ECS_BASE_TASK_DEFINITION:-$current_task_arn}"
 base_json=$(aws ecs describe-task-definition --task-definition "$base_task_arn" --output json)
 base_family=$(jq -r '.taskDefinition.family // empty' <<<"$base_json")
-if [ -z "$base_family" ]; then
-  echo "could not read the current task-definition family" >&2
+resolved_base_arn=$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$base_json")
+base_status=$(jq -r '.taskDefinition.status // empty' <<<"$base_json")
+current_family="${current_task_arn##*/}"
+current_family="${current_family%:*}"
+if [ -z "$base_family" ] || [ "$base_family" != "$current_family" ]; then
+  echo "base task definition does not belong to the service family $current_family" >&2
+  exit 1
+fi
+if [ -n "${ECS_BASE_TASK_DEFINITION:-}" ] && [ "$resolved_base_arn" != "$ECS_BASE_TASK_DEFINITION" ]; then
+  echo "ECS_BASE_TASK_DEFINITION must be an exact task-definition ARN including its revision" >&2
+  exit 1
+fi
+if [ "$base_status" != "ACTIVE" ]; then
+  echo "base task definition is not ACTIVE: $base_task_arn" >&2
   exit 1
 fi
 
