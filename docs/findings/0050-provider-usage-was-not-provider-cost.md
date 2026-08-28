@@ -1,24 +1,26 @@
 # 0050 — Provider usage was not provider cost
 
 Daytona reported 27,360 CPU-seconds, 54,720 GiB-seconds of memory, and 160,920
-GiB-seconds of disk for the live account. SproutOS reported 33,287.062, 66,574.124, and
-166,435.31 respectively. The discrepancy was not provider rounding: the scheduler metered a
-`starting` row from `created_at` before that row had a Daytona `external_id`. Provisioning later
-reset the watermark to the real provider creation time, but usage already emitted from the phantom
-interval remained in the ledger.
+GiB-seconds of disk for the live account. Those account totals are not directly comparable with
+SproutOS's six metered sandboxes: Daytona's export also contains 149 other sandboxes. The six
+provider resources that can be mapped to SproutOS total 26,318 CPU-seconds and 141,360
+GiB-seconds of disk, while SproutOS reported 33,287.062 and 166,435.31 respectively.
 
-The excess was 5,927.062 CPU-seconds, 11,854.124 GiB-seconds of memory, and 5,515.31
-GiB-seconds of disk. At Daytona's rates that is 136,487.8853 micro-USD of nonexistent provider
-usage. The provider-backed quantity costs 634,107.6 micro-USD ($0.6341076), which reconciles with
-Daytona's displayed $0.64. The old Sprout quantity costs 770,595.4853 micro-USD before its 12% fee;
-if all of it was charged under that book, the sandbox correction is 228,959.343536 micro-USD before
-ledger rounding. The actual correction must use posted ledger entries, not this display arithmetic.
+The initial explanation for that gap was wrong. The first SproutOS windows align with the mapped
+Daytona creation timestamps, so there is no evidence that pre-provider `created_at` time caused the
+historical overage. One concrete event instead spans a provider stop/restart gap: Daytona stopped
+the resource at 17:10:28Z and restarted it at 17:25:24Z, while SproutOS emitted one interval from
+17:09:57.923Z through 17:25:27.379Z. That row contains both legitimate and stopped time, so zeroing
+the event would undercount. Historical quantities must not be rewritten until an authoritative
+per-resource provider interval export or an explicitly approved aggregate adjustment supplies the
+correction quantities.
 
 ## What changed
 
 - A sandbox without `external_id` is never meterable, including after the row lock is acquired.
-  The second check closes the race where provider recovery clears the id after the scheduler's
-  first query.
+  The second check closes a latent race where provider recovery clears the id after the scheduler's
+  first query. This invariant prevents unbacked future usage; it is not presented as the cause of
+  the historical discrepancy above.
 - Price-book items can override the book-wide fee. Missing overrides retain the existing 12%; Neon
   compute uses 2%, while Neon storage, Daytona resources, platform-funded AI, and operational agent
   duration use 0%.
