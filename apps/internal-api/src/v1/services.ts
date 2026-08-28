@@ -283,6 +283,8 @@ const app = new Hono()
             .on("databaseBranch.kind", "=", "primary"),
         )
         .leftJoin("databaseRole", "databaseRole.databaseBranchId", "databaseBranch.id")
+        .leftJoin("oauthGrant", "oauthGrant.id", "backendService.createdByOauthGrantId")
+        .leftJoin("oauthClient", "oauthClient.id", "oauthGrant.oauthClientId")
         .select([
           "backendService.id as id",
           "backendService.name as name",
@@ -292,6 +294,8 @@ const app = new Hono()
           "backendService.createdAt as createdAt",
           "databaseBranch.host as host",
           "databaseRole.roleName as username",
+          "oauthClient.id as managedByOauthClientId",
+          "oauthClient.name as managedByOauthAppName",
         ])
         .where("backendService.organizationId", "=", c.var.organization.id)
         .where("backendService.deletedAt", "is", null)
@@ -311,6 +315,10 @@ const app = new Hono()
           port: row.host === null ? null : config.publicPort,
           database: row.username === null ? null : databaseNameOf(row.id),
           username: row.username,
+          managedByOauthApp:
+            row.managedByOauthClientId === null || row.managedByOauthAppName === null
+              ? null
+              : { clientId: row.managedByOauthClientId, name: row.managedByOauthAppName },
           ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
           createdAt: row.createdAt.toISOString(),
         })),

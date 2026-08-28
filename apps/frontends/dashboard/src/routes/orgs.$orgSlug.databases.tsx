@@ -119,6 +119,11 @@ function DatabasesList() {
                         {service.database}
                       </span>
                     )}
+                    {service.managedByOauthApp !== null && (
+                      <span className="block text-[11px] text-muted-foreground">
+                        Managed by {service.managedByOauthApp.name}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant="muted">{KIND_LABELS[service.kind]}</Badge>

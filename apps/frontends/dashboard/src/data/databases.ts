@@ -78,6 +78,7 @@ export type BackendService = {
   port: number | null
   database: string | null
   username: string | null
+  managedByOauthApp: { clientId: string; name: string } | null
   createdLabel: string
 }
 
@@ -102,6 +103,7 @@ export function useBackendServices(orgSlug: string) {
       port: service.port,
       database: service.database,
       username: service.username,
+      managedByOauthApp: service.managedByOauthApp ?? null,
       // The generated type says Date; without transformers.gen.ts it is an ISO string.
       createdLabel: CREATED_FORMAT.format(new Date(service.createdAt)),
     })),

@@ -200,6 +200,13 @@ const projectEntry = Type.Object({
   isGroup: Type.Boolean(),
   /** The group this belongs to, if any. */
   parentProjectId: Nullable(UUID7String),
+  /** Application whose OAuth grant created this project or group, if any. */
+  managedByOauthApp: Nullable(
+    Type.Object({
+      clientId: UUID7String,
+      name: Type.String(),
+    }),
+  ),
   /*
     Where this project is actually reachable, and on what hostname.
 

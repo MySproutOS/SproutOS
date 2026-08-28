@@ -29,6 +29,7 @@ export type Project = {
   isGroup: boolean
   /** The group this belongs to, if any. */
   parentProjectId: string | null
+  managedByOauthApp: { clientId: string; name: string } | null
   /** Where it is reachable. Null when it has never had a successful deployment. */
   url: string | null
   /** Which deployment is serving. Not the newest — a rollback makes those differ. */
@@ -130,6 +131,7 @@ export function useProjects(orgSlug: string) {
       hasUpstreamUpdate: project.hasUpstreamUpdate,
       isGroup: project.isGroup,
       parentProjectId: project.parentProjectId ?? null,
+      managedByOauthApp: project.managedByOauthApp ?? null,
       url: project.url ?? null,
       liveDeploymentId: project.liveDeploymentId ?? null,
     })),
@@ -182,6 +184,7 @@ export function useProject(orgSlug: string, projectId: string) {
             hostname: project.hostname ?? null,
             isGroup: project.isGroup,
             parentProjectId: project.parentProjectId ?? null,
+            managedByOauthApp: project.managedByOauthApp ?? null,
             liveDeploymentId: project.liveDeploymentId ?? null,
             runtime: project.kind,
             autoUpdateForks: project.autoUpdateEnabled,

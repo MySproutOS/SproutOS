@@ -110,15 +110,15 @@ type ProjectRow = {
  * Adds what the project list actually shows: what it has cost, where it runs, and whether its
  * upstream has moved.
  *
- * Three lookups for the whole page rather than three per project. A dashboard with thirty projects
- * would otherwise make ninety round trips to render one screen, and none of the three needs to know
- * about any single project to answer for all of them.
+ * Five lookups for the whole page rather than five per project. A dashboard with thirty projects
+ * would otherwise make 150 round trips to render one screen, and none of them needs to know about
+ * any single project to answer for all of them.
  */
 async function enrich<T extends ProjectRow>(organizationId: string, rows: readonly T[]) {
   if (rows.length === 0) return []
   const projectIds = rows.map((row) => row.id)
 
-  const [rated, regions, behind, live] = await Promise.all([
+  const [rated, regions, behind, live, managers] = await Promise.all([
     /*
       Rated at read time against the price book in force, never stored. A stored cost is wrong the
       moment a rate changes, and wrong in a way nobody can reconstruct.
@@ -184,6 +184,13 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .where("project.id", "in", projectIds)
       .where("deployment.deletedAt", "is", null)
       .execute(),
+    db
+      .selectFrom("project")
+      .innerJoin("oauthGrant", "oauthGrant.id", "project.createdByOauthGrantId")
+      .innerJoin("oauthClient", "oauthClient.id", "oauthGrant.oauthClientId")
+      .select(["project.id as projectId", "oauthClient.id as clientId", "oauthClient.name as name"])
+      .where("project.id", "in", projectIds)
+      .execute(),
   ])
 
   // First region wins, matching the `order by created_at` above: a project's first service is the
@@ -196,6 +203,9 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   }
   const behindByRepository = new Map(behind.map((row) => [row.repositoryId, row.behindBy]))
   const liveByProject = new Map(live.map((row) => [row.projectId, row]))
+  const managerByProject = new Map(
+    managers.map((row) => [row.projectId, { clientId: row.clientId, name: row.name }]),
+  )
 
   return rows.map((row) => ({
     ...row,
@@ -208,6 +218,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     hasUpstreamUpdate: (behindByRepository.get(row.repositoryId) ?? 0) > 0,
     url: liveByProject.get(row.id)?.url ?? null,
     hostname: liveByProject.get(row.id)?.hostname ?? null,
+    managedByOauthApp: managerByProject.get(row.id) ?? null,
   }))
 }
 
@@ -229,6 +240,7 @@ const PROJECT_FIELDS = [
   "agentCredentialId",
   "isGroup",
   "parentProjectId",
+  "createdByOauthGrantId",
   "liveDeploymentId",
   "createdAt",
   "updatedAt",
@@ -289,6 +301,7 @@ function serializeJob(job: JobRow) {
 function serializeProject(
   project: Pick<Selectable<DB["project"]>, (typeof PROJECT_FIELDS)[number]>,
   repository: { ownerLogin: string; name: string; provenance: string },
+  managedByOauthApp: { clientId: string; name: string } | null = null,
 ) {
   return {
     id: project.id,
@@ -308,6 +321,7 @@ function serializeProject(
     agentCredentialId: project.agentCredentialId,
     isGroup: project.isGroup,
     parentProjectId: project.parentProjectId,
+    managedByOauthApp,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     repositoryOwnerLogin: repository.ownerLogin,
@@ -332,7 +346,7 @@ async function serializeOneProject(
     { ...project, id: project.id, repositoryId: project.repositoryId },
   ])
   return {
-    ...serializeProject(project, repository),
+    ...serializeProject(project, repository, enriched?.managedByOauthApp ?? null),
     costMicroUsd: enriched?.costMicroUsd ?? "0",
     region: enriched?.region ?? null,
     hasUpstreamUpdate: enriched?.hasUpstreamUpdate ?? false,
@@ -478,7 +492,12 @@ async function resolveOwnRepository(
  */
 async function ensureRepositoryGroup(
   database: typeof db,
-  input: { organizationId: string; productionBranch: string | null; repositoryId: string },
+  input: {
+    organizationId: string
+    productionBranch: string | null
+    repositoryId: string
+    createdByOauthGrantId: string | null
+  },
 ): Promise<string | null> {
   try {
     const existing = await database
@@ -513,6 +532,7 @@ async function ensureRepositoryGroup(
       .insertInto("project")
       .values({
         id: v7(),
+        createdByOauthGrantId: input.createdByOauthGrantId,
         isGroup: true,
         name: repository.name,
         organizationId: input.organizationId,
@@ -780,6 +800,7 @@ const app = new Hono()
           organizationId: organization.id,
           productionBranch,
           repositoryId: plan.id,
+          createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
         })
       }
 
@@ -832,6 +853,7 @@ const app = new Hono()
 
       const provisioned = await provisionProject(db).create({
         actorUserId: user.id,
+        createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),

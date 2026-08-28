@@ -14,6 +14,7 @@ function project(overrides: Partial<Project> & { id: string; name: string }): Pr
     hasUpstreamUpdate: false,
     isGroup: false,
     parentProjectId: null,
+    managedByOauthApp: null,
     url: null,
     liveDeploymentId: null,
     ...overrides,

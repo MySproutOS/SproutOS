@@ -951,6 +951,10 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       hasUpstreamUpdate: boolean
       isGroup: boolean
       parentProjectId: string | null
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -1059,6 +1063,10 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       hasUpstreamUpdate: boolean
       isGroup: boolean
       parentProjectId: string | null
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -1204,6 +1212,10 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     hasUpstreamUpdate: boolean
     isGroup: boolean
     parentProjectId: string | null
+    managedByOauthApp: {
+      clientId: string
+      name: string
+    } | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1303,6 +1315,10 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     hasUpstreamUpdate: boolean
     isGroup: boolean
     parentProjectId: string | null
+    managedByOauthApp: {
+      clientId: string
+      name: string
+    } | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -2923,6 +2939,10 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
       database: string | null
       username: string | null
       keyPrefix?: string
+      managedByOauthApp: {
+        clientId: string
+        name: string
+      } | null
       createdAt: Date
     }>
   }

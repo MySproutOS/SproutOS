@@ -1,4 +1,6 @@
 import { db } from "@sproutos/db"
+import { availableBalance } from "@lib/billing/ledger"
+import { formatBalanceMicroUsd } from "@lib/billing/money"
 import { redirect } from "next/navigation"
 import { getCurrentSession } from "@website/lib/auth"
 import { ConsentForm } from "./consent-form"
@@ -171,10 +173,17 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
   const memberships = await db
     .selectFrom("organizationMember")
     .innerJoin("organization", "organization.id", "organizationMember.organizationId")
-    .select(["organization.id as id", "organization.name as name"])
+    .select(["organization.id as id", "organization.name as name", "organization.slug as slug"])
     .where("organizationMember.userId", "=", authenticated.user.id)
     .orderBy("organization.name")
     .execute()
+
+  const organizations = await Promise.all(
+    memberships.map(async (organization) => ({
+      ...organization,
+      availableCredit: formatBalanceMicroUsd(await availableBalance(db, organization.id)),
+    })),
+  )
 
   if (memberships.length === 0) {
     return (
@@ -220,7 +229,7 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
         homepageUrl: client.homepageUrl,
         trusted: client.isFirstParty || client.isVerified,
       }}
-      organizations={memberships}
+      organizations={organizations}
       scopes={scopes}
       optionalScopes={
         intent === "create_personal_database" && scopes.includes("database:create")

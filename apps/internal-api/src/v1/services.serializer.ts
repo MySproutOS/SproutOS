@@ -29,6 +29,13 @@ export const servicesSchemaService = Type.Object({
   database: Nullable(Type.String()),
   username: Nullable(Type.String()),
   keyPrefix: Type.Optional(Type.String()),
+  /** Application whose OAuth grant created the service, if any. */
+  managedByOauthApp: Nullable(
+    Type.Object({
+      clientId: UUID7String,
+      name: Type.String(),
+    }),
+  ),
   createdAt: Type.String({ format: "date-time" }),
 })
 

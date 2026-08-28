@@ -48,7 +48,7 @@ export function ConsentForm({
   apiBase,
 }: {
   client: Client
-  organizations: { id: string; name: string }[]
+  organizations: { id: string; name: string; slug: string; availableCredit: string }[]
   scopes: string[]
   optionalScopes: string[]
   databaseIntent: boolean
@@ -64,6 +64,9 @@ export function ConsentForm({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [grantedOptionalScopes, setGrantedOptionalScopes] = useState<string[]>([])
+  const selectedOrganization = organizations.find(
+    (organization) => organization.id === organizationId,
+  )
 
   const mandatoryScopes = scopes.filter((scope) => !optionalScopes.includes(scope))
   const grantedScopes = [...mandatoryScopes, ...grantedOptionalScopes]
@@ -199,6 +202,22 @@ export function ConsentForm({
                   Optional. Creating and running a database uses your SproutOS credit. You can
                   continue without database access, and permission alone does not charge you.
                 </p>
+                {selectedOrganization !== undefined && (
+                  <p className="text-xs text-muted-foreground text-pretty">
+                    <span className="font-medium text-foreground">
+                      {selectedOrganization.availableCredit} available
+                    </span>{" "}
+                    for {selectedOrganization.name}.{" "}
+                    <a
+                      href={`/orgs/${selectedOrganization.slug}/settings/billing`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline underline-offset-4 hover:text-foreground"
+                    >
+                      View billing
+                    </a>
+                  </p>
+                )}
               </div>
             </div>
           </div>

@@ -1,6 +1,14 @@
 import { sql, type Kysely } from "kysely"
 
 export async function up(db: Kysely<unknown>): Promise<void> {
+  await sql`
+    alter table project add column created_by_oauth_grant_id uuid
+      references oauth_grant(id) on delete set null
+  `.execute(db)
+  await sql`
+    create index project_created_by_oauth_grant_id_idx on project (created_by_oauth_grant_id)
+      where created_by_oauth_grant_id is not null
+  `.execute(db)
   await sql`drop index service_credential_live_username_purpose_branch_key`.execute(db)
   await sql`
     create unique index service_credential_live_principal_key
@@ -29,4 +37,6 @@ export async function down(db: Kysely<unknown>): Promise<void> {
       )
       where revoked_at is null
   `.execute(db)
+  await sql`drop index project_created_by_oauth_grant_id_idx`.execute(db)
+  await sql`alter table project drop column created_by_oauth_grant_id`.execute(db)
 }

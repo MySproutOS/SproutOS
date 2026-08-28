@@ -774,6 +774,7 @@ export interface Project {
   autoUpdateEnabled: Generated<boolean>
   autoUpdateMode: Generated<string>
   createdAt: Generated<Timestamp>
+  createdByOauthGrantId: string | null
   deletedAt: Timestamp | null
   dockerfilePath: Generated<string>
   id: string
