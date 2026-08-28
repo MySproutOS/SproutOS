@@ -20,3 +20,9 @@ hide the operational mistake instead of making the deployment sequence explicit.
 
 The deployment itself was fail-safe: migration runs after the idle fleet is healthy and before
 cutover, so the refusal left the previously deployed colour serving.
+
+The same failure recurred when billing statements merged as `10_33` after production had already
+recorded project-template migration `11_01`. The billing migration had not executed, so it was
+renamed to `11_02`; no schema SQL or ledger data changed. The production-shaped verification for
+this repair applies migrations only through `11_01`, then requires the ordinary ordered migrator to
+apply exactly `11_02`.
