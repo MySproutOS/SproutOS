@@ -174,7 +174,7 @@ describe.skipIf(!reachable || !valkeyReachable)("OAuth FastAPI and database acce
       projectId,
     })
     expect({ status: service.status, body: service.json }).toMatchObject({ status: 201 })
-    expect(String(service.json.connectionUri)).toMatch(/^redis:\/\//)
+    expect(String(service.json.connectionUri)).toMatch(/^rediss:\/\//)
 
     const projects = await oauthCall("GET", `/v1/orgs/${orgSlug}/projects`)
     const projectRows = projects.json.data as Json[]
