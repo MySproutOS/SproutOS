@@ -12,7 +12,6 @@ import {
 import { sealEnvVarValue } from "@lib/envelope"
 import {
   parseObjectStorageUri,
-  SecretNotRecoverableError,
   serviceDriverFromEnv,
   type ProvisionResult,
   type ServiceDriver,
@@ -376,23 +375,18 @@ export async function reconcileTemplateServiceProvision(operations: {
 
 export async function recoverTemplateService(
   driver: ServiceDriver,
-  backendServiceId: string,
+  input: Parameters<ServiceDriver["provision"]>[0],
 ): Promise<ProvisionResult> {
-  const details = await driver.details(backendServiceId)
-  try {
-    return { ...details, connectionUri: await driver.connectionUri(backendServiceId) }
-  } catch (error) {
-    if (!(error instanceof SecretNotRecoverableError)) throw error
-    return {
-      ...details,
-      ...(await driver.rotateCredentials(backendServiceId)),
-    }
+  if (driver.recoverProvision === undefined) {
+    throw new Error(`${driver.kind} driver cannot reconcile an interrupted provision safely`)
   }
+  return await driver.recoverProvision(input)
 }
 
 export async function provisionTemplateServices(
   db: Kysely<DB>,
   context: CatalogueTemplateContext,
+  keepAlive?: () => Promise<boolean>,
 ): Promise<void> {
   if (
     context.manifest.services.length > 0 &&
@@ -415,7 +409,7 @@ export async function provisionTemplateServices(
   const services = context.manifest.services as ManifestService[]
   for (const service of services) {
     await reconcileTemplateServiceProvision({
-      serialized: async (work) => await withProjectLock(db, context.projectId, work),
+      serialized: async (work) => await withProjectLock(db, context.projectId, work, { keepAlive }),
       load: async () => {
         const existing = await fetchProjectTemplateService(db).getOne(
           context.projectId,
@@ -469,7 +463,12 @@ export async function provisionTemplateServices(
           name: service.key,
         }),
       recover: async (backendServiceId) =>
-        await recoverTemplateService(serviceDriverFromEnv(db, service.kind), backendServiceId),
+        await recoverTemplateService(serviceDriverFromEnv(db, service.kind), {
+          backendServiceId,
+          organizationId: context.organizationId,
+          projectId: context.projectId,
+          name: service.key,
+        }),
       persistBindings: async (result) => {
         await Promise.all(
           service.bindings.map(async (binding) => {

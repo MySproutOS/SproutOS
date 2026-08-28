@@ -114,6 +114,7 @@ export async function runProvision(
   db: Kysely<DB>,
   payload: ProvisionPayload,
   github?: ProvisionGitHub,
+  keepAlive?: () => Promise<boolean>,
 ): Promise<void> {
   /*
     Claim a queued job, or reclaim one abandoned mid-flight.
@@ -269,7 +270,7 @@ export async function runProvision(
           await configureGeneratedInputs(db, template)
         },
         provisionServices: async () => {
-          await provisionTemplateServices(db, template)
+          await provisionTemplateServices(db, template, keepAlive)
         },
         fork: forkAndPersist,
         prepareAndPush: async (preparedRepository) => {
@@ -545,7 +546,7 @@ function tokenOf(credential: GitHubCredential): string {
   return credential.token
 }
 
-export const provisionProjectJob: JobHandler = async (job, { db }) => {
+export const provisionProjectJob: JobHandler = async (job, { db, keepAlive }) => {
   const payload = job.payload as ProvisionPayload
-  await runProvision(db, payload)
+  await runProvision(db, payload, undefined, keepAlive)
 }

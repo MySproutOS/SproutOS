@@ -114,6 +114,46 @@ async function withAdmin<T>(
   }
 }
 
+type PostgresAdminClient = Pick<Client, "query">
+
+/** Adopt the deterministic role/database after a create response was lost. */
+export async function reconcileSproutPostgresProvider(
+  client: PostgresAdminClient,
+  backendServiceId: string,
+  password: string,
+): Promise<void> {
+  const database = databaseNameFor(backendServiceId)
+  const role = roleNameFor(backendServiceId)
+  assertSafeIdentifier(database)
+  assertSafeIdentifier(role)
+
+  const existingRole = await client.query<{ role: string }>(
+    "select rolname as role from pg_roles where rolname = $1",
+    [role],
+  )
+  if (existingRole.rows[0]?.role !== role) {
+    throw new ServiceNotProvisionedError(backendServiceId)
+  }
+
+  const existingDatabase = await client.query<{ owner: string }>(
+    "select pg_get_userbyid(datdba) as owner from pg_database where datname = $1",
+    [database],
+  )
+  const owner = existingDatabase.rows[0]?.owner
+  if (owner !== undefined && owner !== role) {
+    throw new Error(`Refusing to adopt database ${database}: it is owned by ${owner}`)
+  }
+
+  // Reset the provider password because the response carrying the original plaintext was lost.
+  await client.query(`alter role ${role} login password ${quoteLiteral(password)}`)
+  if (owner === undefined) {
+    // A crash between CREATE ROLE and CREATE DATABASE is safely resumable after the exact role read.
+    await client.query(`create database ${database} owner ${role}`)
+  }
+  await client.query(`revoke all on database ${database} from public`)
+  await client.query(`grant all privileges on database ${database} to ${role}`)
+}
+
 export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfig): ServiceDriver {
   async function locate(backendServiceId: string) {
     const row = await db
@@ -266,6 +306,86 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
       ...details,
       connectionUri: postgresUri({
         ...details,
+        password: secret,
+        ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+      }),
+    }
+  }
+
+  async function recoverProvision(input: ProvisionInput): Promise<ProvisionResult> {
+    try {
+      const service = await details(input.backendServiceId)
+      return {
+        ...service,
+        ...(await rotateCredentials(input.backendServiceId, input.credentialOwner)),
+      }
+    } catch (error) {
+      if (!(error instanceof ServiceNotProvisionedError)) throw error
+    }
+
+    const connectionDetails = detailsFor(input)
+    const password = generatePassword()
+    await withAdmin(config, async (client) => {
+      await reconcileSproutPostgresProvider(client, input.backendServiceId, password)
+    })
+
+    const role = roleNameFor(input.backendServiceId)
+    const roleId = v7()
+    const sealed = await seal(password, rolePasswordContext(roleId))
+    const secret = generateSecret()
+    await db.transaction().execute(async (tx) => {
+      const instanceId = v7()
+      const branchId = v7()
+      await tx
+        .insertInto("databaseInstance")
+        .values({
+          id: instanceId,
+          backendServiceId: input.backendServiceId,
+          projectId: input.projectId,
+          provider: "sprout",
+          region: null,
+          status: "active",
+        })
+        .execute()
+      await tx
+        .insertInto("databaseBranch")
+        .values({
+          id: branchId,
+          databaseInstanceId: instanceId,
+          name: "main",
+          kind: "primary",
+          host: config.publicHost,
+          isProtected: true,
+        })
+        .execute()
+      await tx
+        .insertInto("databaseRole")
+        .values({
+          id: roleId,
+          databaseBranchId: branchId,
+          roleName: role,
+          passwordCiphertext: sealed.ciphertext,
+          passwordWrappedDek: sealed.wrappedDek,
+          passwordKmsKeyId: sealed.kmsKeyId,
+        })
+        .execute()
+      await tx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId: input.backendServiceId,
+          username: connectionDetails.username,
+          secretHash: await hashGeneratedSecret(secret),
+          lastFour: lastFour(secret),
+          oauthGrantId: input.credentialOwner?.oauthGrantId ?? null,
+        })
+        .execute()
+    })
+
+    return {
+      ...connectionDetails,
+      connectionUri: postgresUri({
+        ...connectionDetails,
         password: secret,
         ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
       }),
@@ -442,6 +562,7 @@ export function sproutPostgresDriver(db: Kysely<DB>, config: SproutPostgresConfi
     destroy,
     details,
     provision,
+    recoverProvision,
     resume,
     rotateCredentials,
     suspend,

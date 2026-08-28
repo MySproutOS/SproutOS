@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { SecretNotRecoverableError, type ServiceDriver } from "@lib/services"
+import type { ServiceDriver } from "@lib/services"
 import {
   catalogueTemplateApplyRequest,
   orchestrateCatalogueTemplate,
@@ -122,38 +122,34 @@ describe("catalogue template service recovery", () => {
     }
   }
 
-  it("reconstructs a recoverable credential without rotating it", async () => {
-    let rotations = 0
+  const recoveryInput = {
+    backendServiceId: "service-1",
+    organizationId: "organization-1",
+    projectId: "project-1",
+    name: "database",
+  }
+
+  it("delegates interrupted provisioning to the provider-specific adoption path", async () => {
+    let recoveries = 0
     const result = await recoverTemplateService(
       driver({
-        connectionUri: () => Promise.resolve(first.connectionUri),
-        rotateCredentials: () => {
-          rotations += 1
-          return Promise.resolve({ connectionUri: recovered.connectionUri })
+        recoverProvision: (input) => {
+          expect(input).toEqual(recoveryInput)
+          recoveries += 1
+          return Promise.resolve(recovered)
         },
       }),
-      "service-1",
-    )
-
-    expect(result).toEqual(first)
-    expect(rotations).toBe(0)
-  })
-
-  it("rotates an unrecoverable secret on the same backend service", async () => {
-    let rotations = 0
-    const result = await recoverTemplateService(
-      driver({
-        connectionUri: () => Promise.reject(new SecretNotRecoverableError("service-1")),
-        rotateCredentials: () => {
-          rotations += 1
-          return Promise.resolve({ connectionUri: recovered.connectionUri })
-        },
-      }),
-      "service-1",
+      recoveryInput,
     )
 
     expect(result).toEqual(recovered)
-    expect(rotations).toBe(1)
+    expect(recoveries).toBe(1)
+  })
+
+  it("refuses generic recovery when a driver has no adoption implementation", async () => {
+    await expect(recoverTemplateService(driver({}), recoveryInput)).rejects.toThrow(
+      /cannot reconcile an interrupted provision safely/,
+    )
   })
 
   it("resumes the persisted service after a crash without provisioning another provider resource", async () => {

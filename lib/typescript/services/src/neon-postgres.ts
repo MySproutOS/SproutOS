@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
 import { seal } from "@lib/envelope"
-import type { Kysely } from "kysely"
+import { sql, type Kysely } from "kysely"
 import { v7 } from "uuid"
 import { NeonApiError, neonApi, neonApiConfigFromEnv, type NeonConfig } from "./neon-api"
 import { postgresUri } from "./naming"
@@ -93,6 +93,61 @@ export function parseNeonUri(uri: string): {
   }
 }
 
+type NeonProvisionApi = Pick<
+  ReturnType<typeof neonApi>,
+  "listProjects" | "listBranches" | "listDatabases" | "listRoles" | "getConnectionUri"
+>
+
+/** Locate only the exact provider identity and read all material needed to adopt it. */
+export async function reconcileNeonProvision(
+  api: NeonProvisionApi,
+  backendServiceId: string,
+): Promise<{
+  project: { id: string; name: string; region_id: string }
+  branch: { id: string }
+  connectionUri: string
+}> {
+  const currentName = `sproutos-${backendServiceId}`
+  const legacyName = `sproutos-${backendServiceId.slice(0, 8)}`
+  const current = (await api.listProjects(currentName)).filter(({ name }) => name === currentName)
+  const candidates =
+    current.length === 0
+      ? (await api.listProjects(legacyName)).filter(({ name }) => name === legacyName)
+      : current
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected exactly one Neon project for backend service ${backendServiceId}; found ${candidates.length}`,
+    )
+  }
+  const project = candidates[0]
+  const branches = (await api.listBranches(project.id)).filter(
+    ({ name, primary, default: isDefault }) =>
+      name === "main" && (primary === true || isDefault === true),
+  )
+  if (branches.length !== 1) {
+    throw new Error(`Expected exactly one primary Neon branch for project ${project.id}`)
+  }
+  const branch = branches[0]
+  const [databases, roles] = await Promise.all([
+    api.listDatabases(project.id, branch.id),
+    api.listRoles(project.id, branch.id),
+  ])
+  const usable = databases.filter((database) =>
+    roles.some((role) => role.name === database.owner_name),
+  )
+  if (usable.length !== 1) {
+    throw new Error(`Expected exactly one owned Neon database for project ${project.id}`)
+  }
+  const database = usable[0]
+  const connectionUri = await api.getConnectionUri({
+    projectId: project.id,
+    branchId: branch.id,
+    database: database.name,
+    role: database.owner_name,
+  })
+  return { project, branch, connectionUri }
+}
+
 export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): ServiceDriver {
   const api = neonApi(config.neon)
 
@@ -138,7 +193,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
       never created: a database the customer can see and nothing can serve.
     */
     const { project, branch, connectionUri } = await api.createProject({
-      name: `sproutos-${input.backendServiceId.slice(0, 8)}`,
+      name: `sproutos-${input.backendServiceId}`,
       // Below 1 CU so an idle customer database costs storage and no compute. This is the entire
       // economic argument for Neon over a Postgres that is always running.
       minCu: 0.25,
@@ -220,6 +275,117 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
       .where("id", "=", input.backendServiceId)
       .execute()
 
+    return {
+      ...details,
+      connectionUri: postgresUri({
+        ...details,
+        password: secret,
+        ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+      }),
+    }
+  }
+
+  async function recoverProvision(input: ProvisionInput): Promise<ProvisionResult> {
+    try {
+      const service = await locate(input.backendServiceId)
+      const details = detailsFor({
+        backendServiceId: input.backendServiceId,
+        organizationId: service.organizationId,
+      })
+      return {
+        ...details,
+        ...(await rotateCredentials(input.backendServiceId, input.credentialOwner)),
+      }
+    } catch (error) {
+      if (!(error instanceof ServiceNotProvisionedError)) throw error
+    }
+
+    const adopted = await reconcileNeonProvision(api, input.backendServiceId)
+    if (adopted.project.name === `sproutos-${input.backendServiceId.slice(0, 8)}`) {
+      const sameLegacyIdentity = await db
+        .selectFrom("backendService")
+        .select("id")
+        .where(sql<boolean>`left(id::text, 8) = ${input.backendServiceId.slice(0, 8)}`)
+        .execute()
+      if (sameLegacyIdentity.length !== 1 || sameLegacyIdentity[0]?.id !== input.backendServiceId) {
+        throw new Error(
+          `Legacy Neon identity for ${input.backendServiceId} is not unique in the control plane`,
+        )
+      }
+    }
+    if (adopted.project.region_id !== config.neon.regionId) {
+      throw new Error(`Refusing to adopt Neon project ${adopted.project.id} from another region`)
+    }
+    const alreadyMapped = await db
+      .selectFrom("databaseInstance")
+      .select("backendServiceId")
+      .where("providerProjectId", "=", adopted.project.id)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+    if (alreadyMapped !== undefined && alreadyMapped.backendServiceId !== input.backendServiceId) {
+      throw new Error(`Neon project ${adopted.project.id} is already mapped to another service`)
+    }
+
+    const neon = parseNeonUri(adopted.connectionUri)
+    const details = detailsFor(input)
+    const secret = generateSecret()
+    const roleId = v7()
+    const sealed = await seal(neon.password, rolePasswordContext(roleId))
+    await db.transaction().execute(async (tx) => {
+      const instanceId = v7()
+      const branchId = v7()
+      await tx
+        .insertInto("databaseInstance")
+        .values({
+          id: instanceId,
+          backendServiceId: input.backendServiceId,
+          projectId: input.projectId,
+          provider: "neon",
+          providerProjectId: adopted.project.id,
+          region: adopted.project.region_id,
+          status: "active",
+        })
+        .execute()
+      await tx
+        .insertInto("databaseBranch")
+        .values({
+          id: branchId,
+          databaseInstanceId: instanceId,
+          name: "main",
+          kind: "primary",
+          providerBranchId: adopted.branch.id,
+          host: neon.host,
+          isProtected: true,
+        })
+        .execute()
+      await tx
+        .insertInto("databaseRole")
+        .values({
+          id: roleId,
+          databaseBranchId: branchId,
+          roleName: neon.role,
+          passwordCiphertext: sealed.ciphertext,
+          passwordWrappedDek: sealed.wrappedDek,
+          passwordKmsKeyId: sealed.kmsKeyId,
+        })
+        .execute()
+      await tx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId: input.backendServiceId,
+          username: details.username,
+          secretHash: await hashGeneratedSecret(secret),
+          lastFour: lastFour(secret),
+          oauthGrantId: input.credentialOwner?.oauthGrantId ?? null,
+        })
+        .execute()
+    })
+    await db
+      .updateTable("backendService")
+      .set({ status: "active", updatedAt: new Date() })
+      .where("id", "=", input.backendServiceId)
+      .execute()
     return {
       ...details,
       connectionUri: postgresUri({
@@ -338,6 +504,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
       return detailsFor({ backendServiceId: id, organizationId: service.organizationId })
     },
     provision,
+    recoverProvision,
     resume,
     rotateCredentials,
     suspend,

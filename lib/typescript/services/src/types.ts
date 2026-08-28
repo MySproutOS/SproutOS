@@ -45,6 +45,13 @@ export type CredentialRotationResult = Pick<ProvisionResult, "connectionUri" | "
 export type ServiceDriver = {
   kind: ServiceKind
   provision: (input: ProvisionInput) => Promise<ProvisionResult>
+  /**
+   * Resume a provision whose control-plane marker already exists.
+   *
+   * This is provider-specific on purpose: only a driver knows the durable identity it wrote at the
+   * provider and how to adopt it without replaying a non-idempotent create.
+   */
+  recoverProvision?: (input: ProvisionInput) => Promise<ProvisionResult>
   /** Re-read the URI. Audited by the caller — this is a credential leaving the system. */
   connectionUri: (backendServiceId: string) => Promise<string>
   details: (backendServiceId: string) => Promise<ConnectionDetails>

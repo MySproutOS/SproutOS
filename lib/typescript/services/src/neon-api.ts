@@ -121,6 +121,8 @@ export type NeonBranch = {
   default?: boolean
 }
 export type NeonConnectionUri = { connection_uri: string }
+export type NeonRole = { name: string }
+export type NeonDatabase = { name: string; owner_name: string }
 
 export const NEON_CONSUMPTION_METRICS = [
   "compute_unit_seconds",
@@ -223,13 +225,52 @@ export function neonApi(config: NeonConfig) {
     await call(config, "DELETE", `/projects/${projectId}`)
   }
 
-  async function listProjects(): Promise<NeonProject[]> {
+  async function listProjects(search?: string): Promise<NeonProject[]> {
+    const query = new URLSearchParams({ org_id: config.orgId, limit: "400" })
+    if (search !== undefined) query.set("search", search)
     const listed = await call<{ projects: NeonProject[] }>(
       config,
       "GET",
-      `/projects?org_id=${encodeURIComponent(config.orgId)}`,
+      `/projects?${query.toString()}`,
     )
     return listed.projects
+  }
+
+  async function listRoles(projectId: string, branchId: string): Promise<NeonRole[]> {
+    const listed = await call<{ roles: NeonRole[] }>(
+      config,
+      "GET",
+      `/projects/${projectId}/branches/${branchId}/roles`,
+    )
+    return listed.roles
+  }
+
+  async function listDatabases(projectId: string, branchId: string): Promise<NeonDatabase[]> {
+    const listed = await call<{ databases: NeonDatabase[] }>(
+      config,
+      "GET",
+      `/projects/${projectId}/branches/${branchId}/databases`,
+    )
+    return listed.databases
+  }
+
+  async function getConnectionUri(input: {
+    projectId: string
+    branchId: string
+    database: string
+    role: string
+  }): Promise<string> {
+    const query = new URLSearchParams({
+      branch_id: input.branchId,
+      database_name: input.database,
+      role_name: input.role,
+    })
+    const response = await call<{ uri: string }>(
+      config,
+      "GET",
+      `/projects/${input.projectId}/connection_uri?${query.toString()}`,
+    )
+    return response.uri
   }
 
   /**
@@ -346,7 +387,10 @@ export function neonApi(config: NeonConfig) {
     deleteBranch,
     deleteProject,
     listBranches,
+    listDatabases,
     listProjects,
+    listRoles,
+    getConnectionUri,
     projectConsumption,
     waitForOperations,
   }

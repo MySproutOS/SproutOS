@@ -494,6 +494,20 @@ export function valkeyDriver(
       .execute()
   }
 
+  async function recoverProvision(input: ProvisionInput): Promise<ProvisionResult> {
+    try {
+      const service = await details(input.backendServiceId)
+      return {
+        ...service,
+        ...(await rotateCredentials(input.backendServiceId, input.credentialOwner)),
+      }
+    } catch (error) {
+      // A Valkey service has no provider mutation: the durable credential row is the resource.
+      if (!(error instanceof ServiceNotProvisionedError)) throw error
+      return await provision(input)
+    }
+  }
+
   return {
     kind: "valkey",
     connectionUri,
@@ -509,6 +523,7 @@ export function valkeyDriver(
     */
     issueWorkerCredential,
     provision,
+    recoverProvision,
     rotateCredentials,
     suspend,
   }
