@@ -439,3 +439,9 @@ variable "lambda_web_adapter_layer_version" {
   type        = string
   default     = "29"
 }
+
+variable "android_custody_delivery_enabled" {
+  description = "Inject Android custody parameters only after a later metadata preflight proves the exact SecureStrings exist. Keep false for unrelated task-definition applies."
+  type        = bool
+  default     = false
+}

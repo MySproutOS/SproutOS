@@ -482,6 +482,9 @@ jobs:
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: "1.10.6"
+          # The action's Node output wrapper does not forward EOF reliably to `tofu console`, which
+          # this job uses for the evaluated default-off task-secret contract below.
+          tofu_wrapper: false
 
       - uses: terraform-linters/setup-tflint@v4
         with:
@@ -501,6 +504,9 @@ jobs:
       - name: Validate
         run: tofu validate
         working-directory: tofu
+
+      - name: Prove absent Android parameters cannot enter the default task plan
+        run: bash bin/android-custody-staging.test.sh
 
       # Worth being clear about the ceiling: this catches unused declarations and undocumented
       # variables. It does *not* catch an invalid instance type or a nonexistent database engine —
