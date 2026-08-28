@@ -51,6 +51,9 @@ catalogs:
     '@hey-api/openapi-ts':
       specifier: 0.0.0-next-20260819153534
       version: 0.0.0-next-20260819153534
+    '@peculiar/x509':
+      specifier: ^1.14.3
+      version: 1.14.3
     '@rolldown/plugin-babel':
       specifier: ^0.2.3
       version: 0.2.3
@@ -940,6 +943,9 @@ importers:
       '@lib/workflows':
         specifier: workspace:*
         version: link:../workflows
+      '@peculiar/x509':
+        specifier: 'catalog:'
+        version: 1.14.3
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../../packages/db

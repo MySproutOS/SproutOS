@@ -86,6 +86,10 @@ export function fetchCustomDomain(db: Kysely<DB>) {
             eb("status", "in", ["active", "renewal_warning"]),
             eb("nextRenewalAt", "<=", now),
           ]),
+          eb.and([
+            eb("status", "in", ["active", "renewal_warning"]),
+            eb("renewalInfoRetryAt", "<=", now),
+          ]),
         ]),
       )
       .orderBy("nextRetryAt", "asc")

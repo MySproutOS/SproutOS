@@ -17,6 +17,12 @@ import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 import { certificateVersionKey } from "./certificate-version"
+import {
+  configuredAcmeDirectoryUrl,
+  refreshRenewalSchedule,
+  scheduleIssuedCertificate,
+  type RenewalSchedule,
+} from "./acme-renewal"
 
 export const CUSTOM_DOMAIN_KINDS = {
   scan: "platform.custom_domain_scan",
@@ -42,6 +48,9 @@ type Dependencies = {
   secrets: SecretsManagerClient
   valkey: Redis
   publishRoute: typeof publishLambdaRoute
+  issue: typeof issueCertificate
+  refreshRenewal: typeof refreshRenewalSchedule
+  scheduleIssued: typeof scheduleIssuedCertificate
 }
 
 export type CustomDomainDeletionDependencies = {
@@ -70,6 +79,9 @@ function defaults(): Dependencies {
     secrets: new SecretsManagerClient(config),
     valkey: sharedValkey,
     publishRoute: publishLambdaRoute,
+    issue: issueCertificate,
+    refreshRenewal: refreshRenewalSchedule,
+    scheduleIssued: scheduleIssuedCertificate,
   }
 }
 
@@ -155,7 +167,7 @@ async function issueCertificate(
   const [privateKey, csr] = await acme.crypto.createCsr({ commonName: hostname })
   const client = new acme.Client({
     accountKey: await accountKey(deps),
-    directoryUrl: process.env.ACME_DIRECTORY_URL ?? acme.directory.letsencrypt.staging,
+    directoryUrl: configuredAcmeDirectoryUrl(),
   })
 
   const certificatePem = await client.auto({
@@ -202,12 +214,18 @@ async function loadedReplicaCount(
 }
 
 export function nextRenewal(expiresAt: Date): Date {
-  /*
-   * TODO(custom-domains): prefer ACME Renewal Information once acme-client exposes RFC 9773.
-   * Until then this conservative fallback starts renewal 30 days before expiry; it must not be
-   * mistaken for a permanent assumption that certificates always have a 90-day lifetime.
-   */
+  // Public compatibility name for the bounded fallback used when the CA does not offer RFC 9773.
   return new Date(expiresAt.getTime() - RENEWAL_WINDOW_MS)
+}
+
+function nextCertificateWorkAt(schedule: RenewalSchedule): Date {
+  if (
+    schedule.renewalInfoRetryAt !== null &&
+    schedule.renewalInfoRetryAt < schedule.nextRenewalAt
+  ) {
+    return schedule.renewalInfoRetryAt
+  }
+  return schedule.nextRenewalAt
 }
 
 export function customDomainRetryAfter(now: Date, consecutiveFailures: number): Date {
@@ -320,11 +338,13 @@ export async function deleteCertificateObjectVersions(
 export async function activateCustomDomain(callbacks: {
   publishRoute: () => Promise<void>
   clearPending: () => Promise<void>
+  cleanupObsolete?: () => Promise<void>
   markActive: () => Promise<void>
 }): Promise<void> {
   // The database must never claim a hostname is active before the request hot path can resolve it.
   await callbacks.publishRoute()
   await callbacks.clearPending()
+  await callbacks.cleanupObsolete?.()
   await callbacks.markActive()
 }
 
@@ -378,7 +398,17 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         return
       }
 
-      if (domain.status === "propagating" && domain.certificateObjectVersion !== null) {
+      const directoryUrl = configuredAcmeDirectoryUrl()
+      const provenanceMatches =
+        domain.certificateDirectoryUrl === directoryUrl &&
+        domain.certificateIssuer !== null &&
+        domain.renewalInfoCertificateId !== null
+
+      if (
+        domain.status === "propagating" &&
+        domain.certificateObjectVersion !== null &&
+        provenanceMatches
+      ) {
         failureStatus = "propagating"
         const minimum = minimumCertificateAcks()
         const loaded = await loadedReplicaCount(
@@ -419,11 +449,38 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             clearPending: async () => {
               await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
             },
+            cleanupObsolete: async () => {
+              if (
+                domain.deployedCertificateObjectKey !== null &&
+                domain.deployedCertificateObjectVersion !== null &&
+                (domain.deployedCertificateObjectKey !== domain.certificateObjectKey ||
+                  domain.deployedCertificateObjectVersion !== domain.certificateObjectVersion)
+              ) {
+                await deps.s3.send(
+                  new DeleteObjectCommand({
+                    Bucket: required("TENANT_CERTIFICATE_BUCKET"),
+                    Key: domain.deployedCertificateObjectKey,
+                    VersionId: domain.deployedCertificateObjectVersion,
+                  }),
+                )
+              }
+            },
             markActive: async () => {
+              const nextRetryAt =
+                domain.nextRenewalAt === null
+                  ? null
+                  : nextCertificateWorkAt({
+                      nextRenewalAt: domain.nextRenewalAt,
+                      renewalInfoRetryAt: domain.renewalInfoRetryAt,
+                      renewalInfoExplanationUrl: domain.renewalInfoExplanationUrl,
+                      source: domain.renewalInfoRetryAt === null ? "unsupported" : "ari",
+                    })
               await crudCustomDomain(db).update(domain.organizationId, domain.id, {
                 status: "active",
                 statusReason: null,
-                nextRetryAt: null,
+                deployedCertificateObjectKey: domain.certificateObjectKey,
+                deployedCertificateObjectVersion: domain.certificateObjectVersion,
+                nextRetryAt,
                 consecutiveFailures: 0,
               })
             },
@@ -439,6 +496,35 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       }
 
       const renewing = domain.status === "active" || domain.status === "renewal_warning"
+      if (
+        renewing &&
+        provenanceMatches &&
+        domain.nextRenewalAt !== null &&
+        domain.nextRenewalAt > deps.now()
+      ) {
+        if (
+          domain.renewalInfoRetryAt !== null &&
+          domain.renewalInfoRetryAt <= deps.now() &&
+          domain.renewalInfoCertificateId !== null &&
+          domain.certificateExpiresAt !== null
+        ) {
+          const schedule = await deps.refreshRenewal({
+            certificateId: domain.renewalInfoCertificateId,
+            directoryUrl,
+            expiresAt: domain.certificateExpiresAt,
+            now: deps.now(),
+          })
+          await crudCustomDomain(db).update(domain.organizationId, domain.id, {
+            nextRenewalAt: schedule.nextRenewalAt,
+            renewalInfoRetryAt: schedule.renewalInfoRetryAt,
+            renewalInfoExplanationUrl: schedule.renewalInfoExplanationUrl,
+            nextRetryAt: nextCertificateWorkAt(schedule),
+          })
+          if (schedule.nextRenewalAt > deps.now()) return
+        } else {
+          return
+        }
+      }
       if (!renewing) {
         const [ownsHostname, pointsToIngress] = await Promise.all([
           hasOwnershipTxt(deps.resolver, domain.hostname, domain.verificationToken),
@@ -468,7 +554,9 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       await crudCustomDomain(db).update(domain.organizationId, domain.id, {
         status: "issuing",
         statusReason: renewing
-          ? "Renewing the certificate."
+          ? provenanceMatches
+            ? "Renewing the certificate."
+            : "Replacing a certificate whose ACME issuer provenance does not match the configured directory."
           : "DNS verified; issuing the certificate.",
         verifiedAt: domain.verifiedAt ?? deps.now(),
         lastCheckedAt: deps.now(),
@@ -487,14 +575,20 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       }, 60_000)
       let certificate: Awaited<ReturnType<typeof issueCertificate>>
       try {
-        certificate = await issueCertificate(deps, domain.hostname)
+        certificate = await deps.issue(deps, domain.hostname)
       } finally {
         clearInterval(heartbeat)
       }
       if (heartbeatFailed) {
         throw new Error("Lost the reconciliation lease while the certificate was issuing")
       }
-      const objectKey = `custom-domains/${domain.id}/${certificate.expiresAt.toISOString()}.json`
+      const renewal = await deps.scheduleIssued({
+        certificatePem: certificate.certificatePem,
+        directoryUrl,
+        expiresAt: certificate.expiresAt,
+        now: deps.now(),
+      })
+      const objectKey = `custom-domains/${domain.id}/current.json`
       const stored = await deps.s3.send(
         new PutObjectCommand({
           Bucket: required("TENANT_CERTIFICATE_BUCKET"),
@@ -506,6 +600,8 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             privateKeyPem: certificate.privateKeyPem,
             issuedAt: certificate.issuedAt.toISOString(),
             expiresAt: certificate.expiresAt.toISOString(),
+            issuer: renewal.issuer,
+            directoryUrl,
           }),
           ContentType: "application/json",
           ServerSideEncryption: "aws:kms",
@@ -519,9 +615,14 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       await crudCustomDomain(db).update(domain.organizationId, domain.id, {
         certificateObjectKey: objectKey,
         certificateObjectVersion: stored.VersionId,
+        certificateIssuer: renewal.issuer,
+        certificateDirectoryUrl: directoryUrl,
         certificateIssuedAt: certificate.issuedAt,
         certificateExpiresAt: certificate.expiresAt,
-        nextRenewalAt: nextRenewal(certificate.expiresAt),
+        renewalInfoCertificateId: renewal.certificateId,
+        renewalInfoRetryAt: renewal.renewalInfoRetryAt,
+        renewalInfoExplanationUrl: renewal.renewalInfoExplanationUrl,
+        nextRenewalAt: renewal.nextRenewalAt,
         nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
         status: "propagating",
         statusReason: "Certificate issued; waiting for every active Rust edge replica to load it.",

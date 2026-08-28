@@ -35,6 +35,7 @@
     "@lib/sandbox": "workspace:*",
     "@lib/services": "workspace:*",
     "@lib/workflows": "workspace:*",
+    "@peculiar/x509": "catalog:",
     "@sproutos/db": "workspace:*",
     "@sproutos/sprout-node": "workspace:*",
     "acme-client": "catalog:",
