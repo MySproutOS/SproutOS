@@ -19,11 +19,14 @@ printf '%s\n' "$*" >> "$STUB_CALLS"
 case "$1 $2" in
   "ecs describe-services")
     if [ -e "$UPDATED" ]; then
-      task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8"
+      task=$(cat "$UPDATED")
+      if [ "${AUTO_ROLLBACK:-}" = 1 ] && [ "$task" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8" ]; then
+        task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7"
+      fi
       running=1
     else
       task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7"
-      running=0
+      running=1
     fi
     printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","runningCount":%s,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[{"targetGroupArn":"arn:web-green"},{"targetGroupArn":"arn:api-green"}]}]}\n' "$task" "$running"
     ;;
@@ -61,16 +64,28 @@ JSON
   "ecs run-task")
     printf '{"tasks":[{"taskArn":"arn:aws:ecs:us-east-1:123:task/cluster/migrate"}],"failures":[]}\n'
     ;;
-  "ecs wait") ;;
+  "ecs wait")
+    if [[ "$*" == *"services-stable"* ]]; then
+      count=1
+      [ -e "$WAIT_COUNT" ] && count=$(( $(cat "$WAIT_COUNT") + 1 ))
+      printf '%s' "$count" > "$WAIT_COUNT"
+      if [ "${FAIL_SERVICE_WAIT:-}" = 1 ] && [ "$count" = 1 ]; then exit 255; fi
+    fi
+    ;;
   "ecs describe-tasks")
     if [ "${FAIL_MIGRATION:-}" = 1 ]; then exit_code=1; else exit_code=0; fi
     printf '{"tasks":[{"stopCode":"EssentialContainerExited","stoppedReason":"done","containers":[{"name":"migrate","exitCode":%s}]}]}\n' "$exit_code"
     ;;
   "ecs update-service")
-    : > "$UPDATED"
+    task_definition=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--task-definition" ]; then task_definition=$2; break; fi
+      shift
+    done
+    printf '%s' "$task_definition" > "$UPDATED"
     ;;
   "elbv2 describe-target-health")
-    printf '1\n'
+    printf '%s\n' "${TARGET_HEALTHY:-1}"
     ;;
   "elbv2 describe-target-groups")
     name=""
@@ -95,6 +110,7 @@ chmod +x "$TEST_DIR/bin/aws"
 export PATH="$TEST_DIR/bin:$PATH"
 export STUB_CALLS="$TEST_DIR/calls"
 export REGISTER_COUNT="$TEST_DIR/register-count"
+export WAIT_COUNT="$TEST_DIR/wait-count"
 export UPDATED="$TEST_DIR/updated"
 export CAPTURE="$TEST_DIR/capture"
 export NAME_PREFIX=sproutos
@@ -119,6 +135,7 @@ jq -e '
 ' "$CAPTURE/task-2.json" >/dev/null
 grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
 grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 1' "$STUB_CALLS"
+grep -q 'ecs update-service .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}' "$STUB_CALLS"
 if grep -q 'elbv2 modify-rule' "$STUB_CALLS"; then
   echo "an already-green ECS cutover must not rewrite listener rules" >&2
   exit 1
@@ -129,6 +146,7 @@ fi
 # revisions with that corrected contract before the service changes.
 unlink "$UPDATED"
 unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
 find "$CAPTURE" -type f -exec unlink {} \;
 ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42 \
@@ -146,6 +164,7 @@ grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 1' "$STUB_CALLS"
 # A failed migration is a hard gate: it must not mutate the service.
 unlink "$UPDATED"
 unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
 find "$CAPTURE" -type f -exec unlink {} \;
 if FAIL_MIGRATION=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/failure.out" 2>&1; then
@@ -157,5 +176,47 @@ if grep -q 'ecs update-service' "$STUB_CALLS"; then
   exit 1
 fi
 grep -q 'migration failed before the service was changed' "$TEST_DIR/failure.out"
+
+# The AWS service waiter is bounded. If the replacement does not settle in that window, restore
+# the exact task revision that was healthy before the release and wait (bounded again) for it.
+unlink "$REGISTER_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+if FAIL_SERVICE_WAIT=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/wait-failure.out" 2>&1; then
+  echo "a timed-out ECS deployment reported success" >&2
+  exit 1
+fi
+grep -q 'release did not stabilize within the bounded ECS waiter' "$TEST_DIR/wait-failure.out"
+grep -q 'rollback restored arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7' "$TEST_DIR/wait-failure.out"
+grep -q 'ecs update-service .*sproutos-web:8 .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:7 .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
+
+# Target-group health is an effect assertion after the ECS waiter. A failed assertion also restores
+# the old revision instead of leaving a release the deploy script itself judged unsafe.
+unlink "$UPDATED"
+unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+if TARGET_HEALTHY=0 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/target-failure.out" 2>&1; then
+  echo "an unhealthy target group reported success" >&2
+  exit 1
+fi
+grep -q 'target group arn:web-green has 0 healthy target(s), wanted 1' "$TEST_DIR/target-failure.out"
+grep -q 'rollback restored arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7' "$TEST_DIR/target-failure.out"
+
+# The deployment circuit breaker may finish its own rollback before the waiter returns. That is a
+# failed release, not a stable new one, and it must not trigger a redundant second rollback deploy.
+unlink "$UPDATED"
+unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+if AUTO_ROLLBACK=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/auto-rollback.out" 2>&1; then
+  echo "an automatic circuit-breaker rollback reported a successful release" >&2
+  exit 1
+fi
+grep -q 'ECS waiter returned but the requested release did not settle' "$TEST_DIR/auto-rollback.out"
+[ "$(grep -c 'ecs update-service' "$STUB_CALLS")" = 1 ]
 
 echo "deploy-ecs-web tests passed"
