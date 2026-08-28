@@ -10,7 +10,13 @@ import {
   fetchProjectTemplateService,
 } from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
-import { parseObjectStorageUri, serviceDriverFromEnv } from "@lib/services"
+import {
+  parseObjectStorageUri,
+  SecretNotRecoverableError,
+  serviceDriverFromEnv,
+  type ProvisionResult,
+  type ServiceDriver,
+} from "@lib/services"
 import type { DB, Json } from "@sproutos/db"
 import type { ApplyTemplateResult } from "@sproutos/sprout-node"
 import type { Kysely } from "kysely"
@@ -20,6 +26,7 @@ import {
   type CatalogueApp,
   type CatalogueUserInput,
 } from "./deployment-catalogue-schema"
+import { withProjectLock } from "./project-lock"
 
 export type TemplateInstallState =
   | "configuring"
@@ -289,15 +296,6 @@ export async function verifyUserInputsConfigured(
   }
 }
 
-export class TemplateServiceRecoveryRequiredError extends Error {
-  override readonly name = "TemplateServiceRecoveryRequiredError"
-  constructor(projectId: string, serviceKey: string) {
-    super(
-      `Template service ${projectId}/${serviceKey} was interrupted while provisioning; refusing to mint a second credential`,
-    )
-  }
-}
-
 function bindingValue(
   kind: ManifestService["kind"],
   connection: {
@@ -342,6 +340,56 @@ function bindingValue(
   throw new Error(`${kind} cannot provide template service output ${output}`)
 }
 
+type TemplateServiceProvisionRecord = {
+  backendServiceId: string
+  provisioned: boolean
+}
+
+export async function reconcileTemplateServiceProvision(operations: {
+  serialized: <T>(work: () => Promise<T>) => Promise<T>
+  load: () => Promise<TemplateServiceProvisionRecord | undefined>
+  create: () => Promise<TemplateServiceProvisionRecord>
+  provision: (backendServiceId: string) => Promise<ProvisionResult>
+  recover: (backendServiceId: string) => Promise<ProvisionResult>
+  persistBindings: (result: ProvisionResult) => Promise<void>
+  finish: (backendServiceId: string) => Promise<void>
+  fail: (backendServiceId: string) => Promise<void>
+}): Promise<void> {
+  await operations.serialized(async () => {
+    const loaded = await operations.load()
+    if (loaded?.provisioned === true) return
+
+    const record = loaded ?? (await operations.create())
+    try {
+      const result =
+        loaded === undefined
+          ? await operations.provision(record.backendServiceId)
+          : await operations.recover(record.backendServiceId)
+      await operations.persistBindings(result)
+      await operations.finish(record.backendServiceId)
+    } catch (error) {
+      await operations.fail(record.backendServiceId)
+      throw error
+    }
+  })
+}
+
+export async function recoverTemplateService(
+  driver: ServiceDriver,
+  backendServiceId: string,
+): Promise<ProvisionResult> {
+  const details = await driver.details(backendServiceId)
+  try {
+    return { ...details, connectionUri: await driver.connectionUri(backendServiceId) }
+  } catch (error) {
+    if (!(error instanceof SecretNotRecoverableError)) throw error
+    return {
+      ...details,
+      ...(await driver.rotateCredentials(backendServiceId)),
+    }
+  }
+}
+
 export async function provisionTemplateServices(
   db: Kysely<DB>,
   context: CatalogueTemplateContext,
@@ -366,78 +414,99 @@ export async function provisionTemplateServices(
 
   const services = context.manifest.services as ManifestService[]
   for (const service of services) {
-    const existing = await fetchProjectTemplateService(db).getOne(context.projectId, service.key, [
-      "backendServiceId",
-      "provisionedAt",
-    ])
-    if (existing !== undefined && existing.provisionedAt !== null) continue
-    if (existing !== undefined) {
-      throw new TemplateServiceRecoveryRequiredError(context.projectId, service.key)
-    }
-
-    const backendServiceId = v7()
-    await db.transaction().execute(async (tx) => {
-      await tx
-        .insertInto("backendService")
-        .values({
-          id: backendServiceId,
+    await reconcileTemplateServiceProvision({
+      serialized: async (work) => await withProjectLock(db, context.projectId, work),
+      load: async () => {
+        const existing = await fetchProjectTemplateService(db).getOne(
+          context.projectId,
+          service.key,
+          ["backendServiceId", "bindings", "kind", "provisionedAt"],
+        )
+        if (existing === undefined) return undefined
+        if (
+          existing.kind !== service.kind ||
+          JSON.stringify(existing.bindings) !== JSON.stringify(service.bindings)
+        ) {
+          throw new Error(
+            `template service ${context.projectId}/${service.key} no longer matches its signed manifest`,
+          )
+        }
+        return {
+          backendServiceId: existing.backendServiceId,
+          provisioned: existing.provisionedAt !== null,
+        }
+      },
+      create: async () => {
+        const backendServiceId = v7()
+        await db.transaction().execute(async (tx) => {
+          await tx
+            .insertInto("backendService")
+            .values({
+              id: backendServiceId,
+              organizationId: context.organizationId,
+              projectId: context.projectId,
+              regionId: region.id,
+              name: service.key,
+              kind: service.kind,
+              status: "provisioning",
+            })
+            .execute()
+          await crudProjectTemplateService(tx).create({
+            projectId: context.projectId,
+            serviceKey: service.key,
+            backendServiceId,
+            kind: service.kind,
+            bindings: service.bindings,
+          })
+        })
+        return { backendServiceId, provisioned: false }
+      },
+      provision: async (backendServiceId) =>
+        await serviceDriverFromEnv(db, service.kind).provision({
+          backendServiceId,
           organizationId: context.organizationId,
           projectId: context.projectId,
-          regionId: region.id,
           name: service.key,
-          kind: service.kind,
-          status: "provisioning",
-        })
-        .execute()
-      await crudProjectTemplateService(tx).create({
-        projectId: context.projectId,
-        serviceKey: service.key,
-        backendServiceId,
-        kind: service.kind,
-        bindings: service.bindings,
-      })
-    })
-
-    try {
-      const result = await serviceDriverFromEnv(db, service.kind).provision({
-        backendServiceId,
-        organizationId: context.organizationId,
-        projectId: context.projectId,
-        name: service.key,
-      })
-      await Promise.all(
-        service.bindings.map(async (binding) => {
-          const resolved = bindingValue(service.kind, result, binding.output)
-          const sealed = await sealEnvVarValue(
-            context.projectId,
-            binding.environment,
-            resolved.value,
-          )
-          await crudProjectEnvVar(db).upsert({
-            projectId: context.projectId,
-            key: binding.environment,
-            target: "all",
-            isSecret: resolved.secret,
-            value: sealed,
-          })
         }),
-      )
-      await db.transaction().execute(async (tx) => {
-        await tx
+      recover: async (backendServiceId) =>
+        await recoverTemplateService(serviceDriverFromEnv(db, service.kind), backendServiceId),
+      persistBindings: async (result) => {
+        await Promise.all(
+          service.bindings.map(async (binding) => {
+            const resolved = bindingValue(service.kind, result, binding.output)
+            const sealed = await sealEnvVarValue(
+              context.projectId,
+              binding.environment,
+              resolved.value,
+            )
+            await crudProjectEnvVar(db).upsert({
+              projectId: context.projectId,
+              key: binding.environment,
+              target: "all",
+              isSecret: resolved.secret,
+              value: sealed,
+            })
+          }),
+        )
+      },
+      finish: async (backendServiceId) => {
+        await db.transaction().execute(async (tx) => {
+          await tx
+            .updateTable("backendService")
+            .set({ status: "active", updatedAt: new Date() })
+            .where("id", "=", backendServiceId)
+            .execute()
+          await crudProjectTemplateService(tx).markProvisioned(context.projectId, service.key)
+        })
+      },
+      fail: async (backendServiceId) => {
+        await db
           .updateTable("backendService")
-          .set({ status: "active", updatedAt: new Date() })
+          .set({ status: "error", updatedAt: new Date() })
           .where("id", "=", backendServiceId)
           .execute()
-        await crudProjectTemplateService(tx).markProvisioned(context.projectId, service.key)
-      })
-    } catch (error) {
-      await db
-        .updateTable("backendService")
-        .set({ status: "error", updatedAt: new Date() })
-        .where("id", "=", backendServiceId)
-        .execute()
-      throw error
-    }
+      },
+    })
   }
 }
 

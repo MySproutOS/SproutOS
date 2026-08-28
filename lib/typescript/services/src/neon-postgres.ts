@@ -6,12 +6,13 @@ import { NeonApiError, neonApi, neonApiConfigFromEnv, type NeonConfig } from "./
 import { postgresUri } from "./naming"
 import { rolePasswordContext } from "./postgres"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
-import type {
-  ConnectionDetails,
-  CredentialOwner,
-  ProvisionInput,
-  ProvisionResult,
-  ServiceDriver,
+import {
+  ServiceNotProvisionedError,
+  type ConnectionDetails,
+  type CredentialOwner,
+  type ProvisionInput,
+  type ProvisionResult,
+  type ServiceDriver,
 } from "./types"
 import { SecretNotRecoverableError } from "./valkey"
 
@@ -94,6 +95,19 @@ export function parseNeonUri(uri: string): {
 
 export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): ServiceDriver {
   const api = neonApi(config.neon)
+
+  async function locate(backendServiceId: string) {
+    const service = await db
+      .selectFrom("backendService")
+      .innerJoin("databaseInstance", "databaseInstance.backendServiceId", "backendService.id")
+      .select(["backendService.organizationId as organizationId"])
+      .where("backendService.id", "=", backendServiceId)
+      .where("databaseInstance.provider", "=", "neon")
+      .where("databaseInstance.deletedAt", "is", null)
+      .executeTakeFirst()
+    if (service === undefined) throw new ServiceNotProvisionedError(backendServiceId)
+    return service
+  }
 
   function detailsFor(input: {
     backendServiceId: string
@@ -222,12 +236,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
   }
 
   async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
-    const service = await db
-      .selectFrom("backendService")
-      .select(["organizationId"])
-      .where("id", "=", backendServiceId)
-      .executeTakeFirstOrThrow()
-
+    const service = await locate(backendServiceId)
     const details = detailsFor({ backendServiceId, organizationId: service.organizationId })
     const secret = generateSecret()
 
@@ -325,12 +334,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     connectionUri,
     destroy,
     details: async (id) => {
-      const service = await db
-        .selectFrom("backendService")
-        .select(["organizationId"])
-        .where("id", "=", id)
-        .executeTakeFirstOrThrow()
-
+      const service = await locate(id)
       return detailsFor({ backendServiceId: id, organizationId: service.organizationId })
     },
     provision,
