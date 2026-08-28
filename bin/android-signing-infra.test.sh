@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Static invariants for the Android custody boundary. Provider validation checks syntax and schema;
+# these assertions prevent a future broad IAM/lifecycle cleanup from erasing the properties that
+# make per-app signing keys recoverable.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ANDROID_TF="$ROOT/tofu/android-signing.tf"
+COMPUTE_TF="$ROOT/tofu/compute.tf"
+ECS_TF="$ROOT/tofu/ecs.tf"
+
+require() {
+  local pattern=$1 file=$2 message=$3
+  if ! grep -Eq "$pattern" "$file"; then
+    echo "android signing infrastructure invariant failed: $message" >&2
+    exit 1
+  fi
+}
+
+reject() {
+  local pattern=$1 file=$2 message=$3
+  if grep -Eq "$pattern" "$file"; then
+    echo "android signing infrastructure invariant failed: $message" >&2
+    exit 1
+  fi
+}
+
+require 'resource "aws_s3_bucket_versioning" "android_artifacts"' "$ANDROID_TF" \
+  'the Android artifact bucket must be versioned'
+require 'force_destroy = false' "$ANDROID_TF" \
+  'the Android custody bucket must refuse recursive destruction'
+require 'prefix = "keys/"' "$ANDROID_TF" \
+  'encrypted per-app signing keys need their own non-expiring lifecycle rule'
+require 'prevent_destroy = true' "$ANDROID_TF" \
+  'the Android custody bucket and KMS key must resist accidental destruction'
+require 'aws:SecureTransport.*false' "$ANDROID_TF" \
+  'the bucket must refuse plaintext transport'
+require 'DenyExplicitEncryptionOverride' "$ANDROID_TF" \
+  'a presigned PUT must not override the dedicated SSE-KMS bucket default'
+require 'DenyCustomerProvidedEncryption' "$ANDROID_TF" \
+  'a presigned PUT must not make an artifact depend on a caller-provided S3 key'
+require 'DenyServerSideCopies' "$ANDROID_TF" \
+  'a presigned PUT must not become a cross-prefix CopyObject capability'
+KEY_RETENTION=$(sed -n '/id     = "retain-encrypted-signing-keys"/,/^}/p' "$ANDROID_TF")
+reject '^[[:space:]]*(noncurrent_version_)?expiration[[:space:]]*\{' \
+  <(printf '%s\n' "$KEY_RETENTION") \
+  'no current or noncurrent encrypted signing-key version may expire'
+require '"s3:GetObjectVersion"' "$COMPUTE_TF" \
+  'the API must be able to fetch exact artifact versions recorded in Postgres'
+ANDROID_RAW_SIGNED_POLICY=$(sed -n '/Android release custody/,/Encrypted key objects/p' "$COMPUTE_TF")
+require '"s3:GetObjectVersion"' <(printf '%s\n' "$ANDROID_RAW_SIGNED_POLICY") \
+  'raw and signed artifact reads must support the exact S3 VersionId recorded in Postgres'
+reject 'android_artifacts\.arn}/\*' "$COMPUTE_TF" \
+  'Android S3 authority must stay scoped to raw, keys, and signed prefixes'
+reject 's3:DeleteObject' <(sed -n '/Android release custody/,/A PUT needs GenerateDataKey/p' "$COMPUTE_TF") \
+  'the application task must not be able to delete Android signing material'
+require 'kms:EncryptionContext:aws:s3:arn' "$COMPUTE_TF" \
+  'KMS use must be bound to the Android bucket encryption context'
+ANDROID_POLICY=$(sed -n '/Android release custody/,/Versioned rustls certificate objects/p' "$COMPUTE_TF")
+reject 'cloudwatch:PutMetricData' <(printf '%s\n' "$ANDROID_POLICY") \
+  'do not grant metric publication before the durable signer-health producer exists'
+API_PARAMETERS=$(sed -n '/ecs_api_parameter_names = \[/,/^  ]/p' "$ECS_TF")
+WEBSITE_PARAMETERS=$(sed -n '/ecs_website_parameter_names = \[/,/^  ]/p' "$ECS_TF")
+WORKER_PARAMETERS=$(sed -n '/ecs_worker_parameter_names = \[/,/^  ]/p' "$ECS_TF")
+ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
+ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
+for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
+  require "\"$token\"" <(printf '%s\n' "$ANDROID_API_PARAMETERS") \
+    "$token must reach only the API verifier from Parameter Store"
+  reject "\"$token\"" <(printf '%s\n' "$WEBSITE_PARAMETERS") \
+    "$token must not reach the website container"
+  reject "\"$token\"" <(printf '%s\n' "$WORKER_PARAMETERS") \
+    "$token must not reach the worker container"
+  require "^[[:space:]]*$token$" "$ROOT/bin/put-app-secrets.sh" \
+    "$token must use the out-of-state Parameter Store delivery path"
+done
+require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_PARAMETERS") \
+  'the Android Developer Console credential must reach only the worker'
+reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$API_PARAMETERS$WEBSITE_PARAMETERS") \
+  'the Android Developer Console credential must not reach the API or website'
+require 'var.android_custody_delivery_enabled[[:space:]]*\?' "$ECS_TF" \
+  'all Android task-secret references must remain behind the explicit second-stage gate'
+require 'variable "android_custody_delivery_enabled"' "$ROOT/tofu/variables.tf" \
+  'Android custody delivery needs an explicit rollout variable'
+require 'default[[:space:]]*=[[:space:]]*false' \
+  <(sed -n '/variable "android_custody_delivery_enabled"/,/^}/p' "$ROOT/tofu/variables.tf") \
+  'a normal first apply must not register missing Android SSM references'
+require 'ANDROID_CUSTODY_ONLY' "$ROOT/bin/put-app-secrets.sh" \
+  'custody parameters need an all-or-nothing out-of-state upload mode'
+require 'APK_SIGNER_TOKEN.*APK_SIGNER_OPERATOR_TOKEN must differ' "$ROOT/bin/put-app-secrets.sh" \
+  'the out-of-state upload must reject equal runtime and operator credentials'
+require 'ANDROID_ARTIFACT_BUCKET.*android_artifacts' "$ECS_TF" \
+  'the API and worker need the dedicated bucket name rather than the general build bucket'
+for dependency in \
+  aws_s3_bucket_versioning.android_artifacts \
+  aws_s3_bucket_server_side_encryption_configuration.android_artifacts \
+  aws_s3_bucket_policy.android_artifacts \
+  aws_iam_role_policy_attachment.task_application \
+  aws_iam_role_policy.ecs_execution_secrets; do
+  require "$dependency" "$ECS_TF" \
+    "the ECS task definition must wait for $dependency before registration"
+done
+if git -C "$ROOT" grep -E 'APK_SIGNER_MASTER_IDENTITY|master\.pem|PKCS.?8' -- \
+  'tofu/*.tf' 'tofu/*.tftpl' '.github/workflows/*.yml' >/dev/null; then
+  echo 'android signing infrastructure invariant failed: the offline master identity must not enter AWS or CI configuration' >&2
+  exit 1
+fi
+require 'variable "android_signing_alarms_enabled"' "$ROOT/tofu/variables.tf" \
+  'alarm creation must remain behind an explicit rollout switch'
+require 'default[[:space:]]*=[[:space:]]*false' \
+  <(sed -n '/variable "android_signing_alarms_enabled"/,/^}/p' "$ROOT/tofu/variables.tf") \
+  'signing alarms must stay disabled until the last-seen and queue metric producers exist'
+for metric in SignerHeartbeatAgeSeconds OldestQueuedJobAgeSeconds FailedJobs; do
+  require "metric_name[[:space:]]*=[[:space:]]*\"$metric\"" "$ANDROID_TF" \
+    "the alarm contract must name the $metric producer prerequisite"
+done
+reject 'kms_master_key_id[[:space:]]*=[[:space:]]*"alias/aws/sns"' "$ANDROID_TF" \
+  'CloudWatch cannot be granted use of the immutable AWS-managed SNS key policy'
+require 'AllowCloudWatchAlarmPublishing' "$ANDROID_TF" \
+  'the conditional alarm key must authorize only the CloudWatch alarm publisher'
+require 'land a durable signer registry/last-seen record and a scheduled queue-health sampler' \
+  "$ROOT/docs/android-signing-infrastructure.md" \
+  'operators must be told that last-seen and queue metrics do not exist yet'
+
+echo 'Android signing infrastructure invariants passed'

@@ -548,6 +548,8 @@ jobs:
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
           bash bin/bootstrap-localstack.test.sh
+          bash bin/android-signing-infra.test.sh
+          bash bin/android-custody-delivery.test.sh
           bash bin/user-data.test.sh
           bash tofu/ecs-host-bootstrap.test.sh
           bash tofu/ecs-seccomp-profile.test.sh

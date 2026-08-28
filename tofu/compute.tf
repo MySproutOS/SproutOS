@@ -950,6 +950,51 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
+        /*
+          Android release custody. Presigned URLs carry this role's authority to the outbound-only
+          signer and authenticated clients, so every action is scoped to the three protocol
+          prefixes. There is deliberately no ListBucket or DeleteObject: the control plane already
+          knows exact keys from Postgres, and neither an API bug nor a signer job may erase an app's
+          update identity.
+        */
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = [
+          "${aws_s3_bucket.android_artifacts.arn}/raw/*",
+          "${aws_s3_bucket.android_artifacts.arn}/signed/*",
+        ]
+      },
+      {
+        # Encrypted key objects are also selected by S3 VersionId. Keep this separate so the
+        # recovery-sensitive keys/ prefix remains independently auditable.
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = "${aws_s3_bucket.android_artifacts.arn}/keys/*"
+      },
+      {
+        # A PUT needs GenerateDataKey and a GET needs Decrypt. The dedicated key protects nothing
+        # except this bucket. ViaService prevents direct KMS use, while the encryption context
+        # prevents the role using even this dedicated key through a different S3 bucket. Bucket
+        # keys deliberately make the bucket ARN, rather than an individual object ARN, the context.
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = aws_kms_key.android_artifacts.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService"                   = "s3.${var.aws_region}.amazonaws.com"
+            "kms:EncryptionContext:aws:s3:arn" = aws_s3_bucket.android_artifacts.arn
+          }
+        }
+      },
+      {
         # Tenant object storage. Listing is limited to logical service prefixes in the one physical
         # bucket; no instance can list another platform bucket or the bucket root.
         Effect   = "Allow"

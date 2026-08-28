@@ -12,6 +12,7 @@
 # see `app-secrets.tf`.
 #
 # Usage:  bin/put-app-secrets.sh [path-to-env]
+#         ANDROID_CUSTODY_ONLY=1 bin/put-app-secrets.sh [path-to-env]
 set -euo pipefail
 
 ENV_FILE="${1:-.env}"
@@ -38,7 +39,12 @@ KEYS=(
   STRIPE_PUBLIC_KEY
   STRIPE_SECRET_KEY
   STRIPE_WEBHOOK_SECRET
+  # Runtime poll/claim/callback credential for the outbound-only signer. The signer receives only
+  # exact-object presigned S3 URLs and must never receive an AWS credential or the operator token.
   APK_SIGNER_TOKEN
+  # Separate human-operated catalogue-client identity/release credential. Never install this in
+  # the signer service environment, and refuse rollout if it equals APK_SIGNER_TOKEN.
+  APK_SIGNER_OPERATOR_TOKEN
   ANDROID_DEVELOPER_ID_STATUS_API_KEY
   DEPLOY_TOKEN_SECRET
   LOG_TOKEN_SECRET
@@ -95,8 +101,19 @@ KEYS=(
   SERVICE_OBJECT_STORAGE_ROOT_KEY
 )
 
+# The custody rollout needs an all-or-nothing write between its infrastructure-only plan and its
+# delivery-enable plan. Normal secret refreshes remain partial for backwards compatibility; this
+# mode refuses a missing custody value and writes no unrelated application secret.
+if [ "${ANDROID_CUSTODY_ONLY:-0}" = "1" ]; then
+  KEYS=(
+    APK_SIGNER_TOKEN
+    APK_SIGNER_OPERATOR_TOKEN
+    ANDROID_DEVELOPER_ID_STATUS_API_KEY
+  )
+fi
+
 payload=$(
-  ENV_FILE="$ENV_FILE" KEYS="${KEYS[*]}" python3 <<'PYTHON'
+  ENV_FILE="$ENV_FILE" KEYS="${KEYS[*]}" ANDROID_CUSTODY_ONLY="${ANDROID_CUSTODY_ONLY:-0}" python3 <<'PYTHON'
 import json, os, re
 
 wanted = set(os.environ["KEYS"].split())
@@ -118,10 +135,19 @@ for line in open(os.environ["ENV_FILE"], encoding="utf-8"):
         found[key] = value
 
 missing = sorted(wanted - set(found))
+if missing and os.environ["ANDROID_CUSTODY_ONLY"] == "1":
+    print("Android custody upload refused; missing: " + ", ".join(missing), file=__import__("sys").stderr)
+    raise SystemExit(1)
 if missing:
     # A warning and not an error: several of these are legitimately unset early on, and refusing to
     # write the ones that exist would mean nothing works until everything does.
     print("::warning:: not set locally, so not uploaded: " + ", ".join(missing), file=__import__("sys").stderr)
+
+runtime = found.get("APK_SIGNER_TOKEN")
+operator = found.get("APK_SIGNER_OPERATOR_TOKEN")
+if runtime is not None and operator is not None and runtime == operator:
+    print("Android custody upload refused: APK_SIGNER_TOKEN and APK_SIGNER_OPERATOR_TOKEN must differ.", file=__import__("sys").stderr)
+    raise SystemExit(1)
 
 print(json.dumps(found))
 PYTHON

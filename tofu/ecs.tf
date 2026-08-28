@@ -290,6 +290,18 @@ resource "aws_ecs_task_definition" "web" {
   requires_compatibilities = []
   enable_fault_injection   = false
 
+  # Register no task revision that names the custody bucket until its versioning, SSE-KMS default,
+  # deny policy, and both IAM sides exist. The deploy workflow starts the registered revision only
+  # after OpenTofu finishes, so this closes the first-apply window where an upload could otherwise
+  # reach a newly created bucket before its controls or grants converged.
+  depends_on = [
+    aws_s3_bucket_versioning.android_artifacts,
+    aws_s3_bucket_server_side_encryption_configuration.android_artifacts,
+    aws_s3_bucket_policy.android_artifacts,
+    aws_iam_role_policy_attachment.task_application,
+    aws_iam_role_policy.ecs_execution_secrets,
+  ]
+
   # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
   # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
   # kernel decide what to kill.
@@ -389,6 +401,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "API_PORT", value = "3001" },
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         # The API signs direct build uploads. Without this value it silently falls back to the
         # nonexistent local-development bucket and every CLI/Action deploy fails at the first PUT.
@@ -486,6 +499,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
