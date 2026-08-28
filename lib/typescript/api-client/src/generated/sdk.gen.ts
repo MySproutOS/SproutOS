@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -21,6 +22,7 @@ import {
   getV1OrgsByOrgSlugDomainsResponseTransformer,
   getV1OrgsByOrgSlugInvitesResponseTransformer,
   getV1OrgsByOrgSlugMembersResponseTransformer,
+  getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
@@ -55,6 +57,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
@@ -124,6 +127,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
@@ -193,6 +198,9 @@ import type {
   GetV1OrgsByOrgSlugOauthClientsResponses,
   GetV1OrgsByOrgSlugOauthGrantsData,
   GetV1OrgsByOrgSlugOauthGrantsResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -332,6 +340,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimErrors,
   PostV1ApkSigningClaimResponses,
@@ -1744,6 +1755,29 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions = <
       "Content-Type": "application/json",
       ...options.headers,
     },
+  })
+
+/**
+ * Reads an agent chat transcript and its persisted activity events
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors,
+    ThrowOnError
+  >({
+    responseTransformer:
+      getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions/{sessionId}",
+    ...options,
   })
 
 /**
@@ -3396,4 +3430,40 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

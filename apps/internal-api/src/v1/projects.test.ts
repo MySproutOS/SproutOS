@@ -1248,39 +1248,34 @@ describe.skipIf(!reachable)("project routes", () => {
       await db.deleteFrom("usageRollup").where("id", "in", ids).execute()
     })
 
-    it("shows the region of the project's backend service, and null before it has one", async () => {
+    it("persists the project region and description", async () => {
       const { id: projectId } = await ownProject("Regioned")
 
       const before = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
       const beforeEntry = (before.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
-      // A project has no region of its own — it is where its *data* lives that matters, and that is
-      // a property of a backend service it may not have yet.
       expect(beforeEntry?.region).toBeNull()
 
-      const region = await db.selectFrom("region").select(["id", "code"]).executeTakeFirstOrThrow()
-      const serviceId = v7()
-      await db
-        .insertInto("backendService")
-        .values({
-          id: serviceId,
-          organizationId: orgAId,
-          projectId,
-          regionId: region.id,
-          name: "Queue",
-          kind: "valkey",
-          status: "active",
-        })
-        .execute()
+      const region = await db
+        .selectFrom("region")
+        .select(["id", "code"])
+        .where("isActive", "=", true)
+        .executeTakeFirstOrThrow()
+      const updated = await call("PATCH", `/v1/orgs/${orgA}/projects/${projectId}`, alice, {
+        description: "A customer-visible description",
+        region: region.code,
+      })
+      expect(updated.status).toBe(200)
+      expect(updated.json.description).toBe("A customer-visible description")
+      expect(updated.json.region).toBe(region.code)
 
       const after = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
       const afterEntry = (after.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
       expect(afterEntry?.region).toBe(region.code)
-
-      await db.deleteFrom("backendService").where("id", "=", serviceId).execute()
+      expect(afterEntry?.description).toBe("A customer-visible description")
     })
 
     it("flags a fork only while its latest sync says it is behind", async () => {
@@ -1537,6 +1532,67 @@ describe.skipIf(!reachable)("project routes", () => {
       })
 
       expect(response.status).toBe(400)
+    })
+
+    it("sets a deployable child as the group primary and derives its active domain", async () => {
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId: childId,
+          kind: "production",
+          gitSha: "b".repeat(40),
+          status: "ready",
+          url: "https://generated.sproutos.run",
+          hostname: "generated.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deploymentId })
+        .where("id", "=", childId)
+        .execute()
+      await db
+        .insertInto("customDomain")
+        .values({
+          id: v7(),
+          organizationId: orgAId,
+          projectId: childId,
+          hostname: "app.example.test",
+          verificationToken: "test-token",
+          status: "active",
+        })
+        .execute()
+
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${groupId}`, alice, {
+        primaryChildProjectId: childId,
+      })
+      expect(response.status).toBe(200)
+      expect(response.json.primaryChildProjectId).toBe(childId)
+      expect(response.json.primaryHostname).toBe("app.example.test")
+      expect(response.json.primaryUrl).toBe("https://app.example.test")
+    })
+
+    it("deletes a group's children instead of orphaning them", async () => {
+      const childIds = await db
+        .selectFrom("project")
+        .select("id")
+        .where("parentProjectId", "=", groupId)
+        .where("deletedAt", "is", null)
+        .execute()
+      const response = await call("DELETE", `/v1/orgs/${orgA}/projects/${groupId}`, alice)
+      expect(response.status).toBe(200)
+      expect((response.json.jobs as unknown[]).length).toBe(childIds.length + 1)
+
+      const rows = await db
+        .selectFrom("project")
+        .select(["id", "deletedAt", "state"])
+        .where("id", "in", [groupId, ...childIds.map((child) => child.id)])
+        .orderBy("id")
+        .execute()
+      expect(rows).toHaveLength(childIds.length + 1)
+      expect(rows.every((row) => row.deletedAt !== null && row.state === "deleting")).toBe(true)
     })
   })
 })

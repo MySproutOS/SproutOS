@@ -92,6 +92,8 @@ const ProjectSource = Type.Union([
 
 export const projectSchemaCreateRequest = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 120 }),
+  description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
+  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   kind: Type.Optional(ProjectKind),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -128,6 +130,8 @@ export const projectSchemaCreateRequest = Type.Object({
 
 export const projectSchemaUpdateRequest = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+  description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
+  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */
@@ -161,11 +165,13 @@ export const projectSchemaUpdateRequest = Type.Object({
    * migration somebody should perform deliberately, not a flag flip.
    */
   isGroup: Type.Optional(Type.Boolean()),
+  primaryChildProjectId: Type.Optional(Nullable(UUID7String)),
 })
 
 const projectEntry = Type.Object({
   id: UUID7String,
   name: Type.String(),
+  description: Nullable(Type.String()),
   slug: Type.String(),
   kind: Type.String(),
   state: Type.String(),
@@ -207,6 +213,9 @@ const projectEntry = Type.Object({
       name: Type.String(),
     }),
   ),
+  primaryChildProjectId: Nullable(UUID7String),
+  primaryUrl: Nullable(Type.String()),
+  primaryHostname: Nullable(Type.String()),
   /*
     Where this project is actually reachable, and on what hostname.
 
@@ -283,6 +292,7 @@ export const projectSchemaJobListResponse = Type.Object({
 export const projectSchemaCreateResponse = Type.Object({
   project: projectEntry,
   job: projectJob,
+  jobs: Type.Array(projectJob),
 })
 
 export const projectSchemaDeleteResponse = Type.Object({

@@ -171,6 +171,9 @@ function ProjectDetail() {
                   </div>
                   <Fact label="Region" value={data.region} mono />
                   <Fact label="Runtime" value={data.runtime} mono />
+                  {data.isGroup && (
+                    <Fact label="Primary domain" value={data.primaryHostname ?? "—"} mono />
+                  )}
                   <div className="flex flex-col gap-1">
                     <dt className="eyebrow text-[10px]">Cost this month</dt>
                     <dd>
@@ -188,11 +191,13 @@ function ProjectDetail() {
               condition was hardcoded to null in the data layer — so it read "Not deployed yet" for
               every project forever, including ones that were serving.
             */}
-            <ProductionDeployment
-              orgSlug={orgSlug}
-              project={data}
-              liveDeploymentId={data.liveDeploymentId}
-            />
+            {!data.isGroup && (
+              <ProductionDeployment
+                orgSlug={orgSlug}
+                project={data}
+                liveDeploymentId={data.liveDeploymentId}
+              />
+            )}
 
             {data.isGroup ? <GroupChildren orgSlug={orgSlug} group={data} /> : null}
 

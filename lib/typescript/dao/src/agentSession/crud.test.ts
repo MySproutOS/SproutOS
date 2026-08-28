@@ -2,7 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
-import { crudAgentSession } from "./crud"
+import { crudAgentSession, fetchAgentSession } from "./crud"
 
 /*
   The *tail* of a UUIDv7, not the head.
@@ -91,6 +91,7 @@ afterAll(async () => {
 
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
+    await tx.deleteFrom("agentEvent").where("agentSessionId", "=", sessionId).execute()
     await tx.deleteFrom("agentTurn").where("agentSessionId", "=", sessionId).execute()
     await tx.deleteFrom("agentSession").where("id", "=", sessionId).execute()
     await tx.deleteFrom("project").where("organizationId", "=", organizationId).execute()
@@ -149,5 +150,29 @@ describe("openTurn", () => {
       .where("agentSessionId", "=", sessionId)
       .executeTakeFirstOrThrow()
     expect(Number(after.n)).toBe(Number(before.n) + 3)
+  })
+
+  it("reads persisted turns and associates activity with its turn", async ({ skip }) => {
+    if (!reachable) skip()
+    const turn = await crudAgentSession(db).openTurn({
+      agentSessionId: sessionId,
+      role: "user",
+      inputText: "build a webhook workflow",
+    })
+    const start = await crudAgentSession(db).nextEventSeq(sessionId)
+    await crudAgentSession(db).appendEvents(sessionId, start, [
+      { type: "tool_use", payload: { type: "tool_use", name: "Read" }, agentTurnId: turn.id },
+    ])
+
+    const [turns, events] = await Promise.all([
+      fetchAgentSession(db).listTurns(sessionId),
+      fetchAgentSession(db).listEvents(sessionId, null),
+    ])
+    expect(
+      turns.some((row) => row.id === turn.id && row.inputText === "build a webhook workflow"),
+    ).toBe(true)
+    expect(events.some((event) => event.agentTurnId === turn.id && event.type === "tool_use")).toBe(
+      true,
+    )
   })
 })

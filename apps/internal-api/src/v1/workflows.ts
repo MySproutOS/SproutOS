@@ -264,6 +264,8 @@ app
           "workflowSchedule.enabled as scheduleEnabled",
         ])
         .where("project.organizationId", "=", organizationId)
+        .where("project.kind", "=", "workflow")
+        .where("project.parentProjectId", "is", null)
         .where("workflow.deletedAt", "is", null)
         .where("project.deletedAt", "is", null)
         .orderBy("workflow.name", "asc")
