@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use futures_util::StreamExt as _;
 use reqwest::{Method, Url};
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -116,21 +117,31 @@ impl ApiClient {
             .await
             .map_err(|error| SproutError::ApiTransport(error.to_string()))?;
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|error| SproutError::ApiTransport(error.to_string()))?;
-        if bytes.len() > self.config.max_response_bytes {
-            return Err(SproutError::ApiResponse {
-                status: status.as_u16(),
-                message: "response exceeded the configured size limit".into(),
-            });
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| SproutError::ApiTransport(error.to_string()))?;
+            if bytes.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
+                return Err(SproutError::ApiResponse {
+                    status: status.as_u16(),
+                    message: "response exceeded the configured size limit".into(),
+                });
+            }
+            bytes.extend_from_slice(&chunk);
         }
         if !status.is_success() {
             let message = serde_json::from_slice::<serde_json::Value>(&bytes)
                 .ok()
                 .and_then(|body| body.get("message")?.as_str().map(ToOwned::to_owned))
                 .unwrap_or_else(|| "request failed".into());
+            let message = self
+                .config
+                .token
+                .as_deref()
+                .filter(|token| !token.is_empty())
+                .map_or(message.clone(), |token| {
+                    message.replace(token, "[REDACTED]")
+                });
             return Err(SproutError::ApiResponse {
                 status: status.as_u16(),
                 message,
@@ -138,7 +149,7 @@ impl ApiClient {
         }
         Ok(ApiResponse {
             status,
-            body: bytes.to_vec(),
+            body: bytes,
         })
     }
 }
@@ -146,6 +157,8 @@ impl ApiClient {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     use super::{ApiClient, ApiClientConfig};
 
@@ -185,5 +198,60 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    async fn server(status: &str, body: &str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let body = body.to_owned();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn response_errors_redact_the_configured_token() {
+        let url = server(
+            "400 Bad Request",
+            r#"{"message":"do not echo bearer-canary-token"}"#,
+        )
+        .await;
+        let mut settings = config(&url);
+        settings.token = Some("bearer-canary-token".into());
+        let error = ApiClient::new(settings)
+            .unwrap()
+            .send_json::<()>(reqwest::Method::GET, "v1/test", None)
+            .await
+            .unwrap_err();
+        let envelope = serde_json::to_string(&error.envelope()).unwrap();
+        assert!(!envelope.contains("bearer-canary-token"));
+        assert!(envelope.contains("REDACTED"));
+    }
+
+    #[tokio::test]
+    async fn response_limit_is_enforced_while_streaming() {
+        let url = server("200 OK", &"x".repeat(2048)).await;
+        let mut settings = config(&url);
+        settings.max_response_bytes = 32;
+        let error = ApiClient::new(settings)
+            .unwrap()
+            .send_json::<()>(reqwest::Method::GET, "v1/test", None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("size limit"));
     }
 }
