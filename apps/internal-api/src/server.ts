@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server"
 import type { Server } from "node:http"
 import app from "./index"
+import { assertSignerCredentialConfiguration } from "./v1/apk-signing"
 import { closeMeteringSinks } from "./v1/metering"
 
 /**
@@ -16,6 +17,8 @@ import { closeMeteringSinks } from "./v1/metering"
  * a dev server should die fast when `turbo` tears it down, and this one must not.
  */
 const port = Number(process.env.API_PORT) || 3001
+
+if (process.env.NODE_ENV === "production") assertSignerCredentialConfiguration()
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.info(JSON.stringify({ level: "info", message: "listening", port: info.port }))

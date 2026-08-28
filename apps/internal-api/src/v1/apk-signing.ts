@@ -174,24 +174,30 @@ export function signerAuthorized(header: string | undefined): boolean {
   return constantTimeEqualUtf8(header.slice(7), expected)
 }
 
-export function signerOperatorAuthorized(
-  header: string | undefined,
-  operatorSignerId: string,
-): boolean {
+export function signerOperatorAuthorized(header: string | undefined): boolean {
   const expected = process.env.APK_SIGNER_OPERATOR_TOKEN
-  const expectedSignerId = process.env.APK_SIGNER_OPERATOR_ID
   if (
     expected === undefined ||
     expected === "" ||
-    expectedSignerId === undefined ||
-    expectedSignerId === "" ||
-    operatorSignerId !== expectedSignerId ||
     expected === process.env.APK_SIGNER_TOKEN ||
     header?.startsWith("Bearer ") !== true
   )
     return false
   return constantTimeEqualUtf8(header.slice(7), expected)
 }
+
+export function assertSignerCredentialConfiguration(env: NodeJS.ProcessEnv = process.env): void {
+  const runtime = env.APK_SIGNER_TOKEN
+  const operator = env.APK_SIGNER_OPERATOR_TOKEN
+  if (runtime === undefined || runtime === "" || operator === undefined || operator === "") {
+    throw new Error("APK signer runtime and operator credentials are required")
+  }
+  if (constantTimeEqualUtf8(runtime, operator)) {
+    throw new Error("APK signer runtime and operator credentials must be distinct")
+  }
+}
+
+const CLIENT_RELEASE_OPERATOR_PRINCIPAL = "authenticated-client-release-operator"
 
 function bucket(): string {
   const configured = process.env.ANDROID_ARTIFACT_BUCKET
@@ -371,10 +377,9 @@ const app: Hono = new Hono()
     }),
     validator("json", clientIdentityRequest),
     async (c) => {
-      const json = c.req.valid("json")
-      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
+      if (!signerOperatorAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
-      const identity = await ensureClientSigningIdentity(db, json.signer_id)
+      const identity = await ensureClientSigningIdentity(db, CLIENT_RELEASE_OPERATOR_PRINCIPAL)
       return c.json({
         package_name: identity.packageName,
         state: identity.state,
@@ -398,12 +403,12 @@ const app: Hono = new Hono()
     validator("json", prepareClientReleaseRequest),
     async (c) => {
       const json = c.req.valid("json")
-      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
+      if (!signerOperatorAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
       let prepared: Awaited<ReturnType<typeof prepareClientRelease>>
       try {
         prepared = await prepareClientRelease(db, {
-          operatorSignerId: json.signer_id,
+          operatorSignerId: CLIENT_RELEASE_OPERATOR_PRINCIPAL,
           packageName: json.package_name,
           unsignedDigest: json.unsigned_digest,
           sizeBytes: BigInt(json.size_bytes),
@@ -455,7 +460,7 @@ const app: Hono = new Hono()
     validator("json", finalizeClientReleaseRequest),
     async (c) => {
       const json = c.req.valid("json")
-      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
+      if (!signerOperatorAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
       const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"), json)
       if (idempotencyKey === undefined)
@@ -476,7 +481,7 @@ const app: Hono = new Hono()
       }
       const finalized = await finalizeClientReleaseUpload(db, {
         jobId: json.job_id,
-        operatorSignerId: json.signer_id,
+        operatorSignerId: CLIENT_RELEASE_OPERATOR_PRINCIPAL,
         unsignedKey: json.unsigned_key,
         unsignedObjectVersion: json.unsigned_object_version,
         unsignedDigest: json.unsigned_digest,

@@ -37,7 +37,6 @@ backed.
 | `APK_SIGNER_API_URL`              | Public control-plane origin; HTTPS required except loopback |
 | `APK_SIGNER_TOKEN`                | Bearer credential; required and never accepted on argv      |
 | `APK_SIGNER_OPERATOR_TOKEN`       | Separate credential for client identity/release commands    |
-| `APK_SIGNER_OPERATOR_ID`          | API-configured audit principal for those operator commands  |
 | `APK_SIGNER_ID`                   | Stable machine label used for queue ownership               |
 | `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity                          |
 | `APK_SIGNER_STATE_DIR`            | Durable mode-`0700` crash-recovery journal                  |
@@ -67,10 +66,10 @@ boundary; the API should report the signer's last successful poll as fleet healt
 
 The long-running service receives only `APK_SIGNER_TOKEN`. Keep `APK_SIGNER_OPERATOR_TOKEN` in a
 separate operator-only credential file and expose it only while running `client-identity` or
-`queue-client-release`. Configure the same non-secret `APK_SIGNER_OPERATOR_ID` on the API and for
-the operator command; the API binds the audit label to the credential instead of trusting a
-caller-supplied name. It refuses both credentials if they are configured to the same value. A
-compromised fleet poll token therefore cannot enqueue a catalogue-client APK for signing.
+`queue-client-release`. The API records a fixed audit principal belonging to that credential rather
+than trusting the command's caller-supplied machine label. Production startup fails if either token
+is absent or the two values are equal. A compromised fleet poll token therefore cannot enqueue a
+catalogue-client APK for signing.
 
 ## Normalized job protocol
 
