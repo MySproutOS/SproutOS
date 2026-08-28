@@ -7,6 +7,7 @@ import {
   isReadable,
   latestPerPackage,
   toApp,
+  toClientUpdate,
 } from "./android-index"
 
 const signedUrlFor = (key: string) => `https://cdn.example/${key}?sig=abc`
@@ -161,5 +162,72 @@ describe("the catalogue", () => {
       concludes their apps are gone.
     */
     expect(isReadable(1)).toBe(false)
+  })
+
+  it("carries a verified client update without conflating it with a customer app", () => {
+    const clientUpdate = toClientUpdate(
+      {
+        packageName: "com.sproutos.store",
+        versionName: "2.0.0",
+        versionCode: 20,
+        sha256: "c".repeat(64),
+        sizeBytes: 2_048,
+        certificateSha256: "d".repeat(64),
+        objectKey: "client/2.0.0.apk",
+        required: false,
+      },
+      signedUrlFor,
+    )
+    const catalogue = buildCatalogue({
+      publicApps: [],
+      personalApps: [],
+      personalSites: [],
+      clientUpdate,
+    })
+
+    expect(catalogue.clientUpdate).toMatchObject({
+      packageName: "com.sproutos.store",
+      versionCode: 20,
+      downloadUrl: "https://cdn.example/client/2.0.0.apk?sig=abc",
+    })
+    expect(catalogue.public.apps).toEqual([])
+  })
+})
+
+describe("client updates", () => {
+  const base = {
+    packageName: "com.sproutos.store",
+    versionName: "2.0.0",
+    versionCode: 20,
+    sha256: "c".repeat(64),
+    sizeBytes: 2_048,
+    certificateSha256: "d".repeat(64),
+    objectKey: "client/2.0.0.apk",
+    required: false,
+  }
+
+  it("rejects a release with another package or unverifiable metadata", () => {
+    expect(toClientUpdate({ ...base, packageName: "me.sproutos.someapp" }, signedUrlFor)).toBe(
+      undefined,
+    )
+    expect(toClientUpdate({ ...base, sha256: "not-a-digest" }, signedUrlFor)).toBeUndefined()
+    expect(toClientUpdate({ ...base, certificateSha256: "A".repeat(64) }, signedUrlFor)).toBe(
+      undefined,
+    )
+  })
+
+  it("rejects values Android or JSON cannot represent safely", () => {
+    expect(toClientUpdate({ ...base, versionCode: 2_100_000_001 }, signedUrlFor)).toBeUndefined()
+    expect(toClientUpdate({ ...base, sizeBytes: Number.MAX_SAFE_INTEGER + 1 }, signedUrlFor)).toBe(
+      undefined,
+    )
+    expect(toClientUpdate({ ...base, versionName: "" }, signedUrlFor)).toBeUndefined()
+  })
+
+  it("emits required only when true", () => {
+    expect(toClientUpdate(base, signedUrlFor)).not.toHaveProperty("required")
+    expect(toClientUpdate({ ...base, required: true }, signedUrlFor)).toMatchObject({
+      required: true,
+    })
   })
 })

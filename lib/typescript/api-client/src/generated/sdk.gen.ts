@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -58,6 +59,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1AuthCliTokenResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
@@ -130,8 +132,13 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
+  GetV1AndroidClientReleaseData,
+  GetV1AndroidClientReleaseErrors,
+  GetV1AndroidClientReleaseResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
   GetV1DeployDeploymentsByDeploymentIdData,
@@ -350,6 +357,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -3689,6 +3699,22 @@ export const postV1ApkSigningFail = <ThrowOnError extends boolean = false>(
   })
 
 /**
+ * Returns the latest verified signed release of the SproutOS Android client.
+ */
+export const getV1AndroidClientRelease = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1AndroidClientReleaseData, ThrowOnError>,
+): RequestResult<
+  GetV1AndroidClientReleaseResponses,
+  GetV1AndroidClientReleaseErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).get<
+    GetV1AndroidClientReleaseResponses,
+    GetV1AndroidClientReleaseErrors,
+    ThrowOnError
+  >({ url: "/v1/android/client-release", ...options })
+
+/**
  * The verified public and caller-owned Android apps and deployed sites.
  */
 export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
@@ -3697,4 +3723,40 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

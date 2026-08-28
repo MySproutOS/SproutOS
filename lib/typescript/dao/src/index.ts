@@ -293,6 +293,8 @@ export { crudAndroidApp } from "./androidApp/crud"
 export { fetchAndroidApp } from "./androidApp/fetch"
 export { crudAndroidSignerJob } from "./androidSignerJob/crud"
 export { fetchAndroidSignerJob } from "./androidSignerJob/fetch"
+export { crudClientRelease } from "./clientRelease/crud"
+export { fetchClientRelease, SPROUTOS_ANDROID_PACKAGE } from "./clientRelease/fetch"
 export { crudDeploymentBuild } from "./deploymentBuild/crud"
 export { fetchPlacement, type Placement } from "./cluster/placement"
 export {

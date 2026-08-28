@@ -24,7 +24,9 @@
  */
 
 export type AndroidApp = {
+  /** Stable database identity for this application. */
   androidAppId: string
+  /** The project whose entitlement controls this private APK. */
   projectId: string
   /** The Android package name. The client's primary key, and what an install replaces. */
   packageName: string
@@ -42,6 +44,17 @@ export type AndroidApp = {
   iconUrl?: string
 }
 
+export type ClientUpdate = {
+  packageName: "com.sproutos.store"
+  versionName: string
+  versionCode: number
+  sha256: string
+  sizeBytes: number
+  certificateSha256: string
+  downloadUrl: string
+  required?: boolean
+}
+
 export type AndroidSite = {
   /** A website in the personal tab: something the customer deployed that has no APK. */
   name: string
@@ -57,6 +70,8 @@ export type Catalogue = {
   expiresAt: string
   public: { apps: AndroidApp[] }
   personal: { apps: AndroidApp[]; sites: AndroidSite[] }
+  /** Present only after a verified SproutOS client release has been published. */
+  clientUpdate?: ClientUpdate
 }
 
 /**
@@ -163,6 +178,7 @@ export function buildCatalogue(input: {
   publicApps: AndroidApp[]
   personalApps: AndroidApp[]
   personalSites: AndroidSite[]
+  clientUpdate?: ClientUpdate
   now?: Date
 }): Catalogue {
   const now = input.now ?? new Date()
@@ -176,5 +192,49 @@ export function buildCatalogue(input: {
       apps: latestPerPackage(input.personalApps),
       sites: [...input.personalSites].toSorted((a, b) => a.name.localeCompare(b.name)),
     },
+    ...(input.clientUpdate === undefined ? {} : { clientUpdate: input.clientUpdate }),
+  }
+}
+
+export type ClientReleaseRow = {
+  packageName: string
+  versionName: string
+  versionCode: number
+  sha256: string
+  sizeBytes: number
+  certificateSha256: string
+  objectKey: string
+  required: boolean
+}
+
+/** Convert a persisted platform release into the contract shared with the Android client. */
+export function toClientUpdate(
+  row: ClientReleaseRow,
+  signedUrlFor: (key: string) => string,
+): ClientUpdate | undefined {
+  if (
+    row.packageName !== "com.sproutos.store" ||
+    row.versionName.length === 0 ||
+    !Number.isInteger(row.versionCode) ||
+    row.versionCode <= 0 ||
+    row.versionCode > 2_100_000_000 ||
+    !Number.isSafeInteger(row.sizeBytes) ||
+    row.sizeBytes <= 0 ||
+    !/^[0-9a-f]{64}$/.test(row.sha256) ||
+    !/^[0-9a-f]{64}$/.test(row.certificateSha256) ||
+    row.objectKey.length === 0
+  ) {
+    return undefined
+  }
+
+  return {
+    packageName: row.packageName,
+    versionName: row.versionName,
+    versionCode: row.versionCode,
+    sha256: row.sha256,
+    sizeBytes: row.sizeBytes,
+    certificateSha256: row.certificateSha256,
+    downloadUrl: signedUrlFor(row.objectKey),
+    ...(row.required ? { required: true } : {}),
   }
 }
