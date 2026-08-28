@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import type { Workspace } from "./workspace"
+import { DELEGATION_POLICY } from "./delegation"
 
 /**
  * Teaching the agent what SproutOS is, inside the workspace it is working in.
@@ -132,6 +133,8 @@ leave scratch files in the tree, and do not ask whether you may edit files. You 
 **The sandbox stops after fifteen minutes of inactivity.** A detached preview may live between
 turns, but it stops with the sandbox. Anything that must outlive the sandbox belongs in the
 repository, not only in a process or under \`/tmp\`.
+
+${DELEGATION_POLICY}
 `
 }
 

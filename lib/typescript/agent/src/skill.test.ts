@@ -99,6 +99,11 @@ describe("the sandbox's own section", () => {
     expect(body).toContain("metadata addresses")
     expect(body).toContain("committed and pushed to a branch")
     expect(body).toContain("fifteen minutes")
+    expect(body).toContain("## Delegating work")
+    expect(body).toContain("at most two children concurrently")
+    expect(body).toContain("`small` role")
+    expect(body).toContain("`large` role")
+    expect(body).toContain("The parent agent owns the final answer")
   })
 
   it("says none of it in the control-plane checkout, where none of it is true", async () => {
