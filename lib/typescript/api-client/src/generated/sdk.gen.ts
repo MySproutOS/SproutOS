@@ -424,6 +424,9 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses,
@@ -573,6 +576,34 @@ export const postV1InvitesAccept = <ThrowOnError extends boolean = false>(
     headers: {
       "Content-Type": "application/json",
       ...options?.headers,
+    },
+  })
+
+/**
+ * Sets a direct child as its group's primary project from a scoped agent turn
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
+    ThrowOnError
+  >,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/group-primary",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
     },
   })
 

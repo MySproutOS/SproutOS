@@ -2,6 +2,19 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 
 export function fetchAgentProxyToken(db: Kysely<DB>) {
+  /** The row an access token belongs to, if it can still authorize a request. */
+  async function liveByAccessHash(
+    hash: string,
+  ): Promise<Selectable<DB["agentProxyToken"]> | undefined> {
+    return await db
+      .selectFrom("agentProxyToken")
+      .selectAll()
+      .where("accessTokenHash", "=", hash)
+      .where("revokedAt", "is", null)
+      .where("accessExpiresAt", ">", new Date())
+      .executeTakeFirst()
+  }
+
   /**
    * The row a refresh token belongs to, if it is still usable.
    *
@@ -21,5 +34,5 @@ export function fetchAgentProxyToken(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { liveByRefreshHash }
+  return { liveByAccessHash, liveByRefreshHash }
 }

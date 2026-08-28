@@ -159,8 +159,7 @@ describe("openTurn", () => {
       role: "user",
       inputText: "build a webhook workflow",
     })
-    const start = await crudAgentSession(db).nextEventSeq(sessionId)
-    await crudAgentSession(db).appendEvents(sessionId, start, [
+    await crudAgentSession(db).appendEvents(sessionId, [
       { type: "tool_use", payload: { type: "tool_use", name: "Read" }, agentTurnId: turn.id },
     ])
 
@@ -174,5 +173,33 @@ describe("openTurn", () => {
     expect(events.some((event) => event.agentTurnId === turn.id && event.type === "tool_use")).toBe(
       true,
     )
+  })
+
+  it("serializes concurrent event batches without colliding", async ({ skip }) => {
+    if (!reachable) skip()
+    const sessions = crudAgentSession(db)
+    const turn = await sessions.openTurn({ agentSessionId: sessionId, role: "user" })
+
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        sessions.appendEvents(sessionId, [
+          {
+            type: "platform_action",
+            payload: { type: "platform_action", message: `action-${index}` },
+            agentTurnId: turn.id,
+          },
+        ]),
+      ),
+    )
+
+    const events = await fetchAgentSession(db).listEvents(sessionId, null)
+    const actions = events.filter(
+      (event) =>
+        event.agentTurnId === turn.id &&
+        event.type === "platform_action" &&
+        String((event.payload as { message?: string }).message).startsWith("action-"),
+    )
+    expect(actions).toHaveLength(6)
+    expect(new Set(actions.map((event) => event.seq)).size).toBe(6)
   })
 })
