@@ -60,4 +60,22 @@ describe.runIf(reachable)("the store listing seed", () => {
 
     expect(bad).toEqual([])
   })
+
+  it("leaves no published listing without a SproutOS-Apps instruction marker", async () => {
+    const bad = await db
+      .selectFrom("storeListing")
+      .select("slug")
+      .where("status", "=", "published")
+      .where("deletedAt", "is", null)
+      .where((eb) =>
+        eb.or([
+          eb("deploymentSourceOwner", "!=", "SproutOS-Apps"),
+          eb("deploymentInstructionsPath", "is", null),
+          eb("deploymentSourceRepo", "is", null),
+        ]),
+      )
+      .execute()
+
+    expect(bad).toEqual([])
+  })
 })

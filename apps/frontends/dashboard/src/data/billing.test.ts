@@ -48,8 +48,8 @@ describe("usage service categories", () => {
   it("keeps queue storage under Cache without calling it ordinary cache usage", () => {
     expect(usageCategory("valkey_queue_byte_second")).toBe("Cache")
     expect(usageCategory("valkey_cache_byte_second")).toBe("Cache")
-    expect(usageDescription("valkey_queue_byte_second")).toContain(
-      "queue data and metadata stored over time",
+    expect(usageDescription("valkey_queue_byte_second")).toBe(
+      "Queue residency: queued payload bytes multiplied by how long they remain queued.",
     )
     expect(usageCategory("sandbox_cpu_second")).toBe("Sandbox")
     expect(usageCategory("db_compute_cu_second")).toBe("Postgres")

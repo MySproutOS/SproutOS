@@ -92,6 +92,9 @@ export function fetchStoreListing(db: Kysely<DB>) {
       .selectFrom("storeListing")
       .where("storeListing.deletedAt", "is", null)
       .where("storeListing.status", "=", status)
+      .$if(status === PUBLIC_LISTING_STATUS, (qb) =>
+        qb.where("storeListing.deploymentInstructionsPath", "is not", null),
+      )
       .$if(!!filters.categoryId, (qb) =>
         qb.where("storeListing.categoryId", "=", filters.categoryId!),
       )
@@ -130,6 +133,7 @@ export function fetchStoreListing(db: Kysely<DB>) {
       .selectFrom("storeListing")
       .where("storeListing.deletedAt", "is", null)
       .where("storeListing.status", "=", PUBLIC_LISTING_STATUS)
+      .where("storeListing.deploymentInstructionsPath", "is not", null)
       .select([...LIST_FIELDS])
       .orderBy(sql`store_listing.featured_rank nulls last`)
       .orderBy("storeListing.starsCount", "desc")
@@ -192,6 +196,7 @@ export function fetchStoreListing(db: Kysely<DB>) {
       .where("storeListing.slug", "=", slug)
       .where("storeListing.deletedAt", "is", null)
       .where("storeListing.status", "=", PUBLIC_LISTING_STATUS)
+      .where("storeListing.deploymentInstructionsPath", "is not", null)
       .executeTakeFirst()
   }
 

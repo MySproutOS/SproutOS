@@ -41,6 +41,8 @@ export type StoreListing = {
 export type StoreListingDetail = StoreListing & {
   description: string
   repo: string
+  repoUrl: string
+  homepageUrl: string | null
   version: string
   requires: string[]
 }
@@ -144,6 +146,8 @@ export function useStoreListing(slug: string) {
             tags: listing.tags,
             description: listing.descriptionMd,
             repo: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+            repoUrl: listing.upstreamRepoUrl,
+            homepageUrl: listing.homepageUrl,
             /*
               The branch, not a version.
 

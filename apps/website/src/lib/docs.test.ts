@@ -1,4 +1,7 @@
+import { readdirSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { GENERATED_DOCS } from "./docs.generated"
 import { DOCS, docBySlug, searchableText, searchDocs } from "./docs"
 
 /**
@@ -6,14 +9,29 @@ import { DOCS, docBySlug, searchableText, searchDocs } from "./docs"
  * a search that misses a page answers confidently while missing it, which is worse than no search.
  */
 describe("the documentation", () => {
+  it("keeps the generated browser index synchronized with the Markdown sources", () => {
+    const directory = join(import.meta.dirname, "../content/docs")
+    const markdown = readdirSync(directory)
+      .filter((file) => file.endsWith(".md"))
+      .map((file) => readFileSync(join(directory, file), "utf8"))
+
+    expect(GENERATED_DOCS).toHaveLength(markdown.length)
+    for (const generated of GENERATED_DOCS) {
+      expect(markdown.some((source) => source.includes(`slug: ${generated.slug}`))).toBe(true)
+      expect(markdown.some((source) => source.includes(generated.content))).toBe(true)
+    }
+  })
   it("covers what the brief asks for", () => {
     const slugs = DOCS.map((doc) => doc.slug)
 
-    // §6.2, named: workers and open connections, limits, billing, and connecting to services.
+    // The original operational pages plus the launch navigation and developer guides.
     expect(slugs).toContain("background-workers")
     expect(slugs).toContain("limits")
     expect(slugs).toContain("billing")
     expect(slugs).toContain("connecting")
+    expect(slugs).toContain("navigation")
+    expect(slugs).toContain("oauth-applications")
+    expect(slugs).toContain("github-action")
   })
 
   it("says the thing the docs exist to say", () => {
@@ -60,11 +78,10 @@ describe("searching", () => {
   })
 
   it("points at the heading that matched when there is one", () => {
-    const [result] = searchDocs("Teams")
+    const [result] = searchDocs("Queue residency")
 
     expect(result?.doc.slug).toBe("billing")
-    // So a result can send a reader to the part of a long page that answered them.
-    expect(result?.heading).toBe("Teams")
+    expect(result?.heading).toBe("Queue residency")
   })
 
   it("is not case sensitive", () => {

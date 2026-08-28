@@ -1,6 +1,6 @@
 import { formatMicroUsd } from "@lib/billing/money"
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router"
-import { ArrowLeftIcon } from "lucide-react"
+import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react"
 import { useState } from "react"
 import { Badge } from "@ui/base/ui/badge"
 import { Button } from "@ui/base/ui/button"
@@ -127,7 +127,17 @@ function StoreListingDetail() {
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
                 <div className="flex flex-col gap-1">
                   <dt className="eyebrow text-[10px]">Repository</dt>
-                  <dd className="tnum truncate font-mono text-xs">{data.repo}</dd>
+                  <dd className="min-w-0 truncate font-mono text-xs">
+                    <a
+                      href={data.repoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex max-w-full items-center gap-1 text-primary hover:underline"
+                    >
+                      <span className="truncate">{data.repo}</span>
+                      <ExternalLinkIcon className="size-3 shrink-0" />
+                    </a>
+                  </dd>
                 </div>
                 <div className="flex flex-col gap-1">
                   <dt className="eyebrow text-[10px]">Author</dt>
@@ -153,6 +163,18 @@ function StoreListingDetail() {
                   </dd>
                 </div>
               </dl>
+              {data.homepageUrl !== null && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <a href={data.homepageUrl} target="_blank" rel="noopener noreferrer">
+                      Visit the original app
+                      <ExternalLinkIcon />
+                    </a>
+                  }
+                />
+              )}
               <div className="flex flex-wrap items-center gap-1.5">
                 {data.requires.map((requirement) => (
                   <Badge key={requirement} variant="muted">

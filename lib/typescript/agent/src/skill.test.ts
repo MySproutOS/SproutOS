@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { installSproutosSkill, renderSproutosSkill } from "./skill"
+import { installSproutosSkill, renderPublicSproutosSkill, renderSproutosSkill } from "./skill"
 import type { Workspace } from "./workspace"
 
 const run = promisify(execFile)
@@ -121,5 +121,18 @@ describe("the sandbox's own section", () => {
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
+  })
+})
+
+describe("the public skill", () => {
+  it("uses the deployment source without claiming the developer is inside a sandbox", () => {
+    const body = renderPublicSproutosSkill({
+      apiUrl: "https://api.sproutos.me",
+      tenantDomain: "sproutos.run",
+    })
+
+    expect(body).toContain("MySproutOS/sproutos-deploy-action@v1")
+    expect(body).toContain("AGENTS.md-based CLI")
+    expect(body).not.toContain("Where you are right now")
   })
 })

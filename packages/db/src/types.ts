@@ -1065,6 +1065,9 @@ export interface StoreListing {
   categoryId: string | null
   createdAt: Generated<Timestamp>
   defaultBranch: Generated<string>
+  deploymentInstructionsPath: string | null
+  deploymentSourceOwner: string | null
+  deploymentSourceRepo: string | null
   deletedAt: Timestamp | null
   descriptionMd: string
   dockerfilePath: Generated<string>

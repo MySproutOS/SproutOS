@@ -86,6 +86,14 @@ export function renderSproutosSkill(
   })
 }
 
+/** The installable skill served to developers running their own local agent harness. */
+export function renderPublicSproutosSkill(input: { apiUrl: string; tenantDomain: string }): string {
+  return skillBody({
+    ...input,
+    workspace: { path: "." } as SkillInput["workspace"],
+  })
+}
+
 /**
  * What is true of the machine the agent is on, and only there.
  *
@@ -248,5 +256,15 @@ way to keep a process alive.
 - A custom domain is added through the dashboard and verified by a TXT record before it serves.
 - Renaming a project changes its display name only. It does not rename the repository, and it does
   not change the hostname.
+
+## Using this skill outside SproutOS
+
+Claude Code can load this file from \`.claude/skills/sproutos/SKILL.md\`. An AGENTS.md-based CLI
+agent can use the same instructions by appending the body to the repository's existing
+\`AGENTS.md\`; preserve the instructions already there rather than replacing the file.
+
+A local agent runs on your machine and uses the model account you configured in that harness, so
+SproutOS does not charge sandbox or model usage for that work. Any resources you deploy to
+SproutOS are still metered normally.
 `
 }

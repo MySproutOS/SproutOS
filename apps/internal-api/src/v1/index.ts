@@ -32,6 +32,7 @@ import stripeWebhooks from "./stripe-webhooks"
 import user from "./user"
 import webhooks from "./webhooks"
 import workflows from "./workflows"
+import sproutosSkill from "./sproutos-skill"
 
 /*
   Grouped rather than chained flat.
@@ -126,6 +127,7 @@ unauthenticated.route("/", apkSigning)
   built from whoever is asking.
 */
 unauthenticated.route("/", android)
+unauthenticated.route("/sproutos-skill", sproutosSkill)
 /*
   There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 

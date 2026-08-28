@@ -40,7 +40,7 @@ export function usageCategory(dimension: string): string {
 
 export function usageDescription(dimension: string): string | null {
   return dimension === "valkey_queue_byte_second"
-    ? "Workflow queue data and metadata stored over time, measured as bytes multiplied by seconds."
+    ? "Queue residency: queued payload bytes multiplied by how long they remain queued."
     : null
 }
 

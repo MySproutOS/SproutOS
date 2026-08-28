@@ -39,7 +39,12 @@ export {
   disallowedTools,
 } from "./tools"
 export { changedFiles, commitAndPush, type CommitInput, type CommitResult } from "./commit"
-export { installSproutosSkill, renderSproutosSkill, type SkillInput } from "./skill"
+export {
+  installSproutosSkill,
+  renderPublicSproutosSkill,
+  renderSproutosSkill,
+  type SkillInput,
+} from "./skill"
 export {
   codexProviderFor,
   harnessFor,

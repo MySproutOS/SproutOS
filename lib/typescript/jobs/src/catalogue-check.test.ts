@@ -43,6 +43,9 @@ async function listing(overrides: { lastVerifiedAt?: Date | null } = {}) {
       name: "Checked",
       tagline: "A listing the catalogue check looks at",
       descriptionMd: "",
+      deploymentInstructionsPath: "SPROUT_OS_DEPLOY.md",
+      deploymentSourceOwner: "SproutOS-Apps",
+      deploymentSourceRepo: `app-${id.slice(-10)}`,
       upstreamHost: "github.com",
       // Unique per listing: `store_listing_upstream_live_key` allows one live listing per upstream,
       // which is the right constraint and means fixtures cannot share one.
@@ -171,10 +174,13 @@ describe.runIf(reachable)("the catalogue check", () => {
       .execute()
 
     const seen: unknown[] = []
-    await verifyCatalogue((input) => {
-      seen.push(input)
-      return Promise.resolve({ ok: true, detail: "" })
-    })(
+    await verifyCatalogue(
+      (input) => {
+        seen.push(input)
+        return Promise.resolve({ ok: true, detail: "" })
+      },
+      () => Promise.resolve("SPROUT_OS_DEPLOY.md" as const),
+    )(
       {
         id: v7(),
         kind: "store.verify_catalogue",
@@ -192,12 +198,12 @@ describe.runIf(reachable)("the catalogue check", () => {
 
     const expected = await db
       .selectFrom("storeListing")
-      .select(["upstreamOwner", "upstreamRepo"])
+      .select(["deploymentSourceOwner", "deploymentSourceRepo"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow()
 
     expect(seen).toContainEqual({
-      repositoryUrl: `https://github.com/${expected.upstreamOwner}/${expected.upstreamRepo}.git`,
+      repositoryUrl: `https://github.com/${expected.deploymentSourceOwner}/${expected.deploymentSourceRepo}.git`,
       ref: "develop",
       contextSubdir: "apps/web",
       dockerfilePath: "docker/prod.Dockerfile",

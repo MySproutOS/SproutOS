@@ -19,6 +19,11 @@ export {
 } from "./client"
 export { organizationGitHubCredential } from "./installation-credential"
 export {
+  DEPLOYMENT_INSTRUCTION_PATHS,
+  findDeploymentInstructions,
+  verifyDeploymentMirror,
+} from "./deployment-mirror"
+export {
   GitHubApiError,
   GitHubAuthError,
   GitHubCredentialError,
