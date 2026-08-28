@@ -3,6 +3,9 @@ use std::time::Duration;
 
 use android_signer::api::SignerApi;
 use android_signer::crypto::MasterIdentity;
+use android_signer::developer_console::{
+    DeveloperConsoleOAuth, receive_consent_and_store_refresh_token,
+};
 use android_signer::process::CommandAndroidTools;
 use android_signer::state::StateStore;
 use android_signer::{Signer, SignerConfig};
@@ -21,6 +24,19 @@ enum Command {
     /// Create the offline-backed master identity. Refuses to overwrite an existing identity.
     InitMaster {
         #[arg(long, env = "APK_SIGNER_MASTER_IDENTITY_PATH")]
+        output: PathBuf,
+    },
+    /// Complete one-time OAuth consent and save the refresh token without printing it.
+    AuthorizeDeveloperConsole {
+        #[arg(long, env = "ANDROID_DEVELOPER_CONSOLE_CLIENT_ID")]
+        client_id: String,
+        #[arg(
+            long,
+            env = "ANDROID_DEVELOPER_CONSOLE_REDIRECT_URI",
+            default_value = "http://127.0.0.1:8787/oauth/callback"
+        )]
+        redirect_uri: String,
+        #[arg(long, env = "ANDROID_DEVELOPER_CONSOLE_REFRESH_TOKEN_PATH")]
         output: PathBuf,
     },
     /// Poll forever, sleeping when the queue is empty.
@@ -49,6 +65,12 @@ struct RuntimeArgs {
     poll_seconds: u64,
     #[arg(long, env = "APK_SIGNER_MAX_APK_BYTES", default_value_t = 536_870_912)]
     max_apk_bytes: u64,
+    #[arg(long, env = "ANDROID_DEVELOPER_CONSOLE_CLIENT_ID")]
+    developer_console_client_id: Option<String>,
+    #[arg(long, env = "ANDROID_DEVELOPER_CONSOLE_REFRESH_TOKEN_PATH")]
+    developer_console_refresh_token: Option<PathBuf>,
+    #[arg(long, env = "ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT")]
+    developer_console_account: Option<String>,
 }
 
 #[tokio::main]
@@ -65,6 +87,19 @@ async fn main() -> anyhow::Result<()> {
         Command::InitMaster { output } => {
             MasterIdentity::create(&output)?;
             println!("created master identity at {}", output.display());
+            Ok(())
+        }
+        Command::AuthorizeDeveloperConsole {
+            client_id,
+            redirect_uri,
+            output,
+        } => {
+            // Keep the confidential Web client secret out of argv and generated help output.
+            let client_secret = std::env::var("ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET")
+                .context("ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET is not set")?;
+            receive_consent_and_store_refresh_token(client_id, client_secret, redirect_uri, output)
+                .await?;
+            println!("saved the refresh token with private permissions");
             Ok(())
         }
         Command::Run(args) => runtime(args).await?.run().await,
@@ -86,6 +121,34 @@ async fn runtime(args: RuntimeArgs) -> anyhow::Result<Signer<SignerApi, CommandA
     let identity = MasterIdentity::load(&args.master_identity)?;
     let state = StateStore::open(args.state_dir)?;
     let tools = CommandAndroidTools::discover(args.android_sdk_root.as_deref())?;
+    let oauth_secret = std::env::var("ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET").ok();
+    match (
+        args.developer_console_client_id,
+        oauth_secret,
+        args.developer_console_refresh_token,
+        args.developer_console_account,
+    ) {
+        (None, None, None, None) => {}
+        (Some(client_id), Some(client_secret), Some(refresh_token), Some(account)) => {
+            if !account.starts_with("developerAccounts/")
+                || account.len() <= "developerAccounts/".len()
+            {
+                anyhow::bail!(
+                    "ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT must be a developerAccounts/* resource name"
+                )
+            }
+            let oauth = DeveloperConsoleOAuth::new(client_id, client_secret, refresh_token)?;
+            let token = oauth.access_token().await?;
+            tracing::info!(
+                developer_account = %account,
+                expires_in_seconds = token.expires_at().saturating_duration_since(std::time::Instant::now()).as_secs(),
+                "Android Developer Console OAuth is ready; registration remains pending until Google publishes or authenticated discovery reveals the mutation schema"
+            );
+        }
+        _ => anyhow::bail!(
+            "Android Developer Console OAuth requires CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN_PATH, and DEVELOPER_ACCOUNT together"
+        ),
+    }
     Ok(Signer::new(
         api,
         tools,

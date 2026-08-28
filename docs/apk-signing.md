@@ -32,20 +32,24 @@ backed.
 
 ## Runtime configuration
 
-| Variable                          | Meaning                                                     |
-| --------------------------------- | ----------------------------------------------------------- |
-| `APK_SIGNER_API_URL`              | Public control-plane origin; HTTPS required except loopback |
-| `APK_SIGNER_TOKEN`                | Bearer credential; required and never accepted on argv      |
-| `APK_SIGNER_ID`                   | Stable machine label used for queue ownership               |
-| `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity                          |
-| `APK_SIGNER_STATE_DIR`            | Durable mode-`0700` crash-recovery journal                  |
-| `APK_SIGNER_ANDROID_SDK_ROOT`     | SDK root containing `build-tools/<version>`                 |
-| `APK_SIGNER_KEYTOOL`              | Optional explicit `keytool` path                            |
-| `APK_SIGNER_AAPT2`                | Optional explicit `aapt2` path                              |
-| `APK_SIGNER_ZIPALIGN`             | Optional explicit `zipalign` path                           |
-| `APK_SIGNER_APKSIGNER`            | Optional explicit `apksigner` path                          |
-| `APK_SIGNER_POLL_SECONDS`         | Idle poll interval, default 30                              |
-| `APK_SIGNER_MAX_APK_BYTES`        | Hard download ceiling, default 512 MiB                      |
+| Variable                                       | Meaning                                                     |
+| ---------------------------------------------- | ----------------------------------------------------------- |
+| `APK_SIGNER_API_URL`                           | Public control-plane origin; HTTPS required except loopback |
+| `APK_SIGNER_TOKEN`                             | Bearer credential; required and never accepted on argv      |
+| `APK_SIGNER_ID`                                | Stable machine label used for queue ownership               |
+| `APK_SIGNER_MASTER_IDENTITY_PATH`              | Durable RSA PKCS#8 master identity                          |
+| `APK_SIGNER_STATE_DIR`                         | Durable mode-`0700` crash-recovery journal                  |
+| `APK_SIGNER_ANDROID_SDK_ROOT`                  | SDK root containing `build-tools/<version>`                 |
+| `APK_SIGNER_KEYTOOL`                           | Optional explicit `keytool` path                            |
+| `APK_SIGNER_AAPT2`                             | Optional explicit `aapt2` path                              |
+| `APK_SIGNER_ZIPALIGN`                          | Optional explicit `zipalign` path                           |
+| `APK_SIGNER_APKSIGNER`                         | Optional explicit `apksigner` path                          |
+| `APK_SIGNER_POLL_SECONDS`                      | Idle poll interval, default 30                              |
+| `APK_SIGNER_MAX_APK_BYTES`                     | Hard download ceiling, default 512 MiB                      |
+| `ANDROID_DEVELOPER_CONSOLE_CLIENT_ID`          | Existing Google Web OAuth client id                         |
+| `ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET`      | Existing Google Web OAuth client secret; env only           |
+| `ANDROID_DEVELOPER_CONSOLE_REFRESH_TOKEN_PATH` | Mode-`0600` on-prem refresh-token file                      |
+| `ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT`  | Verified `developerAccounts/<id>` resource                  |
 
 Initialize once, back up the result, then run under a service manager:
 
@@ -102,12 +106,55 @@ Temporary plaintext key material is mode `0600` inside a mode `0700` directory a
 RAII on every return path. A failed job reports a bounded, scrubbed error and never replaces the
 latest good release.
 
-## Android Developer Console dependency
+## Android Developer Console authorization
 
 The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
 `https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,
-and API keys are unsupported. The signer intentionally reports `pending_registration` after key
-provisioning today. It must not report `registered` until the control plane and signer implement the
-official `CreateAndroidPackage`, registration-policy, key creation, ownership-proof, and state
-transitions and a human has granted the refresh token. This is the remaining external contract, not
-a reason to fabricate a successful registration.
+and API keys are unsupported. The existing SproutOS Google Web OAuth client can be reused. In its
+Google Cloud project:
+
+1. Enable **Android Developer Console API** in APIs & Services.
+2. Add the scope above to the OAuth consent screen's Data Access configuration.
+3. Add the exact Web-client redirect URI `http://127.0.0.1:8787/oauth/callback`.
+4. Use the Google account associated with a verified Android Developer Console developer account.
+
+Run the one-time receiver on the operator's Mac. The confidential client secret remains an
+environment value; the command never puts it in argv or output:
+
+```bash
+ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET="$GOOGLE_OAUTH_CLIENT_SECRET" \
+  cargo run -p android-signer -- authorize-developer-console \
+  --client-id "$GOOGLE_OAUTH_CLIENT_ID" \
+  --redirect-uri http://127.0.0.1:8787/oauth/callback \
+  --output /Users/andrew/.config/sproutos/android-developer-console-refresh-token
+```
+
+The command binds only loopback, creates and verifies a cryptographic CSRF state, requests offline
+access with explicit consent, exchanges the returned code, and writes the refresh token to a new
+mode-`0600` file without printing it. Securely install that file on the signer as
+`/var/lib/sproutos-android-signer/android-developer-console-refresh-token`; do not copy it into the
+repository, shell history, Parameter Store, or an AWS-managed secret.
+
+Configure the service with all four values together:
+
+- `ANDROID_DEVELOPER_CONSOLE_CLIENT_ID`
+- `ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET`
+- `ANDROID_DEVELOPER_CONSOLE_REFRESH_TOKEN_PATH`
+- `ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT` (`developerAccounts/<id>`)
+
+At boot the signer uses the stored refresh token to obtain a short-lived scoped access token. An
+`invalid_grant` response produces an actionable re-consent error and never prints either token.
+
+Google's current Console API guide documents the registration sequence and method names but does
+not publish the REST mutation schemas, ownership-proof upload transport, mutation idempotency, or a
+Discovery document without authorization. Therefore the signer continues to report
+`pending_registration`; it must not guess payloads or report `registered`. After the one-time human
+consent above, use authenticated discovery/live schema errors to implement and contract-test
+`ListDeveloperAccounts`, `CreateAndroidPackage`, `GetAndroidPackageRegistrationPolicy`,
+`CreateAndroidPackageKey`, managed ownership proof, justification, and reconciliation. The
+ownership APK must contain the API's opaque verification snippet verbatim at
+`assets/adi-registration.properties`, as shown by Android's official security sample.
+
+Official references: [Console API guide](https://developer.android.com/developer-verification/guides/developer-console-api),
+[OAuth Web Server flow](https://developers.google.com/identity/protocols/oauth2/web-server), and
+[ownership APK sample](https://github.com/android/security-samples/tree/main/AndroidDeveloperVerificationAPKSigningExample).

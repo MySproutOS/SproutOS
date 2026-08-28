@@ -7,6 +7,7 @@
 pub mod api;
 pub mod apk;
 pub mod crypto;
+pub mod developer_console;
 pub mod process;
 pub mod state;
 
