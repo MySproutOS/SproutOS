@@ -202,6 +202,13 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       developerConsoleAccount: "developerAccounts/123",
       idempotencyKey: KEY_2,
     }
+    expect(
+      await completeClientSigning(db, {
+        ...completion,
+        developerConsoleAccount: "developerAccounts/999",
+        idempotencyKey: KEY_1,
+      }),
+    ).toBe(false)
     expect(await completeClientSigning(db, completion)).toBe(true)
     expect(await completeClientSigning(db, completion)).toBe(true)
     expect(await completeClientSigning(db, { ...completion, signedDigest: "e".repeat(64) })).toBe(

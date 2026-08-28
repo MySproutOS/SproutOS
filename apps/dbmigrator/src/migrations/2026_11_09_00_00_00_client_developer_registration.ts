@@ -57,8 +57,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await db.schema
     .alterTable("client_signing_identity")
     .addCheckConstraint(
-      "client_signing_identity_registered_developer_account_check",
-      sql`developer_console_state <> 'registered' or developer_console_account is not null`,
+      "client_signing_identity_registered_identity_check",
+      sql`developer_console_state <> 'registered' or (
+        developer_console_account is not null and
+        developer_console_provider_state is not distinct from 'REGISTERED'
+      )`,
     )
     .execute()
   await db.schema
@@ -76,9 +79,41 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         ('NOT_REGISTERED', 'REGISTERED', 'REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT')`,
     )
     .execute()
+  await sql`
+    create function enforce_developer_console_account_write_once()
+    returns trigger
+    language plpgsql
+    as $$
+    begin
+      if old.developer_console_account is not null and
+         new.developer_console_account is distinct from old.developer_console_account then
+        raise exception 'developer_console_account is immutable once set'
+          using errcode = '23514', constraint = 'developer_console_account_write_once';
+      end if;
+      return new;
+    end
+    $$
+  `.execute(db)
+  await sql`
+    create trigger android_app_developer_console_account_write_once
+    before update of developer_console_account on android_app
+    for each row execute function enforce_developer_console_account_write_once()
+  `.execute(db)
+  await sql`
+    create trigger client_signing_identity_developer_console_account_write_once
+    before update of developer_console_account on client_signing_identity
+    for each row execute function enforce_developer_console_account_write_once()
+  `.execute(db)
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`drop trigger client_signing_identity_developer_console_account_write_once on client_signing_identity`.execute(
+    db,
+  )
+  await sql`drop trigger android_app_developer_console_account_write_once on android_app`.execute(
+    db,
+  )
+  await sql`drop function enforce_developer_console_account_write_once()`.execute(db)
   await db.schema
     .alterTable("client_signing_identity")
     .dropConstraint("client_signing_identity_developer_console_provider_state_check")
@@ -93,7 +128,7 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     .execute()
   await db.schema
     .alterTable("client_signing_identity")
-    .dropConstraint("client_signing_identity_registered_developer_account_check")
+    .dropConstraint("client_signing_identity_registered_identity_check")
     .execute()
   await db.schema
     .alterTable("client_signing_identity")

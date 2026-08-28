@@ -220,6 +220,13 @@ describe.runIf(reachable)("the Android signer state machine", () => {
       developerConsoleAccount: "developerAccounts/123",
       idempotencyKey: KEY_1,
     }
+    expect(
+      await completeSigning(db, {
+        ...completion,
+        developerConsoleAccount: "developerAccounts/999",
+        idempotencyKey: KEY_2,
+      }),
+    ).toBe(false)
     expect(await completeSigning(db, completion)).toBe(true)
     // The response can disappear after the transaction commits. The same callback must converge
     // instead of turning a successful release into an apparent lost-claim failure.

@@ -536,6 +536,7 @@ export async function completeClientSigning(
         "clientSigningIdentity.packageName",
         "clientSigningIdentity.certificateSha256",
         "clientSigningIdentity.developerConsoleState",
+        "clientSigningIdentity.developerConsoleProviderState",
         "clientSigningIdentity.developerConsoleAccount",
       ])
       .where("clientSignerJob.id", "=", input.jobId)
@@ -564,6 +565,8 @@ export async function completeClientSigning(
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
       job.certificateSha256 !== input.certificateSha256 ||
+      (job.developerConsoleAccount !== null &&
+        job.developerConsoleAccount !== input.developerConsoleAccount) ||
       input.signedKey !== `signed/client/${input.jobId}.apk`
     )
       return false
@@ -577,7 +580,10 @@ export async function completeClientSigning(
       .executeTakeFirst()
     if (input.versionCode <= (latest?.versionCode ?? 0)) return false
     const now = new Date()
-    if (job.developerConsoleState === "registered") {
+    if (
+      job.developerConsoleState === "registered" &&
+      job.developerConsoleProviderState === "REGISTERED"
+    ) {
       await trx
         .insertInto("clientRelease")
         .values({

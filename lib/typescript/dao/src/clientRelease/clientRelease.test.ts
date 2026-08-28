@@ -23,11 +23,13 @@ beforeAll(async () => {
         certificateSha256: "a".repeat(64),
         developerConsoleAccount: "developerAccounts/123",
         developerConsoleState: "registered",
+        developerConsoleProviderState: "REGISTERED",
       })
       .onConflict((conflict) =>
         conflict.column("packageName").doUpdateSet({
           developerConsoleAccount: "developerAccounts/123",
           developerConsoleState: "registered",
+          developerConsoleProviderState: "REGISTERED",
         }),
       )
       .execute()
@@ -92,5 +94,40 @@ describe("client releases", () => {
       .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
       .execute()
     expect(await fetchClientRelease(db).latest(["versionCode"])).toBeUndefined()
+  })
+
+  it("cannot bypass publication by writing registered without durable provider proof", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    await db
+      .updateTable("clientSigningIdentity")
+      .set({
+        developerConsoleState: "pending_registration",
+        developerConsoleProviderState: null,
+      })
+      .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+      .execute()
+    await expect(
+      db
+        .updateTable("clientSigningIdentity")
+        .set({ developerConsoleState: "registered" })
+        .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+        .execute(),
+    ).rejects.toThrow("client_signing_identity_registered_identity_check")
+    expect(await fetchClientRelease(db).latest(["versionCode"])).toBeUndefined()
+  })
+
+  it("makes the selected developer account immutable after the first signer callback", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    await expect(
+      db
+        .updateTable("clientSigningIdentity")
+        .set({ developerConsoleAccount: "developerAccounts/999" })
+        .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+        .execute(),
+    ).rejects.toThrow("developer_console_account is immutable once set")
   })
 })

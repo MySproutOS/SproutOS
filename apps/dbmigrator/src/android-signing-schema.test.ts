@@ -124,4 +124,20 @@ describe.skipIf(!reachable)("Android signing schema", () => {
       await db.deleteFrom("user").where("id", "=", userId).execute()
     }
   })
+
+  it("makes a signer-selected Android Developer Console account write-once", async () => {
+    const row = await db
+      .selectFrom("androidApp")
+      .select("id")
+      .where("developerConsoleAccount", "is not", null)
+      .executeTakeFirst()
+    if (row === undefined) return
+    await expect(
+      db
+        .updateTable("androidApp")
+        .set({ developerConsoleAccount: "developerAccounts/999999" })
+        .where("id", "=", row.id)
+        .execute(),
+    ).rejects.toThrow("developer_console_account is immutable once set")
+  })
 })
