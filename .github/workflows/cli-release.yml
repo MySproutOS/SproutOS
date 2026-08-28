@@ -205,6 +205,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
           name: sprout-cli-release-${{ needs.version.outputs.version }}
