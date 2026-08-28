@@ -78,6 +78,10 @@ if lsof -nP -iTCP:"$metering_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 env_value() {
+  if [[ ${!1+x} == x ]]; then
+    printf '%s' "${!1}"
+    return
+  fi
   value=$(sed -n "s/^$1=//p" "$env_file" | tail -n 1)
   value=${value#\"}
   value=${value%\"}
