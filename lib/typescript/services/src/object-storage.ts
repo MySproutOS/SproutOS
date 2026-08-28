@@ -2,6 +2,7 @@ import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
+  ListObjectVersionsCommand,
   ListObjectsV2Command,
   PutBucketCorsCommand,
   S3Client,
@@ -515,21 +516,8 @@ export function objectStorageDriver(
     const physicalBucket = config.sharedBucket ?? bucket
     const prefix = config.sharedBucket === undefined ? undefined : `${bucket}/`
 
-    for (;;) {
-      const listed = await s3.send(
-        new ListObjectsV2Command({
-          Bucket: physicalBucket,
-          ...(prefix === undefined ? {} : { Prefix: prefix }),
-        }),
-      )
-      const keys = (listed.Contents ?? []).flatMap((object) =>
-        object.Key === undefined ? [] : [{ Key: object.Key }],
-      )
-      if (keys.length === 0) break
-
-      await s3.send(new DeleteObjectsCommand({ Bucket: physicalBucket, Delete: { Objects: keys } }))
-      if (listed.IsTruncated !== true) break
-    }
+    if (prefix === undefined) await emptyUnversionedBucket(s3, physicalBucket)
+    else await purgeVersionedPrefix(s3, physicalBucket, prefix)
 
     if (config.sharedBucket === undefined) {
       await s3.send(new DeleteBucketCommand({ Bucket: bucket }))
@@ -569,6 +557,68 @@ export function objectStorageDriver(
     resume,
     rotateCredentials,
     suspend,
+  }
+}
+
+/** Empty the legacy bucket-per-service layout, which is deliberately not versioned. */
+async function emptyUnversionedBucket(s3: Pick<S3Client, "send">, bucket: string): Promise<void> {
+  for (;;) {
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucket }))
+    const objects = (listed.Contents ?? []).flatMap(({ Key }) =>
+      Key === undefined ? [] : [{ Key }],
+    )
+    if (objects.length === 0) break
+    await deleteObjects(s3, bucket, objects)
+  }
+}
+
+/**
+ * Purge every version and delete marker below a tenant's prefix.
+ *
+ * Production enables versioning so a normal `DeleteObjects` only creates delete markers and leaves
+ * the customer's bytes recoverable. Account deletion is not a normal customer object delete: it
+ * must remove the retained versions too. Re-listing the first page after every batch is intentional;
+ * it is bounded in memory and cannot invalidate or skip past a continuation marker we just deleted.
+ */
+export async function purgeVersionedPrefix(
+  s3: Pick<S3Client, "send">,
+  bucket: string,
+  prefix: string,
+): Promise<void> {
+  for (;;) {
+    const listed = await s3.send(
+      new ListObjectVersionsCommand({ Bucket: bucket, Prefix: prefix, MaxKeys: 1000 }),
+    )
+    const objects = [...(listed.Versions ?? []), ...(listed.DeleteMarkers ?? [])].flatMap(
+      ({ Key, VersionId }) =>
+        Key === undefined || VersionId === undefined ? [] : [{ Key, VersionId }],
+    )
+    if (objects.length === 0) {
+      if (listed.IsTruncated === true) {
+        throw new Error(`S3 truncated the version listing for ${prefix} without deletable entries`)
+      }
+      return
+    }
+    await deleteObjects(s3, bucket, objects)
+  }
+}
+
+async function deleteObjects(
+  s3: Pick<S3Client, "send">,
+  bucket: string,
+  objects: Array<{ Key: string; VersionId?: string }>,
+): Promise<void> {
+  const deleted = await s3.send(
+    new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }),
+  )
+  if ((deleted.Errors?.length ?? 0) > 0) {
+    const failures = deleted
+      .Errors!.map(
+        ({ Key, VersionId, Code }) =>
+          `${Key ?? "unknown key"}${VersionId === undefined ? "" : `@${VersionId}`}: ${Code ?? "unknown error"}`,
+      )
+      .join(", ")
+    throw new Error(`S3 failed to delete tenant objects: ${failures}`)
   }
 }
 

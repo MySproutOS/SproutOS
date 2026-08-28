@@ -1,4 +1,4 @@
-import { S3Client } from "@aws-sdk/client-s3"
+import { DeleteObjectsCommand, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -10,6 +10,7 @@ import {
   objectStorageDriver,
   objectStorageUri,
   parseObjectStorageUri,
+  purgeVersionedPrefix,
   tenantCredential,
   VAULT_ORIGINS,
   versionOf,
@@ -298,6 +299,32 @@ describe("derived credentials", () => {
     // An `AKIA…` key belongs to AWS, not to us. Parsing a version out of it would place a stranger
     // in this service's rotation sequence.
     expect(versionOf("AKIAIOSFODNN7EXAMPLE")).toBe(0)
+  })
+})
+
+describe("versioned teardown", () => {
+  it("fails rather than claiming success when S3 retains an object version", async () => {
+    let lists = 0
+    const s3 = {
+      send: (command: unknown) => {
+        if (command instanceof ListObjectVersionsCommand) {
+          lists += 1
+          return Promise.resolve(
+            lists === 1 ? { Versions: [{ Key: "v-one/file", VersionId: "v1" }] } : { Versions: [] },
+          )
+        }
+        if (command instanceof DeleteObjectsCommand) {
+          return Promise.resolve({
+            Errors: [{ Key: "v-one/file", VersionId: "v1", Code: "AccessDenied" }],
+          })
+        }
+        return Promise.reject(new Error(`unexpected ${command?.constructor.name}`))
+      },
+    } as unknown as Pick<S3Client, "send">
+
+    await expect(purgeVersionedPrefix(s3, "shared", "v-one/")).rejects.toThrow(
+      /v-one\/file@v1: AccessDenied/,
+    )
   })
 })
 
