@@ -405,15 +405,15 @@ pub enum TemplateCommand {
         template: String,
         #[arg(long)]
         upstream_commit: String,
-        #[arg(long)]
-        target: String,
+        #[arg(long, value_enum)]
+        target: Option<TemplateTarget>,
     },
     Apply {
         template: String,
         #[arg(long)]
         upstream_commit: String,
-        #[arg(long)]
-        target: String,
+        #[arg(long, value_enum)]
+        target: Option<TemplateTarget>,
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
         /// Non-secret structural JSON passed to the isolated plugin.
@@ -424,9 +424,19 @@ pub enum TemplateCommand {
         template: String,
         #[arg(long)]
         upstream_commit: String,
-        #[arg(long)]
-        target: String,
+        #[arg(long, value_enum)]
+        target: Option<TemplateTarget>,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TemplateTarget {
+    LinuxAmd64Musl,
+    LinuxArm64Musl,
+    DarwinAmd64,
+    DarwinArm64,
+    WindowsAmd64,
 }
 
 pub fn validate(cli: &Cli) -> Result<()> {
@@ -499,6 +509,18 @@ pub fn validate(cli: &Cli) -> Result<()> {
         return Err(CliError::InvalidInput(
             "android verify --commit must be a 40-character lowercase Git SHA".into(),
         ));
+    }
+    if let Command::Template(TemplateArgs {
+        command: TemplateCommand::Apply { input, .. },
+    }) = &cli.command
+    {
+        let value: serde_json::Value = serde_json::from_str(input)
+            .map_err(|error| CliError::InvalidInput(format!("--input is not JSON: {error}")))?;
+        if !value.is_object() {
+            return Err(CliError::InvalidInput(
+                "template --input must be a JSON object".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -606,19 +628,8 @@ mod tests {
                 "t",
                 "--upstream-commit",
                 "c",
-                "--target",
-                "x",
             ],
-            &[
-                "sprout",
-                "template",
-                "apply",
-                "t",
-                "--upstream-commit",
-                "c",
-                "--target",
-                "x",
-            ],
+            &["sprout", "template", "apply", "t", "--upstream-commit", "c"],
             &[
                 "sprout",
                 "template",
@@ -626,8 +637,6 @@ mod tests {
                 "t",
                 "--upstream-commit",
                 "c",
-                "--target",
-                "x",
             ],
         ];
         for case in cases {

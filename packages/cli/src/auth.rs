@@ -10,6 +10,7 @@ use tokio::{
     time::timeout,
 };
 use url::Url;
+use zeroize::Zeroize;
 
 use crate::{
     Backend, CliError, Result,
@@ -58,6 +59,14 @@ pub struct PkceAttempt {
     state: String,
     verifier: String,
     challenge: String,
+}
+
+impl Drop for PkceAttempt {
+    fn drop(&mut self) {
+        self.state.zeroize();
+        self.verifier.zeroize();
+        self.challenge.zeroize();
+    }
 }
 
 impl PkceAttempt {
@@ -115,7 +124,7 @@ impl PkceAttempt {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliTokenExchangeRequest {
     pub code: String,
@@ -124,7 +133,7 @@ pub struct CliTokenExchangeRequest {
     pub code_verifier: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliTokenExchangeResponse {
     pub key: String,
@@ -148,6 +157,12 @@ impl std::fmt::Debug for CliTokenExchangeResponse {
             .field("expires_at", &self.expires_at)
             .field("organization", &self.organization)
             .finish()
+    }
+}
+
+impl Drop for CliTokenExchangeResponse {
+    fn drop(&mut self) {
+        self.key.zeroize();
     }
 }
 
@@ -304,7 +319,7 @@ fn parse_callback(bytes: &[u8], attempt: &PkceAttempt) -> Result<String> {
 pub fn save_exchange(
     store: &dyn CredentialStore,
     account: &str,
-    response: CliTokenExchangeResponse,
+    mut response: CliTokenExchangeResponse,
 ) -> Result<AuthorizedOrganization> {
     if response.key.is_empty() {
         return Err(CliError::AuthorizationCallback(
@@ -312,7 +327,13 @@ pub fn save_exchange(
         ));
     }
     store.set(account, &response.key)?;
-    Ok(response.organization)
+    Ok(std::mem::replace(
+        &mut response.organization,
+        AuthorizedOrganization {
+            id: String::new(),
+            slug: String::new(),
+        },
+    ))
 }
 
 pub struct LoginOptions<'a> {

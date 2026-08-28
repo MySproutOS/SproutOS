@@ -1,6 +1,7 @@
 use std::{env, fmt};
 
 use crate::{CliError, Result};
+use zeroize::Zeroize;
 
 const SERVICE: &str = "me.sproutos.cli";
 
@@ -75,6 +76,12 @@ impl fmt::Debug for ResolvedCredential {
             .field("token", &"[REDACTED]")
             .field("source", &self.source)
             .finish()
+    }
+}
+
+impl Drop for ResolvedCredential {
+    fn drop(&mut self) {
+        self.token.zeroize();
     }
 }
 

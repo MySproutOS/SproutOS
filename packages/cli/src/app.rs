@@ -133,6 +133,8 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         }
     }
 
+    let credential = credential::resolve(dependencies.credentials, &account)?;
+
     if cli::destructive(&cli.command) {
         confirm::require(
             cli.yes,
@@ -141,7 +143,6 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         )?;
     }
 
-    let credential = credential::resolve(dependencies.credentials, &account)?;
     let organization = cli.org.as_deref().or(config.organization.as_deref());
 
     let mut data = match &cli.command {
@@ -156,6 +157,28 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
                 .backend
                 .template(command, credential.expose())
                 .await?
+        }
+        Command::Deployment(DeploymentArgs {
+            command:
+                DeploymentCommand::Wait {
+                    deployment,
+                    timeout_seconds,
+                },
+        }) => {
+            wait_for_deployment(
+                dependencies.backend,
+                credential.expose(),
+                organization,
+                deployment,
+                Duration::from_secs(*timeout_seconds),
+            )
+            .await?
+        }
+        Command::Logs(LogsArgs { follow: true, .. }) => {
+            return Err(CliError::Unavailable(
+                "continuous log streaming does not have a stable JSONL contract yet; omit --follow"
+                    .into(),
+            ));
         }
         _ => {
             let stdin_value = read_stdin_value(&cli.command)?;
@@ -204,6 +227,59 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         data = found;
     }
     render(cli, request::command_name(&cli.command), data)
+}
+
+async fn wait_for_deployment(
+    backend: &dyn Backend,
+    token: &str,
+    organization: Option<&str>,
+    deployment: &str,
+    deadline: Duration,
+) -> Result<Value> {
+    let started = tokio::time::Instant::now();
+    loop {
+        let request = request::plan(
+            &Command::Deployment(DeploymentArgs {
+                command: DeploymentCommand::Get {
+                    deployment: deployment.into(),
+                },
+            }),
+            organization,
+            None,
+        )?
+        .expect("deployment get always plans an API request");
+        let status = backend.request(request, Some(token)).await?;
+        match status.get("status").and_then(Value::as_str) {
+            Some("ready") => return Ok(status),
+            Some("error" | "torn_down") => {
+                let reason = status
+                    .get("failureReason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("deployment ended without a failure reason");
+                return Err(CliError::DeploymentFailed(format!(
+                    "deployment `{deployment}`: {reason}"
+                )));
+            }
+            Some("queued" | "building" | "deploying") => {}
+            Some(other) => {
+                return Err(CliError::Api(format!(
+                    "deployment `{deployment}` returned unknown status `{other}`"
+                )));
+            }
+            None => {
+                return Err(CliError::Api(
+                    "deployment response did not contain a status".into(),
+                ));
+            }
+        }
+        if started.elapsed() >= deadline {
+            return Err(CliError::Timeout(format!(
+                "waiting for deployment `{deployment}`"
+            )));
+        }
+        tokio::time::sleep(Duration::from_secs(5).min(deadline.saturating_sub(started.elapsed())))
+            .await;
+    }
 }
 
 fn destructive_prompt(command: &Command) -> String {
