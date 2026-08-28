@@ -47,6 +47,10 @@ describe("eligibleCustomDomainProjects", () => {
     parentProjectId: null,
     managedByOauthApp: null,
     url: null,
+    hostname: null,
+    primaryChildProjectId: null,
+    primaryUrl: null,
+    primaryHostname: null,
     liveDeploymentId: live ? "01900000-0000-7000-8000-000000000001" : null,
   })
 
