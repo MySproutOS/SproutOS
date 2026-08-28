@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "docs:generate": "tsx scripts/generate-docs.ts",
+    "prebuild": "pnpm run docs:generate",
     "build": "next build",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "dev": "next dev --turbopack",
@@ -48,6 +50,7 @@
     "@types/react-dom": "catalog:",
     "@vercel/config": "^0.6.1",
     "babel-plugin-react-compiler": "catalog:",
+    "oxfmt": "^0.64.0",
     "tailwindcss": "catalog:",
     "typescript": "catalog:"
   },

@@ -28,6 +28,7 @@ const NEXTJS_PUBLIC_PREFIXES = [
   "/legal",
   "/docs",
   "/download",
+  "/skills",
   "/oauth",
   "/github",
 ]

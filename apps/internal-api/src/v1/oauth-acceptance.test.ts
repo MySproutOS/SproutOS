@@ -132,7 +132,7 @@ beforeAll(async () => {
       id: repositoryId,
       organizationId,
       githubRepoId: String(Date.now()),
-      ownerLogin: "SproutOS-Apps",
+      ownerLogin: "MySproutOS",
       name: `oauth-fastapi-${repositoryId.slice(-8)}`,
       defaultBranch: "main",
       private: false,

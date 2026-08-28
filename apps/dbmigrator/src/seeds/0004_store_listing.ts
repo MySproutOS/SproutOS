@@ -38,6 +38,16 @@ type Listing = {
   defaultBranch: string
 }
 
+export const TWENTY_STORE_COPY = {
+  descriptionMd:
+    "Run an adaptable CRM for contacts, companies, opportunities, and custom sales pipelines. " +
+    "Fork Twenty when you want a shared sales workspace your team can shape, then connect the " +
+    "rest of your tools through its API and webhooks.",
+  upstreamOwner: "twentyhq",
+  upstreamRepo: "twenty",
+  homepageUrl: "https://twenty.com",
+} as const
+
 const LISTINGS: Listing[] = [
   {
     slug: "linkding",
@@ -97,14 +107,11 @@ const LISTINGS: Listing[] = [
     slug: "twenty",
     name: "Twenty",
     tagline: "An open-source CRM that does not bill per seat to stay usable.",
-    descriptionMd:
-      "Contacts, companies, opportunities and a customisable pipeline, with an API and webhooks " +
-      "for the rest. The open alternative to Salesforce, and the largest application in the store " +
-      "— it wants a real database rather than the cheapest instance.",
+    descriptionMd: TWENTY_STORE_COPY.descriptionMd,
     categorySlug: "productivity",
-    upstreamOwner: "twentyhq",
-    upstreamRepo: "twenty",
-    homepageUrl: "https://twenty.com",
+    upstreamOwner: TWENTY_STORE_COPY.upstreamOwner,
+    upstreamRepo: TWENTY_STORE_COPY.upstreamRepo,
+    homepageUrl: TWENTY_STORE_COPY.homepageUrl,
     /*
       Not an SPDX identifier, and not recorded as one.
 
