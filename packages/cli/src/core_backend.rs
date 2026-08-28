@@ -201,8 +201,9 @@ impl Backend for CoreBackend {
     }
 
     async fn template(&self, _command: &TemplateCommand, _token: &str) -> Result<Value> {
-        // No production resolver, Sigstore policy, or cross-platform isolation provider is wired
-        // yet. Failing closed is part of the CLI contract; direct execution is never a fallback.
+        // Native isolation now exists in sprout-core, but no production catalogue resolver or
+        // Sigstore policy is wired into the CLI yet. Failing closed is part of the contract;
+        // direct or unverified execution is never a fallback.
         Err(map_core_error(SproutError::IsolationUnavailable(
             "verified template execution is not available in this release".into(),
         )))
