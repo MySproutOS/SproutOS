@@ -581,6 +581,7 @@ export async function completeSigning(
         "androidSignerJob.callbackClaimToken",
         "androidApp.packageName",
         "androidApp.certificateSha256",
+        "androidApp.developerConsoleAccount",
         "androidApp.lastAcceptedVersionCode",
         "androidApp.developerConsoleState",
         "androidApp.verifiedSetupCommit",
@@ -600,6 +601,8 @@ export async function completeSigning(
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
       job.certificateSha256 !== input.certificateSha256 ||
+      (job.developerConsoleAccount !== null &&
+        job.developerConsoleAccount !== input.developerConsoleAccount) ||
       input.versionCode <= job.lastAcceptedVersionCode ||
       input.signedKey !== `signed/${job.androidAppId}/${input.jobId}.apk`
     )

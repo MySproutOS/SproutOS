@@ -136,11 +136,11 @@ describe.runIf(reachable)("the catalogue-client signing schema", () => {
     expect(state).toContain("pending_registration")
     expect(state).toContain("registered")
     expect(provider).toContain("REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT")
-    expect(
-      await constraint(
-        "client_signing_identity",
-        "client_signing_identity_registered_developer_account_check",
-      ),
-    ).toContain("developer_console_account IS NOT NULL")
+    const identity = await constraint(
+      "client_signing_identity",
+      "client_signing_identity_registered_identity_check",
+    )
+    expect(identity).toContain("developer_console_account IS NOT NULL")
+    expect(identity).toContain("developer_console_provider_state IS DISTINCT FROM 'REGISTERED'")
   })
 })

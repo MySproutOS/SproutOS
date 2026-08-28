@@ -4,14 +4,19 @@
 //! that document after refreshing OAuth instead of freezing guessed REST paths into the signer.
 //! OAuth credentials and ownership tokens exist only in this process.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
+use base64::Engine as _;
+use rand::RngCore as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
+use subtle::ConstantTimeEq as _;
 
 use crate::APK_MIME;
 
@@ -19,6 +24,7 @@ pub const SCOPE: &str = "https://www.googleapis.com/auth/androiddeveloperconsole
 pub const DEFAULT_DISCOVERY_URL: &str =
     "https://androiddeveloperconsole.googleapis.com/$discovery/rest?version=v1";
 pub const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+pub const OAUTH_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone)]
 pub struct DeveloperConsoleConfig {
@@ -56,7 +62,11 @@ impl DeveloperConsoleConfig {
         })
     }
 
-    pub fn authorization_url(client_id: &str, redirect_uri: &str) -> anyhow::Result<String> {
+    fn authorization_url(
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+    ) -> anyhow::Result<String> {
         let mut url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
         url.query_pairs_mut()
             .append_pair("client_id", client_id)
@@ -64,8 +74,109 @@ impl DeveloperConsoleConfig {
             .append_pair("response_type", "code")
             .append_pair("scope", SCOPE)
             .append_pair("access_type", "offline")
-            .append_pair("prompt", "consent");
+            .append_pair("prompt", "consent")
+            .append_pair("state", state);
         Ok(url.into())
+    }
+
+    pub fn begin_authorization(
+        client_id: &str,
+        redirect_uri: &str,
+        state_file: &Path,
+        now: SystemTime,
+    ) -> anyhow::Result<String> {
+        validate_loopback_redirect(redirect_uri)?;
+        let mut nonce = [0_u8; 32];
+        aes_gcm::aead::OsRng.fill_bytes(&mut nonce);
+        let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(nonce);
+        let record = OAuthStateRecord {
+            version: 1,
+            created_at: now.duration_since(UNIX_EPOCH)?.as_secs(),
+            client_id_hash: oauth_hash(b"client-id", client_id.as_bytes()),
+            redirect_uri: redirect_uri.to_owned(),
+            state_hash: oauth_hash(b"state", state.as_bytes()),
+        };
+        write_private_new(state_file, &serde_json::to_vec(&record)?)?;
+        Self::authorization_url(client_id, redirect_uri, &state)
+    }
+
+    pub fn consume_authorization_callback(
+        state_file: &Path,
+        client_id: &str,
+        redirect_uri: &str,
+        callback_url: &str,
+        now: SystemTime,
+    ) -> anyhow::Result<String> {
+        validate_loopback_redirect(redirect_uri)?;
+        let lock = state_file.with_extension("consuming");
+        write_private_new(&lock, b"single-use OAuth state consumption lock")
+            .context("Google OAuth setup state is already being consumed")?;
+        let result = (|| {
+            assert_private_file(state_file)?;
+            let encoded = std::fs::read(state_file)
+                .context("Google OAuth setup state is absent or already consumed")?;
+            // Consumption happens before validation or token exchange. An invalid callback cannot
+            // be replayed; the operator must explicitly begin a new consent attempt.
+            std::fs::remove_file(state_file)?;
+            let record: OAuthStateRecord = serde_json::from_slice(&encoded)
+                .context("Google OAuth setup state is malformed")?;
+            if record.version != 1
+                || record.redirect_uri != redirect_uri
+                || !constant_hash_eq(
+                    &record.client_id_hash,
+                    &oauth_hash(b"client-id", client_id.as_bytes()),
+                )
+            {
+                bail!("Google OAuth setup state does not match this signer configuration")
+            }
+            let now = now.duration_since(UNIX_EPOCH)?.as_secs();
+            if record.created_at > now || now - record.created_at > OAUTH_STATE_TTL.as_secs() {
+                bail!("Google OAuth setup state expired")
+            }
+            let callback =
+                url::Url::parse(callback_url).context("Google OAuth callback URL is malformed")?;
+            let expected = url::Url::parse(redirect_uri)?;
+            if callback.scheme() != expected.scheme()
+                || callback.host_str() != expected.host_str()
+                || callback.port_or_known_default() != expected.port_or_known_default()
+                || callback.path() != expected.path()
+                || callback.fragment().is_some()
+                || !callback.username().is_empty()
+                || callback.password().is_some()
+            {
+                bail!("Google OAuth callback URL does not match the configured redirect URI")
+            }
+            let mut code = None;
+            let mut state = None;
+            let mut provider_error = false;
+            for (name, value) in callback.query_pairs() {
+                match name.as_ref() {
+                    "code" => {
+                        if code.replace(value.into_owned()).is_some() {
+                            bail!("Google OAuth callback contains duplicate code parameters")
+                        }
+                    }
+                    "state" => {
+                        if state.replace(value.into_owned()).is_some() {
+                            bail!("Google OAuth callback contains duplicate state parameters")
+                        }
+                    }
+                    "error" => provider_error = true,
+                    _ => {}
+                }
+            }
+            if provider_error {
+                bail!("Google OAuth authorization was refused")
+            }
+            let state = state.context("Google OAuth callback omitted state")?;
+            if !constant_hash_eq(&record.state_hash, &oauth_hash(b"state", state.as_bytes())) {
+                bail!("Google OAuth callback state did not match")
+            }
+            code.filter(|value| !value.is_empty())
+                .context("Google OAuth callback omitted its authorization code")
+        })();
+        let _ = std::fs::remove_file(lock);
+        result
     }
 
     pub async fn exchange_authorization_code(
@@ -117,6 +228,44 @@ impl DeveloperConsoleConfig {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct OAuthStateRecord {
+    version: u8,
+    created_at: u64,
+    client_id_hash: String,
+    redirect_uri: String,
+    state_hash: String,
+}
+
+fn oauth_hash(domain: &[u8], value: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"sproutos/android-developer-console/oauth-state/v1\0");
+    digest.update(domain);
+    digest.update(b"\0");
+    digest.update(value);
+    hex::encode(digest.finalize())
+}
+
+fn constant_hash_eq(left: &str, right: &str) -> bool {
+    left.as_bytes().ct_eq(right.as_bytes()).into()
+}
+
+fn validate_loopback_redirect(raw: &str) -> anyhow::Result<()> {
+    let redirect = url::Url::parse(raw).context("Google OAuth redirect URI is malformed")?;
+    if redirect.scheme() != "http"
+        || !is_loopback(raw)
+        || redirect.query().is_some()
+        || redirect.fragment().is_some()
+        || !redirect.username().is_empty()
+        || redirect.password().is_some()
+    {
+        bail!(
+            "Google OAuth redirect URI must be an exact loopback HTTP URL without query or fragment"
+        )
+    }
+    Ok(())
+}
+
 fn load_refresh_token() -> anyhow::Result<String> {
     if let Ok(path) = std::env::var("APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE") {
         let path = std::path::PathBuf::from(path);
@@ -131,6 +280,10 @@ pub fn write_refresh_token(path: &Path, token: &str) -> anyhow::Result<()> {
     if token.is_empty() || token.contains(['\r', '\n']) {
         bail!("Google OAuth refresh token is malformed")
     }
+    write_private_new(path, token.as_bytes())
+}
+
+fn write_private_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     #[cfg(unix)]
     let mut file = {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -145,7 +298,7 @@ pub fn write_refresh_token(path: &Path, token: &str) -> anyhow::Result<()> {
         .write(true)
         .create_new(true)
         .open(path)?;
-    file.write_all(token.as_bytes())?;
+    file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
 }
@@ -403,7 +556,7 @@ impl GoogleDeveloperConsole {
                     .context("created signing key was not returned by the provider")?
             }
         };
-        let justification = string_field(&key, &["justificationRequired"]);
+        let justification = policy_justification(&policy, fingerprint)?;
         if justification == Some("REQUIRED") {
             let rationale = self.config.justification.as_deref().context(
                 "Android package-name registration requires an operator-approved justification",
@@ -439,10 +592,13 @@ impl GoogleDeveloperConsole {
     }
 
     async fn select_account(&self, session: &Session) -> anyhow::Result<String> {
-        let body = session
-            .call("ListDeveloperAccounts", BTreeMap::new(), Value::Null)
+        let accounts = session
+            .list(
+                "ListDeveloperAccounts",
+                BTreeMap::new(),
+                &["developerAccounts", "accounts"],
+            )
             .await?;
-        let accounts = array_field(&body, &["developerAccounts", "accounts"]);
         let verified: Vec<&Value> = accounts
             .iter()
             .filter(|value| string_field(value, &["verificationState"]) == Some("VERIFIED"))
@@ -484,6 +640,29 @@ struct Session {
 }
 
 impl Session {
+    async fn list(
+        &self,
+        method_name: &str,
+        mut values: BTreeMap<String, String>,
+        fields: &[&str],
+    ) -> anyhow::Result<Vec<Value>> {
+        let mut items = Vec::new();
+        let mut seen_tokens = BTreeSet::new();
+        loop {
+            let response = self.call(method_name, values.clone(), Value::Null).await?;
+            items.extend(array_field(&response, fields).iter().cloned());
+            let Some(token) =
+                string_field(&response, &["nextPageToken"]).filter(|token| !token.is_empty())
+            else {
+                return Ok(items);
+            };
+            if !seen_tokens.insert(token.to_owned()) || seen_tokens.len() > 100 {
+                bail!("{method_name} pagination did not converge")
+            }
+            values.insert("pageToken".to_owned(), token.to_owned());
+        }
+    }
+
     async fn call(
         &self,
         method_name: &str,
@@ -559,13 +738,13 @@ async fn ensure_package(
     display_name: &str,
 ) -> anyhow::Result<String> {
     let listed = session
-        .call(
+        .list(
             "ListAndroidPackages",
             bindings(&[("parent", account), ("name", account)]),
-            Value::Null,
+            &["androidPackages", "packages"],
         )
         .await?;
-    if let Some(found) = array_field(&listed, &["androidPackages", "packages"])
+    if let Some(found) = listed
         .iter()
         .find(|value| string_field(value, &["packageName"]) == Some(package_name))
     {
@@ -586,13 +765,13 @@ async fn ensure_package(
         Ok(value) => Ok(resource_name(&value, "created Android package")?.to_owned()),
         Err(error) if provider_status(&error) == Some(409) => {
             let listed = session
-                .call(
+                .list(
                     "ListAndroidPackages",
                     bindings(&[("parent", account), ("name", account)]),
-                    Value::Null,
+                    &["androidPackages", "packages"],
                 )
                 .await?;
-            array_field(&listed, &["androidPackages", "packages"])
+            listed
                 .iter()
                 .find(|value| string_field(value, &["packageName"]) == Some(package_name))
                 .map(|value| resource_name(value, "Android package").map(ToOwned::to_owned))
@@ -609,13 +788,13 @@ async fn list_key(
     fingerprint: &str,
 ) -> anyhow::Result<Option<Value>> {
     let value = session
-        .call(
+        .list(
             "ListAndroidPackageKeys",
             bindings(&[("parent", package), ("name", package)]),
-            Value::Null,
+            &["androidPackageKeys", "keys"],
         )
         .await?;
-    Ok(array_field(&value, &["androidPackageKeys", "keys"])
+    Ok(value
         .iter()
         .find(|value| {
             string_field(value, &["certificateFingerprintSha256"])
@@ -647,6 +826,23 @@ fn known_fingerprint(policy: &Value, fingerprint: &str) -> bool {
         string_field(key, &["certificateFingerprintSha256"])
             .is_some_and(|candidate| candidate.eq_ignore_ascii_case(fingerprint))
     })
+}
+
+fn policy_justification<'a>(
+    policy: &'a Value,
+    fingerprint: &str,
+) -> anyhow::Result<Option<&'a str>> {
+    let Some(key) = array_field(policy, &["knownKeys"]).iter().find(|key| {
+        string_field(key, &["certificateFingerprintSha256"])
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(fingerprint))
+    }) else {
+        return Ok(None);
+    };
+    match string_field(key, &["justificationRequired"]) {
+        None | Some("NOT_REQUIRED") => Ok(None),
+        Some("REQUIRED") => Ok(Some("REQUIRED")),
+        Some(_) => bail!("registration policy returned an unknown justification requirement"),
+    }
 }
 
 fn find_method<'a>(
@@ -852,8 +1048,12 @@ mod tests {
     use super::*;
     use axum::{
         Json, Router,
+        body::Bytes,
+        extract::Query,
         routing::{get, post},
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn discovery_paths_drive_requests_including_grpc_templates() {
@@ -905,10 +1105,15 @@ mod tests {
     }
 
     #[test]
-    fn offline_consent_url_requests_exact_scope_and_fresh_refresh_token() {
-        let raw = DeveloperConsoleConfig::authorization_url(
+    fn offline_consent_url_uses_single_use_expiring_csrf_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_file = directory.path().join("oauth-state");
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let raw = DeveloperConsoleConfig::begin_authorization(
             "client.apps.googleusercontent.com",
             "http://127.0.0.1:8341/oauth/callback",
+            &state_file,
+            now,
         )
         .unwrap();
         let url = url::Url::parse(&raw).unwrap();
@@ -919,6 +1124,88 @@ mod tests {
             Some("offline")
         );
         assert_eq!(query.get("prompt").map(String::as_str), Some("consent"));
+        let state = query.get("state").unwrap();
+        assert!(state.len() >= 40);
+        let callback =
+            format!("http://127.0.0.1:8341/oauth/callback?code=one-time-code&state={state}");
+        assert_eq!(
+            DeveloperConsoleConfig::consume_authorization_callback(
+                &state_file,
+                "client.apps.googleusercontent.com",
+                "http://127.0.0.1:8341/oauth/callback",
+                &callback,
+                now + Duration::from_secs(1),
+            )
+            .unwrap(),
+            "one-time-code"
+        );
+        assert!(
+            DeveloperConsoleConfig::consume_authorization_callback(
+                &state_file,
+                "client.apps.googleusercontent.com",
+                "http://127.0.0.1:8341/oauth/callback",
+                &callback,
+                now + Duration::from_secs(2),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn oauth_callback_rejects_mismatch_and_expiry_without_echoing_values() {
+        for (suffix, callback_kind, elapsed) in [
+            ("mismatch", "mismatch", 1),
+            ("origin", "origin", 1),
+            ("client", "client", 1),
+            ("duplicate", "duplicate", 1),
+            ("expired", "valid", OAUTH_STATE_TTL.as_secs() + 1),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let state_file = directory.path().join(format!("oauth-state-{suffix}"));
+            let now = UNIX_EPOCH + Duration::from_secs(20_000);
+            let authorization = DeveloperConsoleConfig::begin_authorization(
+                "client.apps.googleusercontent.com",
+                "http://127.0.0.1:8341/oauth/callback",
+                &state_file,
+                now,
+            )
+            .unwrap();
+            let state = url::Url::parse(&authorization)
+                .unwrap()
+                .query_pairs()
+                .find(|(name, _)| name == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            let callback = match callback_kind {
+                "mismatch" => {
+                    "http://127.0.0.1:8341/oauth/callback?code=secret-code&state=attacker-state"
+                        .to_owned()
+                }
+                "origin" => {
+                    format!("http://localhost:8341/oauth/callback?code=secret-code&state={state}")
+                }
+                "duplicate" => format!(
+                    "http://127.0.0.1:8341/oauth/callback?code=secret-code&state={state}&state={state}"
+                ),
+                _ => format!("http://127.0.0.1:8341/oauth/callback?code=secret-code&state={state}"),
+            };
+            let error = DeveloperConsoleConfig::consume_authorization_callback(
+                &state_file,
+                if callback_kind == "client" {
+                    "other.apps.googleusercontent.com"
+                } else {
+                    "client.apps.googleusercontent.com"
+                },
+                "http://127.0.0.1:8341/oauth/callback",
+                &callback,
+                now + Duration::from_secs(elapsed),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(!error.contains("secret-code"));
+            assert!(!error.contains("attacker-state"));
+        }
     }
 
     #[test]
@@ -1045,5 +1332,312 @@ mod tests {
         server.abort();
         assert_eq!(result.developer_account, "developerAccounts/123");
         assert_eq!(result.step, RegistrationStep::Registered);
+    }
+
+    #[tokio::test]
+    async fn discovery_drives_paginated_create_ownership_and_policy_justification() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let root = format!("http://{}/", listener.local_addr().unwrap());
+        let discovery_root = root.clone();
+        let fingerprint = "b".repeat(64);
+        let policy_fingerprint = fingerprint.clone();
+        let listed_fingerprint = fingerprint.clone();
+        let created = Arc::new(AtomicBool::new(false));
+        let created_for_list = created.clone();
+        let created_for_post = created.clone();
+        let package_body = Arc::new(Mutex::new(None));
+        let package_body_for_post = package_body.clone();
+        let key_body = Arc::new(Mutex::new(None));
+        let key_body_for_post = key_body.clone();
+        let justification_body = Arc::new(Mutex::new(None));
+        let justification_body_for_post = justification_body.clone();
+        let uploaded = Arc::new(Mutex::new(Vec::new()));
+        let uploaded_for_post = uploaded.clone();
+        let pages = Arc::new(Mutex::new(Vec::new()));
+        let account_pages = pages.clone();
+        let package_pages = pages.clone();
+        let key_pages = pages.clone();
+
+        let app = Router::new()
+            .route(
+                "/token",
+                post(|| async {
+                    Json(json!({
+                        "access_token": "short-lived",
+                        "token_type": "Bearer",
+                        "scope": SCOPE
+                    }))
+                }),
+            )
+            .route(
+                "/discovery",
+                get(move || {
+                    let root = discovery_root.clone();
+                    async move {
+                        Json(json!({
+                            "rootUrl": root,
+                            "servicePath": "",
+                            "schemas": {
+                                "AndroidPackage": { "properties": {
+                                    "packageName": {}, "displayName": {}
+                                }},
+                                "AndroidPackageKey": { "properties": {
+                                    "certificateFingerprintSha256": {}, "certificate": {}
+                                }},
+                                "Justification": { "properties": { "justification": {} }}
+                            },
+                            "resources": { "developerAccounts": {
+                                "methods": { "list": {
+                                    "id": "androiddeveloperconsole.developerAccounts.list",
+                                    "path": "v1/developerAccounts", "httpMethod": "GET",
+                                    "parameters": { "pageToken": { "location": "query" } }
+                                }},
+                                "resources": { "androidPackages": {
+                                    "methods": {
+                                        "list": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.list",
+                                            "path": "v1/{parent=developerAccounts/*}/androidPackages",
+                                            "httpMethod": "GET",
+                                            "parameters": {
+                                                "parent": { "location": "path", "required": true },
+                                                "pageToken": { "location": "query" }
+                                            }
+                                        },
+                                        "create": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.create",
+                                            "path": "v1/{parent=developerAccounts/*}/androidPackages",
+                                            "httpMethod": "POST",
+                                            "parameters": { "parent": { "location": "path", "required": true } },
+                                            "request": { "$ref": "AndroidPackage" }
+                                        },
+                                        "policy": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.getRegistrationPolicy",
+                                            "path": "v1/{name=developerAccounts/*/androidPackages/*}/registrationPolicy",
+                                            "httpMethod": "GET",
+                                            "parameters": { "name": { "location": "path", "required": true } }
+                                        }
+                                    },
+                                    "resources": { "androidPackageKeys": { "methods": {
+                                        "list": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.list",
+                                            "path": "v1/{parent=developerAccounts/*/androidPackages/*}/androidPackageKeys",
+                                            "httpMethod": "GET",
+                                            "parameters": {
+                                                "parent": { "location": "path", "required": true },
+                                                "pageToken": { "location": "query" }
+                                            }
+                                        },
+                                        "create": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.create",
+                                            "path": "v1/{parent=developerAccounts/*/androidPackages/*}/androidPackageKeys",
+                                            "httpMethod": "POST",
+                                            "parameters": { "parent": { "location": "path", "required": true } },
+                                            "request": { "$ref": "AndroidPackageKey" }
+                                        },
+                                        "justify": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.justifyRegistration",
+                                            "path": "v1/{name=developerAccounts/*/androidPackages/*/androidPackageKeys/*}:justifyRegistration",
+                                            "httpMethod": "POST",
+                                            "parameters": { "name": { "location": "path", "required": true } },
+                                            "request": { "$ref": "Justification" }
+                                        },
+                                        "verify": {
+                                            "id": "androiddeveloperconsole.developerAccounts.androidPackages.androidPackageKeys.verifyOwnership",
+                                            "path": "v1/{name=developerAccounts/*/androidPackages/*/androidPackageKeys/*}:verifyOwnership",
+                                            "httpMethod": "POST",
+                                            "parameters": { "name": { "location": "path", "required": true } },
+                                            "mediaUpload": { "protocols": { "simple": {
+                                                "path": "upload/v1/{name=developerAccounts/*/androidPackages/*/androidPackageKeys/*}:verifyOwnership"
+                                            }}}
+                                        }
+                                    }}}
+                                }}
+                            }}
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts",
+                get(move |Query(query): Query<BTreeMap<String, String>>| {
+                    let pages = account_pages.clone();
+                    async move {
+                        let token = query.get("pageToken").cloned();
+                        pages.lock().unwrap().push(format!("accounts:{token:?}"));
+                        if token.as_deref() == Some("accounts-2") {
+                            Json(json!({ "developerAccounts": [{
+                                "name": "developerAccounts/123", "verificationState": "VERIFIED"
+                            }] }))
+                        } else {
+                            Json(json!({
+                                "developerAccounts": [{
+                                    "name": "developerAccounts/9", "verificationState": "NOT_VERIFIED"
+                                }],
+                                "nextPageToken": "accounts-2"
+                            }))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages",
+                get(move |Query(query): Query<BTreeMap<String, String>>| {
+                    let pages = package_pages.clone();
+                    async move {
+                        let token = query.get("pageToken").cloned();
+                        pages.lock().unwrap().push(format!("packages:{token:?}"));
+                        if token.as_deref() == Some("packages-2") {
+                            Json(json!({ "androidPackages": [] }))
+                        } else {
+                            Json(json!({
+                                "androidPackages": [{
+                                    "name": "developerAccounts/123/androidPackages/com.example.other",
+                                    "packageName": "com.example.other"
+                                }],
+                                "nextPageToken": "packages-2"
+                            }))
+                        }
+                    }
+                })
+                .post(move |Json(body): Json<Value>| {
+                    let package_body = package_body_for_post.clone();
+                    async move {
+                        *package_body.lock().unwrap() = Some(body);
+                        Json(json!({
+                            "name": "developerAccounts/123/androidPackages/com.sproutos.store",
+                            "packageName": "com.sproutos.store",
+                            "registrationState": "DRAFT"
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/registrationPolicy",
+                get(move || {
+                    let fingerprint = policy_fingerprint.clone();
+                    async move { Json(json!({
+                        "keySelectionStrategy": "SELECT_KEY_FROM_LIST",
+                        "knownKeys": [{
+                            "certificateFingerprintSha256": fingerprint,
+                            "justificationRequired": "REQUIRED"
+                        }]
+                    })) }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys",
+                get(move |Query(query): Query<BTreeMap<String, String>>| {
+                    let pages = key_pages.clone();
+                    let created = created_for_list.clone();
+                    let fingerprint = listed_fingerprint.clone();
+                    async move {
+                        let token = query.get("pageToken").cloned();
+                        pages.lock().unwrap().push(format!("keys:{token:?}"));
+                        if token.as_deref() == Some("keys-2") {
+                            if created.load(Ordering::SeqCst) {
+                                Json(json!({ "androidPackageKeys": [{
+                                    "name": "developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7",
+                                    "certificateFingerprintSha256": fingerprint,
+                                    "registrationState": "DRAFT",
+                                    "verificationToken": "opaque-ownership-token",
+                                    "justificationRequired": "NOT_REQUIRED"
+                                }] }))
+                            } else {
+                                Json(json!({ "androidPackageKeys": [] }))
+                            }
+                        } else {
+                            Json(json!({
+                                "androidPackageKeys": [{
+                                    "name": "developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/other",
+                                    "certificateFingerprintSha256": "c".repeat(64),
+                                    "registrationState": "REGISTERED_ACTIVE"
+                                }],
+                                "nextPageToken": "keys-2"
+                            }))
+                        }
+                    }
+                })
+                .post(move |Json(body): Json<Value>| {
+                    let created = created_for_post.clone();
+                    let key_body = key_body_for_post.clone();
+                    async move {
+                        *key_body.lock().unwrap() = Some(body);
+                        created.store(true, Ordering::SeqCst);
+                        Json(json!({
+                            "name": "developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7",
+                            "registrationState": "DRAFT"
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7:justifyRegistration",
+                post(move |Json(body): Json<Value>| {
+                    let justification_body = justification_body_for_post.clone();
+                    async move {
+                        *justification_body.lock().unwrap() = Some(body);
+                        Json(json!({}))
+                    }
+                }),
+            )
+            .route(
+                "/upload/v1/developerAccounts/123/androidPackages/com.sproutos.store/androidPackageKeys/7:verifyOwnership",
+                post(move |body: Bytes| {
+                    let uploaded = uploaded_for_post.clone();
+                    async move {
+                        *uploaded.lock().unwrap() = body.to_vec();
+                        Json(json!({}))
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let console = GoogleDeveloperConsole::new(DeveloperConsoleConfig {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+            developer_account: None,
+            package_display_name: "SproutOS".into(),
+            justification: Some("Existing off-Play SproutOS package and managed key".into()),
+            token_url: format!("{root}token"),
+            discovery_url: format!("{root}discovery"),
+        })
+        .unwrap();
+        let outcome = console
+            .begin_registration("com.sproutos.store", &fingerprint, "Y2VydA==")
+            .await
+            .unwrap();
+        let RegistrationStep::OwnershipRequired { key_name, token } = outcome.step else {
+            panic!("expected ownership proof")
+        };
+        assert_eq!(token, "opaque-ownership-token");
+        let apk = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(apk.path(), b"signed-proof-apk").unwrap();
+        console
+            .verify_ownership(&key_name, apk.path())
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(outcome.developer_account, "developerAccounts/123");
+        assert_eq!(
+            package_body.lock().unwrap().as_ref().unwrap(),
+            &json!({ "packageName": "com.sproutos.store", "displayName": "SproutOS" })
+        );
+        assert_eq!(
+            key_body.lock().unwrap().as_ref().unwrap(),
+            &json!({
+                "certificateFingerprintSha256": fingerprint,
+                "certificate": "Y2VydA=="
+            })
+        );
+        assert_eq!(
+            justification_body.lock().unwrap().as_ref().unwrap(),
+            &json!({ "justification": "Existing off-Play SproutOS package and managed key" })
+        );
+        assert_eq!(&*uploaded.lock().unwrap(), b"signed-proof-apk");
+        let pages = pages.lock().unwrap();
+        assert!(pages.contains(&"accounts:Some(\"accounts-2\")".to_owned()));
+        assert!(pages.contains(&"packages:Some(\"packages-2\")".to_owned()));
+        assert!(pages.contains(&"keys:Some(\"keys-2\")".to_owned()));
     }
 }

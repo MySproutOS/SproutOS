@@ -49,6 +49,8 @@ enum Command {
         client_id: String,
         #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REDIRECT_URI")]
         redirect_uri: String,
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_STATE_FILE")]
+        state_file: PathBuf,
     },
     /// Read an authorization code from stdin and save the offline refresh token mode 0600.
     GoogleOauthExchange {
@@ -58,6 +60,8 @@ enum Command {
         redirect_uri: String,
         #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE")]
         output: PathBuf,
+        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_STATE_FILE")]
+        state_file: PathBuf,
     },
 }
 
@@ -186,10 +190,16 @@ async fn main() -> anyhow::Result<()> {
         Command::GoogleOauthUrl {
             client_id,
             redirect_uri,
+            state_file,
         } => {
             println!(
                 "{}",
-                DeveloperConsoleConfig::authorization_url(&client_id, &redirect_uri)?
+                DeveloperConsoleConfig::begin_authorization(
+                    &client_id,
+                    &redirect_uri,
+                    &state_file,
+                    std::time::SystemTime::now(),
+                )?
             );
             Ok(())
         }
@@ -197,15 +207,23 @@ async fn main() -> anyhow::Result<()> {
             client_id,
             redirect_uri,
             output,
+            state_file,
         } => {
             let client_secret = std::env::var("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET")
                 .context("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET is not set")?;
-            let mut code = String::new();
-            std::io::stdin().read_line(&mut code)?;
+            let mut callback_url = String::new();
+            std::io::stdin().read_line(&mut callback_url)?;
+            let code = DeveloperConsoleConfig::consume_authorization_callback(
+                &state_file,
+                &client_id,
+                &redirect_uri,
+                callback_url.trim(),
+                std::time::SystemTime::now(),
+            )?;
             let token = DeveloperConsoleConfig::exchange_authorization_code(
                 &client_id,
                 &client_secret,
-                code.trim(),
+                &code,
                 &redirect_uri,
                 &std::env::var("APK_SIGNER_GOOGLE_OAUTH_TOKEN_URL")
                     .unwrap_or_else(|_| DEFAULT_TOKEN_URL.to_owned()),

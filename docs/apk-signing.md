@@ -50,6 +50,7 @@ backed.
 | `APK_SIGNER_MAX_APK_BYTES`                   | Hard download ceiling, default 512 MiB                      |
 | `APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID`          | Google Web Server OAuth client ID; signer host only         |
 | `APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET`      | Google OAuth client secret; signer host only                |
+| `APK_SIGNER_GOOGLE_OAUTH_STATE_FILE`         | Mode-`0600` single-use consent state; signer host only      |
 | `APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE` | Mode-`0600` offline token; signer host only                 |
 | `APK_SIGNER_ANDROID_DEVELOPER_ACCOUNT`       | Selected verified `developerAccounts/*` resource            |
 
@@ -176,13 +177,17 @@ and API keys are unsupported. Its documented automated path uses one-time consen
 `GetAndroidPackageRegistrationPolicy`, `CreateAndroidPackageKey`, and—when required—
 `VerifyAndroidPackageKeyOwnership` or `JustifyAndroidPackageKeyRegistration`.
 
-Create the Web Server OAuth client once, then complete offline consent on the signer host. The
-exchange command reads the single-use authorization code from stdin and creates the token file with
-mode `0600`; it refuses to replace an existing token:
+Create the Web Server OAuth client once, then complete offline consent on the signer host. The URL
+command creates a cryptographically random, mode-`0600` setup-state record bound to the OAuth client
+and exact loopback redirect URI. The state expires after ten minutes and is consumed before any
+token exchange. Paste the complete callback URL—not a bare authorization code—into the exchange
+command. It strictly validates the callback origin, path, state, expiry, duplicates, and provider
+errors, then creates the refresh-token file mode `0600`; neither file is replaceable:
 
 ```bash
 cargo run -p android-signer -- google-oauth-url
-printf '%s\n' "$ONE_TIME_CODE" | cargo run -p android-signer -- google-oauth-exchange
+printf '%s\n' "$COMPLETE_LOOPBACK_CALLBACK_URL" | \
+  cargo run -p android-signer -- google-oauth-exchange
 ```
 
 The consent URL requests only `https://www.googleapis.com/auth/androiddeveloperconsole`,
@@ -213,6 +218,22 @@ from catalogues until registration and the independently verified setup commit a
 
 `ANDROID_DEVELOPER_ID_STATUS_API_KEY` belongs only on the background worker. It is not installed on
 the signer. When it is absent, no registration can advance to `registered`.
+
+### Callback and checkpoint cutover
+
+The registration-aware completion callback requires `developer_console_account`, and new durable
+`sign.json` checkpoints contain that account. Deploy this as a coordinated signer/control-plane
+cutover: stop new APK release submission, stop the signer after all running `sign_release` and
+`sign_client_release` jobs have completed and its state directory has no corresponding in-flight
+checkpoints, deploy the migration/API/worker, deploy the new signer, then resume submission. Key
+provision jobs do not carry this field and may be retried normally.
+
+Do not start the new signer over an old signed-release checkpoint: the old checkpoint cannot prove
+which verified developer account performed registration. If a crash prevents a clean drain, keep
+the immutable raw APK and key object, explicitly fail/requeue that job through the operator recovery
+path, and let the new signer repeat registration and signing. Never synthesize the missing account
+in the control plane. The database makes the first signer-selected account write-once, and both
+callback handlers reject any later account mismatch.
 
 Official references: [Android Developer Console API](https://developer.android.com/developer-verification/guides/developer-console-api),
 [Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
