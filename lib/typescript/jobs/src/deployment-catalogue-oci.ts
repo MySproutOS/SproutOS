@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+import {
+  appJwt,
+  createGitHubClient,
+  createInstallationTokenStore,
+  envAppJwtSigner,
+  type GitHubClient,
+} from "@lib/github"
 
 export const DEPLOYMENT_CATALOGUE_REPOSITORY = "ghcr.io/mysproutos/deployment-catalogue" as const
 export const DEPLOYMENT_CATALOGUE_ARTIFACT_TYPE =
@@ -323,6 +330,78 @@ export async function pullDeploymentCatalogue(
 
 export type VerifiedAttestation = Record<string, unknown>
 
+type ExecOptions = {
+  timeout: number
+  maxBuffer: number
+  env?: NodeJS.ProcessEnv
+}
+
+type Exec = (
+  command: string,
+  args: readonly string[],
+  options: ExecOptions,
+) => Promise<{ stdout: string; stderr: string }>
+
+type CatalogueVerificationDependencies = {
+  exec: Exec
+  githubToken: () => Promise<string>
+}
+
+const defaultExec: Exec = async (command, args, options) =>
+  await execFileAsync(command, [...args], options)
+
+/**
+ * Finds the App installation that can see Deployment-Templates, then mints the narrow token used
+ * only by `gh attestation verify`. The store caches that token in-process until five minutes before
+ * expiry; the installation lookup is deliberately repeated so uninstall/reinstall takes effect
+ * without waiting for a worker restart.
+ */
+function createCatalogueGitHubTokenProvider(
+  client: GitHubClient,
+  signJwt: () => string,
+): () => Promise<string> {
+  const tokens = createInstallationTokenStore({ client, signJwt })
+
+  return async () => {
+    const response = await client.request<{ id?: unknown }>({
+      method: "GET",
+      path: "/repos/MySproutOS/Deployment-Templates/installation",
+      credential: appJwt(signJwt()),
+    })
+    const installationId = response.data.id
+    if (
+      typeof installationId !== "number" ||
+      !Number.isSafeInteger(installationId) ||
+      installationId <= 0
+    ) {
+      throw new Error(
+        "GitHub did not return a valid App installation for MySproutOS/Deployment-Templates",
+      )
+    }
+
+    const credential = await tokens.get(installationId, {
+      purpose: "catalogue-attestation-read",
+    })
+    if (credential.token === "") {
+      throw new Error("GitHub returned an empty Deployment-Templates installation token")
+    }
+    return credential.token
+  }
+}
+
+let defaultGitHubToken: (() => Promise<string>) | null = null
+
+function productionGitHubToken(): Promise<string> {
+  defaultGitHubToken ??= createCatalogueGitHubTokenProvider(createGitHubClient(), envAppJwtSigner())
+  return defaultGitHubToken()
+}
+
+function safeVerificationError(error: unknown, token: string): Error {
+  const unsafeMessage = error instanceof Error ? error.message : String(error)
+  const message = token === "" ? unsafeMessage : unsafeMessage.replaceAll(token, "[REDACTED]")
+  return new Error(`GitHub catalogue attestation verification failed: ${message}`)
+}
+
 function githubAttestationVerifyArguments(reference: string, sourceSha: string): string[] {
   return [
     "attestation",
@@ -350,12 +429,16 @@ function githubAttestationVerifyArguments(reference: string, sourceSha: string):
 export async function verifyDeploymentCatalogueProvenance(
   ociDigest: string,
   sourceSha: string,
+  dependencies: CatalogueVerificationDependencies = {
+    exec: defaultExec,
+    githubToken: productionGitHubToken,
+  },
 ): Promise<VerifiedAttestation[]> {
   assertDigest(ociDigest, "catalogue OCI digest")
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error("catalogue source SHA is invalid")
   const reference = `${DEPLOYMENT_CATALOGUE_REPOSITORY}@${ociDigest}`
 
-  await execFileAsync(
+  await dependencies.exec(
     "cosign",
     [
       "verify",
@@ -368,10 +451,17 @@ export async function verifyDeploymentCatalogueProvenance(
     { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
   )
 
-  const result = await execFileAsync("gh", githubAttestationVerifyArguments(reference, sourceSha), {
-    timeout: 60_000,
-    maxBuffer: 8 * 1024 * 1024,
-  })
+  const githubToken = await dependencies.githubToken()
+  let result: { stdout: string; stderr: string }
+  try {
+    result = await dependencies.exec("gh", githubAttestationVerifyArguments(reference, sourceSha), {
+      timeout: 60_000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GH_TOKEN: githubToken },
+    })
+  } catch (error) {
+    throw safeVerificationError(error, githubToken)
+  }
   const attestations = JSON.parse(result.stdout) as unknown
   if (!Array.isArray(attestations) || attestations.length === 0) {
     throw new Error("GitHub returned no verified catalogue provenance attestation")
@@ -380,6 +470,7 @@ export async function verifyDeploymentCatalogueProvenance(
 }
 
 export const deploymentCatalogueInternals = {
+  createCatalogueGitHubTokenProvider,
   githubAttestationVerifyArguments,
   parseManifest,
   sha256,

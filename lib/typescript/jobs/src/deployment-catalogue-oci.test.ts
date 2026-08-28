@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { GitHubClient, GitHubRequest } from "@lib/github"
 import {
   DEPLOYMENT_CATALOGUE_ARTIFACT_TYPE,
   deploymentCatalogueInternals,
   discoverCurrentDeploymentCatalogue,
   pullDeploymentCatalogue,
+  verifyDeploymentCatalogueProvenance,
 } from "./deployment-catalogue-oci"
 
 function response(bytes: Uint8Array, headers: Record<string, string> = {}): Response {
@@ -98,7 +100,10 @@ function releaseFixture() {
   return { ociDigest, release, sourceSha, subjects, subjectsUrl }
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  delete process.env.CATALOGUE_TEST_ENV
+})
 
 describe("deployment catalogue OCI pull", () => {
   it("accepts only descriptor-hashed bytes from the exact three named layers", async () => {
@@ -212,5 +217,125 @@ describe("deployment catalogue release discovery", () => {
       args.slice(args.indexOf("--source-digest"), args.indexOf("--source-digest") + 2),
     ).toEqual(["--source-digest", sourceSha])
     expect(args).toContain("--deny-self-hosted-runners")
+  })
+})
+
+describe("deployment catalogue provenance authentication", () => {
+  const ociDigest = `sha256:${"b".repeat(64)}`
+  const sourceSha = "a".repeat(40)
+  type TestExec = (
+    command: string,
+    args: readonly string[],
+    options: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
+  ) => Promise<{ stdout: string; stderr: string }>
+
+  it("injects the installation token only into gh while preserving the worker environment", async () => {
+    const calls: Array<{
+      command: string
+      options: { env?: NodeJS.ProcessEnv }
+    }> = []
+    const exec = vi.fn<TestExec>(
+      async (
+        command: string,
+        _args: readonly string[],
+        options: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
+      ) => {
+        calls.push({ command, options })
+        return await Promise.resolve({
+          stdout: command === "gh" ? '[{"verified":true}]' : "",
+          stderr: "",
+        })
+      },
+    )
+    process.env.CATALOGUE_TEST_ENV = "preserved"
+
+    await expect(
+      verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+        exec,
+        githubToken: async () => await Promise.resolve("ghs_catalogue_secret"),
+      }),
+    ).resolves.toHaveLength(1)
+
+    expect(calls.map((call) => call.command)).toStrictEqual(["cosign", "gh"])
+    expect(calls[0].options.env).toBeUndefined()
+    expect(calls[1].options.env).toMatchObject({
+      CATALOGUE_TEST_ENV: "preserved",
+      GH_TOKEN: "ghs_catalogue_secret",
+    })
+  })
+
+  it("redacts a token even when gh echoes it in its failure", async () => {
+    const token = "ghs_must_never_escape"
+    const exec = vi.fn<TestExec>(async (command: string) => {
+      if (command === "gh") throw new Error(`authentication failed for ${token}`)
+      return await Promise.resolve({ stdout: "", stderr: "" })
+    })
+
+    const error = await verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+      exec,
+      githubToken: async () => await Promise.resolve(token),
+    }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain(token)
+    expect((error as Error).message).toContain("[REDACTED]")
+  })
+
+  it("fails closed without invoking gh when installation-token minting fails", async () => {
+    const exec = vi.fn<TestExec>(
+      async (_command: string) => await Promise.resolve({ stdout: "", stderr: "" }),
+    )
+
+    await expect(
+      verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+        exec,
+        githubToken: () =>
+          Promise.reject(new Error("Deployment-Templates installation unavailable")),
+      }),
+    ).rejects.toThrow(/installation unavailable/)
+
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(exec.mock.calls[0][0]).toBe("cosign")
+  })
+
+  it("discovers the repository installation and reuses its narrow cached token", async () => {
+    const calls: GitHubRequest[] = []
+    let minted = 0
+    const client: GitHubClient = {
+      // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
+      async request<T>(request: GitHubRequest) {
+        calls.push(request)
+        const data =
+          request.method === "GET"
+            ? { id: 91_002 }
+            : {
+                token: `ghs_catalogue_${++minted}`,
+                expires_at: "2099-01-01T00:00:00Z",
+              }
+        return await Promise.resolve({
+          status: 200,
+          data: data as T,
+          rateLimit: { limit: 5000, remaining: 4999, resetAt: null },
+        })
+      },
+    }
+    const provider = deploymentCatalogueInternals.createCatalogueGitHubTokenProvider(
+      client,
+      () => "app.jwt.signature",
+    )
+
+    await expect(provider()).resolves.toBe("ghs_catalogue_1")
+    await expect(provider()).resolves.toBe("ghs_catalogue_1")
+
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toStrictEqual([
+      "GET /repos/MySproutOS/Deployment-Templates/installation",
+      "POST /app/installations/91002/access_tokens",
+      "GET /repos/MySproutOS/Deployment-Templates/installation",
+    ])
+    expect(calls[0].credential).toMatchObject({ kind: "app", token: "app.jwt.signature" })
+    expect(calls[1].body).toStrictEqual({
+      repositories: ["Deployment-Templates"],
+      permissions: { contents: "read", metadata: "read" },
+    })
   })
 })

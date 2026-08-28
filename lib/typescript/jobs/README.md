@@ -82,6 +82,12 @@ schedule and is left exactly as the caller gave it.
 
 Every one of them exists because something earlier promised a thing and left nothing to do it.
 
+Catalogue provenance verification uses the platform's existing GitHub App identity. The worker
+resolves the App installation that can see `MySproutOS/Deployment-Templates`, mints an in-memory
+installation token scoped only to that repository with `contents: read` and `metadata: read`, and
+passes it to the `gh` subprocess only as `GH_TOKEN`. It is cached until the normal five-minute
+pre-expiry refresh boundary; no PAT or long-lived GitHub credential is stored for this job.
+
 ### Retention lives here, deletion does not
 
 `platform.retention_sweep` is a **schedule**: rows stop being useful after a period, and the period
