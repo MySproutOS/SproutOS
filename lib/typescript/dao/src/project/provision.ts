@@ -37,6 +37,7 @@ export type ProvisionProjectInput = {
   /** OAuth grant that created this project; null for a person using the dashboard. */
   createdByOauthGrantId: string | null
   name: string
+  description?: string | null
   slug: string
   kind: string
   rootDir: string
@@ -60,6 +61,7 @@ export type ProvisionProjectInput = {
    */
   isGroup?: boolean
   parentProjectId?: string | null
+  regionId?: string | null
   idempotencyKey?: string | null
   audit?: AuditContext
 }
@@ -144,6 +146,7 @@ export function provisionProject(db: Kysely<DB>) {
         agentCredentialId: input.agentCredentialId,
         createdByOauthGrantId: input.createdByOauthGrantId,
         name: input.name,
+        description: input.description ?? null,
         slug: input.slug,
         kind: input.kind,
         rootDir: input.rootDir,
@@ -156,6 +159,7 @@ export function provisionProject(db: Kysely<DB>) {
         autoUpdateMode: input.autoUpdateMode,
         isGroup: input.isGroup ?? false,
         parentProjectId: input.parentProjectId ?? null,
+        regionId: input.regionId ?? null,
       })
 
       const job = await crudProjectJob(tx).create({
@@ -206,6 +210,7 @@ export function provisionProject(db: Kysely<DB>) {
     projectId: string
     actorUserId: string
     audit?: AuditContext
+    preserveEmptyGroups?: boolean
   }): Promise<DeletedProject | null> {
     return await db.transaction().execute(async (tx) => {
       const project = await crudProject(tx).softDelete(input.organizationId, input.projectId)
@@ -219,13 +224,24 @@ export function provisionProject(db: Kysely<DB>) {
         repository could never be released. The group would outlive everything it contained and hold
         a repository nobody uses.
       */
-      const siblings = await tx
+      let siblingsQuery = tx
         .selectFrom("project")
         .select((eb) => eb.fn.countAll<string>().as("count"))
         .where("repositoryId", "=", project.repositoryId)
         .where("deletedAt", "is", null)
-        .where("isGroup", "=", false)
-        .executeTakeFirst()
+      /*
+        During a recursive group deletion, live groups are real siblings, not cleanup residue.
+
+        Counting only deployables would release the repository as soon as the deepest leaf went
+        away, while its ancestor groups were still being prepared — and could soft-delete an
+        unrelated sibling group without giving it a teardown job. Ordinary single-project deletion
+        keeps the historical deployable-only count so its implicit empty repository group is still
+        cleaned up automatically.
+      */
+      if (input.preserveEmptyGroups !== true) {
+        siblingsQuery = siblingsQuery.where("isGroup", "=", false)
+      }
+      const siblings = await siblingsQuery.executeTakeFirst()
 
       const remaining = siblings ? Number(siblings.count) : 0
       const repositoryReleased = remaining === 0
@@ -239,13 +255,15 @@ export function provisionProject(db: Kysely<DB>) {
           audit row that references it still resolves. `ON DELETE RESTRICT` on `parent_project_id`
           is untouched by this: a soft delete is an UPDATE.
         */
-        await tx
-          .updateTable("project")
-          .set({ deletedAt: new Date(), state: "deleting" })
-          .where("repositoryId", "=", project.repositoryId)
-          .where("isGroup", "=", true)
-          .where("deletedAt", "is", null)
-          .execute()
+        if (input.preserveEmptyGroups !== true) {
+          await tx
+            .updateTable("project")
+            .set({ deletedAt: new Date(), state: "deleting" })
+            .where("repositoryId", "=", project.repositoryId)
+            .where("isGroup", "=", true)
+            .where("deletedAt", "is", null)
+            .execute()
+        }
 
         await crudRepository(tx).softDelete(project.repositoryId)
       }

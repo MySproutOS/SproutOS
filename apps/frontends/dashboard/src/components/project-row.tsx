@@ -97,6 +97,19 @@ export function ProjectRow({ orgSlug, project }: { orgSlug: string; project: Pro
             Managed by {project.managedByOauthApp.name}
           </span>
         )}
+        {(project.isGroup ? project.primaryHostname : project.hostname) !== null && (
+          <a
+            href={project.isGroup ? (project.primaryUrl ?? "#") : (project.url ?? "#")}
+            target="_blank"
+            rel="noreferrer"
+            className="tnum inline-flex w-fit max-w-full items-center gap-1 truncate font-mono text-[11.5px] text-muted-foreground hover:text-leaf hover:underline"
+          >
+            <span className="truncate">
+              {project.isGroup ? project.primaryHostname : project.hostname}
+            </span>
+            <ExternalLinkIcon className="size-3 shrink-0" aria-hidden="true" />
+          </a>
+        )}
       </div>
 
       <div className="hidden w-[108px] shrink-0 flex-col items-end gap-[3px] sm:flex">

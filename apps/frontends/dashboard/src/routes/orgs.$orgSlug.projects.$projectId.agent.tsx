@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router"
 import {
   ArrowLeftIcon,
   BotIcon,
@@ -30,10 +30,12 @@ import { Spinner } from "@ui/base/ui/spinner"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
+import { SandboxPreviewPanel } from "@frontends/dashboard/components/sandbox/preview-panel"
 import {
   type AgentEvent,
   ensureSandboxRunning,
   latestRestorableAgentSession,
+  loadAgentTranscript,
   streamAgentTurn,
   useAgentSandbox,
   useAgentSessions,
@@ -42,8 +44,17 @@ import {
 } from "@frontends/dashboard/data/agent-chat"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/agent")({
-  component: AgentChat,
+  validateSearch: (search: Record<string, unknown>): { session?: string; prompt?: string } => ({
+    ...(typeof search.session === "string" ? { session: search.session } : {}),
+    ...(typeof search.prompt === "string" ? { prompt: search.prompt } : {}),
+  }),
+  component: AgentChatRoute,
 })
+
+function AgentChatRoute() {
+  const search = Route.useSearch()
+  return <AgentChat key={search.session ?? "new"} />
+}
 
 /** What the transcript is made of. Tool calls are collapsed into one line each. */
 type Bubble =
@@ -54,19 +65,21 @@ type Bubble =
 
 function AgentChat() {
   const { orgSlug, projectId } = Route.useParams()
+  const search = Route.useSearch()
+  const navigate = useNavigate()
   const sessions = useAgentSessions(orgSlug, projectId)
   const sandbox = useAgentSandbox(orgSlug, projectId)
   const { createSession } = useCreateAgentSession(orgSlug, projectId)
   const finishSandbox = useFinishSandbox(orgSlug, projectId)
 
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string | null>(search.session ?? null)
   const [bubbles, setBubbles] = useState<Bubble[]>([])
-  const [prompt, setPrompt] = useState("")
+  const [prompt, setPrompt] = useState(search.prompt ?? "")
   const [running, setRunning] = useState(false)
   const [confirmingFinish, setConfirmingFinish] = useState(false)
   const [finishError, setFinishError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
-  const adoptedExistingSession = useRef(false)
+  const adoptedExistingSession = useRef(search.session !== undefined)
   const routeScope = useRef(`${orgSlug}/${projectId}`)
   const tail = useRef<HTMLDivElement>(null)
 
@@ -74,8 +87,6 @@ function AgentChat() {
     tail.current?.scrollIntoView({ behavior: "smooth" })
   }, [])
 
-  // A run outlives a keystroke but not the page. Leaving one streaming into an unmounted
-  // component would keep burning tokens against a balance nobody is watching.
   useEffect(() => () => abort.current?.abort(), [])
 
   useEffect(() => {
@@ -95,8 +106,59 @@ function AgentChat() {
   useEffect(() => {
     if (sessions.isPending || adoptedExistingSession.current) return
     adoptedExistingSession.current = true
-    setSessionId(latestRestorableAgentSession(sessions.data)?.id ?? null)
-  }, [sessions.data, sessions.isPending])
+    const latest = latestRestorableAgentSession(sessions.data)
+    if (latest === undefined) return
+    void navigate({
+      to: "/orgs/$orgSlug/projects/$projectId/agent",
+      params: { orgSlug, projectId },
+      search: { session: latest.id },
+      replace: true,
+    })
+  }, [navigate, orgSlug, projectId, sessions.data, sessions.isPending])
+
+  useEffect(() => {
+    if (sessionId === null) return
+    let cancelled = false
+    const refresh = async () => {
+      if (abort.current !== null) return
+      try {
+        const transcript = await loadAgentTranscript({ orgSlug, projectId, sessionId })
+        if (cancelled) return
+        const restored: Bubble[] = []
+        for (const turn of transcript.turns) {
+          if (turn.role === "user" && turn.inputText !== null) {
+            restored.push({ kind: "you", text: turn.inputText })
+          }
+          for (const event of transcript.events.filter((event) => event.agentTurnId === turn.id)) {
+            appendInPlace(restored, event.payload)
+          }
+          if (turn.error !== null) restored.push({ kind: "failed", message: turn.error })
+        }
+        setBubbles(restored)
+        setRunning(transcript.session.status === "active")
+      } catch {
+        if (!cancelled)
+          setBubbles([{ kind: "failed", message: "The conversation could not be loaded" }])
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [orgSlug, projectId, sessionId])
+
+  function selectSession(id: string | null) {
+    setSessionId(id)
+    setBubbles([])
+    void navigate({
+      to: "/orgs/$orgSlug/projects/$projectId/agent",
+      params: { orgSlug, projectId },
+      search: id === null ? {} : { session: id },
+      replace: false,
+    })
+  }
 
   const send = async () => {
     const text = prompt.trim()
@@ -113,7 +175,7 @@ function AgentChat() {
       await ensureSandboxRunning({ orgSlug, projectId }, controller.signal)
       await sandbox.refetch()
       const id = sessionId ?? (await createSession())
-      setSessionId(id)
+      selectSession(id)
 
       await streamAgentTurn(
         { orgSlug, projectId, sessionId: id, prompt: text },
@@ -148,8 +210,7 @@ function AgentChat() {
           size="sm"
           disabled={running || sessionId === null}
           onClick={() => {
-            setSessionId(null)
-            setBubbles([])
+            selectSession(null)
           }}
         >
           <MessageSquarePlusIcon />
@@ -180,15 +241,32 @@ function AgentChat() {
         )}
         {sessions.isPending && <ListSkeleton rows={1} />}
 
-        <div className="flex flex-col gap-3">
-          {bubbles.length === 0 && !running && (
-            <EmptyState>
-              <EmptyStateIcon>
-                <BotIcon />
-              </EmptyStateIcon>
-              <EmptyStateTitle>Describe the change you want</EmptyStateTitle>
-              <EmptyStateDescription>
-                {/*
+        <div className="grid min-h-[32rem] gap-4 xl:grid-cols-[13rem_minmax(0,1fr)_minmax(22rem,0.9fr)]">
+          <aside className="flex flex-col gap-2 border-r border-border pr-3">
+            <span className="eyebrow">History</span>
+            {(sessions.data ?? []).map((session) => (
+              <Button
+                key={session.id}
+                variant={session.id === sessionId ? "secondary" : "ghost"}
+                size="sm"
+                className="h-auto justify-start py-2 text-left"
+                onClick={() => {
+                  selectSession(session.id)
+                }}
+              >
+                <span className="min-w-0 truncate">{session.title ?? "New chat"}</span>
+              </Button>
+            ))}
+          </aside>
+          <div className="flex min-w-0 flex-col gap-3">
+            {bubbles.length === 0 && !running && (
+              <EmptyState>
+                <EmptyStateIcon>
+                  <BotIcon />
+                </EmptyStateIcon>
+                <EmptyStateTitle>Describe the change you want</EmptyStateTitle>
+                <EmptyStateDescription>
+                  {/*
                   Says what actually happens now.
 
                   It read "leaves as a pull request — nothing is pushed to your branch", which was
@@ -197,27 +275,31 @@ function AgentChat() {
                   branch is still untouched — which is the part that mattered and is worth keeping
                   accurate rather than reassuring.
                 */}
-                The agent works in a checkout of this project's repository. It reads and edits
-                files, and anything it changes is pushed to a new `sproutos/agent-…` branch — never
-                to your production branch.
-              </EmptyStateDescription>
-            </EmptyState>
-          )}
+                  The agent works in a checkout of this project's repository. It reads and edits
+                  files, and anything it changes is pushed to a new `sproutos/agent-…` branch —
+                  never to your production branch.
+                </EmptyStateDescription>
+              </EmptyState>
+            )}
 
-          {bubbles.map((bubble, index) => (
-            // Bubbles are append-only and never reordered, so the index is a stable identity —
-            // there is no id on a streamed text fragment to key on instead.
-            // oxlint-disable-next-line no-array-index-key
-            <BubbleView key={index} bubble={bubble} />
-          ))}
+            {bubbles.map((bubble, index) => (
+              // Bubbles are append-only and never reordered, so the index is a stable identity —
+              // there is no id on a streamed text fragment to key on instead.
+              // oxlint-disable-next-line no-array-index-key
+              <BubbleView key={index} bubble={bubble} />
+            ))}
 
-          {running && (
-            <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Spinner className="size-3.5" />
-              Working…
-            </span>
-          )}
-          <div ref={tail} />
+            {running && (
+              <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                <Spinner className="size-3.5" />
+                Working…
+              </span>
+            )}
+            <div ref={tail} />
+          </div>
+          <div className="hidden min-w-0 xl:block">
+            <SandboxPreviewPanel orgSlug={orgSlug} projectId={projectId} />
+          </div>
         </div>
 
         <div className="sticky bottom-0 flex flex-col gap-2 border-t border-border bg-background pt-3">
@@ -282,8 +364,7 @@ function AgentChat() {
                   .finish()
                   .then(() => {
                     setConfirmingFinish(false)
-                    setSessionId(null)
-                    setBubbles([])
+                    selectSession(null)
                   })
                   .catch((cause: unknown) => {
                     setFinishError(
@@ -326,6 +407,11 @@ function append(bubbles: Bubble[], event: AgentEvent): Bubble[] {
       // tool_result, thinking, session, done — state the transcript does not show.
       return bubbles
   }
+}
+
+function appendInPlace(bubbles: Bubble[], event: AgentEvent): void {
+  const next = append(bubbles, event)
+  bubbles.splice(0, bubbles.length, ...next)
 }
 
 function BubbleView({ bubble }: { bubble: Bubble }) {

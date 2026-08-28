@@ -1,8 +1,6 @@
 import { formatMicroUsd } from "@lib/billing/money"
 import { Link, createFileRoute } from "@tanstack/react-router"
-import { PlusIcon } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
-import { Button } from "@ui/base/ui/button"
 import { Money } from "@ui/base/ui/money"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import {
@@ -14,6 +12,7 @@ import {
 } from "@ui/base/ui/empty-state"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
+import { NewProjectDialog } from "@frontends/dashboard/components/projects/new-project-dialog"
 import {
   WORKFLOW_STATUS_LABELS,
   useWorkflows,
@@ -38,10 +37,7 @@ function WorkflowsList() {
   return (
     <>
       <PageHeader title="Workflows" count={data?.length}>
-        <Button render={<Link to="/store" />}>
-          <PlusIcon />
-          New workflow
-        </Button>
+        <NewProjectDialog orgSlug={orgSlug} kind="workflow" triggerLabel="New workflow" />
       </PageHeader>
 
       <PageBody>
@@ -61,10 +57,10 @@ function WorkflowsList() {
             <EmptyStateIcon />
             <EmptyStateTitle>Nothing here yet</EmptyStateTitle>
             <EmptyStateDescription>
-              Workflows arrive with the app you fork. Start from one that already works.
+              Create a repository-backed interval or webhook workflow with the agent.
             </EmptyStateDescription>
             <EmptyStateActions>
-              <Button render={<Link to="/store" />}>Go to store</Button>
+              <NewProjectDialog orgSlug={orgSlug} kind="workflow" triggerLabel="New workflow" />
             </EmptyStateActions>
           </EmptyState>
         )}

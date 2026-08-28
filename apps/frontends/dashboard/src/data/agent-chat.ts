@@ -10,6 +10,7 @@ import {
 import {
   baseUrl,
   getV1OrgsByOrgSlugProjectsByProjectIdSandbox,
+  getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId,
   getV1OrgsByOrgSlugAgentConfig,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
 } from "@lib/api-client/index"
@@ -37,6 +38,24 @@ export type AgentEvent =
   | { type: "session"; sdkSessionId: string }
   | { type: "done"; subtype: string; isError: boolean; numTurns: number; durationMs: number }
   | { type: "error"; message: string }
+
+export type AgentTranscript = {
+  session: { id: string; status: string }
+  turns: { id: string; role: string; inputText: string | null; error: string | null; seq: number }[]
+  events: { seq: string; type: string; payload: AgentEvent; agentTurnId: string | null }[]
+}
+
+export async function loadAgentTranscript(input: {
+  orgSlug: string
+  projectId: string
+  sessionId: string
+}): Promise<AgentTranscript> {
+  const response = await getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId({
+    path: input,
+    throwOnError: true,
+  })
+  return response.data as unknown as AgentTranscript
+}
 
 const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short",

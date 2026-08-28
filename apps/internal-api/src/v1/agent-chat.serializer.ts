@@ -20,3 +20,26 @@ export const agentChatSchemaSessionCreateRequest = Type.Object({
 export const agentChatSchemaMessageRequest = Type.Object({
   prompt: Type.String({ minLength: 1, maxLength: 32_000 }),
 })
+
+export const agentChatSchemaTranscriptResponse = Type.Object({
+  session: agentChatSchemaSessionResponse,
+  turns: Type.Array(
+    Type.Object({
+      id: UUID7String,
+      role: Type.String(),
+      inputText: Nullable(Type.String()),
+      error: Nullable(Type.String()),
+      seq: Type.Number(),
+      createdAt: Type.String({ format: "date-time" }),
+    }),
+  ),
+  events: Type.Array(
+    Type.Object({
+      seq: Type.String(),
+      type: Type.String(),
+      payload: Type.Object({}, { additionalProperties: true }),
+      agentTurnId: Nullable(UUID7String),
+      createdAt: Type.String({ format: "date-time" }),
+    }),
+  ),
+})

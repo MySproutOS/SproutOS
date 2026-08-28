@@ -102,6 +102,8 @@ const notFoundResponse = {
 type ProjectRow = {
   id: string
   repositoryId: string
+  regionId?: string | null
+  primaryChildProjectId?: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -118,7 +120,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   if (rows.length === 0) return []
   const projectIds = rows.map((row) => row.id)
 
-  const [rated, regions, behind, live, managers] = await Promise.all([
+  const [rated, regions, behind, live, managers, primaryTargets] = await Promise.all([
     /*
       Rated at read time against the price book in force, never stored. A stored cost is wrong the
       moment a rate changes, and wrong in a way nobody can reconstruct.
@@ -128,18 +130,12 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     */
     rateProjectsForOrganization(db, organizationId, startOfMonth()),
 
-    /*
-      Region comes from the project's backend services, because a project has no region of its own —
-      it is where its *data* lives that a customer cares about, and that is a property of the
-      database or queue rather than of the repository.
-    */
+    /* The persisted workload region, including a group's default for newly created children. */
     db
-      .selectFrom("backendService")
-      .innerJoin("region", "region.id", "backendService.regionId")
-      .select(["backendService.projectId as projectId", "region.code as code"])
-      .where("backendService.projectId", "in", projectIds)
-      .where("backendService.deletedAt", "is", null)
-      .orderBy("backendService.createdAt", "asc")
+      .selectFrom("project")
+      .innerJoin("region", "region.id", "project.regionId")
+      .select(["project.id as projectId", "region.code as code"])
+      .where("project.id", "in", projectIds)
       .execute(),
 
     /*
@@ -191,10 +187,29 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .select(["project.id as projectId", "oauthClient.id as clientId", "oauthClient.name as name"])
       .where("project.id", "in", projectIds)
       .execute(),
+    db
+      .selectFrom("project as groupProject")
+      .innerJoin("project as childProject", "childProject.id", "groupProject.primaryChildProjectId")
+      .leftJoin("deployment", "deployment.id", "childProject.liveDeploymentId")
+      .leftJoin("customDomain", (join) =>
+        join
+          .onRef("customDomain.projectId", "=", "childProject.id")
+          .on("customDomain.status", "=", "active")
+          .on("customDomain.deletedAt", "is", null),
+      )
+      .select([
+        "groupProject.id as groupProjectId",
+        "deployment.url as url",
+        "deployment.hostname as hostname",
+        "customDomain.hostname as customHostname",
+      ])
+      .where("groupProject.id", "in", projectIds)
+      .where("childProject.deletedAt", "is", null)
+      .orderBy("customDomain.createdAt", "asc")
+      .execute(),
   ])
 
-  // First region wins, matching the `order by created_at` above: a project's first service is the
-  // one it was provisioned in, and a later one in another region does not move the project.
+  // The join is one-to-one today; keeping the map makes this enrichment match the other lookups.
   const regionByProject = new Map<string, string>()
   for (const row of regions) {
     if (row.projectId !== null && !regionByProject.has(row.projectId)) {
@@ -206,6 +221,19 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   const managerByProject = new Map(
     managers.map((row) => [row.projectId, { clientId: row.clientId, name: row.name }]),
   )
+  const primaryByGroup = new Map<
+    string,
+    { primaryUrl: string | null; primaryHostname: string | null }
+  >()
+  for (const target of primaryTargets) {
+    if (primaryByGroup.has(target.groupProjectId)) continue
+    const hostname = target.customHostname ?? target.hostname ?? null
+    primaryByGroup.set(target.groupProjectId, {
+      primaryHostname: hostname,
+      primaryUrl:
+        target.customHostname === null ? (target.url ?? null) : `https://${target.customHostname}`,
+    })
+  }
 
   return rows.map((row) => ({
     ...row,
@@ -219,12 +247,15 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     url: liveByProject.get(row.id)?.url ?? null,
     hostname: liveByProject.get(row.id)?.hostname ?? null,
     managedByOauthApp: managerByProject.get(row.id) ?? null,
+    primaryUrl: primaryByGroup.get(row.id)?.primaryUrl ?? null,
+    primaryHostname: primaryByGroup.get(row.id)?.primaryHostname ?? null,
   }))
 }
 
 const PROJECT_FIELDS = [
   "id",
   "name",
+  "description",
   "slug",
   "kind",
   "state",
@@ -241,6 +272,8 @@ const PROJECT_FIELDS = [
   "isGroup",
   "parentProjectId",
   "createdByOauthGrantId",
+  "primaryChildProjectId",
+  "regionId",
   "liveDeploymentId",
   "createdAt",
   "updatedAt",
@@ -248,6 +281,7 @@ const PROJECT_FIELDS = [
 
 const JOB_FIELDS = [
   "id",
+  "projectId",
   "kind",
   "state",
   "progress",
@@ -287,6 +321,7 @@ type JobRow = Pick<Selectable<DB["projectJob"]>, (typeof JOB_FIELDS)[number]>
 function serializeJob(job: JobRow) {
   return {
     id: job.id,
+    projectId: job.projectId,
     kind: job.kind,
     state: job.state,
     progress: job.progress,
@@ -300,6 +335,45 @@ function serializeJob(job: JobRow) {
   }
 }
 
+/**
+ * Collects every live descendant before deletion, with children before their parents.
+ *
+ * The complete walk happens before the first row is changed. That matters for nested groups: once
+ * a child is soft-deleted it disappears from `listChildren`, so discovering and deleting in the
+ * same shallow loop can strand grandchildren permanently. The path guard turns corrupt cyclic
+ * topology into a loud failure instead of unbounded recursion.
+ */
+async function listDescendantsDeepestFirst(
+  organizationId: string,
+  rootProjectId: string,
+): Promise<{ id: string; isGroup: boolean }[]> {
+  const ordered: { id: string; isGroup: boolean }[] = []
+  const path = new Set([rootProjectId])
+  const visited = new Set<string>()
+
+  async function visit(parentProjectId: string): Promise<void> {
+    const children = await fetchProject(db).listChildren(organizationId, parentProjectId, [
+      "id",
+      "isGroup",
+    ])
+    for (const child of children) {
+      if (path.has(child.id)) {
+        throw new Error(`Project group topology contains a cycle at ${child.id}`)
+      }
+      if (visited.has(child.id)) continue
+
+      path.add(child.id)
+      await visit(child.id)
+      path.delete(child.id)
+      visited.add(child.id)
+      ordered.push(child)
+    }
+  }
+
+  await visit(rootProjectId)
+  return ordered
+}
+
 function serializeProject(
   project: Pick<Selectable<DB["project"]>, (typeof PROJECT_FIELDS)[number]>,
   repository: { ownerLogin: string; name: string; provenance: string },
@@ -308,6 +382,7 @@ function serializeProject(
   return {
     id: project.id,
     name: project.name,
+    description: project.description,
     slug: project.slug,
     kind: project.kind,
     state: project.state,
@@ -324,6 +399,7 @@ function serializeProject(
     isGroup: project.isGroup,
     parentProjectId: project.parentProjectId,
     managedByOauthApp,
+    primaryChildProjectId: project.primaryChildProjectId,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     repositoryOwnerLogin: repository.ownerLogin,
@@ -354,6 +430,8 @@ async function serializeOneProject(
     hasUpstreamUpdate: enriched?.hasUpstreamUpdate ?? false,
     url: enriched?.url ?? null,
     hostname: enriched?.hostname ?? null,
+    primaryUrl: enriched?.primaryUrl ?? null,
+    primaryHostname: enriched?.primaryHostname ?? null,
     liveDeploymentId: project.liveDeploymentId,
   }
 }
@@ -636,6 +714,21 @@ const app = new Hono()
       const json = c.req.valid("json")
       const source = json.source
 
+      let selectedRegion =
+        json.region === undefined || json.region === null
+          ? undefined
+          : await db
+              .selectFrom("region")
+              .select("id")
+              .where("code", "=", json.region)
+              .where("isActive", "=", true)
+              .executeTakeFirst()
+      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+        return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
+          target: "region",
+        })
+      }
+
       if (json.slug !== undefined && !isValidProjectSlug(json.slug)) {
         return throwBadRequest(c, "Slug is malformed", ErrorCode.ValidationFailed, {
           target: "slug",
@@ -806,6 +899,31 @@ const app = new Hono()
         })
       }
 
+      if (parentProjectId !== null) {
+        const parent = await fetchProject(db).getInOrganization(organization.id, parentProjectId, [
+          "id",
+          "isGroup",
+          "regionId",
+          "repositoryId",
+        ])
+        if (
+          parent === undefined ||
+          !parent.isGroup ||
+          plan.mode !== "existing" ||
+          parent.repositoryId !== plan.id
+        ) {
+          return throwBadRequest(
+            c,
+            "Group must represent the same repository as this project",
+            ErrorCode.ValidationFailed,
+            { target: "parentProjectId" },
+          )
+        }
+        if (json.region === undefined && parent.regionId !== null) {
+          selectedRegion = { id: parent.regionId }
+        }
+      }
+
       // A group builds nothing, so it has no target to conflict over.
       if (plan.mode === "existing" && json.isGroup !== true) {
         const conflict = await fetchProject(db).findConflictingTarget({
@@ -867,6 +985,7 @@ const app = new Hono()
         jobKind,
         kind: json.kind ?? "site",
         name: json.name,
+        description: json.description ?? null,
         organizationId: organization.id,
         productionBranch,
         dockerfilePath,
@@ -877,6 +996,7 @@ const app = new Hono()
         storeListingId,
         isGroup: json.isGroup ?? false,
         parentProjectId,
+        regionId: selectedRegion?.id ?? null,
       })
 
       /*
@@ -1114,6 +1234,59 @@ const app = new Hono()
         }
       }
 
+      const selectedRegion =
+        json.region === undefined || json.region === null
+          ? undefined
+          : await db
+              .selectFrom("region")
+              .select("id")
+              .where("code", "=", json.region)
+              .where("isActive", "=", true)
+              .executeTakeFirst()
+      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+        return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
+          target: "region",
+        })
+      }
+
+      if (json.primaryChildProjectId !== undefined) {
+        if (!before.isGroup) {
+          return throwBadRequest(
+            c,
+            "Only a group can have a primary project",
+            ErrorCode.ValidationFailed,
+            { target: "primaryChildProjectId" },
+          )
+        }
+        if (json.primaryChildProjectId !== null) {
+          const primary = await fetchProject(db).getInOrganization(
+            organization.id,
+            json.primaryChildProjectId,
+            ["id", "isGroup", "parentProjectId"],
+          )
+          if (primary === undefined || primary.isGroup || primary.parentProjectId !== projectId) {
+            return throwBadRequest(
+              c,
+              "Primary project must be a deployable child of this group",
+              ErrorCode.ValidationFailed,
+              { target: "primaryChildProjectId" },
+            )
+          }
+        }
+      }
+
+      if (before.isGroup && json.isGroup === false) {
+        const children = await fetchProject(db).listChildren(organization.id, projectId, ["id"])
+        if (children.length > 0) {
+          return throwBadRequest(
+            c,
+            "Move every child out of this group before making it deployable",
+            ErrorCode.ValidationFailed,
+            { target: "isGroup" },
+          )
+        }
+      }
+
       /*
         Converting to a group is refused once anything has served.
 
@@ -1207,6 +1380,10 @@ const app = new Hono()
       const updated = await db.transaction().execute(async (tx) => {
         const row = await crudProject(tx).update(organization.id, projectId, {
           ...(json.name === undefined ? {} : { name: json.name }),
+          ...(json.description === undefined ? {} : { description: json.description }),
+          ...(json.region === undefined
+            ? {}
+            : { regionId: json.region === null ? null : selectedRegion?.id }),
           ...(json.slug === undefined ? {} : { slug: json.slug }),
           ...(json.rootDir === undefined ? {} : { rootDir: json.rootDir }),
           ...(json.dockerfilePath === undefined ? {} : { dockerfilePath: json.dockerfilePath }),
@@ -1223,6 +1400,10 @@ const app = new Hono()
           ...(json.scaleMode === undefined ? {} : { scaleMode: json.scaleMode }),
           ...(json.parentProjectId === undefined ? {} : { parentProjectId: json.parentProjectId }),
           ...(json.isGroup === undefined ? {} : { isGroup: json.isGroup }),
+          ...(json.primaryChildProjectId === undefined
+            ? {}
+            : { primaryChildProjectId: json.primaryChildProjectId }),
+          ...(json.isGroup === false ? { primaryChildProjectId: null } : {}),
         })
 
         if (row === undefined) return undefined
@@ -1291,11 +1472,33 @@ const app = new Hono()
       const organization = c.var.organization
       const { projectId } = c.req.valid("param")
 
+      const deleting = await fetchProject(db).getInOrganization(organization.id, projectId, [
+        "id",
+        "isGroup",
+      ])
+      if (deleting === undefined) return throwNotFound(c, "Project not found")
+
+      const childResults = []
+      if (deleting.isGroup) {
+        const descendants = await listDescendantsDeepestFirst(organization.id, projectId)
+        for (const descendant of descendants) {
+          const removed = await provisionProject(db).remove({
+            actorUserId: user.id,
+            audit: auditContext(c),
+            organizationId: organization.id,
+            projectId: descendant.id,
+            preserveEmptyGroups: true,
+          })
+          if (removed !== null) childResults.push(removed)
+        }
+      }
+
       const result = await provisionProject(db).remove({
         actorUserId: user.id,
         audit: auditContext(c),
         organizationId: organization.id,
         projectId,
+        preserveEmptyGroups: deleting.isGroup,
       })
 
       if (result === null) return throwNotFound(c, "Project not found")
@@ -1313,12 +1516,14 @@ const app = new Hono()
         Keyed on the project, so a second delete of the same project collides rather than tearing
         it down twice.
       */
-      await enqueue(db, {
-        kind: JOB_KINDS.tearDownProject,
-        idempotencyKey: `${JOB_KINDS.tearDownProject}:${projectId}`,
-        payload: { projectId, projectJobId: result.job.id },
-        maxAttempts: 5,
-      })
+      for (const removed of [...childResults, result]) {
+        await enqueue(db, {
+          kind: JOB_KINDS.tearDownProject,
+          idempotencyKey: `${JOB_KINDS.tearDownProject}:${removed.project.id}`,
+          payload: { projectId: removed.project.id, projectJobId: removed.job.id },
+          maxAttempts: 5,
+        })
+      }
 
       const repositoryNote = result.repositoryReleased
         ? "The repository was released with it."
@@ -1327,8 +1532,9 @@ const app = new Hono()
       return c.json({
         destroyed: [],
         job: serializeJob(result.job),
+        jobs: [...childResults.map((child) => serializeJob(child.job)), serializeJob(result.job)],
         message:
-          `Project "${result.project.slug}" is marked deleted and a teardown job is queued. ` +
+          `${deleting.isGroup ? `Group and ${childResults.length} descendant project(s)` : `Project "${result.project.slug}"`} are marked deleted and teardown jobs are queued deepest-first. ` +
           `Nothing has been destroyed yet, and billing history is never destroyed — ` +
           `usage events, rollups, statement line items, and audit rows still reference it. ` +
           repositoryNote,
