@@ -199,6 +199,24 @@ async fn management_compatibility_commands_are_local_and_safe() {
 }
 
 #[tokio::test]
+async fn a_command_pipelined_with_auth_is_not_stranded() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    let replies = client
+        .pipeline(&[&["AUTH", &username, &secret], &["PING"]])
+        .await;
+
+    assert_eq!(replies, ["+OK\r\n", "+PONG\r\n"]);
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
 async fn xread_and_xreadgroup_are_scoped_and_hide_physical_stream_names() {
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
