@@ -8,6 +8,7 @@ import {
 } from "@lib/sandbox"
 
 import { commitSandboxWork, runSandboxTurn } from "./sandbox-agent"
+import { SANDBOX_NETWORK_LAUNCHER, SANDBOX_NETWORK_LAUNCHER_SOURCE } from "./sandbox-network"
 
 /** This suite has no Docker substitute: every live assertion crosses Daytona's API. */
 try {
@@ -59,6 +60,11 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
   it("streams and parses a harness turn through Daytona", async () => {
     const externalId = await sandbox()
     const activeDriver = driver!
+    await activeDriver.writeFile(
+      externalId,
+      `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`,
+      SANDBOX_NETWORK_LAUNCHER_SOURCE,
+    )
     const stub = `${workspace}/../bin/claude`
     await activeDriver.writeFile(
       externalId,
