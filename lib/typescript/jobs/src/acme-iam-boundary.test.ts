@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest"
 
 const compute = await readFile(new URL("../../../../tofu/compute.tf", import.meta.url), "utf8")
 const ecs = await readFile(new URL("../../../../tofu/ecs.tf", import.meta.url), "utf8")
+const ecsHostBootstrap = await readFile(
+  new URL("../../../../tofu/ecs-host-bootstrap.sh", import.meta.url),
+  "utf8",
+)
 const outputs = await readFile(new URL("../../../../tofu/outputs.tf", import.meta.url), "utf8")
 const deploy = await readFile(new URL("../../../../tofu/DEPLOY.md", import.meta.url), "utf8")
 const handoff = await readFile(
@@ -89,14 +93,17 @@ describe("tenant-edge IAM boundary", () => {
 
   it("blocks bridge-networked ECS tasks from the host credential endpoint", () => {
     expect(ecs).toContain('http_protocol_ipv6 = "disabled"')
-    expect(ecs).toContain(
+    expect(ecs).toContain('file("${path.module}/ecs-host-bootstrap.sh")')
+    expect(ecsHostBootstrap).toContain(
       "/usr/sbin/iptables -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP",
     )
-    expect(ecs).toContain(
+    expect(ecsHostBootstrap).toContain(
       "/usr/sbin/iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP",
     )
-    expect(ecs).toContain("ExecStartPost=/usr/local/sbin/sproutos-block-container-imds")
-    expect(ecs).toContain("systemctl restart docker")
+    expect(ecsHostBootstrap).toContain(
+      "ExecStartPost=/usr/local/sbin/sproutos-block-container-imds",
+    )
+    expect(ecsHostBootstrap).toContain("systemctl restart docker")
   })
 
   it("limits Route 53 writes to the two exact ACME TXT names", () => {
