@@ -26,6 +26,14 @@ const shutdown = (signal: NodeJS.Signals) => {
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
 
+if (process.env.NODE_ENV === "production") {
+  // Fail at task boot, not after services have been bought and a repository has been forked. The
+  // API shares this bundle but never imports the addon; only the worker owns template execution.
+  const { nativeRuntimeStatus } = await import("@sproutos/sprout-node")
+  const runtime = nativeRuntimeStatus()
+  console.log(`[worker] native templates available for ${runtime.pluginTarget}`)
+}
+
 console.log(`[worker] ${workerId} started`)
 
 // Recurring work is scheduled by the worker itself, keyed on the window it belongs to, so there is

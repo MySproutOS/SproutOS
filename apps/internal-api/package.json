@@ -15,7 +15,7 @@
     }
   ],
   "scripts": {
-    "build": "tsc -b && node build.mjs src/server.ts build/server.js && node build.mjs src/worker.ts build/worker.js",
+    "build": "tsc -b && node build.mjs src/server.ts build/server.js && node build.mjs src/worker.ts build/worker.js && node isolation-proof.mjs --self-test",
     "check-types": "tsc -b",
     "dev": "NODE_ENV=development tsx watch src/dev-server.ts",
     "generate-specs": "tsx src/index.ts --openapi > openapi.json",
@@ -56,6 +56,7 @@
     "@lib/workflows": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
+    "@sproutos/sprout-node": "workspace:*",
     "@utils/cookies": "workspace:*",
     "@utils/crypto": "workspace:*",
     "@utils/feature-flags": "workspace:*",

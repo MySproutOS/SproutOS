@@ -36,6 +36,7 @@
     "@lib/services": "workspace:*",
     "@lib/workflows": "workspace:*",
     "@sproutos/db": "workspace:*",
+    "@sproutos/sprout-node": "workspace:*",
     "acme-client": "catalog:",
     "ioredis": "^6.0.0",
     "kysely": "catalog:",

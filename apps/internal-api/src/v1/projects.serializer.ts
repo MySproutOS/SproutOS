@@ -56,6 +56,17 @@ const EnvTarget = Type.Union([
   Type.Literal("all"),
 ])
 
+const TemplateInput = Type.Object({
+  key: Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-z0-9][a-z0-9._-]*$" }),
+  value: Type.Union([
+    Type.String({ maxLength: 8192 }),
+    Type.Integer({ minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }),
+    Type.Boolean(),
+  ]),
+  /** Controls dashboard/API reveal semantics; every value remains envelope-encrypted at rest. */
+  secret: Type.Boolean(),
+})
+
 /**
  * The three ways a project comes into existence, behind one entry point.
  *
@@ -132,6 +143,8 @@ export const projectSchemaCreateRequest = Type.Object({
   isGroup: Type.Optional(Type.Boolean()),
   /** The group this project belongs to. */
   parentProjectId: Type.Optional(Nullable(UUID7String)),
+  /** Values for keys declared by a signed store template. Rejected for every other source. */
+  templateInputs: Type.Optional(Type.Array(TemplateInput, { maxItems: 64 })),
   source: ProjectSource,
 })
 

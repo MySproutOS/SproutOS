@@ -4,7 +4,14 @@ import {
   sealEnvVarValue,
   sealProjectFileContents,
 } from "@lib/envelope"
-import { GITHUB_EVENT_KINDS, JOB_KINDS, enqueue } from "@lib/jobs"
+import {
+  GITHUB_EVENT_KINDS,
+  JOB_KINDS,
+  enqueue,
+  manifestDigestForCatalogueEntry,
+  parseCatalogueAppManifest,
+  validateCatalogueUserInputs,
+} from "@lib/jobs"
 import {
   allocateProjectSlug,
   autoUpdateDefaultFor,
@@ -17,6 +24,7 @@ import {
   crudProjectUpdateSuggestion,
   crudStoreListingEvent,
   fetchAgentCredential,
+  fetchDeploymentCatalogueImport,
   fetchGithubInstallation,
   fetchProject,
   fetchProjectEnvVar,
@@ -790,6 +798,15 @@ const app = new Hono()
       const json = c.req.valid("json")
       const source = json.source
 
+      if (source.type !== "store" && (json.templateInputs?.length ?? 0) > 0) {
+        return throwBadRequest(
+          c,
+          "Template inputs are only accepted for a signed store listing",
+          ErrorCode.ValidationFailed,
+          { target: "templateInputs" },
+        )
+      }
+
       let selectedRegion =
         json.region === undefined || json.region === null
           ? undefined
@@ -851,6 +868,10 @@ const app = new Hono()
       */
       let listingRootDir: string | null = null
       let listingDockerfilePath: string | null = null
+      let templateInstall:
+        | Parameters<ReturnType<typeof provisionProject>["create"]>[0]["templateInstall"]
+        | undefined = undefined
+      let templateProjectId: string | undefined
 
       if (source.type === "repository") {
         const repository = await resolveOwnRepository(organization.id, source)
@@ -869,6 +890,10 @@ const app = new Hono()
           "upstreamRepo",
           "rootDir",
           "dockerfilePath",
+          "catalogueImportId",
+          "catalogueEntryId",
+          "templatePluginRepository",
+          "templatePluginDigest",
         ])
 
         if (!listing || listing.status !== "published") {
@@ -893,6 +918,66 @@ const app = new Hono()
         }
 
         storeListingId = listing.id
+        const catalogueManifest = await fetchStoreListing(db).getCatalogueManifest(listing.id)
+        if (
+          listing.catalogueImportId === null ||
+          listing.catalogueEntryId === null ||
+          catalogueManifest === undefined ||
+          listing.templatePluginRepository === null ||
+          listing.templatePluginDigest === null
+        ) {
+          throw new Error("published catalogue listing is missing signed template provenance")
+        }
+        const catalogueImport = await fetchDeploymentCatalogueImport(db).getOne(
+          listing.catalogueImportId,
+          ["catalogueDigest", "sourceSha", "provenance"],
+        )
+        if (catalogueImport === undefined) {
+          throw new Error("published catalogue listing points at a missing catalogue import")
+        }
+        const manifest = parseCatalogueAppManifest(catalogueManifest)
+        let resolvedInputs: ReturnType<typeof validateCatalogueUserInputs>
+        try {
+          resolvedInputs = validateCatalogueUserInputs(
+            manifest.user_inputs,
+            json.templateInputs ?? [],
+          )
+        } catch (error) {
+          return throwBadRequest(
+            c,
+            error instanceof Error ? error.message : "Template inputs are invalid",
+            ErrorCode.ValidationFailed,
+            { target: "templateInputs" },
+          )
+        }
+        const projectIdForTemplate = v7()
+        templateProjectId = projectIdForTemplate
+        const environmentInputs = await Promise.all(
+          resolvedInputs.map(async (input) => ({
+            environment: input.environment,
+            secret: input.secret,
+            value: await sealEnvVarValue(projectIdForTemplate, input.environment, input.value),
+          })),
+        )
+        templateInstall = {
+          catalogueImportId: listing.catalogueImportId,
+          catalogueEntryId: listing.catalogueEntryId,
+          catalogueDigest: catalogueImport.catalogueDigest,
+          manifestDigest: manifestDigestForCatalogueEntry(
+            catalogueImport.provenance,
+            listing.catalogueEntryId,
+          ),
+          deploymentTemplatesCommit: catalogueImport.sourceSha,
+          manifest: catalogueManifest,
+          pluginRepository: listing.templatePluginRepository,
+          pluginDigest: listing.templatePluginDigest,
+          configuredInputs: resolvedInputs.map(({ key, environment, secret }) => ({
+            key,
+            environment,
+            secret,
+          })),
+          environmentInputs,
+        }
         listingRootDir = listing.rootDir
         listingDockerfilePath = listing.dockerfilePath
         jobKind = "fork"
@@ -1048,6 +1133,7 @@ const app = new Hono()
       const slug = await allocateProjectSlug(db, organization.id, json.slug ?? json.name)
 
       const provisioned = await provisionProject(db).create({
+        ...(templateProjectId === undefined ? {} : { projectId: templateProjectId }),
         actorUserId: user.id,
         createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
         agentCredentialId: credential?.id ?? null,
@@ -1071,6 +1157,7 @@ const app = new Hono()
         rootDir,
         slug,
         storeListingId,
+        ...(templateInstall === undefined ? {} : { templateInstall }),
         isGroup: json.isGroup ?? false,
         parentProjectId,
         regionId: selectedRegion?.id ?? null,

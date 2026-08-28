@@ -1,8 +1,10 @@
 import { srnFor } from "@lib/srn"
-import type { DB } from "@sproutos/db"
+import type { DB, Json } from "@sproutos/db"
 import type { Kysely, Selectable, Transaction } from "kysely"
 import { crudAuditLog } from "../auditLog/crud"
 import { crudProjectJob, initialSteps, type ProjectJobKind } from "../projectJob/crud"
+import { crudProjectEnvVar, type SealedEnvValue } from "../projectEnvVar/crud"
+import { crudProjectTemplateInstall } from "../projectTemplateInstall/crud"
 import { crudRepository } from "../repository/crud"
 import type { AuditContext } from "../organization/provision"
 import { crudProject } from "./crud"
@@ -32,6 +34,8 @@ export type RepositoryPlan =
     }
 
 export type ProvisionProjectInput = {
+  /** Preallocated when envelope values must be bound to the project before its transaction. */
+  projectId?: string
   organizationId: string
   actorUserId: string
   /** OAuth grant that created this project; null for a person using the dashboard. */
@@ -51,6 +55,23 @@ export type ProvisionProjectInput = {
   autoUpdateCadence: string
   autoUpdateMode: string
   storeListingId: string | null
+  /** Signed catalogue snapshot consumed by the worker. Never reconstructed from a newer import. */
+  templateInstall?: {
+    catalogueImportId: string
+    catalogueEntryId: string
+    catalogueDigest: string
+    manifestDigest: string
+    deploymentTemplatesCommit: string
+    manifest: DB["projectTemplateInstall"]["manifest"]
+    pluginRepository: string
+    pluginDigest: string
+    configuredInputs: Json
+    environmentInputs: {
+      environment: string
+      secret: boolean
+      value: SealedEnvValue
+    }[]
+  }
   repository: RepositoryPlan
   jobKind: ProjectJobKind
   /**
@@ -150,6 +171,7 @@ export function provisionProject(db: Kysely<DB>) {
       const repository = await resolveRepository(tx, input)
 
       const project = await crudProject(tx).create({
+        ...(input.projectId === undefined ? {} : { id: input.projectId }),
         organizationId: input.organizationId,
         repositoryId: repository.id,
         storeListingId: input.storeListingId,
@@ -182,6 +204,31 @@ export function provisionProject(db: Kysely<DB>) {
         steps: JSON.stringify(initialSteps(input.jobKind)),
         idempotencyKey: input.idempotencyKey ?? null,
       })
+
+      if (input.templateInstall !== undefined) {
+        if (input.storeListingId === null) {
+          throw new Error("a template install requires a store listing")
+        }
+        const { environmentInputs, ...snapshot } = input.templateInstall
+        await crudProjectTemplateInstall(tx).create({
+          ...snapshot,
+          configuredInputs: JSON.stringify(snapshot.configuredInputs),
+          organizationId: input.organizationId,
+          projectId: project.id,
+          storeListingId: input.storeListingId,
+        })
+        await Promise.all(
+          environmentInputs.map(async (environmentInput) => {
+            await crudProjectEnvVar(tx).upsert({
+              projectId: project.id,
+              key: environmentInput.environment,
+              target: "all",
+              isSecret: environmentInput.secret,
+              value: environmentInput.value,
+            })
+          }),
+        )
+      }
 
       await crudAuditLog(tx).record({
         organizationId: input.organizationId,

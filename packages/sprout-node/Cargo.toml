@@ -1,0 +1,23 @@
+[package]
+name = "sprout-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+
+[dependencies]
+napi = { version = "3.12.2", default-features = false, features = ["napi8", "tokio_rt"] }
+napi-derive = "3.6.3"
+oci-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sprout-core = { path = "../sprout-core" }
+sprout-template-protocol.workspace = true
+tempfile = "3"
+
+[build-dependencies]
+napi-build = "2.4.1"

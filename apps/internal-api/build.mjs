@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* oxlint-disable typescript/no-unsafe-argument, typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access -- This build-time JavaScript walks package.json data and Node process globals outside the TypeScript application graph. */
 /**
  * Bundle the API into one file for the container.
  *
@@ -93,13 +94,25 @@ function externalDependencies(manifestPath) {
       */
       const nested = join(dirname(path), "node_modules", name, "package.json")
       if (existsSync(nested)) {
+        const nestedManifest = JSON.parse(readFileSync(nested, "utf8"))
+        // Native addons must keep their loader beside the platform `.node` artifact. Inlining the
+        // loader changes `__dirname` to the API bundle and makes a correctly packaged addon look
+        // missing only after the worker reaches its first template job.
+        if (nestedManifest.napi !== undefined) {
+          external.add(name)
+          continue
+        }
         walk(nested)
         continue
       }
       // Hoisted to the workspace root instead, which is where pnpm puts a package that nothing
       // else shadows.
       const hoisted = join(ROOT, "node_modules", name, "package.json")
-      if (existsSync(hoisted)) walk(hoisted)
+      if (existsSync(hoisted)) {
+        const hoistedManifest = JSON.parse(readFileSync(hoisted, "utf8"))
+        if (hoistedManifest.napi !== undefined) external.add(name)
+        else walk(hoisted)
+      }
     }
   }
 

@@ -5,16 +5,9 @@ import {
   ServiceKindUnavailableError,
   ServiceNotConfiguredError,
   ServiceNotProvisionedError,
-  neonPostgresDriverFromEnv,
-  objectStorageDriverFromEnv,
   parseObjectStorageUri,
-  searchDriver,
-  searchServiceConfigFromEnv,
-  sproutPostgresConfigFromEnv,
-  sproutPostgresDriver,
-  valkeyDriver,
+  serviceDriverFromEnv,
   valkeyKeyPrefix,
-  valkeyServiceConfigFromEnv,
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
 import { publishQueue } from "@lib/lambda"
@@ -194,13 +187,6 @@ export function driverFor(kind: string) {
     moved. `database_instance.provider` records which one each database actually was, so a mixed
     estate during that migration is readable rather than ambiguous.
   */
-  if (kind === "postgres") {
-    return process.env.SERVICE_POSTGRES_PROVIDER === "neon"
-      ? neonPostgresDriverFromEnv(db)
-      : sproutPostgresDriver(db, sproutPostgresConfigFromEnv())
-  }
-  if (kind === "valkey") return valkeyDriver(db, valkeyServiceConfigFromEnv())
-  if (kind === "elasticsearch") return searchDriver(db, searchServiceConfigFromEnv())
   /*
     Object storage: the other way to run a vault.
 
@@ -208,10 +194,7 @@ export function driverFor(kind: string) {
     is nobody's server to run. The driver speaks S3 to whatever endpoint it is given — AWS, GCS's XML
     API, MinIO, LocalStack — and the cloud-specific half is issuing a bucket-scoped credential.
   */
-  if (kind === "object_storage") return objectStorageDriverFromEnv(db)
-  // Named rather than 500ing, because "not yet" is a different answer from "something broke" and
-  // the customer can act on one of them.
-  throw new ServiceKindUnavailableError(kind)
+  return serviceDriverFromEnv(db, kind)
 }
 
 /**

@@ -69,6 +69,61 @@ export function migrationResumeAction(status: string | null): MigrationResumeAct
 
 type PublishPayload = { deploymentId: string }
 
+/** A production artifact, not the repository push, is what makes a template install ready. */
+async function markProductionProjectReady(
+  db: Kysely<DB>,
+  projectId: string,
+  deploymentId: string,
+): Promise<void> {
+  await db.transaction().execute(async (tx) => {
+    await tx
+      .updateTable("project")
+      .set({
+        liveDeploymentId: deploymentId,
+        state: "ready",
+        stateReason: null,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", projectId)
+      .execute()
+    await tx
+      .updateTable("projectTemplateInstall")
+      .set({
+        state: "ready",
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: new Date(),
+      })
+      .where("projectId", "=", projectId)
+      .execute()
+  })
+}
+
+async function markProductionProjectFailed(
+  db: Kysely<DB>,
+  projectId: string,
+  cause: unknown,
+): Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  await db.transaction().execute(async (tx) => {
+    await tx
+      .updateTable("project")
+      .set({ state: "failed", stateReason: message, updatedAt: new Date() })
+      .where("id", "=", projectId)
+      .execute()
+    await tx
+      .updateTable("projectTemplateInstall")
+      .set({
+        state: "failed",
+        failureCode: cause instanceof Error ? cause.name : "Error",
+        failureMessage: message,
+        updatedAt: new Date(),
+      })
+      .where("projectId", "=", projectId)
+      .execute()
+  })
+}
+
 /** The domain tenant applications are served from. */
 function tenantDomain(): string {
   return process.env.TENANT_DOMAIN ?? "sproutos.me"
@@ -510,11 +565,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
                 lambdaVersion: null,
               })
               if (deployment.kind === "production") {
-                await db
-                  .updateTable("project")
-                  .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
-                  .where("id", "=", project.id)
-                  .execute()
+                await markProductionProjectReady(db, project.id, deploymentId)
               }
               await retirePreviousPreview()
               return
@@ -554,6 +605,9 @@ export function publishRelease(options?: PublishOptions): JobHandler {
                 status: "error",
                 failureReason: error instanceof Error ? error.message : "Static publication failed",
               })
+              if (deployment.kind === "production") {
+                await markProductionProjectFailed(db, project.id, error)
+              }
               throw error
             }
           }
@@ -796,11 +850,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
       like the thing customers are hitting.
     */
           if (deployment.kind === "production") {
-            await db
-              .updateTable("project")
-              .set({ liveDeploymentId: deploymentId, updatedAt: new Date() })
-              .where("id", "=", project.id)
-              .execute()
+            await markProductionProjectReady(db, project.id, deploymentId)
           }
           await retirePreviousPreview()
         } catch (error) {
@@ -816,6 +866,9 @@ export function publishRelease(options?: PublishOptions): JobHandler {
             status: "error",
             failureReason: error instanceof Error ? error.message : "Deployment publication failed",
           })
+          if (deployment.kind === "production") {
+            await markProductionProjectFailed(db, project.id, error)
+          }
           throw error
         }
       },

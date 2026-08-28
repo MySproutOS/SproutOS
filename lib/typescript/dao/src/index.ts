@@ -94,6 +94,10 @@ import {
   type ProjectJobStep,
 } from "./projectJob/crud"
 import { fetchProjectJob } from "./projectJob/fetch"
+import { crudProjectTemplateInstall } from "./projectTemplateInstall/crud"
+import { fetchProjectTemplateInstall } from "./projectTemplateInstall/fetch"
+import { crudProjectTemplateService } from "./projectTemplateService/crud"
+import { fetchProjectTemplateService } from "./projectTemplateService/fetch"
 import { crudProjectUpdateSuggestion, type SuggestionStatus } from "./projectUpdateSuggestion/crud"
 import { fetchProjectUpdateSuggestion } from "./projectUpdateSuggestion/fetch"
 import { crudRepository, isPendingGithubRepoId, pendingGithubRepoId } from "./repository/crud"
@@ -188,6 +192,8 @@ export {
   crudProject,
   crudProjectEnvVar,
   crudProjectJob,
+  crudProjectTemplateInstall,
+  crudProjectTemplateService,
   crudProjectUpdateSuggestion,
   crudRepository,
   crudRole,
@@ -221,6 +227,8 @@ export {
   fetchProject,
   fetchProjectEnvVar,
   fetchProjectJob,
+  fetchProjectTemplateInstall,
+  fetchProjectTemplateService,
   fetchProjectUpdateSuggestion,
   fetchRepository,
   fetchRole,

@@ -83,6 +83,7 @@ describe.skipIf(!reachable)("project routes", () => {
   let orgBId: string
 
   const listingId = v7()
+  const fixtureHex = listingId.replaceAll("-", "")
   const catalogueImportId = v7()
   const listingSlug = `proj-test-listing-${listingId.slice(-8)}`
 
@@ -107,7 +108,6 @@ describe.skipIf(!reachable)("project routes", () => {
     orgBId = trackOrganization(b.json.id as string)
     orgB = b.json.slug as string
 
-    const fixtureHex = listingId.replaceAll("-", "")
     await db
       .insertInto("deploymentCatalogueImport")
       .values({
@@ -123,7 +123,14 @@ describe.skipIf(!reachable)("project routes", () => {
         signatureIdentity:
           "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
         signatureIssuer: "https://token.actions.githubusercontent.com",
-        provenance: { fixture: true },
+        provenance: {
+          materials: [
+            {
+              uri: `apps/${listingSlug}/manifest-source.json`,
+              digest: `sha256:${fixtureHex.repeat(2)}`,
+            },
+          ],
+        },
       })
       .execute()
 
@@ -144,7 +151,58 @@ describe.skipIf(!reachable)("project routes", () => {
         catalogueEntryId: listingSlug,
         catalogueImportId,
         catalogueSchemaVersion: 1,
-        catalogueManifest: { fixture: true },
+        catalogueManifest: {
+          schema_version: 1,
+          id: listingSlug,
+          name: "Forkable Fixture",
+          pitch: "Something to fork",
+          description_md: "A published listing the project suite forks.",
+          homepage: null,
+          repository: {
+            url: `https://github.com/example/forkable-${listingId.slice(-8)}`,
+            commit: fixtureHex.repeat(2).slice(0, 40),
+          },
+          license: "MIT",
+          platform: "web",
+          readiness: {
+            status: "live",
+            blocked_reasons: [],
+            e2e_evidence: {
+              workflow_run_url: "https://github.com/MySproutOS/Deployment-Templates/actions/runs/1",
+              tested_at: "2026-08-28T00:00:00.000Z",
+              upstream_commit: fixtureHex.repeat(2).slice(0, 40),
+              plugin_digest: `sha256:${fixtureHex.repeat(2)}`,
+            },
+          },
+          plugin: {
+            repository: "ghcr.io/mysproutos/project-test-plugin",
+            digest: `sha256:${fixtureHex.repeat(2)}`,
+            protocol_version: 1,
+          },
+          deployment: {
+            preset: "static",
+            runtime: "static",
+            architecture: "arm64",
+            migration: null,
+            required_capabilities: [],
+          },
+          services: [],
+          user_inputs: [
+            {
+              key: "admin_token",
+              type: "string",
+              environment: "ADMIN_TOKEN",
+              required: false,
+            },
+            {
+              key: "public_url",
+              type: "url",
+              environment: "PUBLIC_URL",
+              required: false,
+            },
+          ],
+          generated_inputs: [],
+        },
         upstreamCommit: fixtureHex.repeat(2).slice(0, 40),
         templatePluginRepository: "ghcr.io/mysproutos/project-test-plugin",
         templatePluginDigest: `sha256:${fixtureHex.repeat(2)}`,
@@ -160,9 +218,9 @@ describe.skipIf(!reachable)("project routes", () => {
     if (usageRollupIds.length > 0) {
       await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
+    await cleanupFixtures()
     await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
     await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
-    await cleanupFixtures()
   })
 
   describe("creating a project", () => {
@@ -188,7 +246,113 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(job.kind).toBe("fork")
       expect(job.state).toBe("queued")
       expect((job.steps as unknown[]).length).toBeGreaterThan(0)
+
+      const install = await db
+        .selectFrom("projectTemplateInstall")
+        .select(["catalogueImportId", "pluginDigest", "state"])
+        .where("projectId", "=", forkedProjectId)
+        .executeTakeFirstOrThrow()
+      expect(install).toMatchObject({
+        catalogueImportId,
+        pluginDigest: `sha256:${fixtureHex.repeat(2)}`,
+        state: "configuring",
+      })
     })
+
+    it("rejects undeclared template values before creating a project", async () => {
+      const before = await db
+        .selectFrom("project")
+        .select((eb) => eb.fn.countAll<string>().as("count"))
+        .where("organizationId", "=", orgAId)
+        .executeTakeFirstOrThrow()
+      const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Rejected Template Inputs",
+        source: { type: "store", storeListingId: listingId, ownerLogin: "acme-test" },
+        templateInputs: [{ key: "not_declared", value: "rejected-secret-value", secret: true }],
+      })
+      expect(response.status).toBe(400)
+      expect(JSON.stringify(response.json)).toContain("not_declared")
+      expect(JSON.stringify(response.json)).not.toContain("rejected-secret-value")
+      const after = await db
+        .selectFrom("project")
+        .select((eb) => eb.fn.countAll<string>().as("count"))
+        .where("organizationId", "=", orgAId)
+        .executeTakeFirstOrThrow()
+      expect(after.count).toBe(before.count)
+    })
+
+    it.skipIf(!kmsUp)(
+      "envelope-encrypts secret and public template values atomically",
+      async () => {
+        const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+          name: "Configured Template Inputs",
+          source: { type: "store", storeListingId: listingId, ownerLogin: "acme-test" },
+          templateInputs: [
+            { key: "admin_token", value: "top-secret", secret: true },
+            { key: "public_url", value: "https://example.com", secret: false },
+          ],
+        })
+        expect(response.status).toBe(201)
+        expect(JSON.stringify(response.json)).not.toContain("top-secret")
+        const project = response.json.project as Json
+        const projectId = project.id as string
+        const createdRepositoryId = project.repositoryId as string
+        try {
+          const rows = await db
+            .selectFrom("projectEnvVar")
+            .select(["key", "isSecret", "valueCiphertext", "valueWrappedDek", "valueKmsKeyId"])
+            .where("projectId", "=", projectId)
+            .orderBy("key")
+            .execute()
+          expect(rows.map(({ key, isSecret }) => ({ key, isSecret }))).toEqual([
+            { key: "ADMIN_TOKEN", isSecret: true },
+            { key: "PUBLIC_URL", isSecret: false },
+          ])
+          expect(rows[0]?.valueCiphertext).not.toContain("top-secret")
+          expect(
+            await Promise.all(
+              rows.map(async (row) =>
+                openEnvVarValue(projectId, row.key, {
+                  ciphertext: row.valueCiphertext,
+                  wrappedDek: row.valueWrappedDek,
+                  kmsKeyId: row.valueKmsKeyId,
+                }),
+              ),
+            ),
+          ).toEqual(["top-secret", "https://example.com"])
+          const install = await db
+            .selectFrom("projectTemplateInstall")
+            .select("configuredInputs")
+            .where("projectId", "=", projectId)
+            .executeTakeFirstOrThrow()
+          expect(install.configuredInputs).toEqual([
+            { key: "admin_token", environment: "ADMIN_TOKEN", secret: true },
+            { key: "public_url", environment: "PUBLIC_URL", secret: false },
+          ])
+          expect(JSON.stringify(install.configuredInputs)).not.toContain("top-secret")
+          const [projectRow, jobRow, auditRows] = await Promise.all([
+            db.selectFrom("project").selectAll().where("id", "=", projectId).executeTakeFirst(),
+            db
+              .selectFrom("projectJob")
+              .selectAll()
+              .where("projectId", "=", projectId)
+              .executeTakeFirst(),
+            db
+              .selectFrom("auditLog")
+              .select(["before", "after"])
+              .where("organizationId", "=", orgAId)
+              .where("resourceSrn", "like", `%${projectId}%`)
+              .execute(),
+          ])
+          expect(JSON.stringify({ projectRow, jobRow, install, auditRows })).not.toContain(
+            "top-secret",
+          )
+        } finally {
+          await db.deleteFrom("project").where("id", "=", projectId).execute()
+          await db.deleteFrom("repository").where("id", "=", createdRepositoryId).execute()
+        }
+      },
+    )
 
     /**
      * The row exists before GitHub has been asked for anything, so `repository.github_repo_id`

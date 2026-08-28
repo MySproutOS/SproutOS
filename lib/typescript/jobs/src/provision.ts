@@ -17,6 +17,16 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 import type { ProjectJobStep } from "@lib/dao/projectJob/crud"
 import type { JobHandler } from "./worker"
+import {
+  applyCatalogueTemplate,
+  catalogueTemplateContext,
+  configureGeneratedInputs,
+  failTemplateInstall,
+  orchestrateCatalogueTemplate,
+  provisionTemplateServices,
+  transitionTemplateInstall,
+  verifyUserInputsConfigured,
+} from "./catalogue-template"
 
 /**
  * What actually creates a customer's repository.
@@ -187,6 +197,7 @@ export async function runProvision(
       (await organizationGitHubCredential(db, repository.organizationId, repository.ownerLogin)) ??
       (await userGitHubCredential(db, payload.userId))
     if (credential === undefined) throw new NoUsableCredentialError()
+    const usableCredential = credential
 
     const client = github?.client ?? createGitHubClient()
 
@@ -204,22 +215,71 @@ export async function runProvision(
       id once it is real. A boolean column would have been a second source of truth for something
       the id already says.
     */
-    const created = isPendingGithubRepoId(repository.githubRepoId)
-      ? await createOnGitHub(client, credential, job.kind, repository)
-      : await getRepository(client, credential, repository.ownerLogin, repository.name)
+    const template =
+      job.projectId === null ? null : await catalogueTemplateContext(db, job.projectId)
 
-    await db
-      .updateTable("repository")
-      .set({
-        githubRepoId: created.id,
-        defaultBranch: created.defaultBranch,
-        private: created.private,
-        updatedAt: new Date(),
+    async function forkAndPersist(): Promise<GitHubRepository> {
+      const created = isPendingGithubRepoId(repository.githubRepoId)
+        ? await createOnGitHub(client, usableCredential, job.kind, repository)
+        : await getRepository(client, usableCredential, repository.ownerLogin, repository.name)
+      await db
+        .updateTable("repository")
+        .set({
+          githubRepoId: created.id,
+          defaultBranch: created.defaultBranch,
+          private: created.private,
+          updatedAt: new Date(),
+        })
+        .where("id", "=", repository.id)
+        .execute()
+      await headShaWhenPopulated(
+        client,
+        usableCredential,
+        created.ownerLogin,
+        created.name,
+        created.defaultBranch,
+      )
+      await mark(createStep, "succeeded")
+      return created
+    }
+
+    if (template === null) {
+      await forkAndPersist()
+    } else {
+      await orchestrateCatalogueTemplate({
+        transition: async (state) => {
+          await transitionTemplateInstall(db, template.projectId, state)
+          await db
+            .updateTable("project")
+            .set({
+              state: state === "deploying" ? "deploying" : "provisioning",
+              stateReason: null,
+              updatedAt: new Date(),
+            })
+            .where("id", "=", template.projectId)
+            .execute()
+        },
+        configure: async () => {
+          await verifyUserInputsConfigured(db, template)
+          await configureGeneratedInputs(db, template)
+        },
+        provisionServices: async () => {
+          await provisionTemplateServices(db, template)
+        },
+        fork: forkAndPersist,
+        prepareAndPush: async (preparedRepository) => {
+          if (template.preparedCommitSha !== null) return
+          await applyCatalogueTemplate({
+            db,
+            context: template,
+            owner: preparedRepository.ownerLogin,
+            repository: preparedRepository.name,
+            branch: preparedRepository.defaultBranch,
+            token: usableCredential.token,
+          })
+        },
       })
-      .where("id", "=", repository.id)
-      .execute()
-
-    await mark(createStep, "succeeded")
+    }
 
     /*
       The first deploy, which this job cannot perform.
@@ -252,14 +312,7 @@ export async function runProvision(
 
         What is dropped is the deployment row that followed, which could only ever fail.
       */
-      await headShaWhenPopulated(
-        client,
-        credential,
-        created.ownerLogin,
-        created.name,
-        created.defaultBranch,
-      )
-      await mark("first_deploy", "skipped")
+      await mark("first_deploy", template === null ? "skipped" : "succeeded")
     }
 
     /*
@@ -283,11 +336,13 @@ export async function runProvision(
       .execute()
 
     if (job.projectId !== null) {
-      await db
-        .updateTable("project")
-        .set({ state: "ready", updatedAt: new Date() })
-        .where("id", "=", job.projectId)
-        .execute()
+      if (template === null) {
+        await db
+          .updateTable("project")
+          .set({ state: "ready", updatedAt: new Date() })
+          .where("id", "=", job.projectId)
+          .execute()
+      }
 
       /*
         The install, counted where an install actually happened.
@@ -334,6 +389,7 @@ export async function runProvision(
       .execute()
 
     if (job.projectId !== null) {
+      await failTemplateInstall(db, job.projectId, cause)
       await db
         .updateTable("project")
         .set({ state: "failed", updatedAt: new Date() })
