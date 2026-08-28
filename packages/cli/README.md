@@ -65,3 +65,29 @@ exactly one such APK for Marketplace Action compatibility) and uploads its origi
 
 The legacy deploy environment `development` remains accepted as an alias for `preview`; both use
 the backend's collision-safe pull-request preview identity rules.
+
+## Releases and production promotion
+
+The version in the workspace manifest and a `cli-v<version>` tag must agree. That tag builds five
+native archives, smokes the extracted binaries, publishes `SHA256SUMS` plus manifest v1, and gives
+every file GitHub build provenance. Repository release immutability must be enabled **before** the
+tag is pushed; GitHub applies that setting only to future releases.
+
+Publication is not promotion. `bin/promote-cli-release.sh` downloads the public release again and
+requires GitHub to report it immutable, verifies its exact five-platform set, checksums, manifest,
+tag-bound provenance and source commit, then records the evidence at
+`/<name>/releases/cli/<version>`. Only after all of that passes does it update
+`/<name>/application/SPROUT_CLI_RELEASE_VERSION` and replace the ECS task that renders `/download`.
+The pointer only moves forward by semantic version; an emergency rollback must be a separately
+reviewed operation rather than a disguised release promotion.
+
+The first authenticated production build will be the immutable `cli-v0.1.1` release. Merge and
+deploy the `/download` CLI consumer in this change before creating its tag. After the production
+IAM/task wiring is applied, run **Promote an existing CLI release** with `0.1.1` and the exact
+task-definition ARN registered by that reviewed OpenTofu apply. The protected workflow records the
+pointer, then uses the existing deployment role to combine that contract with the image already
+serving; the promotion role itself cannot register or select code. Do not put a placeholder version
+in Parameter Store: ECS treats a missing referenced parameter as a task-start failure, while the
+website intentionally treats an absent variable as “no release yet.” Every later release uses the
+same explicit, production-environment-gated promotion; publishing a tag alone never selects
+production configuration.

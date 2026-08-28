@@ -533,6 +533,7 @@ jobs:
           bash bin/ecs-ha-contract.test.sh
           bash bin/deploy-workflow.test.sh
           bash bin/cli-release-workflow.test.sh
+          bash bin/promote-cli-release.test.sh
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
           bash bin/bootstrap-localstack.test.sh

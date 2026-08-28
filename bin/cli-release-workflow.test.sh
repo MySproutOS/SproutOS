@@ -26,4 +26,28 @@ test "$create_line" -lt "$verify_line"
 # shellcheck disable=SC2016
 grep -q 'gh release create "$TAG" dist/\*' <<<"$release_job"
 
+# Manifest v1 is already public. Keep the generator on its published four-field contract; source
+# identity belongs to the independently verified tag-bound attestations, not mutable manifest text.
+grep -Fq "'{schemaVersion:1,version:\$version,tag:\$tag,assets:\$assets}'" "$WORKFLOW"
+# shellcheck disable=SC2016
+if grep -Fq 'commitSha:$commitSha' "$WORKFLOW"; then
+  echo "manifest v1 gained an unpublished top-level field" >&2
+  exit 1
+fi
+
+# A release tag publishes immutable artifacts but cannot select production configuration. The
+# separately reviewed workflow_dispatch path requires the exact OpenTofu task revision.
+if grep -q 'configure-aws-credentials\|promote-cli-release' "$WORKFLOW"; then
+  echo "CLI publication workflow gained production mutation authority" >&2
+  exit 1
+fi
+
+# Obsolete five-platform PR builds may cancel each other, but immutable tag publication shares a
+# non-cancelling lane with production promotion.
+grep -Fq "github.event_name == 'pull_request'" "$WORKFLOW"
+grep -Fq "'cli-release-production'" "$WORKFLOW"
+# shellcheck disable=SC2016
+grep -Fq 'cancel-in-progress: ${{ github.event_name' "$WORKFLOW"
+grep -Fq "group: cli-release-production" "$ROOT/.github/workflows/cli-promote.yml"
+
 echo "CLI release workflow tests passed"

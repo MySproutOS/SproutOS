@@ -182,6 +182,46 @@ The inspection prints only the non-secret database name and must report `sprouto
 requires an exact active ARN in the service's task family, derives both new definitions from it,
 runs migrations first, and changes the service only after a zero exit.
 
+### Wiring the first Sprout CLI release
+
+`SPROUT_CLI_RELEASE_VERSION` is not an operator-supplied application secret and must not be added
+to `.env` or `bin/put-app-secrets.sh`. The CLI release promotion workflow owns two plain String
+parameters:
+
+- `/<name>/releases/cli/<version>` is an immutable evidence record containing the locked tag commit
+  and manifest digest; it is created without overwrite;
+- `/<name>/application/SPROUT_CLI_RELEASE_VERSION` is the small current-release pointer consumed by
+  the website container.
+
+The first authenticated five-platform release is `cli-v0.1.1`. The application change in the same
+pull request renders its manifest on `/download`; it must be merged and deployed before the tag is
+created, otherwise the rollout cannot prove its public result. Keep the promotion workflow
+undispatched until that dependency is serving.
+
+For the first release, wait until this change is on `main` and its application image is serving,
+then save and review a plan. It should add the least-privilege
+`${name_prefix}-cli-release-promotion` OIDC role/policy and register one web task definition revision
+whose website container references the exact SSM pointer ARN. It must not create either parameter,
+change the ECS service revision, or contain an invented version. Apply that exact saved plan, inspect
+the role trust/policy and registered task definition, and publish the immutable `cli-v0.1.1` release.
+Then run the protected **Promote an existing CLI release** workflow with `0.1.1` and that exact
+registered task-definition ARN. It first verifies and records the release. The existing deployment
+role—not the much smaller promotion role—then combines the reviewed task contract with the image
+already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
+rolling application code backward and stops a tag workflow gaining code-deployment authority.
+
+The GitHub `production` environment must have required reviewers before the promotion workflow is
+used. Promotion assumes its AWS role only through that environment; the promotion role does not
+trust an unprotected `cli-v*` ref directly, and the tag publication workflow has no AWS authority.
+
+After promotion, require all of these before calling it complete:
+
+1. the workflow verified seven provenance subjects (five archives, checksums and manifest);
+2. the release evidence record and current pointer name the same version;
+3. ECS's primary deployment is `COMPLETED` and the website secret source is the exact pointer ARN;
+4. `/download` renders that version and release-tag URL;
+5. a fresh OpenTofu plan contains no unexpected infrastructure drift.
+
 For an application rollback, dispatch `website` with `cutover` checked and `ecs_image_tag` set to a
 previous 12-character image SHA. Database migrations remain forward-only, so choose an application
 revision compatible with the current schema. To return the whole website to legacy EC2, set

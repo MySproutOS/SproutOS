@@ -389,3 +389,87 @@ resource "aws_iam_role_policy" "deploy" {
     ]
   })
 }
+
+/*
+  Promoting a CLI release is deliberately a different authority from deploying application code.
+
+  The promotion workflow may name one immutable, attested GitHub release in Parameter Store as
+  the current CLI pointer. It cannot publish a release, deploy or restart an image, run migrations,
+  or write any other application parameter. Every promotion uses the protected `production`
+  environment; the existing deploy role performs the ordinary migration-first ECS rollout.
+*/
+resource "aws_iam_role" "github_actions_cli_release_promotion" {
+  name = "${var.name_prefix}-cli-release-promotion"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = compact([
+            "repo:${var.github_repo}:environment:production",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:production",
+          ])
+        }
+      }
+    }]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "github_actions_cli_release_promotion" {
+  name = "verify-and-record"
+  role = aws_iam_role.github_actions_cli_release_promotion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadCliReleaseState"
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.name_prefix}/releases/cli/*",
+          "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/SPROUT_CLI_RELEASE_VERSION",
+        ]
+      },
+      {
+        Sid      = "CreateVerifiedCliReleaseRecordOnce"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.name_prefix}/releases/cli/*"
+        Condition = {
+          StringEquals = {
+            "ssm:Overwrite" = "false"
+          }
+        }
+      },
+      {
+        Sid      = "MoveCliReleasePointer"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/SPROUT_CLI_RELEASE_VERSION"
+        Condition = {
+          StringEquals = {
+            "ssm:Overwrite" = "true"
+          }
+        }
+      },
+      {
+        # Describe actions do not support resource scoping. They are used to prove the reviewed
+        # task contract before the pointer moves and to prove the deployed contract afterward.
+        Sid      = "ReadWebReleaseState"
+        Effect   = "Allow"
+        Action   = ["ecs:DescribeServices", "ecs:DescribeTaskDefinition"]
+        Resource = "*"
+      },
+    ]
+  })
+}

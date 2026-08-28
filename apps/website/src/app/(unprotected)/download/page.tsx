@@ -1,10 +1,13 @@
 import Link from "next/link"
+import { cliPlatformLabel, latestCliRelease } from "./cli-release"
 
 export const metadata = {
   title: "Get SproutOS for Android · SproutOS",
   description:
     "Install the SproutOS Android client to run the apps you have published and the ones other people have.",
 }
+
+export const dynamic = "force-dynamic"
 
 /**
  * The download page for the Android client (§12.1).
@@ -35,8 +38,9 @@ const STEPS = [
   "You can turn the permission off again afterwards. Updates are offered inside the app.",
 ] as const
 
-export default function DownloadPage() {
+export default async function DownloadPage() {
   const available = RELEASE.url !== ""
+  const cliRelease = await latestCliRelease()
 
   return (
     <main className="container-page py-16">
@@ -85,6 +89,31 @@ export default function DownloadPage() {
             <li key={step}>{step}</li>
           ))}
         </ol>
+      </section>
+
+      <section className="mt-12 max-w-2xl">
+        <h2 className="text-lg font-medium">Sprout CLI</h2>
+        {cliRelease === null ? (
+          <p className="mt-3 text-muted-foreground">
+            Command-line downloads will appear here with their checksums after the first release.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <p className="text-muted-foreground">Version {cliRelease.version}</p>
+            <ul className="space-y-3">
+              {cliRelease.assets.map((asset) => (
+                <li key={asset.target} className="rounded-md border border-border bg-card p-3">
+                  <a href={asset.url} className="font-medium text-primary hover:underline">
+                    {cliPlatformLabel(asset)}
+                  </a>
+                  <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
+                    sha256 {asset.sha256}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="mt-12 max-w-2xl">

@@ -1,0 +1,93 @@
+name: Promote an existing CLI release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact immutable cli-vX.Y.Z release to verify and expose
+        required: true
+        type: string
+      ecs_base_task_definition:
+        description: Exact task revision registered by the reviewed OpenTofu apply
+        required: true
+        type: string
+
+concurrency:
+  group: cli-release-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  attestations: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Verify and promote production pointer
+    runs-on: ubuntu-24.04
+    # Publication and promotion are separate on purpose: an immutable tag cannot select the exact
+    # task revision registered by a reviewed OpenTofu apply. Every production pointer change goes
+    # through this environment; the promotion role does not trust tag subjects directly.
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-cli-release-promotion
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Re-download, verify and record the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECS_BASE_TASK_DEFINITION: ${{ inputs.ecs_base_task_definition }}
+          NAME_PREFIX: ${{ vars.NAME_PREFIX }}
+          VERSION: ${{ inputs.version }}
+        run: bin/promote-cli-release.sh "$VERSION" --record-only
+
+      # The OpenTofu revision adds only the SSM reference but carries its configured placeholder
+      # image. Reuse the normal migration-first deploy authority to combine that reviewed contract
+      # with the image that is actually serving. The CLI promotion role cannot register or select a
+      # task definition at all.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+
+      - name: Deploy the reviewed SSM task contract without changing the image
+        env:
+          ECS_BASE_TASK_DEFINITION: ${{ inputs.ecs_base_task_definition }}
+          ECS_WEB_DESIRED_COUNT: ${{ vars.ECS_WEB_DESIRED_COUNT || '1' }}
+          NAME_PREFIX: ${{ vars.NAME_PREFIX }}
+        run: |
+          set -euo pipefail
+          service=$(aws ecs describe-services --cluster "$NAME_PREFIX" \
+            --services "$NAME_PREFIX-web" --output json)
+          current=$(jq -r '.services[0].taskDefinition // empty' <<<"$service")
+          test -n "$current"
+          task=$(aws ecs describe-task-definition --task-definition "$current" --output json)
+          mapfile -t images < <(jq -r '.taskDefinition.containerDefinitions[].image' <<<"$task" | sort -u)
+          if [ "${#images[@]}" -ne 1 ] || ! [[ "${images[0]}" =~ :[0-9a-f]{12}$ ]]; then
+            echo "serving task does not use one immutable 12-character Git SHA image" >&2
+            exit 1
+          fi
+          IMAGE=${images[0]} bin/deploy-ecs-web.sh
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-cli-release-promotion
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+
+      - name: Prove ECS loaded the pointer and the public page exposes it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          NAME_PREFIX: ${{ vars.NAME_PREFIX }}
+          CLI_DOWNLOAD_URL: https://${{ vars.CONTROL_PLANE_DOMAIN || 'sproutos.me' }}/download
+          VERSION: ${{ inputs.version }}
+        run: bin/promote-cli-release.sh "$VERSION"

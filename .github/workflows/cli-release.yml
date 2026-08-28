@@ -17,6 +17,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Stale pull-request builds have no artifact or production authority and should not make every
+  # edit wait for five obsolete native builds. Tags share the non-cancelling production lane with
+  # explicit promotion so release publication cannot race a pointer change.
+  group: ${{ github.event_name == 'pull_request' && format('cli-release-pr-{0}', github.event.pull_request.number) || 'cli-release-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   version:
     name: Resolve version
@@ -163,7 +170,7 @@ jobs:
 
           entries='[]'
           for asset in "${assets[@]}"; do
-            target=${asset#sprout-v${VERSION}-}
+            target=${asset#"sprout-v${VERSION}-"}
             target=${target%.tar.gz}
             target=${target%.zip}
             case "$target" in
@@ -230,3 +237,14 @@ jobs:
             --verify-tag \
             --title "SproutOS CLI v${VERSION}" \
             --notes "Checksums are in SHA256SUMS and sprout-v${VERSION}-manifest.json."
+
+          # Repository release immutability is a stateful GitHub setting, not workflow YAML. It
+          # was enabled before the first cli-v* tag. Prove GitHub actually locked this release;
+          # a mutable release is never eligible for the production pointer.
+          for _ in {1..12}; do
+            immutable=$(gh release view "$TAG" --json isImmutable --jq .isImmutable)
+            [ "$immutable" = true ] && exit 0
+            sleep 5
+          done
+          echo "Release $TAG was published but GitHub did not make it immutable" >&2
+          exit 1
