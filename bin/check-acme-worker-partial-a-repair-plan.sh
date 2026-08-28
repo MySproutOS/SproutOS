@@ -147,10 +147,12 @@ fi
 
 if ! jq -e --arg name "$NAME_PREFIX" '
   [.resource_changes[] | select(.address == "aws_launch_template.ecs")][0].change as $change
-  | ($change.before
-      | .metadata_options[0].http_protocol_ipv6 = "disabled"
-      | del(.latest_version, .user_data)) ==
-    ($change.after | del(.latest_version, .user_data)) and
+  | $change.before.metadata_options[0].http_protocol_ipv6 == "" and
+    $change.after.metadata_options[0].http_protocol_ipv6 == "disabled" and
+    ($change.before
+      | del(.latest_version, .user_data, .metadata_options[0].http_protocol_ipv6)) ==
+    ($change.after
+      | del(.latest_version, .user_data, .metadata_options[0].http_protocol_ipv6)) and
     ($change.before.id | type) == "string" and
     ($change.before.name | startswith($name + "-ecs-")) and
     ($change.before.latest_version | type) == "number" and

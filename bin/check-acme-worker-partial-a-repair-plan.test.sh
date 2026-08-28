@@ -204,7 +204,10 @@ lt_image_changed=$(plan "$phase_a" "$phase_a" "$repair" | jq -c '
 lt_imds_changed=$(plan "$phase_a" "$phase_a" "$repair" | jq -c '
   (.resource_changes[] | select(.address == "aws_launch_template.ecs").change.after.metadata_options[0].http_tokens) = "optional"
 ')
-for payload in "$privileged_worker" "$extra_acme_secret" "$service_propagates_tags" "$lt_image_changed" "$lt_imds_changed"; do
+lt_ipv6_unreviewed_before=$(plan "$phase_a" "$phase_a" "$repair" | jq -c '
+  (.resource_changes[] | select(.address == "aws_launch_template.ecs").change.before.metadata_options[0].http_protocol_ipv6) = "enabled"
+')
+for payload in "$privileged_worker" "$extra_acme_secret" "$service_propagates_tags" "$lt_image_changed" "$lt_imds_changed" "$lt_ipv6_unreviewed_before"; do
   if run_check "$payload" >"$TMP/nested-payload.out" 2>&1; then
     echo "partial-A guard accepted an unreviewed nested provider payload" >&2
     exit 1
