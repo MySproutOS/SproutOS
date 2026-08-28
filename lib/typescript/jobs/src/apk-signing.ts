@@ -1,4 +1,5 @@
 import type { DB } from "@sproutos/db"
+import { promoteReadyAndroidDeployments } from "@lib/dao"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
 
@@ -128,24 +129,29 @@ export async function completeSigning(
   db: Kysely<DB>,
   input: { jobId: string; signerId: string; signedKey: string; signedDigest: string },
 ): Promise<boolean> {
-  const updated = await db
-    .updateTable("apkSigningJob")
-    .set({
-      status: "signed",
-      signedKey: input.signedKey,
-      signedDigest: input.signedDigest,
-      signedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where("id", "=", input.jobId)
-    // Only the signer holding the claim may complete it. Otherwise a signer whose claim expired
-    // mid-upload could overwrite the artifact a second signer has already produced.
-    .where("claimedBy", "=", input.signerId)
-    .where("status", "=", "claimed")
-    .returning("id")
-    .executeTakeFirst()
+  return await db.transaction().execute(async (trx) => {
+    const now = new Date()
+    const updated = await trx
+      .updateTable("apkSigningJob")
+      .set({
+        status: "signed",
+        signedKey: input.signedKey,
+        signedDigest: input.signedDigest,
+        signedAt: now,
+        updatedAt: now,
+      })
+      .where("id", "=", input.jobId)
+      // Only the signer holding the claim may complete it. Otherwise a signer whose claim expired
+      // mid-upload could overwrite the artifact a second signer has already produced.
+      .where("claimedBy", "=", input.signerId)
+      .where("status", "=", "claimed")
+      .returning(["id", "projectId"])
+      .executeTakeFirst()
 
-  return updated !== undefined
+    if (updated === undefined) return false
+    await promoteReadyAndroidDeployments(trx, updated.projectId, now)
+    return true
+  })
 }
 
 /** Report a failure and put the job back, or give up after enough attempts. */

@@ -89,6 +89,41 @@ not defence against a hostile one.
 Give each machine a stable id. A signer that restarts under a new id every boot cannot reclaim its
 own in-flight job and will wait out the ten-minute timeout instead.
 
+## Android developer verification is a separate durable wait
+
+Signing proves which key produced an APK. It does not prove that Google has registered the package
+name and that exact certificate to a verified developer. After key provisioning, the control plane
+keeps one `android_developer_registration` row per project in `pending_registration` and checks the
+pair with Google's Android Developer ID Status API. Only the exact `REGISTERED` response advances
+the row to `registered`; `REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT` fails closed.
+
+The ten-minute signer claim is unrelated to review time. A status check holds a short claim, records
+`last_checked_at`, `next_check_at`, the provider state, and any bounded failure, then releases the
+claim. Google's review can therefore take hours or days without a worker holding a job lease. The
+singleton reconciler row records worker `last_seen_at`, last completion, and last failure even when
+the registration queue is empty.
+
+A signed deployment remains queued, and its APK remains absent from both public and personal
+catalogues, until both conditions are durable:
+
+- the status API returned `REGISTERED` for the package name and exact SHA-256 certificate;
+- the connected repository's setup commit was independently verified and recorded.
+
+Whichever condition arrives second promotes the signed deployment in the same database transaction
+that records it. This avoids a crash window where all prerequisites are true but the release stays
+queued forever.
+
+The status API uses an API key restricted to the Android Developer ID Status API. Registration and
+key management use the separate Android Developer Console API, which requires a user OAuth Web
+Server flow and does not support service accounts, workload identity, or API-key authentication.
+The signer integration must not guess unpublished mutation schemas; until its OAuth-backed provider
+adapter is contract-tested, registration is completed through the existing verified Play Console
+account and this reconciler supplies the authoritative readiness transition.
+
+Official references: [Android Developer Console API](https://developer.android.com/developer-verification/guides/developer-console-api),
+[Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
+and [Play Console package-name registration](https://support.google.com/googleplay/android-developer/answer/16761053).
+
 ## The loop
 
 ```bash
@@ -115,3 +150,6 @@ minute for a signed build will not notice, and the queue costs one index lookup 
 default for a deployment that has no signer — the empty string is never compared as a value, so a
 forgotten environment variable fails closed rather than opening the queue to anyone who sends
 `Bearer `.
+
+`ANDROID_DEVELOPER_ID_STATUS_API_KEY` belongs only on the background worker. When it is absent, the
+recurring provider check is not scheduled and no registration can advance to `registered`.

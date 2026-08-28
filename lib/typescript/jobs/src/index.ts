@@ -193,6 +193,18 @@ export {
   type SigningJob,
 } from "./apk-signing"
 export {
+  ANDROID_REGISTRATION_BATCH_SIZE,
+  ANDROID_REGISTRATION_CLAIM_MS,
+  ANDROID_REGISTRATION_RECONCILE_KIND,
+  androidRegistrationQueueHealth,
+  ensureAndroidDeveloperRegistration,
+  GoogleAndroidDeveloperStatusChecker,
+  reconcileAndroidDeveloperRegistrations,
+  reconcileAndroidDeveloperRegistrationsJob,
+  verifyAndroidSetupCommit,
+  type AndroidDeveloperStatusChecker,
+} from "./android-developer-registration"
+export {
   cleanUpStaticPreview,
   environmentFor,
   hostnameFor,

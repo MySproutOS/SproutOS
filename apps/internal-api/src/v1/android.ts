@@ -84,6 +84,11 @@ const app: Hono = new Hono().get(
       .selectFrom("apkSigningJob")
       .innerJoin("deployment", "deployment.id", "apkSigningJob.deploymentId")
       .innerJoin("project", "project.id", "apkSigningJob.projectId")
+      .innerJoin(
+        "androidDeveloperRegistration",
+        "androidDeveloperRegistration.projectId",
+        "project.id",
+      )
       .innerJoin("storeListing", "storeListing.id", "project.storeListingId")
       .select([
         "storeListing.name as label",
@@ -92,10 +97,15 @@ const app: Hono = new Hono().get(
         "apkSigningJob.signedKey as signedKey",
         "apkSigningJob.signedDigest as sha256",
         "deployment.gitSha as gitSha",
-        "project.slug as slug",
+        "androidDeveloperRegistration.packageName as packageName",
       ])
       .where("apkSigningJob.status", "=", "signed")
+      .where("deployment.status", "=", "ready")
+      .where("androidDeveloperRegistration.state", "=", "registered")
+      .where("androidDeveloperRegistration.providerState", "=", "REGISTERED")
+      .where("androidDeveloperRegistration.verifiedSetupCommit", "is not", null)
       .where("storeListing.platform", "=", "android")
+      .where("storeListing.status", "=", "published")
       .where("storeListing.deletedAt", "is", null)
       .where("project.deletedAt", "is", null)
       .execute()
@@ -108,6 +118,11 @@ const app: Hono = new Hono().get(
             .innerJoin("deployment", "deployment.id", "apkSigningJob.deploymentId")
             .innerJoin("project", "project.id", "apkSigningJob.projectId")
             .innerJoin(
+              "androidDeveloperRegistration",
+              "androidDeveloperRegistration.projectId",
+              "project.id",
+            )
+            .innerJoin(
               "organizationMember",
               "organizationMember.organizationId",
               "project.organizationId",
@@ -117,9 +132,13 @@ const app: Hono = new Hono().get(
               "apkSigningJob.signedKey as signedKey",
               "apkSigningJob.signedDigest as sha256",
               "deployment.gitSha as gitSha",
-              "project.slug as slug",
+              "androidDeveloperRegistration.packageName as packageName",
             ])
             .where("apkSigningJob.status", "=", "signed")
+            .where("deployment.status", "=", "ready")
+            .where("androidDeveloperRegistration.state", "=", "registered")
+            .where("androidDeveloperRegistration.providerState", "=", "REGISTERED")
+            .where("androidDeveloperRegistration.verifiedSetupCommit", "is not", null)
             .where("organizationMember.userId", "=", user.id)
             .where("project.deletedAt", "is", null)
             .execute()
@@ -159,13 +178,11 @@ const app: Hono = new Hono().get(
       signedKey: string | null
       sha256: string | null
       gitSha: string
-      slug: string
+      packageName: string
     }): AndroidApp | undefined =>
       toApp(
         {
-          // The package name a customer's build declares is not recorded anywhere yet, so it is
-          // derived from the project slug. Stable per project, which is what an install replaces on.
-          packageName: `me.sproutos.${row.slug.replaceAll("-", "")}`,
+          packageName: row.packageName,
           label: row.label,
           summary: row.summary ?? null,
           versionName: row.gitSha.slice(0, 7),

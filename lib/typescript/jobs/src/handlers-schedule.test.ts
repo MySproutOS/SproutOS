@@ -21,6 +21,38 @@ afterAll(async () => {
 })
 
 describe.skipIf(!reachable)("metering schedules", () => {
+  it("schedules Android registration reconciliation only when provider verification is configured", async () => {
+    const now = new Date(`${TEST_YEAR}-12-30T23:58:45.000Z`)
+    const key = `${JOB_KINDS.reconcileAndroidDeveloperRegistration}:${now.toISOString().slice(0, 16)}`
+    const previous = process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY
+    delete process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY
+    await scheduleRecurring(db, now)
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select("id")
+        .where("idempotencyKey", "=", key)
+        .executeTakeFirst(),
+    ).toBeUndefined()
+
+    process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY = "configured-for-schedule-test"
+    try {
+      await scheduleRecurring(db, now)
+      await scheduleRecurring(db, now)
+    } finally {
+      if (previous === undefined) delete process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY
+      else process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY = previous
+    }
+    const rows = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "idempotencyKey"])
+      .where("idempotencyKey", "=", key)
+      .execute()
+    expect(rows).toEqual([
+      { kind: JOB_KINDS.reconcileAndroidDeveloperRegistration, idempotencyKey: key },
+    ])
+  })
+
   it("schedules metering and credit projections once per window", async ({ skip }) => {
     if (!reachable) skip()
     const now = new Date(`${TEST_YEAR}-12-31T23:58:45.000Z`)

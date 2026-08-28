@@ -315,3 +315,9 @@ export { crudStatement } from "./statement/crud"
 export { fetchStatement, type StatementLineRow } from "./statement/fetch"
 export { crudStatementLineItem } from "./statementLineItem/crud"
 export { fetchStatementLineItem } from "./statementLineItem/fetch"
+export {
+  type AndroidRegistrationProviderState,
+  crudAndroidDeveloperRegistration,
+  promoteReadyAndroidDeployments,
+} from "./androidDeveloperRegistration/crud"
+export { fetchAndroidDeveloperRegistration } from "./androidDeveloperRegistration/fetch"

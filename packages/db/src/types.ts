@@ -232,6 +232,32 @@ export interface ApkSigningJob {
   updatedAt: Generated<Timestamp>
 }
 
+export interface AndroidDeveloperRegistration {
+  certificateSha256: string
+  checkAttempts: Generated<number>
+  claimedAt: Timestamp | null
+  claimedBy: string | null
+  createdAt: Generated<Timestamp>
+  id: string
+  lastCheckedAt: Timestamp | null
+  lastFailure: string | null
+  nextCheckAt: Generated<Timestamp>
+  packageName: string
+  projectId: string
+  providerState: string | null
+  state: Generated<string>
+  updatedAt: Generated<Timestamp>
+  verifiedSetupCommit: string | null
+}
+
+export interface AndroidRegistrationReconcilerState {
+  id: string
+  lastCompletedAt: Timestamp | null
+  lastFailure: string | null
+  lastSeenAt: Timestamp | null
+  updatedAt: Generated<Timestamp>
+}
+
 export interface AuditLog {
   action: string
   actorUserId: string | null
@@ -1412,6 +1438,8 @@ export interface DB {
   agentUsage: AgentUsage
   apiKey: ApiKey
   apkSigningJob: ApkSigningJob
+  androidDeveloperRegistration: AndroidDeveloperRegistration
+  androidRegistrationReconcilerState: AndroidRegistrationReconcilerState
   auditLog: AuditLog
   backendService: BackendService
   backgroundJob: BackgroundJob
