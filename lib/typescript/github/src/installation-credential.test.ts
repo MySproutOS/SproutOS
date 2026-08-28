@@ -209,8 +209,14 @@ describe("organizationGitHubCredential", () => {
 
     await expect(
       organizationGitHubCredential(db, organizationId, PROVISION),
-    ).resolves.toMatchObject({ kind: "installation" })
+    ).resolves.toMatchObject({
+      kind: "installation",
+      token: `ghs_${PERSONAL}`,
+      installationId: PERSONAL,
+    })
     expect(minted).toHaveBeenCalledTimes(2)
+    expect(minted).toHaveBeenNthCalledWith(1, ORGANIZATION, PROVISION)
+    expect(minted).toHaveBeenNthCalledWith(2, PERSONAL, PROVISION)
   })
 
   it("recognizes GitHub's plural selected-repository refusal", async ({ skip }) => {
@@ -228,8 +234,14 @@ describe("organizationGitHubCredential", () => {
 
     await expect(
       organizationGitHubCredential(db, organizationId, PROVISION),
-    ).resolves.toMatchObject({ kind: "installation" })
+    ).resolves.toMatchObject({
+      kind: "installation",
+      token: `ghs_${PERSONAL}`,
+      installationId: PERSONAL,
+    })
     expect(minted).toHaveBeenCalledTimes(2)
+    expect(minted).toHaveBeenNthCalledWith(1, ORGANIZATION, PROVISION)
+    expect(minted).toHaveBeenNthCalledWith(2, PERSONAL, PROVISION)
   })
 
   it("tries the next installation when the old App no longer owns a row", async ({ skip }) => {
@@ -273,6 +285,7 @@ describe("organizationGitHubCredential", () => {
       organizationGitHubCredential(db, organizationId, PROVISION),
     ).rejects.toBeInstanceOf(GitHubValidationError)
     expect(minted).toHaveBeenCalledTimes(1)
+    expect(minted).toHaveBeenCalledWith(ORGANIZATION, PROVISION)
   })
 
   it("still tries a row whose cached suspension is stale", async ({ skip }) => {
