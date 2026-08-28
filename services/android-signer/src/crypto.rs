@@ -10,7 +10,7 @@ use rsa::traits::PublicKeyParts as _;
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const AAD: &[u8] = b"sproutos/android-keystore/v1";
 
@@ -30,8 +30,10 @@ pub struct MasterIdentity(RsaPrivateKey);
 impl MasterIdentity {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         assert_private_permissions(path)?;
-        let pem = std::fs::read_to_string(path)
-            .with_context(|| format!("could not read master identity at {}", path.display()))?;
+        let pem =
+            Zeroizing::new(std::fs::read_to_string(path).with_context(|| {
+                format!("could not read master identity at {}", path.display())
+            })?);
         let key = RsaPrivateKey::from_pkcs8_pem(&pem)
             .context("master identity is not an RSA PKCS#8 private key")?;
         if key.size() < 384 {
