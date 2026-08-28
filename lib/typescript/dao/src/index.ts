@@ -285,3 +285,7 @@ export { crudMeteringOutbox } from "./meteringOutbox/crud"
 export { fetchMeteringOutbox, type MeteringOutboxClaim } from "./meteringOutbox/fetch"
 export { crudMeteringImportState } from "./meteringImportState/crud"
 export { fetchMeteringImportState } from "./meteringImportState/fetch"
+export {
+  crudProviderUsageReconciliation,
+  type ProviderUsageReconciliationInput,
+} from "./providerUsageReconciliation/crud"

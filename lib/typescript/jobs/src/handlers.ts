@@ -57,6 +57,7 @@ import {
 } from "./platform-edge-certificate"
 import {
   importStaticCloudFrontLog,
+  reconcileStaticCloudFrontUsage,
   scanStaticCloudFrontLogs,
   STATIC_CLOUDFRONT_METERING_KINDS,
 } from "./static-cloudfront-metering"
@@ -121,6 +122,7 @@ export const JOB_KINDS = {
   reconcilePlatformEdgeCertificate: PLATFORM_EDGE_CERTIFICATE_KIND,
   scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
   importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
+  reconcileStaticCloudFrontUsage: STATIC_CLOUDFRONT_METERING_KINDS.reconcile,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -421,6 +423,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
+  [JOB_KINDS.reconcileStaticCloudFrontUsage]: reconcileStaticCloudFrontUsage(),
 }
 
 /**
@@ -452,6 +455,18 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
     maxAttempts: 5,
   })
+  if (process.env.TENANT_STATIC_DISTRIBUTION_ID !== undefined) {
+    await enqueue(db, {
+      /*
+        Hourly, re-reading the last three closed UTC days. CloudFront standard logs can arrive a
+        day late and its provider metrics can also settle after first publication. Absolute daily
+        upserts make both corrections converge; unmatched residual remains platform overhead.
+      */
+      kind: JOB_KINDS.reconcileStaticCloudFrontUsage,
+      idempotencyKey: `${JOB_KINDS.reconcileStaticCloudFrontUsage}:${hour}`,
+      maxAttempts: 5,
+    })
+  }
   await enqueue(db, {
     kind: JOB_KINDS.workflowScheduleScan,
     idempotencyKey: `${JOB_KINDS.workflowScheduleScan}:${now.toISOString().slice(0, 16)}`,

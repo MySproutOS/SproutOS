@@ -19,6 +19,7 @@ catalog:
   "@aws-sdk/client-lambda": ^3.1114.0
   "@aws-sdk/client-route-53": ^3.1114.0
   "@aws-sdk/client-cloudfront-keyvaluestore": ^3.1114.0
+  "@aws-sdk/client-cloudwatch": ^3.1114.0
   "@aws-sdk/signature-v4a": ^3.1111.0
   "@aws-sdk/client-acm": ^3.1114.0
   "@aws-sdk/client-auto-scaling": ^3.1114.0
