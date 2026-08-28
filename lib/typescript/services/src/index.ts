@@ -108,7 +108,10 @@ export {
   CATALOGUE_TTL_SECONDS,
   type Catalogue,
   catalogueTtlSeconds,
+  type ClientReleaseRow,
+  type ClientUpdate,
   isReadable,
   latestPerPackage,
   toApp,
+  toClientUpdate,
 } from "./android-index"

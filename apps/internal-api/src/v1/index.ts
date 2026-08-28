@@ -13,6 +13,7 @@ import deploy from "./deploy"
 import android from "./android"
 import androidApps from "./android-apps"
 import apkSigning from "./apk-signing"
+import clientRelease from "./client-release"
 import pgResolve from "./pg-resolve"
 import auth from "./auth"
 import billing from "./billing"
@@ -124,6 +125,7 @@ unauthenticated.route("/", deploy)
   out over the public internet. It carries its own bearer credential instead.
 */
 unauthenticated.route("/", apkSigning)
+unauthenticated.route("/", clientRelease)
 /*
   The Android client's catalogue. Optionally authenticated rather than unauthenticated: the public
   tab must be readable by somebody deciding whether to install the client, and the personal tab is

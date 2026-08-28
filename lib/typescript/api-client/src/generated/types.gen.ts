@@ -7278,6 +7278,46 @@ export type PostV1ApkSigningFailResponses = {
   200: unknown
 }
 
+export type GetV1AndroidClientReleaseData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/android/client-release"
+}
+
+export type GetV1AndroidClientReleaseErrors = {
+  /**
+   * No client release has been published
+   */
+  404: ErrorResponseT
+  /**
+   * Stored release metadata is invalid
+   */
+  500: ErrorResponseT
+}
+
+export type GetV1AndroidClientReleaseError =
+  GetV1AndroidClientReleaseErrors[keyof GetV1AndroidClientReleaseErrors]
+
+export type GetV1AndroidClientReleaseResponses = {
+  /**
+   * Latest client release
+   */
+  200: {
+    packageName: "com.sproutos.store"
+    versionName: string
+    versionCode: number
+    sha256: string
+    sizeBytes: number
+    certificateSha256: string
+    downloadUrl: string
+    required?: boolean
+  }
+}
+
+export type GetV1AndroidClientReleaseResponse =
+  GetV1AndroidClientReleaseResponses[keyof GetV1AndroidClientReleaseResponses]
+
 export type GetV1AndroidCatalogueData = {
   body?: never
   path?: never
@@ -7291,3 +7331,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

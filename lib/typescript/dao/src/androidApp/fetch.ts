@@ -58,7 +58,7 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .execute()
   }
 
-  async function listPersonalCatalogue(userId: string) {
+  async function listPersonalCatalogue(userId: string, organizationId: string | null = null) {
     return await db
       .selectFrom("androidApp")
       .innerJoin("project", "project.id", "androidApp.projectId")
@@ -77,6 +77,9 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .select(["project.name as label"])
       .select((eb) => eb.val(null).$castTo<string | null>().as("summary"))
       .where("organizationMember.userId", "=", userId)
+      .$if(organizationId !== null, (qb) =>
+        qb.where("project.organizationId", "=", organizationId!),
+      )
       .where("project.deletedAt", "is", null)
       .where("androidApp.developerConsoleState", "=", "registered")
       .where("androidApp.developerConsoleProviderState", "=", "REGISTERED")
@@ -132,7 +135,7 @@ export function fetchAndroidApp(db: Kysely<DB>) {
     return { ...queue, ...worker }
   }
 
-  async function listPersonalSites(userId: string) {
+  async function listPersonalSites(userId: string, organizationId: string | null = null) {
     return await db
       .selectFrom("deployment")
       .innerJoin("project", "project.id", "deployment.projectId")
@@ -143,6 +146,9 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       )
       .select(["project.name as name", "deployment.url as url"])
       .where("organizationMember.userId", "=", userId)
+      .$if(organizationId !== null, (qb) =>
+        qb.where("project.organizationId", "=", organizationId!),
+      )
       .where("deployment.kind", "=", "production")
       .where("deployment.status", "=", "ready")
       .where("deployment.url", "is not", null)

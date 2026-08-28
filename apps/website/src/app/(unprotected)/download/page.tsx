@@ -1,5 +1,6 @@
 import Link from "next/link"
 import { cliPlatformLabel, latestCliRelease } from "./cli-release"
+import { latestAndroidClientRelease } from "./android-client-release"
 
 export const metadata = {
   title: "Get SproutOS for Android · SproutOS",
@@ -23,13 +24,6 @@ export const dynamic = "force-dynamic"
  * the page so somebody who wants to check what they downloaded can.
  */
 
-/** Filled by the release job. Absent means there is no build yet, which the page says. */
-const RELEASE = {
-  version: process.env.NEXT_PUBLIC_ANDROID_VERSION ?? "",
-  url: process.env.NEXT_PUBLIC_ANDROID_APK_URL ?? "",
-  sha256: process.env.NEXT_PUBLIC_ANDROID_APK_SHA256 ?? "",
-} as const
-
 const STEPS = [
   "Download the APK using the button above.",
   "Open it. Android will say it cannot install apps from this source — that warning is about the browser you downloaded it with, not about the file.",
@@ -39,8 +33,10 @@ const STEPS = [
 ] as const
 
 export default async function DownloadPage() {
-  const available = RELEASE.url !== ""
-  const cliRelease = await latestCliRelease()
+  const [release, cliRelease] = await Promise.all([
+    latestAndroidClientRelease(),
+    latestCliRelease(),
+  ])
 
   return (
     <main className="container-page py-16">
@@ -51,31 +47,26 @@ export default async function DownloadPage() {
       </p>
 
       <div className="mt-8">
-        {available ? (
-          <a
-            href={RELEASE.url}
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            Download {RELEASE.version}
-          </a>
-        ) : (
-          /*
-            Said, rather than a button that does nothing.
-
-            A disabled button with no explanation reads as a broken page; a sentence reads as a
-            product that has not shipped this part yet, which is the truth.
-          */
+        {release === null ? (
           <p className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
             There is no published build yet. This page will offer one as soon as there is.
           </p>
+        ) : (
+          <a
+            href={release.downloadUrl}
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Download {release.versionName}
+          </a>
         )}
       </div>
 
-      {available && RELEASE.sha256 !== "" ? (
-        <p className="mt-4 max-w-2xl font-mono text-xs break-all text-muted-foreground">
-          sha256 {RELEASE.sha256}
-        </p>
-      ) : null}
+      {release === null ? null : (
+        <div className="mt-4 max-w-2xl space-y-1 font-mono text-xs break-all text-muted-foreground">
+          <p>sha256 {release.sha256}</p>
+          <p>certificate sha256 {release.certificateSha256}</p>
+        </div>
+      )}
 
       <section className="mt-12 max-w-2xl">
         <h2 className="text-lg font-medium">Installing it</h2>
