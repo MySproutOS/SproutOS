@@ -2,6 +2,18 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable } from "kysely"
 
 export function fetchClientRelease(db: Kysely<DB>) {
+  async function getByVersion<T extends (keyof DB["clientRelease"])[]>(
+    versionCode: number,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["clientRelease"]>, T[number]> | undefined> {
+    return await db
+      .selectFrom("clientRelease")
+      .select(fields)
+      .where("packageName", "=", "me.sproutos.client")
+      .where("versionCode", "=", versionCode)
+      .executeTakeFirst()
+  }
+
   async function latest<T extends (keyof DB["clientRelease"])[]>(
     fields: T,
   ): Promise<Pick<Selectable<DB["clientRelease"]>, T[number]> | undefined> {
@@ -14,5 +26,5 @@ export function fetchClientRelease(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { latest }
+  return { getByVersion, latest }
 }

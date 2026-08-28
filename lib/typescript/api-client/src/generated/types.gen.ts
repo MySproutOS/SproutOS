@@ -7075,3 +7075,56 @@ export type GetV1AndroidClientReleaseResponses = {
 
 export type GetV1AndroidClientReleaseResponse =
   GetV1AndroidClientReleaseResponses[keyof GetV1AndroidClientReleaseResponses]
+
+export type PostV1AndroidClientReleaseData = {
+  body?: {
+    package_name: "me.sproutos.client"
+    version_name: string
+    version_code: number
+    apk_object_key: string
+    apk_object_version: string
+    apk_sha256: string
+    apk_size_bytes: number
+    certificate_sha256: string
+    required?: boolean
+  }
+  path?: never
+  query?: never
+  url: "/v1/android/client-release"
+}
+
+export type PostV1AndroidClientReleaseErrors = {
+  /**
+   * The signed artifact does not match the release metadata
+   */
+  400: ErrorResponseT
+  /**
+   * Missing or invalid signer token
+   */
+  401: ErrorResponseT
+  /**
+   * The version code was already published with different metadata
+   */
+  409: ErrorResponseT
+}
+
+export type PostV1AndroidClientReleaseError =
+  PostV1AndroidClientReleaseErrors[keyof PostV1AndroidClientReleaseErrors]
+
+export type PostV1AndroidClientReleaseResponses = {
+  /**
+   * The identical release was already recorded
+   */
+  200: {
+    id: string
+  }
+  /**
+   * Client release recorded
+   */
+  201: {
+    id: string
+  }
+}
+
+export type PostV1AndroidClientReleaseResponse =
+  PostV1AndroidClientReleaseResponses[keyof PostV1AndroidClientReleaseResponses]
