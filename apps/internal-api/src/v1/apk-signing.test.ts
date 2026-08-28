@@ -9,6 +9,7 @@ const TOKEN = "signer-token-value"
 
 afterEach(() => {
   delete process.env.APK_SIGNER_TOKEN
+  delete process.env.APK_SIGNER_OPERATOR_TOKEN
 })
 
 describe("the signer credential", () => {
@@ -16,6 +17,16 @@ describe("the signer credential", () => {
     process.env.APK_SIGNER_TOKEN = TOKEN
 
     expect(signerAuthorized(`Bearer ${TOKEN}`)).toBe(true)
+  })
+
+  it("tolerates the future distinct operator credential without changing runtime authorization", () => {
+    // Infrastructure delivers both names before #192 lands. The current image must stay healthy
+    // and continue authenticating runtime signer calls solely with its existing credential.
+    process.env.APK_SIGNER_TOKEN = TOKEN
+    process.env.APK_SIGNER_OPERATOR_TOKEN = "distinct-future-operator-token"
+
+    expect(signerAuthorized(`Bearer ${TOKEN}`)).toBe(true)
+    expect(signerAuthorized("Bearer distinct-future-operator-token")).toBe(false)
   })
 
   it("refuses every caller when no token is configured", () => {

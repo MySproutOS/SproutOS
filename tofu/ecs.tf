@@ -54,13 +54,15 @@ locals {
 
   # These parameters are intentionally absent until the Android custody rollout. A default
   # OpenTofu apply must remain able to register and launch an unrelated ECS task revision before
-  # they exist; the later custody change supplies an explicit, preflighted enable plan.
+  # they exist; the later custody change supplies an explicit, preflighted enable plan. Keep this
+  # independent of the Google registration credential: #192 needs these two tokens at API startup,
+  # while registration can remain disabled until its separate external credential exists.
   ecs_android_api_parameter_names = var.android_custody_delivery_enabled ? [
     "APK_SIGNER_OPERATOR_TOKEN",
     "APK_SIGNER_TOKEN",
   ] : []
 
-  ecs_api_parameter_names = concat(local.ecs_android_api_parameter_names, [
+  ecs_api_parameter_names = [
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
@@ -83,13 +85,13 @@ locals {
     "SERVICE_VALKEY_ADMIN_URL",
     "STRIPE_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET",
-  ])
+  ]
 
-  ecs_android_worker_parameter_names = var.android_custody_delivery_enabled ? [
+  ecs_android_worker_parameter_names = var.android_developer_registration_delivery_enabled ? [
     "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
   ] : []
 
-  ecs_worker_parameter_names = concat(local.ecs_android_worker_parameter_names, [
+  ecs_worker_base_parameter_names = [
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
@@ -112,15 +114,60 @@ locals {
     "SERVICE_OBJECT_STORAGE_ROOT_KEY",
     "SERVICE_VALKEY_ADMIN_URL",
     "VALKEY_PROXY_ACL_ROOT_KEY",
+  ]
+
+  ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names
+
+  ecs_website_parameter_secrets = [for name in local.ecs_website_parameter_names : {
+    name      = name
+    valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+  }]
+  ecs_api_parameter_secrets = concat(
+    [for name in local.ecs_api_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+    }],
+    [for name in local.ecs_android_api_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}/${name}"
+    }],
+  )
+  ecs_worker_parameter_secrets = concat(
+    [for name in local.ecs_worker_base_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+    }],
+    [for name in local.ecs_android_worker_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}/${name}"
+    }],
+  )
+  ecs_acme_worker_parameter_secrets = [for name in local.ecs_acme_worker_parameter_names : {
+    name      = name
+    valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+  }]
+
+  ecs_web_parameter_arns = toset(concat(
+    [for secret in local.ecs_website_parameter_secrets : secret.valueFrom],
+    [for secret in local.ecs_api_parameter_secrets : secret.valueFrom],
+    [for secret in local.ecs_worker_parameter_secrets : secret.valueFrom],
+  ))
+  ecs_acme_parameter_arns = toset([
+    for secret in local.ecs_acme_worker_parameter_secrets : secret.valueFrom
   ])
 
-  ecs_application_parameter_arns = [
-    for name in toset(concat(
-      local.ecs_website_parameter_names,
-      local.ecs_api_parameter_names,
-      local.ecs_worker_parameter_names,
-    )) : "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+  # Every container in one ECS task receives the same task-role credentials. Keep this deny as
+  # data so the staging test can evaluate its exact AWS IAM surface without contacting AWS.
+  ecs_task_parameter_store_deny_actions = [
+    "ssm:GetParameter",
+    "ssm:GetParameters",
+    "ssm:GetParametersByPath",
   ]
+  ecs_task_parameter_store_deny_resources = concat(
+    local.application_parameter_arns,
+    local.android_custody_parameter_arns,
+    local.android_worker_parameter_arns,
+  )
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -290,6 +337,20 @@ resource "aws_ecs_task_definition" "web" {
   requires_compatibilities = []
   enable_fault_injection   = false
 
+  # Register no task revision that names the custody bucket until its versioning, SSE-KMS default,
+  # deny policy, and both IAM sides exist. The deploy workflow starts the registered revision only
+  # after OpenTofu finishes, so this closes the first-apply window where an upload could otherwise
+  # reach a newly created bucket before its controls or grants converged.
+  depends_on = [
+    aws_s3_bucket_versioning.android_artifacts,
+    aws_s3_bucket_server_side_encryption_configuration.android_artifacts,
+    aws_s3_bucket_policy.android_artifacts,
+    aws_iam_role_policy_attachment.task_application,
+    aws_iam_role_policy_attachment.task_android_custody_broker,
+    aws_iam_role_policy.ecs_execution_secrets,
+    aws_iam_role_policy.ecs_task_no_parameter_store,
+  ]
+
   # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
   # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
   # kernel decide what to kill.
@@ -345,10 +406,7 @@ resource "aws_ecs_task_definition" "web" {
 
       secrets = concat(
         [{ name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn }],
-        [for name in local.ecs_website_parameter_names : {
-          name      = name
-          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
-        }],
+        local.ecs_website_parameter_secrets,
       )
 
       logConfiguration = {
@@ -389,6 +447,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "API_PORT", value = "3001" },
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         # The API signs direct build uploads. Without this value it silently falls back to the
         # nonexistent local-development bucket and every CLI/Action deploy fails at the first PUT.
@@ -440,10 +499,7 @@ resource "aws_ecs_task_definition" "web" {
         # connection string in a task definition is a connection string in `describe-task-definition`
         # output, which is readable by anything with ECS read access.
         { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-        ], [for name in local.ecs_api_parameter_names : {
-          name      = name
-          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
-      }])
+      ], local.ecs_api_parameter_secrets)
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -486,6 +542,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
@@ -532,10 +589,7 @@ resource "aws_ecs_task_definition" "web" {
 
       secrets = concat([
         { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-        ], [for name in local.ecs_worker_parameter_names : {
-          name      = name
-          valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
-      }])
+      ], local.ecs_worker_parameter_secrets)
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -586,7 +640,11 @@ resource "aws_ecs_task_definition" "acme_worker" {
   memory = 256
   cpu    = 128
 
-  execution_role_arn = aws_iam_role.ecs_execution.arn
+  depends_on = [
+    aws_iam_role_policy_attachment.acme_execution,
+    aws_iam_role_policy.acme_execution_secrets,
+  ]
+  execution_role_arn = aws_iam_role.acme_execution.arn
   task_role_arn      = aws_iam_role.acme_task.arn
 
   container_definitions = jsonencode([{
@@ -662,10 +720,7 @@ resource "aws_ecs_task_definition" "acme_worker" {
     secrets = concat([{
       name      = "DATABASE_SECRET"
       valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn
-      }], [for name in local.ecs_worker_parameter_names : {
-      name      = name
-      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
-    }])
+    }], local.ecs_acme_worker_parameter_secrets)
 
     logConfiguration = {
       logDriver = "awslogs"
@@ -947,7 +1002,7 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         # calls itself or the task fails as `ResourceInitializationError`.
         Effect   = "Allow"
         Action   = ["ssm:GetParameters"]
-        Resource = local.ecs_application_parameter_arns
+        Resource = local.ecs_web_parameter_arns
       },
       {
         # The same pairing the instance role needed: a secret encrypted with a customer-managed key
@@ -972,5 +1027,88 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         }
       },
     ]
+  })
+}
+
+resource "aws_iam_role" "acme_execution" {
+  name = "${var.name_prefix}-acme-execution"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "acme_execution" {
+  role       = aws_iam_role.acme_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "acme_execution_secrets" {
+  name = "read-acme-task-secrets"
+  role = aws_iam_role.acme_execution.id
+
+  # The isolated task needs the same database secret and ordinary worker configuration, but never
+  # the Google registration key or either signer credential. A separate execution role makes that
+  # boundary enforceable even if a future ACME task definition tries to name one of them.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameters"]
+        Resource = local.ecs_acme_parameter_arns
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_task_no_parameter_store" {
+  name = "deny-runtime-parameter-store"
+  role = aws_iam_role.task.id
+
+  # The application policy is still shared with the legacy EC2 roles and grants path reads for
+  # their boot script. ECS does not need that runtime authority: its execution role resolves the
+  # exact task-definition secret ARNs before containers start. Without this explicit deny, every
+  # container in the shared task could fetch the API-only operator token from Parameter Store even
+  # though ECS injects it into the API container alone.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Deny"
+      Action   = local.ecs_task_parameter_store_deny_actions
+      Resource = local.ecs_task_parameter_store_deny_resources
+    }]
   })
 }

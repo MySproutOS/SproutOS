@@ -443,7 +443,30 @@ variable "lambda_web_adapter_layer_version" {
 }
 
 variable "android_custody_delivery_enabled" {
-  description = "Inject Android custody parameters only after a later metadata preflight proves the exact SecureStrings exist. Keep false for unrelated task-definition applies."
+  description = "Inject the two Android signer API credentials only after a later metadata preflight proves the exact SecureStrings exist. Keep false for unrelated task-definition applies."
+  type        = bool
+  default     = false
+}
+
+variable "android_developer_registration_delivery_enabled" {
+  description = "Inject the independent Android Developer Console API credential into only the worker after its own preflight and rollout are ready."
+  type        = bool
+  default     = false
+}
+
+variable "android_raw_apk_retention_days" {
+  description = "Days to retain raw unsigned APKs for signing retries and incident diagnosis. Signed releases and encrypted app keys do not use this expiry."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = floor(var.android_raw_apk_retention_days) == var.android_raw_apk_retention_days && var.android_raw_apk_retention_days >= 7
+    error_message = "Raw APK retention must be a whole number of at least seven days."
+  }
+}
+
+variable "android_signing_alarms_enabled" {
+  description = "Create Android signer heartbeat, queue-age, and failure alarms after the signer and an SNS subscription are ready."
   type        = bool
   default     = false
 }

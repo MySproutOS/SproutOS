@@ -48,6 +48,25 @@ locals {
     "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}",
     "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/*",
   ]
+
+  # Signer credentials are not ordinary application configuration. The legacy EC2, router and
+  # ACME roles retain a path-wide read below /application for their boot/runtime contracts, so
+  # placing custody tokens there would make container placement cosmetic. Only the web task's ECS
+  # execution role receives exact object ARNs below this separate path.
+  android_custody_parameter_path = "/${var.name_prefix}/android-custody"
+  android_custody_parameter_arns = [
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}",
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}/*",
+  ]
+
+  # The Android registration credential is worker-only. ACME, router and legacy roles can read
+  # /application directly at runtime, so excluding a name from their task definition is not an IAM
+  # boundary. Keep it on a separate path and let only the web execution role inject its exact ARN.
+  android_worker_parameter_path = "/${var.name_prefix}/android-worker"
+  android_worker_parameter_arns = [
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}",
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}/*",
+  ]
 }
 
 output "application_parameter_path" {
