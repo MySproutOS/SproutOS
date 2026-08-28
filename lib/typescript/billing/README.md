@@ -6,7 +6,7 @@ The credit ledger: append-only double-entry accounting, holds, and the Stripe to
 
 One millionth of a dollar. Never a float, never a decimal string a caller will parse with `Number`.
 
-**Unit rates are the exception.** A cache-read token costs 0.33 micro-USD and egress costs 0.00014, so
+**Unit rates are the exception.** A cached Terra input token costs 0.2 micro-USD and egress costs 0.00014, so
 a rate held as an integer would floor to **zero** and the dimension would bill nothing, forever. Rates
 live in `price_book_item.unit_micro_usd` as `numeric(38,9)` and are multiplied in bigint by
 `rateTimesQuantity`. Amounts are integers; rates are not.
@@ -52,10 +52,10 @@ one place to edit.
 
 ## Overhead
 
-TASK 28's amortized platform overhead is `price_book.overhead_bps` (currently 1200, so 12%), applied
-to metered usage and posted as **its own ledger entry**. A statement can then show what the resources
-cost and what the platform added, and the two add up to the total. Folding it into the usage figure
-would make a bill unexplainable.
+TASK 28's amortized platform overhead defaults from `price_book.overhead_bps` (currently 1200, so
+12%). `price_book_item.overhead_bps` overrides it per dimension: provider pass-through items use 0,
+and Neon compute uses 200 (2%). The fee is posted as **its own ledger entry**. A statement can then
+show what the resources cost and what the platform added, and the two add up to the total.
 
 ## Rounding
 

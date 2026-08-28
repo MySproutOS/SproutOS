@@ -736,6 +736,7 @@ export interface PriceBookItem {
   dimension: string
   id: string
   includedFreeQuantity: Generated<Numeric>
+  overheadBps: number | null
   priceBookId: string
   rounding: Generated<string>
   unitMicroUsd: Numeric

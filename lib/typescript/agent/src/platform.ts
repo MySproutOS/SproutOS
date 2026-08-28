@@ -23,7 +23,16 @@ import type { TokenUsage } from "./pricing"
  * hand it to — which is what makes it safe to spend our own credential here at all.
  */
 
-const DEFAULT_MODEL = "gpt-5"
+const PLATFORM_MODEL = "gpt-5.6-terra"
+const LONG_CONTEXT_THRESHOLD = 272_000
+
+export function platformModel(requested?: string | null): string {
+  const model = requested ?? PLATFORM_MODEL
+  if (model !== PLATFORM_MODEL) {
+    throw new Error(`Platform credit currently supports only ${PLATFORM_MODEL}`)
+  }
+  return model
+}
 
 /**
  * Headroom, not an answer length.
@@ -40,7 +49,7 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 8192
 export type OpenAiUsage = {
   prompt_tokens: number
   completion_tokens: number
-  prompt_tokens_details?: { cached_tokens?: number } | null
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } | null
   completion_tokens_details?: { reasoning_tokens?: number } | null
 }
 
@@ -59,10 +68,23 @@ export type OpenAiUsage = {
  */
 export function toTokenUsage(usage: OpenAiUsage): TokenUsage {
   const cached = usage.prompt_tokens_details?.cached_tokens ?? 0
+  const cacheWrite = usage.prompt_tokens_details?.cache_write_tokens ?? 0
+  if (usage.prompt_tokens > LONG_CONTEXT_THRESHOLD) {
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      longContextInputTokens: Math.max(0, usage.prompt_tokens - cached - cacheWrite),
+      longContextOutputTokens: usage.completion_tokens,
+      longContextCacheReadTokens: cached,
+      longContextCacheWriteTokens: cacheWrite,
+    }
+  }
   return {
-    inputTokens: Math.max(0, usage.prompt_tokens - cached),
+    inputTokens: Math.max(0, usage.prompt_tokens - cached - cacheWrite),
     outputTokens: usage.completion_tokens,
     cacheReadTokens: cached,
+    cacheWriteTokens: cacheWrite,
   }
 }
 
@@ -124,10 +146,13 @@ export async function runPlatformChat(
       }
 
       const maxOutputTokens = input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+      // Every platform-funded token must have a derivable provider cost. A different model has
+      // different rates, and silently applying Terra's book would make the charge fiction.
+      const model = platformModel(input.model ?? credential.model)
       const client = new OpenAI({ apiKey: platformOpenAiKey() })
       const stream = await client.chat.completions.create(
         {
-          model: input.model ?? credential.model ?? DEFAULT_MODEL,
+          model,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             ...input.messages.map((message) => ({ role: message.role, content: message.content })),
@@ -154,7 +179,7 @@ export async function runPlatformChat(
         if (chunk.usage != null) usage = toTokenUsage(chunk.usage)
       }
 
-      if (usage.inputTokens === 0 && usage.outputTokens === 0) {
+      if (Object.values(usage).every((quantity) => (quantity ?? 0) === 0)) {
         // A stream that produced text but reported no usage means we bought tokens we cannot
         // account for. Better to notice loudly than to hand out free inference.
         console.warn(`[platform-chat] no usage reported for session ${input.sessionId}`)

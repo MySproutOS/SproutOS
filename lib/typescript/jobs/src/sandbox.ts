@@ -179,6 +179,9 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
     .selectFrom("sandbox")
     .select("id")
     .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
+    // `starting` begins before Daytona creates anything. Until it returns an id there is no
+    // provider object consuming resources, regardless of how long this row has waited in a queue.
+    .where("sandbox.externalId", "is not", null)
     // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
     // deadlock by each holding the row the other plans to claim next.
     .orderBy("id")
@@ -214,6 +217,9 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
         ])
         .where("sandbox.id", "=", candidate.id)
         .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
+        // Re-check under the row lock: provider-loss recovery can clear the id after the outer
+        // sweep selected this candidate.
+        .where("sandbox.externalId", "is not", null)
         .forUpdate("sandbox")
         .executeTakeFirst()
       if (sandbox === undefined) return false

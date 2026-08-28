@@ -170,6 +170,49 @@ describe.skipIf(!up)("usage this period", () => {
     })
   })
 
+  it("adds sandbox provider cost without increasing platform overhead", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+
+    await meter("sandbox_cpu_second", "3600")
+
+    const after = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    expect(
+      BigInt(after.json.subtotalMicroUsd as string) -
+        BigInt(before.json.subtotalMicroUsd as string),
+    ).toBe(rateTimesQuantity("14", "3600"))
+    expect(after.json.overheadMicroUsd).toBe(before.json.overheadMicroUsd)
+  })
+
+  it("keeps agent duration out of customer cost lines", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    await meter("agent_run_second", "3600")
+    const after = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+
+    expect((after.json.lines as Json[]).some((line) => line.dimension === "agent_run_second")).toBe(
+      false,
+    )
+    expect(after.json.totalMicroUsd).toBe(before.json.totalMicroUsd)
+  })
+
+  it("applies 2% only to Postgres compute and 0% to Postgres storage", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    await meter("db_compute_cu_second", "3600")
+    const afterCompute = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+
+    const compute = rateTimesQuantity("29.444444444", "3600")
+    expect(
+      BigInt(afterCompute.json.overheadMicroUsd as string) -
+        BigInt(before.json.overheadMicroUsd as string),
+    ).toBe(overhead(compute, 200))
+
+    await meter("db_storage_gb_month", "1")
+    const afterStorage = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    expect(afterStorage.json.overheadMicroUsd).toBe(afterCompute.json.overheadMicroUsd)
+  })
+
   it("counts each rollup grain once", async ({ skip }) => {
     if (!up) skip()
     /*
@@ -206,14 +249,34 @@ describe.skipIf(!up)("usage this period", () => {
       to be wrong by three orders of magnitude — and the direction of that error is charging a
       customer 730 times what they owe, or a 730th.
     */
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const beforeLine = (before.json.lines as Json[]).find(
+      (row) => row.dimension === "db_storage_gib_hour",
+    )
     await meter("db_storage_gib_hour", "1460")
 
     const response = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
     const line = (response.json.lines as Json[]).find(
       (row) => row.dimension === "db_storage_gib_hour",
     )
-    expect(line?.quantity).toBe("2")
+    expect(Number(line?.quantity) - Number(beforeLine?.quantity ?? 0)).toBe(2)
     expect(line?.unit).toBe("GiB-months")
+  })
+
+  it("shows current Neon storage directly in decimal GB-months", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const beforeLine = (before.json.lines as Json[]).find(
+      (row) => row.dimension === "db_storage_gb_month",
+    )
+    await meter("db_storage_gb_month", "2.5")
+
+    const response = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    const line = (response.json.lines as Json[]).find(
+      (row) => row.dimension === "db_storage_gb_month",
+    )
+    expect(Number(line?.quantity) - Number(beforeLine?.quantity ?? 0)).toBe(2.5)
+    expect(line?.unit).toBe("GB-months")
   })
 
   it("keeps a quantity that does not fit a JavaScript number", async ({ skip }) => {

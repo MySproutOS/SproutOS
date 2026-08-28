@@ -20,8 +20,7 @@ export const NEON_CONSUMPTION_LAG_MS = 30 * 60 * 1000
 // becoming invalid between constructing it and Neon receiving it.
 export const NEON_CONSUMPTION_LOOKBACK_MS = 167 * 60 * 60 * 1000
 
-const GIB = 1_073_741_824n
-const STORAGE_HOURS_PER_MONTH = 730n
+const GB = 1_000_000_000n
 const QUANTITY_SCALE = 1_000_000_000n
 
 type NeonConsumptionClient = {
@@ -63,15 +62,14 @@ export function neonConsumptionCutoff(now: Date): Date {
 }
 
 /**
- * Convert Neon's exact byte-month integer into this price book's GiB-hour unit.
+ * Convert Neon's exact byte-month integer into its invoice-aligned GB-month unit.
  *
- * The price book displays 730 GiB-hours as one GiB-month. Integer arithmetic keeps the provider
- * value exact until the final Decimal(38,9) boundary; any sub-nanounit remainder is truncated, so
- * representation loss can never round a customer's charge upward.
+ * Neon defines GB as 10^9 bytes. Its v2 values have already converted byte-hours using Neon's
+ * fixed 744-hour billing month, so applying another time conversion would be wrong.
  */
-export function neonByteMonthsToGibHours(byteMonths: bigint): string {
+export function neonByteMonthsToGbMonths(byteMonths: bigint): string {
   if (byteMonths < 0n) throw new RangeError("Neon byte-months cannot be negative")
-  const scaled = (byteMonths * STORAGE_HOURS_PER_MONTH * QUANTITY_SCALE) / GIB
+  const scaled = (byteMonths * QUANTITY_SCALE) / GB
   const whole = scaled / QUANTITY_SCALE
   const fraction = (scaled % QUANTITY_SCALE).toString().padStart(9, "0").replace(/0+$/, "")
   return fraction === "" ? whole.toString() : `${whole}.${fraction}`
@@ -270,16 +268,39 @@ async function persistProject(
       if (root + child > 0n) {
         const event = usageEventRecord({
           ...common,
-          externalId: `${candidate.backendServiceId}:db_storage_gib_hour:${timeframe.start.toISOString()}`,
-          dimension: "db_storage_gib_hour",
-          quantity: neonByteMonthsToGibHours(root + child),
+          externalId: `${candidate.backendServiceId}:db_storage_gb_month:${timeframe.start.toISOString()}`,
+          dimension: "db_storage_gb_month",
+          quantity: neonByteMonthsToGbMonths(root + child),
           attributes: {
             provider: "neon",
             provider_project_id: candidate.providerProjectId,
             provider_period_ids: providerPeriods,
             root_branch_bytes_month: root.toString(),
             child_branch_bytes_month: child.toString(),
-            conversion: "byte_month*730/1073741824",
+            conversion: "byte_month/1000000000",
+          },
+        })
+        await outbox.create({
+          id: v7(),
+          eventId: event.eventId,
+          payload: JSON.parse(encodeUsageEvent(event)) as JsonValue,
+        })
+        emitted++
+      }
+
+      const history = timeframe.metrics.get("instant_restore_bytes_month") ?? 0n
+      if (history > 0n) {
+        const event = usageEventRecord({
+          ...common,
+          externalId: `${candidate.backendServiceId}:db_history_storage_gb_month:${timeframe.start.toISOString()}`,
+          dimension: "db_history_storage_gb_month",
+          quantity: neonByteMonthsToGbMonths(history),
+          attributes: {
+            provider: "neon",
+            provider_project_id: candidate.providerProjectId,
+            provider_period_ids: providerPeriods,
+            instant_restore_bytes_month: history.toString(),
+            conversion: "byte_month/1000000000",
           },
         })
         await outbox.create({

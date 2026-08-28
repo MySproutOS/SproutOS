@@ -1,5 +1,5 @@
 import { balances, BelowMinimumTopupError, begin, MINIMUM_TOPUP, quote, stripe } from "@lib/billing"
-import { overhead, rateTimesQuantity } from "@lib/billing/money"
+import { groupedOverhead, rateTimesQuantity } from "@lib/billing/money"
 import { startOfMonth } from "@lib/billing/usage"
 import { crudAuditLog } from "@lib/dao"
 import { db } from "@sproutos/db"
@@ -443,13 +443,12 @@ async function ensureStripeCustomer(organizationId: string, name: string): Promi
 /**
  * How each metered dimension is named and counted for a person.
  *
- * The database's dimension names are units of measurement — `site_vcpu_second`, `db_storage_gib_hour`
+ * The database's dimension names are units of measurement — `site_gib_second`, `db_storage_gb_month`
  * — which is right for a meter and wrong for a bill. Nobody reconciles an invoice against
  * "valkey_queue_byte_second".
  *
- * `divisor` converts the stored quantity into the unit shown. Storage is metered per GiB-*hour* and
- * read per GiB-*month*, which is a factor of 730 and the single easiest place to be wrong by three
- * orders of magnitude.
+ * `divisor` converts the stored quantity into the unit shown. Current Neon storage is already in
+ * decimal GB-months; the legacy GiB-hour line remains readable for current-period compatibility.
  */
 const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: number }> = {
   // The compute line. GB-seconds is what Lambda bills and what appears on our own AWS invoice, so
@@ -459,11 +458,13 @@ const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: 
   site_request: { label: "Requests", unit: "requests", divisor: 1 },
   site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },
   db_storage_gib_hour: { label: "Postgres storage", unit: "GiB-months", divisor: 730 },
+  db_storage_gb_month: { label: "Postgres storage", unit: "GB-months", divisor: 1 },
+  db_history_storage_gb_month: { label: "History storage", unit: "GB-months", divisor: 1 },
   db_compute_cu_second: { label: "Postgres compute", unit: "CU-hours", divisor: 3600 },
   es_storage_gib_hour: { label: "Search storage", unit: "GiB-months", divisor: 730 },
   es_search_unit: { label: "Search queries", unit: "queries", divisor: 1 },
   valkey_queue_byte_second: {
-    label: "Queue residency",
+    label: "Queue storage",
     unit: "GiB-hours",
     divisor: 3_865_470_566_400,
   },
@@ -473,7 +474,24 @@ const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: 
   ai_input_token: { label: "AI input", unit: "tokens", divisor: 1 },
   ai_output_token: { label: "AI output", unit: "tokens", divisor: 1 },
   ai_cache_read_token: { label: "AI cache reads", unit: "tokens", divisor: 1 },
+  ai_cache_write_token: { label: "AI cache writes", unit: "tokens", divisor: 1 },
+  ai_long_context_input_token: { label: "AI long-context input", unit: "tokens", divisor: 1 },
+  ai_long_context_output_token: { label: "AI long-context output", unit: "tokens", divisor: 1 },
+  ai_long_context_cache_read_token: {
+    label: "AI long-context cache reads",
+    unit: "tokens",
+    divisor: 1,
+  },
+  ai_long_context_cache_write_token: {
+    label: "AI long-context cache writes",
+    unit: "tokens",
+    divisor: 1,
+  },
   agent_run_second: { label: "Agent time", unit: "hours", divisor: 3600 },
+  sandbox_cpu_second: { label: "Sandbox CPU", unit: "vCPU-hours", divisor: 3600 },
+  sandbox_gib_second: { label: "Sandbox memory", unit: "GiB-hours", divisor: 3600 },
+  sandbox_disk_gib_second: { label: "Sandbox disk", unit: "GiB-hours", divisor: 3600 },
+  sandbox_egress_byte: { label: "Sandbox egress", unit: "GB", divisor: 1_000_000_000 },
 }
 
 /**
@@ -558,20 +576,25 @@ app
 
       const items = await db
         .selectFrom("priceBookItem")
-        .select(["dimension", "unitMicroUsd"])
+        .select(["dimension", "unitMicroUsd", "overheadBps"])
         .where("priceBookId", "=", book.id)
         .execute()
-      const rates = new Map(items.map((item) => [item.dimension, item.unitMicroUsd]))
+      const rates = new Map(items.map((item) => [item.dimension, item]))
 
       let subtotal = 0n
+      const feeItems: { usageCost: bigint; overheadBps: number | null }[] = []
       const lines = rows
+        // Duration remains in operational metering, but is not a customer cost. Provider-backed
+        // sandbox and token dimensions already account for the resources the run consumed.
+        .filter((row) => row.dimension !== "agent_run_second")
         .map((row) => {
-          const rate = rates.get(row.dimension)
-          if (rate === undefined) throw new Error(`No price book entry for ${row.dimension}`)
+          const item = rates.get(row.dimension)
+          if (item === undefined) throw new Error(`No price book entry for ${row.dimension}`)
           // BYO model tokens remain visible as usage, but their provider already billed the user.
           // Only the part SproutOS funded belongs in this page's Cost column and overhead subtotal.
-          const amount = rateTimesQuantity(String(rate), row.billableQuantity)
+          const amount = rateTimesQuantity(String(item.unitMicroUsd), row.billableQuantity)
           subtotal += amount
+          feeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
 
           const display = DIMENSION_DISPLAY[row.dimension] ?? {
             label: row.dimension,
@@ -588,8 +611,8 @@ app
         })
         // Most expensive first: a usage list is read to find out where the money went.
         .sort((a, b) => (BigInt(b.amountMicroUsd) > BigInt(a.amountMicroUsd) ? 1 : -1))
+      const platformOverhead = groupedOverhead(feeItems, book.overheadBps)
 
-      const platformOverhead = overhead(subtotal, book.overheadBps)
       const total = subtotal + platformOverhead
 
       /*

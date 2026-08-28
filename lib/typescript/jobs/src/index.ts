@@ -115,7 +115,7 @@ export {
   meterNeonDatabases,
   meterNeonDatabasesJob,
   METER_NEON_DATABASES_KIND,
-  neonByteMonthsToGibHours,
+  neonByteMonthsToGbMonths,
   neonConsumptionCutoff,
   NEON_CONSUMPTION_BATCH_SIZE,
   NEON_CONSUMPTION_LAG_MS,

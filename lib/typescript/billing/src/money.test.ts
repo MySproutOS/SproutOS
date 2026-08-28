@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
   ceilDiv,
   creditedAmount,
+  groupedOverhead,
   formatBalanceMicroUsd,
   formatMicroUsd,
+  itemOverhead,
   MICRO_PER_USD,
   MINIMUM_TOPUP,
   overhead,
@@ -48,6 +50,26 @@ describe("overhead", () => {
   it("rounds up rather than losing the remainder on every event", () => {
     expect(overhead(1n, 1200)).toBe(1n)
     expect(overhead(0n, 1200)).toBe(0n)
+  })
+
+  it("uses a dimension override, including an explicit zero, or inherits the book default", () => {
+    expect(itemOverhead(1_000_000n, 200, 1200)).toBe(20_000n)
+    expect(itemOverhead(1_000_000n, 0, 1200)).toBe(0n)
+    expect(itemOverhead(1_000_000n, null, 1200)).toBe(120_000n)
+  })
+
+  it("rounds once per effective fee rate", () => {
+    expect(
+      groupedOverhead(
+        [
+          { usageCost: 1n, overheadBps: null },
+          { usageCost: 1n, overheadBps: 1200 },
+          { usageCost: 1n, overheadBps: 200 },
+          { usageCost: 1n, overheadBps: 0 },
+        ],
+        1200,
+      ),
+    ).toBe(2n)
   })
 })
 

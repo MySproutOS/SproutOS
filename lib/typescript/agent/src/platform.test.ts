@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type OpenAiUsage, toTokenUsage } from "./platform"
+import { type OpenAiUsage, platformModel, toTokenUsage } from "./platform"
 
 function usage(overrides: Partial<OpenAiUsage> = {}): OpenAiUsage {
   return { prompt_tokens: 0, completion_tokens: 0, ...overrides }
@@ -16,6 +16,7 @@ describe("toTokenUsage", () => {
       inputTokens: 94,
       outputTokens: 139,
       cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     })
   })
 
@@ -30,7 +31,12 @@ describe("toTokenUsage", () => {
           prompt_tokens_details: { cached_tokens: 9_000 },
         }),
       ),
-    ).toEqual({ inputTokens: 1_000, outputTokens: 50, cacheReadTokens: 9_000 })
+    ).toEqual({
+      inputTokens: 1_000,
+      outputTokens: 50,
+      cacheReadTokens: 9_000,
+      cacheWriteTokens: 0,
+    })
   })
 
   it("does not add reasoning tokens on top of the completion count", () => {
@@ -59,5 +65,52 @@ describe("toTokenUsage", () => {
         }),
       ).inputTokens,
     ).toBe(0)
+  })
+
+  it("keeps a request above 272K in separately priced long-context buckets", () => {
+    expect(
+      toTokenUsage(
+        usage({
+          prompt_tokens: 300_000,
+          completion_tokens: 1_000,
+          prompt_tokens_details: { cached_tokens: 50_000 },
+        }),
+      ),
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      longContextInputTokens: 250_000,
+      longContextOutputTokens: 1_000,
+      longContextCacheReadTokens: 50_000,
+      longContextCacheWriteTokens: 0,
+    })
+  })
+
+  it("splits cached reads and writes out of total input without double charging either", () => {
+    expect(
+      toTokenUsage(
+        usage({
+          prompt_tokens: 300_000,
+          completion_tokens: 1_000,
+          prompt_tokens_details: { cached_tokens: 50_000, cache_write_tokens: 20_000 },
+        }),
+      ),
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      longContextInputTokens: 230_000,
+      longContextOutputTokens: 1_000,
+      longContextCacheReadTokens: 50_000,
+      longContextCacheWriteTokens: 20_000,
+    })
+  })
+})
+
+describe("platformModel", () => {
+  it("defaults to Terra and refuses an unpriced platform model", () => {
+    expect(platformModel()).toBe("gpt-5.6-terra")
+    expect(() => platformModel("gpt-5")).toThrow("supports only gpt-5.6-terra")
   })
 })

@@ -67,6 +67,10 @@ pub enum UsageDimension {
     SiteEgressByte,
     /// Database storage, in GiB-hours.
     DbStorageGibHour,
+    /// Current Neon database storage, in decimal GB-months.
+    DbStorageGbMonth,
+    /// Neon instant-restore history storage, in decimal GB-months.
+    DbHistoryStorageGbMonth,
     /// Database compute, in compute-unit seconds.
     DbComputeCuSecond,
     /// Search index storage, in GiB-hours.
@@ -87,6 +91,15 @@ pub enum UsageDimension {
     AiOutputToken,
     /// One token read from an AI prompt cache.
     AiCacheReadToken,
+    /// One token written to an AI prompt cache at the provider's write rate.
+    AiCacheWriteToken,
+    /// One input token on a request above the provider's long-context threshold.
+    AiLongContextInputToken,
+    /// One output token on a request above the provider's long-context threshold.
+    AiLongContextOutputToken,
+    /// One cached input token on a request above the provider's long-context threshold.
+    AiLongContextCacheReadToken,
+    AiLongContextCacheWriteToken,
     /// One second spent running a coding agent.
     AgentRunSecond,
     /// Sandbox CPU allocation, in vCPU-seconds.
@@ -105,6 +118,8 @@ impl UsageDimension {
         Self::SiteRequest,
         Self::SiteEgressByte,
         Self::DbStorageGibHour,
+        Self::DbStorageGbMonth,
+        Self::DbHistoryStorageGbMonth,
         Self::DbComputeCuSecond,
         Self::EsStorageGibHour,
         Self::EsSearchUnit,
@@ -115,6 +130,11 @@ impl UsageDimension {
         Self::AiInputToken,
         Self::AiOutputToken,
         Self::AiCacheReadToken,
+        Self::AiCacheWriteToken,
+        Self::AiLongContextInputToken,
+        Self::AiLongContextOutputToken,
+        Self::AiLongContextCacheReadToken,
+        Self::AiLongContextCacheWriteToken,
         Self::AgentRunSecond,
         Self::SandboxCpuSecond,
         Self::SandboxGibSecond,
@@ -129,6 +149,8 @@ impl UsageDimension {
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
             Self::DbStorageGibHour => "db_storage_gib_hour",
+            Self::DbStorageGbMonth => "db_storage_gb_month",
+            Self::DbHistoryStorageGbMonth => "db_history_storage_gb_month",
             Self::DbComputeCuSecond => "db_compute_cu_second",
             Self::EsStorageGibHour => "es_storage_gib_hour",
             Self::EsSearchUnit => "es_search_unit",
@@ -139,6 +161,11 @@ impl UsageDimension {
             Self::AiInputToken => "ai_input_token",
             Self::AiOutputToken => "ai_output_token",
             Self::AiCacheReadToken => "ai_cache_read_token",
+            Self::AiCacheWriteToken => "ai_cache_write_token",
+            Self::AiLongContextInputToken => "ai_long_context_input_token",
+            Self::AiLongContextOutputToken => "ai_long_context_output_token",
+            Self::AiLongContextCacheReadToken => "ai_long_context_cache_read_token",
+            Self::AiLongContextCacheWriteToken => "ai_long_context_cache_write_token",
             Self::AgentRunSecond => "agent_run_second",
             Self::SandboxCpuSecond => "sandbox_cpu_second",
             Self::SandboxGibSecond => "sandbox_gib_second",

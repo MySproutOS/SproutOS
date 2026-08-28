@@ -98,7 +98,7 @@ describe("project consumption", () => {
       expect(requests[0]?.searchParams.get("granularity")).toBe("hourly")
       expect(requests[0]?.searchParams.get("project_ids")).toBe("project-a,project-b")
       expect(requests[0]?.searchParams.get("metrics")).toBe(
-        "compute_unit_seconds,root_branch_bytes_month,child_branch_bytes_month",
+        "compute_unit_seconds,root_branch_bytes_month,child_branch_bytes_month,instant_restore_bytes_month",
       )
       expect(requests[1]?.searchParams.get("cursor")).toBe("next-page")
     } finally {

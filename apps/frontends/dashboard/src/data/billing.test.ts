@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { creditRunway } from "./billing"
+import { creditRunway, usageCategory, usageDescription } from "./billing"
 
 /**
  * The line under the balance in the sidebar.
@@ -41,5 +41,19 @@ describe("creditRunway", () => {
     expect(creditRunway(30n * perDay, perDay).percentRemaining).toBe(100)
     expect(creditRunway(365n * perDay, perDay).percentRemaining).toBe(100)
     expect(creditRunway(15n * perDay, perDay).percentRemaining).toBe(50)
+  })
+})
+
+describe("usage service categories", () => {
+  it("keeps queue storage under Cache without calling it ordinary cache usage", () => {
+    expect(usageCategory("valkey_queue_byte_second")).toBe("Cache")
+    expect(usageCategory("valkey_cache_byte_second")).toBe("Cache")
+    expect(usageDescription("valkey_queue_byte_second")).toContain(
+      "queue data and metadata stored over time",
+    )
+    expect(usageCategory("sandbox_cpu_second")).toBe("Sandbox")
+    expect(usageCategory("db_compute_cu_second")).toBe("Postgres")
+    expect(usageCategory("ai_input_token")).toBe("AI")
+    expect(usageCategory("agent_run_second")).toBe("Other")
   })
 })

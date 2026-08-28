@@ -1,5 +1,6 @@
 import { formatBalanceMicroUsd, formatMicroUsd } from "@lib/billing/money"
 import { createFileRoute } from "@tanstack/react-router"
+import { Fragment } from "react"
 import { Badge } from "@ui/base/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/base/ui/card"
 import { Money } from "@ui/base/ui/money"
@@ -82,14 +83,28 @@ function BillingSettings() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {usage.data.map((line) => (
-                    <TableRow key={line.id}>
-                      <TableCell>{line.label}</TableCell>
-                      <TableCell numeric className="text-right">
-                        {line.quantity}
-                      </TableCell>
-                      <TableCell money>{formatMicroUsd(line.costMicros)}</TableCell>
-                    </TableRow>
+                  {usage.data.map((line, index) => (
+                    <Fragment key={line.id}>
+                      {usage.data?.[index - 1]?.category !== line.category && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="bg-muted/30 text-xs font-medium">
+                            {line.category}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      <TableRow>
+                        <TableCell>
+                          <div>{line.label}</div>
+                          {line.description !== null && (
+                            <div className="text-xs text-muted-foreground">{line.description}</div>
+                          )}
+                        </TableCell>
+                        <TableCell numeric className="text-right">
+                          {line.quantity}
+                        </TableCell>
+                        <TableCell money>{formatMicroUsd(line.costMicros)}</TableCell>
+                      </TableRow>
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>
