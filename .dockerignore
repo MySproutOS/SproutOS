@@ -1,0 +1,16 @@
+.git
+.env*
+node_modules
+**/node_modules
+.turbo
+.pnpm-store
+**/.next
+apps/website/.next
+**/dist
+**/build
+**/*.tsbuildinfo
+target
+tofu/.terraform
+tofu/*.tfplan
+tofu/*.tfstate*
+private_notes
