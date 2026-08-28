@@ -184,10 +184,11 @@ resource "aws_ecs_task_definition" "web" {
 
       portMappings = [{
         containerPort = 8080
-        # 0 means ECS picks an ephemeral host port and registers it with the target group. Fixed
-        # ports would prevent two tasks of the same service ever sharing an instance, which is the
-        # thing bridge mode is here to allow.
-        hostPort = 0
+        # The service security group intentionally exposes only this exact port from the ALB. An
+        # ephemeral host port registers successfully but every health check then times out. Fixed
+        # is safe because the service's 100/0 deployment policy replaces rather than overlaps tasks,
+        # and the task's memory reservation already limits this instance to one copy.
+        hostPort = 8080
         protocol = "tcp"
       }]
 
@@ -215,8 +216,9 @@ resource "aws_ecs_task_definition" "web" {
 
       portMappings = [{
         containerPort = 3001
-        hostPort      = 0
-        protocol      = "tcp"
+        # Same fixed-port/security-group contract as the website listener above.
+        hostPort = 3001
+        protocol = "tcp"
       }]
 
       environment = [
