@@ -9,14 +9,17 @@ use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sprout_core::{
-    ApiClient, ApiClientConfig, ArtifactPackager, DeployArtifactInput, DeployEvent, DeployHttpApi,
-    DeployRequest, Deployer, PackageKind, PackagingLimits, PollConfig, SproutError, StaticPath,
+    ApiCatalogueResolver, ApiClient, ApiClientConfig, ApplyLimits, ArtifactLimits,
+    ArtifactPackager, CosignProvenanceVerifier, DeployArtifactInput, DeployEvent, DeployHttpApi,
+    DeployRequest, Deployer, NativeIsolationProvider, PackageKind, PackagingLimits, PluginTarget,
+    PollConfig, SproutError, StaticPath, TemplateSelector, apply_template, resolve_template,
+    verify_template,
 };
 use url::Url;
 
 use crate::{
     Backend, CliError, Result,
-    cli::{DeployArgs, DeployEnvironment, DeployPreset, TemplateCommand},
+    cli::{DeployArgs, DeployEnvironment, DeployPreset, TemplateCommand, TemplateTarget},
     request::{ApiRequest, Method as CliMethod},
 };
 
@@ -204,14 +207,123 @@ impl Backend for CoreBackend {
         })
     }
 
-    async fn template(&self, _command: &TemplateCommand, _token: &str) -> Result<Value> {
-        // Native isolation now exists in sprout-core, but no production catalogue resolver or
-        // Sigstore policy is wired into the CLI yet. Failing closed is part of the contract;
-        // direct or unverified execution is never a fallback.
-        Err(map_core_error(SproutError::IsolationUnavailable(
-            "verified template execution is not available in this release".into(),
-        )))
+    async fn template(&self, command: &TemplateCommand, token: &str) -> Result<Value> {
+        let (template, upstream_commit, selected_target) = match command {
+            TemplateCommand::Resolve {
+                template,
+                upstream_commit,
+                target,
+            }
+            | TemplateCommand::Verify {
+                template,
+                upstream_commit,
+                target,
+            }
+            | TemplateCommand::Apply {
+                template,
+                upstream_commit,
+                target,
+                ..
+            } => (template, upstream_commit, *target),
+        };
+        let target = selected_target
+            .map(plugin_target)
+            .map_or_else(PluginTarget::current, Ok)
+            .map_err(map_core_error)?;
+        let selector = TemplateSelector {
+            template_id: template.clone(),
+            upstream_commit: upstream_commit.clone(),
+            target,
+        };
+        let resolver = ApiCatalogueResolver::new(self.client(Some(token))?);
+        let resolved = resolve_template(&resolver, &selector)
+            .await
+            .map_err(map_core_error)?;
+
+        match command {
+            TemplateCommand::Resolve { .. } => serde_json::to_value(resolved).map_err(|error| {
+                CliError::Configuration(format!("could not encode template resolution: {error}"))
+            }),
+            TemplateCommand::Verify { .. } => {
+                let verifier = CosignProvenanceVerifier::detect().map_err(map_core_error)?;
+                let verification = verify_template(&resolved, verifier, ArtifactLimits::default())
+                    .await
+                    .map_err(map_core_error)?;
+                serde_json::to_value(verification).map_err(|error| {
+                    CliError::Configuration(format!(
+                        "could not encode template verification: {error}"
+                    ))
+                })
+            }
+            TemplateCommand::Apply {
+                workspace, input, ..
+            } => {
+                validate_template_input(&resolved, input)?;
+                if !workspace.join(".git").exists() {
+                    return Err(CliError::InvalidInput(
+                        "template workspace must be a checked-out Git repository".into(),
+                    ));
+                }
+                if target != PluginTarget::current().map_err(map_core_error)? {
+                    return Err(map_core_error(SproutError::ArtifactRejected(format!(
+                        "cannot execute a {target} plugin on this platform"
+                    ))));
+                }
+                // Detect both mandatory local boundaries before any artifact bytes are fetched.
+                let isolation = NativeIsolationProvider::detect().map_err(map_core_error)?;
+                let verifier = CosignProvenanceVerifier::detect().map_err(map_core_error)?;
+                let applied = apply_template(
+                    &resolved,
+                    workspace,
+                    verifier,
+                    isolation,
+                    ArtifactLimits::default(),
+                    ApplyLimits::default(),
+                )
+                .await
+                .map_err(map_core_error)?;
+                serde_json::to_value(applied).map_err(|error| {
+                    CliError::Configuration(format!("could not encode template result: {error}"))
+                })
+            }
+        }
     }
+}
+
+fn plugin_target(target: TemplateTarget) -> PluginTarget {
+    match target {
+        TemplateTarget::LinuxAmd64Musl => PluginTarget::LinuxAmd64Musl,
+        TemplateTarget::LinuxArm64Musl => PluginTarget::LinuxArm64Musl,
+        TemplateTarget::DarwinAmd64 => PluginTarget::DarwinAmd64,
+        TemplateTarget::DarwinArm64 => PluginTarget::DarwinArm64,
+        TemplateTarget::WindowsAmd64 => PluginTarget::WindowsAmd64,
+    }
+}
+
+fn validate_template_input(resolved: &sprout_core::ResolvedTemplate, input: &str) -> Result<()> {
+    let expected = serde_json::to_value(&resolved.request).map_err(|error| {
+        CliError::Configuration(format!(
+            "could not inspect resolved template request: {error}"
+        ))
+    })?;
+    let supplied: Value = serde_json::from_str(input)
+        .map_err(|error| CliError::InvalidInput(format!("--input is not JSON: {error}")))?;
+    let supplied = supplied
+        .as_object()
+        .ok_or_else(|| CliError::InvalidInput("template --input must be a JSON object".into()))?;
+    for (key, value) in supplied {
+        let expected_value = expected.get(key).ok_or_else(|| {
+            CliError::InvalidInput(format!(
+                "template --input contains unsupported structural field `{key}`"
+            ))
+        })?;
+        if value != expected_value {
+            return Err(CliError::InvalidInput(format!(
+                "template --input field `{key}` differs from the authoritative signed catalogue"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn static_asset_input(

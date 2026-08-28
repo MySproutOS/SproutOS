@@ -319,6 +319,12 @@ fn destructive_prompt(command: &Command) -> String {
         Command::Service(ServiceArgs {
             command: ServiceCommand::Delete { service },
         }) => format!("Delete service `{service}` and its stored data?"),
+        Command::Template(TemplateArgs {
+            command: TemplateCommand::Apply { workspace, .. },
+        }) => format!(
+            "Apply the signed deployment template to `{}`?",
+            workspace.display()
+        ),
         _ => format!("Continue with {}?", request::command_name(command)),
     }
 }
@@ -368,6 +374,29 @@ fn human_summary(command: &str, data: &Value) -> Option<String> {
         } else {
             "Logged out.".into()
         }),
+        "template.resolve" => Some(format!(
+            "Resolved {} at {} to {} for {} (catalogue source {}).",
+            data.get("template_id")?.as_str()?,
+            data.get("upstream_commit")?.as_str()?,
+            data.get("plugin_digest")?.as_str()?,
+            data.get("target")?.as_str()?,
+            data.pointer("/provenance/source_commit")?.as_str()?
+        )),
+        "template.verify" => Some(format!(
+            "Verified {} at {} as {} for {} (catalogue source {}, platform manifest {}).",
+            data.get("template_id")?.as_str()?,
+            data.get("upstream_commit")?.as_str()?,
+            data.get("plugin_digest")?.as_str()?,
+            data.get("target")?.as_str()?,
+            data.get("source_commit")?.as_str()?,
+            data.get("manifest_digest")?.as_str()?
+        )),
+        "template.apply" => Some(format!(
+            "Applied verified template {} at {}; {} workspace change(s).",
+            data.pointer("/verification/template_id")?.as_str()?,
+            data.pointer("/verification/upstream_commit")?.as_str()?,
+            data.pointer("/result/changes")?.as_array()?.len()
+        )),
         _ => None,
     }
 }

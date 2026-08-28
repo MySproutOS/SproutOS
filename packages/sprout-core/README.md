@@ -13,11 +13,12 @@ Plugin execution is fail-closed: callers must supply an `IsolationProvider`. An 
 responsible for constructing an OS-contained command with no network access, only the workspace
 writable, and descendant-process containment. There is no public "run directly" fallback.
 
-`template resolve`, `template verify`, and `template apply` frontends must report the corresponding
-structured unavailable error until all three production providers are wired: the canonical
-catalogue resolver, a verifier for the pinned Deployment-Templates GitHub keyless provenance, and
-an OS isolation provider. A missing provider is not permission to download by tag, skip provenance,
-or launch the executable directly.
+`template resolve`, `template verify`, and `template apply` compose the authenticated catalogue
+resolver, the verifier for the pinned Deployment-Templates GitHub keyless provenance, and the OS
+isolation provider here. The native consumer repeats the exact repository, workflow, ref, source
+commit, digest, and protocol-identity checks after resolution. A missing provider returns its
+structured unavailable or rejected error; it is never permission to download by tag, skip
+provenance, or launch the executable directly.
 
 ## Native plugin isolation
 

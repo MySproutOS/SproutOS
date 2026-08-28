@@ -586,6 +586,47 @@ printf '{"changes":[{"path":"generated.txt","kind":"create"}]}'"#,
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn deterministic_plugin_can_be_applied_idempotently() {
+        let workspace = tempdir().unwrap();
+        let (_plugin_dir, plugin) = executable(
+            r#"cat >/dev/null
+if [ -f generated.txt ]; then
+  test "$(cat generated.txt)" = created
+  printf '{"changes":[]}'
+else
+  printf created > generated.txt
+  printf '{"changes":[{"path":"generated.txt","kind":"create"}]}'
+fi"#,
+        );
+        let runner = PluginRunner::new(TestIsolation, ApplyLimits::default());
+        let first = runner
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({"version": 1}),
+            )
+            .await
+            .unwrap();
+        let second = runner
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({"version": 1}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.changes.len(), 1);
+        assert!(second.changes.is_empty());
+        assert_eq!(
+            fs::read(workspace.path().join("generated.txt")).unwrap(),
+            b"created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn unreported_diff_is_rejected() {
         let workspace = tempdir().unwrap();
         let (_plugin_dir, plugin) = executable(

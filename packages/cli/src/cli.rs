@@ -434,7 +434,7 @@ pub enum TemplateCommand {
         target: Option<TemplateTarget>,
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
-        /// Non-secret structural JSON passed to the isolated plugin.
+        /// Optional non-secret structural assertions; every supplied field must equal the signed catalogue request.
         #[arg(long, default_value = "{}")]
         input: String,
     },
@@ -615,6 +615,8 @@ pub fn destructive(command: &Command) -> bool {
             command: EnvCommand::Unset { .. }
         }) | Command::Service(ServiceArgs {
             command: ServiceCommand::Delete { .. }
+        }) | Command::Template(TemplateArgs {
+            command: TemplateCommand::Apply { .. }
         })
     )
 }

@@ -63,6 +63,13 @@ without mutating the source tree. Android accepts one raw unsigned APK (or a dir
 exactly one such APK for Marketplace Action compatibility) and uploads its original bytes as
 `application/vnd.android.package-archive`.
 
+`sprout template resolve` reads one exact upstream commit from the authenticated, signed-catalogue
+resolution endpoint. `template verify` downloads that immutable digest and verifies its pinned
+Deployment-Templates keyless provenance. `template apply` additionally requires confirmation,
+checks that the workspace is a Git checkout, detects the fail-closed native isolation boundary
+before downloading plugin bytes, and applies only the signed structural request. `--input` may
+assert fields from that request but cannot override the imported catalogue snapshot.
+
 The legacy deploy environment `development` remains accepted as an alias for `preview`; both use
 the backend's collision-safe pull-request preview identity rules.
 

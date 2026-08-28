@@ -233,6 +233,53 @@ describe.skipIf(!reachable)("project routes", () => {
     await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
   })
 
+  describe("resolving the signed template for native clients", () => {
+    it("returns exact catalogue, plugin, source commit, and publisher provenance", async () => {
+      const upstreamCommit = fixtureHex.repeat(2).slice(0, 40)
+      const response = await call("POST", "/v1/templates/resolve", alice, {
+        template_id: listingSlug,
+        upstream_commit: upstreamCommit,
+        target: "linux_amd64_musl",
+      })
+
+      expect(response.status).toBe(200)
+      expect(response.json).toMatchObject({
+        template_id: listingSlug,
+        upstream_commit: upstreamCommit,
+        plugin_reference: `ghcr.io/mysproutos/project-test-plugin@sha256:${fixtureHex.repeat(2)}`,
+        plugin_digest: `sha256:${fixtureHex.repeat(2)}`,
+        target: "linux_amd64_musl",
+        provenance: {
+          repository: "MySproutOS/Deployment-Templates",
+          workflow: ".github/workflows/publish.yml",
+          git_ref: "refs/heads/main",
+          source_commit: upstreamCommit,
+          oidc_issuer: "https://token.actions.githubusercontent.com",
+          workflow_identity:
+            "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+          github_hosted_runner: true,
+        },
+      })
+      expect((response.json.request as Json).template).toMatchObject({
+        id: listingSlug,
+        catalogue_digest: `sha256:${fixtureHex.repeat(2)}`,
+        manifest_digest: `sha256:${fixtureHex.repeat(2)}`,
+        plugin_digest: `sha256:${fixtureHex.repeat(2)}`,
+        upstream_commit: upstreamCommit,
+      })
+    })
+
+    it("does not resolve another upstream commit or an unauthenticated request", async () => {
+      const body = {
+        template_id: listingSlug,
+        upstream_commit: "f".repeat(40),
+        target: "linux_amd64_musl",
+      }
+      expect((await call("POST", "/v1/templates/resolve", alice, body)).status).toBe(404)
+      expect((await call("POST", "/v1/templates/resolve", null, body)).status).toBe(401)
+    })
+  })
+
   describe("creating a project", () => {
     it("requires a non-null region", async () => {
       const missing = await call(

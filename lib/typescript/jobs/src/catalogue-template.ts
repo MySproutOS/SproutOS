@@ -564,24 +564,35 @@ export async function applyCatalogueTemplate(input: {
 export function catalogueTemplateApplyRequest(
   context: CatalogueTemplateContext,
 ): Record<string, unknown> {
+  return catalogueTemplateApplyRequestFromManifest(context.manifest, {
+    catalogueDigest: context.catalogueDigest,
+    manifestDigest: context.manifestDigest,
+    pluginDigest: context.pluginDigest,
+  })
+}
+
+export function catalogueTemplateApplyRequestFromManifest(
+  manifest: CatalogueApp,
+  identity: { catalogueDigest: string; manifestDigest: string; pluginDigest: string },
+): Record<string, unknown> {
   return {
     protocol_version: 1,
     workspace: "/workspace",
     template: {
-      id: context.manifest.id,
-      catalogue_digest: context.catalogueDigest,
-      manifest_digest: context.manifestDigest,
-      plugin_digest: context.pluginDigest,
-      upstream_repository: context.manifest.repository.url,
-      upstream_commit: context.manifest.repository.commit,
+      id: manifest.id,
+      catalogue_digest: identity.catalogueDigest,
+      manifest_digest: identity.manifestDigest,
+      plugin_digest: identity.pluginDigest,
+      upstream_repository: manifest.repository.url,
+      upstream_commit: manifest.repository.commit,
     },
     deployment: {
-      preset: context.manifest.deployment.preset,
-      capabilities: context.manifest.deployment.required_capabilities,
+      preset: manifest.deployment.preset,
+      capabilities: manifest.deployment.required_capabilities,
     },
-    services: context.manifest.services,
-    user_inputs: context.manifest.user_inputs,
-    generated_inputs: context.manifest.generated_inputs,
+    services: manifest.services,
+    user_inputs: manifest.user_inputs,
+    generated_inputs: manifest.generated_inputs,
   }
 }
 
