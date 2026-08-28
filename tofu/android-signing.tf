@@ -213,6 +213,60 @@ resource "aws_s3_bucket_policy" "android_artifacts" {
   })
 }
 
+resource "aws_iam_policy" "android_custody_broker" {
+  name        = "${var.name_prefix}-android-custody-broker"
+  description = "Broker exact Android signing objects through the ordinary control-plane task."
+
+  # This is deliberately not part of aws_iam_policy.application. That policy is attached to the
+  # legacy EC2 host, Rust router, ordinary ECS task, and ACME task. Only the ordinary control-plane
+  # task runs the API/worker code that creates exact presigned custody operations.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = [
+          "${aws_s3_bucket.android_artifacts.arn}/raw/*",
+          "${aws_s3_bucket.android_artifacts.arn}/signed/*",
+        ]
+      },
+      {
+        # Keep recovery-sensitive encrypted keys independently visible in IAM review.
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = "${aws_s3_bucket.android_artifacts.arn}/keys/*"
+      },
+      {
+        # Bucket Keys make the bucket ARN the encryption context. ViaService and this exact context
+        # prevent direct KMS use or use through any other S3 bucket.
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = aws_kms_key.android_artifacts.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService"                   = "s3.${var.aws_region}.amazonaws.com"
+            "kms:EncryptionContext:aws:s3:arn" = aws_s3_bucket.android_artifacts.arn
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "task_android_custody_broker" {
+  role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.android_custody_broker.arn
+}
+
 /*
  * The API reports these namespace-scoped custom metrics from signer polls and normalized job
  * state. The on-prem signer still receives no AWS credential. Alarms are an explicit rollout

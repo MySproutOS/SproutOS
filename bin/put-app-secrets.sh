@@ -16,7 +16,9 @@
 set -euo pipefail
 
 ENV_FILE="${1:-.env}"
+AWS_BIN=${AWS_BIN:-aws}
 PARAMETER_PATH="${APPLICATION_PARAMETER_PATH:-/sproutos/application}"
+ANDROID_CUSTODY_PARAMETER_PATH="${ANDROID_CUSTODY_PARAMETER_PATH:-/sproutos/android-custody}"
 KMS_KEY_ALIAS="${APPLICATION_KMS_KEY_ALIAS:-alias/sproutos-secrets}"
 
 [ -f "$ENV_FILE" ] || { echo "no such file: $ENV_FILE" >&2; exit 1; }
@@ -105,6 +107,8 @@ KEYS=(
 # delivery-enable plan. Normal secret refreshes remain partial for backwards compatibility; this
 # mode refuses a missing custody value and writes no unrelated application secret.
 if [ "${ANDROID_CUSTODY_ONLY:-0}" = "1" ]; then
+  # These values must never share /application with the path-wide legacy/router/ACME grants.
+  PARAMETER_PATH=$ANDROID_CUSTODY_PARAMETER_PATH
   KEYS=(
     APK_SIGNER_TOKEN
     APK_SIGNER_OPERATOR_TOKEN
@@ -178,11 +182,11 @@ with open(os.environ["OUT"], "w", encoding="utf-8", opener=lambda p, f: os.open(
         "Type": "SecureString",
         "KeyId": os.environ["KEY_ID"],
         "Overwrite": True,
-        "Description": "Read at boot by the website, API and worker. Written by bin/put-app-secrets.sh.",
+        "Description": "Out-of-state runtime configuration written by bin/put-app-secrets.sh.",
     }, out)
 PYTHON
 
-  aws ssm put-parameter --cli-input-json "file://$WORK_DIR/request.json" \
+  "$AWS_BIN" ssm put-parameter --cli-input-json "file://$WORK_DIR/request.json" \
     --query 'Version' --output text >/dev/null
   rm -f "$WORK_DIR/request.json"
   count=$((count + 1))

@@ -36,7 +36,8 @@ SSE-KMS is a second storage-layer control. It does not replace the signer's clie
 only the on-prem master identity can open `keys/` ciphertext, and that identity never enters AWS.
 The bucket and KMS key both resist an accidental OpenTofu destroy.
 
-The shared ECS task role may presign exact `GetObject`, `GetObjectVersion`, and `PutObject`
+The ordinary ECS control-plane task role receives a dedicated custody policy that may presign exact
+`GetObject`, `GetObjectVersion`, and `PutObject`
 operations below those three prefixes. It cannot list the bucket or delete an object. The signer
 has no IAM identity or AWS credential; it can use only the short-lived exact-object URLs returned
 by the authenticated API. The KMS grant works only through S3 and only with this bucket's encryption
@@ -44,13 +45,20 @@ context. This is the narrowest AWS authority possible while the website, API, an
 containers in one ECS task: ECS has one task role, not a per-container role. Splitting those
 containers later would allow the website to lose this inherited authority entirely.
 
-The legacy EC2 application policy also grants Parameter Store path reads for its boot script. ECS
-does not need them: its execution role resolves exact task-definition secret ARNs before starting a
-container. An explicit deny on the shared ECS task role therefore blocks `GetParameter`,
-`GetParameters`, and `GetParametersByPath` across the application path. The execution role retains
-only `GetParameters` on the exact names enabled in the task definition. This makes API-only secret
-injection an actual boundary: sibling website and worker containers cannot use their shared task
-credentials to retrieve the operator token themselves.
+The shared application policy remains attached to the legacy EC2 host, Rust router, ordinary ECS
+task, and ACME task, so it deliberately contains no Android S3 or KMS custody grant. Only the
+ordinary control-plane task receives that dedicated policy; legacy, router, and ACME principals do
+not. The website still inherits the grant because website, API, and worker share one ECS task role.
+
+The legacy application policy also grants its boot script broad reads below
+`/sproutos/application`. Signer credentials therefore live under the separate
+`/sproutos/android-custody` path. Neither the legacy host, router, nor ACME role can read that path.
+The ordinary web task and isolated ACME task also have distinct ECS execution roles. The former may
+resolve only exact secrets rendered into its task definition; the latter's exact allowlist excludes
+both signer tokens and the independently gated Google credential. An explicit deny on the ordinary
+task role blocks `GetParameter`, `GetParameters`, and `GetParametersByPath` across both parameter
+paths. This makes API-only injection an actual boundary: sibling website and worker containers
+cannot use their shared task credentials to retrieve the operator token themselves.
 
 SSE-KMS is a bucket default, not a caller header contract. A presigned signer PUT must not require
 `x-amz-server-side-encryption` or a KMS-key-id header unless the API also returns an explicit,
@@ -63,8 +71,8 @@ PUT URL cannot replace the storage key or move an existing object across custody
 
 After the infrastructure-only apply, generate two independent high-entropy values in the local
 secret source and run `ANDROID_CUSTODY_ONLY=1 bin/put-app-secrets.sh`. This all-or-nothing mode
-rejects a missing value or equal signer tokens, then writes the two values directly to the
-application Parameter Store path.
+rejects a missing value or equal signer tokens, then writes the two values directly to the isolated
+`/sproutos/android-custody` Parameter Store path.
 OpenTofu creates no parameter value, so none enters state:
 
 - `APK_SIGNER_TOKEN` authenticates runtime poll, claim, completion, and failure calls;
@@ -153,8 +161,8 @@ steps creates noise rather than monitoring.
 Keep both `android_custody_delivery_enabled = false` and
 `android_developer_registration_delivery_enabled = false` for the first reviewed plan and apply.
 That plan may
-create the dedicated KMS key and alias, bucket controls, lifecycle and transport policy, scoped
-application policy, and a new task-definition revision carrying `ANDROID_ARTIFACT_BUCKET`. It must
+create the dedicated KMS key and alias, bucket controls, lifecycle and transport policy, dedicated
+control-plane custody policy, and a new task-definition revision carrying `ANDROID_ARTIFACT_BUCKET`. It must
 not contain `APK_SIGNER_TOKEN`, `APK_SIGNER_OPERATOR_TOKEN`, or
 `ANDROID_DEVELOPER_ID_STATUS_API_KEY` in any ECS task definition or execution-role parameter ARN.
 With alarms disabled, it must not create the alert KMS key, SNS topic, or alarms.
@@ -171,12 +179,72 @@ The wrapper uses SSM `DescribeParameters`, which returns metadata and never secr
 that each exact signer name is a `SecureString`. It forces Google credential delivery off, passes
 the explicit signer enable variable to OpenTofu, saves the plan, and inspects both planned ECS JSON
 and the execution-role policy. Each token must occur once in only the API; the execution role must
-contain only their two exact Android SSM ARNs; and the Google credential must occur nowhere. It
-never applies. Review and apply that exact saved plan while the current pre-#192 image is running,
-then verify the new task stays healthy and still accepts only the runtime token for signer calls.
-Only after that live proof should #192 merge and deploy its missing/equal-token startup failure. A
-normal `tofu plan` keeps both delivery switches disabled, so it cannot silently introduce a missing
-SSM reference.
+contain only their two exact `/sproutos/android-custody` ARNs; and the Google credential must occur
+nowhere. An ARN with a suffix such as `_extra` is not accepted. The wrapper never applies.
+
+Before applying the reviewed stage-two plan, capture the exact immutable image already serving the
+healthy pre-#192 API. Do not substitute `latest`, a branch tag, or a locally remembered SHA:
+
+```bash
+NAME_PREFIX=sproutos
+CLUSTER=$NAME_PREFIX
+SERVICE=$NAME_PREFIX-web
+CURRENT_TASK_DEFINITION=$(aws ecs describe-services \
+  --cluster "$CLUSTER" --services "$SERVICE" \
+  --query 'services[0].taskDefinition' --output text)
+CURRENT_IMAGE=$(aws ecs describe-task-definition \
+  --task-definition "$CURRENT_TASK_DEFINITION" \
+  --query 'taskDefinition.containerDefinitions[?name==`api`].image | [0]' --output text)
+[[ "$CURRENT_IMAGE" =~ :[0-9a-f]{12}$ ]]
+aws ecs describe-task-definition --task-definition "$CURRENT_TASK_DEFINITION" --output json |
+  jq -e --arg image "$CURRENT_IMAGE" \
+    '[.taskDefinition.containerDefinitions[] | select(.name == "website" or .name == "api" or .name == "worker") | .image] | length == 3 and all(. == $image)'
+```
+
+Apply only the reviewed saved plan. This registers a new task contract, but both ECS services have
+`lifecycle.ignore_changes = [task_definition]`; the apply intentionally does **not** launch it. The
+stage-two handoff is therefore mandatory and must use the exact pre-#192 image captured above:
+
+```bash
+tofu -chdir=tofu apply android-custody-delivery.tfplan
+IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos bin/handoff-ecs-task-definitions.sh
+```
+
+The handoff derives new service and migration revisions from the exact task-definition outputs,
+runs the migration, waits for the two-replica web service and ACME worker to stabilize, and does not
+cut traffic between target-group colours. After it succeeds, inspect the live service revision—not
+only the OpenTofu output—and require all of the following before merging #192:
+
+- all website, API, and worker containers still use `CURRENT_IMAGE`;
+- only the API secret list contains the two exact custody-path signer ARNs;
+- website and ordinary worker contain neither signer name;
+- the ACME task contains neither signer name nor `ANDROID_DEVELOPER_ID_STATUS_API_KEY`, and uses its
+  dedicated execution role;
+- both service replicas and load-balancer targets are healthy.
+
+Finally, prove the current image's runtime boundary without claiming a queued job. Send a
+well-formed `/v1/apk-signing/fail` body with no `Idempotency-Key`: the operator token must return
+`401`, while the runtime token must pass authentication and return `400` before any database write.
+Keep shell tracing disabled and feed the authorization header to curl over stdin so neither token
+appears in the process list:
+
+```bash
+set +x
+probe_signer_auth() {
+  local token=$1
+  printf 'header = "Authorization: Bearer %s"\n' "$token" |
+    curl --silent --output /dev/null --write-out '%{http_code}' --config - \
+      --header 'Content-Type: application/json' \
+      --request POST 'https://api.sproutos.me/v1/apk-signing/fail' \
+      --data '{"job_id":"00000000-0000-7000-8000-000000000000","signer_id":"custody-preflight","error":"preflight"}'
+}
+[[ "$(probe_signer_auth "$APK_SIGNER_OPERATOR_TOKEN")" == 401 ]]
+[[ "$(probe_signer_auth "$APK_SIGNER_TOKEN")" == 400 ]]
+```
+
+Only after recording that live proof should #192 merge and deploy its missing/equal-token startup
+failure. A normal `tofu plan` keeps both delivery switches disabled, so it cannot silently introduce
+a missing SSM reference.
 
 The independent Google credential may be staged later: first use a metadata-only SSM check to prove
 its exact name is a `SecureString`, then save a plan with

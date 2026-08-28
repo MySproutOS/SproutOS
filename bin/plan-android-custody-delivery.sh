@@ -12,7 +12,7 @@ AWS_BIN=${AWS_BIN:-aws}
 TOFU_BIN=${TOFU_BIN:-tofu}
 AWS_REGION=${AWS_REGION:-us-east-1}
 NAME_PREFIX=${NAME_PREFIX:-sproutos}
-PARAMETER_PATH="/${NAME_PREFIX}/application"
+PARAMETER_PATH="/${NAME_PREFIX}/android-custody"
 
 if [ "$#" -lt 1 ]; then
   echo "usage: $0 PLAN_FILE [additional tofu plan arguments...]" >&2
@@ -30,6 +30,16 @@ required_parameters=(
   APK_SIGNER_TOKEN
   APK_SIGNER_OPERATOR_TOKEN
 )
+
+account_id=$(
+  "$AWS_BIN" sts get-caller-identity \
+    --query Account \
+    --output text
+)
+if ! [[ "$account_id" =~ ^[0-9]{12}$ ]]; then
+  echo "Android custody delivery refused: AWS returned an invalid account id." >&2
+  exit 1
+fi
 
 for short_name in "${required_parameters[@]}"; do
   full_name="${PARAMETER_PATH}/${short_name}"
@@ -58,7 +68,8 @@ chmod 600 "$plan_json"
 trap 'rm -f "$plan_json"' EXIT
 "$TOFU_BIN" -chdir="$ROOT/tofu" show -json "$PLAN_FILE" >"$plan_json"
 
-PLAN_JSON="$plan_json" PARAMETER_PATH="$PARAMETER_PATH" python3 <<'PYTHON'
+PLAN_JSON="$plan_json" PARAMETER_PATH="$PARAMETER_PATH" AWS_REGION="$AWS_REGION" \
+  AWS_ACCOUNT_ID="$account_id" python3 <<'PYTHON'
 import json
 import os
 import sys
@@ -97,6 +108,10 @@ expected = {
     "APK_SIGNER_OPERATOR_TOKEN": "api",
 }
 parameter_path = os.environ["PARAMETER_PATH"]
+expected_prefix = (
+    f"arn:aws:ssm:{os.environ['AWS_REGION']}:{os.environ['AWS_ACCOUNT_ID']}:"
+    f"parameter{parameter_path}/"
+)
 task_secret_arns = {}
 
 for secret, intended_container in expected.items():
@@ -105,17 +120,13 @@ for secret, intended_container in expected.items():
         for candidate in container.get("secrets", []):
             if candidate.get("name") == secret:
                 occurrences.append((container_name, candidate.get("valueFrom")))
-    required_arn_suffix = f"parameter{parameter_path}/{secret}"
-    if occurrences != [(intended_container, next((arn for name, arn in occurrences if name == intended_container), None))]:
+    expected_arn = expected_prefix + secret
+    if occurrences != [(intended_container, expected_arn)]:
         sys.exit(
             f"Android custody delivery refused: {secret} must occur exactly once in {intended_container}; "
             f"found {occurrences!r}."
         )
-    if not occurrences[0][1] or required_arn_suffix not in occurrences[0][1]:
-        sys.exit(
-            f"Android custody delivery refused: {secret} does not reference its exact Parameter Store name."
-        )
-    task_secret_arns[secret] = occurrences[0][1]
+    task_secret_arns[secret] = expected_arn
 
 for container_name, container in containers.items():
     if any(

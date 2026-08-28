@@ -45,23 +45,37 @@ KEY_RETENTION=$(sed -n '/id     = "retain-encrypted-signing-keys"/,/^}/p' "$ANDR
 reject '^[[:space:]]*(noncurrent_version_)?expiration[[:space:]]*\{' \
   <(printf '%s\n' "$KEY_RETENTION") \
   'no current or noncurrent encrypted signing-key version may expire'
-require '"s3:GetObjectVersion"' "$COMPUTE_TF" \
+require '"s3:GetObjectVersion"' "$ANDROID_TF" \
   'the API must be able to fetch exact artifact versions recorded in Postgres'
-ANDROID_RAW_SIGNED_POLICY=$(sed -n '/Android release custody/,/Encrypted key objects/p' "$COMPUTE_TF")
+ANDROID_RAW_SIGNED_POLICY=$(sed -n '/resource "aws_iam_policy" "android_custody_broker"/,/Keep recovery-sensitive encrypted keys/p' "$ANDROID_TF")
 require '"s3:GetObjectVersion"' <(printf '%s\n' "$ANDROID_RAW_SIGNED_POLICY") \
   'raw and signed artifact reads must support the exact S3 VersionId recorded in Postgres'
-reject 'android_artifacts\.arn}/\*' "$COMPUTE_TF" \
+ANDROID_CUSTODY_POLICY=$(sed -n '/resource "aws_iam_policy" "android_custody_broker"/,/^}/p' "$ANDROID_TF")
+reject 'android_artifacts\.arn}/\*' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
   'Android S3 authority must stay scoped to raw, keys, and signed prefixes'
-reject 's3:DeleteObject' <(sed -n '/Android release custody/,/A PUT needs GenerateDataKey/p' "$COMPUTE_TF") \
+reject 's3:DeleteObject' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
   'the application task must not be able to delete Android signing material'
-require 'kms:EncryptionContext:aws:s3:arn' "$COMPUTE_TF" \
+require 'kms:EncryptionContext:aws:s3:arn' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
   'KMS use must be bound to the Android bucket encryption context'
-ANDROID_POLICY=$(sed -n '/Android release custody/,/Tenant object storage/p' "$COMPUTE_TF")
-reject 'cloudwatch:PutMetricData' <(printf '%s\n' "$ANDROID_POLICY") \
+reject 'cloudwatch:PutMetricData' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
   'do not grant metric publication before the durable signer-health producer exists'
+SHARED_APPLICATION_POLICY=$(sed -n '/resource "aws_iam_policy" "application"/,/^}/p' "$COMPUTE_TF")
+reject 'android_artifacts|android_custody' <(printf '%s\n' "$SHARED_APPLICATION_POLICY") \
+  'the shared legacy/router/ACME application policy must have no Android custody authority'
+require 'resource "aws_iam_role_policy_attachment" "task_android_custody_broker"' "$ANDROID_TF" \
+  'Android object custody must have a dedicated task-role attachment'
+ANDROID_CUSTODY_ATTACHMENT=$(sed -n \
+  '/resource "aws_iam_role_policy_attachment" "task_android_custody_broker"/,/^}/p' "$ANDROID_TF")
+require 'role[[:space:]]*=[[:space:]]*aws_iam_role.task.name' \
+  <(printf '%s\n' "$ANDROID_CUSTODY_ATTACHMENT") \
+  'only the ordinary control-plane task role may receive Android custody access'
+reject 'aws_iam_role\.(instance|router|acme_worker)' \
+  <(printf '%s\n' "$ANDROID_CUSTODY_ATTACHMENT") \
+  'legacy, router, and ACME roles must not receive Android custody access'
 API_PARAMETERS=$(sed -n '/ecs_api_parameter_names = \[/,/^  ]/p' "$ECS_TF")
 WEBSITE_PARAMETERS=$(sed -n '/ecs_website_parameter_names = \[/,/^  ]/p' "$ECS_TF")
-WORKER_PARAMETERS=$(sed -n '/ecs_worker_parameter_names = \[/,/^  ]/p' "$ECS_TF")
+WORKER_PARAMETERS=$(sed -n '/ecs_worker_base_parameter_names = \[/,/^  ]/p' "$ECS_TF")
+ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /p' "$ECS_TF")
 ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
@@ -71,6 +85,8 @@ for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
     "$token must not reach the website container"
   reject "\"$token\"" <(printf '%s\n' "$WORKER_PARAMETERS") \
     "$token must not reach the worker container"
+  reject "\"$token\"" <(printf '%s\n' "$ACME_PARAMETERS") \
+    "$token must not reach the ACME container"
   require "^[[:space:]]*$token$" "$ROOT/bin/put-app-secrets.sh" \
     "$token must use the out-of-state Parameter Store delivery path"
 done
@@ -78,6 +94,8 @@ require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_P
   'the Android Developer Console credential must reach only the worker'
 reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$API_PARAMETERS$WEBSITE_PARAMETERS") \
   'the Android Developer Console credential must not reach the API or website'
+reject 'ecs_worker_parameter_names' <(printf '%s\n' "$ACME_PARAMETERS") \
+  'the ACME task must not inherit the ordinary worker secret list'
 require 'var.android_custody_delivery_enabled[[:space:]]*\?' "$ECS_TF" \
   'both signer task-secret references must remain behind their explicit second-stage gate'
 require 'var.android_developer_registration_delivery_enabled[[:space:]]*\?' "$ECS_TF" \
@@ -103,6 +121,7 @@ for dependency in \
   aws_s3_bucket_server_side_encryption_configuration.android_artifacts \
   aws_s3_bucket_policy.android_artifacts \
   aws_iam_role_policy_attachment.task_application \
+  aws_iam_role_policy_attachment.task_android_custody_broker \
   aws_iam_role_policy.ecs_execution_secrets \
   aws_iam_role_policy.ecs_task_no_parameter_store; do
   require "$dependency" "$ECS_TF" \
@@ -122,15 +141,28 @@ for action in ssm:GetParameter ssm:GetParameters ssm:GetParametersByPath; do
 done
 require 'Resource[[:space:]]*=[[:space:]]*local.ecs_task_parameter_store_deny_resources' \
   <(printf '%s\n' "$TASK_PARAMETER_DENY") \
-  'the runtime deny must cover the entire application parameter path, including not-yet-enabled tokens'
+  'the runtime deny must cover the application and isolated custody parameter paths'
 EXECUTION_POLICY=$(sed -n \
   '/resource "aws_iam_role_policy" "ecs_execution_secrets"/,/^}/p' "$ECS_TF")
 require 'Action[[:space:]]*=[[:space:]]*\["ssm:GetParameters"\]' \
   <(printf '%s\n' "$EXECUTION_POLICY") \
   'the ECS execution role may use only the batch read needed for injected secrets'
-require 'Resource[[:space:]]*=[[:space:]]*local.ecs_application_parameter_arns' \
+require 'Resource[[:space:]]*=[[:space:]]*local.ecs_web_parameter_arns' \
   <(printf '%s\n' "$EXECUTION_POLICY") \
   'the ECS execution role must remain scoped to exact enabled task-secret ARNs'
+ACME_EXECUTION_POLICY=$(sed -n \
+  '/resource "aws_iam_role_policy" "acme_execution_secrets"/,/^}/p' "$ECS_TF")
+require 'Resource[[:space:]]*=[[:space:]]*local.ecs_acme_parameter_arns' \
+  <(printf '%s\n' "$ACME_EXECUTION_POLICY") \
+  'the ACME execution role must remain scoped to its separate ordinary-secret list'
+require 'execution_role_arn[[:space:]]*=[[:space:]]*aws_iam_role.acme_execution.arn' "$ECS_TF" \
+  'the ACME task must not share the web execution role'
+require 'ecs_acme_worker_parameter_names[[:space:]]*=[[:space:]]*local.ecs_worker_base_parameter_names' "$ECS_TF" \
+  'the ACME task must exclude the independently gated Google credential'
+require 'ANDROID_CUSTODY_PARAMETER_PATH' "$ROOT/bin/put-app-secrets.sh" \
+  'signer credentials must use their isolated Parameter Store path'
+require '/sproutos/android-custody' "$ROOT/bin/put-app-secrets.sh" \
+  'the custody-only upload must default to the isolated production path'
 if git -C "$ROOT" grep -E 'APK_SIGNER_MASTER_IDENTITY|master\.pem|PKCS.?8' -- \
   'tofu/*.tf' 'tofu/*.tftpl' '.github/workflows/*.yml' >/dev/null; then
   echo 'android signing infrastructure invariant failed: the offline master identity must not enter AWS or CI configuration' >&2
@@ -152,5 +184,9 @@ require 'AllowCloudWatchAlarmPublishing' "$ANDROID_TF" \
 require 'land a durable signer registry/last-seen record and a scheduled queue-health sampler' \
   "$ROOT/docs/android-signing-infrastructure.md" \
   'operators must be told that last-seen and queue metrics do not exist yet'
+require 'bin/handoff-ecs-task-definitions\.sh' "$ROOT/docs/android-signing-infrastructure.md" \
+  'stage two must explicitly deploy the registered task with the existing immutable pre-192 image'
+require 'ignore_changes.*task_definition' "$ROOT/docs/android-signing-infrastructure.md" \
+  'the runbook must explain why applying the saved plan does not update the live ECS service'
 
 echo 'Android signing infrastructure invariants passed'
