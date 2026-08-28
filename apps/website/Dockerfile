@@ -27,6 +27,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc* ./
 COPY apps/website/package.json apps/website/
 COPY apps/internal-api/package.json apps/internal-api/
+COPY apps/dbmigrator/package.json apps/dbmigrator/
 COPY packages/db/package.json packages/db/
 COPY lib/typescript/ lib/typescript/
 COPY packages/ packages/
@@ -41,6 +42,25 @@ RUN pnpm run build --filter=website --filter=@api/internal
 # nothing fails until something tries to run one.
 RUN pnpm --filter=@api/internal deploy --prod --legacy \
       --config.node-linker=hoisted /prod/api
+
+# The deploy-time programs are part of the image they migrate for.
+#
+# The legacy release assembled these in the workflow tarball, but the container image originally
+# carried only the two servers and the worker. That left an ECS rollout with two bad choices: run
+# migrations from the old EC2 colour, whose code can predate the schema being deployed, or update
+# the service first and briefly run new code against an old schema. Keep the providers' scanned
+# migration/seed files next to their bundles for the same path contract as the tarball release.
+RUN mkdir -p /prod/migrator/migrations /prod/migrator/seeds \
+    && (cd apps/dbmigrator && node ../internal-api/build.mjs src/cli.ts /prod/migrator/migrate.mjs) \
+    && pnpm --filter=dbmigrator exec esbuild "src/migrations/*.ts" \
+      --platform=node --format=esm --target=node24 \
+      --outdir=/prod/migrator/migrations \
+    && (cd apps/dbmigrator && node ../internal-api/build.mjs src/seed-entry.ts /prod/migrator/seed.mjs) \
+    && pnpm --filter=dbmigrator exec esbuild "src/seeds/*.ts" \
+      --bundle --packages=external \
+      --platform=node --format=esm --target=node24 \
+      --outdir=/prod/migrator/seeds \
+    && (cd apps/dbmigrator && node ../internal-api/build.mjs src/clickhouse-entry.ts /prod/migrator/clickhouse.mjs)
 
 # ---------------------------------------------------------------------------
 # Run
@@ -68,6 +88,7 @@ COPY --from=build /src/apps/website/.next/static ./apps/website/.next/static
 COPY --from=build /src/apps/website/public ./apps/website/public
 COPY --from=build /src/apps/internal-api/build/ ./api/
 COPY --from=build /prod/api/node_modules ./api/node_modules
+COPY --from=build /prod/migrator/ ./api/
 
 # Amazon's RDS certificate authority. Node does not ship it, so `sslmode=require` connects and then
 # fails verification with "self-signed certificate in certificate chain" — which reads as a broken
