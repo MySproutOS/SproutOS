@@ -168,6 +168,7 @@ describe("OAuth FastAPI and database acceptance", () => {
     expect(main).toContain('os.environ["DATABASE_URL"]')
     expect(main).toContain("create table if not exists visit_counter")
     expect(main).toContain('@app.get("/visits")')
+    expect(main).toContain('handler = Mangum(app, lifespan="auto")')
     expect(dockerfile).toContain('"uvicorn", "main:app"')
     expect(requirements).toContain("asyncpg==")
   })

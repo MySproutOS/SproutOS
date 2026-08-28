@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 from fastapi import FastAPI
+from mangum import Mangum
 
 
 @asynccontextmanager
@@ -41,3 +42,9 @@ async def visits() -> dict[str, int]:
             """
         )
     return {"visits": count}
+
+
+# The same fixture runs in a local/Daytona container through Uvicorn and in SproutOS production
+# through Lambda's native Python handler. Keeping both entry points on one app makes the live
+# acceptance exercise the same code that the deterministic container check does.
+handler = Mangum(app, lifespan="auto")
