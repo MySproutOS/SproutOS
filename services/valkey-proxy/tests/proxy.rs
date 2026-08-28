@@ -12,6 +12,7 @@
 //! Skipped, not failed, when the services are not running: `docker compose up -d` first.
 
 use std::net::SocketAddr;
+use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1364,6 +1365,165 @@ async fn an_enqueue_is_reported_to_the_master_queue() {
 
     raw.send(&["DEL", "sproutos:master:wake"]).await;
     client.send(&["DEL", &published_queue]).await;
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn a_real_celery_repository_round_trips_a_task() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    /*
+      The command-shaped tests above are necessary for exact key assertions, but they are not a
+      Celery acceptance test. Celery performs its own connection negotiation, declares bindings,
+      publishes a protocol-v2 task, blocks on BRPOP and writes a result through a second
+      connection. A missing command or an incorrectly rewritten reply only appears when the real
+      client performs that sequence.
+
+      CI installs the pinned requirement before `cargo test`. A developer running only Rust tests
+      may omit it; CI may never turn this into a silent skip.
+    */
+    let python = std::env::var("CELERY_ACCEPTANCE_PYTHON").unwrap_or_else(|_| "python3".into());
+    let celery_available = tokio::process::Command::new(&python)
+        .args(["-c", "import celery"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !celery_available {
+        assert!(
+            std::env::var("CI").is_err(),
+            "Celery is required in CI; install services/valkey-proxy/tests/fixtures/celery-requirements.txt"
+        );
+        eprintln!("skipping real Celery acceptance: Celery is not installed");
+        return;
+    }
+
+    let mut raw = Client {
+        stream: TcpStream::connect(backend()).await.expect("backend"),
+    };
+    raw.send(&["DEL", "sproutos:master:wake"]).await;
+
+    let address = start_proxy_with_master(&url).await;
+    let (username, secret, service_id, fixtures) = provision(&url).await;
+    let fixture = format!(
+        "{}/tests/fixtures/celery_repository.py",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let queue = format!("celery-{}", Uuid::now_v7().simple());
+    let common_env = [
+        ("VALKEY_ADDRESS", address.to_string()),
+        ("VALKEY_USERNAME", username),
+        ("VALKEY_SECRET", secret),
+        ("CELERY_QUEUE", queue.clone()),
+    ];
+
+    let mut worker = tokio::process::Command::new(&python)
+        .args([&fixture, "worker"])
+        .envs(common_env.iter().cloned())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("start the Celery worker");
+
+    // The worker has to finish its broker negotiation before the producer publishes. A bounded
+    // wait keeps this deterministic without turning a startup failure into a hanging test.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let producer = tokio::time::timeout(
+        Duration::from_secs(40),
+        tokio::process::Command::new(&python)
+            .args([&fixture, "produce"])
+            .envs(common_env.iter().cloned())
+            .output(),
+    )
+    .await;
+
+    let _ = worker.kill().await;
+    let worker_output = worker
+        .wait_with_output()
+        .await
+        .expect("collect worker output");
+    let producer_output = producer
+        .expect("the Celery result timed out")
+        .expect("run the Celery producer");
+    assert!(
+        producer_output.status.success(),
+        "producer failed:\nstdout={}\nstderr={}\nworker stdout={}\nworker stderr={}",
+        String::from_utf8_lossy(&producer_output.stdout),
+        String::from_utf8_lossy(&producer_output.stderr),
+        String::from_utf8_lossy(&worker_output.stdout),
+        String::from_utf8_lossy(&worker_output.stderr),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&producer_output.stdout).trim(),
+        "42"
+    );
+
+    // SproutOS does not keep the long-running worker above alive in production. The router invokes
+    // the repository's Lambda with `queue.drain`, and customer code consumes a bounded batch then
+    // returns. Drive that exact repository entry point with a second ordinary Celery publish.
+    let enqueue = tokio::process::Command::new(&python)
+        .args([&fixture, "enqueue"])
+        .envs(common_env.iter().cloned())
+        .output()
+        .await
+        .expect("enqueue the Lambda-drained task");
+    assert!(enqueue.status.success(), "enqueue failed: {enqueue:?}");
+    let task_id = String::from_utf8_lossy(&enqueue.stdout).trim().to_owned();
+    assert!(
+        !task_id.is_empty(),
+        "the Celery publish returned no task id"
+    );
+
+    let drain = tokio::process::Command::new(&python)
+        .args([&fixture, "drain"])
+        .envs(common_env.iter().cloned())
+        .output()
+        .await
+        .expect("invoke the repository queue.drain handler");
+    assert!(
+        drain.status.success(),
+        "queue.drain handler failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&drain.stdout),
+        String::from_utf8_lossy(&drain.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&drain.stdout).contains("'processed': 1"),
+        "the bounded handler did not consume exactly one task: {}",
+        String::from_utf8_lossy(&drain.stdout)
+    );
+
+    let result = tokio::process::Command::new(&python)
+        .args([&fixture, "result", &task_id])
+        .envs(common_env.iter().cloned())
+        .output()
+        .await
+        .expect("read the queue.drain task result");
+    assert!(result.status.success(), "result read failed: {result:?}");
+    assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "42");
+
+    // The same live client path must wake the router dispatcher. A successful task alone could
+    // still be a worker polling a queue the platform never noticed.
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    let members = raw
+        .send(&["ZRANGE", "sproutos:master:wake", "0", "-1"])
+        .await;
+    let expected = format!(
+        "{}/{}",
+        sproutos_tenant_auth::encode_short_id(service_id),
+        queue
+    );
+    assert!(
+        members.contains(&expected),
+        "missing Celery wake: {members}"
+    );
+
+    raw.send(&["DEL", "sproutos:master:wake"]).await;
     cleanup(&url, &fixtures).await;
 }
 

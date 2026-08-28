@@ -178,6 +178,18 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "UNWATCH",
 ];
 
+/// Narrow administrative subcommands required by supported clients.
+///
+/// A real Celery worker uses redis-py's `Script` helper for its visibility-timeout mutex. It first
+/// tries `EVALSHA` and, on `NOSCRIPT`, loads the source with `SCRIPT LOAD`. Loading a script does
+/// not execute it or touch a key. Execution still goes through `EVALSHA`, where both the proxy and
+/// the upstream ACL constrain every declared and script-discovered key to this tenant.
+///
+/// Granting the whole `SCRIPT` command would also grant `FLUSH` and `KILL`, allowing one tenant to
+/// disrupt every other tenant on the shared server. Keep these as full `COMMAND|SUBCOMMAND` ACL
+/// tokens and validate the exact wire shape below.
+pub const FORWARDED_SUBCOMMANDS: &[&str] = &["SCRIPT|LOAD"];
+
 /// The commands a tenant may send, and where their keys are.
 ///
 /// BullMQ and Celery are the clients that matter, and between them they use most of this list.
@@ -286,6 +298,18 @@ pub fn namespace_command(
         .first()
         .map(|arg| String::from_utf8_lossy(arg).to_uppercase())
         .unwrap_or_default();
+
+    if verb == "SCRIPT" {
+        let is_load = args.len() == 3
+            && args
+                .get(1)
+                .is_some_and(|arg| arg.eq_ignore_ascii_case(b"LOAD"));
+        return if is_load {
+            Ok(Vec::new())
+        } else {
+            Err("unknown or disallowed command")
+        };
+    }
 
     let Some(spec) = key_spec(&verb) else {
         return Err("unknown or disallowed command");
@@ -410,7 +434,6 @@ mod tests {
             "CONFIG",
             "SHUTDOWN",
             "DEBUG",
-            "SCRIPT",
             "CLIENT",
             "CLUSTER",
             "ACL",
@@ -426,6 +449,27 @@ mod tests {
                 "{verb} should be refused"
             );
         }
+        for command in [
+            ["SCRIPT", "FLUSH"].as_slice(),
+            ["SCRIPT", "KILL"].as_slice(),
+            ["SCRIPT", "EXISTS", "abc"].as_slice(),
+        ] {
+            assert!(
+                namespaced(command).is_err(),
+                "{command:?} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn celery_may_load_but_not_administer_scripts() {
+        let command = namespaced(&["SCRIPT", "LOAD", "return redis.call('GET', KEYS[1])"])
+            .expect("SCRIPT LOAD is safe before execution");
+        assert_eq!(
+            command,
+            ["SCRIPT", "LOAD", "return redis.call('GET', KEYS[1])"]
+        );
+        assert!(namespaced(&["SCRIPT", "LOAD"]).is_err());
     }
 
     #[test]

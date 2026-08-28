@@ -1,5 +1,5 @@
 {
-  "version": "valkey-acl-v1",
+  "version": "valkey-acl-v2",
   "credentialVector": {
     "rootKey": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
     "organizationId": "00000000-0000-0000-0000-000000000000",
@@ -188,5 +188,6 @@
     "OBJECT",
     "LATENCY",
     "WAIT"
-  ]
+  ],
+  "forwardedSubcommands": ["SCRIPT|LOAD"]
 }
