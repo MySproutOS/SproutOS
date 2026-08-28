@@ -588,11 +588,9 @@ const deploy: Hono = new Hono()
         machine SproutOS does not operate. So the release queues a signing job and the deployment
         waits.
 
-        The key recorded is the uploaded archive, not a bare APK: the action packages a directory,
-        which for the `android` preset contains the unsigned APK. The signer unzips it. Uploading
-        the APK on its own would be tidier and is worth doing when the action next changes; doing it
-        now would mean a version skew where a customer on the old action silently queues a job no
-        signer can read.
+        The key recorded is the raw unsigned APK. Android deliberately has no archive compatibility
+        path: accepting a wrapper here would queue an artifact the signer refuses and leave the
+        deployment waiting forever.
       */
       if (json.preset === "android") {
         await enqueueSigning(db, {
