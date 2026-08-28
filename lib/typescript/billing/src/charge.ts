@@ -3,7 +3,7 @@ import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { lockAvailableBalance, postWithin } from "./ledger"
 import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
-import { NoActivePriceBookError } from "./usage"
+import { NoActivePriceBookError, RETIRED_UNBILLABLE_DIMENSIONS } from "./usage"
 
 /**
  * Turn measured usage into money the customer actually owes.
@@ -152,6 +152,7 @@ export async function chargeUsage(
       where quantity > charged_quantity
         and bucket = ${CHARGED_BUCKET}
         and bucket_start < ${now}
+        and dimension <> all(${RETIRED_UNBILLABLE_DIMENSIONS})
       order by bucket_start
       limit ${batchSize}
       for update skip locked
