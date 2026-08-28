@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { signerAuthorized } from "./apk-signing"
+import { callbackIdempotencyKey, signerAuthorized } from "./apk-signing"
 
 /**
  * The signer is the one caller that is neither a session nor inside the VPC, so this bearer check
@@ -40,5 +40,15 @@ describe("the signer credential", () => {
     // comparison and a header of the right shape could be assembled from a prefix.
     expect(signerAuthorized(TOKEN)).toBe(false)
     expect(signerAuthorized(`bearer ${TOKEN}`)).toBe(false)
+  })
+})
+
+describe("signer callback idempotency", () => {
+  it("requires the stable SHA-256 key emitted by the signer", () => {
+    const key = "a".repeat(64)
+    expect(callbackIdempotencyKey(key)).toBe(key)
+    expect(callbackIdempotencyKey(undefined)).toBeUndefined()
+    expect(callbackIdempotencyKey("a".repeat(63))).toBeUndefined()
+    expect(callbackIdempotencyKey("A".repeat(64))).toBeUndefined()
   })
 })

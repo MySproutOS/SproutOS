@@ -69,6 +69,10 @@ import {
   scheduleDeploymentCatalogueReconciliation,
 } from "./deployment-catalogue"
 import { ACCOUNT_TEARDOWN_KIND, tearDownAccount } from "./account-teardown"
+import {
+  ANDROID_REGISTRATION_RECONCILE_KIND,
+  reconcileAndroidDeveloperRegistrationsJob,
+} from "./android-developer-registration"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -133,6 +137,7 @@ export const JOB_KINDS = {
   importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
   importDeploymentCatalogue: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   reconcileStaticCloudFrontUsage: STATIC_CLOUDFRONT_METERING_KINDS.reconcile,
+  reconcileAndroidDeveloperRegistration: ANDROID_REGISTRATION_RECONCILE_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -450,6 +455,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
   [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
   [JOB_KINDS.reconcileStaticCloudFrontUsage]: reconcileStaticCloudFrontUsage(),
+  [JOB_KINDS.reconcileAndroidDeveloperRegistration]: reconcileAndroidDeveloperRegistrationsJob(),
 }
 
 /**
@@ -463,6 +469,17 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
   const hour = now.toISOString().slice(0, 13)
 
   await scheduleDeploymentCatalogueReconciliation(db, now)
+
+  if (
+    process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY !== undefined &&
+    process.env.ANDROID_DEVELOPER_ID_STATUS_API_KEY !== ""
+  ) {
+    await enqueue(db, {
+      kind: JOB_KINDS.reconcileAndroidDeveloperRegistration,
+      idempotencyKey: `${JOB_KINDS.reconcileAndroidDeveloperRegistration}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
+  }
 
   if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
     await enqueue(db, {

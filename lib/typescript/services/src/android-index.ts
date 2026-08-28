@@ -24,6 +24,8 @@
  */
 
 export type AndroidApp = {
+  androidAppId: string
+  projectId: string
   /** The Android package name. The client's primary key, and what an install replaces. */
   packageName: string
   label: string
@@ -34,6 +36,7 @@ export type AndroidApp = {
   /** sha256 of the signed APK, so the client can verify what it downloaded. */
   sha256: string
   sizeBytes: number
+  certificateSha256: string
   /** Expiring. See `catalogueTtlSeconds`. */
   downloadUrl: string
   iconUrl?: string
@@ -48,7 +51,7 @@ export type AndroidSite = {
 
 export type Catalogue = {
   /** Bumped when the shape changes, so an old client can refuse rather than misread. */
-  version: 1
+  version: 2
   generatedAt: string
   /** Expires with the download URLs inside it. */
   expiresAt: string
@@ -78,10 +81,12 @@ export function catalogueTtlSeconds(): number {
  * looks like an empty one and a customer concludes their apps are gone.
  */
 export function isReadable(version: number): boolean {
-  return version === 1
+  return version === 2
 }
 
 export type AppRow = {
+  androidAppId: string
+  projectId: string
   packageName: string | null
   label: string
   summary: string | null
@@ -90,6 +95,8 @@ export type AppRow = {
   sha256: string | null
   sizeBytes: number | null
   signedKey: string | null
+  signedObjectVersion: string | null
+  certificateSha256: string | null
   iconUrl: string | null
 }
 
@@ -105,15 +112,19 @@ export function toApp(row: AppRow, signedUrlFor: (key: string) => string): Andro
   if (
     row.packageName === null ||
     row.signedKey === null ||
+    row.signedObjectVersion === null ||
     row.sha256 === null ||
     row.versionCode === null ||
     row.versionName === null ||
-    row.sizeBytes === null
+    row.sizeBytes === null ||
+    row.certificateSha256 === null
   ) {
     return undefined
   }
 
   return {
+    androidAppId: row.androidAppId,
+    projectId: row.projectId,
     packageName: row.packageName,
     label: row.label,
     summary: row.summary ?? "",
@@ -121,6 +132,7 @@ export function toApp(row: AppRow, signedUrlFor: (key: string) => string): Andro
     versionCode: row.versionCode,
     sha256: row.sha256,
     sizeBytes: row.sizeBytes,
+    certificateSha256: row.certificateSha256,
     downloadUrl: signedUrlFor(row.signedKey),
     ...(row.iconUrl === null ? {} : { iconUrl: row.iconUrl }),
   }
@@ -144,7 +156,7 @@ export function latestPerPackage(apps: AndroidApp[]): AndroidApp[] {
   }
 
   // Sorted by label so the client does not have to, and so two requests return the same order.
-  return [...best.values()].sort((a, b) => a.label.localeCompare(b.label))
+  return [...best.values()].toSorted((a, b) => a.label.localeCompare(b.label))
 }
 
 export function buildCatalogue(input: {
@@ -156,13 +168,13 @@ export function buildCatalogue(input: {
   const now = input.now ?? new Date()
 
   return {
-    version: 1,
+    version: 2,
     generatedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + CATALOGUE_TTL_SECONDS * 1000).toISOString(),
     public: { apps: latestPerPackage(input.publicApps) },
     personal: {
       apps: latestPerPackage(input.personalApps),
-      sites: [...input.personalSites].sort((a, b) => a.name.localeCompare(b.name)),
+      sites: [...input.personalSites].toSorted((a, b) => a.name.localeCompare(b.name)),
     },
   }
 }

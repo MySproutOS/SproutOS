@@ -284,14 +284,11 @@ jobs:
             # an empty price book and billing zero.
             (cd apps/dbmigrator && node ../internal-api/build.mjs src/seed-entry.ts "$staging/api/seed.mjs")
 
-            # `--bundle`, unlike the migrations above. A migration imports only `kysely`; a seed
-            # also imports `../lib/rows` and friends, and compiling each file on its own leaves
-            # those relative specifiers pointing at a directory the release does not ship —
-            # `ERR_MODULE_NOT_FOUND: /opt/sproutos/api/lib/rows`. Bundling inlines them.
-            pnpm --filter=dbmigrator exec esbuild "src/seeds/*.ts" \
-              --bundle --packages=external \
-              --platform=node --format=esm --target=node24 \
-              --outdir="$staging/api/seeds"
+            # The helper uses the workspace-aware bundler for each separately discovered seed. It
+            # bundles relative helpers and workspace packages while leaving only real npm packages
+            # external. Generic `--packages=external` left `@lib/oauth-provider` pointing at its
+            # TypeScript source under node_modules, which Node 24 refuses to load in production.
+            bin/build-db-seeds.sh "$staging/api/seeds"
 
             # ClickHouse's schema, which had no delivery path at all.
             #
