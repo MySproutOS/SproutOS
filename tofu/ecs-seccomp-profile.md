@@ -35,8 +35,16 @@ every other non-stdio descriptor close-on-exec.
 
 The profile is daemon-wide because ECS does not expose Docker's per-container seccomp selector.
 The host is dedicated to the SproutOS ECS task, privileged containers are disabled in the ECS
-agent, and the profile preserves every other deny in Docker's materialized default. Do not replace
+agent, every task container drops every capability and uses `no-new-privileges`, and the profile
+preserves every other deny in Docker's materialized default. The exact namespace clone and traced
+mount/pivot calls are nevertheless available to a compromised website or API process; this widens
+the kernel attack surface even though a capability-free process cannot use them against host
+mounts. The task-definition check makes the compensating controls fail at plan time. Do not replace
 this with `unconfined`, `SYS_ADMIN`, a privileged task, or Docker socket access.
+
+The runtime image pins Debian's `bubblewrap=0.8.0-2+deb12u1` and asserts upstream version `0.8.0`.
+If Debian removes or replaces that package, the image must fail to build until the replacement's
+setup syscalls have been traced, the outer profile reviewed, and the complete boundary probe rerun.
 
 Applying the launch-template change does not mutate the running instance. Roll a fresh instance
 through the capacity provider, run the signed success/output-limit/timeout proofs there, and only

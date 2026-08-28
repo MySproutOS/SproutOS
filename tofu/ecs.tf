@@ -289,6 +289,11 @@ resource "aws_ecs_task_definition" "web" {
       dockerSecurityOptions = [
         "no-new-privileges",
       ]
+      linuxParameters = {
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
 
       portMappings = [{
         containerPort = 8080
@@ -337,6 +342,11 @@ resource "aws_ecs_task_definition" "web" {
       dockerSecurityOptions = [
         "no-new-privileges",
       ]
+      linuxParameters = {
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
 
       portMappings = [{
         containerPort = 3001
@@ -427,6 +437,11 @@ resource "aws_ecs_task_definition" "web" {
       dockerSecurityOptions = [
         "no-new-privileges",
       ]
+      linuxParameters = {
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
 
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
@@ -505,6 +520,20 @@ resource "aws_ecs_task_definition" "web" {
   ])
 
   tags = local.tags
+}
+
+# The daemon-wide seccomp exception is acceptable only while every process on this dedicated task
+# host remains both capability-free and unable to gain privilege. This evaluates the serialized
+# task definition rather than trusting three visually similar source blocks to remain in sync.
+check "ecs_control_plane_container_isolation" {
+  assert {
+    condition = alltrue([
+      for container in jsondecode(aws_ecs_task_definition.web.container_definitions) :
+      contains(container.dockerSecurityOptions, "no-new-privileges") &&
+      contains(container.linuxParameters.capabilities.drop, "ALL")
+    ])
+    error_message = "Every ECS control-plane container must drop ALL capabilities and use no-new-privileges while the Docker seccomp exception is daemon-wide."
+  }
 }
 
 /*

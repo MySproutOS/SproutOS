@@ -329,12 +329,7 @@ fn configure_process(command: &mut Command, inherited_fds: &[OwnedFd]) -> Result
                 }
             }
 
-            let maximum = libc::sysconf(libc::_SC_OPEN_MAX);
-            let maximum = if maximum < 0 {
-                65_536
-            } else {
-                maximum.min(1_048_576)
-            };
+            let maximum = fd_scan_maximum()?;
             for descriptor in 3..maximum {
                 if inherited_fds.contains(&(descriptor as libc::c_int)) {
                     clear_close_on_exec(descriptor as libc::c_int)?;
@@ -355,6 +350,34 @@ fn configure_process(command: &mut Command, inherited_fds: &[OwnedFd]) -> Result
         });
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn fd_scan_maximum() -> std::io::Result<libc::c_int> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    fd_scan_maximum_from_rlimit(limit.rlim_cur)
+}
+
+#[cfg(unix)]
+fn fd_scan_maximum_from_rlimit(limit: libc::rlim_t) -> std::io::Result<libc::c_int> {
+    if limit == libc::RLIM_INFINITY {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "RLIMIT_NOFILE is infinite; cannot prove descriptor closure",
+        ));
+    }
+    libc::c_int::try_from(limit).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "RLIMIT_NOFILE exceeds the descriptor number range",
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -453,10 +476,20 @@ mod tests {
     use tempfile::tempdir;
     use tokio::process::Command;
 
+    #[cfg(unix)]
+    use super::fd_scan_maximum_from_rlimit;
     use super::{
         ApplyLimits, IsolatedCommand, IsolationProvider, PluginRunner, ProtocolOutcome,
         TemplateProtocol,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_fallback_scans_the_complete_finite_rlimit() {
+        assert_eq!(fd_scan_maximum_from_rlimit(2_000_000).unwrap(), 2_000_000);
+        assert!(fd_scan_maximum_from_rlimit(libc::RLIM_INFINITY).is_err());
+    }
+
     use crate::{ChangeKind, DeclaredChange, ErrorCode, Result, VerifiedExecutable};
 
     struct TestIsolation;

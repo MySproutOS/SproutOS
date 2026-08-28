@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 profile="$SCRIPT_DIR/ecs-seccomp-profile.json"
+ecs="$SCRIPT_DIR/ecs.tf"
+dockerfile="$SCRIPT_DIR/../apps/website/Dockerfile"
 expected_base_sha=25497e540002b93d4503da25ab60b7f292def23af8ae6f53da115ef6092e5f67
 
 fail() {
@@ -50,5 +52,18 @@ assert_equal "$(jq \
 assert_equal "$(jq \
   '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and .names == ["umount2"] and .args == [{"index":1,"op":"SCMP_CMP_EQ","value":2}])] | length' \
   "$profile")" 1 'argument-scoped Bubblewrap umount2 rule changed'
+
+assert_equal \
+  "$(grep -c 'drop = \["ALL"\]' "$ecs")" 3 \
+  'not every control-plane container drops all capabilities'
+assert_equal \
+  "$(grep -c '"no-new-privileges"' "$ecs")" 4 \
+  'no-new-privileges task definition contract changed'
+grep -Fq 'check "ecs_control_plane_container_isolation"' "$ecs" || \
+  fail 'task-definition isolation check is missing'
+grep -Fq 'ARG BUBBLEWRAP_DEBIAN_VERSION=0.8.0-2+deb12u1' "$dockerfile" || \
+  fail 'reviewed Bubblewrap Debian version is not pinned'
+grep -Fq 'test "$(bwrap --version)" = "bubblewrap 0.8.0"' "$dockerfile" || \
+  fail 'reviewed Bubblewrap upstream version is not verified'
 
 echo 'ECS seccomp profile preserves the captured default and only admits traced bwrap setup calls'
