@@ -32,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/base/ui/tooltip"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
+import { credentialRotationGuidance } from "@frontends/dashboard/components/databases/credential-rotation"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   type BackendService,
@@ -73,6 +74,8 @@ function DatabasesList() {
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
           A database can stand on its own or belong to a project. Connection details are shown here;
           passwords are shown only once, when a database is created or its credential is rotated.
+          There is no later View action because SproutOS does not keep a recoverable copy. If you
+          lose the URI, rotate the credential to issue a replacement.
         </p>
 
         {isPending && <ListSkeleton rows={3} />}
@@ -180,7 +183,7 @@ function RotateButton({
   onRotated: (uri: string) => void
 }) {
   const { rotate, isPending } = useRotateConnection(orgSlug)
-  const canRotate = service.status === "active"
+  const { canRotate, tooltipCopy, tooltipId } = credentialRotationGuidance(service)
 
   return (
     <Dialog>
@@ -194,6 +197,7 @@ function RotateButton({
                     variant="ghost"
                     size="sm"
                     aria-label={`Rotate the credential for ${service.name}`}
+                    aria-describedby={tooltipId}
                   >
                     <RefreshCwIcon />
                   </Button>
@@ -212,6 +216,7 @@ function RotateButton({
                   size="sm"
                   disabled
                   aria-label={`Rotate the credential for ${service.name}`}
+                  aria-describedby={tooltipId}
                 >
                   <RefreshCwIcon />
                 </Button>
@@ -220,9 +225,9 @@ function RotateButton({
           />
         )}
         <TooltipContent className="max-w-72 leading-relaxed">
-          {canRotate
-            ? "Replace the current password and show a new connection URI once. The current URI stops working immediately."
-            : "Credentials can be rotated after this database becomes active."}
+          <span id={tooltipId} role="tooltip">
+            {tooltipCopy}
+          </span>
         </TooltipContent>
       </Tooltip>
       <DialogContent>
