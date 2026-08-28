@@ -509,5 +509,6 @@ jobs:
           bash bin/deploy-workflow.test.sh
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
+          bash bin/bootstrap-localstack.test.sh
           bash bin/user-data.test.sh
           bash .claude/hooks/check-direction.test.sh

@@ -5,6 +5,10 @@
 # starts empty. This script is idempotent and cheap — re-run it after any restart.
 set -euo pipefail
 
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=bin/lib/localstack-kms.sh
+source "$repo_root/bin/lib/localstack-kms.sh"
+
 ENDPOINT="${AWS_ENDPOINT_URL:-http://localhost:4566}"
 REGION="${AWS_REGION:-us-east-1}"
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
@@ -22,14 +26,7 @@ done
 
 # Envelope-encryption CMK. Every secret in the database is wrapped by a data key
 # from this CMK; see lib/typescript/envelope.
-if ! aws_local kms describe-key --key-id alias/sproutos-dev >/dev/null 2>&1; then
-  KEY_ID=$(aws_local kms create-key --description "SproutOS dev envelope key" \
-    --query 'KeyMetadata.KeyId' --output text)
-  aws_local kms create-alias --alias-name alias/sproutos-dev --target-key-id "$KEY_ID"
-  echo "created KMS key $KEY_ID (alias/sproutos-dev)"
-else
-  echo "KMS alias/sproutos-dev already present"
-fi
+ensure_localstack_kms_alias alias/sproutos-dev "SproutOS dev envelope key"
 
 # `sproutos-dev-pageserver` is Neon's remote storage: the pageserver refuses to start
 # without a bucket it can reach, and the failure is a panic at boot rather than a warning.

@@ -30,6 +30,41 @@ export function crudProject(db: Kysely<DB>) {
   }
 
   /**
+   * Set one direct deployable child as a group's primary project in one conditional statement.
+   *
+   * The API reads both rows to produce useful validation errors, but this predicate is the race
+   * authority: moving or deleting the child between that read and this write must not leave a group
+   * pointing at something it no longer contains.
+   */
+  async function setPrimaryChild(
+    organizationId: string,
+    groupProjectId: string,
+    childProjectId: string,
+  ): Promise<Selectable<DB["project"]> | undefined> {
+    return await db
+      .updateTable("project")
+      .set({ primaryChildProjectId: childProjectId, updatedAt: new Date() })
+      .where("id", "=", groupProjectId)
+      .where("organizationId", "=", organizationId)
+      .where("isGroup", "=", true)
+      .where("deletedAt", "is", null)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("project as child")
+            .select("child.id")
+            .where("child.id", "=", childProjectId)
+            .where("child.organizationId", "=", organizationId)
+            .where("child.parentProjectId", "=", groupProjectId)
+            .where("child.isGroup", "=", false)
+            .where("child.deletedAt", "is", null),
+        ),
+      )
+      .returningAll()
+      .executeTakeFirst()
+  }
+
+  /**
    * Soft-deletes a project, per ADR 0017.
    *
    * `usage_event.project_id` is `ON DELETE RESTRICT`: a hard delete either fails or, if the
@@ -81,5 +116,5 @@ export function crudProject(db: Kysely<DB>) {
     return Number(result.numUpdatedRows)
   }
 
-  return { create, disableAutoUpdateForInstallation, softDelete, update }
+  return { create, disableAutoUpdateForInstallation, setPrimaryChild, softDelete, update }
 }

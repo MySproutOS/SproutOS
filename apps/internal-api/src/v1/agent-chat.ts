@@ -17,6 +17,7 @@ import {
 import { InsufficientBalanceError } from "@lib/billing"
 import {
   crudSandbox,
+  crudAgentProxyToken,
   fetchSandbox,
   sandboxScopeFor,
   crudAgentSession,
@@ -337,13 +338,10 @@ const app = new Hono()
         // per event would make the database the slowest part of relaying a response the model has
         // already produced.
         const pending: { type: string; payload: unknown; agentTurnId: string }[] = []
-        let seq = await sessions.nextEventSeq(sessionId)
-
         const flush = async () => {
           if (pending.length === 0) return
           const batch = pending.splice(0, pending.length)
-          await sessions.appendEvents(sessionId, seq, batch)
-          seq += BigInt(batch.length)
+          await sessions.appendEvents(sessionId, batch)
         }
 
         const emit = async (event: AgentEvent) => {
@@ -355,6 +353,7 @@ const app = new Hono()
         }
 
         let workspace: Awaited<ReturnType<typeof checkout>> | null = null
+        let turnProxyTokenId: string | null = null
         try {
           const sandbox = await runningSandbox(organization.id, projectId, c.var.user.id)
           if (sandbox === undefined && onPlatformCredit) {
@@ -404,24 +403,49 @@ const app = new Hono()
           if (sandbox !== undefined && sandbox.externalId !== null) {
             const relay = sandboxEventRelay(emit)
             const proxy = await mintProxyToken(db, {
+              actorUserId: c.var.user.id,
               agentCredentialId: credential.billing === "byo" ? credential.credentialId : null,
+              agentSessionId: sessionId,
+              agentTurnId: turn.id,
               organizationId: organization.id,
               projectId,
               upstreamBaseUrl: credential.billing === "byo" ? credential.baseUrl : null,
               upstreamKind: credential.billing === "byo" ? upstreamKindFor(credential.kind) : null,
               upstreamSecret: credential.billing === "byo" ? sealForProxy(credential.secret) : null,
             })
+            turnProxyTokenId = proxy.id
+
+            const scopedProject = await fetchProject(db).getInOrganization(
+              organization.id,
+              projectId,
+              ["id", "isGroup", "parentProjectId", "slug"],
+            )
+            if (scopedProject === undefined) throw new Error("the scoped project disappeared")
+            const groupProjectId = scopedProject.isGroup
+              ? scopedProject.id
+              : scopedProject.parentProjectId
+            const groupPrimaryCandidates =
+              groupProjectId === null
+                ? []
+                : await fetchProject(db).listChildren(organization.id, groupProjectId, [
+                    "name",
+                    "rootDir",
+                    "slug",
+                  ])
 
             const { exitCode } = await runSandboxTurn({
+              actionUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/group-primary`,
               driver: daytonaClientFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
               model: credential.model,
+              groupPrimaryCandidates,
               onEvent: (event) => {
                 relay.onEvent(event)
               },
               prompt,
               proxyBaseUrl: process.env.LLM_PROXY_URL ?? "https://llm.sproutos.me",
+              projectSlug: scopedProject.slug,
               refreshUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${c.req.param("orgSlug")}/agent/proxy-token/refresh`,
               timeoutMs: SANDBOX_TURN_TIMEOUT_MS,
               token: proxy,
@@ -596,10 +620,19 @@ const app = new Hono()
           await sessions.setStatus(sessionId, "failed")
           await emit({ type: "error", message })
         } finally {
-          // The checkout holds a copy of the customer's source. It goes away whether the run
-          // succeeded, failed, or the client hung up mid-stream.
-          await workspace?.dispose()
-          await flush()
+          try {
+            // A detached process can survive the harness command inside the persistent sandbox.
+            // The bearer belongs to this turn, so finishing or failing the turn withdraws it
+            // immediately instead of leaving a 35-minute control-plane credential behind.
+            if (turnProxyTokenId !== null) {
+              await crudAgentProxyToken(db).revoke(turnProxyTokenId)
+            }
+          } finally {
+            // Cleanup and transcript persistence still run if the database refuses the revocation;
+            // the action route independently rejects a turn as soon as closeTurn stamps it done.
+            await workspace?.dispose()
+            await flush()
+          }
         }
       })
     },

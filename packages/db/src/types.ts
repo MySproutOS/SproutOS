@@ -125,7 +125,10 @@ export interface AgentJobRun {
 export interface AgentProxyToken {
   accessExpiresAt: Timestamp
   accessTokenHash: string
+  actorUserId: string | null
   agentCredentialId: string | null
+  agentSessionId: string | null
+  agentTurnId: string | null
   createdAt: Generated<Timestamp>
   id: string
   organizationId: string
