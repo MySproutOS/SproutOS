@@ -1,7 +1,23 @@
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { deploy } from "./deploy"
+
+// CI already loads and applies every real migration before Vitest starts. This suite is about the
+// deploy-time advisory lock, so do not enumerate the filesystem migrations again here: doing so
+// couples a lock test to migration module loading and to whatever schema another test worker left
+// in the shared database.
+vi.mock("kysely/migration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("kysely/migration")>()
+  return {
+    ...actual,
+    Migrator: class {
+      migrateToLatest() {
+        return Promise.resolve({ results: [] })
+      }
+    },
+  }
+})
 
 /**
  * The lock, not the migrations.

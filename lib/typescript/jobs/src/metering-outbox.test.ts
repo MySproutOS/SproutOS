@@ -53,6 +53,15 @@ async function insert(): Promise<{ id: string; eventId: string; value: string }>
   const body = payload(eventId)
   created.push(id)
   await crudMeteringOutbox(db).create({ id, eventId, payload: body })
+  // The production relay correctly claims the oldest global row. Other test files also exercise
+  // metering producers against this shared database, though, and Vitest runs those files in
+  // parallel. Put this suite's row unambiguously first so each relay invocation claims the event
+  // the assertion created instead of an unrelated producer's newly committed row.
+  await db
+    .updateTable("meteringOutbox")
+    .set({ createdAt: new Date("1900-01-01T00:00:00.000Z") })
+    .where("id", "=", id)
+    .execute()
   const stored = await sql<{ payload: string }>`
     select payload::text as payload from metering_outbox where id = ${id}
   `.execute(db)
