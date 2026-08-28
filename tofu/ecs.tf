@@ -479,7 +479,11 @@ resource "aws_ecs_task_definition" "web" {
         { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
         { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
         { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : aws_autoscaling_group.router[colour].name]) },
+        # These names are part of the stable naming contract, not runtime attributes. Referencing
+        # the ASG resources here makes every infrastructure-only task-definition plan inherit the
+        # router launch templates and tenant target groups, so an unrelated application contract
+        # correction cannot be reviewed or applied independently of an edge rollout.
+        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
         { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
         { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
         { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },

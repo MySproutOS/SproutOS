@@ -30,4 +30,13 @@ grep -q 'resource "aws_cloudwatch_metric_alarm" "ecs_unhealthy_targets"' "$ECS"
 grep -q 'resource "aws_cloudwatch_metric_alarm" "ecs_in_service_hosts"' "$ECS"
 grep -A8 'resource "aws_ecs_cluster" "main"' "$ECS" | grep -q 'value = "disabled"'
 
+# A task-definition-only correction must not pull the router launch templates and target groups
+# into its dependency graph. The ASG names are deterministic; treating them as resource outputs
+# couples otherwise independent production rollouts and makes a narrow saved plan impossible.
+if grep -A280 'resource "aws_ecs_task_definition" "web"' "$ECS" |
+  grep -q 'aws_autoscaling_group\.router'; then
+  echo "ECS task definition must derive stable router ASG names without resource dependencies" >&2
+  exit 1
+fi
+
 echo "ECS HA contract tests passed"
