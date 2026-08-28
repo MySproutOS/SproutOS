@@ -1007,6 +1007,23 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
+        # The background worker imports only CloudFront's dedicated standard-v2 log prefix. It
+        # cannot read any other log bucket or prefix, and never needs write/delete authority.
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${aws_s3_bucket.tenant_static_logs.arn}/tenant-static/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.tenant_static_logs.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["tenant-static/*"]
+          }
+        }
+      },
+      {
         # The last write of a static release: one atomic hostname-to-digest pointer at the edge.
         Effect = "Allow"
         Action = [

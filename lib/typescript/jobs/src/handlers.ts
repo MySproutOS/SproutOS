@@ -51,6 +51,11 @@ import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-meterin
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
 import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
+import {
+  importStaticCloudFrontLog,
+  scanStaticCloudFrontLogs,
+  STATIC_CLOUDFRONT_METERING_KINDS,
+} from "./static-cloudfront-metering"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -107,6 +112,8 @@ export const JOB_KINDS = {
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
   customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
+  scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
+  importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -403,6 +410,8 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
+  [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
+  [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
 }
 
 /**
@@ -433,6 +442,17 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     kind: JOB_KINDS.relayMeteringOutbox,
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
     maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes, with the actual importer fanned out by immutable S3 object. Standard
+      logs usually arrive within an hour but may be delayed for a day. A durable consumer cursor
+      recovers arbitrarily long worker outages; its two-day overlap lets the background-job
+      idempotency key absorb late objects and already-seen objects.
+    */
+    kind: JOB_KINDS.scanStaticCloudFrontLogs,
+    idempotencyKey: `${JOB_KINDS.scanStaticCloudFrontLogs}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
+    maxAttempts: 5,
   })
   await enqueue(db, {
     /*
