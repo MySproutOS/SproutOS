@@ -194,7 +194,12 @@ export async function runProvision(
     */
     const credential =
       github?.credential ??
-      (await organizationGitHubCredential(db, repository.organizationId, repository.ownerLogin)) ??
+      (await organizationGitHubCredential(
+        db,
+        repository.organizationId,
+        { purpose: "repository-provision" },
+        repository.ownerLogin,
+      )) ??
       (await userGitHubCredential(db, payload.userId))
     if (credential === undefined) throw new NoUsableCredentialError()
     const usableCredential = credential
@@ -269,13 +274,28 @@ export async function runProvision(
         fork: forkAndPersist,
         prepareAndPush: async (preparedRepository) => {
           if (template.preparedCommitSha !== null) return
+          const templateCredential =
+            usableCredential.kind === "installation"
+              ? await organizationGitHubCredential(
+                  db,
+                  repository.organizationId,
+                  {
+                    purpose: "catalogue-template-push",
+                    repositoryId: preparedRepository.id,
+                  },
+                  preparedRepository.ownerLogin,
+                )
+              : usableCredential
+          if (templateCredential === undefined) {
+            throw new NoUsableCredentialError()
+          }
           await applyCatalogueTemplate({
             db,
             context: template,
             owner: preparedRepository.ownerLogin,
             repository: preparedRepository.name,
             branch: preparedRepository.defaultBranch,
-            token: usableCredential.token,
+            token: templateCredential.token,
           })
         },
       })

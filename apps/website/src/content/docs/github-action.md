@@ -6,8 +6,10 @@ summary: Use the same sprout deployment contract from GitHub Actions, a terminal
 
 ## GitHub Actions
 
-Build the target, then call the Marketplace action. The action is a thin wrapper around a pinned
-release of the `sprout` CLI, so CI and a local terminal package and publish the same artifact.
+Build the target, then call the Marketplace action. The reviewed action at commit
+`0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180` is a thin wrapper around the published `sprout` CLI
+v0.1.0. The local CLI is v0.1.1 because it corrects the production control-plane defaults; both use
+the same packaging and deployment protocol.
 
 ```yaml
 name: Deploy to SproutOS
@@ -29,7 +31,7 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@v1
+      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
           preset: next
           directory: apps/website/.next/standalone
@@ -54,7 +56,9 @@ repository identity fails the GitHub job instead of reporting a successful uploa
 
 ## Run the same deployment locally
 
-Install `sprout` from the checksummed binaries on [Downloads](/download), then sign in and deploy:
+Install `sprout` from the checksummed binaries in the
+[SproutOS CLI v0.1.1 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.1), then
+sign in and deploy:
 
 ```shell
 sprout auth login
@@ -69,6 +73,11 @@ command line that will be saved in shell history.
 
 Every command also supports stable `--json` output for scripts and coding agents. Destructive
 commands require confirmation or `--yes`.
+
+The release contains macOS arm64 and x86-64, Linux arm64 and x86-64, and Windows x86-64 binaries,
+plus `SHA256SUMS` and `sprout-v0.1.1-manifest.json`. Verify the selected archive against both files.
+The action also verifies GitHub's artifact attestation and the release's exact source revision
+before it executes the binary.
 
 ## Give a local coding agent the SproutOS skill
 
@@ -93,6 +102,10 @@ The skill is instructions, not a credential. Authenticate the `sprout` CLI yours
 App Store eligibility and deployment behavior come only from the signed
 `MySproutOS/Deployment-Templates` catalogue. SproutOS verifies the catalogue provenance, exact
 upstream commit, and immutable plugin digest before applying a recipe.
+
+The reviewed template source at commit `c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1` generates the
+canonical OIDC workflows for Umami and Memos. Those workflows pin the deploy action to the full
+commit above; they do not follow a mutable action tag.
 
 Generated forks may contain `.config/sproutos.toml`. It is declarative, contains no secret values,
 and helps humans and agents understand the chosen services and bindings. It is not the catalogue

@@ -625,7 +625,12 @@ async function resolveOwnRepository(
   ])
   if (known) return known
 
-  const credential = await organizationGitHubCredential(db, organizationId)
+  const repositoryId = Number(githubRepoId)
+  if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) return undefined
+  const credential = await organizationGitHubCredential(db, organizationId, {
+    purpose: "project-repository-read",
+    repositoryId,
+  })
   if (credential === undefined) return undefined
 
   const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)
@@ -1056,7 +1061,7 @@ const app = new Hono()
           organizationId: organization.id,
           productionBranch,
           repositoryId: plan.id,
-          createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
+          createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
         })
       }
 
@@ -1135,7 +1140,7 @@ const app = new Hono()
       const provisioned = await provisionProject(db).create({
         ...(templateProjectId === undefined ? {} : { projectId: templateProjectId }),
         actorUserId: user.id,
-        createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
+        createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),

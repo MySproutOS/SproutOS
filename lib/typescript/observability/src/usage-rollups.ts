@@ -21,6 +21,32 @@ type Row = {
   externally_charged_quantity: string
 }
 
+export type StaticCloudFrontUsageTotals = {
+  requests: string
+}
+
+/** Deduplicated request count for one closed CloudFront event-time window. */
+export async function staticCloudFrontUsageTotals(
+  start: Date,
+  end: Date,
+): Promise<StaticCloudFrontUsageTotals> {
+  const result = await clickhouse().query({
+    query: `
+select
+  toString(coalesce(sumIf(quantity, dimension = 'site_request'), toDecimal128(0, 9))) as requests
+from ${USAGE_EVENT_RAW_TABLE} final
+where source = 'cloudfront-standard-v2'
+  and occurred_at >= parseDateTime64BestEffort({start:String}, 3, 'UTC')
+  and occurred_at < parseDateTime64BestEffort({end:String}, 3, 'UTC')
+`,
+    query_params: { start: start.toISOString(), end: end.toISOString() },
+    format: "JSONEachRow",
+  })
+  const [row] = await result.json<{ requests: string }>()
+  if (row === undefined) throw new Error("ClickHouse returned no static CloudFront usage totals")
+  return { requests: row.requests }
+}
+
 /** A cutoff from the same clock that writes `stored_at`, taken before the affected-grain query. */
 export async function clickhouseUsageWatermark(): Promise<Date> {
   const result = await clickhouse().query({

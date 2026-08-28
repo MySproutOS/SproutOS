@@ -312,7 +312,7 @@ const app = new Hono()
 
       const repository = onPlatformCredit
         ? null
-        : await repositoryFor(organization.id, projectId, c.var.user.id)
+        : await repositoryFor(organization.id, projectId, c.var.user.id, "agent-clone")
       if (typeof repository === "string") return throwBadRequest(c, repository)
 
       await crudAuditLog(db).record({
@@ -471,8 +471,12 @@ const app = new Hono()
             */
             if (exitCode === 0 && !terminal.isError) {
               try {
-                const target =
-                  repository ?? (await repositoryFor(organization.id, projectId, c.var.user.id))
+                const target = await repositoryFor(
+                  organization.id,
+                  projectId,
+                  c.var.user.id,
+                  "sandbox-push",
+                )
                 if (typeof target === "string") throw new Error(target)
 
                 const pushed = await commitSandboxWork({
@@ -582,11 +586,18 @@ const app = new Hono()
           */
           if (!outcome.isError) {
             try {
+              const writeTarget = await repositoryFor(
+                organization.id,
+                projectId,
+                c.var.user.id,
+                "agent-push",
+              )
+              if (typeof writeTarget === "string") throw new Error(writeTarget)
               const pushed = await commitAndPush({
                 workspace,
-                owner: repository.ownerLogin,
-                repo: repository.name,
-                token: repository.credential.token,
+                owner: writeTarget.ownerLogin,
+                repo: writeTarget.name,
+                token: writeTarget.credential.token,
                 branch: `sproutos/agent-${sessionId.slice(-12)}`,
                 message: `${prompt.split("\n")[0]?.slice(0, 72) ?? "Agent changes"}\n\nWritten by the SproutOS agent.`,
               })
@@ -739,6 +750,7 @@ async function repositoryFor(
   organizationId: string,
   projectId: string,
   userId: string,
+  purpose: "agent-clone" | "agent-push" | "sandbox-push",
 ): Promise<
   | {
       ownerLogin: string
@@ -759,7 +771,7 @@ async function repositoryFor(
   const repository = await fetchRepository(db).getInOrganization(
     organizationId,
     project.repositoryId,
-    ["ownerLogin", "name", "defaultBranch"],
+    ["ownerLogin", "name", "defaultBranch", "githubRepoId"],
   )
   if (repository === undefined) return "This project's repository record is missing"
 
@@ -779,7 +791,7 @@ async function repositoryFor(
         installationId,
         // The store hands back the expiry too. Carried rather than dropped: an installation token
         // lasts an hour, and a caller that holds one across a long agent turn needs to know.
-        ...(await installationTokenFor(installationId)),
+        ...(await installationTokenFor(installationId, purpose, Number(repository.githubRepoId))),
       },
     }
   }
@@ -802,12 +814,14 @@ let tokenStore: ReturnType<typeof createInstallationTokenStore> | null = null
 
 async function installationTokenFor(
   installationId: number,
+  purpose: "agent-clone" | "agent-push" | "sandbox-push",
+  repositoryId: number,
 ): Promise<{ token: string; expiresAt: Date }> {
   tokenStore ??= createInstallationTokenStore({
     client: createGitHubClient(),
     signJwt: envAppJwtSigner(),
   })
-  const token = await tokenStore.get(installationId)
+  const token = await tokenStore.get(installationId, { purpose, repositoryId })
   return { token: token.token, expiresAt: token.expiresAt }
 }
 

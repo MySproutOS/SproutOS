@@ -92,6 +92,8 @@ impl ProvenanceVerifier for CosignProvenanceVerifier {
                 &identity,
                 "--certificate-oidc-issuer",
                 &expected.oidc_issuer,
+                "--certificate-github-workflow-sha",
+                &expected.source_commit,
                 &subject,
             ])
             .env_clear()
@@ -202,16 +204,63 @@ mod tests {
             "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main"
         ));
         assert!(arguments.contains("https://token.actions.githubusercontent.com"));
+        assert!(arguments.contains("--certificate-github-workflow-sha"));
+        assert!(arguments.contains(&"c".repeat(40)));
         assert!(arguments.contains(&digest.to_string()));
     }
 
     #[tokio::test]
-    async fn fails_closed_on_timeout_and_refusal() {
+    async fn pins_the_exact_source_commit_from_the_signing_certificate() {
+        let directory = tempdir().unwrap();
+        let executable = directory.path().join("cosign");
+        let signed_commit = "c".repeat(40);
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = --certificate-github-workflow-sha ]; then\n    shift\n    [ \"$1\" = '{signed_commit}' ] && exit 0\n    echo wrong-source-commit >&2\n    exit 1\n  fi\n  shift\ndone\necho missing-source-commit >&2\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(2));
+        let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            .parse()
+            .unwrap();
+
+        verifier
+            .verify(
+                &reference,
+                &digest,
+                &digest,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates(signed_commit),
+            )
+            .await
+            .unwrap();
+
+        let error = verifier
+            .verify(
+                &reference,
+                &digest,
+                &digest,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates("d".repeat(40)),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("wrong-source-commit"));
+    }
+
+    #[tokio::test]
+    async fn fails_closed_on_cosign_refusal() {
         let directory = tempdir().unwrap();
         let executable = directory.path().join("cosign");
         fs::write(&executable, "#!/bin/sh\necho unsigned >&2\nexit 1\n").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(1));
+        // This is not the timeout test: give a loaded parallel test runner enough time to observe
+        // the verifier's deliberate refusal and retain its diagnostic.
+        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(5));
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
@@ -227,5 +276,29 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("unsigned"));
+    }
+
+    #[tokio::test]
+    async fn fails_closed_when_cosign_times_out() {
+        let directory = tempdir().unwrap();
+        let executable = directory.path().join("cosign");
+        fs::write(&executable, "#!/bin/sh\nexec sleep 10\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_millis(50));
+        let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            .parse()
+            .unwrap();
+        let error = verifier
+            .verify(
+                &reference,
+                &digest,
+                &digest,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates("c".repeat(40)),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
     }
 }

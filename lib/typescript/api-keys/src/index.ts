@@ -24,6 +24,8 @@ export const KEY_PREFIX = "sk_live_"
 /** Characters of the key shown in a list. Enough to recognise, far too few to use. */
 export const DISPLAY_PREFIX_LENGTH = KEY_PREFIX.length + 8
 
+export class InactiveGrantError extends Error {}
+
 export function generateKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   return `${KEY_PREFIX}${Buffer.from(bytes).toString("base64url")}`
@@ -50,6 +52,26 @@ export type ResolvedKey = {
   organizationId: string
   userId: string
   scopes: string[]
+  oauthGrantId: string | null
+}
+
+function scopeCovers(granted: readonly string[], requested: string): boolean {
+  const segments = requested.split(":")
+  const candidates = new Set<string>(["*", requested])
+  for (let index = 1; index < segments.length; index += 1) {
+    candidates.add(`${segments.slice(0, index).join(":")}:*`)
+  }
+  return granted.some((scope) => candidates.has(scope))
+}
+
+/** The narrowest scope representation covered by both authorities. */
+export function intersectScopes(left: readonly string[], right: readonly string[]): string[] {
+  const covered = [...new Set([...left, ...right])].filter(
+    (scope) => scopeCovers(left, scope) && scopeCovers(right, scope),
+  )
+  return covered.filter(
+    (scope) => !covered.some((other) => other !== scope && scopeCovers([other], scope)),
+  )
 }
 
 /**
@@ -68,11 +90,17 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
   const row = await db
     .selectFrom("apiKey")
     .innerJoin("organization", "organization.id", "apiKey.organizationId")
+    .leftJoin("oauthGrant", "oauthGrant.id", "apiKey.oauthGrantId")
     .select([
       "apiKey.id as id",
       "apiKey.organizationId as organizationId",
       "apiKey.userId as userId",
       "apiKey.scopes as scopes",
+      "apiKey.oauthGrantId as oauthGrantId",
+      "oauthGrant.revokedAt as grantRevokedAt",
+      "oauthGrant.organizationId as grantOrganizationId",
+      "oauthGrant.userId as grantUserId",
+      "oauthGrant.scopes as grantScopes",
     ])
     .where("apiKey.keyHash", "=", await hashKey(key))
     .where("apiKey.revokedAt", "is", null)
@@ -83,7 +111,26 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
     .where("organization.deletedAt", "is", null)
     .executeTakeFirst()
 
-  return row === undefined ? undefined : { ...row, scopes: row.scopes ?? [] }
+  if (row === undefined) return undefined
+  if (
+    row.oauthGrantId !== null &&
+    (row.grantRevokedAt !== null ||
+      row.grantOrganizationId !== row.organizationId ||
+      row.grantUserId !== row.userId)
+  ) {
+    return undefined
+  }
+
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    userId: row.userId,
+    scopes:
+      row.oauthGrantId === null
+        ? (row.scopes ?? [])
+        : intersectScopes(row.scopes ?? [], row.grantScopes ?? []),
+    oauthGrantId: row.oauthGrantId,
+  }
 }
 
 /**
@@ -108,6 +155,7 @@ export type IssueInput = {
   name: string
   scopes: string[]
   expiresAt?: Date | null
+  oauthGrantId?: string | null
 }
 
 /** Mints a key. The plaintext is returned once and never stored. */
@@ -117,20 +165,40 @@ export async function issueKey(
 ): Promise<{ id: string; key: string; prefix: string }> {
   const key = generateKey()
   const id = v7()
+  const keyHash = await hashKey(key)
 
-  await db
-    .insertInto("apiKey")
-    .values({
-      id,
-      organizationId: input.organizationId,
-      userId: input.userId,
-      name: input.name,
-      keyHash: await hashKey(key),
-      prefix: displayPrefix(key),
-      scopes: input.scopes,
-      expiresAt: input.expiresAt ?? null,
-    })
-    .execute()
+  await db.transaction().execute(async (tx) => {
+    if (input.oauthGrantId !== undefined && input.oauthGrantId !== null) {
+      const grant = await tx
+        .selectFrom("oauthGrant")
+        .select(["id", "scopes"])
+        .where("id", "=", input.oauthGrantId)
+        .where("organizationId", "=", input.organizationId)
+        .where("userId", "=", input.userId)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .executeTakeFirst()
+      if (grant === undefined) throw new InactiveGrantError("The OAuth grant is no longer active")
+      if (!input.scopes.every((scope) => scopeCovers(grant.scopes, scope))) {
+        throw new InactiveGrantError("The OAuth grant no longer covers the requested scopes")
+      }
+    }
+
+    await tx
+      .insertInto("apiKey")
+      .values({
+        id,
+        organizationId: input.organizationId,
+        userId: input.userId,
+        name: input.name,
+        keyHash,
+        prefix: displayPrefix(key),
+        scopes: input.scopes,
+        expiresAt: input.expiresAt ?? null,
+        oauthGrantId: input.oauthGrantId ?? null,
+      })
+      .execute()
+  })
 
   return { id, key, prefix: displayPrefix(key) }
 }

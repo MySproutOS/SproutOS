@@ -26,7 +26,6 @@ import {
   deleteV1OrgsByOrgSlugServicesByServiceId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
-  getAdminUsers,
   getV1AndroidCatalogue,
   getV1AuthMe,
   getV1DeployDeploymentsByDeploymentId,
@@ -105,10 +104,11 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
-  postAdminUsersImpersonate,
   postV1ApkSigningClaim,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
+  postV1AuthCliRevoke,
+  postV1AuthCliToken,
   postV1AuthLogout,
   postV1DeployCatalogueImport,
   postV1DeployMigrate,
@@ -139,6 +139,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  postV1OrgsByOrgSlugProjectsByProjectIdDeployToken,
   postV1OrgsByOrgSlugProjectsByProjectIdDomains,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
@@ -217,8 +218,6 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
-  GetAdminUsersData,
-  GetAdminUsersResponse,
   GetV1AndroidCatalogueData,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
@@ -432,13 +431,16 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateError,
-  PostAdminUsersImpersonateResponse,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
+  PostV1AuthCliRevokeData,
+  PostV1AuthCliRevokeError,
+  PostV1AuthCliRevokeResponse,
+  PostV1AuthCliTokenData,
+  PostV1AuthCliTokenError,
+  PostV1AuthCliTokenResponse,
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
@@ -511,6 +513,8 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
@@ -607,6 +611,33 @@ import type {
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
 } from "../types.gen"
 
+/**
+ * Exchange a Sprout CLI PKCE authorization code for an organization-scoped API key
+ */
+export const postV1AuthCliTokenMutation = (
+  options?: Partial<Options<PostV1AuthCliTokenData>>,
+): UseMutationOptions<
+  PostV1AuthCliTokenResponse,
+  PostV1AuthCliTokenError,
+  Options<PostV1AuthCliTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1AuthCliTokenResponse,
+    PostV1AuthCliTokenError,
+    Options<PostV1AuthCliTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1AuthCliToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export type QueryKey<TOptions extends Options> = [
   Pick<TOptions, "baseUrl" | "body" | "headers" | "path" | "query"> & {
     _id: string
@@ -682,6 +713,33 @@ export const postV1AuthLogoutMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1AuthLogout({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Revoke the Sprout CLI API key presented as a bearer credential
+ */
+export const postV1AuthCliRevokeMutation = (
+  options?: Partial<Options<PostV1AuthCliRevokeData>>,
+): UseMutationOptions<
+  PostV1AuthCliRevokeResponse,
+  PostV1AuthCliRevokeError,
+  Options<PostV1AuthCliRevokeData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1AuthCliRevokeResponse,
+    PostV1AuthCliRevokeError,
+    Options<PostV1AuthCliRevokeData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1AuthCliRevoke({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -5202,6 +5260,33 @@ export const postV1DeployCatalogueImportMutation = (
 }
 
 /**
+ * Authorize an interactive deployment of one project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeployTokenMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDeployToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
  * Exchange a GitHub Actions OIDC token for a short-lived SproutOS deploy token. Called by the deploy action.
  */
 export const postV1DeployTokenMutation = (
@@ -5452,100 +5537,3 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
-
-export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
-  createQueryKey("getAdminUsers", options)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersOptions = (options?: Options<GetAdminUsersData>) =>
-  queryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    GetAdminUsersResponse,
-    ReturnType<typeof getAdminUsersQueryKey>
-  >({
-    queryFn: async ({ queryKey, signal }) => {
-      const { data } = await getAdminUsers({
-        ...options,
-        ...queryKey[0],
-        signal,
-        throwOnError: true,
-      })
-      return data
-    },
-    queryKey: getAdminUsersQueryKey(options),
-  })
-
-export const getAdminUsersInfiniteQueryKey = (
-  options?: Options<GetAdminUsersData>,
-): QueryKey<Options<GetAdminUsersData>> => createQueryKey("getAdminUsers", options, true)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersInfiniteOptions = (options?: Options<GetAdminUsersData>) => {
-  const opts = infiniteQueryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    InfiniteData<GetAdminUsersResponse>,
-    QueryKey<Options<GetAdminUsersData>>,
-    string | Pick<QueryKey<Options<GetAdminUsersData>>[0], "body" | "headers" | "path" | "query">
-  >(
-    // @ts-ignore
-    {
-      queryFn: async ({ pageParam, queryKey, signal }) => {
-        // @ts-ignore
-        const page: Pick<
-          QueryKey<Options<GetAdminUsersData>>[0],
-          "body" | "headers" | "path" | "query"
-        > =
-          typeof pageParam === "object"
-            ? pageParam
-            : {
-                query: {
-                  cursor: pageParam,
-                },
-              }
-        const params = createInfiniteParams(queryKey, page)
-        const { data } = await getAdminUsers({
-          ...options,
-          ...params,
-          signal,
-          throwOnError: true,
-        })
-        return data
-      },
-      queryKey: getAdminUsersInfiniteQueryKey(options),
-    },
-  )
-  return opts as Omit<typeof opts, "initialData">
-}
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonateMutation = (
-  options?: Partial<Options<PostAdminUsersImpersonateData>>,
-): UseMutationOptions<
-  PostAdminUsersImpersonateResponse,
-  PostAdminUsersImpersonateError,
-  Options<PostAdminUsersImpersonateData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostAdminUsersImpersonateResponse,
-    PostAdminUsersImpersonateError,
-    Options<PostAdminUsersImpersonateData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postAdminUsersImpersonate({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}

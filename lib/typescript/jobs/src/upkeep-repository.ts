@@ -8,6 +8,7 @@ import {
   repositoryTagState,
   type GitHubClient,
   type GitHubCredential,
+  type InstallationTokenRequest,
   syncWithUpstream,
 } from "@lib/github"
 import type { DB } from "@sproutos/db"
@@ -33,7 +34,10 @@ type UpkeepPayload = { repositoryId: string; trigger?: UpkeepTrigger }
  */
 export type UpkeepDeps = {
   client: GitHubClient
-  credentialFor: (installationId: number) => Promise<GitHubCredential>
+  credentialFor: (
+    installationId: number,
+    request: InstallationTokenRequest,
+  ) => Promise<GitHubCredential>
   reconcileTemplate?: (input: TemplateUpstreamInput) => Promise<TemplateUpstreamResult>
 }
 
@@ -49,7 +53,7 @@ function defaultDeps(): UpkeepDeps {
     // `envAppJwtSigner()` reads the key lazily, so building this does not require the key to
     // exist until a job actually runs.
     const tokens = createInstallationTokenStore({ client, signJwt: envAppJwtSigner() })
-    defaults = { client, credentialFor: (id) => tokens.get(id) }
+    defaults = { client, credentialFor: (id, request) => tokens.get(id, request) }
   }
   return defaults
 }
@@ -109,6 +113,7 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         "upstreamDefaultBranch",
         "upstreamTagFingerprint",
         "githubInstallationId",
+        "githubRepoId",
       ])
       .where("id", "=", repositoryId)
       .where("deletedAt", "is", null)
@@ -148,11 +153,20 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
     }
 
     const { client, credentialFor } = deps ?? defaultDeps()
-    const credential = await credentialFor(Number(installation.installationId))
+    const installationId = Number(installation.installationId)
+    const githubRepoId = Number(repository.githubRepoId)
+    const inspectionCredential = await credentialFor(installationId, {
+      purpose: "upkeep-inspect",
+      repositoryId: githubRepoId,
+    })
 
     let observedTagFingerprint: string | undefined
     if (trigger === "tag") {
-      const tags = await repositoryTagState(client, credential, repository.upstreamFullName)
+      const tags = await repositoryTagState(
+        client,
+        inspectionCredential,
+        repository.upstreamFullName,
+      )
 
       if (tags.fingerprint === repository.upstreamTagFingerprint) {
         await db
@@ -182,6 +196,10 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
     }
 
     if (repository.provenance === "template") {
+      const writeCredential = await credentialFor(installationId, {
+        purpose: "upkeep-sync",
+        repositoryId: githubRepoId,
+      })
       const base = await db
         .selectFrom("upstreamSyncRun")
         .select("upstreamSha")
@@ -200,7 +218,7 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
           branch: repository.defaultBranch,
           upstreamFullName: repository.upstreamFullName,
           upstreamBranch: repository.upstreamDefaultBranch ?? repository.defaultBranch,
-          token: credential.token,
+          token: writeCredential.token,
           baseUpstreamSha: base?.upstreamSha,
           signal: context.signal,
         })
@@ -263,7 +281,7 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
       return
     }
 
-    const position = await compareWithUpstream(client, credential, {
+    const position = await compareWithUpstream(client, inspectionCredential, {
       owner: repository.ownerLogin,
       repo: repository.name,
       branch: repository.defaultBranch,
@@ -291,9 +309,13 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
     }
 
     try {
+      const writeCredential = await credentialFor(installationId, {
+        purpose: "upkeep-sync",
+        repositoryId: githubRepoId,
+      })
       const sync = await syncWithUpstream(
         client,
-        credential,
+        writeCredential,
         repository.ownerLogin,
         repository.name,
         repository.defaultBranch,

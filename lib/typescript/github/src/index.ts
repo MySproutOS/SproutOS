@@ -5,6 +5,7 @@ export {
   envAppJwtSigner,
   type GitHubAppConfig,
   githubAppConfigFromEnv,
+  type InstallationTokenRequest,
   type InstallationTokenStoreOptions,
 } from "./app-auth"
 export {

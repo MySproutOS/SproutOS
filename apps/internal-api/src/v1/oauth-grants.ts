@@ -285,6 +285,13 @@ const routes = app
         .where("revokedAt", "is", null)
         .execute()
 
+      await db
+        .updateTable("apiKey")
+        .set({ revokedAt })
+        .where("oauthGrantId", "=", grantId)
+        .where("revokedAt", "is", null)
+        .execute()
+
       /*
         And every credential the grant minted, including on databases that were deleted.
 

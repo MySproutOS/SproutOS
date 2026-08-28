@@ -134,3 +134,49 @@ output "tenant_static_log_bucket" {
   description = "Encrypted standard-v2 CloudFront logs imported into canonical usage events."
   value       = aws_s3_bucket.tenant_static_logs.id
 }
+
+# A durable reconciliation row is the audit record; these metrics make lag and a settled residual
+# visible without an operator polling Postgres. Pending delivery is expected inside the grace
+# window, while platform overhead means AWS still observed requests after that window closed.
+# Bytes are deliberately excluded because CloudWatch BytesDownloaded and standard-log sc-bytes
+# have different documented method/header boundaries.
+resource "aws_cloudwatch_log_metric_filter" "tenant_static_pending_delivery" {
+  name           = "${var.name_prefix}-tenant-static-pending-delivery"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+  pattern        = "{ $.event = \"static_cloudfront_usage_reconciliation\" && $.status = \"pending_delivery\" }"
+
+  metric_transformation {
+    name      = "StaticCloudFrontPendingDeliveryDays"
+    namespace = "SproutOS/Billing"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "tenant_static_platform_overhead" {
+  name           = "${var.name_prefix}-tenant-static-platform-overhead"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+  pattern        = "{ $.event = \"static_cloudfront_usage_reconciliation\" && $.status = \"platform_overhead\" }"
+
+  metric_transformation {
+    name      = "StaticCloudFrontPlatformOverheadDays"
+    namespace = "SproutOS/Billing"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "tenant_static_platform_overhead" {
+  alarm_name          = "${var.name_prefix}-tenant-static-platform-overhead"
+  alarm_description   = "CloudFront viewer-request count still exceeds imported standard-log rows after the delivery grace period. Residual is platform overhead, never tenant usage."
+  namespace           = "SproutOS/Billing"
+  metric_name         = "StaticCloudFrontPlatformOverheadDays"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  tags = local.tags
+}

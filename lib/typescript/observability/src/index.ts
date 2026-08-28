@@ -62,6 +62,8 @@ export { gbSeconds, type UsageEvent, usageFrom, usageFromBatch } from "./lambda-
 export { connectProducer, encode, type LogProducer, topic } from "./producer"
 export {
   clickhouseUsageWatermark,
+  staticCloudFrontUsageTotals,
   usageRollupsChangedBetween,
   type ClickHouseUsageRollup,
+  type StaticCloudFrontUsageTotals,
 } from "./usage-rollups"

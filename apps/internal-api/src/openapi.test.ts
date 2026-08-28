@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { Type } from "typebox"
 import { describe, expect, it } from "vitest"
 import { validator } from "./utils/validator"
+import app, { spec as apiSpecOptions } from "./index"
 
 /**
  * The spec has to describe the bodies the API actually accepts.
@@ -39,6 +40,22 @@ function requestBodyOf(spec: Record<string, never>, path: string, method: string
 }
 
 describe("the OpenAPI document", () => {
+  it("publishes bearer authentication for CLI and API-key clients", async () => {
+    const document = (await generateSpecs(app, apiSpecOptions)) as {
+      components?: { securitySchemes?: Record<string, unknown> }
+      paths?: Record<string, Record<string, { security?: unknown }>>
+    }
+
+    expect(document.components?.securitySchemes?.bearerAuth).toEqual({
+      type: "http",
+      scheme: "bearer",
+      description: "SproutOS OAuth access token or organization-scoped API key",
+    })
+    expect(
+      document.paths?.["/v1/orgs/{orgSlug}/projects/{projectId}/deploy-token"]?.post?.security,
+    ).toContainEqual({ bearerAuth: [] })
+  })
+
   it("describes the body of a route validated through the strict wrapper", async () => {
     const app = new Hono().post("/things", validator("json", Body), (c) =>
       c.json(c.req.valid("json")),

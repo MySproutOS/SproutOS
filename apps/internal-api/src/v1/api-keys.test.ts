@@ -300,6 +300,21 @@ describe.skipIf(!up)("what a key can do", () => {
     expect([403, 404]).toContain(response.status)
   })
 
+  it("stays pinned to its organization even when its user belongs to both", async ({ skip }) => {
+    if (!up) skip()
+    const { key } = await mint("Pinned", ["project:read"])
+    const created = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: authHeaders(actor()),
+      body: JSON.stringify({ name: `Second owner org ${v7()}` }),
+    })
+    const other = (await created.json()) as Json
+    trackOrganization(other.id as string)
+
+    const response = await withKey("GET", `/v1/orgs/${other.slug as string}/projects`, key)
+    expect(response.status).toBe(404)
+  })
+
   it("refuses to revoke a key belonging to another organization", async ({ skip }) => {
     if (!up) skip()
     const { id } = await mint("Mine", ["*"])
@@ -329,11 +344,11 @@ describe.skipIf(!up)("what a key can do", () => {
     expect(stillLive.revokedAt).toBeNull()
   })
 
-  it("does not let a bearer credential sign out a browser session", async ({ skip }) => {
+  it("revokes the bearer credential used to sign out", async ({ skip }) => {
     if (!up) skip()
-    // There is no cookie to clear. Revoking a key is a different action with a different endpoint.
     const { key } = await mint("No logout", ["*"])
     const response = await withKey("POST", "/v1/auth/logout", key)
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(200)
+    expect((await withKey("GET", `/v1/orgs/${orgSlug}/projects`, key)).status).toBe(401)
   })
 })

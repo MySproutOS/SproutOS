@@ -406,6 +406,7 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
         { name = "TENANT_STATIC_LOG_PREFIX", value = "tenant-static/" },
+        { name = "TENANT_STATIC_DISTRIBUTION_ID", value = aws_cloudfront_distribution.tenant_static.id },
         { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },

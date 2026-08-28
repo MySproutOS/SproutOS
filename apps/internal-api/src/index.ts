@@ -8,7 +8,7 @@ import { ErrorObjectT, ErrorResponseT, InnerErrorT } from "./utils/errors/error.
 import v1 from "./v1"
 import admin from "./admin"
 
-const spec: OpenApiSpecsOptions = {
+export const spec: OpenApiSpecsOptions = {
   documentation: {
     info: {
       title: "Internal API",
@@ -22,6 +22,18 @@ const spec: OpenApiSpecsOptions = {
       },
     ],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          description: "SproutOS OAuth access token or organization-scoped API key",
+        },
+        sessionCookie: {
+          type: "apiKey",
+          in: "cookie",
+          name: "session",
+        },
+      },
       schemas: {
         InnerErrorT,
         ErrorObjectT,

@@ -88,6 +88,14 @@ export type ExchangeCode = {
   codeVerifier: string
 }
 
+export type RedeemedAuthorizationCode = {
+  oauthClientId: string
+  oauthGrantId: string
+  organizationId: string
+  userId: string
+  scopes: string[]
+}
+
 /**
  * Exchange an authorization code for tokens. Single use, enforced by the database.
  *
@@ -99,10 +107,10 @@ export type ExchangeCode = {
  * Every check is inside the same transaction as the consumption, so a code that fails PKCE is
  * still burned. Leaving it alive would turn a failed verifier into a free retry.
  */
-export async function exchangeAuthorizationCode(
+export async function redeemAuthorizationCode(
   db: Kysely<DB>,
   input: ExchangeCode,
-): Promise<IssuedTokens> {
+): Promise<RedeemedAuthorizationCode> {
   const codeHash = await hashToken(input.code)
 
   /*
@@ -144,13 +152,43 @@ export async function exchangeAuthorizationCode(
     throw new OAuthError("invalid_grant", "code_verifier does not match the challenge")
   }
 
+  const grant = await db
+    .selectFrom("oauthGrant")
+    .select(["id", "organizationId", "userId", "oauthClientId", "scopes"])
+    .where("id", "=", consumed.oauthGrantId)
+    .where("revokedAt", "is", null)
+    .executeTakeFirst()
+  if (
+    grant === undefined ||
+    grant.organizationId !== consumed.organizationId ||
+    grant.userId !== consumed.userId ||
+    grant.oauthClientId !== consumed.oauthClientId
+  ) {
+    throw new OAuthError("invalid_grant", "The authorization grant is no longer active")
+  }
+
+  return {
+    oauthClientId: consumed.oauthClientId,
+    oauthGrantId: consumed.oauthGrantId,
+    organizationId: consumed.organizationId,
+    userId: consumed.userId,
+    scopes: consumed.scopes.filter((scope) => grant.scopes.includes(scope)),
+  }
+}
+
+export async function exchangeAuthorizationCode(
+  db: Kysely<DB>,
+  input: ExchangeCode,
+): Promise<IssuedTokens> {
+  const redeemed = await redeemAuthorizationCode(db, input)
+
   return await db.transaction().execute(
     async (tx) =>
       await issueTokens(tx, {
-        oauthGrantId: consumed.oauthGrantId,
-        oauthClientId: consumed.oauthClientId,
-        userId: consumed.userId,
-        scopes: consumed.scopes,
+        oauthGrantId: redeemed.oauthGrantId,
+        oauthClientId: redeemed.oauthClientId,
+        userId: redeemed.userId,
+        scopes: redeemed.scopes,
         familyId: v7(),
         parentTokenHash: null,
       }),
