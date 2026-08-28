@@ -224,10 +224,12 @@ export function fetchAgentSession(db: Kysely<DB> | Transaction<DB>) {
     agentSessionId: string,
     afterSeq: bigint | null,
     limit = 500,
-  ): Promise<{ seq: string; type: string; payload: unknown; createdAt: Date }[]> {
+  ): Promise<
+    { seq: string; type: string; payload: unknown; agentTurnId: string | null; createdAt: Date }[]
+  > {
     const rows = await db
       .selectFrom("agentEvent")
-      .select(["seq", "type", "payload", "createdAt"])
+      .select(["seq", "type", "payload", "agentTurnId", "createdAt"])
       .where("agentSessionId", "=", agentSessionId)
       // `seq` is bigint in Postgres and selects as a string, so the comparand is stringified
       // rather than cast: a Number() here would silently lose precision past 2^53.
@@ -240,9 +242,19 @@ export function fetchAgentSession(db: Kysely<DB> | Transaction<DB>) {
       seq: String(row.seq),
       type: row.type,
       payload: row.payload,
+      agentTurnId: row.agentTurnId,
       createdAt: row.createdAt,
     }))
   }
 
-  return { getInOrganization, listEvents, listForProject }
+  async function listTurns(agentSessionId: string) {
+    return await db
+      .selectFrom("agentTurn")
+      .select(["id", "role", "inputText", "error", "seq", "createdAt"])
+      .where("agentSessionId", "=", agentSessionId)
+      .orderBy("seq", "asc")
+      .execute()
+  }
+
+  return { getInOrganization, listEvents, listForProject, listTurns }
 }

@@ -1,7 +1,12 @@
 import type { DB } from "@sproutos/db"
 import type { Kysely, Transaction } from "kysely"
 import { v7 } from "uuid"
-import { availableBalance, InsufficientBalanceError, postWithin } from "./ledger"
+import {
+  availableBalance,
+  InsufficientBalanceError,
+  lockAvailableBalance,
+  postWithin,
+} from "./ledger"
 import type { MicroUsd } from "./money"
 
 /**
@@ -97,9 +102,9 @@ export type SettleHold = {
   holdId: string
   /**
    * What the work actually cost. May exceed the hold: the reservation is a guard against starting
-   * work that obviously cannot be paid for, not a hard ceiling on a provider's final bill. An
-   * overrun posts in full and lands the balance closer to zero, which is visible and recoverable;
-   * silently discarding the excess would be us paying for it.
+   * work that obviously cannot be paid for, not a hard ceiling on a provider's final bill. The
+   * customer is still prepaid, so settlement takes only the credit that remains and the platform
+   * absorbs any overrun rather than creating debt for a later top-up.
    */
   actual: MicroUsd
   /** Platform overhead on this usage, posted as its own entry so a statement stays explicable. */
@@ -117,7 +122,7 @@ export type SettleHold = {
 export async function settleHold(
   db: Kysely<DB>,
   input: SettleHold,
-): Promise<{ transactionId: string; created: boolean }> {
+): Promise<{ transactionId: string; created: boolean; chargedMicroUsd: MicroUsd }> {
   return await db.transaction().execute(async (tx) => await settleHoldWithin(tx, input))
 }
 
@@ -131,7 +136,7 @@ export async function settleHold(
 export async function settleHoldWithin(
   tx: Transaction<DB>,
   input: SettleHold,
-): Promise<{ transactionId: string; created: boolean }> {
+): Promise<{ transactionId: string; created: boolean; chargedMicroUsd: MicroUsd }> {
   const hold = await lockActiveHold(tx, input.holdId)
 
   const usage = input.actual
@@ -142,8 +147,30 @@ export async function settleHoldWithin(
   // row that says nothing, so the hold is simply released.
   if (total === 0n) {
     await closeHold(tx, hold.id, "released", null)
-    return { transactionId: "", created: false }
+    return { transactionId: "", created: false, chargedMicroUsd: 0n }
   }
+
+  /*
+    Release this hold in the arithmetic, but preserve every other active reservation.
+
+    `lockAvailableBalance` serializes this settlement with every other debit to the account.
+    While the hold is still active, `available` has already subtracted its reservation, so adding
+    only this hold's amount is the exact balance settlement may consume. Capping here makes
+    prepaid a hard floor even when the provider reports more usage than the estimate reserved.
+  */
+  const available = await lockAvailableBalance(tx, hold.organizationId)
+  const spendable = available + BigInt(hold.amountMicroUsd)
+  const debit = spendable <= 0n ? 0n : total < spendable ? total : spendable
+
+  if (debit === 0n) {
+    await closeHold(tx, hold.id, "settled", null)
+    return { transactionId: "", created: false, chargedMicroUsd: 0n }
+  }
+
+  // Usage is paid before platform overhead. A capped settlement never takes a fee while forgiving
+  // the provider resource cost underneath it.
+  const paidUsage = usage < debit ? usage : debit
+  const paidOverhead = debit - paidUsage
 
   const posted = await postWithin(tx, {
     organizationId: hold.organizationId,
@@ -153,13 +180,14 @@ export async function settleHoldWithin(
     referenceId: hold.resourceId,
     description: input.description ?? null,
     postings: [
-      { account: "user_credit", amount: -total },
-      { account: "platform_revenue", amount: total },
+      { account: "user_credit", amount: -debit },
+      { account: "platform_revenue", amount: paidUsage },
+      { account: "platform_revenue", amount: paidOverhead },
     ],
   })
 
   await closeHold(tx, hold.id, "settled", posted.transactionId)
-  return posted
+  return { ...posted, chargedMicroUsd: posted.created ? debit : 0n }
 }
 
 /** Close a hold without charging: the work did not happen, or failed before it cost anything. */

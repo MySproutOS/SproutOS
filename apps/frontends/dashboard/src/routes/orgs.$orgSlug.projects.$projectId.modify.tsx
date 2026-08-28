@@ -27,9 +27,11 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { Switch } from "@ui/base/ui/switch"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
+import { PrimaryProjectSelect } from "@frontends/dashboard/components/projects/primary-project-select"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   useProject,
+  useProjects,
   useRegions,
   useUpdateProject,
   useDeleteProject,
@@ -81,6 +83,8 @@ function ModifyProject() {
             description={data.description}
             region={data.region}
             autoUpdateForks={data.autoUpdateForks}
+            isGroup={data.isGroup}
+            primaryChildProjectId={data.primaryChildProjectId}
           />
         )}
       </PageBody>
@@ -95,6 +99,8 @@ function ModifyForm({
   description: initialDescription,
   region: initialRegion,
   autoUpdateForks: initialAutoUpdate,
+  isGroup,
+  primaryChildProjectId: initialPrimaryChildProjectId,
 }: {
   orgSlug: string
   projectId: string
@@ -102,11 +108,16 @@ function ModifyForm({
   description: string
   region: string
   autoUpdateForks: boolean
+  isGroup: boolean
+  primaryChildProjectId: string | null
 }) {
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState(initialDescription)
   const [region, setRegion] = useState(initialRegion)
   const [autoUpdate, setAutoUpdate] = useState(initialAutoUpdate)
+  const [primaryChildProjectId, setPrimaryChildProjectId] = useState(
+    initialPrimaryChildProjectId ?? "none",
+  )
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -119,6 +130,7 @@ function ModifyForm({
     than a release.
   */
   const regions = useRegions()
+  const projects = useProjects(orgSlug)
   const update = useUpdateProject(orgSlug)
   const remove = useDeleteProject(orgSlug)
   const navigate = useNavigate()
@@ -137,8 +149,15 @@ function ModifyForm({
         path: { orgSlug, projectId },
         body: {
           name: name.trim(),
+          description: description.trim() === "" ? null : description.trim(),
           ...(region === initialRegion || region === "—" ? {} : { region }),
           autoUpdateEnabled: autoUpdate,
+          ...(isGroup
+            ? {
+                primaryChildProjectId:
+                  primaryChildProjectId === "none" ? null : primaryChildProjectId,
+              }
+            : {}),
         },
       },
       {
@@ -230,6 +249,21 @@ function ModifyForm({
               </div>
             </div>
           </div>
+
+          {isGroup && (
+            <div className="flex flex-col gap-1.5">
+              <Label>Primary project</Label>
+              <PrimaryProjectSelect
+                projectId={projectId}
+                projects={projects.data}
+                value={primaryChildProjectId}
+                onValueChange={setPrimaryChildProjectId}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                The group uses this child project’s custom domain or SproutOS hostname.
+              </p>
+            </div>
+          )}
         </CardContent>
         <CardFooter className="justify-end gap-3">
           {error === null ? null : <span className="text-xs text-destructive">{error}</span>}

@@ -37,11 +37,16 @@ replace with zero-quantity higher versions; the mixed stop/restart interval abov
   output, and request-scoped long-context buckets. The proxy refuses another platform-funded model
   rather than inventing a rate. BYO events carry a signed external-cost
   marker and remain visible without a SproutOS charge.
-- The billing UI groups measured queue residency under Cache as **Queue storage**. It does not claim
-  ordinary Valkey cache memory is metered; no writer exists for that usage today.
+- The billing UI groups measured queue residency under Queue as **Queue storage**. Cache remains a
+  separate category and does not claim ordinary Valkey cache memory is metered; no writer exists
+  for that usage today.
+- A stopped Daytona container continues billing reserved disk until archive or deletion. Stopped
+  provider-backed rows therefore emit disk usage only; CPU and memory stop with the container.
 
-Sandbox egress is intentionally outside this change. Its proxy instrumentation and provider-cost
-source are a separate change; adding a guessed network rate here would recreate the same failure.
+- Sandbox egress is measured at the authenticated Rust forward-proxy boundary and stored as
+  `sandbox_egress_byte`. The price is AWS US-East internet data transfer at $0.09 per decimal GB,
+  because Daytona sends internet traffic through our proxy and AWS is the provider charging that
+  leg. Its item-level fee is 0%; this is not an invented Daytona network rate.
 
 ## Provenance and supersession
 
