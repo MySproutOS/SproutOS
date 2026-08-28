@@ -170,6 +170,9 @@ impl SignerApi {
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(15 * 60))
+                // Neither control-plane credentials nor an on-prem network client follow a URL
+                // chosen by an HTTP response. S3 presigned URLs are already region-specific.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             base_url,
             token,

@@ -84,6 +84,9 @@ impl AndroidTools for CommandAndroidTools {
         let keystore = temp.path().join("app.p12");
         let certificate = temp.path().join("certificate.der");
         let password = random_password();
+        let password_file = temp.path().join("password");
+        std::fs::write(&password_file, format!("{password}\n"))?;
+        restrict_file(&password_file)?;
         let alias = "sproutos".to_owned();
         let args = vec![
             "-genkeypair".into(),
@@ -92,10 +95,10 @@ impl AndroidTools for CommandAndroidTools {
             "PKCS12".into(),
             "-keystore".into(),
             keystore.as_os_str().to_owned(),
-            "-storepass:env".into(),
-            "SPROUTOS_KEYSTORE_PASSWORD".into(),
-            "-keypass:env".into(),
-            "SPROUTOS_KEYSTORE_PASSWORD".into(),
+            "-storepass:file".into(),
+            password_file.as_os_str().to_owned(),
+            "-keypass:file".into(),
+            password_file.as_os_str().to_owned(),
             "-alias".into(),
             alias.clone().into(),
             "-keyalg".into(),
@@ -109,25 +112,20 @@ impl AndroidTools for CommandAndroidTools {
             "-dname".into(),
             format!("CN={package_name},O=SproutOS,C=US").into(),
         ];
-        run_checked(
-            &self.keytool,
-            &args,
-            &[("SPROUTOS_KEYSTORE_PASSWORD", password.clone())],
-        )?;
+        run_checked(&self.keytool, &args)?;
         run_checked(
             &self.keytool,
             &[
                 "-exportcert".into(),
                 "-keystore".into(),
                 keystore.as_os_str().to_owned(),
-                "-storepass:env".into(),
-                "SPROUTOS_KEYSTORE_PASSWORD".into(),
+                "-storepass:file".into(),
+                password_file.as_os_str().to_owned(),
                 "-alias".into(),
                 alias.clone().into(),
                 "-file".into(),
                 certificate.as_os_str().to_owned(),
             ],
-            &[("SPROUTOS_KEYSTORE_PASSWORD", password.clone())],
         )?;
         let pkcs12 = std::fs::read(&keystore)?;
         let cert = std::fs::read(&certificate)?;
@@ -143,7 +141,6 @@ impl AndroidTools for CommandAndroidTools {
         let result = run(
             &self.apksigner,
             &["verify".into(), apk.as_os_str().to_owned()],
-            &[],
         )?;
         if result.success {
             bail!("APK is already signed")
@@ -155,7 +152,6 @@ impl AndroidTools for CommandAndroidTools {
         let output = run_checked(
             &self.aapt2,
             &["dump".into(), "badging".into(), apk.as_os_str().to_owned()],
-            &[],
         )?;
         parse_badging(&output.stdout)
     }
@@ -171,6 +167,7 @@ impl AndroidTools for CommandAndroidTools {
             .tempdir()?;
         restrict_directory(temp.path())?;
         let keystore = temp.path().join("app.p12");
+        let password_file = temp.path().join("password");
         let aligned = temp.path().join("aligned.apk");
         let mut pkcs12 = base64::engine::general_purpose::STANDARD
             .decode(&key.pkcs12_base64)
@@ -178,6 +175,12 @@ impl AndroidTools for CommandAndroidTools {
         std::fs::write(&keystore, &pkcs12)?;
         zeroize::Zeroize::zeroize(&mut pkcs12);
         restrict_file(&keystore)?;
+        // apksigner reads the file once per password option, sequentially rather than reopening it.
+        std::fs::write(
+            &password_file,
+            format!("{}\n{}\n", key.password, key.password),
+        )?;
+        restrict_file(&password_file)?;
         run_checked(
             &self.zipalign,
             &[
@@ -187,7 +190,6 @@ impl AndroidTools for CommandAndroidTools {
                 unsigned_apk.as_os_str().to_owned(),
                 aligned.as_os_str().to_owned(),
             ],
-            &[],
         )?;
         run_checked(
             &self.apksigner,
@@ -200,16 +202,12 @@ impl AndroidTools for CommandAndroidTools {
                 "--ks-key-alias".into(),
                 key.alias.clone().into(),
                 "--ks-pass".into(),
-                "env:APKSIGNER_KS_PASS".into(),
+                format!("file:{}", password_file.display()).into(),
                 "--key-pass".into(),
-                "env:APKSIGNER_KEY_PASS".into(),
+                format!("file:{}", password_file.display()).into(),
                 "--out".into(),
                 signed_apk.as_os_str().to_owned(),
                 aligned.as_os_str().to_owned(),
-            ],
-            &[
-                ("APKSIGNER_KS_PASS", key.password.clone()),
-                ("APKSIGNER_KEY_PASS", key.password.clone()),
             ],
         )?;
         Ok(())
@@ -224,7 +222,6 @@ impl AndroidTools for CommandAndroidTools {
                 "--print-certs".into(),
                 apk.as_os_str().to_owned(),
             ],
-            &[],
         )?;
         parse_certificate_sha256(&output.stdout)
     }
@@ -279,12 +276,8 @@ struct ToolOutput {
     overflow: bool,
 }
 
-fn run_checked(
-    executable: &Path,
-    args: &[OsString],
-    secret_env: &[(&str, String)],
-) -> anyhow::Result<ToolOutput> {
-    let result = run(executable, args, secret_env)?;
+fn run_checked(executable: &Path, args: &[OsString]) -> anyhow::Result<ToolOutput> {
+    let result = run(executable, args)?;
     if result.overflow {
         bail!("Android tool output exceeded {OUTPUT_LIMIT} bytes")
     }
@@ -296,11 +289,7 @@ fn run_checked(
     Ok(result)
 }
 
-fn run(
-    executable: &Path,
-    args: &[OsString],
-    secret_env: &[(&str, String)],
-) -> anyhow::Result<ToolOutput> {
+fn run(executable: &Path, args: &[OsString]) -> anyhow::Result<ToolOutput> {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -315,9 +304,6 @@ fn run(
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
-    }
-    for (name, value) in secret_env {
-        command.env(name, value);
     }
     let mut child = command
         .spawn()
