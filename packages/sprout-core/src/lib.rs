@@ -11,6 +11,8 @@ mod plugin;
 mod provenance;
 mod resolve;
 mod template;
+#[cfg(windows)]
+mod windows_isolation;
 mod workspace;
 
 pub use api::{ApiClient, ApiClientConfig, ApiResponse};

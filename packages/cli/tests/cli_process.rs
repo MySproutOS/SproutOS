@@ -58,6 +58,51 @@ fn resolution(target: &str) -> Value {
     })
 }
 
+fn published_umami_resolution() -> Value {
+    let plugin_digest = "sha256:1f2b4dffa39090d78aeebbd9596ed887d7950259ee5091cdcc0952ca684bf15e";
+    json!({
+        "template_id": "umami",
+        "upstream_commit": "ca661c7057984aa98ed4f7083d84dae2f65bfcb0",
+        "plugin_reference": format!("ghcr.io/mysproutos/umami-plugin@{plugin_digest}"),
+        "plugin_digest": plugin_digest,
+        "target": current_target(),
+        "provenance": {
+            "repository": "MySproutOS/Deployment-Templates",
+            "workflow": ".github/workflows/publish.yml",
+            "git_ref": "refs/heads/main",
+            "source_commit": "20b1f92d0f52c32a33f996a41bdc30817ec73a79",
+            "oidc_issuer": "https://token.actions.githubusercontent.com",
+            "workflow_identity": "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+            "github_hosted_runner": true
+        },
+        "request": {
+            "protocol_version": 1,
+            "workspace": "/workspace",
+            "template": {
+                "id": "umami",
+                "catalogue_digest": "sha256:c7d78bba2173c429559c87806b66475bc54b2a78bccddbe77823b671eebe2deb",
+                "manifest_digest": "sha256:13936900135adfc54914f84eca8f25d90cab72052fbfe48133eed48c3b22f3c4",
+                "plugin_digest": plugin_digest,
+                "upstream_repository": "https://github.com/umami-software/umami",
+                "upstream_commit": "ca661c7057984aa98ed4f7083d84dae2f65bfcb0"
+            },
+            "deployment": {"preset": "next", "capabilities": ["controlled_migrations", "next_standalone"]},
+            "services": [{
+                "key": "postgres",
+                "kind": "postgres",
+                "bindings": [{"environment": "DATABASE_URL", "output": "connection_url"}]
+            }],
+            "user_inputs": [],
+            "generated_inputs": [{
+                "key": "app_secret",
+                "generator": "random_base64url",
+                "bytes": 32,
+                "environment": "APP_SECRET"
+            }]
+        }
+    })
+}
+
 fn serve_once(body: Value) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -274,36 +319,72 @@ fn template_apply_rejects_unsigned_structural_input_without_echoing_values() {
         .stderr(predicate::str::is_empty());
 }
 
-#[cfg(not(target_os = "linux"))]
 #[test]
-fn template_apply_fails_closed_when_native_isolation_is_unavailable() {
+#[ignore = "downloads and verifies the immutable published OCI plugin under native isolation"]
+fn published_oci_attestation_isolation_and_plugin_apply_end_to_end() {
+    if std::env::var_os("SPROUT_CLI_RUN_SIGNED_TEMPLATE_E2E").is_none() {
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir(directory.path().join(".git")).unwrap();
-    let (api_url, _) = serve_once(resolution(current_target()));
-    let mut command = cargo_bin_cmd!("sprout");
-    command
-        .env("SPROUTOS_TOKEN", "isolation-redaction-canary")
-        .env("SPROUTOS_CONFIG", directory.path().join("config.json"))
-        .args([
-            "--json",
-            "--yes",
-            "--api-url",
-            &api_url,
-            "template",
-            "apply",
-            "starter",
-            "--upstream-commit",
-            UPSTREAM_COMMIT,
-            "--workspace",
-            directory.path().to_str().unwrap(),
-        ])
-        .assert()
-        .code(1)
-        .stdout(
-            predicate::str::contains(r#""code":"isolation_unavailable""#)
-                .and(predicate::str::contains("isolation-redaction-canary").not()),
-        )
-        .stderr(predicate::str::is_empty());
+    let config = directory.path().join("config.json");
+    let upstream = "ca661c7057984aa98ed4f7083d84dae2f65bfcb0";
+
+    for expected_change_count in [7, 0] {
+        let (api_url, _) = serve_once(published_umami_resolution());
+        let mut command = cargo_bin_cmd!("sprout");
+        let output = command
+            .env("SPROUTOS_TOKEN", "signed-e2e-redaction-canary")
+            .env("SPROUTOS_CONFIG", &config)
+            .args([
+                "--json",
+                "--yes",
+                "--api-url",
+                &api_url,
+                "template",
+                "apply",
+                "umami",
+                "--upstream-commit",
+                upstream,
+                "--workspace",
+                directory.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "template apply failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            document
+                .pointer("/data/result/changes")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            expected_change_count
+        );
+        let selected = document
+            .pointer("/data/verification/manifest_digest")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_ne!(
+            selected, "sha256:1f2b4dffa39090d78aeebbd9596ed887d7950259ee5091cdcc0952ca684bf15e",
+            "the result must store the selected Linux platform manifest, not the root index"
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("signed-e2e-redaction-canary"));
+    }
+    assert!(directory.path().join(".config/sproutos.toml").is_file());
+    assert!(
+        directory
+            .path()
+            .join(".github/workflows/sproutos-deploy.yml")
+            .is_file()
+    );
 }
 
 #[test]

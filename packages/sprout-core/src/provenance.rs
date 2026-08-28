@@ -1,4 +1,5 @@
-//! Keyless signature verification for immutable Deployment-Templates plugins.
+//! Keyless signature and GitHub SLSA attestation verification for immutable
+//! Deployment-Templates plugins.
 //!
 //! The catalogue import verifies the signed catalogue and its SLSA attestation. Execution still
 //! verifies the exact plugin index it downloads: otherwise a compromised registry could answer a
@@ -15,10 +16,11 @@ use crate::{ArtifactProvenance, ProvenanceVerifier, Result, Sha256Digest, Sprout
 
 const MAX_DIAGNOSTIC_BYTES: usize = 256 * 1024;
 
-/// Verifies keyless OCI signatures with a trusted, root-owned Cosign installation.
+/// Verifies keyless OCI signatures and GitHub-hosted SLSA attestations with approved tools.
 #[derive(Clone, Debug)]
 pub struct CosignProvenanceVerifier {
-    executable: PathBuf,
+    cosign: PathBuf,
+    github_cli: PathBuf,
     timeout: Duration,
 }
 
@@ -27,44 +29,92 @@ impl CosignProvenanceVerifier {
     pub fn detect() -> Result<Self> {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-            for candidate in ["/usr/local/bin/cosign", "/usr/bin/cosign"] {
-                let Ok(executable) = PathBuf::from(candidate).canonicalize() else {
-                    continue;
-                };
-                let Ok(metadata) = std::fs::metadata(&executable) else {
-                    continue;
-                };
-                if metadata.is_file()
-                    && metadata.uid() == 0
-                    && metadata.permissions().mode() & 0o022 == 0
-                {
-                    return Ok(Self {
-                        executable,
-                        timeout: Duration::from_secs(60),
-                    });
-                }
-            }
-            Err(SproutError::ProvenanceRejected(
-                "trusted cosign executable was not found at an approved system path".into(),
-            ))
+            let cosign = find_unix_tool(
+                &[
+                    "/opt/homebrew/bin/cosign",
+                    "/usr/local/bin/cosign",
+                    "/usr/bin/cosign",
+                ],
+                "cosign",
+            )?;
+            let github_cli = find_unix_tool(
+                &["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"],
+                "GitHub CLI",
+            )?;
+            Ok(Self {
+                cosign,
+                github_cli,
+                timeout: Duration::from_secs(60),
+            })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            Err(SproutError::ProvenanceRejected(
-                "native keyless verification is not implemented on this platform".into(),
-            ))
+            let program_files = std::env::var_os("ProgramFiles").ok_or_else(|| {
+                SproutError::ProvenanceRejected("ProgramFiles is unavailable".into())
+            })?;
+            let root = PathBuf::from(program_files);
+            let cosign = find_windows_tool(
+                &[
+                    root.join("cosign/cosign.exe"),
+                    root.join("Cosign/cosign.exe"),
+                ],
+                "cosign",
+            )?;
+            let github_cli = find_windows_tool(&[root.join("GitHub CLI/gh.exe")], "GitHub CLI")?;
+            Ok(Self {
+                cosign,
+                github_cli,
+                timeout: Duration::from_secs(60),
+            })
         }
     }
 
     #[cfg(test)]
-    fn for_test(executable: PathBuf, timeout: Duration) -> Self {
+    fn for_test(cosign: PathBuf, github_cli: PathBuf, timeout: Duration) -> Self {
         Self {
-            executable,
+            cosign,
+            github_cli,
             timeout,
         }
     }
+}
+
+#[cfg(unix)]
+fn find_unix_tool(candidates: &[&str], name: &str) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for candidate in candidates {
+        let Ok(path) = PathBuf::from(candidate).canonicalize() else {
+            continue;
+        };
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        // Homebrew's standard /opt/homebrew installation is user-owned. Refusing group/world
+        // writable tools preserves the local trust boundary without excluding that supported
+        // installation layout.
+        if metadata.is_file() && metadata.permissions().mode() & 0o022 == 0 {
+            return Ok(path);
+        }
+    }
+    Err(SproutError::ProvenanceRejected(format!(
+        "trusted {name} executable was not found at an approved system path"
+    )))
+}
+
+#[cfg(windows)]
+fn find_windows_tool(candidates: &[PathBuf], name: &str) -> Result<PathBuf> {
+    for candidate in candidates {
+        let Ok(path) = candidate.canonicalize() else {
+            continue;
+        };
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err(SproutError::ProvenanceRejected(format!(
+        "trusted {name} executable was not found under Program Files"
+    )))
 }
 
 #[async_trait]
@@ -84,9 +134,9 @@ impl ProvenanceVerifier for CosignProvenanceVerifier {
         let subject = reference
             .clone_with_digest(root_digest.to_string())
             .to_string();
-        let mut command = Command::new(&self.executable);
-        command
-            .args([
+        run_verifier(
+            &self.cosign,
+            &[
                 "verify",
                 "--certificate-identity",
                 &identity,
@@ -95,63 +145,152 @@ impl ProvenanceVerifier for CosignProvenanceVerifier {
                 "--certificate-github-workflow-sha",
                 &expected.source_commit,
                 &subject,
-            ])
-            .env_clear()
-            .env("HOME", "/tmp")
-            .env("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            ],
+            self.timeout,
+            "cosign",
+            false,
+        )
+        .await?;
 
-        let mut child = command
-            .spawn()
-            .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            SproutError::ProvenanceRejected("cosign did not provide a diagnostic stream".into())
-        })?;
-        let diagnostic = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stderr
-                .take((MAX_DIAGNOSTIC_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .await
-                .map(|_| bytes)
-        });
-        let status = match tokio::time::timeout(self.timeout, child.wait()).await {
-            Ok(status) => {
-                status.map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?
-            }
-            Err(_) => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                return Err(SproutError::ProvenanceRejected(
-                    "cosign verification timed out".into(),
-                ));
-            }
-        };
-        let diagnostic = diagnostic
-            .await
-            .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?
-            .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
-        if diagnostic.len() > MAX_DIAGNOSTIC_BYTES {
-            return Err(SproutError::ProvenanceRejected(
-                "cosign diagnostic exceeded its output limit".into(),
-            ));
-        }
-        if !status.success() {
-            let diagnostic = String::from_utf8_lossy(&diagnostic).trim().to_owned();
-            return Err(SproutError::ProvenanceRejected(if diagnostic.is_empty() {
-                format!("cosign exited with {status}")
-            } else {
-                diagnostic
-            }));
-        }
+        let signer_workflow = format!("{}/{}", expected.repository, expected.workflow);
+        let oci_subject = format!("oci://{subject}");
+        run_verifier(
+            &self.github_cli,
+            &[
+                "attestation",
+                "verify",
+                &oci_subject,
+                "--repo",
+                &expected.repository,
+                "--signer-workflow",
+                &signer_workflow,
+                "--cert-oidc-issuer",
+                &expected.oidc_issuer,
+                "--source-ref",
+                &expected.git_ref,
+                "--source-digest",
+                &expected.source_commit,
+                "--deny-self-hosted-runners",
+                "--bundle-from-oci",
+                "--format=json",
+            ],
+            self.timeout,
+            "GitHub attestation",
+            true,
+        )
+        .await?;
         Ok(())
     }
 }
 
-#[cfg(test)]
+async fn run_verifier(
+    executable: &PathBuf,
+    arguments: &[&str],
+    timeout: Duration,
+    name: &str,
+    require_attestation: bool,
+) -> Result<()> {
+    let home =
+        tempfile::tempdir().map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
+    let mut command = Command::new(executable);
+    command
+        .args(arguments)
+        .env_clear()
+        .env("HOME", home.path())
+        .env("GH_CONFIG_DIR", home.path())
+        .env("TMPDIR", home.path())
+        .env("TMP", home.path())
+        .env("TEMP", home.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if require_attestation {
+        // `--bundle-from-oci` performs offline bundle verification, but gh still requires this
+        // variable to be non-empty before entering that code path. A fixed non-credential keeps
+        // user and GitHub Actions tokens outside the verifier process.
+        command.env("GH_TOKEN", "public-oci-bundle-verification");
+    }
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system_root);
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SproutError::ProvenanceRejected(format!("{name} did not provide stdout")))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| SproutError::ProvenanceRejected(format!("{name} did not provide stderr")))?;
+    let output = |stream: tokio::process::ChildStdout| async move {
+        let mut bytes = Vec::new();
+        stream
+            .take((MAX_DIAGNOSTIC_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .map(|_| bytes)
+    };
+    let stdout_task = tokio::spawn(output(stdout));
+    let diagnostic = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stderr
+            .take((MAX_DIAGNOSTIC_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .map(|_| bytes)
+    });
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status.map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?,
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(SproutError::ProvenanceRejected(format!(
+                "{name} verification timed out"
+            )));
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?
+        .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
+    let diagnostic = diagnostic
+        .await
+        .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?
+        .map_err(|error| SproutError::ProvenanceRejected(error.to_string()))?;
+    if stdout.len() > MAX_DIAGNOSTIC_BYTES || diagnostic.len() > MAX_DIAGNOSTIC_BYTES {
+        return Err(SproutError::ProvenanceRejected(format!(
+            "{name} output exceeded its limit"
+        )));
+    }
+    if !status.success() {
+        let diagnostic = String::from_utf8_lossy(&diagnostic).trim().to_owned();
+        return Err(SproutError::ProvenanceRejected(if diagnostic.is_empty() {
+            format!("{name} exited with {status}")
+        } else {
+            diagnostic
+        }));
+    }
+    if require_attestation {
+        let value: serde_json::Value = serde_json::from_slice(&stdout).map_err(|_| {
+            SproutError::ProvenanceRejected(
+                "GitHub returned malformed attestation verification output".into(),
+            )
+        })?;
+        if value.as_array().is_none_or(|items| items.is_empty()) {
+            return Err(SproutError::ProvenanceRejected(
+                "GitHub returned no verified provenance attestation".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
@@ -169,6 +308,13 @@ mod tests {
         .unwrap()
     }
 
+    fn github_cli(directory: &std::path::Path) -> PathBuf {
+        let executable = directory.join("gh");
+        fs::write(&executable, "#!/bin/sh\nprintf '[{}]'").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        executable
+    }
+
     #[tokio::test]
     async fn pins_identity_issuer_and_exact_digest_without_a_shell() {
         let directory = tempdir().unwrap();
@@ -183,7 +329,11 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(2));
+        let verifier = CosignProvenanceVerifier::for_test(
+            executable,
+            github_cli(directory.path()),
+            Duration::from_secs(5),
+        );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
@@ -222,7 +372,11 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(2));
+        let verifier = CosignProvenanceVerifier::for_test(
+            executable,
+            github_cli(directory.path()),
+            Duration::from_secs(2),
+        );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
@@ -253,6 +407,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verifies_canonical_github_slsa_attestation_and_hosted_runner_policy() {
+        let directory = tempdir().unwrap();
+        let cosign = directory.path().join("cosign");
+        fs::write(&cosign, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&cosign, fs::Permissions::from_mode(0o700)).unwrap();
+        let github_cli = directory.path().join("gh");
+        let arguments = directory.path().join("gh-arguments");
+        fs::write(
+            &github_cli,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '[{{}}]'\n",
+                arguments.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&github_cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let verifier =
+            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
+        let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
+            .parse()
+            .unwrap();
+        verifier
+            .verify(
+                &reference,
+                &digest,
+                &digest,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates("c".repeat(40)),
+            )
+            .await
+            .unwrap();
+        let arguments = fs::read_to_string(arguments).unwrap();
+        for expected in [
+            "attestation",
+            "verify",
+            "--repo",
+            "MySproutOS/Deployment-Templates",
+            "--signer-workflow",
+            "MySproutOS/Deployment-Templates/.github/workflows/publish.yml",
+            "--source-ref",
+            "refs/heads/main",
+            "--source-digest",
+            &"c".repeat(40),
+            "--deny-self-hosted-runners",
+            "--bundle-from-oci",
+            "--format=json",
+        ] {
+            assert!(arguments.lines().any(|argument| argument == expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_when_github_returns_no_verified_attestation() {
+        let directory = tempdir().unwrap();
+        let cosign = directory.path().join("cosign");
+        fs::write(&cosign, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&cosign, fs::Permissions::from_mode(0o700)).unwrap();
+        let github_cli = directory.path().join("gh");
+        fs::write(&github_cli, "#!/bin/sh\nprintf '[]'\n").unwrap();
+        fs::set_permissions(&github_cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let verifier =
+            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
+        let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
+            .parse()
+            .unwrap();
+        let error = verifier
+            .verify(
+                &reference,
+                &digest,
+                &digest,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates("c".repeat(40)),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no verified provenance attestation")
+        );
+    }
+
+    #[tokio::test]
     async fn fails_closed_on_cosign_refusal() {
         let directory = tempdir().unwrap();
         let executable = directory.path().join("cosign");
@@ -260,7 +499,11 @@ mod tests {
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         // This is not the timeout test: give a loaded parallel test runner enough time to observe
         // the verifier's deliberate refusal and retain its diagnostic.
-        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_secs(5));
+        let verifier = CosignProvenanceVerifier::for_test(
+            executable,
+            github_cli(directory.path()),
+            Duration::from_secs(5),
+        );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
@@ -284,7 +527,11 @@ mod tests {
         let executable = directory.path().join("cosign");
         fs::write(&executable, "#!/bin/sh\nexec sleep 10\n").unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        let verifier = CosignProvenanceVerifier::for_test(executable, Duration::from_millis(50));
+        let verifier = CosignProvenanceVerifier::for_test(
+            executable,
+            github_cli(directory.path()),
+            Duration::from_millis(50),
+        );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()

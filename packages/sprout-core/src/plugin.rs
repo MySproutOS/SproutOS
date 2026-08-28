@@ -48,6 +48,13 @@ pub struct ProtocolOutcome {
 /// Boundary implemented by `sprout-template-protocol`; wire structs do not live in this crate.
 pub trait TemplateProtocol<Request>: Send + Sync {
     fn encode_request(&self, request: &Request) -> Result<Vec<u8>>;
+    fn encode_request_for_workspace(
+        &self,
+        request: &Request,
+        _workspace: &Path,
+    ) -> Result<Vec<u8>> {
+        self.encode_request(request)
+    }
     fn decode_response(&self, response: &[u8]) -> Result<ProtocolOutcome>;
 }
 
@@ -101,6 +108,21 @@ impl TemplateProtocol<sprout_template_protocol::ApplyRequest> for CanonicalProto
             response,
         })
     }
+
+    fn encode_request_for_workspace(
+        &self,
+        request: &sprout_template_protocol::ApplyRequest,
+        workspace: &Path,
+    ) -> Result<Vec<u8>> {
+        let mut request = request.clone();
+        request.workspace = workspace
+            .to_str()
+            .ok_or_else(|| {
+                SproutError::ProtocolViolation("plugin workspace path must be valid UTF-8".into())
+            })?
+            .to_owned();
+        self.encode_request(&request)
+    }
 }
 
 /// Constructs a command inside a fail-closed OS sandbox.
@@ -116,15 +138,30 @@ pub trait IsolationProvider: Send + Sync {
 /// A sandbox command and the narrowly allowlisted descriptors its launcher consumes before the
 /// plugin starts. Every other non-stdio descriptor remains close-on-exec.
 pub struct IsolatedCommand {
-    command: Command,
+    command: Option<Command>,
     inherited_fds: Vec<OwnedFd>,
+    #[cfg(windows)]
+    appcontainer: Option<crate::windows_isolation::WindowsAppContainerCommand>,
 }
 
 impl IsolatedCommand {
     pub fn new(command: Command) -> Self {
         Self {
-            command,
+            command: Some(command),
             inherited_fds: Vec::new(),
+            #[cfg(windows)]
+            appcontainer: None,
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn appcontainer(
+        command: crate::windows_isolation::WindowsAppContainerCommand,
+    ) -> Self {
+        Self {
+            command: None,
+            inherited_fds: Vec::new(),
+            appcontainer: Some(command),
         }
     }
 
@@ -136,12 +173,12 @@ impl IsolatedCommand {
 
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn command(&self) -> &Command {
-        &self.command
+        self.command.as_ref().expect("native command")
     }
 
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
     pub(crate) fn command_mut(&mut self) -> &mut Command {
-        &mut self.command
+        self.command.as_mut().expect("native command")
     }
 
     #[cfg(all(test, target_os = "linux"))]
@@ -185,6 +222,15 @@ impl<I: IsolationProvider> PluginRunner<I> {
         P: TemplateProtocol<Request>,
         Request: Sync,
     {
+        let original_before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
+        original_before.reject_preexisting_hard_links()?;
+        let mut isolated = self.isolation.command(executable, workspace)?;
+        #[cfg(windows)]
+        if let Some(appcontainer) = isolated.appcontainer.take() {
+            return self
+                .apply_windows(appcontainer, workspace, protocol, request)
+                .await;
+        }
         let request = protocol.encode_request(request)?;
         if request.len() > self.limits.max_request_bytes {
             return Err(SproutError::ProtocolViolation(format!(
@@ -193,12 +239,10 @@ impl<I: IsolationProvider> PluginRunner<I> {
                 self.limits.max_request_bytes
             )));
         }
-        let before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
-        before.reject_preexisting_hard_links()?;
-        let IsolatedCommand {
-            mut command,
-            inherited_fds,
-        } = self.isolation.command(executable, workspace)?;
+        let mut command = isolated.command.take().ok_or_else(|| {
+            SproutError::IsolationUnavailable("native sandbox command was not constructed".into())
+        })?;
+        let inherited_fds = isolated.inherited_fds;
         command
             .env_clear()
             .env("LANG", "C")
@@ -291,9 +335,97 @@ impl<I: IsolationProvider> PluginRunner<I> {
         }
         let protocol = protocol.decode_response(&stdout.bytes)?;
         let after = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
-        let changes = before.validate_diff(&after, &protocol.declared_changes, self.limits.diff)?;
+        let changes =
+            original_before.validate_diff(&after, &protocol.declared_changes, self.limits.diff)?;
         Ok(ApplyResult { protocol, changes })
     }
+
+    #[cfg(windows)]
+    async fn apply_windows<P, Request>(
+        &self,
+        appcontainer: crate::windows_isolation::WindowsAppContainerCommand,
+        workspace: &Path,
+        protocol: &P,
+        request: &Request,
+    ) -> Result<ApplyResult>
+    where
+        P: TemplateProtocol<Request>,
+        Request: Sync,
+    {
+        let request = protocol.encode_request_for_workspace(request, appcontainer.workspace())?;
+        if request.len() > self.limits.max_request_bytes {
+            return Err(SproutError::ProtocolViolation(format!(
+                "encoded request is {} bytes; limit is {}",
+                request.len(),
+                self.limits.max_request_bytes
+            )));
+        }
+        let staged_before = WorkspaceSnapshot::capture(appcontainer.workspace(), self.limits.diff)?;
+        let original_before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
+        let output = appcontainer.run(request, self.limits).await?;
+        if !output.success {
+            return Err(SproutError::PluginFailed {
+                status: output.status,
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        let protocol = protocol.decode_response(&output.stdout)?;
+        let staged_after = WorkspaceSnapshot::capture(appcontainer.workspace(), self.limits.diff)?;
+        let changes = staged_before.validate_diff(
+            &staged_after,
+            &protocol.declared_changes,
+            self.limits.diff,
+        )?;
+        let still_original =
+            WorkspaceSnapshot::capture(appcontainer.original_workspace(), self.limits.diff)?;
+        original_before.require_unchanged(&still_original)?;
+        replay_windows_changes(appcontainer.workspace(), workspace, &changes)?;
+        let final_snapshot = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
+        let applied = original_before.validate_diff(
+            &final_snapshot,
+            &protocol.declared_changes,
+            self.limits.diff,
+        )?;
+        Ok(ApplyResult {
+            protocol,
+            changes: applied,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn replay_windows_changes(
+    staged: &Path,
+    workspace: &Path,
+    changes: &[WorkspaceChange],
+) -> Result<()> {
+    for change in changes {
+        let destination = workspace.join(&change.path);
+        match change.kind {
+            crate::ChangeKind::Delete => std::fs::remove_file(&destination),
+            crate::ChangeKind::Create | crate::ChangeKind::Modify => {
+                let parent = destination.parent().ok_or_else(|| {
+                    SproutError::DiffMismatch("Windows change has no parent".into())
+                })?;
+                std::fs::create_dir_all(parent)
+                    .and_then(|_| {
+                        if change.kind == crate::ChangeKind::Modify {
+                            std::fs::remove_file(&destination)
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .and_then(|_| {
+                        std::fs::copy(staged.join(&change.path), &destination).map(|_| ())
+                    })
+            }
+        }
+        .map_err(|source| SproutError::Io {
+            operation: "commit validated Windows template change",
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

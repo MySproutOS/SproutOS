@@ -115,13 +115,27 @@ where
     let destination = temporary.path().join(resolved.target.executable_name());
     let executable = provider.download(resolved, &destination).await?;
     let verification = verification(resolved, executable.manifest_digest().clone());
+    #[cfg(target_os = "macos")]
+    let request = {
+        let mut request = resolved.request.clone();
+        request.workspace = workspace
+            .canonicalize()
+            .map_err(|source| SproutError::Io {
+                operation: "resolve macOS template workspace",
+                source,
+            })?
+            .to_str()
+            .ok_or_else(|| SproutError::WorkspaceRejected {
+                path: workspace.to_owned(),
+                reason: "workspace path must be valid UTF-8".into(),
+            })?
+            .to_owned();
+        request
+    };
+    #[cfg(not(target_os = "macos"))]
+    let request = resolved.request.clone();
     let result = PluginRunner::new(isolation, apply_limits)
-        .apply(
-            &executable,
-            workspace,
-            &CanonicalProtocol,
-            &resolved.request,
-        )
+        .apply(&executable, workspace, &CanonicalProtocol, &request)
         .await?;
     Ok(TemplateApplication {
         verification,

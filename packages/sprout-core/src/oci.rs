@@ -400,7 +400,10 @@ impl<V: ProvenanceVerifier> OciDownloader<V> {
 
         Ok(VerifiedExecutable {
             path: destination.to_owned(),
-            manifest_digest: root_digest,
+            // The executable came from this platform manifest. The root index remains the
+            // catalogue-pinned subject, but reporting it as the executable digest conflates two
+            // different OCI objects and makes a cross-platform verification record ambiguous.
+            manifest_digest: selected_digest,
         })
     }
 }
