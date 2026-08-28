@@ -115,6 +115,8 @@ export async function runProvision(
   payload: ProvisionPayload,
   github?: ProvisionGitHub,
   keepAlive?: () => Promise<boolean>,
+  retryOnFailure = false,
+  provisionServices: typeof provisionTemplateServices = provisionTemplateServices,
 ): Promise<void> {
   /*
     Claim a queued job, or reclaim one abandoned mid-flight.
@@ -139,7 +141,14 @@ export async function runProvision(
 
   const claimed = await db
     .updateTable("projectJob")
-    .set({ state: "running", startedAt: new Date(), updatedAt: new Date() })
+    .set({
+      state: "running",
+      startedAt: new Date(),
+      finishedAt: null,
+      errorCode: null,
+      errorMessage: null,
+      updatedAt: new Date(),
+    })
     .where("id", "=", payload.projectJobId)
     .where((eb) =>
       eb.or([
@@ -270,7 +279,7 @@ export async function runProvision(
           await configureGeneratedInputs(db, template)
         },
         provisionServices: async () => {
-          await provisionTemplateServices(db, template, keepAlive)
+          await provisionServices(db, template, keepAlive)
         },
         fork: forkAndPersist,
         prepareAndPush: async (preparedRepository) => {
@@ -393,27 +402,27 @@ export async function runProvision(
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
     const running = steps.find((step) => step.state === "running")
-    if (running !== undefined) await mark(running.key, "failed")
+    if (running !== undefined) await mark(running.key, retryOnFailure ? "pending" : "failed")
 
     await db
       .updateTable("projectJob")
       .set({
-        state: "failed",
+        state: retryOnFailure ? "queued" : "failed",
         errorCode: cause instanceof Error ? cause.name : "Error",
         // Recorded on the row, because this is the only place a customer can see it. A provisioning
         // failure that lives in a worker's stdout is a project stuck in `creating` with no reason.
         errorMessage: message,
-        finishedAt: new Date(),
+        finishedAt: retryOnFailure ? null : new Date(),
         updatedAt: new Date(),
       })
       .where("id", "=", job.id)
       .execute()
 
     if (job.projectId !== null) {
-      await failTemplateInstall(db, job.projectId, cause)
+      if (!retryOnFailure) await failTemplateInstall(db, job.projectId, cause)
       await db
         .updateTable("project")
-        .set({ state: "failed", updatedAt: new Date() })
+        .set({ state: retryOnFailure ? "provisioning" : "failed", updatedAt: new Date() })
         .where("id", "=", job.projectId)
         .execute()
     }
@@ -546,7 +555,23 @@ function tokenOf(credential: GitHubCredential): string {
   return credential.token
 }
 
-export const provisionProjectJob: JobHandler = async (job, { db, keepAlive }) => {
-  const payload = job.payload as ProvisionPayload
-  await runProvision(db, payload, undefined, keepAlive)
+export function provisionProjectJobHandler(
+  dependencies: {
+    github?: ProvisionGitHub
+    provisionServices?: typeof provisionTemplateServices
+  } = {},
+): JobHandler {
+  return async (job, { db, keepAlive }) => {
+    const payload = job.payload as ProvisionPayload
+    await runProvision(
+      db,
+      payload,
+      dependencies.github,
+      keepAlive,
+      job.attempt < job.maxAttempts,
+      dependencies.provisionServices,
+    )
+  }
 }
+
+export const provisionProjectJob = provisionProjectJobHandler()

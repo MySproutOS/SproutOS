@@ -37,14 +37,21 @@ declared bindings are then upserted before `provisioned_at` and `backend_service
 commit together.
 
 A project advisory lock covers the read, provider recovery, binding writes, and final marker. The
-background-job `keepAlive` callback is invoked on every blocked lock poll, so the queue's five-minute
-lease remains owned during the lock's thirty-minute wait. A concurrent retry therefore observes the
-completed marker instead of rotating the credential that the first worker just wrote. If the driver
-cannot prove the persisted service exists, recovery still fails closed and never calls `provision`
-again.
+background-job `keepAlive` callback is invoked on every blocked lock poll and periodically throughout
+the acquired work, so the queue's five-minute lease remains owned during both the lock's thirty-minute
+wait and a slow provider operation. A concurrent retry therefore observes the completed marker
+instead of rotating the credential that the first worker just wrote. If the driver cannot prove the
+persisted service exists, recovery still fails closed and never calls `provision` again.
+
+The background queue and `project_job` also agree about retryability. Before the final queue attempt,
+a thrown provision returns the project job and its running step to `queued`/`pending` and leaves the
+template in `provisioning`; the queue's backoff can then enter the same recovery path. Only an
+exhausted background attempt records terminal project, template, and step failure.
 
 Deterministic tests model Neon, shared-Postgres, and legacy-S3 mutations already existing before any
 local evidence, stop after a provider result, fail a first binding pass, retry a failed provider
-read, and run two attempts against the same blocked provision. They also hold the project advisory
-lock while counting lease heartbeats. The assertions cover one provider provision, one eventual
+read, and run two attempts against the same blocked provision. The background-worker test executes
+the ordinary queue failure/backoff/claim path and proves its second attempt reaches reconciliation
+without another provider resource. Deterministic lock tests count heartbeats both while waiting and
+while acquired work remains blocked. The assertions cover one provider provision, one eventual
 credential, exact provider identities, a completed marker, and continued lease ownership.

@@ -4,7 +4,9 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
-import { runProvision, STALE_AFTER_MS } from "./provision"
+import { enqueue } from "./queue"
+import { provisionProjectJobHandler, runProvision, STALE_AFTER_MS } from "./provision"
+import { runOne } from "./worker"
 
 /**
  * A fork has to end in a deploy, and for the life of the platform it did not.
@@ -35,6 +37,7 @@ const created: {
     | "organization"
     | "user"
     | "storeListing"
+    | "deploymentCatalogueImport"
   id: string
 }[] = []
 
@@ -198,6 +201,115 @@ async function seed() {
   return { userId, orgId, projectId, repoId, projectJobId: job.id }
 }
 
+async function attachTemplate(seeded: Awaited<ReturnType<typeof seed>>): Promise<void> {
+  const catalogueImportId = v7()
+  const listingId = v7()
+  const manifest = {
+    schema_version: 1,
+    id: `retry-${listingId}`,
+    name: "Retry fixture",
+    pitch: "Retry fixture",
+    description_md: "Retry fixture",
+    homepage: null,
+    repository: { url: "https://github.com/acme/retry", commit: "1".repeat(40) },
+    license: "MIT",
+    platform: "web",
+    readiness: {
+      status: "live",
+      blocked_reasons: [],
+      e2e_evidence: {
+        workflow_run_url: "https://github.com/MySproutOS/Deployment-Templates/actions/runs/1",
+        tested_at: "2026-08-28T00:00:00.000Z",
+        upstream_commit: "1".repeat(40),
+        plugin_digest: `sha256:${"2".repeat(64)}`,
+      },
+    },
+    plugin: {
+      repository: "ghcr.io/mysproutos/retry",
+      digest: `sha256:${"2".repeat(64)}`,
+      protocol_version: 1,
+    },
+    deployment: {
+      preset: "static",
+      runtime: "static",
+      architecture: "arm64",
+      migration: null,
+      required_capabilities: [],
+    },
+    services: [
+      {
+        key: "database",
+        kind: "postgres",
+        bindings: [{ environment: "DATABASE_URL", output: "connection_url" }],
+      },
+    ],
+    user_inputs: [],
+    generated_inputs: [],
+  }
+
+  await db
+    .insertInto("deploymentCatalogueImport")
+    .values({
+      id: catalogueImportId,
+      ociRepository: "ghcr.io/mysproutos/deployment-catalogue",
+      ociDigest: `sha256:${"3".repeat(64)}`,
+      catalogueDigest: `sha256:${"4".repeat(64)}`,
+      sourceRepository: "MySproutOS/Deployment-Templates",
+      workflowRef: "fixture@refs/heads/main",
+      sourceRef: "refs/heads/main",
+      sourceSha: "5".repeat(40),
+      signatureIdentity: "fixture",
+      signatureIssuer: "fixture",
+      provenance: { fixture: true },
+    })
+    .execute()
+  created.push({ table: "deploymentCatalogueImport", id: catalogueImportId })
+  await db
+    .insertInto("storeListing")
+    .values({
+      id: listingId,
+      slug: `retry-${listingId.slice(-10)}`,
+      name: "Retry fixture",
+      tagline: "Retry fixture",
+      descriptionMd: "Retry fixture",
+      upstreamOwner: "acme",
+      upstreamRepo: "retry",
+      upstreamRepoUrl: "https://github.com/acme/retry",
+      catalogueEntryId: manifest.id,
+      catalogueImportId,
+      catalogueSchemaVersion: 1,
+      catalogueManifest: manifest,
+      upstreamCommit: manifest.repository.commit,
+      templatePluginRepository: manifest.plugin.repository,
+      templatePluginDigest: manifest.plugin.digest,
+    })
+    .execute()
+  created.push({ table: "storeListing", id: listingId })
+  await db
+    .updateTable("project")
+    .set({ storeListingId: listingId })
+    .where("id", "=", seeded.projectId)
+    .execute()
+  await db
+    .insertInto("projectTemplateInstall")
+    .values({
+      projectId: seeded.projectId,
+      organizationId: seeded.orgId,
+      storeListingId: listingId,
+      catalogueEntryId: manifest.id,
+      catalogueImportId,
+      catalogueDigest: `sha256:${"4".repeat(64)}`,
+      manifest,
+      configuredInputs: JSON.stringify([]),
+      manifestDigest: `sha256:${"6".repeat(64)}`,
+      pluginRepository: manifest.plugin.repository,
+      pluginDigest: manifest.plugin.digest,
+      deploymentTemplatesCommit: "5".repeat(40),
+      preparedCommitSha: "7".repeat(40),
+    })
+    .execute()
+}
+
 afterAll(async () => {
   if (!reachable) return
 
@@ -211,6 +323,11 @@ afterAll(async () => {
   const projectIds = created.filter((row) => row.table === "project").map((row) => row.id)
   if (projectIds.length > 0) {
     await db.deleteFrom("deployment").where("projectId", "in", projectIds).execute()
+    await db.deleteFrom("projectTemplateInstall").where("projectId", "in", projectIds).execute()
+  }
+  const organizationIds = created.filter((row) => row.table === "organization").map((row) => row.id)
+  if (organizationIds.length > 0) {
+    await db.deleteFrom("backgroundJob").where("organizationId", "in", organizationIds).execute()
   }
 
   for (const row of [...created].reverse()) {
@@ -389,6 +506,88 @@ describe.runIf(reachable)("a provisioning job left running by a worker that died
         .where("projectId", "=", seeded.projectId)
         .execute(),
     ).toEqual([])
+  })
+})
+
+describe.runIf(reachable)("a provider response lost inside the background worker", () => {
+  it("requeues the project job so the background retry reaches provider reconciliation", async () => {
+    const seeded = await seed()
+    await attachTemplate(seeded)
+    const backgroundJobId = await enqueue(db, {
+      kind: "project.provision",
+      organizationId: seeded.orgId,
+      payload: { projectJobId: seeded.projectJobId, userId: seeded.userId },
+      maxAttempts: 2,
+    })
+    let providerCalls = 0
+    let providerResources = 0
+    const handler = provisionProjectJobHandler({
+      github: fakeGitHub("8".repeat(40)),
+      provisionServices: () => {
+        providerCalls += 1
+        if (providerResources === 0) {
+          providerResources += 1
+          return Promise.reject(new Error("provider applied the mutation but response was lost"))
+        }
+        return Promise.resolve()
+      },
+    })
+    const options = {
+      workerId: `retry-${v7()}`,
+      handlers: { "project.provision": handler },
+      leaseSeconds: 300,
+    }
+
+    await runOne(db, options)
+
+    expect(
+      await db
+        .selectFrom("projectJob")
+        .select(["state", "errorMessage"])
+        .where("id", "=", seeded.projectJobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      state: "queued",
+      errorMessage: "provider applied the mutation but response was lost",
+    })
+    expect(
+      await db
+        .selectFrom("projectTemplateInstall")
+        .select("state")
+        .where("projectId", "=", seeded.projectId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "provisioning" })
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select(["state", "attempt"])
+        .where("id", "=", backgroundJobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "queued", attempt: 1 })
+
+    await db
+      .updateTable("backgroundJob")
+      .set({ runAt: new Date(Date.now() - 1_000) })
+      .where("id", "=", backgroundJobId)
+      .execute()
+    await runOne(db, options)
+
+    expect(providerCalls).toBe(2)
+    expect(providerResources).toBe(1)
+    expect(
+      await db
+        .selectFrom("projectJob")
+        .select(["state", "errorMessage"])
+        .where("id", "=", seeded.projectJobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "succeeded", errorMessage: null })
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select(["state", "attempt"])
+        .where("id", "=", backgroundJobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "succeeded", attempt: 2 })
   })
 })
 

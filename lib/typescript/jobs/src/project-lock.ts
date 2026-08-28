@@ -15,6 +15,41 @@ type ProjectLockWaitOptions = {
   /** Deterministic test seam; production waits one second between provider-safe reads. */
   waitBeforeRetry?: () => Promise<void>
   now?: () => number
+  heartbeatIntervalMs?: number
+}
+
+/** Renew a queue lease for the entire operation, including after the advisory lock is acquired. */
+export async function withLeaseHeartbeat<T>(
+  work: () => Promise<T>,
+  keepAlive?: () => Promise<boolean>,
+  intervalMs = 60_000,
+): Promise<T> {
+  if (keepAlive === undefined) return await work()
+
+  let heartbeatFailure: unknown
+  let heartbeatTail = Promise.resolve()
+  const timer = setInterval(() => {
+    heartbeatTail = heartbeatTail
+      .then(async () => {
+        if (!(await keepAlive())) throw new Error("Lost ownership of the job during project work")
+      })
+      .catch((error: unknown) => {
+        heartbeatFailure ??= error
+      })
+  }, intervalMs)
+
+  try {
+    const result = await work()
+    await heartbeatTail
+    if (heartbeatFailure !== undefined) {
+      throw heartbeatFailure instanceof Error
+        ? heartbeatFailure
+        : new Error("Project lease heartbeat failed", { cause: heartbeatFailure })
+    }
+    return result
+  } finally {
+    clearInterval(timer)
+  }
 }
 
 /** Poll one exact advisory lock while retaining the queue lease. */
@@ -58,7 +93,7 @@ export async function withProjectLock<T>(
     )
 
     try {
-      return await work()
+      return await withLeaseHeartbeat(work, options.keepAlive, options.heartbeatIntervalMs)
     } finally {
       await sql`select pg_advisory_unlock(hashtextextended(${key}, 0))`.execute(connection)
     }
