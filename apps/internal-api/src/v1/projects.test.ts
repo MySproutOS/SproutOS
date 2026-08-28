@@ -1662,7 +1662,7 @@ describe.skipIf(!reachable)("project routes", () => {
 
       const queued = await db
         .selectFrom("backgroundJob")
-        .select(["payload", "state"])
+        .select(["idempotencyKey", "payload", "state"])
         .where("kind", "=", "project.teardown")
         .execute()
       const queuedTreeIds = queued
@@ -1672,6 +1672,16 @@ describe.skipIf(!reachable)("project routes", () => {
         })
         .map(({ payload }) => (payload as Json).projectId as string)
       expect(new Set(queuedTreeIds)).toStrictEqual(new Set(expectedTreeIds))
+      const expectedJobIds = new Map(jobs.map((job) => [job.projectId as string, job.id as string]))
+      for (const queuedJob of queued) {
+        const queuedProjectId = (queuedJob.payload as Json).projectId
+        if (typeof queuedProjectId !== "string" || !expectedTreeIds.includes(queuedProjectId)) {
+          continue
+        }
+        expect(queuedJob.idempotencyKey).toBe(
+          `project.teardown:${queuedProjectId}:${expectedJobIds.get(queuedProjectId)}`,
+        )
+      }
 
       const rows = await db
         .selectFrom("project")
