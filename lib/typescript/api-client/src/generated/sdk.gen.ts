@@ -131,6 +131,9 @@ import type {
   DeleteV1UserMeImpersonationResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
+  GetV1AndroidClientReleaseData,
+  GetV1AndroidClientReleaseErrors,
+  GetV1AndroidClientReleaseResponses,
   GetV1AuthMeData,
   GetV1AuthMeResponses,
   GetV1DeployDeploymentsByDeploymentIdData,
@@ -3578,3 +3581,19 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
     url: "/v1/android/catalogue",
     ...options,
   })
+
+/**
+ * Returns the latest verified signed release of the SproutOS Android client.
+ */
+export const getV1AndroidClientRelease = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1AndroidClientReleaseData, ThrowOnError>,
+): RequestResult<
+  GetV1AndroidClientReleaseResponses,
+  GetV1AndroidClientReleaseErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).get<
+    GetV1AndroidClientReleaseResponses,
+    GetV1AndroidClientReleaseErrors,
+    ThrowOnError
+  >({ url: "/v1/android/client-release", ...options })

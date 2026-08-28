@@ -27,6 +27,7 @@ import {
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
   getV1AndroidCatalogue,
+  getV1AndroidClientRelease,
   getV1AuthMe,
   getV1DeployDeploymentsByDeploymentId,
   getV1Orgs,
@@ -216,6 +217,9 @@ import type {
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
   GetV1AndroidCatalogueData,
+  GetV1AndroidClientReleaseData,
+  GetV1AndroidClientReleaseError,
+  GetV1AndroidClientReleaseResponse,
   GetV1AuthMeData,
   GetV1AuthMeResponse,
   GetV1DeployDeploymentsByDeploymentIdData,
@@ -5445,4 +5449,32 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
       return data
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
+  })
+
+export const getV1AndroidClientReleaseQueryKey = (
+  options?: Options<GetV1AndroidClientReleaseData>,
+) => createQueryKey("getV1AndroidClientRelease", options)
+
+/**
+ * Returns the latest verified signed release of the SproutOS Android client.
+ */
+export const getV1AndroidClientReleaseOptions = (
+  options?: Options<GetV1AndroidClientReleaseData>,
+) =>
+  queryOptions<
+    GetV1AndroidClientReleaseResponse,
+    GetV1AndroidClientReleaseError,
+    GetV1AndroidClientReleaseResponse,
+    ReturnType<typeof getV1AndroidClientReleaseQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1AndroidClientRelease({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1AndroidClientReleaseQueryKey(options),
   })

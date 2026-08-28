@@ -11,6 +11,7 @@ import metering from "./metering"
 import deploy from "./deploy"
 import android from "./android"
 import androidApps from "./android-apps"
+import clientRelease from "./client-release"
 import apkSigning from "./apk-signing"
 import pgResolve from "./pg-resolve"
 import auth from "./auth"
@@ -128,6 +129,7 @@ unauthenticated.route("/", apkSigning)
   built from whoever is asking.
 */
 unauthenticated.route("/", android)
+unauthenticated.route("/", clientRelease)
 /*
   There was a `/internal/neon` route here and it is gone with the self-hosted storage layer.
 

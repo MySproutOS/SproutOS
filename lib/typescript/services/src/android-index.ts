@@ -24,7 +24,9 @@
  */
 
 export type AndroidApp = {
+  /** Stable database identity for this application. */
   androidAppId: string
+  /** The project whose entitlement controls this private APK. */
   projectId: string
   /** The Android package name. The client's primary key, and what an install replaces. */
   packageName: string
@@ -36,10 +38,22 @@ export type AndroidApp = {
   /** sha256 of the signed APK, so the client can verify what it downloaded. */
   sha256: string
   sizeBytes: number
+  /** sha256 of the signing certificate encoded in the APK. */
   certificateSha256: string
   /** Expiring. See `catalogueTtlSeconds`. */
   downloadUrl: string
   iconUrl?: string
+}
+
+export type ClientUpdate = {
+  packageName: "me.sproutos.client"
+  versionName: string
+  versionCode: number
+  sha256: string
+  sizeBytes: number
+  certificateSha256: string
+  downloadUrl: string
+  required?: boolean
 }
 
 export type AndroidSite = {
@@ -57,6 +71,8 @@ export type Catalogue = {
   expiresAt: string
   public: { apps: AndroidApp[] }
   personal: { apps: AndroidApp[]; sites: AndroidSite[] }
+  /** Present only after a verified SproutOS client release has been published. */
+  clientUpdate?: ClientUpdate
 }
 
 /**
@@ -111,6 +127,8 @@ export type AppRow = {
 export function toApp(row: AppRow, signedUrlFor: (key: string) => string): AndroidApp | undefined {
   if (
     row.packageName === null ||
+    row.androidAppId == null ||
+    row.projectId == null ||
     row.signedKey === null ||
     row.signedObjectVersion === null ||
     row.sha256 === null ||
@@ -163,6 +181,7 @@ export function buildCatalogue(input: {
   publicApps: AndroidApp[]
   personalApps: AndroidApp[]
   personalSites: AndroidSite[]
+  clientUpdate?: ClientUpdate
   now?: Date
 }): Catalogue {
   const now = input.now ?? new Date()
@@ -176,5 +195,43 @@ export function buildCatalogue(input: {
       apps: latestPerPackage(input.personalApps),
       sites: [...input.personalSites].toSorted((a, b) => a.name.localeCompare(b.name)),
     },
+    ...(input.clientUpdate === undefined ? {} : { clientUpdate: input.clientUpdate }),
+  }
+}
+
+export type ClientReleaseRow = {
+  packageName: string
+  versionName: string
+  versionCode: number
+  sha256: string
+  sizeBytes: number
+  certificateSha256: string
+  objectKey: string
+  required: boolean
+}
+
+export function toClientUpdate(
+  row: ClientReleaseRow,
+  signedUrlFor: (key: string) => string,
+): ClientUpdate | undefined {
+  if (
+    row.packageName !== "me.sproutos.client" ||
+    row.versionCode <= 0 ||
+    row.sizeBytes <= 0 ||
+    !/^[0-9a-f]{64}$/.test(row.sha256) ||
+    !/^[0-9a-f]{64}$/.test(row.certificateSha256)
+  ) {
+    return undefined
+  }
+
+  return {
+    packageName: row.packageName,
+    versionName: row.versionName,
+    versionCode: row.versionCode,
+    sha256: row.sha256,
+    sizeBytes: row.sizeBytes,
+    certificateSha256: row.certificateSha256,
+    downloadUrl: signedUrlFor(row.objectKey),
+    ...(row.required ? { required: true } : {}),
   }
 }

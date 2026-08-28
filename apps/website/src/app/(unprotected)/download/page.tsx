@@ -1,10 +1,13 @@
 import Link from "next/link"
+import { latestCliRelease } from "./cli-release"
 
 export const metadata = {
   title: "Get SproutOS for Android · SproutOS",
   description:
     "Install the SproutOS Android client to run the apps you have published and the ones other people have.",
 }
+
+export const dynamic = "force-dynamic"
 
 /**
  * The download page for the Android client (§12.1).
@@ -20,12 +23,24 @@ export const metadata = {
  * the page so somebody who wants to check what they downloaded can.
  */
 
-/** Filled by the release job. Absent means there is no build yet, which the page says. */
-const RELEASE = {
-  version: process.env.NEXT_PUBLIC_ANDROID_VERSION ?? "",
-  url: process.env.NEXT_PUBLIC_ANDROID_APK_URL ?? "",
-  sha256: process.env.NEXT_PUBLIC_ANDROID_APK_SHA256 ?? "",
-} as const
+type ClientRelease = {
+  packageName: "me.sproutos.client"
+  versionName: string
+  versionCode: number
+  sha256: string
+  sizeBytes: number
+  certificateSha256: string
+  downloadUrl: string
+  required?: boolean
+}
+
+async function latestClientRelease(): Promise<ClientRelease | null> {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+  const response = await fetch(`${apiBase}/v1/android/client-release`, { cache: "no-store" })
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`Client release lookup failed with status ${response.status}`)
+  return (await response.json()) as ClientRelease
+}
 
 const STEPS = [
   "Download the APK using the button above.",
@@ -35,8 +50,8 @@ const STEPS = [
   "You can turn the permission off again afterwards. Updates are offered inside the app.",
 ] as const
 
-export default function DownloadPage() {
-  const available = RELEASE.url !== ""
+export default async function DownloadPage() {
+  const [release, cliRelease] = await Promise.all([latestClientRelease(), latestCliRelease()])
 
   return (
     <main className="container-page py-16">
@@ -47,31 +62,26 @@ export default function DownloadPage() {
       </p>
 
       <div className="mt-8">
-        {available ? (
-          <a
-            href={RELEASE.url}
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            Download {RELEASE.version}
-          </a>
-        ) : (
-          /*
-            Said, rather than a button that does nothing.
-
-            A disabled button with no explanation reads as a broken page; a sentence reads as a
-            product that has not shipped this part yet, which is the truth.
-          */
+        {release === null ? (
           <p className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
             There is no published build yet. This page will offer one as soon as there is.
           </p>
+        ) : (
+          <a
+            href={release.downloadUrl}
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Download {release.versionName}
+          </a>
         )}
       </div>
 
-      {available && RELEASE.sha256 !== "" ? (
-        <p className="mt-4 max-w-2xl font-mono text-xs break-all text-muted-foreground">
-          sha256 {RELEASE.sha256}
-        </p>
-      ) : null}
+      {release === null ? null : (
+        <div className="mt-4 max-w-2xl space-y-1 font-mono text-xs break-all text-muted-foreground">
+          <p>sha256 {release.sha256}</p>
+          <p>certificate sha256 {release.certificateSha256}</p>
+        </div>
+      )}
 
       <section className="mt-12 max-w-2xl">
         <h2 className="text-lg font-medium">Installing it</h2>
@@ -85,6 +95,31 @@ export default function DownloadPage() {
             <li key={step}>{step}</li>
           ))}
         </ol>
+      </section>
+
+      <section className="mt-12 max-w-2xl">
+        <h2 className="text-lg font-medium">Sprout CLI</h2>
+        {cliRelease === null ? (
+          <p className="mt-3 text-muted-foreground">
+            Command-line downloads will appear here with their checksums after the first release.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <p className="text-muted-foreground">Version {cliRelease.version}</p>
+            <ul className="space-y-3">
+              {cliRelease.assets.map((asset) => (
+                <li key={asset.target} className="rounded-md border border-border bg-card p-3">
+                  <a href={asset.url} className="font-medium text-primary hover:underline">
+                    {asset.os} {asset.arch}
+                  </a>
+                  <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
+                    sha256 {asset.sha256}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="mt-12 max-w-2xl">

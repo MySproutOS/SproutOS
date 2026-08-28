@@ -7,6 +7,7 @@ import {
   isReadable,
   latestPerPackage,
   toApp,
+  toClientUpdate,
 } from "./android-index"
 
 const signedUrlFor = (key: string) => `https://cdn.example/${key}?sig=abc`
@@ -161,5 +162,54 @@ describe("the catalogue", () => {
       concludes their apps are gone.
     */
     expect(isReadable(1)).toBe(false)
+  })
+
+  it("carries a verified client update without conflating it with a customer app", () => {
+    const clientUpdate = toClientUpdate(
+      {
+        packageName: "me.sproutos.client",
+        versionName: "2.0.0",
+        versionCode: 20,
+        sha256: "c".repeat(64),
+        sizeBytes: 2_048,
+        certificateSha256: "d".repeat(64),
+        objectKey: "client/2.0.0.apk",
+        required: false,
+      },
+      signedUrlFor,
+    )
+    const catalogue = buildCatalogue({
+      publicApps: [],
+      personalApps: [],
+      personalSites: [],
+      clientUpdate,
+    })
+
+    expect(catalogue.clientUpdate).toMatchObject({
+      packageName: "me.sproutos.client",
+      versionCode: 20,
+      downloadUrl: "https://cdn.example/client/2.0.0.apk?sig=abc",
+    })
+    expect(catalogue.public.apps).toEqual([])
+  })
+})
+
+describe("client updates", () => {
+  it("rejects a release with the customer-app package or unverifiable metadata", () => {
+    const base = {
+      packageName: "me.sproutos.client",
+      versionName: "2.0.0",
+      versionCode: 20,
+      sha256: "c".repeat(64),
+      sizeBytes: 2_048,
+      certificateSha256: "d".repeat(64),
+      objectKey: "client/2.0.0.apk",
+      required: false,
+    }
+
+    expect(toClientUpdate({ ...base, packageName: "me.sproutos.someapp" }, signedUrlFor)).toBe(
+      undefined,
+    )
+    expect(toClientUpdate({ ...base, sha256: "not-a-digest" }, signedUrlFor)).toBe(undefined)
   })
 })

@@ -7035,3 +7035,43 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetV1AndroidClientReleaseData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/android/client-release"
+}
+
+export type GetV1AndroidClientReleaseErrors = {
+  /**
+   * No client release has been published
+   */
+  404: ErrorResponseT
+  /**
+   * Stored release metadata is invalid
+   */
+  500: ErrorResponseT
+}
+
+export type GetV1AndroidClientReleaseError =
+  GetV1AndroidClientReleaseErrors[keyof GetV1AndroidClientReleaseErrors]
+
+export type GetV1AndroidClientReleaseResponses = {
+  /**
+   * Latest client release
+   */
+  200: {
+    packageName: "me.sproutos.client"
+    versionName: string
+    versionCode: number
+    sha256: string
+    sizeBytes: number
+    certificateSha256: string
+    downloadUrl: string
+    required?: boolean
+  }
+}
+
+export type GetV1AndroidClientReleaseResponse =
+  GetV1AndroidClientReleaseResponses[keyof GetV1AndroidClientReleaseResponses]

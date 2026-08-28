@@ -139,6 +139,21 @@ export interface AgentProxyToken {
   upstreamSecret: string | null
 }
 
+export interface ClientRelease {
+  apkObjectKey: string
+  apkObjectVersion: string
+  apkSha256: string
+  apkSizeBytes: Int8
+  certificateSha256: string
+  createdAt: Generated<Timestamp>
+  id: string
+  packageName: string
+  required: Generated<boolean>
+  verifiedAt: Timestamp
+  versionCode: number
+  versionName: string
+}
+
 export interface AgentSession {
   archivedAt: Timestamp | null
   branchName: string | null
@@ -1385,6 +1400,7 @@ export interface DB {
   backendService: BackendService
   backgroundJob: BackgroundJob
   cacheNamespace: CacheNamespace
+  clientRelease: ClientRelease
   cluster: Cluster
   computeInstance: ComputeInstance
   creditAccount: CreditAccount
