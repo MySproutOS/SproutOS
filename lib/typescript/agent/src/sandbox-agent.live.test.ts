@@ -65,6 +65,12 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
       `${workspace}/${SANDBOX_NETWORK_LAUNCHER}`,
       SANDBOX_NETWORK_LAUNCHER_SOURCE,
     )
+    await activeDriver.exec(externalId, ["mkdir", "-p", `${workspace}/.git/sproutos/codex`], 30_000)
+    await activeDriver.writeFile(
+      externalId,
+      `${workspace}/.git/sproutos/codex/AGENTS.md`,
+      "# SproutOS platform instructions\nVerify the delegated work.\n",
+    )
     const stub = `${workspace}/../bin/claude`
     await activeDriver.writeFile(
       externalId,
