@@ -1,0 +1,222 @@
+name: CLI release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cli-release.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "packages/cli/**"
+      - "packages/sprout-core/**"
+      - "packages/sprout-template-protocol/**"
+  push:
+    tags:
+      - "cli-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "sprout-cli") | .version')
+          test -n "$version"
+          tag="cli-v${version}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [[ "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match sprout-cli version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and smoke ${{ matrix.target }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            os: macos
+            arch: arm64
+            extension: ""
+            archive_suffix: tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            os: macos
+            arch: x86_64
+            extension: ""
+            archive_suffix: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os: linux
+            arch: arm64
+            extension: ""
+            archive_suffix: tar.gz
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            os: linux
+            arch: x86_64
+            extension: ""
+            archive_suffix: tar.gz
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            os: windows
+            arch: x86_64
+            extension: ".exe"
+            archive_suffix: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the native binary
+        shell: bash
+        run: cargo build --locked --release -p sprout-cli
+      - name: Smoke the binary before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/release/sprout${{ matrix.extension }}"
+          test -f "$binary"
+          "$binary" --version | grep -Fx "sprout ${{ needs.version.outputs.version }}"
+          "$binary" auth --help >/dev/null
+          "$binary" deploy --help >/dev/null
+
+      - name: Package Unix release
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="sprout-v${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "$RUNNER_TEMP/$asset"
+          cp target/release/sprout "$RUNNER_TEMP/$asset/sprout"
+          cp LICENSE "$RUNNER_TEMP/$asset/LICENSE"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$asset.tar.gz" "$asset"
+          mkdir -p "$RUNNER_TEMP/smoke"
+          tar -C "$RUNNER_TEMP/smoke" -xzf "$RUNNER_TEMP/$asset.tar.gz"
+          "$RUNNER_TEMP/smoke/$asset/sprout" --version |
+            grep -Fx "sprout ${{ needs.version.outputs.version }}"
+
+      - name: Package Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $asset = "sprout-v${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          $stage = Join-Path $env:RUNNER_TEMP $asset
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "target/release/sprout.exe" (Join-Path $stage "sprout.exe")
+          Copy-Item "LICENSE" (Join-Path $stage "LICENSE")
+          $archive = Join-Path $env:RUNNER_TEMP "$asset.zip"
+          Compress-Archive -Path $stage -DestinationPath $archive
+          $smoke = Join-Path $env:RUNNER_TEMP "smoke"
+          Expand-Archive -Path $archive -DestinationPath $smoke
+          $actual = & (Join-Path $smoke "$asset/sprout.exe") --version
+          if ($actual -ne "sprout ${{ needs.version.outputs.version }}") {
+            throw "Extracted CLI reported '$actual'"
+          }
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprout-${{ matrix.target }}
+          path: ${{ runner.temp }}/sprout-v${{ needs.version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_suffix }}
+          if-no-files-found: error
+          retention-days: 7
+
+  manifest:
+    name: Checksums and manifest
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: sprout-*
+          path: dist
+          merge-multiple: true
+      - name: Generate immutable release metadata
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd dist
+          mapfile -t assets < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort)
+          test "${#assets[@]}" -eq 5
+          sha256sum "${assets[@]}" > SHA256SUMS
+
+          entries='[]'
+          for asset in "${assets[@]}"; do
+            target=${asset#sprout-v${VERSION}-}
+            target=${target%.tar.gz}
+            target=${target%.zip}
+            case "$target" in
+              aarch64-apple-darwin) os=macos; arch=arm64 ;;
+              x86_64-apple-darwin) os=macos; arch=x86_64 ;;
+              aarch64-unknown-linux-gnu) os=linux; arch=arm64 ;;
+              x86_64-unknown-linux-gnu) os=linux; arch=x86_64 ;;
+              x86_64-pc-windows-msvc) os=windows; arch=x86_64 ;;
+              *) echo "Unknown target $target" >&2; exit 1 ;;
+            esac
+            sha256=$(sha256sum "$asset" | cut -d' ' -f1)
+            size=$(stat -c '%s' "$asset")
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
+            entries=$(jq -c \
+              --arg target "$target" --arg os "$os" --arg arch "$arch" \
+              --arg url "$url" --arg sha256 "$sha256" --argjson size "$size" \
+              '. + [{target:$target,os:$os,arch:$arch,url:$url,sha256:$sha256,sizeBytes:$size}]' \
+              <<< "$entries")
+          done
+          jq -n --arg version "$VERSION" --arg tag "$TAG" --argjson assets "$entries" \
+            '{schemaVersion:1,version:$version,tag:$tag,assets:$assets}' \
+            > "sprout-v${VERSION}-manifest.json"
+          jq -e '.schemaVersion == 1 and (.assets | length) == 5' \
+            "sprout-v${VERSION}-manifest.json" >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sprout-cli-release-${{ needs.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish immutable GitHub release
+    if: startsWith(github.ref, 'refs/tags/cli-v')
+    needs: [version, manifest]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: sprout-cli-release-${{ needs.version.outputs.version }}
+          path: dist
+      - name: Publish assets once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; immutable assets are never overwritten." >&2
+            exit 1
+          fi
+          gh release create "$TAG" dist/* \
+            --verify-tag \
+            --title "SproutOS CLI v${VERSION}" \
+            --notes "Checksums are in SHA256SUMS and sprout-v${VERSION}-manifest.json."
