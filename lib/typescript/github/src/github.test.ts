@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   appJwt,
   createAppJwt,
@@ -236,17 +236,22 @@ describe("app authentication", () => {
       now: () => clock,
     })
 
-    const first = await store.get(42)
-    const second = await store.get(42)
+    const scope = { purpose: "agent-clone", repositoryId: REPO.id } as const
+    const first = await store.get(42, scope)
+    const second = await store.get(42, scope)
     expect(first.token).toBe("ghs_1")
     expect(second.token).toBe("ghs_1")
     expect(minted).toBe(1)
     expect(client.calls[0].credential).toStrictEqual(appJwt("header.payload.signature"))
+    expect(client.calls[0].body).toStrictEqual({
+      repository_ids: [REPO.id],
+      permissions: { contents: "read" },
+    })
 
     // Fifty-six minutes in, the token has four minutes left — inside the five-minute skew, so it
     // is refused rather than handed to a fork that would outlive it.
     clock = new Date(clock.getTime() + 56 * 60_000)
-    const third = await store.get(42)
+    const third = await store.get(42, scope)
     expect(third.token).toBe("ghs_2")
     expect(minted).toBe(2)
   })
@@ -265,12 +270,82 @@ describe("app authentication", () => {
 
     const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
 
-    expect((await store.get(1)).token).toBe("ghs_one")
-    expect((await store.get(2)).token).toBe("ghs_two")
+    const scope = { purpose: "project-repository-read", repositoryId: REPO.id } as const
+    expect((await store.get(1, scope)).token).toBe("ghs_one")
+    expect((await store.get(2, scope)).token).toBe("ghs_two")
 
     store.clear(1)
-    await store.get(1)
+    await store.get(1, scope)
     expect(client.calls).toHaveLength(3)
+  })
+
+  it("never reuses a token across repositories or purposes, or gives Daytona administration", async () => {
+    let minted = 0
+    const client = fakeClient({
+      "POST /app/installations/42/access_tokens": () => ({
+        token: `ghs_${++minted}`,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    })
+    const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
+
+    const readOne = await store.get(42, { purpose: "sandbox-clone", repositoryId: 101 })
+    const readTwo = await store.get(42, { purpose: "sandbox-clone", repositoryId: 202 })
+    const writeOne = await store.get(42, { purpose: "sandbox-push", repositoryId: 101 })
+    const agentWriteOne = await store.get(42, { purpose: "agent-push", repositoryId: 101 })
+
+    expect([readOne.token, readTwo.token, writeOne.token, agentWriteOne.token]).toStrictEqual([
+      "ghs_1",
+      "ghs_2",
+      "ghs_3",
+      "ghs_4",
+    ])
+    expect(client.calls.map((call) => call.body)).toStrictEqual([
+      { repository_ids: [101], permissions: { contents: "read" } },
+      { repository_ids: [202], permissions: { contents: "read" } },
+      {
+        repository_ids: [101],
+        permissions: { contents: "write", workflows: "write" },
+      },
+      {
+        repository_ids: [101],
+        permissions: { contents: "write", workflows: "write" },
+      },
+    ])
+  })
+
+  it("keeps broad read-only discovery separate from trusted repository provisioning", async () => {
+    let minted = 0
+    const client = fakeClient({
+      "POST /app/installations/42/access_tokens": () => ({
+        token: `ghs_${++minted}`,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    })
+    const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
+
+    await store.get(42, { purpose: "repository-picker" })
+    await store.get(42, { purpose: "repository-provision" })
+
+    expect(client.calls.map((call) => call.body)).toStrictEqual([
+      { permissions: { metadata: "read" } },
+      { permissions: { administration: "write", contents: "read" } },
+    ])
+  })
+
+  it("rejects invalid repository identifiers before signing or calling GitHub", async () => {
+    const client = fakeClient({})
+    const signJwt = vi.fn<() => string>(() => "j.w.t")
+    const store = createInstallationTokenStore({ client, signJwt })
+
+    await expect(
+      store.get(42, { purpose: "sandbox-clone", repositoryId: Number.NaN }),
+    ).rejects.toThrow(/positive safe integer/)
+    await expect(store.get(42, { purpose: "sandbox-clone", repositoryId: -1 })).rejects.toThrow(
+      /positive safe integer/,
+    )
+    expect(signJwt).not.toHaveBeenCalled()
+    expect(client.calls).toHaveLength(0)
   })
 })
 

@@ -1,4 +1,9 @@
-import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
+import {
+  createGitHubClient,
+  createInstallationTokenStore,
+  envAppJwtSigner,
+  type InstallationTokenRequest,
+} from "@lib/github"
 import { crudAgentSession, crudProjectJob, recordUpkeepRun } from "@lib/dao"
 import type { GitHubCredential } from "@lib/github"
 import type { JobHandler } from "./worker"
@@ -21,7 +26,10 @@ type ResolutionDetails = {
 }
 
 export type UpkeepResolutionDeps = {
-  credentialFor: (installationId: number) => Promise<GitHubCredential>
+  credentialFor: (
+    installationId: number,
+    request: InstallationTokenRequest,
+  ) => Promise<GitHubCredential>
   resolve: typeof resolveUpstreamConflict
 }
 
@@ -32,7 +40,7 @@ function defaultDeps(): UpkeepResolutionDeps {
     const client = createGitHubClient()
     const tokens = createInstallationTokenStore({ client, signJwt: envAppJwtSigner() })
     defaults = {
-      credentialFor: (installationId) => tokens.get(installationId),
+      credentialFor: (installationId, request) => tokens.get(installationId, request),
       resolve: resolveUpstreamConflict,
     }
   }
@@ -110,6 +118,7 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
         "repository.provenance",
         "repository.upstreamFullName",
         "repository.upstreamDefaultBranch",
+        "repository.githubRepoId",
         "githubInstallation.installationId",
       ])
       .where("project.id", "=", projectJob.projectId)
@@ -140,7 +149,10 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
     }
     const heartbeat = setInterval(() => void touch().catch(() => undefined), HEARTBEAT_MS)
     try {
-      const credential = await (deps ?? defaultDeps()).credentialFor(Number(facts.installationId))
+      const credential = await (deps ?? defaultDeps()).credentialFor(Number(facts.installationId), {
+        purpose: "upkeep-resolution",
+        repositoryId: Number(facts.githubRepoId),
+      })
       const result = await (deps ?? defaultDeps()).resolve({
         agentSessionId: details.agentSessionId,
         branch: facts.defaultBranch,

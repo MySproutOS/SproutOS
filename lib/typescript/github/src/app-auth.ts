@@ -83,6 +83,102 @@ type InstallationTokenResponse = {
   expires_at: string
 }
 
+type RepositoryPermission =
+  | "administration"
+  | "contents"
+  | "metadata"
+  | "pull_requests"
+  | "workflows"
+type PermissionLevel = "read" | "write"
+
+/**
+ * Why an installation token is being minted.
+ *
+ * This is deliberately not a caller-supplied permissions object. A stringly permission map at
+ * every call site would make a typo an over-privileged credential, and would let a sandbox caller
+ * quietly ask for `administration: write`. The purpose is the public API; the permission set is a
+ * closed mapping owned here.
+ */
+export type InstallationTokenRequest =
+  | {
+      purpose: "repository-picker" | "repository-name-check" | "repository-provision"
+    }
+  | {
+      purpose:
+        | "project-repository-read"
+        | "agent-clone"
+        | "agent-push"
+        | "sandbox-clone"
+        | "sandbox-push"
+        | "catalogue-template-push"
+        | "upkeep-inspect"
+        | "upkeep-sync"
+        | "upkeep-resolution"
+      repositoryId: number
+    }
+
+type ResolvedInstallationTokenScope = {
+  purpose: InstallationTokenRequest["purpose"]
+  repositoryIds: readonly number[] | null
+  permissions: Readonly<Partial<Record<RepositoryPermission, PermissionLevel>>>
+}
+
+function exactRepositoryScope(
+  request: Extract<InstallationTokenRequest, { repositoryId: number }>,
+  permissions: ResolvedInstallationTokenScope["permissions"],
+): ResolvedInstallationTokenScope {
+  if (!Number.isSafeInteger(request.repositoryId) || request.repositoryId <= 0) {
+    throw new TypeError("GitHub repository id must be a positive safe integer")
+  }
+  return { purpose: request.purpose, repositoryIds: [request.repositoryId], permissions }
+}
+
+function resolveInstallationTokenScope(
+  request: InstallationTokenRequest,
+): ResolvedInstallationTokenScope {
+  switch (request.purpose) {
+    /* These endpoints inherently range across an installation. Neither token can write. */
+    case "repository-picker":
+    case "repository-name-check":
+      return { purpose: request.purpose, repositoryIds: null, permissions: { metadata: "read" } }
+
+    /* A repository that is about to be created has no id yet. Kept out of every sandbox path. */
+    case "repository-provision":
+      return {
+        purpose: request.purpose,
+        repositoryIds: null,
+        permissions: { administration: "write", contents: "read" },
+      }
+
+    case "project-repository-read":
+      return exactRepositoryScope(request, { metadata: "read" })
+    case "agent-clone":
+    case "sandbox-clone":
+    case "upkeep-inspect":
+      return exactRepositoryScope(request, { contents: "read" })
+    case "agent-push":
+    case "sandbox-push":
+    case "catalogue-template-push":
+    case "upkeep-sync":
+      return exactRepositoryScope(request, { contents: "write", workflows: "write" })
+    case "upkeep-resolution":
+      return exactRepositoryScope(request, {
+        contents: "write",
+        pull_requests: "write",
+        workflows: "write",
+      })
+  }
+}
+
+function cacheKey(installationId: number, scope: ResolvedInstallationTokenScope): string {
+  const repositories = scope.repositoryIds === null ? "all" : scope.repositoryIds.join(",")
+  const permissions = Object.entries(scope.permissions)
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([permission, level]) => `${permission}:${level}`)
+    .join(",")
+  return `${installationId}|${scope.purpose}|${repositories}|${permissions}`
+}
+
 /**
  * Mints and caches `ghs_` installation tokens.
  *
@@ -97,28 +193,40 @@ type InstallationTokenResponse = {
 export function createInstallationTokenStore(options: InstallationTokenStoreOptions) {
   const now = options.now ?? (() => new Date())
   const skewMs = (options.skewSeconds ?? DEFAULT_SKEW_SECONDS) * 1000
-  const cache = new Map<number, GitHubInstallationToken>()
+  const cache = new Map<string, GitHubInstallationToken>()
 
-  function cached(installationId: number): GitHubInstallationToken | undefined {
-    const entry = cache.get(installationId)
+  function cached(key: string): GitHubInstallationToken | undefined {
+    const entry = cache.get(key)
     if (entry === undefined) return undefined
 
     if (entry.expiresAt.getTime() - skewMs <= now().getTime()) {
-      cache.delete(installationId)
+      cache.delete(key)
       return undefined
     }
 
     return entry
   }
 
-  async function get(installationId: number): Promise<GitHubInstallationToken> {
-    const hit = cached(installationId)
+  async function get(
+    installationId: number,
+    request: InstallationTokenRequest,
+  ): Promise<GitHubInstallationToken> {
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+      throw new TypeError("GitHub installation id must be a positive safe integer")
+    }
+    const scope = resolveInstallationTokenScope(request)
+    const key = cacheKey(installationId, scope)
+    const hit = cached(key)
     if (hit !== undefined) return hit
 
     const response = await options.client.request<InstallationTokenResponse>({
       method: "POST",
       path: `/app/installations/${installationId}/access_tokens`,
       credential: appJwt(options.signJwt()),
+      body: {
+        ...(scope.repositoryIds === null ? {} : { repository_ids: scope.repositoryIds }),
+        permissions: scope.permissions,
+      },
     })
 
     const minted = installationToken(
@@ -127,13 +235,18 @@ export function createInstallationTokenStore(options: InstallationTokenStoreOpti
       new Date(response.data.expires_at),
     )
 
-    cache.set(installationId, minted)
+    cache.set(key, minted)
     return minted
   }
 
   function clear(installationId?: number): void {
     if (installationId === undefined) cache.clear()
-    else cache.delete(installationId)
+    else {
+      const prefix = `${installationId}|`
+      for (const key of cache.keys()) {
+        if (key.startsWith(prefix)) cache.delete(key)
+      }
+    }
   }
 
   return { clear, get }
