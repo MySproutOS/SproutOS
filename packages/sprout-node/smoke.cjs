@@ -1,5 +1,7 @@
 "use strict"
 
+/* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access, typescript/use-unknown-in-catch-callback-variable -- This executable exercises the untyped CommonJS ABI boundary; index.d.ts covers consumers. */
+
 const assert = require("node:assert/strict")
 const { applyTemplate } = require("./index.cjs")
 

@@ -1,5 +1,7 @@
 "use strict"
 
+/* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access, typescript/no-unsafe-return -- This CommonJS loader must inspect Node runtime globals before the typed addon can load. */
+
 const { existsSync } = require("node:fs")
 const { join } = require("node:path")
 

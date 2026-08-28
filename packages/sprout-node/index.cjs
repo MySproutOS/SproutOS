@@ -1,5 +1,7 @@
 "use strict"
 
+/* oxlint-disable typescript/no-unsafe-argument, typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access, typescript/no-unsafe-return -- CommonJS is the public Node loader for the native ABI; index.d.ts owns its typed contract. */
+
 const { loadNative } = require("./loader.cjs")
 const native = loadNative()
 

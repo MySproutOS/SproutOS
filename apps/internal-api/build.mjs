@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* oxlint-disable typescript/no-unsafe-argument, typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-member-access -- This build-time JavaScript walks package.json data and Node process globals outside the TypeScript application graph. */
 /**
  * Bundle the API into one file for the container.
  *
