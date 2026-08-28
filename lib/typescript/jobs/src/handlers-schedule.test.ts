@@ -34,6 +34,7 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const valkeyAclKey = `${JOB_KINDS.reconcileValkeyAcl}:2099-12-31T23`
     const staticLogKey = `${JOB_KINDS.scanStaticCloudFrontLogs}:2099-12-31T23:55`
     const platformCertificateKey = `${JOB_KINDS.reconcilePlatformEdgeCertificate}:2099-12-31T23:58`
+    const statementKey = `${JOB_KINDS.generateStatements}:2099-12-31`
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
@@ -61,11 +62,13 @@ describe.skipIf(!reachable)("metering schedules", () => {
         valkeyAclKey,
         staticLogKey,
         platformCertificateKey,
+        statementKey,
       ])
       .orderBy("kind")
       .execute()
 
     expect(scheduled).toEqual([
+      { kind: JOB_KINDS.generateStatements, idempotencyKey: statementKey },
       { kind: JOB_KINDS.importUsage, idempotencyKey: importKey },
       { kind: JOB_KINDS.meterNeonDatabases, idempotencyKey: neonMeteringKey },
       { kind: JOB_KINDS.meterValkeyQueues, idempotencyKey: valkeyMeteringKey },

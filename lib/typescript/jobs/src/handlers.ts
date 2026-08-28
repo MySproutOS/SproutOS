@@ -3,6 +3,7 @@ import {
   chargeUsage,
   expireHolds,
   formatMicroUsd,
+  generateMonthlyStatements,
   importedUsageCursor,
 } from "@lib/billing"
 import {
@@ -95,6 +96,7 @@ export const JOB_KINDS = {
   relayMeteringOutbox: "billing.relay_metering_outbox",
   reconcileActiveUsage: RECONCILE_ACTIVE_USAGE_KIND,
   chargeUsage: "billing.charge_usage",
+  generateStatements: "billing.generate_statements",
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
@@ -362,6 +364,19 @@ const chargeUsageJob: JobHandler = async (_job, { db }) => {
   }
 }
 
+const generateStatementsJob: JobHandler = async (_job, { db }) => {
+  const result = await generateMonthlyStatements(db)
+  if (
+    result.importedTransactions > 0 ||
+    result.createdStatements > 0 ||
+    result.finalizedStatements > 0
+  ) {
+    console.info(
+      `[jobs] statements imported=${result.importedTransactions} created=${result.createdStatements} finalized=${result.finalizedStatements}`,
+    )
+  }
+}
+
 const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
   const payload = job.payload as { generationId?: unknown; username?: unknown }
   if (typeof payload.generationId !== "string" || typeof payload.username !== "string") {
@@ -391,6 +406,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.relayMeteringOutbox]: meteringOutboxRelay(),
   [JOB_KINDS.reconcileActiveUsage]: reconcileActiveUsageJob(),
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
+  [JOB_KINDS.generateStatements]: generateStatementsJob,
   [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
@@ -562,6 +578,16 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     kind: JOB_KINDS.chargeUsage,
     idempotencyKey: `${JOB_KINDS.chargeUsage}:${tenMinuteWindow(now)}`,
     maxAttempts: 3,
+  })
+  await enqueue(db, {
+    /*
+      Daily. New usage charges attach to their draft statement in the ledger transaction itself;
+      this job closes elapsed UTC months and reconciles exact older debits from before that link
+      existed. A date-keyed row makes retries and overlapping schedulers harmless.
+    */
+    kind: JOB_KINDS.generateStatements,
+    idempotencyKey: `${JOB_KINDS.generateStatements}:${now.toISOString().slice(0, 10)}`,
+    maxAttempts: 5,
   })
   await enqueue(db, {
     /*

@@ -99,3 +99,18 @@ export {
   invoiceText,
   renderInvoicePdf,
 } from "./invoice"
+export {
+  DIMENSION_DISPLAY,
+  displayForDimension,
+  displayQuantity,
+  type DimensionDisplay,
+} from "./dimensions"
+export {
+  addQuantities,
+  generateMonthlyStatements,
+  paidQuantity,
+  recordUsageStatement,
+  statementPeriod,
+  type StatementRunResult,
+  type UsageStatementLine,
+} from "./statements"

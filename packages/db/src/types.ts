@@ -1096,6 +1096,13 @@ export interface Statement {
   updatedAt: Generated<Timestamp>
 }
 
+export interface StatementCharge {
+  createdAt: Generated<Timestamp>
+  creditTransactionId: string
+  id: string
+  statementId: string
+}
+
 export interface StatementLineItem {
   amountMicroUsd: Generated<Int8>
   createdAt: Generated<Timestamp>
@@ -1467,6 +1474,7 @@ export interface DB {
   serviceCredential: ServiceCredential
   session: Session
   statement: Statement
+  statementCharge: StatementCharge
   statementLineItem: StatementLineItem
   storeCategory: StoreCategory
   storeListing: StoreListing

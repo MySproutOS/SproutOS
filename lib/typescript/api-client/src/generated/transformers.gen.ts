@@ -7,6 +7,7 @@ import type {
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
   GetV1OrgsByOrgSlugApiKeysResponse,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
   GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugBillingUsageResponse,
@@ -730,6 +731,17 @@ export const getV1OrgsByOrgSlugBillingStatementsResponseTransformer = async (
     }
     return item
   })
+  return data
+}
+
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse> => {
+  data.periodStart = new Date(data.periodStart)
+  data.periodEnd = new Date(data.periodEnd)
+  if (data.finalizedAt) {
+    data.finalizedAt = new Date(data.finalizedAt)
+  }
   return data
 }
 

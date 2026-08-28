@@ -1,12 +1,14 @@
 import { MINIMUM_TOPUP } from "@lib/billing/money"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  getV1OrgsByOrgSlugBillingStatementsByStatementIdOptions,
   getV1OrgsByOrgSlugBillingBalanceOptions,
   getV1OrgsByOrgSlugBillingStatementsOptions,
   getV1OrgsByOrgSlugBillingTopupQuoteOptions,
   getV1OrgsByOrgSlugBillingUsageOptions,
   postV1OrgsByOrgSlugBillingTopupMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
+import { baseUrl } from "@lib/api-client/index"
 
 export type CreditBalance = {
   balanceMicros: bigint
@@ -64,8 +66,11 @@ export function usageDescription(dimension: string): string | null {
 
 export type Invoice = {
   id: string
+  number: string
   period: string
-  status: "paid" | "open"
+  status: "finalized" | "open"
+  subtotalMicros: bigint
+  overheadMicros: bigint
   totalMicros: bigint
 }
 
@@ -242,11 +247,43 @@ export function useInvoices(orgSlug: string) {
     ...query,
     data: query.data?.data.map((statement): Invoice => ({
       id: statement.id,
+      number: statement.number,
       period: PERIOD_FORMAT.format(new Date(statement.periodStart)),
-      status: statement.status === "finalized" ? "paid" : "open",
+      status: statement.status === "finalized" ? "finalized" : "open",
+      subtotalMicros: BigInt(statement.subtotalMicroUsd),
+      overheadMicros: BigInt(statement.overheadMicroUsd),
       totalMicros: BigInt(statement.totalMicroUsd),
     })),
   }
+}
+
+export function useStatementDetail(orgSlug: string, statementId: string, enabled: boolean) {
+  return useQuery({
+    ...getV1OrgsByOrgSlugBillingStatementsByStatementIdOptions({
+      path: { orgSlug, statementId },
+    }),
+    enabled,
+  })
+}
+
+/** A PDF is a one-shot document, not cacheable application state. */
+export function useDownloadStatement(orgSlug: string) {
+  return useMutation({
+    mutationFn: async ({ statementId, number }: { statementId: string; number: string }) => {
+      const response = await fetch(
+        `${baseUrl}/v1/orgs/${encodeURIComponent(orgSlug)}/billing/statements/${encodeURIComponent(statementId)}/pdf`,
+        { credentials: "include" },
+      )
+      if (!response.ok) throw new Error(`The statement could not be prepared (${response.status})`)
+
+      const url = URL.createObjectURL(await response.blob())
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `sproutos-${number}.pdf`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    },
+  })
 }
 
 /**

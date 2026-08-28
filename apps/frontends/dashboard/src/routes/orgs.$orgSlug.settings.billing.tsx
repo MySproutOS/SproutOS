@@ -1,7 +1,9 @@
 import { formatBalanceMicroUsd, formatMicroUsd } from "@lib/billing/money"
 import { createFileRoute } from "@tanstack/react-router"
-import { Fragment } from "react"
+import { Fragment, useState } from "react"
+import { ChevronDown, Download } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
+import { Button } from "@ui/base/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/base/ui/card"
 import { Money } from "@ui/base/ui/money"
 import { Progress } from "@ui/base/ui/progress"
@@ -18,7 +20,14 @@ import {
 import { AddCreditDialog } from "@frontends/dashboard/components/billing/add-credit-dialog"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
-import { useCreditBalance, useInvoices, useUsageLines } from "@frontends/dashboard/data/billing"
+import {
+  type Invoice,
+  useCreditBalance,
+  useDownloadStatement,
+  useInvoices,
+  useStatementDetail,
+  useUsageLines,
+} from "@frontends/dashboard/data/billing"
 
 export const Route = createFileRoute("/orgs/$orgSlug/settings/billing")({
   component: BillingSettings,
@@ -170,26 +179,114 @@ function BillingSettings() {
                 <TableHead className="w-40">Invoice</TableHead>
                 <TableHead>Period</TableHead>
                 <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-24 text-right">Usage</TableHead>
+                <TableHead className="w-24 text-right">Fee</TableHead>
                 <TableHead className="w-24 text-right">Total</TableHead>
+                <TableHead className="w-24 text-right">Download</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {invoices.data.map((invoice) => (
-                <TableRow key={invoice.id}>
-                  <TableCell numeric>{invoice.id}</TableCell>
-                  <TableCell>{invoice.period}</TableCell>
-                  <TableCell>
-                    <Badge variant={invoice.status === "paid" ? "success" : "outline"}>
-                      {invoice.status === "paid" ? "Paid" : "Open"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell money>{formatMicroUsd(invoice.totalMicros)}</TableCell>
-                </TableRow>
+                <StatementRow key={invoice.id} orgSlug={orgSlug} invoice={invoice} />
               ))}
             </TableBody>
           </Table>
         )}
       </section>
     </PageBody>
+  )
+}
+
+function StatementRow({ orgSlug, invoice }: { orgSlug: string; invoice: Invoice }) {
+  const [expanded, setExpanded] = useState(false)
+  const detail = useStatementDetail(orgSlug, invoice.id, expanded)
+  const download = useDownloadStatement(orgSlug)
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={expanded}
+            onClick={() => {
+              setExpanded((value) => !value)
+            }}
+          >
+            <ChevronDown
+              className={expanded ? "rotate-180 transition-transform" : "transition-transform"}
+            />
+            <span className="font-mono">{invoice.number}</span>
+          </Button>
+        </TableCell>
+        <TableCell>{invoice.period}</TableCell>
+        <TableCell>
+          <Badge variant={invoice.status === "finalized" ? "success" : "outline"}>
+            {invoice.status === "finalized" ? "Final" : "Open"}
+          </Badge>
+        </TableCell>
+        <TableCell money>{formatMicroUsd(invoice.subtotalMicros)}</TableCell>
+        <TableCell money>{formatMicroUsd(invoice.overheadMicros)}</TableCell>
+        <TableCell money>{formatMicroUsd(invoice.totalMicros)}</TableCell>
+        <TableCell className="text-right">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={download.isPending}
+            onClick={() => {
+              download.mutate({ statementId: invoice.id, number: invoice.number })
+            }}
+          >
+            <Download />
+            PDF
+          </Button>
+          {download.isError && (
+            <span role="alert" className="ml-2 text-xs text-destructive">
+              Failed
+            </span>
+          )}
+        </TableCell>
+      </TableRow>
+      {expanded && (
+        <TableRow>
+          <TableCell colSpan={7} className="bg-muted/20 p-4">
+            {detail.isPending && <Skeleton className="h-20 w-full" />}
+            {detail.isError && (
+              <ListError
+                title="Could not load statement detail"
+                onRetry={() => {
+                  void detail.refetch()
+                }}
+              />
+            )}
+            {detail.data !== undefined && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Line</TableHead>
+                    <TableHead>Project</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detail.data.lines.map((line) => (
+                    <TableRow key={line.id}>
+                      <TableCell>{line.label}</TableCell>
+                      <TableCell>{line.projectName ?? "Organization-wide"}</TableCell>
+                      <TableCell numeric className="text-right">
+                        {line.quantity} {line.unit}
+                      </TableCell>
+                      <TableCell money>{formatMicroUsd(BigInt(line.amountMicroUsd))}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   )
 }

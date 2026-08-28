@@ -39,6 +39,8 @@ import {
   getV1OrgsByOrgSlugApiKeys,
   getV1OrgsByOrgSlugBillingBalance,
   getV1OrgsByOrgSlugBillingStatements,
+  getV1OrgsByOrgSlugBillingStatementsByStatementId,
+  getV1OrgsByOrgSlugBillingStatementsByStatementIdPdf,
   getV1OrgsByOrgSlugBillingTopupQuote,
   getV1OrgsByOrgSlugBillingTransactions,
   getV1OrgsByOrgSlugBillingUsage,
@@ -240,6 +242,12 @@ import type {
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceError,
   GetV1OrgsByOrgSlugBillingBalanceResponse,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdData,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdError,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfError,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponse,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
   GetV1OrgsByOrgSlugBillingStatementsData,
   GetV1OrgsByOrgSlugBillingStatementsError,
   GetV1OrgsByOrgSlugBillingStatementsResponse,
@@ -3899,6 +3907,62 @@ export const getV1OrgsByOrgSlugBillingStatementsOptions = (
       return data
     },
     queryKey: getV1OrgsByOrgSlugBillingStatementsQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdPdfQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingStatementsByStatementIdPdf", options)
+
+/**
+ * Downloads an organization's statement as a PDF
+ */
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdPdfOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponse,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfError,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingStatementsByStatementIdPdfQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingStatementsByStatementIdPdf({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingStatementsByStatementIdPdfQueryKey(options),
+  })
+
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugBillingStatementsByStatementId", options)
+
+/**
+ * A statement and the exact line items that reconcile to its total
+ */
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdError,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugBillingStatementsByStatementIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugBillingStatementsByStatementId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugBillingStatementsByStatementIdQueryKey(options),
   })
 
 export const getV1OrgsByOrgSlugProjectsByProjectIdLogsQueryKey = (
