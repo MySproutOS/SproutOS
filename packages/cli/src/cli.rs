@@ -4,8 +4,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::{CliError, Result};
 
-const DEFAULT_API_URL: &str = "https://api.sproutos.com";
-const DEFAULT_WEBSITE_URL: &str = "https://sproutos.com";
+const DEFAULT_API_URL: &str = "https://api.sproutos.me";
+const DEFAULT_WEBSITE_URL: &str = "https://sproutos.me";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -444,6 +444,14 @@ pub enum TemplateTarget {
 pub fn validate(cli: &Cli) -> Result<()> {
     validate_base_url("--api-url", &cli.api_url)?;
     validate_base_url("--website-url", &cli.website_url)?;
+    if matches!(
+        cli.command,
+        Command::Auth(AuthArgs {
+            command: AuthCommand::Login { .. }
+        })
+    ) {
+        validate_login_origin_pair(&cli.api_url, &cli.website_url)?;
+    }
 
     if cli.json && destructive(&cli.command) && !cli.yes {
         return Err(CliError::InvalidInput(
@@ -541,7 +549,43 @@ fn validate_base_url(name: &str, value: &str) -> Result<()> {
             "{name} must be an HTTP(S) origin without credentials, query, or fragment"
         )));
     }
+    if url.scheme() == "http" && !is_loopback_host(url.host_str().unwrap_or_default()) {
+        return Err(CliError::InvalidInput(format!(
+            "{name} must use HTTPS unless it is a local loopback URL"
+        )));
+    }
     Ok(())
+}
+
+fn validate_login_origin_pair(api_value: &str, website_value: &str) -> Result<()> {
+    let api = url::Url::parse(api_value).expect("base URL was validated");
+    let website = url::Url::parse(website_value).expect("base URL was validated");
+    let api_host = api.host_str().expect("base URL has a host");
+    let website_host = website.host_str().expect("base URL has a host");
+    let api_is_loopback = is_loopback_host(api_host);
+    let website_is_loopback = is_loopback_host(website_host);
+
+    if api_is_loopback && website_is_loopback {
+        return Ok(());
+    }
+    if api_is_loopback
+        || website_is_loopback
+        || (api_host != website_host && api_host != format!("api.{website_host}"))
+    {
+        return Err(CliError::InvalidInput(
+            "--api-url and --website-url must be the same HTTPS host pair so an authorization code and PKCE verifier cannot be sent to another operator"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 pub fn destructive(command: &Command) -> bool {
@@ -583,6 +627,14 @@ mod tests {
         ] {
             assert!(help.contains(command), "missing {command} from root help");
         }
+    }
+
+    #[test]
+    fn production_defaults_target_the_live_control_plane() {
+        let cli = Cli::parse_from(["sprout", "auth", "login"]);
+
+        assert_eq!(cli.api_url, "https://api.sproutos.me");
+        assert_eq!(cli.website_url, "https://sproutos.me");
     }
 
     #[test]
@@ -677,5 +729,39 @@ mod tests {
             let cli = Cli::parse_from(["sprout", "--api-url", url, "org", "list"]);
             assert!(validate(&cli).is_err(), "accepted {url}");
         }
+    }
+
+    #[test]
+    fn login_refuses_an_api_origin_that_could_capture_the_pkce_exchange() {
+        for args in [
+            [
+                "sprout",
+                "--api-url",
+                "https://api.attacker.test",
+                "auth",
+                "login",
+            ],
+            [
+                "sprout",
+                "--api-url",
+                "http://api.sproutos.me",
+                "auth",
+                "login",
+            ],
+        ] {
+            let cli = Cli::parse_from(args);
+            assert!(validate(&cli).is_err());
+        }
+
+        let local = Cli::parse_from([
+            "sprout",
+            "--api-url",
+            "http://127.0.0.1:3001",
+            "--website-url",
+            "http://localhost:3000",
+            "auth",
+            "login",
+        ]);
+        validate(&local).unwrap();
     }
 }

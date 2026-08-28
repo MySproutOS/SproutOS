@@ -3,8 +3,10 @@ import {
   SPROUT_CLI_CLIENT_ID,
   SPROUT_CLI_REDIRECT_URI,
 } from "@lib/oauth-provider"
+import { issueKey } from "@lib/api-keys"
 import { db } from "@sproutos/db"
 import { encodeBase64UrlNoPadding, sha256Utf8 } from "@utils/crypto"
+import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import app from "../index"
@@ -148,6 +150,8 @@ describe.skipIf(!reachable)("Sprout CLI PKCE exchange", () => {
     const authorizationCode = await code()
     const response = await exchange(authorizationCode)
     expect(response.status).toBe(201)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    expect(response.headers.get("pragma")).toBe("no-cache")
     const result = (await response.json()) as {
       key: string
       scopes: string[]
@@ -266,4 +270,122 @@ describe.skipIf(!reachable)("Sprout CLI PKCE exchange", () => {
     )
     expect(deploy.status).toBe(403)
   })
+
+  it("narrows an existing CLI key when re-consent narrows its live grant", async () => {
+    await db
+      .updateTable("oauthGrant")
+      .set({ revokedAt: new Date() })
+      .where("oauthClientId", "=", SPROUT_CLI_CLIENT_ID)
+      .where("userId", "=", user!.id)
+      .where("organizationId", "=", organizationId)
+      .where("revokedAt", "is", null)
+      .execute()
+    grantId = v7()
+    await db
+      .insertInto("oauthGrant")
+      .values({
+        id: grantId,
+        oauthClientId: SPROUT_CLI_CLIENT_ID,
+        userId: user!.id,
+        organizationId,
+        scopes: ["project:read", "deployment:write"],
+      })
+      .execute()
+    const exchanged = await exchange(await code())
+    const { key } = (await exchanged.json()) as { key: string }
+
+    const consent = await app.request("/v1/oauth/consent", {
+      method: "POST",
+      headers: authHeaders(user!),
+      body: JSON.stringify({
+        clientId: SPROUT_CLI_CLIENT_ID,
+        redirectUri,
+        scopes: ["project:read"],
+        state: "narrow-scope",
+        codeChallenge: encodeBase64UrlNoPadding(await sha256Utf8(verifier)),
+        codeChallengeMethod: "S256",
+        organizationId,
+      }),
+    })
+    expect(consent.status).toBe(200)
+
+    const status = await app.request("/v1/auth/me", {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+    expect(status.status).toBe(200)
+    expect((await status.json()) as object).toMatchObject({
+      authentication: { kind: "api_key", scopes: ["project:read"] },
+    })
+    const deploy = await app.request(
+      `/v1/orgs/${organizationSlug}/projects/${projectId}/deploy-token`,
+      { method: "POST", headers: { Authorization: `Bearer ${key}` } },
+    )
+    expect(deploy.status).toBe(403)
+  })
+
+  it("waits for concurrent grant narrowing before storing key scopes", async () => {
+    let releaseNarrowing!: () => void
+    let narrowingStarted!: () => void
+    const holdNarrowing = new Promise<void>((resolve) => {
+      releaseNarrowing = resolve
+    })
+    const narrowingHasLock = new Promise<void>((resolve) => {
+      narrowingStarted = resolve
+    })
+
+    const narrowing = db.transaction().execute(async (tx) => {
+      await tx
+        .updateTable("oauthGrant")
+        .set({ scopes: ["project:read"], updatedAt: new Date() })
+        .where("id", "=", grantId)
+        .execute()
+      narrowingStarted()
+      await holdNarrowing
+    })
+    await narrowingHasLock
+
+    const issuedName = `Concurrent Sprout CLI ${v7()}`
+    const issuance = issueKey(db, {
+      organizationId,
+      userId: user!.id,
+      name: issuedName,
+      scopes: ["project:read", "deployment:write"],
+      oauthGrantId: grantId,
+    })
+    const issuanceOutcome = issuance.then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    )
+
+    try {
+      const deadline = Date.now() + 5_000
+      let waitingForGrantLock = false
+      while (Date.now() < deadline && !waitingForGrantLock) {
+        const activity = await sql<{ waitEventType: string | null }>`
+            select wait_event_type as "waitEventType"
+            from pg_stat_activity
+            where pid <> pg_backend_pid()
+              and state = 'active'
+              and wait_event_type = 'Lock'
+              and query ilike '%oauth_grant%for share%'
+          `.execute(db)
+        waitingForGrantLock = activity.rows.length > 0
+        if (!waitingForGrantLock) await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(waitingForGrantLock).toBe(true)
+    } finally {
+      releaseNarrowing()
+      await narrowing
+    }
+
+    const { error } = await issuanceOutcome
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe("The OAuth grant no longer covers the requested scopes")
+    const stored = await db
+      .selectFrom("apiKey")
+      .select("id")
+      .where("name", "=", issuedName)
+      .executeTakeFirst()
+    expect(stored).toBeUndefined()
+  }, 15_000)
 })

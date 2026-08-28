@@ -70,6 +70,12 @@ const app = new Hono()
           oauthGrantId: redeemed.oauthGrantId,
         })
 
+        // This response contains the only copy of a long-lived credential. RFC 6749's token
+        // response cache prohibition applies for the same reason even though this is the CLI's
+        // specialized exchange endpoint.
+        c.header("Cache-Control", "no-store")
+        c.header("Pragma", "no-cache")
+
         return c.json(
           {
             key: issued.key,

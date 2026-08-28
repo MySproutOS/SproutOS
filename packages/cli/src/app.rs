@@ -445,8 +445,7 @@ mod tests {
     async fn json_mode_is_one_versioned_document_and_token_is_absent() {
         let directory = tempfile::tempdir().unwrap();
         let store = FakeStore::default();
-        let account =
-            credential::account_for(&url::Url::parse("https://api.sproutos.com").unwrap());
+        let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let backend = FakeBackend(Mutex::new(Vec::new()));
         let cli = Cli::parse_from(["sprout", "--json", "org", "list"]);
@@ -473,8 +472,7 @@ mod tests {
     async fn org_use_verifies_before_persisting() {
         let directory = tempfile::tempdir().unwrap();
         let store = FakeStore::default();
-        let account =
-            credential::account_for(&url::Url::parse("https://api.sproutos.com").unwrap());
+        let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let backend = FakeBackend(Mutex::new(Vec::new()));
         let cli = Cli::parse_from(["sprout", "org", "use", "acme"]);
@@ -504,8 +502,7 @@ mod tests {
     async fn logout_keeps_saved_key_when_revocation_fails() {
         let directory = tempfile::tempdir().unwrap();
         let store = FakeStore::default();
-        let account =
-            credential::account_for(&url::Url::parse("https://api.sproutos.com").unwrap());
+        let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let cli = Cli::parse_from(["sprout", "--yes", "auth", "logout"]);
         assert!(

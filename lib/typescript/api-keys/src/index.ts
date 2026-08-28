@@ -55,6 +55,25 @@ export type ResolvedKey = {
   oauthGrantId: string | null
 }
 
+function scopeCovers(granted: readonly string[], requested: string): boolean {
+  const segments = requested.split(":")
+  const candidates = new Set<string>(["*", requested])
+  for (let index = 1; index < segments.length; index += 1) {
+    candidates.add(`${segments.slice(0, index).join(":")}:*`)
+  }
+  return granted.some((scope) => candidates.has(scope))
+}
+
+/** The narrowest scope representation covered by both authorities. */
+export function intersectScopes(left: readonly string[], right: readonly string[]): string[] {
+  const covered = [...new Set([...left, ...right])].filter(
+    (scope) => scopeCovers(left, scope) && scopeCovers(right, scope),
+  )
+  return covered.filter(
+    (scope) => !covered.some((other) => other !== scope && scopeCovers([other], scope)),
+  )
+}
+
 /**
  * Resolves a presented key to who it acts as.
  *
@@ -81,6 +100,7 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
       "oauthGrant.revokedAt as grantRevokedAt",
       "oauthGrant.organizationId as grantOrganizationId",
       "oauthGrant.userId as grantUserId",
+      "oauthGrant.scopes as grantScopes",
     ])
     .where("apiKey.keyHash", "=", await hashKey(key))
     .where("apiKey.revokedAt", "is", null)
@@ -105,7 +125,10 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
     id: row.id,
     organizationId: row.organizationId,
     userId: row.userId,
-    scopes: row.scopes ?? [],
+    scopes:
+      row.oauthGrantId === null
+        ? (row.scopes ?? [])
+        : intersectScopes(row.scopes ?? [], row.grantScopes ?? []),
     oauthGrantId: row.oauthGrantId,
   }
 }
@@ -148,7 +171,7 @@ export async function issueKey(
     if (input.oauthGrantId !== undefined && input.oauthGrantId !== null) {
       const grant = await tx
         .selectFrom("oauthGrant")
-        .select("id")
+        .select(["id", "scopes"])
         .where("id", "=", input.oauthGrantId)
         .where("organizationId", "=", input.organizationId)
         .where("userId", "=", input.userId)
@@ -156,6 +179,9 @@ export async function issueKey(
         .forShare()
         .executeTakeFirst()
       if (grant === undefined) throw new InactiveGrantError("The OAuth grant is no longer active")
+      if (!input.scopes.every((scope) => scopeCovers(grant.scopes, scope))) {
+        throw new InactiveGrantError("The OAuth grant no longer covers the requested scopes")
+      }
     }
 
     await tx
