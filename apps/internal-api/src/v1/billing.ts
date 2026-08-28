@@ -1,7 +1,18 @@
-import { balances, BelowMinimumTopupError, begin, MINIMUM_TOPUP, quote, stripe } from "@lib/billing"
+import {
+  balances,
+  BelowMinimumTopupError,
+  begin,
+  displayForDimension,
+  displayQuantity,
+  invoiceNumber,
+  MINIMUM_TOPUP,
+  quote,
+  renderInvoicePdf,
+  stripe,
+} from "@lib/billing"
 import { groupedOverhead, rateTimesQuantity } from "@lib/billing/money"
 import { RETIRED_UNBILLABLE_DIMENSIONS, startOfMonth } from "@lib/billing/usage"
-import { crudAuditLog } from "@lib/dao"
+import { crudAuditLog, fetchStatement } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { Hono } from "hono"
@@ -13,7 +24,7 @@ import { requirePermission } from "../rbac"
 import { authMiddleware } from "../middleware"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
 import { ErrorCode } from "../utils/errors.enum"
-import { throwBadRequest, throwConflict, throwError } from "../utils/http-exception"
+import { throwBadRequest, throwConflict, throwError, throwNotFound } from "../utils/http-exception"
 import { auditContext } from "../utils/request-context"
 import {
   billingSchemaAutoReloadRequest,
@@ -25,6 +36,9 @@ import {
   billingSchemaTopupResponse,
   billingSchemaTransactionsQuery,
   billingSchemaStatementsResponse,
+  billingSchemaStatementParam,
+  billingSchemaStatementPdfResponse,
+  billingSchemaStatementResponse,
   billingSchemaTransactionsResponse,
   billingSchemaUsageResponse,
 } from "./billing.serializer"
@@ -450,69 +464,34 @@ async function ensureStripeCustomer(organizationId: string, name: string): Promi
  * `divisor` converts the stored quantity into the unit shown. Current Neon storage is already in
  * decimal GB-months; the legacy GiB-hour line remains readable for current-period compatibility.
  */
-const DIMENSION_DISPLAY: Record<string, { label: string; unit: string; divisor: number }> = {
-  // The compute line. GB-seconds is what Lambda bills and what appears on our own AWS invoice, so
-  // a customer comparing the two is comparing like with like.
-  site_gib_second: { label: "Compute", unit: "GB-hours", divisor: 3600 },
-  site_provisioned_gib_second: { label: "Provisioned memory", unit: "GiB-hours", divisor: 3600 },
-  site_request: { label: "Requests", unit: "requests", divisor: 1 },
-  site_egress_byte: { label: "Egress", unit: "GB", divisor: 1_000_000_000 },
-  db_storage_gib_hour: { label: "Postgres storage (legacy)", unit: "GiB-months", divisor: 730 },
-  db_storage_gb_month: { label: "Postgres storage", unit: "GB-months", divisor: 1 },
-  db_history_storage_gb_month: { label: "History storage", unit: "GB-months", divisor: 1 },
-  db_compute_cu_second: { label: "Postgres compute", unit: "CU-hours", divisor: 3600 },
-  es_storage_gib_hour: { label: "Search storage", unit: "GiB-months", divisor: 730 },
-  es_search_unit: { label: "Search queries", unit: "queries", divisor: 1 },
-  valkey_queue_byte_second: {
-    label: "Queue storage",
-    unit: "GiB-hours",
-    divisor: 3_865_470_566_400,
-  },
-  workflow_job_enqueued: { label: "Workflow jobs", unit: "jobs", divisor: 1 },
-  workflow_exec_vcpu_second: { label: "Workflow compute", unit: "vCPU-hours", divisor: 3600 },
-  workflow_exec_gib_second: { label: "Workflow memory", unit: "GiB-hours", divisor: 3600 },
-  ai_input_token: { label: "AI input", unit: "tokens", divisor: 1 },
-  ai_output_token: { label: "AI output", unit: "tokens", divisor: 1 },
-  ai_cache_read_token: { label: "AI cache reads", unit: "tokens", divisor: 1 },
-  ai_cache_write_token: { label: "AI cache writes", unit: "tokens", divisor: 1 },
-  ai_long_context_input_token: { label: "AI long-context input", unit: "tokens", divisor: 1 },
-  ai_long_context_output_token: { label: "AI long-context output", unit: "tokens", divisor: 1 },
-  ai_long_context_cache_read_token: {
-    label: "AI long-context cache reads",
-    unit: "tokens",
-    divisor: 1,
-  },
-  ai_long_context_cache_write_token: {
-    label: "AI long-context cache writes",
-    unit: "tokens",
-    divisor: 1,
-  },
-  agent_run_second: { label: "Agent time", unit: "hours", divisor: 3600 },
-  sandbox_cpu_second: { label: "Sandbox CPU", unit: "vCPU-hours", divisor: 3600 },
-  sandbox_gib_second: { label: "Sandbox memory", unit: "GiB-hours", divisor: 3600 },
-  sandbox_disk_gib_second: { label: "Sandbox disk", unit: "GiB-hours", divisor: 3600 },
-  sandbox_egress_byte: { label: "Sandbox egress", unit: "GB", divisor: 1_000_000_000 },
+function numberForStatement(organizationId: string, periodStart: Date): string {
+  return invoiceNumber(organizationId, periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1)
 }
 
-/**
- * A quantity in the unit a person reads.
- *
- * Kept as a decimal string end to end. `numeric(38,9)` does not fit a JavaScript number at either
- * end of its range — byte-seconds run past 2^53 within a day, and a token rate is a fraction of a
- * micro-USD — and this is the figure a customer checks an invoice against.
- */
-function displayQuantity(raw: string, divisor: number): string {
-  if (divisor === 1) return trimZeros(raw)
-  // Scaled in fixed point rather than by dividing floats: `1e11 / 3600` in double precision is
-  // already approximate, and an invoice line that does not add up is a support ticket.
-  const scaled = (BigInt(Math.round(Number(raw) * 1e6)) * 1_000_000n) / BigInt(divisor)
-  const whole = scaled / 1_000_000_000_000n
-  const fraction = (scaled % 1_000_000_000_000n).toString().padStart(12, "0").slice(0, 2)
-  return trimZeros(`${whole}.${fraction}`)
-}
-
-function trimZeros(value: string): string {
-  return value.includes(".") ? value.replace(/\.?0+$/, "") : value
+function statementJson(
+  organizationId: string,
+  row: {
+    id: string
+    periodStart: Date
+    periodEnd: Date
+    status: string
+    subtotalMicroUsd: bigint | string
+    overheadMicroUsd: bigint | string
+    totalMicroUsd: bigint | string
+    finalizedAt: Date | null
+  },
+) {
+  return {
+    id: row.id,
+    number: numberForStatement(organizationId, row.periodStart),
+    periodStart: row.periodStart.toISOString(),
+    periodEnd: row.periodEnd.toISOString(),
+    status: row.status,
+    subtotalMicroUsd: row.subtotalMicroUsd.toString(),
+    overheadMicroUsd: row.overheadMicroUsd.toString(),
+    totalMicroUsd: row.totalMicroUsd.toString(),
+    finalizedAt: row.finalizedAt?.toISOString() ?? null,
+  }
 }
 
 app
@@ -597,11 +576,7 @@ app
           subtotal += amount
           feeItems.push({ usageCost: amount, overheadBps: item.overheadBps })
 
-          const display = DIMENSION_DISPLAY[row.dimension] ?? {
-            label: row.dimension,
-            unit: "units",
-            divisor: 1,
-          }
+          const display = displayForDimension(row.dimension)
           return {
             dimension: row.dimension,
             label: display.label,
@@ -658,9 +633,9 @@ app
     }),
     requirePermission("billing:read"),
     async (c) => {
-      const rows = await db
-        .selectFrom("statement")
-        .select([
+      const rows = await fetchStatement(db).listForOrganization(
+        c.var.organization.id,
+        [
           "id",
           "periodStart",
           "periodEnd",
@@ -669,26 +644,131 @@ app
           "overheadMicroUsd",
           "totalMicroUsd",
           "finalizedAt",
-        ])
-        .where("organizationId", "=", c.var.organization.id)
-        // Voided statements are not history a customer should be reconciling against; they are a
-        // correction, and the replacement is the one that counts.
-        .where("status", "!=", "void")
-        .orderBy("periodStart", "desc")
-        .limit(24)
-        .execute()
+        ],
+        24,
+      )
 
       return c.json({
-        data: rows.map((row) => ({
-          id: row.id,
-          periodStart: row.periodStart.toISOString(),
-          periodEnd: row.periodEnd.toISOString(),
-          status: row.status,
-          subtotalMicroUsd: row.subtotalMicroUsd.toString(),
-          overheadMicroUsd: row.overheadMicroUsd.toString(),
-          totalMicroUsd: row.totalMicroUsd.toString(),
-          finalizedAt: row.finalizedAt?.toISOString() ?? null,
-        })),
+        data: rows.map((row) => statementJson(c.var.organization.id, row)),
+      })
+    },
+  )
+  .get(
+    "/statements/:statementId/pdf",
+    describeRoute({
+      description: "Downloads an organization's statement as a PDF",
+      responses: {
+        200: {
+          description: "Statement PDF",
+          content: { "application/pdf": { schema: resolver(billingSchemaStatementPdfResponse) } },
+        },
+        403: { description: "Caller lacks billing:read", ...errorResponse },
+        404: { description: "Statement not found", ...errorResponse },
+      },
+    }),
+    requirePermission("billing:read"),
+    validator("param", billingSchemaStatementParam),
+    async (c) => {
+      const { statementId } = c.req.valid("param")
+      const organization = c.var.organization
+      const statement = await fetchStatement(db).getForOrganization(organization.id, statementId, [
+        "id",
+        "periodStart",
+        "periodEnd",
+        "subtotalMicroUsd",
+        "overheadMicroUsd",
+        "totalMicroUsd",
+        "finalizedAt",
+        "updatedAt",
+      ])
+      if (statement === undefined) return throwNotFound(c, "Statement not found")
+      const lines = await fetchStatement(db).listLineItems(statement.id)
+      const number = numberForStatement(organization.id, statement.periodStart)
+      const pdf = renderInvoicePdf({
+        number,
+        issuedAt: statement.finalizedAt ?? statement.updatedAt,
+        periodStart: statement.periodStart,
+        periodEnd: statement.periodEnd,
+        organizationName: organization.name,
+        lines: lines
+          .filter((line) => line.kind === "usage")
+          .map((line) => {
+            const display = line.dimension === null ? null : displayForDimension(line.dimension)
+            const label = [line.projectName, line.description ?? display?.label ?? "Metered usage"]
+              .filter((part): part is string => part !== null && part !== undefined)
+              .join(": ")
+            return {
+              label,
+              quantity:
+                display === null
+                  ? "1 charge"
+                  : `${displayQuantity(line.quantity, display.divisor)} ${display.unit}`,
+              amountMicroUsd: BigInt(line.amountMicroUsd),
+            }
+          }),
+        subtotalMicroUsd: BigInt(statement.subtotalMicroUsd),
+        overheadMicroUsd: BigInt(statement.overheadMicroUsd),
+        processingMicroUsd: 0n,
+        totalMicroUsd: BigInt(statement.totalMicroUsd),
+      })
+
+      c.header("Content-Type", "application/pdf")
+      c.header("Content-Disposition", `attachment; filename="sproutos-${number}.pdf"`)
+      c.header("Cache-Control", "private, no-store")
+      return c.body(new Uint8Array(pdf))
+    },
+  )
+  .get(
+    "/statements/:statementId",
+    describeRoute({
+      description: "A statement and the exact line items that reconcile to its total",
+      responses: {
+        200: {
+          description: "Statement detail",
+          content: { "application/json": { schema: resolver(billingSchemaStatementResponse) } },
+        },
+        403: { description: "Caller lacks billing:read", ...errorResponse },
+        404: { description: "Statement not found", ...errorResponse },
+      },
+    }),
+    requirePermission("billing:read"),
+    validator("param", billingSchemaStatementParam),
+    async (c) => {
+      const { statementId } = c.req.valid("param")
+      const organization = c.var.organization
+      const statement = await fetchStatement(db).getForOrganization(organization.id, statementId, [
+        "id",
+        "periodStart",
+        "periodEnd",
+        "status",
+        "subtotalMicroUsd",
+        "overheadMicroUsd",
+        "totalMicroUsd",
+        "finalizedAt",
+      ])
+      if (statement === undefined) return throwNotFound(c, "Statement not found")
+      const lines = await fetchStatement(db).listLineItems(statement.id)
+
+      return c.json({
+        ...statementJson(organization.id, statement),
+        lines: lines.map((line) => {
+          const display = line.dimension === null ? null : displayForDimension(line.dimension)
+          const kind = line.kind === "overhead" ? "overhead" : "usage"
+          return {
+            id: line.id,
+            kind,
+            projectId: line.projectId,
+            projectName: line.projectName,
+            dimension: line.dimension,
+            label: line.description ?? display?.label ?? "Metered usage",
+            quantity:
+              display === null ? line.quantity : displayQuantity(line.quantity, display.divisor),
+            unit: display?.unit ?? "charge",
+            unitMicroUsd: line.unitMicroUsd,
+            amountMicroUsd: line.amountMicroUsd.toString(),
+            description: line.description,
+          }
+        }),
       })
     },
   )

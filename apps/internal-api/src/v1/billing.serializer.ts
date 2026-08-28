@@ -106,6 +106,7 @@ export const billingSchemaUsageResponse = Type.Object({
 
 export const billingSchemaStatement = Type.Object({
   id: UUID7String,
+  number: Type.String(),
   periodStart: Type.String({ format: "date-time" }),
   periodEnd: Type.String({ format: "date-time" }),
   status: Type.String(),
@@ -118,3 +119,28 @@ export const billingSchemaStatement = Type.Object({
 export const billingSchemaStatementsResponse = Type.Object({
   data: Type.Array(billingSchemaStatement),
 })
+
+export const billingSchemaStatementParam = Type.Object({
+  statementId: UUID7String,
+})
+
+export const billingSchemaStatementLine = Type.Object({
+  id: UUID7String,
+  kind: Type.Union([Type.Literal("usage"), Type.Literal("overhead")]),
+  projectId: Nullable(UUID7String),
+  projectName: Nullable(Type.String()),
+  dimension: Nullable(Type.String()),
+  label: Type.String(),
+  quantity: Type.String(),
+  unit: Type.String(),
+  unitMicroUsd: Nullable(Type.String()),
+  amountMicroUsd: Type.String(),
+  description: Nullable(Type.String()),
+})
+
+export const billingSchemaStatementResponse = Type.Intersect([
+  billingSchemaStatement,
+  Type.Object({ lines: Type.Array(billingSchemaStatementLine) }),
+])
+
+export const billingSchemaStatementPdfResponse = Type.String({ format: "binary" })

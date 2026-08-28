@@ -16,6 +16,7 @@ import {
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
   getV1OrgsByOrgSlugApiKeysResponseTransformer,
+  getV1OrgsByOrgSlugBillingStatementsByStatementIdResponseTransformer,
   getV1OrgsByOrgSlugBillingStatementsResponseTransformer,
   getV1OrgsByOrgSlugBillingTransactionsResponseTransformer,
   getV1OrgsByOrgSlugBillingUsageResponseTransformer,
@@ -154,6 +155,12 @@ import type {
   GetV1OrgsByOrgSlugBillingBalanceData,
   GetV1OrgsByOrgSlugBillingBalanceErrors,
   GetV1OrgsByOrgSlugBillingBalanceResponses,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdData,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses,
   GetV1OrgsByOrgSlugBillingStatementsData,
   GetV1OrgsByOrgSlugBillingStatementsErrors,
   GetV1OrgsByOrgSlugBillingStatementsResponses,
@@ -2635,6 +2642,46 @@ export const getV1OrgsByOrgSlugBillingStatements = <ThrowOnError extends boolean
   >({
     responseTransformer: getV1OrgsByOrgSlugBillingStatementsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/billing/statements",
+    ...options,
+  })
+
+/**
+ * Downloads an organization's statement as a PDF
+ */
+export const getV1OrgsByOrgSlugBillingStatementsByStatementIdPdf = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/billing/statements/{statementId}/pdf", ...options })
+
+/**
+ * A statement and the exact line items that reconcile to its total
+ */
+export const getV1OrgsByOrgSlugBillingStatementsByStatementId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<GetV1OrgsByOrgSlugBillingStatementsByStatementIdData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses,
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses,
+    GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugBillingStatementsByStatementIdResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/billing/statements/{statementId}",
     ...options,
   })
 

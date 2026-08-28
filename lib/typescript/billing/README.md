@@ -57,6 +57,22 @@ TASK 28's amortized platform overhead defaults from `price_book.overhead_bps` (c
 and Neon compute uses 200 (2%). The fee is posted as **its own ledger entry**. A statement can then
 show what the resources cost and what the platform added, and the two add up to the total.
 
+## Monthly statements
+
+A usage debit and its customer-facing detail commit in the same transaction. `statement_charge`
+uses the immutable `credit_transaction.id` as the idempotency key; the draft's line items aggregate
+by project and dimension, and its totals are recomputed from those rows. The database additionally
+checks `total = subtotal + overhead`, so an inexplicable statement cannot be stored.
+
+`billing.generate_statements` runs daily. It creates a statement for every live organization for
+the just-closed UTC month, finalizes closed drafts, and reconciles usage transactions written before
+statement attribution existed. Historical debits retain their exact ledger split but deliberately
+use a generic usage label: the old ledger did not preserve project/dimension allocation, and
+inventing one after the fact would turn a correct total into false accounting.
+
+Statements debit prepaid credit; they do not initiate a card payment. Their PDFs therefore show the
+exact micro-USD ledger total, not a total rounded to cents, and omit a zero payment-processing line.
+
 ## Rounding
 
 Every fee and overhead calculation rounds **up**. Rounding down means eating the remainder on every

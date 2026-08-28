@@ -3,6 +3,8 @@ import type { DB } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
 import { lockAvailableBalance, postWithin } from "./ledger"
 import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
+import { displayForDimension } from "./dimensions"
+import { addQuantities, paidQuantity, recordUsageStatement } from "./statements"
 import { NoActivePriceBookError, RETIRED_UNBILLABLE_DIMENSIONS } from "./usage"
 
 /**
@@ -176,15 +178,23 @@ export async function chargeUsage(
     )
 
     /** Per organization: what it owes, which rows that covers, and the state that charge leaves. */
-    const owed = new Map<
-      string,
-      {
-        usage: MicroUsd
-        byDimension: Map<string, { usage: MicroUsd; overheadBps: number | null }>
-        ids: string[]
-        watermark: string[]
-      }
-    >()
+    type OwedEntry = {
+      usage: MicroUsd
+      byDimension: Map<string, { usage: MicroUsd; overheadBps: number | null }>
+      lines: Map<
+        string,
+        {
+          projectId: string | null
+          dimension: string
+          quantity: string
+          unitMicroUsd: string
+          ratedMicroUsd: MicroUsd
+        }
+      >
+      ids: string[]
+      watermark: string[]
+    }
+    const owed = new Map<string, OwedEntry>()
 
     for (const row of claimed.rows) {
       const item = rates.get(row.dimension)
@@ -200,9 +210,10 @@ export async function chargeUsage(
         Charging `quantity` again would bill the paid part twice; skipping the row, which is what a
         null-marker check did, made the addition free.
       */
-      const entry = owed.get(row.organizationId) ?? {
+      const entry: OwedEntry = owed.get(row.organizationId) ?? {
         usage: 0n,
         byDimension: new Map<string, { usage: MicroUsd; overheadBps: number | null }>(),
+        lines: new Map(),
         ids: [] as string[],
         watermark: [] as string[],
       }
@@ -214,6 +225,17 @@ export async function chargeUsage(
       }
       dimension.usage += amount
       entry.byDimension.set(row.dimension, dimension)
+      const lineKey = `${row.projectId ?? ""}\u0000${row.dimension}`
+      const line = entry.lines.get(lineKey) ?? {
+        projectId: row.projectId,
+        dimension: row.dimension,
+        quantity: "0",
+        unitMicroUsd: item.unitMicroUsd,
+        ratedMicroUsd: 0n,
+      }
+      line.quantity = addQuantities(line.quantity, row.uncharged)
+      line.ratedMicroUsd += amount
+      entry.lines.set(lineKey, line)
       entry.ids.push(row.id)
       // Where each row's `charged_quantity` will stand once this charge commits. Part of the
       // idempotency key — see below.
@@ -277,6 +299,46 @@ export async function chargeUsage(
         reported, with the balance unmoved.
       */
       if (posted?.created === true) charged += debit
+
+      if (posted?.created === true) {
+        let usageRemaining = paidUsage
+        const usageLines = [...entry.lines.values()]
+          .toSorted((left, right) =>
+            `${left.projectId ?? ""}:${left.dimension}`.localeCompare(
+              `${right.projectId ?? ""}:${right.dimension}`,
+            ),
+          )
+          .flatMap((line) => {
+            const allocated =
+              usageRemaining < line.ratedMicroUsd ? usageRemaining : line.ratedMicroUsd
+            usageRemaining -= allocated
+            if (allocated <= 0n) return []
+            const display = displayForDimension(line.dimension)
+            return [
+              {
+                projectId: line.projectId,
+                dimension: line.dimension,
+                quantity: paidQuantity(line.quantity, allocated, line.ratedMicroUsd),
+                unitMicroUsd: line.unitMicroUsd,
+                amountMicroUsd: allocated,
+                description: display.label,
+              },
+            ]
+          })
+        if (usageRemaining !== 0n) {
+          throw new Error(
+            `Statement allocation left ${usageRemaining.toString()} micro-USD unexplained`,
+          )
+        }
+        await recordUsageStatement(trx, {
+          organizationId,
+          creditTransactionId: posted.transactionId,
+          chargedAt: now,
+          overheadBps: book.overheadBps,
+          usageLines,
+          overheadMicroUsd: paidOverhead,
+        })
+      }
 
       /*
         `charged_quantity = quantity`, in the same transaction as the posting.

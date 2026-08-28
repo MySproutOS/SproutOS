@@ -75,17 +75,7 @@ function lineMoney(amount: MicroUsd): string {
   return formatMicroUsd(amount)
 }
 
-/**
- * The total, rounded **up** to whole cents.
- *
- * This is the number somebody pays, and a payment processor takes integer cents — an invoice
- * reading `Total: $0.381543` is not a total, it is a measurement. Up rather than nearest, because
- * rounding a charge down means the platform absorbs the remainder on every invoice it ever issues.
- *
- * The consequence is stated on the invoice itself: the lines will not sum to exactly the total, and
- * a customer who adds them up and finds a cent of difference should be told why rather than left to
- * wonder whether they were overcharged.
- */
+/** Round a cash payment to whole cents. Usage statements do not use this: prepaid debits are exact. */
 export function totalInCents(amount: MicroUsd): string {
   const negative = amount < 0n
   const abs = negative ? -amount : amount
@@ -109,7 +99,9 @@ export function invoiceText(invoice: Invoice): string[] {
     "",
     `INVOICE ${invoice.number}`,
     `Issued ${date(invoice.issuedAt)}`,
-    `Period ${date(invoice.periodStart)} to ${date(invoice.periodEnd)}`,
+    // `periodEnd` is exclusive in storage. Printing it directly labels an August statement as
+    // ending September 1, which reads as though September 1 was billed too.
+    `Period ${date(invoice.periodStart)} to ${date(new Date(invoice.periodEnd.getTime() - 1))}`,
     `Billed to ${invoice.organizationName}`,
     "",
     "Usage",
@@ -127,26 +119,18 @@ export function invoiceText(invoice: Invoice): string[] {
     lines.push("  No metered usage this period")
   }
 
+  lines.push("", `Subtotal: ${lineMoney(invoice.subtotalMicroUsd)}`)
+  // Fees are separate rather than folded into usage. A zero payment-processing line is omitted:
+  // monthly statements debit prepaid credit and do not charge a card.
+  lines.push(`Platform overhead: ${lineMoney(invoice.overheadMicroUsd)}`)
+  if (invoice.processingMicroUsd !== 0n) {
+    lines.push(`Payment processing: ${lineMoney(invoice.processingMicroUsd)}`)
+  }
   lines.push(
     "",
-    `Subtotal: ${lineMoney(invoice.subtotalMicroUsd)}`,
-    /*
-      Both of these are their own line on purpose.
-
-      The Terms say payment processing is shown as its own line rather than folded into the price,
-      and the platform overhead is posted as its own ledger entry so a bill stays explicable. An
-      invoice that merged either into the usage figures would contradict a document the customer
-      agreed to.
-    */
-    `Platform overhead: ${lineMoney(invoice.overheadMicroUsd)}`,
-    `Payment processing: ${lineMoney(invoice.processingMicroUsd)}`,
+    `Total debited from prepaid credit: ${lineMoney(invoice.totalMicroUsd)}`,
     "",
-    `Total: ${totalInCents(invoice.totalMicroUsd)}`,
-    "",
-    // Said, not left to be discovered. A customer who adds the lines up and finds a cent of
-    // difference should know why rather than wonder whether they were overcharged.
-    "Usage is metered below one cent and shown at full precision;",
-    "the total is rounded up to the nearest cent, which is what is charged.",
+    "Usage and totals are shown in exact micro-USD precision.",
   )
 
   return lines
@@ -160,23 +144,37 @@ export function invoiceText(invoice: Invoice): string[] {
  * keeps the content Latin-1, so this is belt as well as braces.
  */
 export function renderInvoicePdf(invoice: Invoice): Buffer {
-  const text = invoiceText(invoice)
+  const allText = invoiceText(invoice)
+  const pageSize = 46
+  const pages: string[][] = []
+  for (let offset = 0; offset < allText.length; offset += pageSize) {
+    const slice = allText.slice(offset, offset + pageSize)
+    pages.push(offset === 0 ? slice : [`INVOICE ${invoice.number} (continued)`, "", ...slice])
+  }
+  if (pages.length === 0) pages.push([])
 
-  const content = [
-    "BT",
-    "/F1 11 Tf",
-    "14 TL",
-    "56 760 Td",
-    ...text.map((line) => `(${escapePdfText(line)}) Tj T*`),
-    "ET",
-  ].join("\n")
-
+  const pageObjectStart = 3
+  const contentObjectStart = pageObjectStart + pages.length
+  const fontObject = contentObjectStart + pages.length
+  const pageReferences = pages.map((_, index) => `${pageObjectStart + index} 0 R`).join(" ")
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    // US Letter, in points. The customers this bills are American and the address above is.
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Pages /Kids [${pageReferences}] /Count ${pages.length} >>`,
+    ...pages.map(
+      (_, index) =>
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObject} 0 R >> >> /Contents ${contentObjectStart + index} 0 R >>`,
+    ),
+    ...pages.map((text) => {
+      const content = [
+        "BT",
+        "/F1 11 Tf",
+        "14 TL",
+        "56 760 Td",
+        ...text.map((line) => `(${escapePdfText(line)}) Tj T*`),
+        "ET",
+      ].join("\n")
+      return `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`
+    }),
     // Helvetica is one of the fourteen fonts every reader has. No embedding, no licence, no bytes.
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
   ]

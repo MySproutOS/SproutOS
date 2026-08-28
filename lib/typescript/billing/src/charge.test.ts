@@ -145,6 +145,7 @@ afterAll(async () => {
         ),
       )
       .execute()
+    await tx.deleteFrom("statement").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("creditTransaction").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("creditAccount").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("usageRollup").where("organizationId", "=", organizationId).execute()
@@ -218,6 +219,22 @@ describe("chargeUsage", () => {
 
     const charged = await chargedHere(() => chargeUsage(db))
     expect(charged).toBeGreaterThan(0n)
+
+    const statement = await db
+      .selectFrom("statement")
+      .select(["id", "subtotalMicroUsd", "overheadMicroUsd", "totalMicroUsd"])
+      .where("organizationId", "=", organizationId)
+      .where("status", "=", "draft")
+      .executeTakeFirstOrThrow()
+    expect(BigInt(statement.totalMicroUsd)).toBe(charged)
+    expect(BigInt(statement.subtotalMicroUsd) + BigInt(statement.overheadMicroUsd)).toBe(charged)
+    const detail = await db
+      .selectFrom("statementLineItem")
+      .select(["dimension", "amountMicroUsd"])
+      .where("statementId", "=", statement.id)
+      .where("kind", "=", "usage")
+      .execute()
+    expect(detail.some((line) => line.dimension === "site_gib_second")).toBe(true)
   })
 
   it("charges Daytona sandbox usage at provider cost with no overhead", async ({ skip }) => {

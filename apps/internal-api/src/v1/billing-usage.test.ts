@@ -39,6 +39,7 @@ let orgSlug = ""
 let organizationId = ""
 const rollupIds: string[] = []
 const statementIds: string[] = []
+let detailedStatementId = ""
 
 function actor(): TestUser {
   if (user === undefined) throw new Error("the fixture was not built")
@@ -372,7 +373,30 @@ describe.skipIf(!up)("statements", () => {
         })
         .execute()
       statementIds.push(id)
+      if (period.month === 5) detailedStatementId = id
     }
+
+    await db
+      .insertInto("statementLineItem")
+      .values([
+        {
+          id: v7(),
+          statementId: detailedStatementId,
+          kind: "usage",
+          quantity: "1",
+          amountMicroUsd: 1_000_000n,
+          description: "Metered usage",
+        },
+        {
+          id: v7(),
+          statementId: detailedStatementId,
+          kind: "overhead",
+          quantity: "1",
+          amountMicroUsd: 120_000n,
+          description: "Platform fee",
+        },
+      ])
+      .execute()
 
     const response = await call("GET", `/v1/orgs/${orgSlug}/billing/statements`, actor())
     const rows = response.json.data as Json[]
@@ -390,9 +414,46 @@ describe.skipIf(!up)("statements", () => {
 
     // Every statement has to be explicable as subtotal plus overhead.
     for (const row of rows) {
+      expect(row.number).toMatch(/^2026-[A-F0-9]{6}-\d{4}$/)
       expect(BigInt(row.totalMicroUsd as string)).toBe(
         BigInt(row.subtotalMicroUsd as string) + BigInt(row.overheadMicroUsd as string),
       )
     }
+  })
+
+  it("serves exact detail and a downloadable PDF only inside the organization", async ({
+    skip,
+  }) => {
+    if (!up) skip()
+    const detail = await call(
+      "GET",
+      `/v1/orgs/${orgSlug}/billing/statements/${detailedStatementId}`,
+      actor(),
+    )
+    expect(detail.status).toBe(200)
+    expect(detail.json.lines).toEqual([
+      expect.objectContaining({ kind: "usage", amountMicroUsd: "1000000" }),
+      expect.objectContaining({ kind: "overhead", amountMicroUsd: "120000" }),
+    ])
+
+    const pdf = await app.request(
+      `/v1/orgs/${orgSlug}/billing/statements/${detailedStatementId}/pdf`,
+      { headers: authHeaders(actor()) },
+    )
+    expect(pdf.status).toBe(200)
+    expect(pdf.headers.get("content-type")).toContain("application/pdf")
+    expect(pdf.headers.get("content-disposition")).toMatch(/attachment; filename="sproutos-/)
+    expect(
+      Buffer.from(await pdf.arrayBuffer())
+        .toString("latin1")
+        .startsWith("%PDF-1.4"),
+    ).toBe(true)
+
+    const stranger = await createTestUser("statement-stranger")
+    const hidden = await app.request(
+      `/v1/orgs/${orgSlug}/billing/statements/${detailedStatementId}/pdf`,
+      { headers: authHeaders(stranger) },
+    )
+    expect(hidden.status).toBe(404)
   })
 })

@@ -5042,6 +5042,7 @@ export type GetV1OrgsByOrgSlugBillingStatementsResponses = {
   200: {
     data: Array<{
       id: string
+      number: string
       periodStart: Date
       periodEnd: Date
       status: string
@@ -5055,6 +5056,98 @@ export type GetV1OrgsByOrgSlugBillingStatementsResponses = {
 
 export type GetV1OrgsByOrgSlugBillingStatementsResponse =
   GetV1OrgsByOrgSlugBillingStatementsResponses[keyof GetV1OrgsByOrgSlugBillingStatementsResponses]
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfData = {
+  body?: never
+  path: {
+    statementId: string
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/statements/{statementId}/pdf"
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors = {
+  /**
+   * Caller lacks billing:read
+   */
+  403: ErrorResponseT
+  /**
+   * Statement not found
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfError =
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors[keyof GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfErrors]
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses = {
+  /**
+   * Statement PDF
+   */
+  200: Blob | File
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponse =
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses[keyof GetV1OrgsByOrgSlugBillingStatementsByStatementIdPdfResponses]
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdData = {
+  body?: never
+  path: {
+    statementId: string
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/billing/statements/{statementId}"
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors = {
+  /**
+   * Caller lacks billing:read
+   */
+  403: ErrorResponseT
+  /**
+   * Statement not found
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdError =
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors[keyof GetV1OrgsByOrgSlugBillingStatementsByStatementIdErrors]
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses = {
+  /**
+   * Statement detail
+   */
+  200: {
+    id: string
+    number: string
+    periodStart: Date
+    periodEnd: Date
+    status: string
+    subtotalMicroUsd: string
+    overheadMicroUsd: string
+    totalMicroUsd: string
+    finalizedAt: Date | null
+  } & {
+    lines: Array<{
+      id: string
+      kind: "usage" | "overhead"
+      projectId: string | null
+      projectName: string | null
+      dimension: string | null
+      label: string
+      quantity: string
+      unit: string
+      unitMicroUsd: string | null
+      amountMicroUsd: string
+      description: string | null
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse =
+  GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses[keyof GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponses]
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdLogsData = {
   body?: never

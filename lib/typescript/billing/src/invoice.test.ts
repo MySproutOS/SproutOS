@@ -42,7 +42,7 @@ describe("the invoice text", () => {
     expect(text).toContain("Payment processing:")
     expect(text).toContain("Platform overhead:")
     expect(text).toContain("Subtotal:")
-    expect(text).toContain("Total:")
+    expect(text).toContain("Total debited from prepaid credit:")
   })
 
   it("names the company that is billing", () => {
@@ -53,22 +53,15 @@ describe("the invoice text", () => {
     expect(text).toContain("Ann Arbor, Michigan 48104")
   })
 
-  it("gives a total somebody can actually pay", () => {
+  it("shows the exact prepaid debit that reconciles to the lines", () => {
     const text = invoiceText(invoice).join("\n")
 
     /*
-      A payment processor takes integer cents. `Total: $0.381543` is a measurement, not a total, and
-      it was what this rendered until a thumbnail of the real PDF was looked at.
-
-      Rounded up rather than to nearest: rounding a charge down means the platform absorbs the
-      remainder on every invoice it ever issues.
+      This is a prepaid usage statement, not a new card charge. Rounding the total to cents while
+      the immutable ledger debits micro-USD makes the document fail its own reconciliation.
     */
-    expect(text).toContain("Total: $0.39")
-    expect(text).not.toContain("Total: $0.381543")
-
-    // And the discrepancy is explained, because the lines are shown at full precision and will not
-    // sum to it.
-    expect(text).toContain("rounded up to the nearest cent")
+    expect(text).toContain("Total debited from prepaid credit: $0.381543")
+    expect(text).toContain("exact micro-USD precision")
   })
 
   it("rounds a total up, never down", () => {
@@ -181,6 +174,22 @@ describe("the PDF", () => {
     // damaged.
     expect(text).toContain("/Type /Page")
     expect(text.trimEnd().endsWith("%%EOF")).toBe(true)
+  })
+
+  it("paginates a long statement without losing any line", () => {
+    const long = renderInvoicePdf({
+      ...invoice,
+      lines: Array.from({ length: 100 }, (_, index) => ({
+        label: `Project ${index}`,
+        quantity: "1 request",
+        amountMicroUsd: 1n,
+      })),
+    }).toString("latin1")
+
+    expect(long).toContain("/Count 3")
+    expect(long).toContain("Project 0")
+    expect(long).toContain("Project 99")
+    expect(long).toContain("\\(continued\\)")
   })
 })
 
