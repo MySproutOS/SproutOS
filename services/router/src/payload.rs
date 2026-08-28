@@ -62,6 +62,11 @@ pub struct Reply {
     pub status_code: Option<u16>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// API Gateway HTTP API v2 carries response cookies separately so repeated `Set-Cookie`
+    /// fields survive JSON. They cannot be folded into `headers`: commas are valid inside cookie
+    /// attributes, and browsers require one field per cookie.
+    #[serde(default)]
+    pub cookies: Vec<String>,
     pub body: Option<String>,
     #[serde(rename = "isBase64Encoded", default)]
     pub is_base64_encoded: bool,
@@ -232,16 +237,17 @@ mod tests {
     }
 
     #[test]
-    fn tolerates_a_reply_with_fields_we_do_not_know() {
-        // Adapters add fields — `cookies`, `multiValueHeaders`. A strict shape would turn a working
+    fn reads_v2_response_cookies_and_tolerates_fields_we_do_not_know() {
+        // Adapters add fields such as `multiValueHeaders`. A strict shape would turn a working
         // customer app into a 502 from our own deserializer.
         let reply: Reply = serde_json::from_str(
-            r#"{"statusCode":201,"headers":{"x-a":"b"},"cookies":["s=1"],"body":"ok"}"#,
+            r#"{"statusCode":201,"headers":{"x-a":"b"},"cookies":["s=1","csrf=2"],"multiValueHeaders":{"x-b":["c"]},"body":"ok"}"#,
         )
         .expect("deserialises");
 
         assert_eq!(status_of(&reply), 201);
         assert_eq!(reply.headers.get("x-a").map(String::as_str), Some("b"));
+        assert_eq!(reply.cookies, ["s=1", "csrf=2"]);
         assert_eq!(decode_body(&reply).expect("decodes"), b"ok".to_vec());
     }
 }
