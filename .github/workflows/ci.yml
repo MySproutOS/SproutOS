@@ -23,6 +23,12 @@ jobs:
           cache: "pnpm"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Build every separately discovered seed exactly as the production image does, then import
+      # each artifact with plain Node. This belongs after install: the scripts-only job deliberately
+      # has no package-manager setup and cannot exercise a workspace-aware esbuild bundle.
+      - name: Verify deployable database seed artifacts
+        run: bash bin/build-db-seeds.test.sh
       - name: Check formatting with Oxfmt
         run: pnpm run format --check
 
@@ -525,7 +531,6 @@ jobs:
           bash bin/cutover.test.sh
           bash bin/deploy-ecs-web.test.sh
           bash bin/deploy-workflow.test.sh
-          bash bin/build-db-seeds.test.sh
           bash bin/cli-release-workflow.test.sh
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
