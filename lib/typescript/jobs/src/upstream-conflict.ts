@@ -326,7 +326,16 @@ async function prepareConflict(
   )
   await hostGit(
     directory,
-    ["merge", "--no-commit", "--no-ff", upstreamSha],
+    [
+      "-c",
+      "user.name=SproutOS Upkeep",
+      "-c",
+      "user.email=upkeep@users.noreply.github.com",
+      "merge",
+      "--no-commit",
+      "--no-ff",
+      upstreamSha,
+    ],
     undefined,
     [1],
     input.signal,

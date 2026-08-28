@@ -33,7 +33,7 @@ const reachable = await (async () => {
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   return (
-    await run("git", args, {
+    await run("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], {
       cwd,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
     })
