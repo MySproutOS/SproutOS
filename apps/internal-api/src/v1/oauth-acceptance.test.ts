@@ -146,13 +146,16 @@ afterAll(async () => {
 
 describe.skipIf(!reachable || !valkeyReachable)("OAuth FastAPI and database acceptance", () => {
   it("keeps a runnable database-backed FastAPI fixture", async () => {
-    const [main, dockerfile] = await Promise.all([
+    const [main, dockerfile, requirements] = await Promise.all([
       readFile(new URL("main.py", FASTAPI_FIXTURE), "utf8"),
       readFile(new URL("Dockerfile", FASTAPI_FIXTURE), "utf8"),
+      readFile(new URL("requirements.txt", FASTAPI_FIXTURE), "utf8"),
     ])
-    expect(main).toContain('os.environ["REDIS_URL"]')
+    expect(main).toContain('os.environ["DATABASE_URL"]')
+    expect(main).toContain("create table if not exists visit_counter")
     expect(main).toContain('@app.get("/visits")')
     expect(dockerfile).toContain('"uvicorn", "main:app"')
+    expect(requirements).toContain("asyncpg==")
   })
 
   it("lets one OAuth grant create the API project, its group, and its database", async () => {
@@ -170,11 +173,11 @@ describe.skipIf(!reachable || !valkeyReachable)("OAuth FastAPI and database acce
 
     const service = await oauthCall("POST", `/v1/orgs/${orgSlug}/services`, {
       name: "FastAPI visits database",
-      kind: "valkey",
+      kind: "postgres",
       projectId,
     })
     expect({ status: service.status, body: service.json }).toMatchObject({ status: 201 })
-    expect(String(service.json.connectionUri)).toMatch(/^rediss:\/\//)
+    expect(String(service.json.connectionUri)).toMatch(/^postgres(?:ql)?:\/\//)
 
     const projects = await oauthCall("GET", `/v1/orgs/${orgSlug}/projects`)
     const projectRows = projects.json.data as Json[]
@@ -207,5 +210,13 @@ describe.skipIf(!reachable || !valkeyReachable)("OAuth FastAPI and database acce
       `/v1/orgs/${orgSlug}/services/${service.json.id as string}`,
     )
     expect(deleted.status).toBe(200)
+
+    // The product deliberately keeps the soft-deleted service and database rows for billing
+    // history. This fixture organization has no history to retain, and cleanupFixtures hard-deletes
+    // it, so remove the retained root after the driver has already destroyed the real database.
+    await db
+      .deleteFrom("backendService")
+      .where("id", "=", service.json.id as string)
+      .execute()
   })
 })
