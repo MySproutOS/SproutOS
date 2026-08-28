@@ -122,17 +122,8 @@ impl Client {
     }
 
     async fn pipeline(&mut self, commands: &[&[&str]]) -> Vec<String> {
-        let mut out = String::new();
-        for args in commands {
-            out.push_str(&format!("*{}\r\n", args.len()));
-            for arg in *args {
-                out.push_str(&format!("${}\r\n{arg}\r\n", arg.len()));
-            }
-        }
-        self.stream
-            .write_all(out.as_bytes())
-            .await
-            .expect("write pipeline");
+        let out = encode_pipeline(commands);
+        self.stream.write_all(&out).await.expect("write pipeline");
 
         let mut buffer = bytes::BytesMut::new();
         let mut replies = Vec::new();
@@ -147,6 +138,19 @@ impl Client {
         }
         replies
     }
+}
+
+fn encode_pipeline(commands: &[&[&str]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for args in commands {
+        out.extend_from_slice(format!("*{}\r\n", args.len()).as_bytes());
+        for arg in *args {
+            out.extend_from_slice(format!("${}\r\n", arg.len()).as_bytes());
+            out.extend_from_slice(arg.as_bytes());
+            out.extend_from_slice(b"\r\n");
+        }
+    }
+    out
 }
 
 fn bulk_payload(reply: &[u8]) -> &[u8] {
@@ -209,10 +213,108 @@ async fn a_command_pipelined_with_auth_is_not_stranded() {
     let (username, secret, _service, fixtures) = provision(&url).await;
     let mut client = Client::connect(address).await;
     let replies = client
-        .pipeline(&[&["AUTH", &username, &secret], &["PING"]])
+        .pipeline(&[
+            &["AUTH", &username, &secret],
+            &["SET", "pipelined", "0"],
+            &["INCR", "pipelined"],
+            &["GET", "pipelined"],
+            &["PING"],
+        ])
         .await;
 
-    assert_eq!(replies, ["+OK\r\n", "+PONG\r\n"]);
+    assert_eq!(
+        replies,
+        ["+OK\r\n", "+OK\r\n", ":1\r\n", "$1\r\n1\r\n", "+PONG\r\n"]
+    );
+    assert_eq!(client.send(&["DEL", "pipelined"]).await, ":1\r\n");
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn fragmented_auth_preserves_a_fragmented_following_command() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut client = Client::connect(address).await;
+    let bytes = encode_pipeline(&[
+        &["AUTH", &username, &secret],
+        &["SET", "fragmented", "kept"],
+        &["GET", "fragmented"],
+    ]);
+    let auth_end = bytes
+        .windows(secret.len())
+        .position(|window| window == secret.as_bytes())
+        .expect("secret in encoded AUTH")
+        + secret.len()
+        + 2;
+    let partial_command_end = auth_end + 9;
+
+    // Split both the AUTH frame and the next command. The authentication reader must retain the
+    // partial application frame, then the forwarding reader must join it to the later bytes once.
+    client
+        .stream
+        .write_all(&bytes[..7])
+        .await
+        .expect("AUTH prefix");
+    tokio::task::yield_now().await;
+    client
+        .stream
+        .write_all(&bytes[7..partial_command_end])
+        .await
+        .expect("AUTH suffix and partial command");
+    assert_eq!(client.read_reply().await, "+OK\r\n");
+    client
+        .stream
+        .write_all(&bytes[partial_command_end..])
+        .await
+        .expect("remaining commands");
+
+    assert_eq!(client.read_reply().await, "+OK\r\n");
+    assert_eq!(client.read_reply().await, "$4\r\nkept\r\n");
+    assert_eq!(client.send(&["DEL", "fragmented"]).await, ":1\r\n");
+    cleanup(&url, &fixtures).await;
+}
+
+#[tokio::test]
+async fn a_command_coalesced_with_failed_auth_never_reaches_valkey() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username, secret, _service, fixtures) = provision(&url).await;
+    let mut rejected = Client::connect(address).await;
+    let bytes = encode_pipeline(&[
+        &["AUTH", &username, "not-the-secret"],
+        &["SET", "after-wrongpass", "must-not-exist"],
+    ]);
+    rejected
+        .stream
+        .write_all(&bytes)
+        .await
+        .expect("write pipeline");
+    assert_eq!(
+        rejected.read_reply().await,
+        "-ERR WRONGPASS invalid username or password\r\n"
+    );
+    let mut trailing = [0_u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(5), rejected.stream.read(&mut trailing))
+        .await
+        .expect("failed authentication did not close")
+        .expect("read after failed authentication");
+    assert_eq!(read, 0, "a coalesced command produced a second reply");
+
+    let mut accepted = Client::connect(address).await;
+    assert_eq!(
+        accepted.send(&["AUTH", &username, &secret]).await,
+        "+OK\r\n"
+    );
+    assert_eq!(accepted.send(&["GET", "after-wrongpass"]).await, "$-1\r\n");
     cleanup(&url, &fixtures).await;
 }
 
