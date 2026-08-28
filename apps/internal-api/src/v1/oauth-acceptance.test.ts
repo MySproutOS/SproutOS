@@ -11,6 +11,7 @@ import {
   cleanupFixtures,
   createTestUser,
   databaseReachable,
+  kmsReachable,
   type TestUser,
   trackOrganization,
 } from "../test/fixtures"
@@ -20,6 +21,19 @@ type Json = Record<string, unknown>
 const FASTAPI_FIXTURE = new URL("./fixtures/oauth-fastapi/", import.meta.url)
 const accessToken = `oauth_acceptance_${v7()}`
 const reachable = await databaseReachable()
+const kmsUp = await (async () => {
+  if (await kmsReachable()) return true
+
+  // CI bootstraps this LocalStack alias but deliberately does not export KMS_KEY_ID. Adopt the
+  // known development alias only for a loopback endpoint; never turn a missing production key
+  // into an SDK call against an assumed AWS key.
+  const endpoint = process.env.AWS_ENDPOINT_URL
+  if (endpoint === undefined || !["127.0.0.1", "localhost"].includes(new URL(endpoint).hostname)) {
+    return false
+  }
+  process.env.KMS_KEY_ID = "alias/sproutos-dev"
+  return kmsReachable()
+})()
 const valkeyReachable = await (async () => {
   const client = new Redis(process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://localhost:41023", {
     connectTimeout: 500,
@@ -56,7 +70,7 @@ async function oauthCall(method: string, path: string, body?: unknown) {
 }
 
 beforeAll(async () => {
-  if (!reachable || !valkeyReachable) return
+  if (!reachable || !valkeyReachable || !kmsUp) return
   owner = await createTestUser("oauth-fastapi")
   const organizationResponse = await app.request("/v1/orgs", {
     method: "POST",
@@ -139,73 +153,89 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  if (!reachable || !valkeyReachable) return
+  if (!reachable || !valkeyReachable || !kmsUp) return
   await cleanupFixtures()
   await db.destroy()
 })
 
-describe.skipIf(!reachable || !valkeyReachable)("OAuth FastAPI and database acceptance", () => {
+describe("OAuth FastAPI and database acceptance", () => {
   it("keeps a runnable database-backed FastAPI fixture", async () => {
-    const [main, dockerfile] = await Promise.all([
+    const [main, dockerfile, requirements] = await Promise.all([
       readFile(new URL("main.py", FASTAPI_FIXTURE), "utf8"),
       readFile(new URL("Dockerfile", FASTAPI_FIXTURE), "utf8"),
+      readFile(new URL("requirements.txt", FASTAPI_FIXTURE), "utf8"),
     ])
-    expect(main).toContain('os.environ["REDIS_URL"]')
+    expect(main).toContain('os.environ["DATABASE_URL"]')
+    expect(main).toContain("create table if not exists visit_counter")
     expect(main).toContain('@app.get("/visits")')
+    expect(main).toContain('handler = Mangum(app, lifespan="auto")')
     expect(dockerfile).toContain('"uvicorn", "main:app"')
+    expect(requirements).toContain("asyncpg==")
   })
 
-  it("lets one OAuth grant create the API project, its group, and its database", async () => {
-    const project = await oauthCall("POST", `/v1/orgs/${orgSlug}/projects`, {
-      name: "FastAPI visits",
-      kind: "site",
-      rootDir: ".",
-      dockerfilePath: "Dockerfile",
-      source: { type: "repository", repositoryId },
-    })
-    expect({ status: project.status, body: project.json }).toMatchObject({ status: 201 })
-    const projectBody = project.json.project as Json
-    const projectJob = project.json.job as Json
-    const projectId = projectBody.id as string
+  it.skipIf(!reachable || !valkeyReachable || !kmsUp)(
+    "lets one OAuth grant create the API project, its group, and its database",
+    async () => {
+      const project = await oauthCall("POST", `/v1/orgs/${orgSlug}/projects`, {
+        name: "FastAPI visits",
+        kind: "site",
+        rootDir: ".",
+        dockerfilePath: "Dockerfile",
+        source: { type: "repository", repositoryId },
+      })
+      expect({ status: project.status, body: project.json }).toMatchObject({ status: 201 })
+      const projectBody = project.json.project as Json
+      const projectJob = project.json.job as Json
+      const projectId = projectBody.id as string
 
-    const service = await oauthCall("POST", `/v1/orgs/${orgSlug}/services`, {
-      name: "FastAPI visits database",
-      kind: "valkey",
-      projectId,
-    })
-    expect({ status: service.status, body: service.json }).toMatchObject({ status: 201 })
-    expect(String(service.json.connectionUri)).toMatch(/^rediss:\/\//)
+      const service = await oauthCall("POST", `/v1/orgs/${orgSlug}/services`, {
+        name: "FastAPI visits database",
+        kind: "postgres",
+        projectId,
+      })
+      expect({ status: service.status, body: service.json }).toMatchObject({ status: 201 })
+      expect(String(service.json.connectionUri)).toMatch(/^postgres(?:ql)?:\/\//)
 
-    const projects = await oauthCall("GET", `/v1/orgs/${orgSlug}/projects`)
-    const projectRows = projects.json.data as Json[]
-    const createdProject = projectRows.find((row) => row.id === projectId)
-    const createdGroup = projectRows.find((row) => row.isGroup === true)
-    expect(createdProject?.managedByOauthApp).toEqual({
-      clientId,
-      name: "FastAPI Database Builder",
-    })
-    expect(createdGroup?.managedByOauthApp).toEqual({
-      clientId,
-      name: "FastAPI Database Builder",
-    })
+      const projects = await oauthCall("GET", `/v1/orgs/${orgSlug}/projects`)
+      const projectRows = projects.json.data as Json[]
+      const createdProject = projectRows.find((row) => row.id === projectId)
+      const createdGroup = projectRows.find((row) => row.isGroup === true)
+      expect(createdProject?.managedByOauthApp).toEqual({
+        clientId,
+        name: "FastAPI Database Builder",
+      })
+      expect(createdGroup?.managedByOauthApp).toEqual({
+        clientId,
+        name: "FastAPI Database Builder",
+      })
 
-    const services = await oauthCall("GET", `/v1/orgs/${orgSlug}/services`)
-    expect((services.json.data as Json[])[0]?.managedByOauthApp).toEqual({
-      clientId,
-      name: "FastAPI Database Builder",
-    })
+      const services = await oauthCall("GET", `/v1/orgs/${orgSlug}/services`)
+      expect((services.json.data as Json[])[0]?.managedByOauthApp).toEqual({
+        clientId,
+        name: "FastAPI Database Builder",
+      })
 
-    const queued = await db
-      .selectFrom("backgroundJob")
-      .select("id")
-      .where("idempotencyKey", "=", `project.provision:${projectJob.id as string}`)
-      .executeTakeFirst()
-    expect(queued, "the deployment request must be queued").toBeDefined()
+      const queued = await db
+        .selectFrom("backgroundJob")
+        .select("id")
+        .where("idempotencyKey", "=", `project.provision:${projectJob.id as string}`)
+        .executeTakeFirst()
+      expect(queued, "the deployment request must be queued").toBeDefined()
 
-    const deleted = await oauthCall(
-      "DELETE",
-      `/v1/orgs/${orgSlug}/services/${service.json.id as string}`,
-    )
-    expect(deleted.status).toBe(200)
-  })
+      const deleted = await oauthCall(
+        "DELETE",
+        `/v1/orgs/${orgSlug}/services/${service.json.id as string}`,
+      )
+      expect(deleted.status).toBe(200)
+
+      // The product deliberately keeps the soft-deleted service and database rows for billing
+      // history. This fixture organization has no history to retain, and cleanupFixtures hard-deletes
+      // it, so remove the retained root after the driver has already destroyed the real database.
+      await db
+        .deleteFrom("backendService")
+        .where("id", "=", service.json.id as string)
+        .execute()
+    },
+    30_000,
+  )
 })
