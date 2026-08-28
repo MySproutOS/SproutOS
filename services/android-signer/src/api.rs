@@ -778,6 +778,59 @@ mod tests {
     }
 
     #[test]
+    fn callback_json_and_sha256_are_cross_language_contract_vectors() {
+        let job_id = "019d0000-0000-7000-8000-000000000007";
+        let prepared = PrepareClientReleaseResponse {
+            job_id: job_id.into(),
+            unsigned_key: format!("raw/client/{job_id}.apk"),
+            upload_url: "https://bucket.s3.us-east-1.amazonaws.com/raw".into(),
+        };
+        let finalize = FinalizeClientUploadRequest {
+            job_id,
+            signer_id: "signer-01",
+            unsigned_key: &prepared.unsigned_key,
+            unsigned_object_version: "version-one",
+            unsigned_digest: &"a".repeat(64),
+            size_bytes: 42,
+        };
+        let complete = CompleteRequest::SignClientRelease {
+            job_id: job_id.into(),
+            signer_id: "signer-01".into(),
+            signed_key: format!("signed/client/{job_id}.apk"),
+            signed_object_version: "version-two".into(),
+            signed_digest: "b".repeat(64),
+            size_bytes: 84,
+            package_name: "com.sproutos.store".into(),
+            version_code: 2,
+            version_name: "0.2.0".into(),
+            certificate_sha256: "c".repeat(64),
+        };
+        let fail = FailRequest {
+            job_id,
+            signer_id: "signer-01",
+            error: "verification failed",
+        };
+
+        let vectors = [
+            (
+                serde_json::to_string(&finalize).unwrap(),
+                "a538ce266aa6b86af1e526112f3de0908d14a1c8ce807aa5ef589b5d5223bbf6",
+            ),
+            (
+                serde_json::to_string(&complete).unwrap(),
+                "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+            ),
+            (
+                serde_json::to_string(&fail).unwrap(),
+                "6eefaec98cefc61fa4ecf8df21d3d2837b2866ab4f4b9d534c53b8d600cb7a5c",
+            ),
+        ];
+        for (body, expected) in vectors {
+            assert_eq!(hex::encode(Sha256::digest(body.as_bytes())), expected);
+        }
+    }
+
+    #[test]
     fn artifact_urls_cannot_turn_the_signer_into_an_internal_network_client() {
         assert!(
             validate_artifact_url("https://bucket.s3.us-east-1.amazonaws.com/key?sig=x").is_ok()
