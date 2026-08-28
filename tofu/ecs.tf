@@ -44,6 +44,10 @@ locals {
     "GITHUB_APP_CLIENT_ID",
     "GITHUB_APP_CLIENT_SECRET",
     "GITHUB_APP_PRIVATE_KEY",
+    # A release pointer, not a credential. It still comes through Parameter Store so a GitHub tag
+    # workflow can promote an already-published, attested release without writing mutable version
+    # text into an image or OpenTofu state. `bin/promote-cli-release.sh` is its only writer.
+    "SPROUT_CLI_RELEASE_VERSION",
   ]
 
   ecs_api_parameter_names = [

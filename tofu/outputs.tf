@@ -90,6 +90,11 @@ output "deploy_role_arn" {
   value       = aws_iam_role.deploy.arn
 }
 
+output "cli_release_promotion_role_arn" {
+  description = "Least-privilege role assumed after a five-platform CLI release is verified"
+  value       = aws_iam_role.github_actions_cli_release_promotion.arn
+}
+
 # The API's rule, so the cutover can move it with the other two.
 output "api_rule_arn" {
   description = "Listener rule for api.<domain>. Set as the API_RULE_ARN repository variable."

@@ -389,3 +389,102 @@ resource "aws_iam_role_policy" "deploy" {
     ]
   })
 }
+
+/*
+  Promoting a CLI release is deliberately a different authority from deploying application code.
+
+  The tag workflow may name one immutable, attested GitHub release in Parameter Store and restart
+  this one ECS service so it reads the new pointer. It cannot publish a release, deploy an image,
+  run migrations, or write any other application parameter. A manually dispatched first promotion
+  uses the protected `production` environment; later `cli-v*` tag workflows use their exact ref.
+*/
+resource "aws_iam_role" "github_actions_cli_release_promotion" {
+  name = "${var.name_prefix}-cli-release-promotion"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = compact([
+            "repo:${var.github_repo}:ref:refs/tags/cli-v*",
+            "repo:${var.github_repo}:environment:production",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:ref:refs/tags/cli-v*",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:production",
+          ])
+        }
+      }
+    }]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "github_actions_cli_release_promotion" {
+  name = "verify-record-and-restart"
+  role = aws_iam_role.github_actions_cli_release_promotion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadCliReleaseState"
+        Effect = "Allow"
+        Action = ["ssm:GetParameter"]
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.name_prefix}/releases/cli/*",
+          "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/SPROUT_CLI_RELEASE_VERSION",
+        ]
+      },
+      {
+        Sid      = "CreateVerifiedCliReleaseRecordOnce"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.name_prefix}/releases/cli/*"
+        Condition = {
+          StringEquals = {
+            "ssm:Overwrite" = "false"
+          }
+        }
+      },
+      {
+        Sid      = "MoveCliReleasePointer"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/SPROUT_CLI_RELEASE_VERSION"
+        Condition = {
+          StringEquals = {
+            "ssm:Overwrite" = "true"
+          }
+        }
+      },
+      {
+        # ECS Describe actions do not support resource scoping. The only mutation is separately
+        # pinned to the web service below.
+        Sid      = "ReadWebReleaseState"
+        Effect   = "Allow"
+        Action   = ["ecs:DescribeServices", "ecs:DescribeTaskDefinition"]
+        Resource = "*"
+      },
+      {
+        Sid      = "RunPromotedWebTask"
+        Effect   = "Allow"
+        Action   = ["ecs:UpdateService"]
+        Resource = aws_ecs_service.web.id
+        Condition = {
+          # The role may force the serving definition to restart so ECS rereads Parameter Store,
+          # but it may not select a different task definition (and therefore cannot deploy code).
+          Null = {
+            "ecs:task-definition" = "true"
+          }
+        }
+      },
+    ]
+  })
+}
