@@ -3,4 +3,4 @@
 	url = git@github.com:MySproutOS/sproutos-deploy-action.git
 [submodule "vendor/android"]
 	path = vendor/android
-	url = git@github.com:MySproutOS/SproutOS-Android.git
+	url = https://github.com/MySproutOS/SproutOS-Android.git

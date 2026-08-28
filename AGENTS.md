@@ -135,7 +135,8 @@ Two repositories are carried as submodules so a coding agent's context stays in 
 - `vendor/deploy-action` — `MySproutOS/sproutos-deploy-action`, the GitHub Action customers run to
   upload a build. Composite shell, authenticated by GitHub OIDC so nothing is stored in a customer's
   repository.
-- `vendor/android` — `MySproutOS/SproutOS-Android`, the Android client.
+- `vendor/android` — the public `MySproutOS/SproutOS-Android` Android client. Its HTTPS submodule URL
+  deliberately supports anonymous clones; do not replace it with an SSH-only URL.
 
 `git clone --recurse-submodules`, or `git submodule update --init` after the fact. The cost is a
 second commit graph and a CI checkout that has to be recursive; the benefit is that a change
