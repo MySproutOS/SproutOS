@@ -1,8 +1,9 @@
 # Build the two services, upload them, fill the idle colour, and cut over.
 #
-# This replaces a workflow that built container images and rendered Kubernetes manifests. There is
-# no cluster (ADR 0026): the website and the router run on EC2 from a release tarball, and customer
-# code runs on Lambda from an archive their own GitHub Action uploads.
+# The router remains a blue/green EC2 release tarball. The website, API and worker can move as one
+# ECS-on-EC2 service behind the `ECS_WEB_ENABLED` repository gate; customer code remains Lambda.
+# Keeping both deployment paths during the transition is intentional, but the gate makes them
+# mutually exclusive for website fill, migration and cutover.
 #
 # **The cutover is a separate, manual job.** Filling the idle colour is safe and reversible — it
 # touches nothing serving traffic — so it runs on dispatch. Moving traffic is neither, so it is its
@@ -43,6 +44,10 @@ on:
         required: false
         type: boolean
         default: false
+      ecs_image_tag:
+        description: Optional existing 12-character Git SHA image tag for an explicit ECS rollback
+        required: false
+        type: string
 
 concurrency:
   # One release at a time. Two concurrent runs would write the same pointer object and leave the
@@ -434,6 +439,35 @@ jobs:
           cache-to: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache,mode=max
     needs: release
 
+  ecs_web:
+    name: Migrate and deploy the ECS website
+    needs: [release, image]
+    # ECS owns the website only after the repository switch is deliberate. A manual run without
+    # `cutover` remains a build/stage operation, matching the legacy workflow; a push to main and
+    # an explicitly approved manual cutover both deploy.
+    if: >-
+      ${{ vars.ECS_WEB_ENABLED == 'true' &&
+          ((inputs.service || 'both') == 'website' || (inputs.service || 'both') == 'both') &&
+          (github.event_name == 'push' || inputs.cutover) }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run the image's migrations, update ECS, and pin traffic to green
+        run: bin/deploy-ecs-web.sh --cutover
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+          ECS_WEB_DESIRED_COUNT: ${{ vars.ECS_WEB_DESIRED_COUNT || '1' }}
+          LISTENER_ARN: ${{ vars.LISTENER_ARN }}
+          WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
+          API_RULE_ARN: ${{ vars.API_RULE_ARN }}
+
   spa:
     name: Publish the dashboard and admin
     runs-on: ubuntu-latest
@@ -558,7 +592,28 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Scale the idle groups up and wait for health
-        run: bin/fill-idle.sh
+        run: |
+          requested="${{ inputs.service || 'both' }}"
+          case "$requested" in
+            both) services="website router" ;;
+            website|router) services="$requested" ;;
+            *) echo "::error::unknown service: $requested"; exit 2 ;;
+          esac
+
+          # ECS has one permanent green service target. Once enabled, putting legacy website
+          # instances into either colour would mix two runtimes in one target group or resurrect
+          # the blue estate after the deliberate transition. Router blue/green remains unchanged.
+          if [ "${ECS_WEB_ENABLED:-}" = "true" ]; then
+            services="${services//website/}"
+          fi
+          services="${services# }"
+          services="${services% }"
+          if [ -z "$services" ]; then
+            echo "website is ECS-managed; no legacy colour to fill"
+            exit 0
+          fi
+
+          SERVICES="$services" bin/fill-idle.sh
         env:
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
@@ -582,7 +637,7 @@ jobs:
           FORWARD_PROXY_LISTENER_ARN: ${{ vars.FORWARD_PROXY_LISTENER_ARN }}
           TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
           TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}
-          SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
+          ECS_WEB_ENABLED: ${{ vars.ECS_WEB_ENABLED }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
   migrate:
@@ -606,17 +661,34 @@ jobs:
       # The idle instances are not serving, so a migration that fails here stops the release with
       # production still on the old colour and untouched.
       - name: Migrate and seed
-        run: bin/migrate.sh
+        run: |
+          requested="${{ inputs.service || 'both' }}"
+          if [ "${ECS_WEB_ENABLED:-}" = "true" ]; then
+            echo "website migrations run from the immutable ECS image"
+            exit 0
+          fi
+          if [ "$requested" = "router" ]; then
+            echo "router-only release has no control-plane migration"
+            exit 0
+          fi
+          bin/migrate.sh
         env:
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
+          ECS_WEB_ENABLED: ${{ vars.ECS_WEB_ENABLED }}
 
   cutover:
     name: Move traffic
-    needs: [fill, migrate]
+    needs: [fill, migrate, image, ecs_web]
     # A push deploys all the way. A manual run keeps its opt-in, because the reason to dispatch by
     # hand is usually to stage something without moving traffic.
-    if: ${{ github.event_name == 'push' || inputs.cutover }}
+    if: >-
+      ${{ always() && needs.fill.result == 'success' && needs.migrate.result == 'success' &&
+          ((vars.ECS_WEB_ENABLED == 'true' && (inputs.service || 'both') != 'router' &&
+            needs.ecs_web.result == 'success' && needs.image.result == 'success') ||
+           ((vars.ECS_WEB_ENABLED != 'true' || (inputs.service || 'both') == 'router') &&
+            needs.ecs_web.result == 'skipped')) &&
+          (github.event_name == 'push' || inputs.cutover) }}
     runs-on: ubuntu-latest
     # A protected environment, so moving production traffic asks a person first. The release and
     # the fill do not: they change nothing that is serving.
@@ -631,10 +703,20 @@ jobs:
 
       - name: Cut over
         run: |
-          for service in ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}; do
+          requested="${{ inputs.service || 'both' }}"
+          case "$requested" in
+            both) services="website router" ;;
+            website|router) services="$requested" ;;
+            *) echo "::error::unknown service: $requested"; exit 2 ;;
+          esac
+          if [ "${ECS_WEB_ENABLED:-}" = "true" ]; then
+            services="${services//website/}"
+          fi
+          for service in $services; do
             bin/cutover.sh "$service"
           done
         env:
+          ECS_WEB_ENABLED: ${{ vars.ECS_WEB_ENABLED }}
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
           # The API's rule moves with the website's — one release on two ports, so they can never be
