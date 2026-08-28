@@ -9,6 +9,7 @@ const WORKSPACE = "/home/daytona/workspace"
 function fakeDriver(
   options: {
     stdout?: string[]
+    stderr?: string[]
     execExit?: number
     cloneFailure?: Error
     /** Durable checkout left behind when the structured clone reports an error. */
@@ -77,10 +78,12 @@ function fakeDriver(
       env: Record<string, string>,
       _timeout: number,
       onStdout: (chunk: string) => void,
+      onStderr: (chunk: string) => void,
     ) => {
       commands.push(argv)
       secretEnvironments.push(env)
       for (const chunk of options.stdout ?? []) onStdout(chunk)
+      for (const chunk of options.stderr ?? []) onStderr(chunk)
       return Promise.resolve({ stdout: "", stderr: "", exitCode: 0 })
     },
     writeFile: (_id: string, path: string, content: string) => {
@@ -444,6 +447,37 @@ describe("runSandboxTurn", () => {
       numTurns: 3,
       durationMs: 900,
     })
+  })
+
+  it("preserves the current Codex JSON answer and session without inventing a stdin error", async () => {
+    /*
+      Captured from a real Codex turn in Daytona through the production LLM proxy. The model had
+      answered and the proxy had metered it, but the adapter looked only for `item.content`, so the
+      user saw a successful empty turn plus a red error for Codex's harmless stdin notice.
+    */
+    const events: AgentEvent[] = []
+    const { driver } = fakeDriver({
+      stdout: [
+        `${JSON.stringify({ type: "thread.started", thread_id: "019c" })}\n`,
+        `${JSON.stringify({ type: "turn.started" })}\n`,
+        `${JSON.stringify({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: "SPROUTOS_DAYTONA_PLATFORM_OK" } })}\n`,
+        `${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 3, output_tokens: 13 } })}\n`,
+      ],
+      stderr: ["Reading additional input from stdin...\n"],
+    })
+
+    await runSandboxTurn({
+      ...base,
+      harness: "codex",
+      driver,
+      onEvent: (event) => events.push(event),
+    })
+
+    expect(events).toEqual([
+      { type: "session", sdkSessionId: "019c" },
+      { type: "text", text: "SPROUTOS_DAYTONA_PLATFORM_OK" },
+      { type: "done", subtype: "success", isError: false, numTurns: 1, durationMs: 0 },
+    ])
   })
 
   it("says it is still in use while it works", async () => {
