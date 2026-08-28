@@ -25,6 +25,7 @@ import {
   orchestrateCatalogueTemplate,
   provisionTemplateServices,
   transitionTemplateInstall,
+  verifyUserInputsConfigured,
 } from "./catalogue-template"
 
 /**
@@ -259,6 +260,7 @@ export async function runProvision(
             .execute()
         },
         configure: async () => {
+          await verifyUserInputsConfigured(db, template)
           await configureGeneratedInputs(db, template)
         },
         provisionServices: async () => {

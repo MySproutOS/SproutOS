@@ -40,8 +40,15 @@ export type CatalogueApp = {
     required_capabilities: string[]
   }
   services: unknown[]
-  user_inputs: unknown[]
+  user_inputs: CatalogueUserInput[]
   generated_inputs: unknown[]
+}
+
+export type CatalogueUserInput = {
+  key: string
+  type: "string" | "url" | "integer" | "boolean"
+  environment: string
+  required: boolean
 }
 
 export type DeploymentCatalogue = {
@@ -233,7 +240,7 @@ function validateServices(value: unknown, label: string): unknown[] {
   })
 }
 
-function validateUserInputs(value: unknown, label: string): unknown[] {
+function validateUserInputs(value: unknown, label: string): CatalogueUserInput[] {
   return array(value, label).map((entry, index) => {
     const row = object(entry, `${label}[${index}]`)
     exactKeys(row, ["key", "type", "environment", "required"], `${label}[${index}]`)
@@ -243,7 +250,12 @@ function validateUserInputs(value: unknown, label: string): unknown[] {
       throw new Error(`${label}[${index}].type is invalid`)
     }
     if (typeof row.required !== "boolean") throw new Error(`${label}[${index}].required is invalid`)
-    return row
+    return {
+      key: row.key as string,
+      type: row.type as CatalogueUserInput["type"],
+      environment: row.environment as string,
+      required: row.required,
+    }
   })
 }
 
@@ -259,6 +271,92 @@ function validateGeneratedInputs(value: unknown, label: string): unknown[] {
       throw new Error(`${label}[${index}].bytes is invalid`)
     }
     return row
+  })
+}
+
+function strictlySorted(values: readonly string[], label: string): void {
+  if (values.some((value, index) => index > 0 && values[index - 1] >= value)) {
+    throw new Error(`${label} must be strictly sorted and unique`)
+  }
+}
+
+function addGlobalUnique(set: Set<string>, value: string, field: string): void {
+  if (set.has(value)) throw new Error(`${field} is not globally unique`)
+  set.add(value)
+}
+
+function validateStructuralContract(app: CatalogueApp, label: string): void {
+  strictlySorted(app.deployment.required_capabilities, `${label}.deployment.required_capabilities`)
+  const keys = new Set<string>()
+  const environments = new Set<string>()
+  const supportedOutputs: Record<string, Set<string>> = {
+    postgres: new Set(["connection_url"]),
+    valkey: new Set(["connection_url"]),
+    elasticsearch: new Set(["endpoint", "username", "password"]),
+    object_storage: new Set([
+      "endpoint",
+      "region",
+      "bucket",
+      "access_key_id",
+      "secret_access_key",
+      "force_path_style",
+    ]),
+  }
+
+  const services = app.services.map((entry, index) => object(entry, `${label}.services[${index}]`))
+  strictlySorted(
+    services.map((service) => service.key as string),
+    `${label}.services`,
+  )
+  services.forEach((service, index) => {
+    const field = `${label}.services[${index}]`
+    const key = service.key as string
+    addGlobalUnique(keys, key, `${field}.key`)
+    const bindings = array(service.bindings, `${field}.bindings`).map((entry, bindingIndex) =>
+      object(entry, `${field}.bindings[${bindingIndex}]`),
+    )
+    if (bindings.length === 0) throw new Error(`${field}.bindings must not be empty`)
+    strictlySorted(
+      bindings.map((binding) => binding.environment as string),
+      `${field}.bindings`,
+    )
+    bindings.forEach((binding, bindingIndex) => {
+      addGlobalUnique(
+        environments,
+        binding.environment as string,
+        `${field}.bindings[${bindingIndex}].environment`,
+      )
+      if (!supportedOutputs[service.kind as string].has(binding.output as string)) {
+        throw new Error(
+          `${field}.bindings[${bindingIndex}].output is not provided by ${String(service.kind)}`,
+        )
+      }
+    })
+  })
+
+  strictlySorted(
+    app.user_inputs.map((input) => input.key),
+    `${label}.user_inputs`,
+  )
+  app.user_inputs.forEach((input, index) => {
+    addGlobalUnique(keys, input.key, `${label}.user_inputs[${index}].key`)
+    addGlobalUnique(environments, input.environment, `${label}.user_inputs[${index}].environment`)
+  })
+
+  const generated = app.generated_inputs.map((entry, index) =>
+    object(entry, `${label}.generated_inputs[${index}]`),
+  )
+  strictlySorted(
+    generated.map((input) => input.key as string),
+    `${label}.generated_inputs`,
+  )
+  generated.forEach((input, index) => {
+    addGlobalUnique(keys, input.key as string, `${label}.generated_inputs[${index}].key`)
+    addGlobalUnique(
+      environments,
+      input.environment as string,
+      `${label}.generated_inputs[${index}].environment`,
+    )
   })
 }
 
@@ -361,6 +459,7 @@ function parseApp(value: unknown, index: number): CatalogueApp {
   ) {
     throw new Error(`${label}.readiness evidence does not match the pinned app artifacts`)
   }
+  validateStructuralContract(result, label)
   return result
 }
 

@@ -6,7 +6,10 @@ import {
   reconcileSignedDeploymentCatalogue,
 } from "./deployment-catalogue"
 import type { DeploymentCatalogueArtifact } from "./deployment-catalogue-oci"
-import { deploymentCatalogueSchemaInternals } from "./deployment-catalogue-schema"
+import {
+  deploymentCatalogueSchemaInternals,
+  parseCatalogueAppManifest,
+} from "./deployment-catalogue-schema"
 
 const reachable = await (async () => {
   try {
@@ -124,6 +127,40 @@ async function cleanup(): Promise<void> {
 afterAll(async () => {
   await cleanup()
   await db.destroy()
+})
+
+describe("signed manifest structural preflight", () => {
+  it("rejects environment collisions before service provisioning", () => {
+    const fixture = {
+      ...app(),
+      user_inputs: [
+        {
+          key: "database_override",
+          type: "string",
+          environment: "DATABASE_URL",
+          required: false,
+        },
+      ],
+    }
+    expect(() => parseCatalogueAppManifest(fixture)).toThrow("environment is not globally unique")
+  })
+
+  it("rejects outputs a service kind cannot provide", () => {
+    const fixture = app()
+    fixture.services[0].bindings = [{ environment: "REGION", output: "region" }]
+    expect(() => parseCatalogueAppManifest(fixture)).toThrow("output is not provided by postgres")
+  })
+
+  it("rejects unsorted structural declarations", () => {
+    const fixture = {
+      ...app(),
+      user_inputs: [
+        { key: "zulu", type: "string", environment: "ZULU", required: false },
+        { key: "alpha", type: "string", environment: "ALPHA", required: false },
+      ],
+    }
+    expect(() => parseCatalogueAppManifest(fixture)).toThrow("must be strictly sorted")
+  })
 })
 
 describe.skipIf(!reachable)("signed deployment catalogue reconciliation", () => {

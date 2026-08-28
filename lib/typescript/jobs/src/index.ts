@@ -43,6 +43,11 @@ export {
   parseCatalogueAppManifest,
 } from "./deployment-catalogue-schema"
 export {
+  validateCatalogueUserInputs,
+  type ResolvedCatalogueInput,
+  type SubmittedCatalogueInput,
+} from "./catalogue-template"
+export {
   importStaticCloudFrontLog,
   parseStaticCloudFrontLog,
   scanStaticCloudFrontLogs,

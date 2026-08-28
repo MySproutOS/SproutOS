@@ -1,4 +1,4 @@
-import type { DB } from "@sproutos/db"
+import type { DB, Json } from "@sproutos/db"
 import { type Kysely, type Selectable, sql } from "kysely"
 
 /** The listing statuses a visitor may ever see. Everything else is moderation-only. */
@@ -207,5 +207,24 @@ export function fetchStoreListing(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { browseQuery, featuredQuery, getBySlug, getOne, getPublishedDetail }
+  /** JSONB rendered as text so CamelCasePlugin cannot rewrite the signed manifest's keys. */
+  async function getCatalogueManifest(id: string): Promise<Json | undefined> {
+    const result = await db
+      .selectFrom("storeListing")
+      .select(sql<string>`catalogue_manifest::text`.as("manifestJson"))
+      .where("id", "=", id)
+      .where("deletedAt", "is", null)
+      .where("catalogueManifest", "is not", null)
+      .executeTakeFirst()
+    return result === undefined ? undefined : (JSON.parse(result.manifestJson) as Json)
+  }
+
+  return {
+    browseQuery,
+    featuredQuery,
+    getBySlug,
+    getCatalogueManifest,
+    getOne,
+    getPublishedDetail,
+  }
 }

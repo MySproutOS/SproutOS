@@ -22,6 +22,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("manifest_digest", "text", (col) => col.notNull())
     .addColumn("deployment_templates_commit", "text", (col) => col.notNull())
     .addColumn("manifest", "jsonb", (col) => col.notNull())
+    .addColumn("configured_inputs", "jsonb", (col) => col.notNull().defaultTo(sql`'[]'::jsonb`))
     .addColumn("plugin_repository", "text", (col) => col.notNull())
     .addColumn("plugin_digest", "text", (col) => col.notNull())
     .addColumn("state", "text", (col) => col.notNull().defaultTo("configuring"))

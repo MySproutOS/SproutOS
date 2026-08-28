@@ -15,7 +15,11 @@ import type { DB, Json } from "@sproutos/db"
 import type { ApplyTemplateResult } from "@sproutos/sprout-node"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { parseCatalogueAppManifest, type CatalogueApp } from "./deployment-catalogue-schema"
+import {
+  parseCatalogueAppManifest,
+  type CatalogueApp,
+  type CatalogueUserInput,
+} from "./deployment-catalogue-schema"
 
 export type TemplateInstallState =
   | "configuring"
@@ -25,6 +29,90 @@ export type TemplateInstallState =
   | "deploying"
   | "ready"
   | "failed"
+
+export type SubmittedCatalogueInput = {
+  key: string
+  value: string | number | boolean
+  secret: boolean
+}
+
+export type ResolvedCatalogueInput = {
+  key: string
+  environment: string
+  value: string
+  secret: boolean
+}
+
+function resolvedInputValue(definition: CatalogueUserInput, value: unknown): string {
+  if (definition.type === "string") {
+    if (typeof value !== "string") throw new Error(`${definition.key} must be a string`)
+    if (value.length > 8192 || value.includes("\0")) {
+      throw new Error(`${definition.key} contains an invalid string value`)
+    }
+    return value
+  }
+  if (definition.type === "integer") {
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+      throw new Error(`${definition.key} must be a safe integer`)
+    }
+    return String(value)
+  }
+  if (definition.type === "boolean") {
+    if (typeof value !== "boolean") throw new Error(`${definition.key} must be a boolean`)
+    return String(value)
+  }
+  if (typeof value !== "string") throw new Error(`${definition.key} must be a URL`)
+  if (value.length > 8192 || value.includes("\0")) {
+    throw new Error(`${definition.key} contains an invalid URL value`)
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error(`${definition.key} must be a URL`)
+  }
+  if (
+    !(["http:", "https:"] as string[]).includes(parsed.protocol) ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    throw new Error(`${definition.key} must be an HTTP(S) URL without embedded credentials`)
+  }
+  return value
+}
+
+/** Resolve only keys and types authorized by the immutable signed manifest. */
+export function validateCatalogueUserInputs(
+  definitions: readonly CatalogueUserInput[],
+  submitted: readonly SubmittedCatalogueInput[],
+): ResolvedCatalogueInput[] {
+  if (submitted.length > 64) throw new Error("too many template inputs were supplied")
+  const byKey = new Map(definitions.map((definition) => [definition.key, definition]))
+  if (byKey.size !== definitions.length)
+    throw new Error("signed template has duplicate user input keys")
+
+  const seen = new Set<string>()
+  const resolved = submitted.map((input) => {
+    if (typeof input.secret !== "boolean") {
+      throw new Error(`template input ${input.key} must declare whether it is secret`)
+    }
+    if (seen.has(input.key))
+      throw new Error(`template input ${input.key} was supplied more than once`)
+    seen.add(input.key)
+    const definition = byKey.get(input.key)
+    if (definition === undefined) throw new Error(`template input ${input.key} is not declared`)
+    return {
+      key: definition.key,
+      environment: definition.environment,
+      value: resolvedInputValue(definition, input.value),
+      secret: input.secret,
+    }
+  })
+
+  const missing = definitions.find((definition) => definition.required && !seen.has(definition.key))
+  if (missing !== undefined) throw new Error(`required template input ${missing.key} is missing`)
+  return resolved
+}
 
 /** The ordering seam: every side effect is injected, so the production sequence is testable. */
 export async function orchestrateCatalogueTemplate<TRepository>(operations: {
@@ -56,33 +144,59 @@ export type CatalogueTemplateContext = {
   pluginDigest: string
   deploymentTemplatesCommit: string
   preparedCommitSha: string | null
+  configuredInputs: { key: string; environment: string; secret: boolean }[]
+}
+
+function parseConfiguredInputs(value: Json): CatalogueTemplateContext["configuredInputs"] {
+  if (!Array.isArray(value)) throw new Error("template configured input provenance is invalid")
+  return value.map((entry) => {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      Array.isArray(entry) ||
+      Object.keys(entry).toSorted().join(",") !== "environment,key,secret" ||
+      typeof entry.key !== "string" ||
+      typeof entry.environment !== "string" ||
+      typeof entry.secret !== "boolean"
+    ) {
+      throw new Error("template configured input provenance is invalid")
+    }
+    return { key: entry.key, environment: entry.environment, secret: entry.secret }
+  })
 }
 
 export async function catalogueTemplateContext(
   db: Kysely<DB>,
   projectId: string,
 ): Promise<CatalogueTemplateContext | null> {
-  const install = await fetchProjectTemplateInstall(db).getOne(projectId, [
-    "organizationId",
-    "manifest",
-    "catalogueDigest",
-    "manifestDigest",
-    "pluginRepository",
-    "pluginDigest",
-    "deploymentTemplatesCommit",
-    "preparedCommitSha",
+  const installs = fetchProjectTemplateInstall(db)
+  const [install, raw] = await Promise.all([
+    installs.getOne(projectId, [
+      "organizationId",
+      "catalogueDigest",
+      "manifestDigest",
+      "pluginRepository",
+      "pluginDigest",
+      "deploymentTemplatesCommit",
+      "preparedCommitSha",
+    ]),
+    installs.getRawConfiguration(projectId),
   ])
-  if (install === undefined) return null
+  if (install === undefined && raw === undefined) return null
+  if (install === undefined || raw === undefined) {
+    throw new Error(`template install for ${projectId} is internally inconsistent`)
+  }
   return {
     projectId,
     organizationId: install.organizationId,
-    manifest: parseCatalogueAppManifest(install.manifest),
+    manifest: parseCatalogueAppManifest(raw.manifest),
     catalogueDigest: install.catalogueDigest,
     manifestDigest: install.manifestDigest,
     pluginRepository: install.pluginRepository,
     pluginDigest: install.pluginDigest,
     deploymentTemplatesCommit: install.deploymentTemplatesCommit,
     preparedCommitSha: install.preparedCommitSha,
+    configuredInputs: parseConfiguredInputs(raw.configuredInputs),
   }
 }
 
@@ -133,6 +247,46 @@ export async function configureGeneratedInputs(
       })
     }),
   )
+}
+
+/** Internal callers cannot bypass the API's required-input gate. */
+export async function verifyUserInputsConfigured(
+  db: Kysely<DB>,
+  context: CatalogueTemplateContext,
+): Promise<void> {
+  const definitions = new Map(context.manifest.user_inputs.map((input) => [input.key, input]))
+  const configuredKeys = new Set<string>()
+  for (const configured of context.configuredInputs) {
+    if (configuredKeys.has(configured.key)) {
+      throw new Error(`template input ${configured.key} has duplicate configuration provenance`)
+    }
+    configuredKeys.add(configured.key)
+    const definition = definitions.get(configured.key)
+    if (definition === undefined || definition.environment !== configured.environment) {
+      throw new Error(`template input ${configured.key} configuration provenance is not declared`)
+    }
+  }
+  const missingDeclaration = context.manifest.user_inputs.find(
+    (input) => input.required && !configuredKeys.has(input.key),
+  )
+  if (missingDeclaration !== undefined) {
+    throw new Error(`required template input ${missingDeclaration.key} is not configured`)
+  }
+  if (context.configuredInputs.length === 0) return
+  const existing = new Map(
+    (await fetchProjectEnvVar(db).listForProject(context.projectId)).map(({ key, isSecret }) => [
+      key,
+      isSecret,
+    ]),
+  )
+  const missing = context.configuredInputs.find(
+    (input) => existing.get(input.environment) !== input.secret,
+  )
+  if (missing !== undefined) {
+    throw new Error(
+      `template input ${missing.key} configuration does not match its persisted value`,
+    )
+  }
 }
 
 export class TemplateServiceRecoveryRequiredError extends Error {
@@ -310,25 +464,7 @@ export async function applyCatalogueTemplate(input: {
       pluginReference: `${input.context.pluginRepository}@${input.context.pluginDigest}`,
       pluginDigest: input.context.pluginDigest as `sha256:${string}`,
       deploymentTemplatesCommit: input.context.deploymentTemplatesCommit,
-      request: {
-        protocol_version: 1,
-        workspace: "/workspace",
-        template: {
-          id: input.context.manifest.id,
-          catalogue_digest: input.context.catalogueDigest,
-          manifest_digest: input.context.manifestDigest,
-          plugin_digest: input.context.pluginDigest,
-          upstream_repository: input.context.manifest.repository.url,
-          upstream_commit: input.context.manifest.repository.commit,
-        },
-        deployment: {
-          preset: input.context.manifest.deployment.preset,
-          capabilities: input.context.manifest.deployment.required_capabilities,
-        },
-        services: input.context.manifest.services,
-        user_inputs: input.context.manifest.user_inputs,
-        generated_inputs: input.context.manifest.generated_inputs,
-      },
+      request: catalogueTemplateApplyRequest(input.context),
     })
     const committed = await commitAndPush({
       workspace,
@@ -346,6 +482,31 @@ export async function applyCatalogueTemplate(input: {
     return { sha: committed.sha, result }
   } finally {
     await workspace.dispose()
+  }
+}
+
+/** Structural declarations only: customer values and even their secret flags stay outside N-API. */
+export function catalogueTemplateApplyRequest(
+  context: CatalogueTemplateContext,
+): Record<string, unknown> {
+  return {
+    protocol_version: 1,
+    workspace: "/workspace",
+    template: {
+      id: context.manifest.id,
+      catalogue_digest: context.catalogueDigest,
+      manifest_digest: context.manifestDigest,
+      plugin_digest: context.pluginDigest,
+      upstream_repository: context.manifest.repository.url,
+      upstream_commit: context.manifest.repository.commit,
+    },
+    deployment: {
+      preset: context.manifest.deployment.preset,
+      capabilities: context.manifest.deployment.required_capabilities,
+    },
+    services: context.manifest.services,
+    user_inputs: context.manifest.user_inputs,
+    generated_inputs: context.manifest.generated_inputs,
   }
 }
 

@@ -865,6 +865,7 @@ export interface ProjectTemplateInstall {
   catalogueDigest: string
   catalogueEntryId: string
   catalogueImportId: string
+  configuredInputs: Generated<Json>
   createdAt: Generated<Timestamp>
   deploymentTemplatesCommit: string
   failureCode: string | null
