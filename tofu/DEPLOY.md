@@ -128,6 +128,39 @@ Until (3), the Auto Scaling groups will start instances that boot, find no relea
 their bootstrap and be replaced. That is a loop, and it bills. **Either run the deploy promptly or
 set `service_desired_count = 0` for the first apply.**
 
+### Moving the website to ECS
+
+The ECS service is a replacement for the website Auto Scaling groups, not a third copy. Leave the
+`ECS_WEB_ENABLED` repository variable absent while applying the ECS task definition, execution-role
+secret policy, deploy-role ECS permissions and deployment circuit breaker. Confirm legacy website
+traffic is entirely on blue and that green has no legacy instance before enabling the switch.
+
+Set these repository variables:
+
+- `ECS_WEB_ENABLED=true` — the ownership switch;
+- `ECS_WEB_DESIRED_COUNT=1` — optional, and one by default.
+
+The next push to `main` that includes `website` then performs this order behind the production
+environment gate:
+
+1. build and publish `sproutos-web:<12-character Git SHA>`;
+2. derive a one-container migration task from the current API container's environment, secrets and
+   roles;
+3. run Postgres migrations, seeds and ClickHouse schema from that immutable image;
+4. only after a zero exit, register/update the three-container service revision and wait for ECS and
+   both ALB target groups to report healthy;
+5. pin the website and API rules to green and scale the drained legacy blue group to zero.
+
+With the gate enabled, legacy fill, SSM migration and website cutover are removed from the workflow;
+router blue/green is unchanged. A migration failure never updates the service. A failed service
+rollout is automatically restored by the ECS deployment circuit breaker.
+
+For an application rollback, dispatch `website` with `cutover` checked and `ecs_image_tag` set to a
+previous 12-character image SHA. Database migrations remain forward-only, so choose an application
+revision compatible with the current schema. To return the whole website to legacy EC2, set
+`ECS_WEB_ENABLED=false`, then dispatch `website` with `cutover`: the legacy workflow fills blue,
+migrates from that release, moves both rules, and leaves the ECS green target idle for diagnosis.
+
 ### Enabling object storage for the first time
 
 Object storage has a deliberate two-apply interlock. The first apply and deploy leave
