@@ -4,7 +4,7 @@ import type { Kysely } from "kysely"
 import { v7 } from "uuid"
 
 import { postgresUri } from "./naming"
-import { neonApi } from "./neon-api"
+import { NeonApiError, neonApi } from "./neon-api"
 import { type NeonPostgresConfig, parseNeonUri } from "./neon-postgres"
 import { rolePasswordContext } from "./postgres"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
@@ -36,8 +36,36 @@ import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from ".
  */
 export type DevBranch = {
   databaseBranchId: string
+  name: string
   /** What goes in the sandbox's `DATABASE_URL`. Points at pg-proxy, never at Neon. */
   uri: string
+}
+
+/** Conservative floor shared by every Neon tier the platform supports. */
+export const DEFAULT_NEON_PROJECT_BRANCH_LIMIT = 10
+/** One default branch plus four disposable alternatives per sandbox. */
+export const MAX_SANDBOX_DATABASE_BRANCHES = 5
+
+export function assertDevBranchQuota(input: {
+  ownedBranches?: number
+  maxOwnedBranches?: number
+  providerBranches: number
+  maxProjectBranches: number
+}): void {
+  if (
+    input.ownedBranches !== undefined &&
+    input.maxOwnedBranches !== undefined &&
+    input.ownedBranches >= input.maxOwnedBranches
+  ) {
+    throw new DevBranchQuotaExceededError(
+      `the sandbox already owns its maximum of ${input.maxOwnedBranches} database branches`,
+    )
+  }
+  if (input.providerBranches >= input.maxProjectBranches) {
+    throw new DevBranchQuotaExceededError(
+      `the Neon project already has its maximum of ${input.maxProjectBranches} branches`,
+    )
+  }
 }
 
 export async function createDevBranch(
@@ -50,122 +78,190 @@ export async function createDevBranch(
     label: string
     /** When the branch stops being worth keeping. Read by the branch reaper. */
     expiresAt?: Date
+    /** Branch from the sandbox's current copy rather than from production. */
+    parentDatabaseBranchId?: string
+    /** Attach the branch to this sandbox so destroy/reap cannot lose ownership. */
+    ownerSandboxId?: string
+    /** Includes the sandbox's default branch. Required whenever ownerSandboxId is supplied. */
+    maxOwnedBranches?: number
+    /** Provider-wide safety cap, including branches not represented in this database. */
+    maxProjectBranches?: number
   },
 ): Promise<DevBranch> {
-  const parent = await db
-    .selectFrom("databaseInstance")
-    .innerJoin("databaseBranch", "databaseBranch.databaseInstanceId", "databaseInstance.id")
-    .select([
-      "databaseInstance.id as instanceId",
-      "databaseInstance.providerProjectId as providerProjectId",
-      "databaseBranch.id as branchId",
-      "databaseBranch.providerBranchId as providerBranchId",
-    ])
-    .where("databaseInstance.backendServiceId", "=", input.backendServiceId)
-    .where("databaseInstance.provider", "=", "neon")
-    .where("databaseInstance.status", "=", "active")
-    .where("databaseBranch.kind", "=", "primary")
-    .executeTakeFirst()
-
-  if (parent === undefined || parent.providerProjectId === null) {
-    throw new DevBranchUnavailableError(
-      `backend service ${input.backendServiceId} has no active Neon primary branch to branch from`,
-    )
-  }
-
   const api = neonApi(config.neon)
-  const created = await api.createBranch({
-    projectId: parent.providerProjectId,
-    name: `sandbox-${input.label}`,
-    ...(parent.providerBranchId === null ? {} : { parentId: parent.providerBranchId }),
-  })
+  let providerBranch: { projectId: string; branchId: string } | undefined
+  try {
+    return await db.transaction().execute(async (tx) => {
+      if (input.ownerSandboxId !== undefined) {
+        if (input.maxOwnedBranches === undefined || input.maxOwnedBranches < 1) {
+          throw new TypeError("an owned dev branch requires a positive maxOwnedBranches")
+        }
+        const owner = await tx
+          .selectFrom("sandbox")
+          .select(["id", "state"])
+          .where("id", "=", input.ownerSandboxId)
+          .where("state", "!=", "deleting")
+          .forUpdate()
+          .executeTakeFirst()
+        if (owner === undefined) {
+          throw new DevBranchUnavailableError(
+            `sandbox ${input.ownerSandboxId} is unavailable for a database branch`,
+          )
+        }
+        const owned = await tx
+          .selectFrom("sandboxDatabaseBranch")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("sandboxId", "=", owner.id)
+          .executeTakeFirstOrThrow()
+        assertDevBranchQuota({
+          ownedBranches: Number(owned.count),
+          maxOwnedBranches: input.maxOwnedBranches,
+          providerBranches: 0,
+          maxProjectBranches: Number.POSITIVE_INFINITY,
+        })
+      }
 
-  /*
-    No connection URI means no endpoint, and no endpoint means a branch that exists in storage and
-    cannot be connected to — which is a dev database that fails at the first query with an error
-    about the host rather than about the branch. Neon is asked for a read-write endpoint by
-    `createBranch`; if it did not give one, this is not usable and saying so here is the only place
-    the cause is still visible.
-  */
-  if (created.connectionUri === undefined) {
-    await api.deleteBranch(parent.providerProjectId, created.branch.id).catch(() => {
-      // Best effort: the branch is unusable either way, and the reaper will find it. Failing here
-      // would replace a clear error with a confusing one.
+      let parentQuery = tx
+        .selectFrom("databaseInstance")
+        .innerJoin("databaseBranch", "databaseBranch.databaseInstanceId", "databaseInstance.id")
+        .select([
+          "databaseInstance.id as instanceId",
+          "databaseInstance.providerProjectId as providerProjectId",
+          "databaseBranch.id as branchId",
+          "databaseBranch.providerBranchId as providerBranchId",
+        ])
+        .where("databaseInstance.backendServiceId", "=", input.backendServiceId)
+        .where("databaseInstance.provider", "=", "neon")
+        .where("databaseInstance.status", "=", "active")
+        .forUpdate("databaseInstance")
+      parentQuery =
+        input.parentDatabaseBranchId === undefined
+          ? parentQuery.where("databaseBranch.kind", "=", "primary")
+          : parentQuery.where("databaseBranch.id", "=", input.parentDatabaseBranchId)
+      const parent = await parentQuery.executeTakeFirst()
+
+      if (parent === undefined || parent.providerProjectId === null) {
+        throw new DevBranchUnavailableError(
+          `backend service ${input.backendServiceId} has no requested active Neon branch to branch from`,
+        )
+      }
+
+      const projectLimit = input.maxProjectBranches ?? DEFAULT_NEON_PROJECT_BRANCH_LIMIT
+      const providerBranches = await api.listBranches(parent.providerProjectId)
+      assertDevBranchQuota({
+        providerBranches: providerBranches.length,
+        maxProjectBranches: projectLimit,
+      })
+
+      const name = `sandbox-${input.label}`
+      const duplicate = await tx
+        .selectFrom("databaseBranch")
+        .select("id")
+        .where("databaseInstanceId", "=", parent.instanceId)
+        .where("name", "=", name)
+        .executeTakeFirst()
+      if (duplicate !== undefined) {
+        throw new DevBranchNameConflictError(`database branch ${name} already exists`)
+      }
+      const created = await api.createBranch({
+        projectId: parent.providerProjectId,
+        name,
+        ...(parent.providerBranchId === null ? {} : { parentId: parent.providerBranchId }),
+      })
+      providerBranch = { projectId: parent.providerProjectId, branchId: created.branch.id }
+
+      if (created.connectionUri === undefined) {
+        throw new DevBranchUnavailableError(
+          `Neon created branch ${created.branch.id} without an endpoint, so nothing can connect to it`,
+        )
+      }
+
+      const neon = parseNeonUri(created.connectionUri)
+      const secret = generateSecret()
+      const branchId = v7()
+      const roleId = v7()
+      const sealed = await seal(neon.password, rolePasswordContext(roleId))
+      const username = tenantUsername({
+        organizationId: input.organizationId,
+        kind: "database",
+        resourceId: input.backendServiceId,
+      })
+
+      await tx
+        .insertInto("databaseBranch")
+        .values({
+          id: branchId,
+          databaseInstanceId: parent.instanceId,
+          name,
+          kind: "dev",
+          parentBranchId: parent.branchId,
+          providerBranchId: created.branch.id,
+          host: neon.host,
+          // Ephemeral by construction: an unprotected branch is what the reaper is allowed to delete,
+          // and a dev branch nothing will ever delete is a bill with no owner.
+          isProtected: false,
+          ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+        })
+        .execute()
+
+      await tx
+        .insertInto("databaseRole")
+        .values({
+          id: roleId,
+          databaseBranchId: branchId,
+          roleName: neon.role,
+          passwordCiphertext: sealed.ciphertext,
+          passwordWrappedDek: sealed.wrappedDek,
+          passwordKmsKeyId: sealed.kmsKeyId,
+        })
+        .execute()
+
+      await tx
+        .insertInto("serviceCredential")
+        .values({
+          id: v7(),
+          backendServiceId: input.backendServiceId,
+          databaseBranchId: branchId,
+          username,
+          secretHash: await hashGeneratedSecret(secret),
+          lastFour: lastFour(secret),
+          ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+        })
+        .execute()
+
+      if (input.ownerSandboxId !== undefined) {
+        await tx
+          .insertInto("sandboxDatabaseBranch")
+          .values({ sandboxId: input.ownerSandboxId, databaseBranchId: branchId })
+          .execute()
+      }
+
+      return {
+        databaseBranchId: branchId,
+        name,
+        uri: postgresUri({
+          host: config.publicHost,
+          port: config.publicPort,
+          database: `sprout_db_${input.backendServiceId.replaceAll("-", "").slice(-26)}`,
+          username,
+          password: secret,
+          ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+        }),
+      }
     })
-    throw new DevBranchUnavailableError(
-      `Neon created branch ${created.branch.id} without an endpoint, so nothing can connect to it`,
-    )
-  }
-
-  const neon = parseNeonUri(created.connectionUri)
-  const secret = generateSecret()
-  const branchId = v7()
-  const roleId = v7()
-  const sealed = await seal(neon.password, rolePasswordContext(roleId))
-
-  const username = tenantUsername({
-    organizationId: input.organizationId,
-    kind: "database",
-    resourceId: input.backendServiceId,
-  })
-
-  await db.transaction().execute(async (tx) => {
-    await tx
-      .insertInto("databaseBranch")
-      .values({
-        id: branchId,
-        databaseInstanceId: parent.instanceId,
-        name: `sandbox-${input.label}`,
-        kind: "dev",
-        parentBranchId: parent.branchId,
-        providerBranchId: created.branch.id,
-        host: neon.host,
-        // Ephemeral by construction: an unprotected branch is what the reaper is allowed to delete,
-        // and a dev branch nothing will ever delete is a bill with no owner.
-        isProtected: false,
-        ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
-      })
-      .execute()
-
-    await tx
-      .insertInto("databaseRole")
-      .values({
-        id: roleId,
-        databaseBranchId: branchId,
-        roleName: neon.role,
-        passwordCiphertext: sealed.ciphertext,
-        passwordWrappedDek: sealed.wrappedDek,
-        passwordKmsKeyId: sealed.kmsKeyId,
-      })
-      .execute()
-
-    await tx
-      .insertInto("serviceCredential")
-      .values({
-        id: v7(),
-        backendServiceId: input.backendServiceId,
-        databaseBranchId: branchId,
-        username,
-        secretHash: await hashGeneratedSecret(secret),
-        lastFour: lastFour(secret),
-        ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
-      })
-      .execute()
-  })
-
-  return {
-    databaseBranchId: branchId,
-    uri: postgresUri({
-      host: config.publicHost,
-      port: config.publicPort,
-      // The database name the customer sees, which pg-proxy maps onto whatever Neon called it. The
-      // same name as the primary, because from inside the sandbox this is the same database — a
-      // different copy of it.
-      database: `sprout_db_${input.backendServiceId.replaceAll("-", "").slice(-26)}`,
-      username,
-      password: secret,
-      ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
-    }),
+  } catch (error) {
+    if (providerBranch !== undefined) {
+      try {
+        await api.deleteBranch(providerBranch.projectId, providerBranch.branchId)
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `creating the dev branch failed and provider branch ${providerBranch.branchId} could not be removed`,
+          { cause: error },
+        )
+      }
+    }
+    throw error
   }
 }
 
@@ -209,7 +305,11 @@ export async function dropDevBranch(
   }
 
   if (branch.providerBranchId !== null && branch.providerProjectId !== null) {
-    await neonApi(config.neon).deleteBranch(branch.providerProjectId, branch.providerBranchId)
+    try {
+      await neonApi(config.neon).deleteBranch(branch.providerProjectId, branch.providerBranchId)
+    } catch (error) {
+      if (!(error instanceof NeonApiError && error.status === 404)) throw error
+    }
   }
 
   await db.deleteFrom("databaseBranch").where("id", "=", branch.id).execute()
@@ -217,4 +317,12 @@ export async function dropDevBranch(
 
 export class DevBranchUnavailableError extends Error {
   override readonly name = "DevBranchUnavailableError"
+}
+
+export class DevBranchQuotaExceededError extends Error {
+  override readonly name = "DevBranchQuotaExceededError"
+}
+
+export class DevBranchNameConflictError extends Error {
+  override readonly name = "DevBranchNameConflictError"
 }

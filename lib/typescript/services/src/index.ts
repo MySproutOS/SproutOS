@@ -15,6 +15,11 @@ export {
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
   createDevBranch,
+  assertDevBranchQuota,
+  DEFAULT_NEON_PROJECT_BRANCH_LIMIT,
+  MAX_SANDBOX_DATABASE_BRANCHES,
+  DevBranchQuotaExceededError,
+  DevBranchNameConflictError,
   DevBranchUnavailableError,
   dropDevBranch,
   type DevBranch,

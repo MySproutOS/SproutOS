@@ -100,6 +100,9 @@ describe("the sandbox's own section", () => {
 
     // The three facts that change what the agent does, rather than what it knows.
     expect(body).toContain("DATABASE_URL")
+    expect(body).toContain("SPROUTOS_AGENT_DATABASE_BRANCHES_URL")
+    expect(body).toContain("schema-alternative")
+    expect(body).toContain("24-hour branch")
     expect(body).toContain("0.0.0.0")
     expect(body).toContain("/home/daytona/workspace")
     expect(body).toContain("setsid -f")

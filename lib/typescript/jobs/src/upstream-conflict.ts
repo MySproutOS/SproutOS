@@ -443,6 +443,7 @@ async function runResolutionAgent(
       driver,
       externalId,
       actionUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(input.organizationSlug)}/projects/${encodeURIComponent(input.projectId)}/agent/actions/group-primary`,
+      databaseBranchesUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(input.organizationSlug)}/projects/${encodeURIComponent(input.projectId)}/agent/actions/database-branches`,
       groupPrimaryCandidates: [],
       harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
       model: credential.model,

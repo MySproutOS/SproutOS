@@ -435,6 +435,7 @@ const app = new Hono()
 
             const { exitCode } = await runSandboxTurn({
               actionUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/group-primary`,
+              databaseBranchesUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/database-branches`,
               driver: daytonaClientFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",

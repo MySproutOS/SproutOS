@@ -18,6 +18,7 @@ import {
   deleteV1OrgsByOrgSlugMembersByMemberId,
   deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId,
   deleteV1OrgsByOrgSlugProjectsByProjectId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileId,
@@ -138,6 +139,7 @@ import {
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
   postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke,
   postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup,
@@ -195,6 +197,9 @@ import type {
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponse,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
@@ -515,6 +520,9 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
@@ -820,6 +828,68 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryMutat
   }
   return mutationOptions
 }
+
+/**
+ * Creates a short-lived Neon branch from the sandbox's development database
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Deletes an additional database branch owned by this sandbox
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdMutation =
+  (
+    options?: Partial<
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    >,
+  ): UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+  > => {
+    const mutationOptions: UseMutationOptions<
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    > = {
+      mutationFn: async (fnOptions) => {
+        const { data } =
+          await deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId(
+            {
+              ...options,
+              ...fnOptions,
+              throwOnError: true,
+            },
+          )
+        return data
+      },
+    }
+    return mutationOptions
+  }
 
 export const getV1OrgsQueryKey = (options?: Options<GetV1OrgsData>) =>
   createQueryKey("getV1Orgs", options)

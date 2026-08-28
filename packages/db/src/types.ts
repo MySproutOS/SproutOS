@@ -1131,6 +1131,12 @@ export interface Sandbox {
   userId: string
 }
 
+export interface SandboxDatabaseBranch {
+  createdAt: Generated<Timestamp>
+  databaseBranchId: string
+  sandboxId: string
+}
+
 export interface SearchCluster {
   acceptingNewTenants: Generated<boolean>
   createdAt: Generated<Timestamp>
@@ -1579,6 +1585,7 @@ export interface DB {
   role: Role
   roleStatement: RoleStatement
   sandbox: Sandbox
+  sandboxDatabaseBranch: SandboxDatabaseBranch
   searchCluster: SearchCluster
   searchTenant: SearchTenant
   serviceCredential: ServiceCredential

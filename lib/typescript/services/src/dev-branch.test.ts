@@ -3,7 +3,13 @@ import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 
-import { createDevBranch, DevBranchUnavailableError, dropDevBranch } from "./dev-branch"
+import {
+  assertDevBranchQuota,
+  createDevBranch,
+  DevBranchQuotaExceededError,
+  DevBranchUnavailableError,
+  dropDevBranch,
+} from "./dev-branch"
 import { neonApi, neonApiConfigFromEnv } from "./neon-api"
 import { neonPostgresConfigFromEnv, parseNeonUri } from "./neon-postgres"
 import { rolePasswordContext } from "./postgres"
@@ -50,6 +56,30 @@ const projectId = v7()
 const backendServiceId = v7()
 const instanceId = v7()
 const primaryBranchId = v7()
+
+describe("dev branch quotas", () => {
+  it("refuses at both the per-sandbox and provider-wide boundary", () => {
+    expect(() => {
+      assertDevBranchQuota({
+        ownedBranches: 5,
+        maxOwnedBranches: 5,
+        providerBranches: 5,
+        maxProjectBranches: 10,
+      })
+    }).toThrow(DevBranchQuotaExceededError)
+    expect(() => {
+      assertDevBranchQuota({ providerBranches: 10, maxProjectBranches: 10 })
+    }).toThrow(DevBranchQuotaExceededError)
+    expect(() => {
+      assertDevBranchQuota({
+        ownedBranches: 4,
+        maxOwnedBranches: 5,
+        providerBranches: 9,
+        maxProjectBranches: 10,
+      })
+    }).not.toThrow()
+  })
+})
 
 afterAll(async () => {
   if (!reachable) return

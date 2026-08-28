@@ -65,6 +65,7 @@ import {
   postV1OrgsByOrgSlugAnalysesResponseTransformer,
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
   postV1OrgsByOrgSlugInvitesResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponseTransformer,
@@ -102,6 +103,9 @@ import type {
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdErrors,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdResponses,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors,
@@ -441,6 +445,9 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeErrors,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses,
@@ -690,6 +697,59 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary = <
       ...options.headers,
     },
   })
+
+/**
+ * Creates a short-lived Neon branch from the sandbox's development database
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData,
+    ThrowOnError
+  >,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors,
+    ThrowOnError
+  >({
+    responseTransformer:
+      postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Deletes an additional database branch owned by this sandbox
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId =
+  <ThrowOnError extends boolean = false>(
+    options: Options<
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData,
+      ThrowOnError
+    >,
+  ): RequestResult<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors,
+    ThrowOnError
+  > =>
+    (options.client ?? client).delete<
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses,
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches/{databaseBranchId}",
+      ...options,
+    })
 
 /**
  * Lists the organizations the caller is an active member of

@@ -96,6 +96,7 @@ export {
   requestSandboxStart,
   SandboxDeletingError,
   reapSandboxes,
+  reapExpiredDatabaseBranches,
   SANDBOX_KINDS,
   scheduleSandboxJobs,
   stopSandbox,

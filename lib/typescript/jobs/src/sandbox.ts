@@ -8,12 +8,19 @@ import {
   crudAgentSession,
   crudMeteringOutbox,
   crudSandbox,
+  fetchDatabaseBranch,
   fetchGithubInstallation,
   fetchSandbox,
+  fetchSandboxDatabaseBranch,
 } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
-import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
+import {
+  createDevBranch,
+  dropDevBranch,
+  MAX_SANDBOX_DATABASE_BRANCHES,
+  neonPostgresConfigFromEnv,
+} from "@lib/services"
 import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { DaytonaSandboxClient } from "@lib/sandbox"
 import type { DB, JsonValue } from "@sproutos/db"
@@ -30,7 +37,10 @@ export const SANDBOX_KINDS = {
   reconcile: "sandbox.reconcile",
   reap: "sandbox.reap",
   meter: "sandbox.meter",
+  reapDatabaseBranches: "sandbox.database_branch.reap",
 } as const
+
+const DATABASE_BRANCH_REAP_BATCH_SIZE = 25
 
 /**
  * What a sandbox costs us, per second, in micro-USD.
@@ -519,7 +529,7 @@ async function devDatabase(
   db: Kysely<DB>,
   input: { projectId: string; organizationId: string; sandboxId: string },
 ): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
-  const serviceId = await findSandboxPostgresServiceId(db, input.projectId)
+  const serviceId = await fetchSandbox(db).postgresServiceIdForScope(input.projectId)
 
   if (serviceId === undefined) return undefined
 
@@ -528,6 +538,8 @@ async function devDatabase(
       backendServiceId: serviceId,
       organizationId: input.organizationId,
       label: input.sandboxId.slice(-12),
+      maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
+      ownerSandboxId: input.sandboxId,
     })
     return { databaseBranchId: branch.databaseBranchId, env: { DATABASE_URL: branch.uri } }
   } catch (cause) {
@@ -554,51 +566,7 @@ export async function findSandboxPostgresServiceId(
   db: Kysely<DB>,
   projectId: string,
 ): Promise<string | undefined> {
-  const service = await db
-    .selectFrom("backendService")
-    .select(["id"])
-    .where("kind", "=", "postgres")
-    .where("status", "=", "active")
-    .where("deletedAt", "is", null)
-    .where((eb) =>
-      eb.or([
-        eb("projectId", "=", projectId),
-        eb(
-          "projectId",
-          "in",
-          eb
-            .selectFrom("project")
-            .select("parentProjectId")
-            .where("id", "=", projectId)
-            .where("deletedAt", "is", null)
-            .where("parentProjectId", "is not", null)
-            .$castTo<string>(),
-        ),
-        eb(
-          "projectId",
-          "in",
-          eb
-            .selectFrom("project")
-            .select("id")
-            .where("parentProjectId", "=", projectId)
-            .where("deletedAt", "is", null),
-        ),
-      ]),
-    )
-    .orderBy(
-      sql<number>`case
-        when project_id = ${projectId} then 0
-        when project_id = (
-          select parent_project_id from project where id = ${projectId}
-        ) then 1
-        else 2
-      end`,
-      "asc",
-    )
-    .orderBy("createdAt", "asc")
-    .executeTakeFirst()
-
-  return service?.id
+  return await fetchSandbox(db).postgresServiceIdForScope(projectId)
 }
 
 type SandboxPayload = { sandboxId?: string }
@@ -634,8 +602,11 @@ async function reprovisionMissingProviderObject(
       with no sandbox pointing at it. The protected-primary check in `dropDevBranch` is the final
       guard if this foreign key is ever wrong.
     */
-    if (current.databaseBranchId !== null) {
-      await dropDevBranch(tx, neonPostgresConfigFromEnv(), current.databaseBranchId)
+    const ownedBranches = await fetchSandboxDatabaseBranch(tx).listForSandbox(input.sandboxId)
+    const branchIds = new Set(ownedBranches.map((owned) => owned.databaseBranchId))
+    if (current.databaseBranchId !== null) branchIds.add(current.databaseBranchId)
+    for (const databaseBranchId of branchIds) {
+      await dropDevBranch(tx, neonPostgresConfigFromEnv(), databaseBranchId)
     }
 
     await crudSandbox(tx).update(input.sandboxId, {
@@ -710,6 +681,7 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
 
     let sandboxDriver: DaytonaSandboxClient | undefined
     let providerExternalId = sandbox.externalId
+    let unrecordedDatabaseBranchId: string | undefined
     try {
       sandboxDriver = makeDriver()
 
@@ -762,6 +734,7 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
         projectId: sandbox.projectId,
         sandboxId: sandbox.id,
       })
+      unrecordedDatabaseBranchId = database?.databaseBranchId
 
       const created = await sandboxDriver.create({
         sandboxId: sandbox.id,
@@ -795,6 +768,7 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
         }
         return
       }
+      unrecordedDatabaseBranchId = undefined
 
       /*
         A sandbox with nothing in it is a sandbox nobody can work in.
@@ -838,6 +812,19 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
           await sandboxDriver.stop(providerExternalId)
         } catch (cause) {
           if (!(cause instanceof SandboxNotFoundError)) cleanupError = cause
+        }
+      }
+      if (unrecordedDatabaseBranchId !== undefined) {
+        try {
+          await dropDevBranch(db, neonPostgresConfigFromEnv(), unrecordedDatabaseBranchId)
+        } catch (cause) {
+          cleanupError =
+            cleanupError === undefined
+              ? cause
+              : new AggregateError(
+                  [cleanupError, cause],
+                  `sandbox ${sandbox.id} provider and database cleanup both failed`,
+                )
         }
       }
       await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], { state: "failed" })
@@ -988,7 +975,11 @@ export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): J
 }
 
 /** Destroy at the provider, then drop the row. Order matters — see `teardown.ts`. */
-export function destroySandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function destroySandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -1023,11 +1014,29 @@ export function destroySandbox(makeDriver: () => DaytonaSandboxClient = daytona)
       Failing the job on error is deliberate. Dropping the row while the branch survives is exactly
       how the reference is lost.
     */
-    if (sandbox.databaseBranchId !== null) {
-      await dropDevBranch(db, neonPostgresConfigFromEnv(), sandbox.databaseBranchId)
+    const ownedBranches = await fetchSandboxDatabaseBranch(db).listForSandbox(sandbox.id)
+    const branchIds = new Set(ownedBranches.map((owned) => owned.databaseBranchId))
+    if (sandbox.databaseBranchId !== null) branchIds.add(sandbox.databaseBranchId)
+    for (const databaseBranchId of branchIds) {
+      await drop(db, branchConfig(), databaseBranchId)
     }
 
     await crudSandbox(db).remove(sandbox.id)
+  }
+}
+
+export function reapExpiredDatabaseBranches(
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
+  return async (_job, { db }) => {
+    const expired = await fetchDatabaseBranch(db).expiredUnprotected(
+      new Date(),
+      DATABASE_BRANCH_REAP_BATCH_SIZE,
+    )
+    for (const branch of expired) {
+      await drop(db, branchConfig(), branch.id)
+    }
   }
 }
 
@@ -1055,5 +1064,10 @@ export async function scheduleSandboxJobs(db: Kysely<DB>, now: Date = new Date()
     kind: SANDBOX_KINDS.reap,
     idempotencyKey: `${SANDBOX_KINDS.reap}:${minute}`,
     maxAttempts: 3,
+  })
+  await enqueue(db, {
+    kind: SANDBOX_KINDS.reapDatabaseBranches,
+    idempotencyKey: `${SANDBOX_KINDS.reapDatabaseBranches}:${minute}`,
+    maxAttempts: 5,
   })
 }

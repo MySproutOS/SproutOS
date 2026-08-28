@@ -118,6 +118,29 @@ server. Nothing you run reaches the platform's own infrastructure.
 this sandbox. It is a copy: migrate it, seed it, drop a table. Production is not on the other end of
 that credential, and cannot be reached from here.
 
+**You can branch that development database again.** When two alternatives must be tested without
+changing each other's data, request a named, 24-hour branch through the scoped action below. It is
+created from this sandbox's current database, not from production. The response contains a new
+\`databaseUrl\` exactly once; capture it without printing it, and pass it only to the command that
+needs the alternative database. A sandbox may own its default branch plus four alternatives.
+
+\`\`\`bash
+branch_response="$(curl --silent --show-error --fail-with-body \\
+  --request POST \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  --header "Content-Type: application/json" \\
+  --data '{"name":"schema-alternative"}' \\
+  "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL")"
+alternative_database_url="$(BRANCH_RESPONSE="$branch_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseUrl)')"
+DATABASE_URL="$alternative_database_url" npm test
+unset branch_response alternative_database_url
+\`\`\`
+
+Names use lowercase letters, numbers, and hyphens. Delete an alternative early with
+\`DELETE "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL/<databaseBranchId>"\` and the same bearer. Never
+delete or replace the default \`DATABASE_URL\`; sandbox destruction removes every remaining branch.
+
 **A person may be watching a port.** A dev server on 3000, 5173 or 8080 is shown to the customer as
 a live preview. Bind to \`0.0.0.0\`, not \`127.0.0.1\` — a server listening on loopback inside a
 container is invisible from outside it, which looks to the customer like a preview that never loads.

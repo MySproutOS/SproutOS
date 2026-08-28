@@ -260,6 +260,109 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryRespon
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData = {
+  body?: {
+    name: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors = {
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The initiating user lacks database:branch:create
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this scope
+   */
+  404: ErrorResponseT
+  /**
+   * No running sandbox development database is available
+   */
+  409: ErrorResponseT
+  /**
+   * The sandbox or Neon project branch quota is full
+   */
+  429: ErrorResponseT
+  /**
+   * Neon is unavailable or not configured
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses = {
+  /**
+   * A branch-scoped pg-proxy URL returned exactly once
+   */
+  201: {
+    databaseBranchId: string
+    name: string
+    databaseUrl: string
+    expiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData =
+  {
+    body?: never
+    path: {
+      orgSlug: string
+      projectId: string
+      databaseBranchId: string
+    }
+    query?: never
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches/{databaseBranchId}"
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors =
+  {
+    /**
+     * The short-lived agent token is absent or invalid
+     */
+    401: ErrorResponseT
+    /**
+     * The initiating user lacks database:branch:delete
+     */
+    403: ErrorResponseT
+    /**
+     * The branch is not an additional branch of this sandbox
+     */
+    404: ErrorResponseT
+    /**
+     * Neon is unavailable or not configured
+     */
+    503: ErrorResponseT
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses =
+  {
+    /**
+     * The additional branch was deleted
+     */
+    204: void
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses]
+
 export type GetV1OrgsData = {
   body?: never
   path?: never

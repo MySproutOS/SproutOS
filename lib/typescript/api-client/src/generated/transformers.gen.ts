@@ -56,6 +56,7 @@ import type {
   PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
@@ -81,6 +82,14 @@ export const postV1AuthCliTokenResponseTransformer = async (
   }
   return data
 }
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse> => {
+    data.expiresAt = new Date(data.expiresAt)
+    return data
+  }
 
 export const getV1OrgsResponseTransformer = async (data: any): Promise<GetV1OrgsResponse> => {
   data.data = data.data.map((item: any) => {
