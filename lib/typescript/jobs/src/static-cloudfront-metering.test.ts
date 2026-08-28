@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   importStaticCloudFrontLog,
   parseStaticCloudFrontLog,
+  reconcileStaticCloudFrontUsage,
   scanStaticCloudFrontLogs,
   staticCloudFrontObjectIdempotencyKey,
   staticCloudFrontUsageEvents,
@@ -67,6 +68,7 @@ describe("static CloudFront metering", () => {
     expect(new Set(first.map((event) => event.eventId)).size).toBe(2)
     expect(first[0]?.occurredAt).toEqual(new Date(1_787_913_296_789))
     expect(first[0]?.attributes.cloudfront_request_id).toBe("req-stable-1")
+    expect(first.every((event) => event.source === "cloudfront-standard-v2")).toBe(true)
   })
 
   it("uses the logged immutable project/digest route when a hostname has since moved", () => {
@@ -272,6 +274,61 @@ describe("static CloudFront metering", () => {
         "#Fields: timestamp(ms) x-edge-request-id x-host-header sc-bytes\nnope\treq\thost\tnot-a-number\n",
       ),
     ).toThrow(/invalid sc-bytes/)
+  })
+
+  it("records a comparable request-count gap without inventing a byte residual", async () => {
+    const reconciliations: Record<string, unknown>[] = []
+    const handler = reconcileStaticCloudFrontUsage({
+      distributionId: "EDISTRIBUTION",
+      now: () => new Date("2026-08-28T12:00:00.000Z"),
+      providerTotals: () => Promise.resolve({ requests: "10" }),
+      importedTotals: () => Promise.resolve({ requests: "8.000000000" }),
+      store: (_db, input) => {
+        reconciliations.push(input)
+        return Promise.resolve()
+      },
+    })
+
+    await handler({} as never, scanContext())
+
+    expect(reconciliations).toHaveLength(3)
+    expect(reconciliations.map(({ periodStart, status }) => ({ periodStart, status }))).toEqual([
+      { periodStart: new Date("2026-08-27T00:00:00.000Z"), status: "pending_delivery" },
+      { periodStart: new Date("2026-08-26T00:00:00.000Z"), status: "pending_delivery" },
+      { periodStart: new Date("2026-08-25T00:00:00.000Z"), status: "platform_overhead" },
+    ])
+    expect(reconciliations[0]).toMatchObject({
+      providerRequests: "10",
+      importedRequests: "8",
+      residualRequests: "2",
+      resourceId: "EDISTRIBUTION",
+    })
+    expect(reconciliations[0]).not.toHaveProperty("providerEgressBytes")
+    expect(reconciliations[0]).not.toHaveProperty("importedEgressBytes")
+    expect(reconciliations[0]).not.toHaveProperty("residualEgressBytes")
+  })
+
+  it("converges provider corrections absolutely and never invents a negative residual", async () => {
+    const reconciliations: Record<string, unknown>[] = []
+    const handler = reconcileStaticCloudFrontUsage({
+      distributionId: "EDISTRIBUTION",
+      now: () => new Date("2026-08-28T12:00:00.000Z"),
+      providerTotals: () => Promise.resolve({ requests: "9" }),
+      importedTotals: () => Promise.resolve({ requests: "10.000000000" }),
+      store: (_db, input) => {
+        reconciliations.push(input)
+        return Promise.resolve()
+      },
+    })
+
+    await handler({} as never, scanContext())
+    await handler({} as never, scanContext())
+
+    expect(reconciliations).toHaveLength(6)
+    expect(
+      reconciliations.every((row) => row.status === "matched" && row.residualRequests === "0"),
+    ).toBe(true)
+    expect(reconciliations.slice(0, 3)).toEqual(reconciliations.slice(3))
   })
 })
 

@@ -25,6 +25,7 @@
     "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@aws-sdk/client-auto-scaling": "catalog:",
     "@aws-sdk/client-cloudfront-keyvaluestore": "catalog:",
+    "@aws-sdk/client-cloudwatch": "catalog:",
     "@aws-sdk/client-kms": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
     "@aws-sdk/client-route-53": "catalog:",

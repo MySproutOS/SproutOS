@@ -24,6 +24,9 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   ["site_gib_second", "3"],
   ["site_provisioned_gib_second", "3"],
   ["site_request", "2"],
+  // Static delivery uses CloudFront standard-log sc-bytes: the full server-to-viewer response,
+  // including headers and every HTTP method. This is the explicit customer price-book quantity,
+  // not a claim that CloudWatch BytesDownloaded (GET/HEAD only) is provider-equivalent.
   ["site_egress_byte", "0.00014"],
   // Neon Launch pass-through: $0.106/CU-hour and $0.35 per decimal GB-month.
   ["db_storage_gib_hour", "514.807723836"], // Legacy byte-month conversion compatibility.

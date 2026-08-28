@@ -6,9 +6,16 @@ import {
   type ListObjectsV2CommandInput,
   S3Client,
 } from "@aws-sdk/client-s3"
-import { crudMeteringImportState, crudMeteringOutbox, fetchMeteringImportState } from "@lib/dao"
+import {
+  crudMeteringImportState,
+  crudMeteringOutbox,
+  crudProviderUsageReconciliation,
+  fetchMeteringImportState,
+} from "@lib/dao"
 import { encodeUsageEvent, usageEventRecord, type UsageEventRecord } from "@lib/metering"
+import { staticCloudFrontUsageTotals, type StaticCloudFrontUsageTotals } from "@lib/observability"
 import type { DB, JsonValue } from "@sproutos/db"
+import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch"
 import { createHash } from "node:crypto"
 import { gunzip as gunzipCallback } from "node:zlib"
 import { promisify } from "node:util"
@@ -20,6 +27,7 @@ import type { JobHandler } from "./worker"
 export const STATIC_CLOUDFRONT_METERING_KINDS = {
   scan: "billing.scan_static_cloudfront_logs",
   importObject: "billing.import_static_cloudfront_log",
+  reconcile: "billing.reconcile_static_cloudfront_usage",
 } as const
 
 export const STATIC_CLOUDFRONT_LOG_PREFIX = "tenant-static/"
@@ -27,6 +35,8 @@ export const STATIC_CLOUDFRONT_RETENTION_DAYS = 90
 export const STATIC_CLOUDFRONT_LATE_DELIVERY_OVERLAP_DAYS = 2
 export const STATIC_CLOUDFRONT_OUTBOX_BATCH_SIZE = 500
 export const STATIC_CLOUDFRONT_IMPORT_CONSUMER = "static-cloudfront-standard-v2"
+export const STATIC_CLOUDFRONT_RECONCILIATION_DAYS = 3
+export const STATIC_CLOUDFRONT_DELIVERY_GRACE_HOURS = 48
 const MAX_COMPRESSED_BYTES = 32 * 1024 * 1024
 const MAX_DECOMPRESSED_BYTES = 128 * 1024 * 1024
 const SOURCE = "cloudfront-standard-v2"
@@ -67,6 +77,29 @@ type ImportDependencies = {
   ) => Promise<Map<string, Attribution>>
   storeEvents?: (db: Kysely<DB>, events: UsageEventRecord[]) => Promise<void>
   config?: StaticLogConfig
+}
+
+type ReconciliationTotals = {
+  requests: string
+}
+
+type ReconciliationDependencies = {
+  now?: () => Date
+  providerTotals?: (start: Date, end: Date) => Promise<ReconciliationTotals>
+  importedTotals?: (start: Date, end: Date) => Promise<StaticCloudFrontUsageTotals>
+  store?: (
+    db: Kysely<DB>,
+    input: {
+      importedRequests: string
+      observedAt: Date
+      periodStart: Date
+      providerRequests: string
+      residualRequests: string
+      resourceId: string
+      status: "matched" | "pending_delivery" | "platform_overhead"
+    },
+  ) => Promise<void>
+  distributionId?: string
 }
 
 type ParsedRequest = {
@@ -489,7 +522,13 @@ async function storeEvents(db: Kysely<DB>, events: UsageEventRecord[]): Promise<
   }
 }
 
-/** Fetch one immutable object and stage retry-stable request and egress events in the outbox. */
+/**
+ * Fetch one immutable object and stage retry-stable request and egress events in the outbox.
+ *
+ * FUTURE: if seconds-level visibility becomes necessary, replace this standard-log source with
+ * 100% CloudFront real-time logs through Kinesis and a checkpointed consumer. Sampling cannot be
+ * used for billing, and cache hits must remain on CloudFront instead of being routed through Rust.
+ */
 export function importStaticCloudFrontLog(dependencies: ImportDependencies = {}): JobHandler {
   let client: S3Client | undefined
   const get =
@@ -528,6 +567,146 @@ export function importStaticCloudFrontLog(dependencies: ImportDependencies = {})
       console.info(
         `[jobs] staged ${events.length} static CloudFront usage event(s) from ${payload.key}`,
       )
+    }
+  }
+}
+
+function integerQuantity(value: string, label: string): bigint {
+  if (!/^\d+(?:\.0+)?$/.test(value)) {
+    throw new Error(`${label} must be a non-negative integer quantity, received ${value}`)
+  }
+  return BigInt(value.split(".")[0] ?? value)
+}
+
+function providerMetricTotal(value: number | undefined, label: string): string {
+  if (value === undefined) return "0"
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`CloudFront ${label} metric is invalid: ${String(value)}`)
+  }
+  return String(Math.round(value))
+}
+
+async function cloudFrontProviderTotals(
+  distributionId: string,
+  start: Date,
+  end: Date,
+): Promise<ReconciliationTotals> {
+  const client = new CloudWatchClient({ region: "us-east-1" })
+  const response = await client.send(
+    new GetMetricStatisticsCommand({
+      Namespace: "AWS/CloudFront",
+      MetricName: "Requests",
+      Dimensions: [
+        { Name: "DistributionId", Value: distributionId },
+        { Name: "Region", Value: "Global" },
+      ],
+      StartTime: start,
+      EndTime: end,
+      Period: 86_400,
+      Statistics: ["Sum"],
+    }),
+  )
+  return {
+    requests: providerMetricTotal(
+      response.Datapoints?.reduce((sum, point) => sum + (point.Sum ?? 0), 0),
+      "Requests",
+    ),
+  }
+}
+
+function closedUtcDay(now: Date, daysAgo: number): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysAgo))
+}
+
+/**
+ * Compare the provider request count with canonical ClickHouse rows without manufacturing usage.
+ *
+ * AWS defines both the CloudWatch Requests metric and one standard-log row as a viewer request
+ * across all methods, so those counts have a bounded, like-for-like interpretation. We
+ * intentionally do not compare bytes: standard-log sc-bytes includes response headers and all
+ * methods, while BytesDownloaded is defined only for GET and HEAD and AWS does not document those
+ * values as equivalent. A byte comparison here would manufacture a false residual.
+ *
+ * Standard logs are best effort. During the documented delivery window a positive request gap is
+ * `pending_delivery`; after the grace period it becomes `platform_overhead`. Neither state writes
+ * a usage event, rollup, hold, or ledger entry. Credit enforcement therefore never treats usage
+ * that has not been attributed yet as a customer debit, and the prepaid hard floor remains the
+ * only last-line safeguard.
+ *
+ * FUTURE: if seconds-level visibility becomes necessary, replace standard logs with 100% real-time
+ * logs through Kinesis and a checkpointed consumer. Never sample a financial source, and do not
+ * route static cache hits through Rust merely to meter them.
+ */
+export function reconcileStaticCloudFrontUsage(
+  dependencies: ReconciliationDependencies = {},
+): JobHandler {
+  return async (_job, { db, keepAlive, signal }) => {
+    const now = dependencies.now?.() ?? new Date()
+    if (Number.isNaN(now.getTime())) throw new Error("Static reconciliation clock is invalid")
+    const distributionId = dependencies.distributionId ?? process.env.TENANT_STATIC_DISTRIBUTION_ID
+    if (distributionId === undefined || distributionId === "") {
+      throw new Error(
+        "TENANT_STATIC_DISTRIBUTION_ID is not set; provider usage cannot be reconciled",
+      )
+    }
+    const providerTotals =
+      dependencies.providerTotals ??
+      ((start: Date, end: Date) => cloudFrontProviderTotals(distributionId, start, end))
+    const importedTotals = dependencies.importedTotals ?? staticCloudFrontUsageTotals
+    const store =
+      dependencies.store ??
+      (async (database, input) => {
+        await crudProviderUsageReconciliation(database).upsert({
+          id: v7(),
+          provider: "cloudfront",
+          ...input,
+        })
+      })
+
+    for (let daysAgo = 1; daysAgo <= STATIC_CLOUDFRONT_RECONCILIATION_DAYS; daysAgo++) {
+      if (signal.aborted) throw signal.reason ?? new Error("Static reconciliation aborted")
+      const start = closedUtcDay(now, daysAgo)
+      const end = new Date(start.getTime() + 86_400_000)
+      const [provider, imported] = await Promise.all([
+        providerTotals(start, end),
+        importedTotals(start, end),
+      ])
+      const providerRequests = integerQuantity(provider.requests, "provider requests")
+      const importedRequests = integerQuantity(imported.requests, "imported requests")
+      const residualRequests =
+        providerRequests > importedRequests ? providerRequests - importedRequests : 0n
+      const hasResidual = residualRequests > 0n
+      const graceEnds = new Date(end.getTime() + STATIC_CLOUDFRONT_DELIVERY_GRACE_HOURS * 3_600_000)
+      const status = !hasResidual
+        ? "matched"
+        : now < graceEnds
+          ? "pending_delivery"
+          : "platform_overhead"
+
+      await store(db, {
+        importedRequests: importedRequests.toString(),
+        observedAt: now,
+        periodStart: start,
+        providerRequests: providerRequests.toString(),
+        residualRequests: residualRequests.toString(),
+        resourceId: distributionId,
+        status,
+      })
+
+      console.info(
+        JSON.stringify({
+          event: "static_cloudfront_usage_reconciliation",
+          periodStart: start.toISOString(),
+          providerRequests: providerRequests.toString(),
+          importedRequests: importedRequests.toString(),
+          residualRequests: residualRequests.toString(),
+          comparisonSemantics: "viewer_request_count_only",
+          byteComparison: "unsupported_non_equivalent_definitions",
+          residualAllocation: "platform_overhead",
+          status,
+        }),
+      )
+      if (!(await keepAlive())) throw new Error("Static reconciliation lost its job lease")
     }
   }
 }
