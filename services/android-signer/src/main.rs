@@ -6,9 +6,9 @@ use android_signer::crypto::MasterIdentity;
 use android_signer::developer_console::{
     DeveloperConsoleOAuth, receive_consent_and_store_refresh_token,
 };
-use android_signer::process::CommandAndroidTools;
+use android_signer::process::{AndroidTools as _, CommandAndroidTools};
 use android_signer::state::StateStore;
-use android_signer::{Signer, SignerConfig};
+use android_signer::{CLIENT_PACKAGE_NAME, Signer, SignerConfig, apk};
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 
@@ -43,6 +43,31 @@ enum Command {
     Run(RuntimeArgs),
     /// Claim and process at most one job. Useful for installation smoke tests.
     Once(RuntimeArgs),
+    /// Idempotently request the one immutable catalogue-client key and print only public state.
+    ClientIdentity(ClientApiArgs),
+    /// Validate and durably queue an unsigned catalogue-client APK for the on-prem signer.
+    QueueClientRelease {
+        #[command(flatten)]
+        api: ClientApiArgs,
+        #[arg(long)]
+        apk: PathBuf,
+        #[arg(long, env = "APK_SIGNER_ANDROID_SDK_ROOT")]
+        android_sdk_root: Option<PathBuf>,
+        #[arg(long, env = "APK_SIGNER_MAX_APK_BYTES", default_value_t = 536_870_912)]
+        max_apk_bytes: u64,
+    },
+}
+
+#[derive(clap::Args)]
+struct ClientApiArgs {
+    #[arg(
+        long,
+        env = "APK_SIGNER_API_URL",
+        default_value = "https://api.sproutos.me"
+    )]
+    api_url: String,
+    #[arg(long, env = "APK_SIGNER_ID")]
+    signer_id: String,
 }
 
 #[derive(clap::Args)]
@@ -107,7 +132,62 @@ async fn main() -> anyhow::Result<()> {
             runtime(args).await?.run_once().await?;
             Ok(())
         }
+        Command::ClientIdentity(args) => {
+            let api = client_api(args)?;
+            let identity = api.ensure_client_identity().await?;
+            println!("package_name={}", identity.package_name);
+            println!("state={}", identity.state);
+            if let Some(fingerprint) = identity.certificate_sha256 {
+                println!("certificate_sha256={fingerprint}");
+            }
+            Ok(())
+        }
+        Command::QueueClientRelease {
+            api,
+            apk: unsigned_apk,
+            android_sdk_root,
+            max_apk_bytes,
+        } => {
+            if max_apk_bytes == 0 {
+                anyhow::bail!("APK limit must be positive")
+            }
+            let size_bytes = std::fs::metadata(&unsigned_apk)?.len();
+            if size_bytes == 0 || size_bytes > max_apk_bytes {
+                anyhow::bail!("catalogue-client APK is empty or exceeds the configured limit")
+            }
+            apk::validate_unsigned_zip_structure(&unsigned_apk)?;
+            let tools = CommandAndroidTools::discover(android_sdk_root.as_deref())?;
+            tools.assert_unsigned(&unsigned_apk)?;
+            let manifest = tools.manifest(&unsigned_apk)?;
+            manifest.assert_expected(CLIENT_PACKAGE_NAME, manifest.version_code)?;
+            let digest = apk::sha256_file(&unsigned_apk)?;
+            let api = client_api(api)?;
+            let prepared = api
+                .prepare_client_release(
+                    CLIENT_PACKAGE_NAME,
+                    &digest,
+                    size_bytes,
+                    manifest.version_code,
+                )
+                .await?;
+            let uploaded = api
+                .upload_local_apk(&prepared.upload_url, &unsigned_apk)
+                .await?;
+            let version = uploaded.version_id.context(
+                "the private artifact bucket did not return x-amz-version-id; versioning is required",
+            )?;
+            api.finalize_client_upload(&prepared, &version, &digest, size_bytes)
+                .await?;
+            println!("queued_client_release_job={}", prepared.job_id);
+            println!("unsigned_sha256={digest}");
+            Ok(())
+        }
     }
+}
+
+fn client_api(args: ClientApiArgs) -> anyhow::Result<SignerApi> {
+    let token = std::env::var("APK_SIGNER_TOKEN").context("APK_SIGNER_TOKEN is not set")?;
+    SignerApi::new(args.api_url, token, args.signer_id)
 }
 
 async fn runtime(args: RuntimeArgs) -> anyhow::Result<Signer<SignerApi, CommandAndroidTools>> {

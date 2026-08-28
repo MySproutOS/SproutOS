@@ -15,6 +15,8 @@ use crate::{APK_MIME, response_is_apk};
 pub enum ClaimedJob {
     ProvisionKey(ProvisionKeyJob),
     SignRelease(Box<SignReleaseJob>),
+    ProvisionClientKey(ProvisionClientKeyJob),
+    SignClientRelease(Box<SignClientReleaseJob>),
 }
 
 impl ClaimedJob {
@@ -22,6 +24,8 @@ impl ClaimedJob {
         match self {
             Self::ProvisionKey(job) => &job.job_id,
             Self::SignRelease(job) => &job.job_id,
+            Self::ProvisionClientKey(job) => &job.job_id,
+            Self::SignClientRelease(job) => &job.job_id,
         }
     }
 
@@ -29,8 +33,18 @@ impl ClaimedJob {
         match self {
             Self::ProvisionKey(_) => "provision_key",
             Self::SignRelease(_) => "sign_release",
+            Self::ProvisionClientKey(_) => "provision_client_key",
+            Self::SignClientRelease(_) => "sign_client_release",
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProvisionClientKeyJob {
+    pub job_id: String,
+    pub package_name: String,
+    pub encrypted_key_upload_url: String,
+    pub encrypted_key_object_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +63,23 @@ pub struct SignReleaseJob {
     pub package_name: String,
     pub project_id: String,
     pub deployment_id: String,
+    pub download_url: String,
+    pub unsigned_digest: String,
+    pub input_mime: String,
+    pub version_code: u64,
+    pub previous_version_code: u64,
+    pub expected_certificate_sha256: String,
+    pub key_download_url: String,
+    pub encrypted_key_object_key: String,
+    pub encrypted_key_object_version: String,
+    pub upload_url: String,
+    pub signed_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignClientReleaseJob {
+    pub job_id: String,
+    pub package_name: String,
     pub download_url: String,
     pub unsigned_digest: String,
     pub input_mime: String,
@@ -92,6 +123,58 @@ pub enum CompleteRequest {
         version_name: String,
         certificate_sha256: String,
     },
+    ProvisionClientKey {
+        job_id: String,
+        signer_id: String,
+        encrypted_key_object_key: String,
+        encrypted_key_object_version: String,
+        certificate_sha256: String,
+    },
+    SignClientRelease {
+        job_id: String,
+        signer_id: String,
+        signed_key: String,
+        signed_object_version: String,
+        signed_digest: String,
+        size_bytes: u64,
+        package_name: String,
+        version_code: u64,
+        version_name: String,
+        certificate_sha256: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct PrepareClientReleaseRequest<'a> {
+    signer_id: &'a str,
+    package_name: &'a str,
+    unsigned_digest: &'a str,
+    size_bytes: u64,
+    version_code: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PrepareClientReleaseResponse {
+    pub job_id: String,
+    pub unsigned_key: String,
+    pub upload_url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FinalizeClientUploadRequest<'a> {
+    job_id: &'a str,
+    signer_id: &'a str,
+    unsigned_key: &'a str,
+    unsigned_object_version: &'a str,
+    unsigned_digest: &'a str,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientIdentityStatus {
+    pub package_name: String,
+    pub state: String,
+    pub certificate_sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,6 +271,87 @@ impl SignerApi {
 
     fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request.header(AUTHORIZATION, format!("Bearer {}", self.token))
+    }
+
+    pub async fn ensure_client_identity(&self) -> anyhow::Result<ClientIdentityStatus> {
+        let response = self
+            .authorized(self.client.post(self.endpoint("client-identity")))
+            .json(&ClaimRequest {
+                signer_id: &self.signer_id,
+            })
+            .send()
+            .await
+            .context("could not request the catalogue-client identity")?;
+        if !response.status().is_success() {
+            Self::require_success(response, "catalogue-client identity request").await?;
+            unreachable!();
+        }
+        response
+            .json()
+            .await
+            .context("catalogue-client identity response is malformed")
+    }
+
+    pub async fn prepare_client_release(
+        &self,
+        package_name: &str,
+        unsigned_digest: &str,
+        size_bytes: u64,
+        version_code: u64,
+    ) -> anyhow::Result<PrepareClientReleaseResponse> {
+        let response = self
+            .authorized(self.client.post(self.endpoint("client-release/prepare")))
+            .json(&PrepareClientReleaseRequest {
+                signer_id: &self.signer_id,
+                package_name,
+                unsigned_digest,
+                size_bytes,
+                version_code,
+            })
+            .send()
+            .await
+            .context("could not prepare the catalogue-client release")?;
+        if !response.status().is_success() {
+            Self::require_success(response, "catalogue-client release preparation").await?;
+            unreachable!();
+        }
+        response
+            .json()
+            .await
+            .context("catalogue-client release preparation response is malformed")
+    }
+
+    pub async fn finalize_client_upload(
+        &self,
+        prepared: &PrepareClientReleaseResponse,
+        unsigned_object_version: &str,
+        unsigned_digest: &str,
+        size_bytes: u64,
+    ) -> anyhow::Result<()> {
+        let request = FinalizeClientUploadRequest {
+            job_id: &prepared.job_id,
+            signer_id: &self.signer_id,
+            unsigned_key: &prepared.unsigned_key,
+            unsigned_object_version,
+            unsigned_digest,
+            size_bytes,
+        };
+        let callback = self
+            .authorized(
+                self.client
+                    .post(self.endpoint("client-release/finalize-upload")),
+            )
+            .header(
+                "Idempotency-Key",
+                hex::encode(Sha256::digest(serde_json::to_vec(&request)?)),
+            )
+            .json(&request);
+        self.callback(callback, "catalogue-client upload finalization")
+            .await
+    }
+
+    pub async fn upload_local_apk(&self, url: &str, path: &Path) -> anyhow::Result<UploadResult> {
+        <Self as ControlPlane>::put_file(self, url, APK_MIME, path).await
     }
 
     async fn require_success(response: reqwest::Response, operation: &str) -> anyhow::Result<()> {
@@ -579,6 +743,38 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(sign, ClaimedJob::SignRelease(_)));
+
+        let client_provision: ClaimedJob = serde_json::from_value(serde_json::json!({
+            "kind": "provision_client_key",
+            "job_id": "019d0000-0000-7000-8000-000000000006",
+            "package_name": "com.sproutos.store",
+            "encrypted_key_upload_url": "https://bucket.s3.us-east-1.amazonaws.com/client-key",
+            "encrypted_key_object_key": "keys/client/signing.keystore.enc"
+        }))
+        .unwrap();
+        assert!(matches!(
+            client_provision,
+            ClaimedJob::ProvisionClientKey(_)
+        ));
+
+        let client_sign: ClaimedJob = serde_json::from_value(serde_json::json!({
+            "kind": "sign_client_release",
+            "job_id": "019d0000-0000-7000-8000-000000000007",
+            "package_name": "com.sproutos.store",
+            "download_url": "https://bucket.s3.us-east-1.amazonaws.com/client-unsigned?versionId=one",
+            "unsigned_digest": "aa",
+            "input_mime": "application/vnd.android.package-archive",
+            "version_code": 2,
+            "previous_version_code": 1,
+            "expected_certificate_sha256": "bb",
+            "key_download_url": "https://bucket.s3.us-east-1.amazonaws.com/client-key?versionId=one",
+            "encrypted_key_object_key": "keys/client/signing.keystore.enc",
+            "encrypted_key_object_version": "one",
+            "upload_url": "https://bucket.s3.us-east-1.amazonaws.com/client-signed",
+            "signed_key": "signed/client/job.apk"
+        }))
+        .unwrap();
+        assert!(matches!(client_sign, ClaimedJob::SignClientRelease(_)));
     }
 
     #[test]

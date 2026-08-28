@@ -106,6 +106,43 @@ Temporary plaintext key material is mode `0600` inside a mode `0700` directory a
 RAII on every return path. A failed job reports a bounded, scrubbed error and never replaces the
 latest good release.
 
+## SproutOS catalogue-client identity
+
+The platform catalogue client is a separate, fixed application: `com.sproutos.store`. It is not a
+customer Android project and must never be squeezed into the generated
+`me.sproutos.app.p<project-id>` namespace. Its one signing identity uses the same on-prem master
+identity, client-side envelope encryption, private versioned bucket, and presigned URL boundary as
+customer keys. Only its certificate SHA-256 is returned to an operator.
+
+After the 10_30 control-plane migration and signer are deployed, request or inspect the singleton
+identity with:
+
+```bash
+cargo run -p android-signer -- client-identity
+```
+
+The first call idempotently creates one `provision_client_key` job. Run the normal signer service;
+then repeat the command. `certificate_sha256=<64 lowercase hex characters>` is the public
+fingerprint to add to Play Console. The command never reads, decrypts, or prints the PKCS#12
+keystore. Do not create a temporary key with `keytool`, upload a debug certificate, or add a Play
+key before this durable provisioning job succeeds. The control plane rejects a different key or
+object after success; rotation requires a separate migration and installed-client upgrade design.
+
+To publish a release, obtain the reviewed **unsigned** release APK on the signer host and run:
+
+```bash
+cargo run -p android-signer -- queue-client-release \
+  --apk /secure/operator-input/sproutos-store-release-unsigned.apk
+```
+
+This locally rejects a signed APK, wrong package name, malformed archive, missing version metadata,
+or oversized file before requesting storage. It uploads the raw APK through an immutable,
+versioned presigned URL and durably queues `sign_client_release`. The normal poll loop downloads
+that exact version, decrypts the singleton key, signs and verifies the APK, uploads an immutable
+signed object, and completes the audit job. Only then does the control plane atomically add the
+immutable `client_release` row consumed by `/download` and catalogue self-update. Retries reuse the
+same job and object identities.
+
 ## Android Developer Console authorization
 
 Ur LLC's existing verified Google Play Console account is the developer identity for both Play
@@ -122,6 +159,12 @@ the Android Developer Console API below for CI/CD automation. Its public guide d
 that API is an interoperability test, not an instruction to create another developer account. The
 signer must not proceed to registration until an authenticated `ListDeveloperAccounts` call proves
 that the existing Play identity is available through the public API.
+
+SproutOS currently performs no Play publication API operation, so it must not request the
+`https://www.googleapis.com/auth/androidpublisher` scope. Android developer verification
+registration uses only `https://www.googleapis.com/auth/androiddeveloperconsole`. If Play upload,
+tracks, or releases are implemented later, request `androidpublisher` separately and only at that
+feature boundary.
 
 The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
 `https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,

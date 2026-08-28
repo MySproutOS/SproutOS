@@ -25,7 +25,7 @@ pub struct ApkManifest {
 impl ApkManifest {
     pub fn assert_expected(&self, package_name: &str, version_code: u64) -> anyhow::Result<()> {
         if self.package_name != package_name {
-            bail!("APK package name does not match the generated project package")
+            bail!("APK package name does not match the expected immutable package")
         }
         if self.version_code != version_code {
             bail!("APK versionCode does not match the declared release")
