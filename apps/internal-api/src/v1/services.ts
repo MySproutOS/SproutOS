@@ -292,7 +292,6 @@ const app = new Hono()
           "backendService.status as status",
           "backendService.projectId as projectId",
           "backendService.createdAt as createdAt",
-          "databaseBranch.host as host",
           "databaseRole.roleName as username",
           "oauthClient.id as managedByOauthClientId",
           "oauthClient.name as managedByOauthAppName",
@@ -302,26 +301,27 @@ const app = new Hono()
         .orderBy("backendService.createdAt", "desc")
         .execute()
 
-      const config = safeConfig()
-
       return c.json({
-        data: rows.map((row) => ({
-          id: row.id,
-          name: row.name,
-          kind: row.kind as "postgres",
-          status: row.status,
-          projectId: row.projectId,
-          host: row.host,
-          port: row.host === null ? null : config.publicPort,
-          database: row.username === null ? null : databaseNameOf(row.id),
-          username: row.username,
-          managedByOauthApp:
-            row.managedByOauthClientId === null || row.managedByOauthAppName === null
-              ? null
-              : { clientId: row.managedByOauthClientId, name: row.managedByOauthAppName },
-          ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
-          createdAt: row.createdAt.toISOString(),
-        })),
+        data: rows.map((row) => {
+          const endpoint = servicePublicEndpoint(row.kind, row.status)
+          return {
+            id: row.id,
+            name: row.name,
+            kind: row.kind as "postgres",
+            status: row.status,
+            projectId: row.projectId,
+            host: endpoint.host,
+            port: endpoint.port,
+            database: row.username === null ? null : databaseNameOf(row.id),
+            username: row.username,
+            managedByOauthApp:
+              row.managedByOauthClientId === null || row.managedByOauthAppName === null
+                ? null
+                : { clientId: row.managedByOauthClientId, name: row.managedByOauthAppName },
+            ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
+            createdAt: row.createdAt.toISOString(),
+          }
+        }),
       })
     },
   )
@@ -610,13 +610,55 @@ async function owned(organizationId: string, serviceId: string) {
     .executeTakeFirst()
 }
 
-/** Reading the config can throw if the cluster is unconfigured; a list should still render. */
-function safeConfig(): { publicPort: number } {
-  try {
-    return sproutPostgresConfigFromEnv()
-  } catch {
-    return { publicPort: 5432 }
+/**
+ * The public proxy address a customer can actually use, never a provider/backend address.
+ *
+ * `database_branch.host` is a Postgres provider detail. It is null for Valkey and Search, so using
+ * it for every kind rendered `—` for both; for Neon it can name the provider host behind pg-proxy,
+ * which is not an endpoint the dashboard should encourage anyone to use. The public address is
+ * deployment configuration and is deliberately selected by kind here.
+ *
+ * Listing is fail-soft. A missing or malformed endpoint is an operator configuration problem, but
+ * it must not make the entire databases page fail. Provisioning remains fail-closed in each driver.
+ */
+export function servicePublicEndpoint(
+  kind: string,
+  status: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { host: string | null; port: number | null } {
+  if (status !== "active") return { host: null, port: null }
+
+  const config =
+    kind === "postgres"
+      ? {
+          host: env.SERVICE_POSTGRES_PUBLIC_HOST,
+          port: env.SERVICE_POSTGRES_PUBLIC_PORT,
+          fallback: 5432,
+        }
+      : kind === "valkey"
+        ? {
+            host: env.SERVICE_VALKEY_PUBLIC_HOST,
+            port: env.SERVICE_VALKEY_PUBLIC_PORT,
+            fallback: 6379,
+          }
+        : kind === "elasticsearch"
+          ? {
+              host: env.SERVICE_SEARCH_PUBLIC_HOST,
+              port: env.SERVICE_SEARCH_PUBLIC_PORT,
+              fallback: 9200,
+            }
+          : null
+
+  if (config === null || config.host === undefined || config.host.trim() === "") {
+    return { host: null, port: null }
   }
+
+  const port = Number(config.port ?? config.fallback)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    return { host: null, port: null }
+  }
+
+  return { host: config.host, port }
 }
 
 function databaseNameOf(backendServiceId: string): string {

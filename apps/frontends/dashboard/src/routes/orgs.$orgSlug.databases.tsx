@@ -32,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/base/ui/tooltip"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
+import { credentialRotationGuidance } from "@frontends/dashboard/components/databases/credential-rotation"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   type BackendService,
@@ -73,6 +74,8 @@ function DatabasesList() {
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
           A database can stand on its own or belong to a project. Connection details are shown here;
           passwords are shown only once, when a database is created or its credential is rotated.
+          There is no later View action because SproutOS does not keep a recoverable copy. If you
+          lose the URI, rotate the credential to issue a replacement.
         </p>
 
         {isPending && <ListSkeleton rows={3} />}
@@ -180,24 +183,51 @@ function RotateButton({
   onRotated: (uri: string) => void
 }) {
   const { rotate, isPending } = useRotateConnection(orgSlug)
+  const { canRotate, tooltipCopy, tooltipId } = credentialRotationGuidance(service)
 
   return (
     <Dialog>
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <DialogTrigger
-              render={
-                <Button variant="ghost" size="sm" disabled={service.status !== "active"}>
+        {canRotate ? (
+          <TooltipTrigger
+            render={
+              <DialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Rotate the credential for ${service.name}`}
+                    aria-describedby={tooltipId}
+                  >
+                    <RefreshCwIcon />
+                  </Button>
+                }
+              />
+            }
+          />
+        ) : (
+          <TooltipTrigger
+            render={
+              /* A disabled button cannot receive hover. Keeping the tooltip trigger on this
+                 wrapper means the status explanation remains available while it provisions. */
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled
+                  aria-label={`Rotate the credential for ${service.name}`}
+                  aria-describedby={tooltipId}
+                >
                   <RefreshCwIcon />
-                  <span className="sr-only">Rotate the credential for {service.name}</span>
                 </Button>
-              }
-            />
-          }
-        />
-        <TooltipContent>
-          Issue a new connection URI for you. Your current URI stops working immediately.
+              </span>
+            }
+          />
+        )}
+        <TooltipContent className="max-w-72 leading-relaxed">
+          <span id={tooltipId} role="tooltip">
+            {tooltipCopy}
+          </span>
         </TooltipContent>
       </Tooltip>
       <DialogContent>
@@ -205,7 +235,8 @@ function RotateButton({
           <DialogTitle>Rotate the password for {service.name}?</DialogTitle>
           <DialogDescription>
             Your current connection URI stops working immediately. Anything still using it — a
-            deployed app, a local script — will fail until you give it the new one.
+            deployed app, a local script — will fail until you give it the new one. The replacement
+            is shown only once, so copy it before closing.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -220,7 +251,7 @@ function RotateButton({
                     .catch(() => undefined)
                 }}
               >
-                Rotate
+                Rotate and show URI
               </Button>
             }
           />
