@@ -550,6 +550,36 @@ pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHand
         .check()
         .await
         .context("the sandbox forward proxy cannot reach the control-plane database")?;
+
+    // A configured public forward proxy is a billable AWS internet boundary. Unlike development
+    // listeners that may run without billing, it must not start unless its signed durable path is
+    // complete; otherwise every successful package download creates an unrecoverable usage gap.
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .context("METERING_INGEST_URL is required when the sandbox forward proxy is enabled")?;
+    let metering_key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .context("METERING_INGEST_HMAC_KEY is required when the sandbox forward proxy is enabled")?
+        .into_bytes();
+    let spool_directory = std::env::var("FORWARD_PROXY_METERING_SPOOL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("sandbox-egress-metering")
+        });
+    let spool = sproutos_llm_proxy::spool::MeteringSpool::open(
+        spool_directory,
+        sproutos_llm_proxy::spool::SpoolLimits::default(),
+    )
+    .context("the sandbox forward proxy cannot open its durable metering spool")?;
+    spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+        reqwest::Client::builder().build()?,
+        ingest_url,
+        metering_key,
+    ));
+    let meter = Arc::new(crate::sandbox_egress_metering::SandboxEgressMeter::new(
+        spool,
+    ));
     let proxy_url = std::env::var("SANDBOX_FORWARD_PROXY_URL")
         .context("SANDBOX_FORWARD_PROXY_URL is required when the forward proxy is enabled")?;
     let resolver = Arc::new(crate::sandbox_egress::EgressResolver::new(&proxy_url)?);
@@ -584,6 +614,7 @@ pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHand
             Arc::new(sproutos_sandbox_forward_proxy::TokioDialer),
             sproutos_sandbox_forward_proxy::Limits::default(),
         )?
+        .with_meter(meter)
         .with_connect_override(postgres_host, postgres_public_port, postgres_loopback),
     );
     let listener = TcpListener::bind(&listen)

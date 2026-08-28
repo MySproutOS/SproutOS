@@ -121,6 +121,9 @@ SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 # Search query observations and hourly primary-storage samples are isolated from the other
 # emitters, while remaining on the router's persistent state volume.
 SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
+# Request and response bytes leaving AWS for Daytona use an isolated durable source. Keeping this
+# off tmpfs is what makes a router restart a retry rather than a free transfer.
+FORWARD_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/sandbox-egress-metering
 # Daytona reaches this listener through \`egress.<domain>\` on the tenant NLB. TLS terminates there;
 # the router receives the authenticated HTTP forward-proxy protocol on this private instance port.
 FORWARD_PROXY_LISTEN=0.0.0.0:3128

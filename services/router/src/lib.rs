@@ -18,6 +18,7 @@ pub mod payload;
 pub mod resolve;
 pub mod route;
 pub mod sandbox_egress;
+pub mod sandbox_egress_metering;
 pub mod serve;
 pub mod site_metering;
 

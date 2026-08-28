@@ -24,7 +24,12 @@ import { Kafka } from "kafkajs"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import app from "../index"
-import { closeMeteringSinks, publishUsageEvents, setMeteringSinksForTest } from "./metering"
+import {
+  closeMeteringSinks,
+  ingestAttribution,
+  publishUsageEvents,
+  setMeteringSinksForTest,
+} from "./metering"
 import {
   cleanupFixtures,
   createTestUser,
@@ -119,6 +124,29 @@ async function post(batch: UsageBatch, signature?: string) {
 function storedFor(externalId: string) {
   return published.filter((event) => event.externalId === externalId)
 }
+
+describe("signed emitter attribution", () => {
+  const event: UsageBatch["events"][number] = {
+    externalId: "sandbox-forward-proxy:connection",
+    organizationId: v7(),
+    projectId: v7(),
+    dimension: "sandbox_egress_byte",
+    quantity: 46,
+    occurredAt: Date.now(),
+    attributes: { sandbox_id: v7() },
+  }
+
+  it("attributes sandbox egress to the authorized sandbox", () => {
+    expect(ingestAttribution("sandbox-forward-proxy", event)).toEqual({
+      resourceType: "sandbox",
+      resourceId: event.attributes.sandbox_id,
+    })
+  })
+
+  it("refuses a sandbox egress event without its sandbox attribution", () => {
+    expect(ingestAttribution("sandbox-forward-proxy", { ...event, attributes: {} })).toBeUndefined()
+  })
+})
 
 beforeAll(async () => {
   process.env.METERING_INGEST_HMAC_KEY = KEY
@@ -262,6 +290,30 @@ describe.skipIf(!reachable)("metering ingest", () => {
     const [stored] = storedFor(batch.events[0].externalId)
     expect(stored?.resourceType).toBe("search_index")
     expect(stored?.resourceId).toBe(searchIndexId)
+  })
+
+  it("accepts signed sandbox egress with its sandbox attribution", async () => {
+    const sandboxId = v7()
+    const batch = batchOf([
+      {
+        dimension: "sandbox_egress_byte",
+        quantity: 46,
+        attributes: {
+          protocol: "connect",
+          request_bytes: "17",
+          response_bytes: "29",
+          sandbox_id: sandboxId,
+        },
+      },
+    ])
+    batch.source = "sandbox-forward-proxy"
+
+    expect((await post(batch)).status).toBe(202)
+    const [stored] = storedFor(batch.events[0].externalId)
+    expect(stored?.resourceType).toBe("sandbox")
+    expect(stored?.resourceId).toBe(sandboxId)
+    expect(stored?.dimension).toBe("sandbox_egress_byte")
+    expect(stored?.quantity).toBe("46")
   })
 
   it("rejects a signed source/dimension mismatch instead of misclassifying it", async () => {

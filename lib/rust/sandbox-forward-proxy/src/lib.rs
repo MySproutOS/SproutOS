@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -53,6 +54,39 @@ pub struct SandboxAuthorization {
     pub project_id: Uuid,
     pub state: SandboxState,
 }
+
+/// Bytes the authenticated sandbox caused the platform proxy to send out of AWS.
+///
+/// `request_bytes` are the sanitized HTTP request or tunneled bytes written to a public upstream.
+/// `response_bytes` are upstream bytes written back to Daytona. Both are internet DTO from the
+/// proxy's point of view; bytes merely received by the proxy are not billed here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressObservation {
+    pub authorization: SandboxAuthorization,
+    pub connection_id: Uuid,
+    pub request_bytes: u64,
+    pub response_bytes: u64,
+    pub occurred_at: i64,
+    pub protocol: &'static str,
+}
+
+impl EgressObservation {
+    pub fn total_bytes(&self) -> u64 {
+        self.request_bytes.saturating_add(self.response_bytes)
+    }
+}
+
+pub trait EgressReservation: Send {
+    fn commit(self: Box<Self>, observation: EgressObservation);
+}
+
+pub trait EgressMeter: Send + Sync {
+    fn reserve(&self) -> Result<Box<dyn EgressReservation>, MeteringCapacityError>;
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("sandbox egress metering has no durable capacity")]
+pub struct MeteringCapacityError;
 
 #[async_trait]
 pub trait Authorizer: Send + Sync {
@@ -133,6 +167,7 @@ pub struct SandboxForwardProxy {
     resolver: Arc<dyn Resolver>,
     dialer: Arc<dyn Dialer>,
     connect_overrides: Arc<BTreeMap<(String, u16), SocketAddr>>,
+    meter: Option<Arc<dyn EgressMeter>>,
     limits: Limits,
 }
 
@@ -157,8 +192,15 @@ impl SandboxForwardProxy {
             resolver,
             dialer,
             connect_overrides: Arc::new(BTreeMap::new()),
+            meter: None,
             limits,
         })
+    }
+
+    #[must_use]
+    pub fn with_meter(mut self, meter: Arc<dyn EgressMeter>) -> Self {
+        self.meter = Some(meter);
+        self
     }
 
     /// Route one exact public authority to a platform-owned local listener.
@@ -238,15 +280,19 @@ impl SandboxForwardProxy {
             }
             _ => return respond(&mut client, ResponseKind::ProxyAuthRequired).await,
         };
-        // Keep the verified identity alive through the connection. Router integrations can attach
-        // metering to it later without parsing credentials a second time.
-        let _authorization = authorization;
-
         let destination = match request.destination() {
             Ok(destination) => destination,
             Err(_) => return respond(&mut client, ResponseKind::BadRequest).await,
         };
+        let metering_reservation = match &self.meter {
+            Some(meter) => match meter.reserve() {
+                Ok(reservation) => Some(reservation),
+                Err(_) => return respond(&mut client, ResponseKind::ServiceUnavailable).await,
+            },
+            None => None,
+        };
         let override_key = (normalize_host(&destination.host), destination.port);
+        let is_platform_override = self.connect_overrides.contains_key(&override_key);
         let socket_addresses = if let Some(address) = self.connect_overrides.get(&override_key) {
             vec![*address]
         } else {
@@ -291,43 +337,141 @@ impl SandboxForwardProxy {
         .ok()
         .flatten();
         attempts.abort_all();
-        let Some(mut upstream) = upstream else {
+        let Some(upstream) = upstream else {
             return respond(&mut client, ResponseKind::BadGateway).await;
         };
 
-        if request.method.eq_ignore_ascii_case("CONNECT") {
-            client
-                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                .await?;
-            // Clients commonly send the TLS ClientHello in the same packet as CONNECT. The header
-            // reader may already own those bytes; dropping them makes an otherwise valid tunnel
-            // hang immediately after the 200 response.
-            upstream.write_all(&request.buffered_body).await?;
-            match timeout(
-                self.limits.tunnel_timeout,
-                tokio::io::copy_bidirectional(&mut client, &mut upstream),
-            )
-            .await
-            {
-                Ok(Ok(_)) => Ok(()),
-                Ok(Err(error)) => Err(error),
-                Err(_) => Ok(()),
-            }
+        let connection_id = Uuid::now_v7();
+        let protocol = if request.method.eq_ignore_ascii_case("CONNECT") {
+            "connect"
         } else {
-            upstream
-                .write_all(&request.forward_head(&destination))
-                .await?;
-            upstream.write_all(&request.buffered_body).await?;
-            // Carry exactly one parsed request. Relaying arbitrary client bytes after its body
-            // would let a pipelined second request bypass destination and credential parsing.
-            let remaining = request.content_length() - request.buffered_body.len() as u64;
-            if remaining > 0 {
-                tokio::io::copy(&mut (&mut client).take(remaining), &mut upstream).await?;
+            "http"
+        };
+        let request_counter = Arc::new(AtomicU64::new(0));
+        let response_counter = Arc::new(AtomicU64::new(0));
+        let result: io::Result<()> = async {
+            if request.method.eq_ignore_ascii_case("CONNECT") {
+                client
+                    .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                    .await?;
+                let mut upstream = CountingIo::new(upstream, Arc::clone(&request_counter));
+                let mut client = CountingIo::new(client, Arc::clone(&response_counter));
+                // Clients commonly send the TLS ClientHello in the same packet as CONNECT. The
+                // header reader may already own those bytes; dropping them makes an otherwise
+                // valid tunnel hang immediately after the 200 response.
+                upstream.write_all(&request.buffered_body).await?;
+                match timeout(
+                    self.limits.tunnel_timeout,
+                    tokio::io::copy_bidirectional(&mut client, &mut upstream),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(error)) => Err(error),
+                    Err(_) => Ok(()),
+                }
+            } else {
+                let mut upstream = CountingIo::new(upstream, Arc::clone(&request_counter));
+                upstream
+                    .write_all(&request.forward_head(&destination))
+                    .await?;
+                upstream.write_all(&request.buffered_body).await?;
+                // Carry exactly one parsed request. Relaying arbitrary client bytes after its body
+                // would let a pipelined second request bypass destination and credential parsing.
+                let remaining = request.content_length() - request.buffered_body.len() as u64;
+                if remaining > 0 {
+                    tokio::io::copy(&mut (&mut client).take(remaining), &mut upstream).await?;
+                }
+                upstream.shutdown().await?;
+                let mut client = CountingIo::new(client, Arc::clone(&response_counter));
+                tokio::io::copy(&mut upstream, &mut client)
+                    .await
+                    .map(|_| ())
             }
-            upstream.shutdown().await?;
-            tokio::io::copy(&mut upstream, &mut client).await?;
-            Ok(())
         }
+        .await;
+
+        let request_bytes = if is_platform_override {
+            // The exact, boot-configured Postgres override stays on loopback. Its request leg does
+            // not leave AWS, while its response still crosses the public proxy endpoint to Daytona.
+            0
+        } else {
+            request_counter.load(Ordering::Relaxed)
+        };
+        let response_bytes = response_counter.load(Ordering::Relaxed);
+        if (request_bytes != 0 || response_bytes != 0)
+            && let Some(reservation) = metering_reservation
+        {
+            reservation.commit(EgressObservation {
+                authorization,
+                connection_id,
+                request_bytes,
+                response_bytes,
+                occurred_at: now_millis(),
+                protocol,
+            });
+        }
+        result
+    }
+}
+
+fn now_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64
+}
+
+struct CountingIo<T> {
+    inner: T,
+    written: Arc<AtomicU64>,
+}
+
+impl<T> CountingIo<T> {
+    fn new(inner: T, written: Arc<AtomicU64>) -> Self {
+        Self { inner, written }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for CountingIo<T> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buffer)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for CountingIo<T> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<Result<usize, io::Error>> {
+        match std::pin::Pin::new(&mut self.inner).poll_write(cx, buffer) {
+            std::task::Poll::Ready(Ok(written)) => {
+                self.written.fetch_add(written as u64, Ordering::Relaxed);
+                std::task::Poll::Ready(Ok(written))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), io::Error>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), io::Error>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -714,6 +858,7 @@ enum ResponseKind {
     ProxyAuthRequired,
     DestinationForbidden,
     BadGateway,
+    ServiceUnavailable,
 }
 
 async fn respond<T>(client: &mut T, kind: ResponseKind) -> io::Result<()>
@@ -730,6 +875,9 @@ where
         }
         ResponseKind::BadGateway => {
             b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        }
+        ResponseKind::ServiceUnavailable => {
+            b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
         }
     };
     client.write_all(response).await
@@ -765,6 +913,31 @@ mod tests {
     impl Resolver for StaticResolver {
         async fn resolve(&self, _: &str, _: u16) -> io::Result<Vec<IpAddr>> {
             Ok(self.0.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingMeter(Arc<Mutex<Vec<EgressObservation>>>);
+
+    impl EgressMeter for RecordingMeter {
+        fn reserve(&self) -> Result<Box<dyn EgressReservation>, MeteringCapacityError> {
+            Ok(Box::new(RecordingReservation(Arc::clone(&self.0))))
+        }
+    }
+
+    struct RecordingReservation(Arc<Mutex<Vec<EgressObservation>>>);
+
+    impl EgressReservation for RecordingReservation {
+        fn commit(self: Box<Self>, observation: EgressObservation) {
+            self.0.lock().unwrap().push(observation);
+        }
+    }
+
+    struct FullMeter;
+
+    impl EgressMeter for FullMeter {
+        fn reserve(&self) -> Result<Box<dyn EgressReservation>, MeteringCapacityError> {
+            Err(MeteringCapacityError)
         }
     }
 
@@ -1035,6 +1208,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_full_metering_spool_refuses_traffic_before_dialing() {
+        let root = &ROOT;
+        let (proxy, dialed, _) = make_proxy(
+            root,
+            Ok(Some(authorization(SandboxState::Running))),
+            vec!["1.1.1.1".parse().unwrap()],
+        );
+        let response = exchange(
+            proxy.with_meter(Arc::new(FullMeter)),
+            request(root, "http://example.com/", "").as_bytes(),
+        )
+        .await;
+        assert!(response.starts_with(b"HTTP/1.1 503"));
+        assert!(dialed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn absolute_form_is_rewritten_and_proxy_headers_are_stripped() {
         let root = &ROOT;
         let (proxy, dialed, mut upstream) = make_proxy(
@@ -1042,6 +1232,8 @@ mod tests {
             Ok(Some(authorization(SandboxState::Running))),
             vec!["1.1.1.1".parse().unwrap()],
         );
+        let meter = Arc::new(RecordingMeter::default());
+        let proxy = proxy.with_meter(meter.clone());
         let (mut client, server) = tokio::io::duplex(64 * 1024);
         let task = tokio::spawn(async move { proxy.serve_connection(server).await });
         client
@@ -1057,21 +1249,37 @@ mod tests {
             .unwrap();
         let mut forwarded = vec![0; 4096];
         let read = upstream.read(&mut forwarded).await.unwrap();
-        let forwarded = String::from_utf8_lossy(&forwarded[..read]);
+        let forwarded_bytes = forwarded[..read].to_vec();
+        let forwarded = String::from_utf8_lossy(&forwarded_bytes);
         assert!(forwarded.starts_with("GET /private?q=secret HTTP/1.1\r\nHost: example.com\r\n"));
         assert!(forwarded.contains("x-keep: yes\r\n"));
         assert!(!forwarded.contains("proxy-authorization"));
         assert!(!forwarded.contains("x-remove"));
-        upstream
-            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
+        let upstream_response =
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        upstream.write_all(upstream_response).await.unwrap();
         upstream.shutdown().await.unwrap();
         let mut response = Vec::new();
         client.read_to_end(&mut response).await.unwrap();
         task.await.unwrap().unwrap();
         assert!(response.starts_with(b"HTTP/1.1 204"));
         assert_eq!(*dialed.lock().unwrap(), vec!["1.1.1.1:80".parse().unwrap()]);
+        let observations = meter.0.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].authorization,
+            authorization(SandboxState::Running)
+        );
+        assert_eq!(observations[0].request_bytes, forwarded_bytes.len() as u64);
+        assert_eq!(
+            observations[0].response_bytes,
+            upstream_response.len() as u64
+        );
+        assert_eq!(
+            observations[0].total_bytes(),
+            (forwarded_bytes.len() + upstream_response.len()) as u64
+        );
+        assert_eq!(observations[0].protocol, "http");
     }
 
     #[tokio::test]
@@ -1087,6 +1295,8 @@ mod tests {
         let request = format!(
             "CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: Basic {basic}\r\n\r\neager hello"
         );
+        let meter = Arc::new(RecordingMeter::default());
+        let proxy = proxy.with_meter(meter.clone());
         let (mut client, server) = tokio::io::duplex(4096);
         let task = tokio::spawn(async move { proxy.serve_connection(server).await });
         client.write_all(request.as_bytes()).await.unwrap();
@@ -1100,6 +1310,10 @@ mod tests {
         let mut tunneled = [0; 12];
         upstream.read_exact(&mut tunneled).await.unwrap();
         assert_eq!(&tunneled, b"tunnel bytes");
+        upstream.write_all(b"upstream reply").await.unwrap();
+        let mut reply = [0; 14];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply, b"upstream reply");
         drop(client);
         drop(upstream);
         task.await.unwrap().unwrap();
@@ -1107,6 +1321,13 @@ mod tests {
             *dialed.lock().unwrap(),
             vec!["8.8.8.8:443".parse().unwrap()]
         );
+        {
+            let observations = meter.0.lock().unwrap();
+            assert_eq!(observations.len(), 1);
+            assert_eq!(observations[0].request_bytes, 23);
+            assert_eq!(observations[0].response_bytes, 14);
+            assert_eq!(observations[0].protocol, "connect");
+        }
 
         let (proxy, _, _) = make_proxy(
             root,
@@ -1155,6 +1376,8 @@ mod tests {
             5432,
             "127.0.0.1:15432".parse().unwrap(),
         );
+        let meter = Arc::new(RecordingMeter::default());
+        let proxy = proxy.with_meter(meter.clone());
         let password = derive_password(root, SANDBOX.parse().unwrap());
         let basic = STANDARD.encode(format!("{SANDBOX}:{password}"));
         let request = format!(
@@ -1170,6 +1393,10 @@ mod tests {
         let mut tunneled = [0; 16];
         upstream.read_exact(&mut tunneled).await.unwrap();
         assert_eq!(&tunneled, b"postgres startup");
+        upstream.write_all(b"postgres response").await.unwrap();
+        let mut response = [0; 17];
+        client.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"postgres response");
         drop(client);
         drop(upstream);
         task.await.unwrap().unwrap();
@@ -1177,6 +1404,10 @@ mod tests {
             *dialed.lock().unwrap(),
             vec!["127.0.0.1:15432".parse().unwrap()]
         );
+        let observations = meter.0.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].request_bytes, 0);
+        assert_eq!(observations[0].response_bytes, 17);
     }
 
     #[tokio::test]

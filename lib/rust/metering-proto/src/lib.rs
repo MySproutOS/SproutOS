@@ -108,6 +108,8 @@ pub enum UsageDimension {
     SandboxGibSecond,
     /// Sandbox disk allocation, in GiB-seconds.
     SandboxDiskGibSecond,
+    /// Bytes the sandbox forward proxy sends out of AWS, in either direction of a public exchange.
+    SandboxEgressByte,
 }
 
 impl UsageDimension {
@@ -139,6 +141,7 @@ impl UsageDimension {
         Self::SandboxCpuSecond,
         Self::SandboxGibSecond,
         Self::SandboxDiskGibSecond,
+        Self::SandboxEgressByte,
     ];
 
     /// The wire name, identical to the serde representation.
@@ -170,6 +173,7 @@ impl UsageDimension {
             Self::SandboxCpuSecond => "sandbox_cpu_second",
             Self::SandboxGibSecond => "sandbox_gib_second",
             Self::SandboxDiskGibSecond => "sandbox_disk_gib_second",
+            Self::SandboxEgressByte => "sandbox_egress_byte",
         }
     }
 }
