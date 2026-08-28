@@ -921,6 +921,61 @@ resource "aws_iam_policy" "application" {
       },
       {
         /*
+          Android release custody. Presigned URLs carry this role's authority to the outbound-only
+          signer and authenticated clients, so every action is scoped to the three protocol
+          prefixes. There is deliberately no ListBucket or DeleteObject: the control plane already
+          knows exact keys from Postgres, and neither an API bug nor a signer job may erase an app's
+          update identity.
+        */
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = [
+          "${aws_s3_bucket.android_artifacts.arn}/raw/*",
+          "${aws_s3_bucket.android_artifacts.arn}/signed/*",
+        ]
+      },
+      {
+        # Encrypted key objects are also selected by S3 VersionId. Keep this separate so the
+        # recovery-sensitive keys/ prefix remains independently auditable.
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+        ]
+        Resource = "${aws_s3_bucket.android_artifacts.arn}/keys/*"
+      },
+      {
+        # A PUT needs GenerateDataKey and a GET needs Decrypt. The dedicated key protects nothing
+        # except this bucket, and ViaService prevents the shared task role using it directly.
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = aws_kms_key.android_artifacts.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        # Metrics are emitted by the API from authenticated signer polls and durable job state.
+        # The signer itself has no AWS credential. PutMetricData cannot be resource-scoped, so the
+        # namespace condition is the least-privilege boundary AWS exposes for this action.
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "SproutOS/AndroidSigner"
+          }
+        }
+      },
+      {
+        /*
           Versioned rustls certificate objects. The router reads an exact S3 VersionId before it
           acknowledges readiness; the worker writes and deletes only inside this dedicated bucket.
           No bucket-policy, ACL or public-access mutation is granted.

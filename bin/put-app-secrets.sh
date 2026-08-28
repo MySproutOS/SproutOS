@@ -38,6 +38,8 @@ KEYS=(
   STRIPE_PUBLIC_KEY
   STRIPE_SECRET_KEY
   STRIPE_WEBHOOK_SECRET
+  # Authenticates the outbound-only on-prem signer to the public API. The signer receives only
+  # exact-object presigned S3 URLs and must never receive an AWS credential.
   APK_SIGNER_TOKEN
   DEPLOY_TOKEN_SECRET
   LOG_TOKEN_SECRET

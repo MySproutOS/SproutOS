@@ -434,3 +434,20 @@ variable "lambda_web_adapter_layer_version" {
   type        = string
   default     = "29"
 }
+
+variable "android_raw_apk_retention_days" {
+  description = "Days to retain raw unsigned APKs for signing retries and incident diagnosis. Signed releases and encrypted app keys do not use this expiry."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = floor(var.android_raw_apk_retention_days) == var.android_raw_apk_retention_days && var.android_raw_apk_retention_days >= 7
+    error_message = "Raw APK retention must be a whole number of at least seven days."
+  }
+}
+
+variable "android_signing_alarms_enabled" {
+  description = "Create Android signer heartbeat, queue-age, and failure alarms after the signer and an SNS subscription are ready."
+  type        = bool
+  default     = false
+}

@@ -47,6 +47,7 @@ locals {
   ]
 
   ecs_api_parameter_names = [
+    "APK_SIGNER_TOKEN",
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
@@ -318,6 +319,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "API_PORT", value = "3001" },
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
@@ -398,6 +400,7 @@ resource "aws_ecs_task_definition" "web" {
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
+        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
