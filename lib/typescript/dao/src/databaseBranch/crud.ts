@@ -22,6 +22,9 @@ export function crudDatabaseBranch(db: Kysely<DB>) {
         cleanupAttempts: sql<number>`cleanup_attempts + 1`,
         cleanupError: String(error).slice(0, 2_000),
         cleanupRetryAt: sql<Date>`now() + make_interval(secs => least(3600, 30 * power(2, cleanup_attempts)))`,
+        // Default sandbox branches normally have no expiry. Once provider cleanup fails they must
+        // also become visible to the independent branch reaper, not only to sandbox reconciliation.
+        expiresAt: sql<Date>`coalesce(expires_at, now())`,
         updatedAt: new Date(),
       })
       .where("id", "=", id)

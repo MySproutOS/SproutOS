@@ -369,7 +369,11 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
 }
 
 /** Repair provider-driven state changes before the database can keep metering a stopped machine. */
-export function reconcileSandboxes(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function reconcileSandboxes(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
     const candidates = await context.db
       .selectFrom("sandbox")
@@ -390,12 +394,32 @@ export function reconcileSandboxes(makeDriver: () => DaytonaSandboxClient = dayt
         const providerState = await sandboxDriver.state(candidate.externalId!)
         if (["stopped", "archived", "paused"].includes(providerState)) {
           await crudSandbox(context.db).update(candidate.id, { state: "stopped" })
-        } else if (["destroyed", "error", "build_failed"].includes(providerState)) {
+        } else if (providerState === "destroyed") {
+          await cleanMissingProviderObject(
+            context.db,
+            { sandboxId: candidate.id, externalId: candidate.externalId! },
+            drop,
+            branchConfig,
+          )
+        } else if (["error", "build_failed"].includes(providerState)) {
           await crudSandbox(context.db).update(candidate.id, { state: "failed" })
         }
       } catch (error) {
         if (error instanceof SandboxNotFoundError) {
-          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          try {
+            await cleanMissingProviderObject(
+              context.db,
+              { sandboxId: candidate.id, externalId: candidate.externalId! },
+              drop,
+              branchConfig,
+            )
+          } catch (cleanupError) {
+            // Keep the row in a reconcilable provider-backed state. Every failed branch is also
+            // made visible to the branch reaper, and the next minute retries this complete set.
+            console.error(
+              `[jobs] failed to clean missing sandbox ${candidate.id}: ${String(cleanupError)}`,
+            )
+          }
           continue
         }
         // One provider object must not prevent every other row from reconciling. The recurring job
@@ -592,7 +616,7 @@ async function cleanMissingProviderObject(
   if (
     current === undefined ||
     current.externalId !== input.externalId ||
-    !["starting", "failed"].includes(current.state)
+    !["starting", "running", "idle", "stopped", "failed"].includes(current.state)
   ) {
     return false
   }
@@ -612,7 +636,18 @@ async function cleanMissingProviderObject(
     try {
       await drop(db, branchConfig(), databaseBranchId)
     } catch (error) {
-      cleanupFailures.push(error)
+      try {
+        await crudDatabaseBranch(db).deferCleanup(databaseBranchId, error)
+        cleanupFailures.push(error)
+      } catch (deferError) {
+        cleanupFailures.push(
+          new AggregateError(
+            [error, deferError],
+            `branch ${databaseBranchId} failed cleanup and retry deferral`,
+            { cause: error },
+          ),
+        )
+      }
     }
   }
   if (cleanupFailures.length > 0) {
@@ -633,7 +668,7 @@ async function cleanMissingProviderObject(
     })
     .where("id", "=", input.sandboxId)
     .where("externalId", "=", input.externalId)
-    .where("state", "in", ["starting", "failed"])
+    .where("state", "in", ["starting", "running", "idle", "stopped", "failed"])
     .executeTakeFirst()
   return Number(cleaned.numUpdatedRows) === 1
 }
@@ -995,7 +1030,7 @@ export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): J
       }
     }
 
-    await crudSandbox(db).updateIfState(sandbox.id, ["starting", "running", "idle"], {
+    await crudSandbox(db).updateIfState(sandbox.id, ["starting", "running", "idle", "failed"], {
       state: "stopped",
     })
   }

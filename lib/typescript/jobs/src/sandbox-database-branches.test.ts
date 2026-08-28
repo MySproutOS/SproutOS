@@ -1,10 +1,12 @@
 import { crudSandbox, crudSandboxDatabaseBranch } from "@lib/dao"
+import { SandboxNotFoundError } from "@lib/sandbox"
 import type { NeonPostgresConfig } from "@lib/services"
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import {
   destroySandbox,
+  reconcileSandboxes,
   reapExpiredDatabaseBranches,
   repairDeletingSandboxes,
   SANDBOX_KINDS,
@@ -176,6 +178,120 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
     await db.deleteFrom("organization").where("id", "=", organizationId).execute()
     await db.deleteFrom("user").where("id", "=", userId).execute()
     await db.deleteFrom("region").where("id", "=", regionId).execute()
+  })
+
+  it("cleans the default branch when reconciliation finds no Daytona object", async () => {
+    const missingSandboxId = v7()
+    const missingBranchId = v7()
+    const externalId = `daytona-missing-${missingSandboxId}`
+    await db
+      .insertInto("databaseBranch")
+      .values({
+        id: missingBranchId,
+        databaseInstanceId: instanceId,
+        name: `sandbox-missing-${missingBranchId}`,
+        kind: "dev",
+      })
+      .execute()
+    await crudSandbox(db).create({
+      id: missingSandboxId,
+      projectId,
+      userId,
+      databaseBranchId: missingBranchId,
+      externalId,
+      purpose: "upstream_resolution",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+    await crudSandboxDatabaseBranch(db).create({
+      sandboxId: missingSandboxId,
+      databaseBranchId: missingBranchId,
+    })
+
+    await reconcileSandboxes(
+      () =>
+        ({
+          state: () => Promise.reject(new SandboxNotFoundError(externalId)),
+        }) as never,
+      drop,
+      () => config,
+    )({ id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never, { db } as never)
+
+    const repaired = await db
+      .selectFrom("sandbox")
+      .select(["state", "externalId", "databaseBranchId"])
+      .where("id", "=", missingSandboxId)
+      .executeTakeFirstOrThrow()
+    expect(repaired).toEqual({ state: "stopped", externalId: null, databaseBranchId: null })
+    expect(dropped).toContain(missingBranchId)
+    await expect(
+      db
+        .selectFrom("databaseBranch")
+        .select("id")
+        .where("id", "=", missingBranchId)
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+    await db.deleteFrom("sandbox").where("id", "=", missingSandboxId).execute()
+    dropped.splice(dropped.indexOf(missingBranchId), 1)
+  })
+
+  it("makes a failed missing-object cleanup durable for the branch reaper", async () => {
+    const missingSandboxId = v7()
+    const missingBranchId = v7()
+    const externalId = `daytona-cleanup-failure-${missingSandboxId}`
+    await db
+      .insertInto("databaseBranch")
+      .values({
+        id: missingBranchId,
+        databaseInstanceId: instanceId,
+        name: `sandbox-cleanup-failure-${missingBranchId}`,
+        kind: "dev",
+      })
+      .execute()
+    await crudSandbox(db).create({
+      id: missingSandboxId,
+      projectId,
+      userId,
+      databaseBranchId: missingBranchId,
+      externalId,
+      purpose: "upstream_resolution",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+    await crudSandboxDatabaseBranch(db).create({
+      sandboxId: missingSandboxId,
+      databaseBranchId: missingBranchId,
+    })
+
+    await reconcileSandboxes(
+      () =>
+        ({
+          state: () => Promise.reject(new SandboxNotFoundError(externalId)),
+        }) as never,
+      () => Promise.reject(new Error("Neon delete unavailable")),
+      () => config,
+    )({ id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never, { db } as never)
+
+    const sandbox = await db
+      .selectFrom("sandbox")
+      .select(["state", "externalId", "databaseBranchId"])
+      .where("id", "=", missingSandboxId)
+      .executeTakeFirstOrThrow()
+    expect(sandbox).toEqual({
+      state: "running",
+      externalId,
+      databaseBranchId: missingBranchId,
+    })
+    const branch = await db
+      .selectFrom("databaseBranch")
+      .select(["expiresAt", "cleanupAttempts", "cleanupRetryAt"])
+      .where("id", "=", missingBranchId)
+      .executeTakeFirstOrThrow()
+    expect(branch.expiresAt).toBeInstanceOf(Date)
+    expect(branch.cleanupAttempts).toBe(1)
+    expect(branch.cleanupRetryAt).toBeInstanceOf(Date)
+    await db.deleteFrom("sandbox").where("id", "=", missingSandboxId).execute()
+    await db.deleteFrom("databaseBranch").where("id", "=", missingBranchId).execute()
   })
 
   it("reaps expired alternatives and destruction removes every remaining owned branch", async () => {

@@ -16,6 +16,7 @@ import {
   SANDBOX_KINDS,
   SandboxDeletingError,
   startSandbox,
+  stopSandbox,
 } from "./sandbox"
 
 /**
@@ -608,6 +609,73 @@ describe("reconcileSandboxes", () => {
       .where("id", "=", sandbox.id)
       .executeTakeFirstOrThrow()
     expect(row.state).toBe("stopped")
+  })
+
+  it("does not reconcile a sandbox whose deletion already owns its lifecycle", async ({ skip }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-deleting-${v7()}`,
+      provider: "daytona",
+      state: "deleting",
+      meteredThrough: new Date(),
+    })
+    let stateCalls = 0
+
+    await reconcileSandboxes(
+      () =>
+        ({
+          state: () => {
+            stateCalls += 1
+            return Promise.resolve("destroyed")
+          },
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never, context)
+
+    expect(stateCalls).toBe(0)
+    const row = await db
+      .selectFrom("sandbox")
+      .select(["state", "externalId"])
+      .where("id", "=", sandbox.id)
+      .executeTakeFirstOrThrow()
+    expect(row).toEqual({ state: "deleting", externalId: sandbox.externalId })
+  })
+
+  it("maps a provider error to failed and lets the stop retry settle it", async ({ skip }) => {
+    if (!reachable) skip()
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-provider-error-${v7()}`,
+      provider: "daytona",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+
+    await reconcileSandboxes(() => ({ state: () => Promise.resolve("error") }) as never)(
+      { id: v7(), kind: SANDBOX_KINDS.reconcile, payload: {} } as never,
+      context,
+    )
+    await expect(
+      db.selectFrom("sandbox").select("state").where("id", "=", sandbox.id).executeTakeFirst(),
+    ).resolves.toEqual({ state: "failed" })
+
+    const stopped: string[] = []
+    await stopSandbox(
+      () =>
+        ({
+          stop: (externalId: string) => {
+            stopped.push(externalId)
+            return Promise.resolve()
+          },
+        }) as never,
+    )({ id: v7(), kind: SANDBOX_KINDS.stop, payload: { sandboxId: sandbox.id } } as never, context)
+
+    expect(stopped).toEqual([sandbox.externalId])
+    await expect(
+      db.selectFrom("sandbox").select("state").where("id", "=", sandbox.id).executeTakeFirst(),
+    ).resolves.toEqual({ state: "stopped" })
   })
 })
 

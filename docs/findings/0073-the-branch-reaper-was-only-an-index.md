@@ -40,10 +40,13 @@ queries the existing expiry index and deletes provider state before its row; san
 walks the complete ownership relation. Cleanup failures receive per-branch backoff, so one broken
 old branch does not hide later rows. A minute repair job gives every `deleting` sandbox a fresh
 destroy key even if its original job dead-lettered. Missing Daytona objects are cleaned and left
-stopped; only another user request may rent a replacement. Tests cover negative action scope,
+stopped from provisioning, starting, and recurring reconciliation; a failed provider delete gives
+even a non-expiring default branch an expiry and retry time so the independent branch reaper can
+finish it after a crash. Only another user request may rent a replacement. Tests cover negative action scope,
 concurrent quota reservations, ambiguous provider success, failed cleanup durability, parent
 selection, the canonical pg-proxy database name, refusal to delete the default, audit trail,
-per-branch expiry isolation, destroy repair, and complete destruction.
+per-branch expiry isolation, missing-object reconciliation, destroy repair, and complete
+destruction.
 
 This does not make Neon optional and does not substitute a local database or Docker sandbox for
 Daytona. It adds a control-plane capability to the existing Daytona sandbox and continues to route
