@@ -16,7 +16,7 @@ const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 export const SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT = 1_000
 export const SEARCH_SECURITY_REPAIRS_PER_PASS = 100
 
-const CLUSTER_PERMISSIONS = ["cluster_composite_ops"]
+const CLUSTER_PERMISSIONS = ["cluster_composite_ops", "cluster:monitor/main"]
 const INDEX_ACTIONS = [
   "read",
   "write",
