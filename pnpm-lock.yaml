@@ -402,6 +402,9 @@ importers:
       '@aws-sdk/client-acm':
         specifier: 'catalog:'
         version: 3.1118.0
+      '@aws-sdk/client-auto-scaling':
+        specifier: 'catalog:'
+        version: 3.1120.0
       '@aws-sdk/client-cloudfront-keyvaluestore':
         specifier: 'catalog:'
         version: 3.1119.0
@@ -420,6 +423,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1118.0
+      '@aws-sdk/client-secrets-manager':
+        specifier: 'catalog:'
+        version: 3.1120.0
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1117.0
         version: 3.1117.0
@@ -510,6 +516,9 @@ importers:
       '@utils/numbers':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/numbers
+      acme-client:
+        specifier: 'catalog:'
+        version: 5.4.0
       bullmq:
         specifier: ^6.1.2
         version: 6.1.2(ioredis@6.0.0)(pg@8.23.0)
