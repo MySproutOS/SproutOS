@@ -10,7 +10,7 @@ import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-sec
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudPlatformEdgeCertificate } from "@lib/dao"
 import * as acme from "acme-client"
-import { createHash } from "node:crypto"
+import { Resolver, resolve4, resolveNs, resolveTxt } from "node:dns/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { Redis } from "ioredis"
 import { v7 } from "uuid"
@@ -24,6 +24,40 @@ const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_RETRY_MS = 24 * 60 * 60 * 1000
 const ROUTE53_CHANGE_POLL_MS = 2_000
 const ROUTE53_CHANGE_MAX_POLLS = 60
+const DNS_PROPAGATION_POLL_MS = 2_000
+const DNS_PROPAGATION_MAX_POLLS = 60
+
+type DnsLookup = {
+  resolveNameservers: (hostname: string) => Promise<string[]>
+  resolvePublicTxt: (hostname: string) => Promise<string[][]>
+  resolveAuthoritativeTxt: (hostname: string, nameserver: string) => Promise<string[][]>
+}
+
+const SYSTEM_DNS_LOOKUP: DnsLookup = {
+  resolveNameservers: async (hostname) => {
+    const labels = hostname.replace(/\.$/, "").split(".")
+    for (let index = 0; index < labels.length - 1; index++) {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- walk toward the zone cut until NS records exist.
+        const nameservers = await resolveNs(labels.slice(index).join("."))
+        if (nameservers.length > 0) return nameservers
+      } catch {
+        // An ordinary name below the zone has no NS RRset; its parent may be the zone apex.
+      }
+    }
+    throw new Error(`could not discover authoritative nameservers for ${hostname}`)
+  },
+  resolvePublicTxt: resolveTxt,
+  resolveAuthoritativeTxt: async (hostname, nameserver) => {
+    const addresses = await resolve4(nameserver)
+    if (addresses.length === 0) {
+      throw new Error(`authoritative nameserver ${nameserver} has no IPv4 address`)
+    }
+    const resolver = new Resolver()
+    resolver.setServers(addresses)
+    return resolver.resolveTxt(hostname)
+  },
+}
 
 type Certificate = {
   certificatePem: string
@@ -53,6 +87,7 @@ export type PlatformCertificateDependencies = {
   secrets: SecretsManagerClient
   valkey: Redis
   sleep: (milliseconds: number) => Promise<void>
+  dns: DnsLookup
   issue: (
     deps: PlatformCertificateDependencies,
     config: PlatformCertificateConfig,
@@ -90,6 +125,7 @@ function dependencies(
       (async (milliseconds) => {
         await delay(milliseconds)
       }),
+    dns: options.dns ?? SYSTEM_DNS_LOOKUP,
     issue: options.issue ?? issuePlatformCertificate,
   }
 }
@@ -163,12 +199,23 @@ function challengeRecordName(identifier: string): string {
   return `_acme-challenge.${identifier.replace(/^\*\./, "").replace(/\.$/, "").toLowerCase()}`
 }
 
-function dnsAuthorization(keyAuthorization: string): string {
-  return createHash("sha256").update(keyAuthorization).digest("base64url")
-}
-
 function quotedTxt(value: string): string {
   return JSON.stringify(value)
+}
+
+function txtValues(records: string[][]): string[] {
+  // A TXT RDATA value may be split into multiple character strings. DNS clients present those as
+  // one string array per record, so join within each record instead of flattening records together.
+  return records.map((parts) => parts.join(""))
+}
+
+function route53TxtValue(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return typeof parsed === "string" ? parsed : value
+  } catch {
+    return value
+  }
 }
 
 function exactRecord(records: ResourceRecordSet[] | undefined, name: string) {
@@ -210,18 +257,67 @@ async function waitForRoute53(
   throw new Error(`Route 53 change ${changeId} did not become INSYNC within two minutes`)
 }
 
+async function waitForDnsPropagation(
+  name: string,
+  expected: string,
+  sleep: PlatformCertificateDependencies["sleep"],
+  dns: DnsLookup,
+): Promise<void> {
+  const nameservers = await dns.resolveNameservers(name)
+  if (nameservers.length === 0) {
+    throw new Error(`DNS returned no authoritative nameservers for ${name}`)
+  }
+
+  let missing = ["public resolver", ...nameservers]
+  for (let poll = 0; poll < DNS_PROPAGATION_MAX_POLLS; poll++) {
+    // Query the same public resolver path acme-client verifies through as well as every Route 53
+    // authority. GetChange=INSYNC is a control-plane result; it does not prove a recursive resolver
+    // has stopped serving the previous RRset from cache.
+    // eslint-disable-next-line no-await-in-loop -- bounded propagation polling is intentionally sequential.
+    const answers = await Promise.allSettled([
+      dns.resolvePublicTxt(name),
+      ...nameservers.map((nameserver) => dns.resolveAuthoritativeTxt(name, nameserver)),
+    ])
+    const labels = ["public resolver", ...nameservers]
+    missing = labels.filter((_, index) => {
+      const answer = answers[index]
+      return answer?.status !== "fulfilled" || !txtValues(answer.value).includes(expected)
+    })
+    if (missing.length === 0) return
+    // eslint-disable-next-line no-await-in-loop -- bounded asynchronous propagation poll.
+    await sleep(DNS_PROPAGATION_POLL_MS)
+  }
+  throw new Error(
+    `DNS TXT ${name} did not expose the ACME authorization through ${missing.join(", ")} within two minutes`,
+  )
+}
+
+type PutDnsChallengeOptions = {
+  sleep?: PlatformCertificateDependencies["sleep"]
+  dns?: DnsLookup
+  replaceExisting?: boolean
+}
+
 export async function putDnsChallenge(
   route53: Route53Client,
   zoneId: string,
   identifier: string,
   keyAuthorization: string,
-  sleep: PlatformCertificateDependencies["sleep"] = async (milliseconds) => {
-    await delay(milliseconds)
-  },
+  options: PutDnsChallengeOptions = {},
 ): Promise<void> {
+  const sleep =
+    options.sleep ??
+    (async (milliseconds: number) => {
+      await delay(milliseconds)
+    })
+  const dns = options.dns ?? SYSTEM_DNS_LOOKUP
   const name = challengeRecordName(identifier)
-  const value = quotedTxt(dnsAuthorization(keyAuthorization))
-  const current = await currentChallengeRecord(route53, zoneId, name)
+  // acme-client's DNS-01 callback value is already SHA-256(keyAuthorization), base64url encoded.
+  // Hashing it again writes a different value from the one both acme-client and the CA validate.
+  const value = quotedTxt(keyAuthorization)
+  const current = options.replaceExisting
+    ? undefined
+    : await currentChallengeRecord(route53, zoneId, name)
   const values = new Set(
     (current?.ResourceRecords ?? [])
       .map((record) => record.Value)
@@ -250,6 +346,7 @@ export async function putDnsChallenge(
     }),
   )
   await waitForRoute53(route53, changed.ChangeInfo?.Id, sleep)
+  await waitForDnsPropagation(name, route53TxtValue(value), sleep, dns)
 }
 
 export async function removeDnsChallenge(
@@ -264,7 +361,7 @@ export async function removeDnsChallenge(
   const name = challengeRecordName(identifier)
   const current = await currentChallengeRecord(route53, zoneId, name)
   if (current === undefined) return
-  const value = quotedTxt(dnsAuthorization(keyAuthorization))
+  const value = quotedTxt(keyAuthorization)
   const remaining = (current.ResourceRecords ?? []).filter((record) => record.Value !== value)
   if (remaining.length === current.ResourceRecords?.length) return
 
@@ -320,6 +417,7 @@ export async function issuePlatformCertificate(
   // invoke callbacks concurrently, so serialize read/modify/write updates or each callback can
   // read the same old RRset and overwrite the other challenge digest.
   let dnsMutation = Promise.resolve()
+  const initializedRecords = new Set<string>()
   const serializeDnsMutation = async (mutation: () => Promise<void>): Promise<void> => {
     const result = dnsMutation.then(mutation)
     dnsMutation = result.catch(() => undefined)
@@ -331,14 +429,16 @@ export async function issuePlatformCertificate(
     termsOfServiceAgreed: true,
     challengePriority: ["dns-01"],
     challengeCreateFn: async (authorization, _challenge, keyAuthorization) => {
+      const zoneId = zoneForAuthorization(config, authorization.identifier.value)
+      const record = `${zoneId}:${challengeRecordName(authorization.identifier.value)}`
+      const replaceExisting = !initializedRecords.has(record)
+      initializedRecords.add(record)
       await serializeDnsMutation(() =>
-        putDnsChallenge(
-          deps.route53,
-          zoneForAuthorization(config, authorization.identifier.value),
-          authorization.identifier.value,
-          keyAuthorization,
-          deps.sleep,
-        ),
+        putDnsChallenge(deps.route53, zoneId, authorization.identifier.value, keyAuthorization, {
+          sleep: deps.sleep,
+          dns: deps.dns,
+          replaceExisting,
+        }),
       )
     },
     challengeRemoveFn: async (authorization, _challenge, keyAuthorization) => {
