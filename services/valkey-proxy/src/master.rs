@@ -16,7 +16,7 @@
 //! time.**
 //!
 //! ```text
-//! ZADD sproutos:master:wake GT <epoch_ms> "<resource-short-id>/<queue>"
+//! ZADD sproutos:master:wake LT <epoch_ms> "<resource-short-id>/<queue>"
 //! ```
 //!
 //! A sorted set rather than a list, and this is the whole design:
@@ -24,9 +24,8 @@
 //! - The member is the queue, so a thousand enqueues in a second collapse to one entry. A list
 //!   would grow at the rate the busiest tenant enqueues, and the dispatcher would spend its life
 //!   reading duplicates of a fact it already acted on.
-//! - The score is the last time work arrived, which is exactly what a scale-to-zero decision needs.
-//!   `GT` keeps the newest, so an entry never goes backwards when two proxy replicas report the
-//!   same queue.
+//! - The score is when the queue next needs attention. `LT` keeps the earliest, so an immediate
+//!   enqueue always pulls a future delayed-job alarm forward rather than disappearing behind it.
 //! - The dispatcher reads with `ZRANGEBYSCORE` and removes what it has handled. Nothing here has to
 //!   know whether a dispatcher exists.
 //!
@@ -145,9 +144,9 @@ async fn run(backend: String, mut receiver: mpsc::Receiver<Wake>) {
                         return
                     }
                     Some(wake) => {
-                        // Newest wins, matching the `GT` the write uses.
-                        let entry = pending.entry(wake.member()).or_insert(0);
-                        *entry = (*entry).max(now_ms());
+                        // Earliest wins, matching the `LT` the write uses.
+                        let entry = pending.entry(wake.member()).or_insert(u64::MAX);
+                        *entry = (*entry).min(now_ms());
                     }
                 }
             }
@@ -190,7 +189,7 @@ async fn flush(
         return;
     };
 
-    let command = zadd_gt(pending);
+    let command = zadd_earliest(pending);
     if let Err(cause) = stream.write_all(&command).await {
         warn!(%cause, "master queue write failed; reconnecting");
         *connection = None;
@@ -208,20 +207,19 @@ async fn flush(
     pending.clear();
 }
 
-/// One `ZADD ... GT` carrying every pending member, encoded as a RESP array.
+/// One `ZADD ... LT` carrying every pending member, encoded as a RESP array.
 ///
 /// Sorted by member so the encoding is deterministic — which is what makes it assertable in a test
 /// rather than merely runnable.
-pub fn zadd_gt(pending: &HashMap<String, u64>) -> Vec<u8> {
+pub fn zadd_earliest(pending: &HashMap<String, u64>) -> Vec<u8> {
     let mut members: Vec<(&String, &u64)> = pending.iter().collect();
     members.sort_by(|a, b| a.0.cmp(b.0));
 
     let mut args: Vec<Vec<u8>> = Vec::with_capacity(3 + members.len() * 2);
     args.push(b"ZADD".to_vec());
     args.push(MASTER_WAKE_KEY.as_bytes().to_vec());
-    // `GT` so a score never goes backwards. Two proxy replicas reporting the same queue must not
-    // let the slower one's clock make a queue look staler than it is.
-    args.push(b"GT".to_vec());
+    // `LT` makes immediate work win over any future delayed-job alarm for the same queue.
+    args.push(b"LT".to_vec());
     for (member, score) in members {
         args.push(score.to_string().into_bytes());
         args.push(member.as_bytes().to_vec());
@@ -276,13 +274,13 @@ mod tests {
         pending.insert("res/b".to_string(), 200u64);
         pending.insert("res/a".to_string(), 100u64);
 
-        let encoded = String::from_utf8(zadd_gt(&pending)).unwrap();
+        let encoded = String::from_utf8(zadd_earliest(&pending)).unwrap();
 
         // 3 fixed arguments plus a score and a member each.
         assert!(encoded.starts_with("*7\r\n"));
         assert!(encoded.contains("ZADD"));
         assert!(encoded.contains(MASTER_WAKE_KEY));
-        assert!(encoded.contains("GT"));
+        assert!(encoded.contains("LT"));
         // Sorted by member, so the bytes are the same every run.
         assert!(encoded.find("res/a").unwrap() < encoded.find("res/b").unwrap());
         assert!(encoded.contains("100"));

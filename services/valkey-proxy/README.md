@@ -181,7 +181,7 @@ TASK 20's second half, and the reason this proxy is the only place it can live: 
 enqueue, so it can report one without polling a keyspace that holds every tenant's keys.
 
 ```
-ZADD sproutos:master:wake GT <epoch_ms> "<resource-short-id>/<queue>"
+ZADD sproutos:master:wake LT <epoch_ms> "<resource-short-id>/<queue>"
 ```
 
 Not the job — a job belongs to the tenant, and copying one into a shared structure would put a
@@ -189,9 +189,9 @@ customer's payload somewhere another customer's dispatcher could read. Only the 
 lets the control plane act: _this queue was written to, at this time_.
 
 A sorted set rather than a list, and that is the whole design. The member is the queue, so a
-thousand enqueues in a second collapse to one entry; the score is when work last arrived, which is
-exactly what a scale-to-zero decision needs; `GT` keeps the newest so two replicas cannot make a
-queue look staler than it is.
+thousand enqueues in a second collapse to one entry; the score is when the queue next needs
+attention; `LT` keeps the earliest so an immediate enqueue always pulls a
+future delayed-job alarm forward instead of disappearing behind it.
 
 **On its own connection.** RESP has no request ids, so this proxy tracks replies by position in a
 FIFO. An extra command on a client's backend connection would put a reply in that stream nothing is

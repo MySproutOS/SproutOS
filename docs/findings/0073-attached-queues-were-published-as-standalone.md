@@ -33,10 +33,14 @@ Queue binding is a lifecycle rather than a one-time provision side effect:
   replica's unconditional legacy write cannot overwrite that fence during a rolling deployment;
 - target updates are atomic compare-and-sets and credential publication refuses a tombstone, so
   neither deployment nor a late rotation can resurrect deleted credentials;
+- the DB-authoritative project/function target is also stored separately from the rotating
+  credential binding. An old API replica can overwrite the legacy binding during rollout without
+  erasing the repaired target the router uses;
 - a transient missing target, exhausted balance, or Lambda invocation error rearms the exact wake
   after a bounded delay, pulling it ahead of any later BullMQ delayed-job alarm without overwriting
   a concurrent immediate enqueue. Celery and immediate BullMQ jobs no longer need another enqueue
-  to recover.
+  to recover. The proxy and dispatcher both use earliest-score (`ZADD LT`) semantics, so an enqueue
+  arriving after a future alarm was preserved still becomes due immediately.
 
 The release integration test starts with a legacy binding whose `projectId` is null and proves
 publication repairs its attachment and points it at the same alias as HTTP without changing its URI. The

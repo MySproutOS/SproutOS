@@ -43,9 +43,21 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
       functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
     })
 
+    const oldReplica = {
+      ...original,
+      uri: "rediss://tenant:rotated-by-old-replica@queue.example.test:6379/0",
+      projectId: null,
+    }
+    await valkey.set(`queue:${resource}`, JSON.stringify(oldReplica))
+    expect(await readQueue(valkey, resource)).toEqual({
+      ...oldReplica,
+      projectId: "project-one",
+      functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
+    })
+
     expect(await setQueueTarget(valkey, resource, "project-one", null)).toBe(true)
     expect(await readQueue(valkey, resource)).toEqual({
-      ...original,
+      ...oldReplica,
       projectId: "project-one",
     })
     await withdrawQueue(valkey, resource)

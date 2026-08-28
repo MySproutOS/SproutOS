@@ -246,12 +246,24 @@ pub struct QueueBinding {
     pub organization_id: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct QueueTarget {
+    #[serde(rename = "functionArn")]
+    pub function_arn: Option<String>,
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+}
+
 pub fn binding_key(resource_short_id: &str) -> String {
     format!("queue:{resource_short_id}")
 }
 
 pub fn binding_deleted_key(resource_short_id: &str) -> String {
     format!("queue:deleted:{resource_short_id}")
+}
+
+pub fn binding_target_key(resource_short_id: &str) -> String {
+    format!("queue:target:{resource_short_id}")
 }
 
 /// Run the dispatcher until the process ends.
@@ -303,15 +315,47 @@ pub async fn dispatch_once<I: WorkerInvoker>(valkey: &ConnectionManager, invoker
             continue;
         };
 
+        // Separate from the credential binding so an old API replica's unconditional legacy SET
+        // cannot erase a target already repaired by a new deployment. Fall back to the embedded
+        // fields only while old bindings are being migrated.
+        let authoritative: Result<Option<String>, redis::RedisError> =
+            redis::AsyncCommands::get(&mut connection, binding_target_key(&pending.resource)).await;
+        let target = match authoritative {
+            Ok(Some(raw)) => match serde_json::from_str::<QueueTarget>(&raw) {
+                Ok(target) => Some(target),
+                Err(error) => {
+                    tracing::warn!(%error, resource = pending.resource, "unreadable queue target");
+                    rearm_wake(valkey, &pending).await;
+                    continue;
+                }
+            },
+            Ok(None) => None,
+            Err(error) => {
+                tracing::warn!(%error, resource = pending.resource, "could not read queue target");
+                rearm_wake(valkey, &pending).await;
+                continue;
+            }
+        };
+        let (project_id, function_arn) = match target.as_ref() {
+            Some(target) => (
+                Some(target.project_id.as_str()),
+                target.function_arn.as_deref(),
+            ),
+            None => (
+                binding.project_id.as_deref(),
+                binding.function_arn.as_deref(),
+            ),
+        };
+
         // Preserve the alarm before any credit/function early return. Credit can recover and a
         // deployment can appear; neither should require the customer to enqueue another job.
         preserve_delayed_wake(valkey, &pending).await;
 
-        let Some(arn) = binding.function_arn.as_deref() else {
+        let Some(arn) = function_arn else {
             // An attached service can exist before its first production deployment, or while a
             // failed release rolls back. Keep its wake until a live alias appears. A standalone
             // queue intentionally has no worker target and should not poll forever.
-            if binding.project_id.is_some() {
+            if project_id.is_some() {
                 rearm_wake(valkey, &pending).await;
             }
             continue;
@@ -353,7 +397,7 @@ pub async fn run(valkey: ConnectionManager, lambda: LambdaClient) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     fn dispatcher_test_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -397,6 +441,21 @@ mod tests {
     impl WorkerInvoker for FailingInvoker {
         async fn invoke(&self, _function_arn: &str, _pending: &Pending) -> anyhow::Result<()> {
             anyhow::bail!("deterministic invocation failure")
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct BlockingInvoker {
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl WorkerInvoker for BlockingInvoker {
+        async fn invoke(&self, _function_arn: &str, _pending: &Pending) -> anyhow::Result<()> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(())
         }
     }
 
@@ -715,35 +774,81 @@ mod tests {
             queue: format!("celery-{}", uuid::Uuid::now_v7().simple()),
         };
         let member = format!("{}/{}", pending.resource, pending.queue);
-        let immediate = now_ms();
+        let first_wake = now_ms();
         let delayed = delayed_key(&pending);
+        let binding = binding_key(&pending.resource);
+        let target = binding_target_key(&pending.resource);
+        let arn = "arn:aws:lambda:us-east-1:123:function:app:live";
         let mut connection = manager.clone();
         let _: () = redis::pipe()
             .atomic()
-            // Exact dangerous interleaving: drain completed, then the proxy reported another
-            // immediate enqueue before delayed-alarm preservation ran.
-            .zadd(MASTER_WAKE_KEY, &member, immediate)
-            .zadd(&delayed, "delayed-job", (immediate + 86_400_000) * 4096)
+            .set(
+                &target,
+                serde_json::json!({"projectId": uuid::Uuid::now_v7(), "functionArn": arn})
+                    .to_string(),
+            )
+            // Exact rolling-upgrade ordering: the new API repaired the target, then an old API
+            // replica overwrote only the legacy credential binding.
+            .set(
+                &binding,
+                serde_json::json!({
+                    "uri": "rediss://tenant:redacted@example.test:6379/0",
+                    "backendServiceId": uuid::Uuid::now_v7(),
+                    "projectId": null,
+                    "organizationId": uuid::Uuid::now_v7(),
+                })
+                .to_string(),
+            )
+            .zadd(&delayed, "delayed-job", (first_wake + 86_400_000) * 4096)
+            .zadd(MASTER_WAKE_KEY, &member, first_wake)
             .query_async(&mut connection)
             .await
-            .expect("seed concurrent immediate and delayed wakes");
+            .expect("seed repaired target, legacy overwrite, and delayed wake");
 
-        preserve_delayed_wake(&manager, &pending).await;
-        let invoker = RecordingInvoker::default();
-        invoker
-            .invoke("arn:aws:lambda:us-east-1:123:function:app:live", &pending)
+        // The dispatcher drains the first wake, preserves tomorrow's alarm, and blocks inside the
+        // successful async invocation. Only then does the proxy observe another immediate job.
+        let blocking = BlockingInvoker::default();
+        let started = blocking.started.clone();
+        let release = blocking.release.clone();
+        let dispatch_manager = manager.clone();
+        let first_dispatch = tokio::spawn(async move {
+            dispatch_once(&dispatch_manager, &blocking).await;
+        });
+        tokio::time::timeout(Duration::from_secs(1), started.notified())
             .await
-            .expect("successful invocation");
+            .expect("first dispatch reached the successful invocation");
 
-        let preserved: Option<u64> = redis::cmd("ZSCORE")
+        let concurrent_wake = now_ms();
+        let _: () = redis::cmd("ZADD")
+            .arg(MASTER_WAKE_KEY)
+            .arg("LT")
+            .arg(concurrent_wake)
+            .arg(&member)
+            .query_async(&mut connection)
+            .await
+            .expect("proxy lowers future alarm to immediate work");
+        let due: Option<u64> = redis::cmd("ZSCORE")
             .arg(MASTER_WAKE_KEY)
             .arg(&member)
             .query_async(&mut connection)
             .await
-            .expect("read preserved immediate wake");
-        assert_eq!(preserved, Some(immediate));
+            .expect("read concurrent wake score");
+        assert_eq!(due, Some(concurrent_wake));
+
+        release.notify_one();
+        first_dispatch.await.expect("first dispatch task completed");
+
+        // A successful first invocation must not clear or postpone the job that arrived during it.
+        let invoker = RecordingInvoker::default();
+        dispatch_once(&manager, &invoker).await;
+        assert_eq!(
+            invoker.0.lock().expect("recorded invocation").as_slice(),
+            &[(arn.to_owned(), pending)]
+        );
         let _: () = redis::cmd("DEL")
             .arg(delayed)
+            .arg(binding)
+            .arg(target)
             .query_async(&mut connection)
             .await
             .expect("remove delayed fixture");
@@ -752,7 +857,7 @@ mod tests {
             .arg(member)
             .query_async(&mut connection)
             .await
-            .expect("remove immediate fixture");
+            .expect("remove preserved delayed wake");
     }
 
     #[tokio::test]
