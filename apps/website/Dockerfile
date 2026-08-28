@@ -62,7 +62,9 @@ COPY . .
 # Override any host artifact in the build context with the one built for the image's exact ABI.
 COPY --from=sprout-node-build /out/sprout-node.linux-arm64-gnu.node \
   /src/packages/sprout-node/sprout-node.linux-arm64-gnu.node
-RUN pnpm run build --filter=website --filter=@api/internal
+# The native addon was built in the Rust stage above. `--only` prevents Turbo from trying to run
+# its Cargo-backed package script again in this intentionally Node-only stage.
+RUN pnpm run build --filter=website --filter=@api/internal --only
 
 # The production dependency tree, resolved here so it is resolved for *this* platform. A tree built
 # on a developer's macOS laptop puts `darwin-arm64` binaries into an image bound for Linux, and
@@ -114,8 +116,8 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends bubblewrap ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
     && test "$(stat -c '%u:%a' /usr/bin/bwrap)" = "0:755"
-COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
-COPY --from=worker-tools /usr/local/bin/gh /usr/local/bin/gh
+COPY --from=cosign --chown=0:0 --chmod=0755 /ko-app/cosign /usr/local/bin/cosign
+COPY --from=worker-tools --chown=0:0 --chmod=0755 /usr/local/bin/gh /usr/local/bin/gh
 RUN test "$(stat -c '%u:%a' /usr/local/bin/cosign)" = "0:755" \
     && test "$(stat -c '%u:%a' /usr/local/bin/gh)" = "0:755" \
     && cosign version >/dev/null \
