@@ -25,6 +25,11 @@
  */
 
 locals {
+  # This is the database that already exists on the production OVH ClickHouse server. Keep one
+  # value for every immutable control-plane container: a task can pass ECS health checks while
+  # failing every log query later if this drifts from the server-side database name.
+  ecs_clickhouse_database = "sproutos"
+
   # The EC2 release loaded this allowlist from Parameter Store at boot. Moving the same processes
   # into ECS without carrying the allowlist forward produced containers that were healthy at the
   # load balancer while every credential-backed operation failed at its point of use. Keep the
@@ -330,7 +335,7 @@ resource "aws_ecs_task_definition" "web" {
         # cannot see a client's IPv6 source there, and an allowlist that cannot see the source is
         # not an allowlist.
         { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
-        { name = "CLICKHOUSE_DATABASE", value = "observability" },
+        { name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database },
         { name = "CLICKHOUSE_USER", value = "sproutos" },
         { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
         { name = "NEXT_PUBLIC_HOST_URL", value = "https://${var.control_plane_domain}" },
@@ -420,7 +425,7 @@ resource "aws_ecs_task_definition" "web" {
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
         { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
         { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
-        { name = "CLICKHOUSE_DATABASE", value = "observability" },
+        { name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database },
         { name = "CLICKHOUSE_USER", value = "sproutos" },
         { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
         { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },

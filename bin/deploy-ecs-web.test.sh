@@ -28,8 +28,18 @@ case "$1 $2" in
     printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","runningCount":%s,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[{"targetGroupArn":"arn:web-green"},{"targetGroupArn":"arn:api-green"}]}]}\n' "$task" "$running"
     ;;
   "ecs describe-task-definition")
-    cat <<'JSON'
-{"taskDefinition":{"family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"]}]}}
+    task_reference=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--task-definition" ]; then task_reference=$2; break; fi
+      shift
+    done
+    if [ "$task_reference" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42" ]; then
+      clickhouse_database=sproutos
+    else
+      clickhouse_database=observability
+    fi
+    cat <<JSON
+{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"},{"name":"CLICKHOUSE_DATABASE","value":"$clickhouse_database"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"]}]}}
 JSON
     ;;
   "ecs register-task-definition")
@@ -113,6 +123,25 @@ if grep -q 'elbv2 modify-rule' "$STUB_CALLS"; then
   echo "an already-green ECS cutover must not rewrite listener rules" >&2
   exit 1
 fi
+
+# OpenTofu registers infrastructure-only task contract changes, but the service intentionally
+# ignores task-definition drift. An exact override must seed both the migration and service
+# revisions with that corrected contract before the service changes.
+unlink "$UPDATED"
+unlink "$REGISTER_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42 \
+  "$HERE/deploy-ecs-web.sh"
+jq -e '
+  .containerDefinitions[]
+  | select(.name == "api")
+  | .environment[]
+  | select(.name == "CLICKHOUSE_DATABASE" and .value == "sproutos")
+' "$CAPTURE/task-1.json" >/dev/null
+grep -q 'ecs describe-task-definition --task-definition arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42' "$STUB_CALLS"
+grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 1' "$STUB_CALLS"
 
 # A failed migration is a hard gate: it must not mutate the service.
 unlink "$UPDATED"

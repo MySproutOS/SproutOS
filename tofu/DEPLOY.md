@@ -155,6 +155,29 @@ With the gate enabled, legacy fill, SSM migration and website cutover are remove
 router blue/green is unchanged. A migration failure never updates the service. A failed service
 rollout is automatically restored by the ECS deployment circuit breaker.
 
+The service ignores `task_definition` changes in OpenTofu because application deploys own image
+revisions. When an apply registers an infrastructure-only container contract change, hand that
+exact revision to the migration-first deploy instead of updating the service directly:
+
+```bash
+corrected_task_arn="$(tofu -chdir=tofu state show -no-color aws_ecs_task_definition.web \
+  | sed -n 's/^    arn *= *"\([^"]*\)"/\1/p')"
+test -n "$corrected_task_arn"
+
+aws ecs describe-task-definition --task-definition "$corrected_task_arn" \
+  --query 'taskDefinition.containerDefinitions[?name==`api`].environment[?name==`CLICKHOUSE_DATABASE`].value' \
+  --output text
+
+ECS_BASE_TASK_DEFINITION="$corrected_task_arn" \
+  IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
+  NAME_PREFIX=sproutos \
+  bin/deploy-ecs-web.sh --cutover
+```
+
+The inspection prints only the non-secret database name and must report `sproutos`. The deploy
+requires an exact active ARN in the service's task family, derives both new definitions from it,
+runs migrations first, and changes the service only after a zero exit.
+
 For an application rollback, dispatch `website` with `cutover` checked and `ecs_image_tag` set to a
 previous 12-character image SHA. Database migrations remain forward-only, so choose an application
 revision compatible with the current schema. To return the whole website to legacy EC2, set
