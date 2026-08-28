@@ -132,6 +132,7 @@ describe("signer callback idempotency", () => {
           kind: "sign_client_release",
           job_id: jobId,
           signer_id: "signer-01",
+          claim_token: "d".repeat(64),
           signed_key: `signed/client/${jobId}.apk`,
           signed_object_version: "version-two",
           signed_digest: "b".repeat(64),
@@ -141,11 +142,16 @@ describe("signer callback idempotency", () => {
           version_name: "0.2.0",
           certificate_sha256: "c".repeat(64),
         },
-        "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+        "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
       ],
       [
-        { job_id: jobId, signer_id: "signer-01", error: "verification failed" },
-        "6eefaec98cefc61fa4ecf8df21d3d2837b2866ab4f4b9d534c53b8d600cb7a5c",
+        {
+          job_id: jobId,
+          signer_id: "signer-01",
+          claim_token: "d".repeat(64),
+          error: "verification failed",
+        },
+        "5693763c94f32034803c04a362c6f00704de8253adbed2c71de5c942f313944d",
       ],
     ]
     for (const [payload, key] of vectors) {

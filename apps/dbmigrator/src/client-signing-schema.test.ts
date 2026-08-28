@@ -112,5 +112,15 @@ describe.runIf(reachable)("the catalogue-client signing schema", () => {
     const definition = await constraint("client_signer_job", "client_signer_job_idempotency_check")
     expect(definition).toContain("callback_kind")
     expect(definition).toContain("callback_signer_id")
+    expect(definition).toContain("callback_claim_token")
+  })
+
+  it("requires a fresh opaque token exactly while each signer job is claimed", async () => {
+    expect(
+      await constraint("android_signer_job", "android_signer_job_claim_token_check"),
+    ).toContain("claim_token")
+    expect(await constraint("client_signer_job", "client_signer_job_claim_token_check")).toContain(
+      "claim_token",
+    )
   })
 })

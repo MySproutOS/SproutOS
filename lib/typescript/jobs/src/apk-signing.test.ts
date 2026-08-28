@@ -121,6 +121,7 @@ async function provision() {
   const completion = {
     jobId: job.id,
     signerId: "signer",
+    claimToken: job.claimToken,
     keyObjectKey: `keys/${job.androidAppId}/signing.keystore.enc`,
     keyObjectVersion: "v1",
     certificateSha256: "b".repeat(64),
@@ -208,6 +209,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     const completion = {
       jobId,
       signerId: "signer",
+      claimToken: signing.claimToken,
       signedKey: `signed/${signing.androidAppId}/${jobId}.apk`,
       signedObjectVersion: "signed-v1",
       signedDigest: "c".repeat(64),
@@ -251,6 +253,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
       await completeSigning(db, {
         jobId,
         signerId: "signer",
+        claimToken: signing.claimToken,
         signedKey: `signed/${signing.androidAppId}/${jobId}.apk`,
         signedObjectVersion: "signed-v1",
         signedDigest: "c".repeat(64),
@@ -313,6 +316,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
       await completeSigning(db, {
         jobId,
         signerId: "old",
+        claimToken: held.claimToken,
         signedKey: `signed/${held.androidAppId}/${jobId}.apk`,
         signedObjectVersion: "signed-v1",
         signedDigest: "c".repeat(64),
@@ -329,11 +333,13 @@ describe.runIf(reachable)("the Android signer state machine", () => {
   it("marks the deployment error after a terminal signing failure", async () => {
     const { deploymentId, jobId } = await queue()
     await provision()
-    await claimSigningJob(db, "signer")
+    const signing = await claimSigningJob(db, "signer")
+    if (signing?.kind !== "sign_release") throw new Error("expected signing job")
     expect(
       await failSigning(db, {
         jobId,
         signerId: "signer",
+        claimToken: signing.claimToken,
         error: "invalid APK",
         maxAttempts: 1,
         idempotencyKey: KEY_1,
@@ -351,11 +357,13 @@ describe.runIf(reachable)("the Android signer state machine", () => {
   it("does not let a terminal failed job burn an unpublished version code", async () => {
     const { projectId, jobId } = await queue(17)
     await provision()
-    await claimSigningJob(db, "signer")
+    const signing = await claimSigningJob(db, "signer")
+    if (signing?.kind !== "sign_release") throw new Error("expected signing job")
     expect(
       await failSigning(db, {
         jobId,
         signerId: "signer",
+        claimToken: signing.claimToken,
         error: "invalid APK",
         maxAttempts: 1,
         idempotencyKey: KEY_1,
@@ -389,10 +397,12 @@ describe.runIf(reachable)("the Android signer state machine", () => {
   it("records a retried failure callback only once per claim", async () => {
     const { jobId } = await queue()
     await provision()
-    await claimSigningJob(db, "signer")
+    const firstClaim = await claimSigningJob(db, "signer")
+    if (firstClaim?.kind !== "sign_release") throw new Error("expected signing job")
     const failure = {
       jobId,
       signerId: "signer",
+      claimToken: firstClaim.claimToken,
       error: "temporary tool failure",
       maxAttempts: 3,
       idempotencyKey: KEY_1,
@@ -407,10 +417,17 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         .executeTakeFirstOrThrow(),
     ).toMatchObject({ state: "queued", attempts: 1 })
 
-    // A new claim clears the old callback key, so the same diagnostic on a genuinely new attempt
-    // is counted rather than mistaken for another delivery of the prior callback.
-    await claimSigningJob(db, "signer")
-    expect(await failSigning(db, failure)).toBe(true)
+    // A new attempt gets a distinct token while retaining the previous callback history.
+    const secondClaim = await claimSigningJob(db, "signer")
+    if (secondClaim?.kind !== "sign_release") throw new Error("expected signing job")
+    expect(secondClaim.claimToken).not.toBe(firstClaim.claimToken)
+    expect(
+      await failSigning(db, {
+        ...failure,
+        claimToken: secondClaim.claimToken,
+        idempotencyKey: KEY_2,
+      }),
+    ).toBe(true)
     expect(
       await db
         .selectFrom("androidSignerJob")
@@ -418,6 +435,63 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         .where("id", "=", jobId)
         .executeTakeFirstOrThrow(),
     ).toMatchObject({ attempts: 2 })
+  })
+
+  it("fences a delayed failure after the same signer reclaims an expired app job", async () => {
+    const { jobId } = await queue()
+    await provision()
+    const firstClaimAt = new Date("2026-08-28T12:00:00.000Z")
+    const firstToken = "a".repeat(64)
+    const secondToken = "b".repeat(64)
+    const first = await claimSigningJob(
+      db,
+      "stable-signer",
+      () => firstClaimAt,
+      () => firstToken,
+    )
+    if (first?.kind !== "sign_release") throw new Error("expected signing job")
+    const reclaimed = await claimSigningJob(
+      db,
+      "stable-signer",
+      () => new Date(firstClaimAt.getTime() + CLAIM_TIMEOUT_MS + 1),
+      () => secondToken,
+    )
+    if (reclaimed?.kind !== "sign_release") throw new Error("expected reclaimed signing job")
+    expect(reclaimed.claimToken).toBe(secondToken)
+
+    expect(
+      await failSigning(db, {
+        jobId,
+        signerId: "stable-signer",
+        claimToken: firstToken,
+        error: "delayed first-attempt failure",
+        idempotencyKey: KEY_1,
+      }),
+    ).toBe(false)
+    expect(
+      await db
+        .selectFrom("androidSignerJob")
+        .select(["state", "claimToken", "attempts", "error"])
+        .where("id", "=", jobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "running", claimToken: secondToken, attempts: 0, error: null })
+
+    const currentFailure = {
+      jobId,
+      signerId: "stable-signer",
+      claimToken: secondToken,
+      error: "current-attempt failure",
+      idempotencyKey: KEY_2,
+    }
+    expect(await failSigning(db, currentFailure)).toBe(true)
+    expect(await failSigning(db, currentFailure)).toBe(true)
+    expect(
+      await db
+        .selectFrom("androidSignerJob")
+        .select(["state", "claimToken", "attempts", "callbackClaimToken"])
+        .where("id", "=", jobId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "queued", claimToken: null, attempts: 1, callbackClaimToken: secondToken })
   })
 
   it("fails blocked releases when per-app key provisioning is terminal", async () => {
@@ -428,6 +502,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
       await failSigning(db, {
         jobId: provisioning.id,
         signerId: "signer",
+        claimToken: provisioning.claimToken,
         error: "Developer Console ownership proof required",
         developerConsoleState: "ownership_required",
         maxAttempts: 1,

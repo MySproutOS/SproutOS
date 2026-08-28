@@ -51,6 +51,7 @@ async function provision() {
   const completion = {
     jobId: claim.id,
     signerId: "signer",
+    claimToken: claim.claimToken,
     keyObjectKey: CLIENT_KEY_OBJECT_KEY,
     keyObjectVersion: "key-v1",
     certificateSha256: CERTIFICATE,
@@ -118,6 +119,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       await failClientSigning(db, {
         jobId: claimed.id,
         signerId: "signer",
+        claimToken: claimed.claimToken,
         error: "tool failed",
         idempotencyKey: KEY_1,
         maxAttempts: 1,
@@ -180,6 +182,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
     const completion = {
       jobId: claim.id,
       signerId: "signer",
+      claimToken: claim.claimToken,
       signedKey: `signed/client/${claim.id}.apk`,
       signedObjectVersion: "signed-v1",
       signedDigest: "d".repeat(64),
@@ -241,7 +244,9 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       "signer-recovery",
       () => new Date(firstClaimAt.getTime() + CLAIM_TIMEOUT_MS + 1),
     )
-    expect(recovered).toEqual(versionTwo)
+    if (recovered?.kind !== "sign_client_release") throw new Error("expected reclaimed release")
+    expect(recovered).toMatchObject({ id: versionTwo.id, kind: versionTwo.kind, versionCode: 2 })
+    expect(recovered.claimToken).not.toBe(versionTwo.claimToken)
     expect(
       await claimClientSigningJob(
         db,
@@ -253,6 +258,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       await completeClientSigning(db, {
         jobId: versionTwo.id,
         signerId: "signer-recovery",
+        claimToken: recovered.claimToken,
         signedKey: `signed/client/${versionTwo.id}.apk`,
         signedObjectVersion: "signed-v2",
         signedDigest: "2".repeat(64),
@@ -271,6 +277,68 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       kind: "sign_client_release",
       versionCode: 3,
       previousVersionCode: 2,
+    })
+  })
+
+  it("fences a delayed failure from an expired attempt even when the signer identity is reused", async () => {
+    await ensureClientSigningIdentity(db, "operator")
+    const firstClaimAt = new Date("2026-08-28T12:00:00.000Z")
+    const firstToken = "1".repeat(64)
+    const secondToken = "2".repeat(64)
+    const first = await claimClientSigningJob(
+      db,
+      "stable-signer",
+      () => firstClaimAt,
+      () => firstToken,
+    )
+    if (first?.kind !== "provision_client_key") throw new Error("expected provision job")
+
+    const reclaimed = await claimClientSigningJob(
+      db,
+      "stable-signer",
+      () => new Date(firstClaimAt.getTime() + CLAIM_TIMEOUT_MS + 1),
+      () => secondToken,
+    )
+    expect(reclaimed).toEqual({ ...first, claimToken: secondToken })
+
+    expect(
+      await failClientSigning(db, {
+        jobId: first.id,
+        signerId: "stable-signer",
+        claimToken: firstToken,
+        error: "delayed first-attempt failure",
+        idempotencyKey: KEY_1,
+      }),
+    ).toBe(false)
+    expect(
+      await db
+        .selectFrom("clientSignerJob")
+        .select(["state", "claimToken", "attempts", "error"])
+        .where("id", "=", first.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "running", claimToken: secondToken, attempts: 0, error: null })
+
+    const currentFailure = {
+      jobId: first.id,
+      signerId: "stable-signer",
+      claimToken: secondToken,
+      error: "current-attempt failure",
+      idempotencyKey: KEY_2,
+    }
+    expect(await failClientSigning(db, currentFailure)).toBe(true)
+    expect(await failClientSigning(db, currentFailure)).toBe(true)
+    expect(
+      await db
+        .selectFrom("clientSignerJob")
+        .select(["state", "claimToken", "attempts", "error", "callbackClaimToken"])
+        .where("id", "=", first.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      state: "queued",
+      claimToken: null,
+      attempts: 1,
+      error: "current-attempt failure",
+      callbackClaimToken: secondToken,
     })
   })
 })

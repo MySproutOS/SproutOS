@@ -30,6 +30,7 @@ const digest = Type.String({ pattern: "^[0-9a-f]{64}$" })
 const claimRequest = Type.Object({ signer_id: Type.String({ minLength: 1, maxLength: 200 }) })
 const provisionClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
+  claim_token: digest,
   kind: Type.Literal("provision_key"),
   android_app_id: Type.String({ format: "uuid" }),
   package_name: Type.String(),
@@ -38,6 +39,7 @@ const provisionClaimResponse = Type.Object({
 })
 const signClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
+  claim_token: digest,
   kind: Type.Literal("sign_release"),
   android_app_id: Type.String({ format: "uuid" }),
   package_name: Type.String(),
@@ -57,6 +59,7 @@ const signClaimResponse = Type.Object({
 })
 const provisionClientClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
+  claim_token: digest,
   kind: Type.Literal("provision_client_key"),
   package_name: Type.Literal(CLIENT_PACKAGE_NAME),
   encrypted_key_upload_url: Type.String(),
@@ -64,6 +67,7 @@ const provisionClientClaimResponse = Type.Object({
 })
 const signClientClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
+  claim_token: digest,
   kind: Type.Literal("sign_client_release"),
   package_name: Type.Literal(CLIENT_PACKAGE_NAME),
   download_url: Type.String(),
@@ -88,6 +92,7 @@ const claimResponse = Type.Union([
 const provisionComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  claim_token: digest,
   kind: Type.Literal("provision_key"),
   encrypted_key_object_key: Type.String({ minLength: 1 }),
   encrypted_key_object_version: Type.String({ minLength: 1 }),
@@ -97,6 +102,7 @@ const provisionComplete = Type.Object({
 const signComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  claim_token: digest,
   kind: Type.Literal("sign_release"),
   signed_key: Type.String({ minLength: 1 }),
   signed_object_version: Type.String({ minLength: 1 }),
@@ -110,6 +116,7 @@ const signComplete = Type.Object({
 const provisionClientComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  claim_token: digest,
   kind: Type.Literal("provision_client_key"),
   encrypted_key_object_key: Type.Literal(CLIENT_KEY_OBJECT_KEY),
   encrypted_key_object_version: Type.String({ minLength: 1 }),
@@ -118,6 +125,7 @@ const provisionClientComplete = Type.Object({
 const signClientComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  claim_token: digest,
   kind: Type.Literal("sign_client_release"),
   signed_key: Type.String({ minLength: 1 }),
   signed_object_version: Type.String({ minLength: 1 }),
@@ -137,6 +145,7 @@ const completeRequest = Type.Union([
 const failRequest = Type.Object({
   job_id: Type.String({ format: "uuid" }),
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
+  claim_token: digest,
   error: Type.String({ minLength: 1, maxLength: 4000 }),
   developer_console_state: Type.Optional(
     Type.Union([Type.Literal("ownership_required"), Type.Literal("failed")]),
@@ -277,6 +286,7 @@ const app: Hono = new Hono()
         if (job.kind === "provision_client_key") {
           return c.json({
             job_id: job.id,
+            claim_token: job.claimToken,
             kind: job.kind,
             package_name: job.packageName,
             encrypted_key_upload_url: upload,
@@ -285,6 +295,7 @@ const app: Hono = new Hono()
         }
         return c.json({
           job_id: job.id,
+          claim_token: job.claimToken,
           kind: job.kind,
           android_app_id: job.androidAppId,
           package_name: job.packageName,
@@ -329,6 +340,7 @@ const app: Hono = new Hono()
       if (clientRelease) {
         return c.json({
           job_id: job.id,
+          claim_token: job.claimToken,
           kind: job.kind,
           package_name: job.packageName,
           download_url: downloadUrl,
@@ -346,6 +358,7 @@ const app: Hono = new Hono()
       }
       return c.json({
         job_id: job.id,
+        claim_token: job.claimToken,
         kind: job.kind,
         android_app_id: job.androidAppId,
         package_name: job.packageName,
@@ -544,6 +557,7 @@ const app: Hono = new Hono()
         recorded = await completeKeyProvision(db, {
           jobId: json.job_id,
           signerId: json.signer_id,
+          claimToken: json.claim_token,
           keyObjectKey: json.encrypted_key_object_key,
           keyObjectVersion: json.encrypted_key_object_version,
           certificateSha256: json.certificate_sha256,
@@ -554,6 +568,7 @@ const app: Hono = new Hono()
         recorded = await completeSigning(db, {
           jobId: json.job_id,
           signerId: json.signer_id,
+          claimToken: json.claim_token,
           signedKey: json.signed_key,
           signedObjectVersion: json.signed_object_version,
           signedDigest: json.signed_digest,
@@ -568,6 +583,7 @@ const app: Hono = new Hono()
         recorded = await completeClientKeyProvision(db, {
           jobId: json.job_id,
           signerId: json.signer_id,
+          claimToken: json.claim_token,
           keyObjectKey: json.encrypted_key_object_key,
           keyObjectVersion: json.encrypted_key_object_version,
           certificateSha256: json.certificate_sha256,
@@ -577,6 +593,7 @@ const app: Hono = new Hono()
         recorded = await completeClientSigning(db, {
           jobId: json.job_id,
           signerId: json.signer_id,
+          claimToken: json.claim_token,
           signedKey: json.signed_key,
           signedObjectVersion: json.signed_object_version,
           signedDigest: json.signed_digest,
@@ -615,6 +632,7 @@ const app: Hono = new Hono()
       const recordedCustomer = await failSigning(db, {
         jobId: json.job_id,
         signerId: json.signer_id,
+        claimToken: json.claim_token,
         error: json.error,
         developerConsoleState: json.developer_console_state,
         idempotencyKey,
@@ -624,6 +642,7 @@ const app: Hono = new Hono()
         (await failClientSigning(db, {
           jobId: json.job_id,
           signerId: json.signer_id,
+          claimToken: json.claim_token,
           error: json.error,
           idempotencyKey,
         }))

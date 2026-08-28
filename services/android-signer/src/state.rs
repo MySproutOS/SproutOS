@@ -64,6 +64,7 @@ impl SignCheckpoint {
         CompleteRequest::SignRelease {
             job_id: job.job_id.clone(),
             signer_id: signer_id.to_owned(),
+            claim_token: job.claim_token.clone(),
             signed_key: job.signed_key.clone(),
             signed_object_version,
             signed_digest: self.signed_digest.clone(),
@@ -250,6 +251,7 @@ mod tests {
         std::fs::write(&signed_apk, b"signed bytes").unwrap();
         let mut job = SignReleaseJob {
             job_id: uuid::Uuid::now_v7().to_string(),
+            claim_token: "1".repeat(64),
             android_app_id: uuid::Uuid::now_v7().to_string(),
             package_name: "com.sproutos.store".into(),
             project_id: "platform".into(),

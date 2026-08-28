@@ -240,9 +240,11 @@ export interface AndroidRegistrationReconcilerState {
 export interface AndroidSignerJob {
   androidAppId: string
   attempts: Generated<number>
+  callbackClaimToken: string | null
   callbackIdempotencyKey: string | null
   claimedAt: Timestamp | null
   claimedBy: string | null
+  claimToken: string | null
   createdAt: Generated<Timestamp>
   deploymentId: string | null
   error: string | null
@@ -359,11 +361,13 @@ export interface ClientRelease {
 
 export interface ClientSignerJob {
   attempts: Generated<number>
+  callbackClaimToken: string | null
   callbackIdempotencyKey: string | null
   callbackKind: string | null
   callbackSignerId: string | null
   claimedAt: Timestamp | null
   claimedBy: string | null
+  claimToken: string | null
   clientSigningIdentityId: string
   createdAt: Generated<Timestamp>
   error: string | null

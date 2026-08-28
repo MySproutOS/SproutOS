@@ -1,5 +1,6 @@
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely, type Transaction } from "kysely"
+import { randomBytes } from "node:crypto"
 import { v7 } from "uuid"
 import { ANDROID_VERSION_CODE_MAX, APK_MIME, CLAIM_TIMEOUT_MS } from "./apk-signing"
 
@@ -15,6 +16,7 @@ export type ClientSigningJob =
       id: string
       kind: "provision_client_key"
       packageName: typeof CLIENT_PACKAGE_NAME
+      claimToken: string
     }
   | {
       id: string
@@ -28,6 +30,7 @@ export type ClientSigningJob =
       certificateSha256: string
       keyObjectKey: string
       keyObjectVersion: string
+      claimToken: string
     }
 
 async function identityForUpdate(db: JobDb) {
@@ -79,9 +82,11 @@ export async function ensureClientSigningIdentity(db: Kysely<DB>, operatorSigner
             error: null,
             claimedBy: null,
             claimedAt: null,
+            claimToken: null,
             callbackIdempotencyKey: null,
             callbackKind: null,
             callbackSignerId: null,
+            callbackClaimToken: null,
             operatorSignerId,
             updatedAt: new Date(),
           })
@@ -272,9 +277,11 @@ export async function claimClientSigningJob(
   db: Kysely<DB>,
   signerId: string,
   now: () => Date = () => new Date(),
+  token: () => string = () => randomBytes(32).toString("hex"),
 ): Promise<ClientSigningJob | undefined> {
   const claimedAt = now()
   const staleBefore = new Date(claimedAt.getTime() - CLAIM_TIMEOUT_MS)
+  const claimToken = token()
   return await db.transaction().execute(async (trx) => {
     // The singleton identity row is the fleet-wide claim mutex. Without this lock two signer
     // processes can claim adjacent versions concurrently and a later completion can permanently
@@ -336,9 +343,7 @@ export async function claimClientSigningJob(
         state: "running",
         claimedBy: signerId,
         claimedAt,
-        callbackIdempotencyKey: null,
-        callbackKind: null,
-        callbackSignerId: null,
+        claimToken,
         updatedAt: claimedAt,
       })
       .whereRef("clientSignerJob.id", "=", "candidate.id")
@@ -373,7 +378,12 @@ export async function claimClientSigningJob(
         .set({ state: "provisioning", lastError: null, updatedAt: claimedAt })
         .where("id", "=", row.clientSigningIdentityId)
         .execute()
-      return { id: row.id, kind: "provision_client_key", packageName: CLIENT_PACKAGE_NAME }
+      return {
+        id: row.id,
+        kind: "provision_client_key",
+        packageName: CLIENT_PACKAGE_NAME,
+        claimToken,
+      }
     }
     if (
       row.unsignedKey === null ||
@@ -404,6 +414,7 @@ export async function claimClientSigningJob(
       certificateSha256: row.certificateSha256,
       keyObjectKey: row.keyObjectKey,
       keyObjectVersion: row.keyObjectVersion,
+      claimToken,
     }
   })
 }
@@ -413,6 +424,7 @@ export async function completeClientKeyProvision(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     keyObjectKey: string
     keyObjectVersion: string
     certificateSha256: string
@@ -431,9 +443,11 @@ export async function completeClientKeyProvision(
         "clientSignerJob.clientSigningIdentityId",
         "clientSignerJob.state",
         "clientSignerJob.claimedBy",
+        "clientSignerJob.claimToken",
         "clientSignerJob.callbackIdempotencyKey",
         "clientSignerJob.callbackKind",
         "clientSignerJob.callbackSignerId",
+        "clientSignerJob.callbackClaimToken",
         "clientSigningIdentity.keyObjectKey",
         "clientSigningIdentity.keyObjectVersion",
         "clientSigningIdentity.certificateSha256",
@@ -446,6 +460,7 @@ export async function completeClientKeyProvision(
       return (
         job.callbackKind === "complete" &&
         job.callbackSignerId === input.signerId &&
+        job.callbackClaimToken === input.claimToken &&
         job.keyObjectKey === input.keyObjectKey &&
         job.keyObjectVersion === input.keyObjectVersion &&
         job.certificateSha256 === input.certificateSha256
@@ -455,6 +470,7 @@ export async function completeClientKeyProvision(
       job === undefined ||
       job.state !== "running" ||
       job.claimedBy !== input.signerId ||
+      job.claimToken !== input.claimToken ||
       input.keyObjectKey !== CLIENT_KEY_OBJECT_KEY
     )
       return false
@@ -469,9 +485,11 @@ export async function completeClientKeyProvision(
       .updateTable("clientSignerJob")
       .set({
         state: "succeeded",
+        claimToken: null,
         callbackIdempotencyKey: input.idempotencyKey,
         callbackKind: "complete",
         callbackSignerId: input.signerId,
+        callbackClaimToken: input.claimToken,
         updatedAt: now,
       })
       .where("id", "=", input.jobId)
@@ -497,6 +515,7 @@ export async function completeClientSigning(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     signedKey: string
     signedObjectVersion: string
     signedDigest: string
@@ -519,10 +538,12 @@ export async function completeClientSigning(
       .select([
         "clientSignerJob.state",
         "clientSignerJob.claimedBy",
+        "clientSignerJob.claimToken",
         "clientSignerJob.versionCode",
         "clientSignerJob.callbackIdempotencyKey",
         "clientSignerJob.callbackKind",
         "clientSignerJob.callbackSignerId",
+        "clientSignerJob.callbackClaimToken",
         "clientSignerJob.signedKey",
         "clientSignerJob.signedObjectVersion",
         "clientSignerJob.signedDigest",
@@ -539,6 +560,7 @@ export async function completeClientSigning(
       return (
         job.callbackKind === "complete" &&
         job.callbackSignerId === input.signerId &&
+        job.callbackClaimToken === input.claimToken &&
         job.signedKey === input.signedKey &&
         job.signedObjectVersion === input.signedObjectVersion &&
         job.signedDigest === input.signedDigest &&
@@ -553,6 +575,7 @@ export async function completeClientSigning(
       job === undefined ||
       job.state !== "running" ||
       job.claimedBy !== input.signerId ||
+      job.claimToken !== input.claimToken ||
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
       job.certificateSha256 !== input.certificateSha256 ||
@@ -588,6 +611,7 @@ export async function completeClientSigning(
       .updateTable("clientSignerJob")
       .set({
         state: "succeeded",
+        claimToken: null,
         signedKey: input.signedKey,
         signedObjectVersion: input.signedObjectVersion,
         signedDigest: input.signedDigest,
@@ -596,6 +620,7 @@ export async function completeClientSigning(
         callbackIdempotencyKey: input.idempotencyKey,
         callbackKind: "complete",
         callbackSignerId: input.signerId,
+        callbackClaimToken: input.claimToken,
         signedAt: now,
         updatedAt: now,
       })
@@ -610,6 +635,7 @@ export async function failClientSigning(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     error: string
     idempotencyKey: string
     maxAttempts?: number
@@ -623,10 +649,12 @@ export async function failClientSigning(
         "kind",
         "state",
         "claimedBy",
+        "claimToken",
         "attempts",
         "callbackIdempotencyKey",
         "callbackKind",
         "callbackSignerId",
+        "callbackClaimToken",
         "error",
       ])
       .where("id", "=", input.jobId)
@@ -636,10 +664,16 @@ export async function failClientSigning(
       return (
         job.callbackKind === "fail" &&
         job.callbackSignerId === input.signerId &&
+        job.callbackClaimToken === input.claimToken &&
         job.error === input.error.slice(0, 2000)
       )
     }
-    if (job === undefined || job.state !== "running" || job.claimedBy !== input.signerId)
+    if (
+      job === undefined ||
+      job.state !== "running" ||
+      job.claimedBy !== input.signerId ||
+      job.claimToken !== input.claimToken
+    )
       return false
     const attempts = job.attempts + 1
     const terminal = attempts >= (input.maxAttempts ?? 3)
@@ -651,9 +685,11 @@ export async function failClientSigning(
         error: input.error.slice(0, 2000),
         claimedBy: null,
         claimedAt: null,
+        claimToken: null,
         callbackIdempotencyKey: input.idempotencyKey,
         callbackKind: "fail",
         callbackSignerId: input.signerId,
+        callbackClaimToken: input.claimToken,
         updatedAt: new Date(),
       })
       .where("id", "=", input.jobId)

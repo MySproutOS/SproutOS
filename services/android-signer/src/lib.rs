@@ -76,6 +76,7 @@ where
             return Ok(false);
         };
         let job_id = job.job_id().to_owned();
+        let claim_token = job.claim_token().to_owned();
         let kind = job.kind();
 
         let result = match job {
@@ -96,7 +97,7 @@ where
                 // Never send paths, command output, tokens, URLs, or key material to the platform.
                 let public_error = public_error(&cause);
                 warn!(%job_id, %kind, error = %public_error, "signer job failed");
-                self.api.fail(&job_id, &public_error).await?;
+                self.api.fail(&job_id, &claim_token, &public_error).await?;
                 Ok(true)
             }
         }
@@ -157,6 +158,7 @@ where
         Ok(CompleteRequest::ProvisionKey {
             job_id: job.job_id,
             signer_id: self.api.signer_id().to_owned(),
+            claim_token: job.claim_token,
             encrypted_key_object_key: job.encrypted_key_object_key,
             encrypted_key_object_version: version,
             certificate_sha256: checkpoint.certificate_sha256,
@@ -176,6 +178,7 @@ where
         let completion = self
             .provision_key(api::ProvisionKeyJob {
                 job_id: job.job_id,
+                claim_token: job.claim_token,
                 android_app_id: "platform-catalogue-client".to_owned(),
                 package_name: job.package_name,
                 encrypted_key_upload_url: job.encrypted_key_upload_url,
@@ -186,6 +189,7 @@ where
             CompleteRequest::ProvisionKey {
                 job_id,
                 signer_id,
+                claim_token,
                 encrypted_key_object_key,
                 encrypted_key_object_version,
                 certificate_sha256,
@@ -193,6 +197,7 @@ where
             } => Ok(CompleteRequest::ProvisionClientKey {
                 job_id,
                 signer_id,
+                claim_token,
                 encrypted_key_object_key,
                 encrypted_key_object_version,
                 certificate_sha256,
@@ -323,6 +328,7 @@ where
         let completion = self
             .sign_release(api::SignReleaseJob {
                 job_id: job.job_id,
+                claim_token: job.claim_token,
                 android_app_id: "platform-catalogue-client".to_owned(),
                 package_name: job.package_name,
                 project_id: "platform".to_owned(),
@@ -344,6 +350,7 @@ where
             CompleteRequest::SignRelease {
                 job_id,
                 signer_id,
+                claim_token,
                 signed_key,
                 signed_object_version,
                 signed_digest,
@@ -359,6 +366,7 @@ where
                 Ok(CompleteRequest::SignClientRelease {
                     job_id,
                     signer_id,
+                    claim_token,
                     signed_key,
                     signed_object_version,
                     signed_digest,

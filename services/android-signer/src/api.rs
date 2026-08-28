@@ -37,11 +37,21 @@ impl ClaimedJob {
             Self::SignClientRelease(_) => "sign_client_release",
         }
     }
+
+    pub fn claim_token(&self) -> &str {
+        match self {
+            Self::ProvisionKey(job) => &job.claim_token,
+            Self::SignRelease(job) => &job.claim_token,
+            Self::ProvisionClientKey(job) => &job.claim_token,
+            Self::SignClientRelease(job) => &job.claim_token,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProvisionClientKeyJob {
     pub job_id: String,
+    pub claim_token: String,
     pub package_name: String,
     pub encrypted_key_upload_url: String,
     pub encrypted_key_object_key: String,
@@ -50,6 +60,7 @@ pub struct ProvisionClientKeyJob {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProvisionKeyJob {
     pub job_id: String,
+    pub claim_token: String,
     pub android_app_id: String,
     pub package_name: String,
     pub encrypted_key_upload_url: String,
@@ -59,6 +70,7 @@ pub struct ProvisionKeyJob {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SignReleaseJob {
     pub job_id: String,
+    pub claim_token: String,
     pub android_app_id: String,
     pub package_name: String,
     pub project_id: String,
@@ -79,6 +91,7 @@ pub struct SignReleaseJob {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SignClientReleaseJob {
     pub job_id: String,
+    pub claim_token: String,
     pub package_name: String,
     pub download_url: String,
     pub unsigned_digest: String,
@@ -106,6 +119,7 @@ pub enum CompleteRequest {
     ProvisionKey {
         job_id: String,
         signer_id: String,
+        claim_token: String,
         encrypted_key_object_key: String,
         encrypted_key_object_version: String,
         certificate_sha256: String,
@@ -114,6 +128,7 @@ pub enum CompleteRequest {
     SignRelease {
         job_id: String,
         signer_id: String,
+        claim_token: String,
         signed_key: String,
         signed_object_version: String,
         signed_digest: String,
@@ -126,6 +141,7 @@ pub enum CompleteRequest {
     ProvisionClientKey {
         job_id: String,
         signer_id: String,
+        claim_token: String,
         encrypted_key_object_key: String,
         encrypted_key_object_version: String,
         certificate_sha256: String,
@@ -133,6 +149,7 @@ pub enum CompleteRequest {
     SignClientRelease {
         job_id: String,
         signer_id: String,
+        claim_token: String,
         signed_key: String,
         signed_object_version: String,
         signed_digest: String,
@@ -187,6 +204,7 @@ struct ClaimRequest<'a> {
 struct FailRequest<'a> {
     job_id: &'a str,
     signer_id: &'a str,
+    claim_token: &'a str,
     error: &'a str,
 }
 
@@ -200,7 +218,7 @@ pub trait ControlPlane: Send + Sync {
     fn signer_id(&self) -> &str;
     async fn claim(&self) -> anyhow::Result<Option<ClaimedJob>>;
     async fn complete(&self, request: &CompleteRequest) -> anyhow::Result<()>;
-    async fn fail(&self, job_id: &str, error: &str) -> anyhow::Result<()>;
+    async fn fail(&self, job_id: &str, claim_token: &str, error: &str) -> anyhow::Result<()>;
     async fn get_bytes(&self, url: &str, max_bytes: u64) -> anyhow::Result<Vec<u8>>;
     async fn download_file(
         &self,
@@ -438,10 +456,11 @@ impl ControlPlane for SignerApi {
         self.callback(callback, "job completion").await
     }
 
-    async fn fail(&self, job_id: &str, error: &str) -> anyhow::Result<()> {
+    async fn fail(&self, job_id: &str, claim_token: &str, error: &str) -> anyhow::Result<()> {
         let request = FailRequest {
             job_id,
             signer_id: &self.signer_id,
+            claim_token,
             error,
         };
         let callback = self
@@ -641,6 +660,7 @@ mod tests {
         CompleteRequest::SignRelease {
             job_id: "job".into(),
             signer_id: "signer".into(),
+            claim_token: "1".repeat(64),
             signed_key: "key".into(),
             signed_object_version: "version".into(),
             signed_digest: "d".repeat(64),
@@ -726,6 +746,7 @@ mod tests {
         let provision: ClaimedJob = serde_json::from_value(serde_json::json!({
             "kind": "provision_key",
             "job_id": "019d0000-0000-7000-8000-000000000001",
+            "claim_token": "1111111111111111111111111111111111111111111111111111111111111111",
             "android_app_id": "019d0000-0000-7000-8000-000000000002",
             "package_name": "me.sproutos.app.pabc",
             "encrypted_key_upload_url": "https://bucket.s3.us-east-1.amazonaws.com/key",
@@ -737,6 +758,7 @@ mod tests {
         let sign: ClaimedJob = serde_json::from_value(serde_json::json!({
             "kind": "sign_release",
             "job_id": "019d0000-0000-7000-8000-000000000003",
+            "claim_token": "2222222222222222222222222222222222222222222222222222222222222222",
             "android_app_id": "019d0000-0000-7000-8000-000000000002",
             "package_name": "me.sproutos.app.pabc",
             "project_id": "019d0000-0000-7000-8000-000000000004",
@@ -759,6 +781,7 @@ mod tests {
         let client_provision: ClaimedJob = serde_json::from_value(serde_json::json!({
             "kind": "provision_client_key",
             "job_id": "019d0000-0000-7000-8000-000000000006",
+            "claim_token": "3333333333333333333333333333333333333333333333333333333333333333",
             "package_name": "com.sproutos.store",
             "encrypted_key_upload_url": "https://bucket.s3.us-east-1.amazonaws.com/client-key",
             "encrypted_key_object_key": "keys/client/signing.keystore.enc"
@@ -772,6 +795,7 @@ mod tests {
         let client_sign: ClaimedJob = serde_json::from_value(serde_json::json!({
             "kind": "sign_client_release",
             "job_id": "019d0000-0000-7000-8000-000000000007",
+            "claim_token": "4444444444444444444444444444444444444444444444444444444444444444",
             "package_name": "com.sproutos.store",
             "download_url": "https://bucket.s3.us-east-1.amazonaws.com/client-unsigned?versionId=one",
             "unsigned_digest": "aa",
@@ -792,6 +816,7 @@ mod tests {
     #[test]
     fn callback_json_and_sha256_are_cross_language_contract_vectors() {
         let job_id = "019d0000-0000-7000-8000-000000000007";
+        let claim_token = "d".repeat(64);
         let prepared = PrepareClientReleaseResponse {
             job_id: job_id.into(),
             unsigned_key: format!("raw/client/{job_id}.apk"),
@@ -809,6 +834,7 @@ mod tests {
         let complete = CompleteRequest::SignClientRelease {
             job_id: job_id.into(),
             signer_id: "signer-01".into(),
+            claim_token: claim_token.clone(),
             signed_key: format!("signed/client/{job_id}.apk"),
             signed_object_version: "version-two".into(),
             signed_digest: "b".repeat(64),
@@ -821,6 +847,7 @@ mod tests {
         let fail = FailRequest {
             job_id,
             signer_id: "signer-01",
+            claim_token: &claim_token,
             error: "verification failed",
         };
 
@@ -831,11 +858,11 @@ mod tests {
             ),
             (
                 serde_json::to_string(&complete).unwrap(),
-                "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+                "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
             ),
             (
                 serde_json::to_string(&fail).unwrap(),
-                "6eefaec98cefc61fa4ecf8df21d3d2837b2866ab4f4b9d534c53b8d600cb7a5c",
+                "5693763c94f32034803c04a362c6f00704de8253adbed2c71de5c942f313944d",
             ),
         ];
         for (body, expected) in vectors {

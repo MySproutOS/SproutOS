@@ -6,6 +6,38 @@ import { type Kysely, sql } from "kysely"
  * store itself, while the immutable object versions make every published release reproducible.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
+  // A signer identity is stable across retries, so it cannot fence a callback from an expired
+  // claim after that same signer has reclaimed the job. Each claim gets an unpredictable token;
+  // completion and failure callbacks must present the exact token for the attempt they report.
+  await sql`
+    alter table android_signer_job
+      add column claim_token text,
+      add column callback_claim_token text
+  `.execute(db)
+  // No pre-token lease can be authenticated by the new protocol. Requeue it instead of either
+  // fabricating a token or letting an old in-flight callback cross the migration boundary.
+  await sql`
+    update android_signer_job
+      set state = 'queued', claimed_by = null, claimed_at = null, updated_at = now()
+      where state = 'running'
+  `.execute(db)
+  // Legacy callback hashes did not cover a claim token and cannot be represented as fenced
+  // history. The corresponding terminal/queued state remains; only obsolete replay metadata goes.
+  await sql`
+    update android_signer_job set callback_idempotency_key = null
+      where callback_idempotency_key is not null
+  `.execute(db)
+  await sql`
+    alter table android_signer_job
+      add constraint android_signer_job_claim_token_check check (
+        (state = 'running') = coalesce(claim_token ~ '^[0-9a-f]{64}$', false)
+      ),
+      add constraint android_signer_job_callback_claim_token_check check (
+        (callback_idempotency_key is null and callback_claim_token is null)
+        or (callback_idempotency_key is not null and callback_claim_token ~ '^[0-9a-f]{64}$')
+      )
+  `.execute(db)
+
   // The package is an identity derived from the owning project, not editable metadata. Keep this
   // at the database boundary so a generic DAO update or callback bug cannot move an installed app
   // onto another package name.
@@ -84,12 +116,14 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("operator_signer_id", "text", (col) => col.notNull())
     .addColumn("claimed_by", "text")
     .addColumn("claimed_at", "timestamptz")
+    .addColumn("claim_token", "text")
     .addColumn("attempts", "integer", (col) => col.notNull().defaultTo(0))
     .addColumn("error", "text")
     .addColumn("upload_idempotency_key", "text")
     .addColumn("callback_idempotency_key", "text")
     .addColumn("callback_kind", "text")
     .addColumn("callback_signer_id", "text")
+    .addColumn("callback_claim_token", "text")
     .addColumn("unsigned_key", "text")
     .addColumn("unsigned_object_version", "text")
     .addColumn("unsigned_digest", "text")
@@ -118,14 +152,20 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       sql`length(operator_signer_id) between 1 and 200`,
     )
     .addCheckConstraint(
+      "client_signer_job_claim_token_check",
+      sql`(state = 'running') = coalesce(claim_token ~ '^[0-9a-f]{64}$', false)`,
+    )
+    .addCheckConstraint(
       "client_signer_job_idempotency_check",
       sql`(upload_idempotency_key is null or upload_idempotency_key ~ '^[0-9a-f]{64}$')
         and (
-          (callback_idempotency_key is null and callback_kind is null and callback_signer_id is null)
+          (callback_idempotency_key is null and callback_kind is null and callback_signer_id is null
+            and callback_claim_token is null)
           or (
             callback_idempotency_key ~ '^[0-9a-f]{64}$'
             and callback_kind in ('complete', 'fail')
             and length(callback_signer_id) between 1 and 200
+            and callback_claim_token ~ '^[0-9a-f]{64}$'
           )
         )`,
     )
@@ -206,6 +246,13 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema.dropTable("client_signer_job").execute()
   await db.schema.dropTable("client_signing_identity").execute()
+  await sql`
+    alter table android_signer_job
+      drop constraint android_signer_job_callback_claim_token_check,
+      drop constraint android_signer_job_claim_token_check,
+      drop column callback_claim_token,
+      drop column claim_token
+  `.execute(db)
   await sql`drop trigger android_app_identity_immutable on android_app`.execute(db)
   await sql`drop function sproutos_android_app_identity_immutable()`.execute(db)
   await db.schema
