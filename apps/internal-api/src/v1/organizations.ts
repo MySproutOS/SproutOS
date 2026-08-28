@@ -7,7 +7,9 @@ import {
   fetchOrganizationMember,
   isValidOrganizationSlug,
   provisionOrganization,
+  prepareOrganizationTeardownInTransaction,
 } from "@lib/dao"
+import { enqueue, JOB_KINDS } from "@lib/jobs"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -299,24 +301,40 @@ const app = new Hono()
       const user = c.var.user
       const organization = c.var.organization
 
-      const deleted = await db.transaction().execute(async (tx) => {
-        const ok = await crudOrganization(tx).softDelete(organization.id)
-        if (!ok) return false
+      const prepared = await db.transaction().execute(async (transaction) => {
+        const result = await prepareOrganizationTeardownInTransaction(transaction, {
+          organizationId: organization.id,
+        })
+        if (!result.ok) return result
 
-        await crudAuditLog(tx).record({
+        for (const project of result.projects) {
+          await enqueue(transaction, {
+            kind: JOB_KINDS.tearDownProject,
+            // A previous project teardown may be dead-lettered. `prepareOrganizationTeardown`
+            // adopts that cleanup debt with a new progress row, so its durable job must be new too;
+            // colliding on project id would merely return the terminal job and strand the resource.
+            idempotencyKey:
+              `${JOB_KINDS.tearDownProject}:${project.projectId}:` + project.projectJobId,
+            payload: project,
+            maxAttempts: 5,
+          })
+        }
+
+        await crudAuditLog(transaction).record({
           organizationId: organization.id,
           actorUserId: user.id,
           action: "org:delete",
           resourceSrn: srnFor("org", organization.id, "organization", organization.id),
           before: { slug: organization.slug, name: organization.name, deletedAt: null },
-          after: { deletedAt: new Date().toISOString() },
+          after: {
+            deletedAt: new Date().toISOString(),
+            projectsScheduledForTeardown: result.projects.length,
+          },
           ...auditContext(c),
         })
-
-        return true
+        return result
       })
-
-      if (!deleted) return throwNotFound(c, "Organization not found")
+      if (!prepared.ok) return throwNotFound(c, "Organization not found")
 
       await crudUserPreference(db).setLastOrganization(user.id, null)
 
