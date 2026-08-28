@@ -1,4 +1,4 @@
-import { PLATFORM_HANDLERS, scheduleRecurring, work } from "@lib/jobs"
+import { ACME_HANDLERS, PLATFORM_HANDLERS, scheduleRecurring, work } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { hostname } from "node:os"
 
@@ -9,7 +9,12 @@ import { hostname } from "node:os"
  * process delays every request behind it, and a worker that needs restarting should not take the
  * API down with it. Both read the same table; nothing else coordinates them.
  */
-const workerId = `${hostname()}:${process.pid}`
+const profile = process.env.WORKER_PROFILE ?? "platform"
+if (profile !== "platform" && profile !== "acme") {
+  throw new Error("WORKER_PROFILE must be platform or acme")
+}
+const handlers = profile === "acme" ? ACME_HANDLERS : PLATFORM_HANDLERS
+const workerId = `${profile}:${hostname()}:${process.pid}`
 const controller = new AbortController()
 
 const shutdown = (signal: NodeJS.Signals) => {
@@ -39,16 +44,19 @@ console.log(`[worker] ${workerId} started`)
 // Recurring work is scheduled by the worker itself, keyed on the window it belongs to, so there is
 // no cron process to run and no second place for work to get stuck. Every worker calls this and
 // all but one insert nothing.
-const scheduler = setInterval(() => {
-  void scheduleRecurring(db).catch((error: unknown) => {
-    console.warn("[worker] could not schedule recurring jobs", error)
-  })
-}, 60_000)
-await scheduleRecurring(db)
+const scheduler =
+  profile === "platform"
+    ? setInterval(() => {
+        void scheduleRecurring(db).catch((error: unknown) => {
+          console.warn("[worker] could not schedule recurring jobs", error)
+        })
+      }, 60_000)
+    : undefined
+if (profile === "platform") await scheduleRecurring(db)
 
 await work(db, {
   workerId,
-  handlers: PLATFORM_HANDLERS,
+  handlers,
   signal: controller.signal,
   onEvent: (event) => {
     if (event.type === "failed") {
@@ -59,6 +67,6 @@ await work(db, {
   },
 })
 
-clearInterval(scheduler)
+if (scheduler !== undefined) clearInterval(scheduler)
 await db.destroy()
 console.log("[worker] stopped")

@@ -7,8 +7,12 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
-import { publishRoute as publishLambdaRoute, type Route, withdrawRoute } from "@lib/lambda"
 import type { DB } from "@sproutos/db"
+import {
+  publishRoute as publishLambdaRoute,
+  type Route,
+  withdrawRoute as withdrawLambdaRoute,
+} from "@lib/lambda"
 import * as acme from "acme-client"
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises"
 import { Redis } from "ioredis"
@@ -17,6 +21,7 @@ import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
 import { certificateVersionKey } from "./certificate-version"
+import { certificateDeploymentQuorum } from "./certificate-quorum"
 import {
   configuredAcmeDirectoryUrl,
   refreshRenewalSchedule,
@@ -48,6 +53,7 @@ type Dependencies = {
   secrets: SecretsManagerClient
   valkey: Redis
   publishRoute: typeof publishLambdaRoute
+  withdrawRoute: typeof withdrawLambdaRoute
   issue: typeof issueCertificate
   refreshRenewal: typeof refreshRenewalSchedule
   scheduleIssued: typeof scheduleIssuedCertificate
@@ -79,6 +85,7 @@ function defaults(): Dependencies {
     secrets: new SecretsManagerClient(config),
     valkey: sharedValkey,
     publishRoute: publishLambdaRoute,
+    withdrawRoute: withdrawLambdaRoute,
     issue: issueCertificate,
     refreshRenewal: refreshRenewalSchedule,
     scheduleIssued: scheduleIssuedCertificate,
@@ -88,14 +95,6 @@ function defaults(): Dependencies {
 function required(name: string): string {
   const value = process.env[name]
   if (value === undefined || value === "") throw new Error(`${name} is required`)
-  return value
-}
-
-function minimumCertificateAcks(): number {
-  const value = Number(process.env.ROUTER_CERTIFICATE_MIN_ACKS ?? "1")
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error("ROUTER_CERTIFICATE_MIN_ACKS must be a positive integer")
-  }
   return value
 }
 
@@ -196,23 +195,6 @@ async function issueCertificate(
   }
 }
 
-async function loadedReplicaCount(
-  valkey: Redis,
-  hostname: string,
-  objectVersion: string,
-): Promise<number> {
-  let cursor = "0"
-  let count = 0
-  const pattern = `cert:loaded:${hostname}:${certificateVersionKey(objectVersion)}:*`
-  do {
-    // eslint-disable-next-line no-await-in-loop -- Redis SCAN is cursor based.
-    const [next, keys] = await valkey.scan(cursor, "MATCH", pattern, "COUNT", 100)
-    cursor = next
-    count += keys.length
-  } while (cursor !== "0")
-  return count
-}
-
 export function nextRenewal(expiresAt: Date): Date {
   // Public compatibility name for the bounded fallback used when the CA does not offer RFC 9773.
   return new Date(expiresAt.getTime() - RENEWAL_WINDOW_MS)
@@ -274,7 +256,7 @@ async function deleteCustomDomainResources(
   leaseToken: string,
   dependencies: CustomDomainDeletionDependencies,
 ): Promise<void> {
-  await withdrawRoute(dependencies.valkey, domain.hostname)
+  await withdrawLambdaRoute(dependencies.valkey, domain.hostname)
   await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
 
   if (domain.certificateObjectKey !== null) {
@@ -348,6 +330,27 @@ export async function activateCustomDomain(callbacks: {
   await callbacks.markActive()
 }
 
+/**
+ * Withdraw the request-path state before deleting private-key material or the durable claim.
+ *
+ * Every operation is idempotent. If the worker dies after either Valkey delete, the retry starts
+ * by withdrawing both again and cannot accidentally make the hostname routable while finishing
+ * S3 cleanup. The database row remains `deleting` until the final callback commits.
+ */
+export async function deleteCustomDomain(callbacks: {
+  withdrawRoute: () => Promise<void>
+  clearPending: () => Promise<void>
+  deleteObjects: () => Promise<void>
+  invalidateCertificates: () => Promise<void>
+  finishDelete: () => Promise<void>
+}): Promise<void> {
+  await callbacks.withdrawRoute()
+  await callbacks.clearPending()
+  await callbacks.deleteObjects()
+  await callbacks.invalidateCertificates()
+  await callbacks.finishDelete()
+}
+
 export function scanCustomDomains(): JobHandler {
   return async (_job, { db }) => {
     const due = await fetchCustomDomain(db).listDueQuery(new Date()).execute()
@@ -410,13 +413,12 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         provenanceMatches
       ) {
         failureStatus = "propagating"
-        const minimum = minimumCertificateAcks()
-        const loaded = await loadedReplicaCount(
+        const quorum = await certificateDeploymentQuorum(
           deps.valkey,
-          domain.hostname,
-          domain.certificateObjectVersion,
+          `cert:loaded:${domain.hostname}:${certificateVersionKey(domain.certificateObjectVersion)}:`,
+          deps.now(),
         )
-        if (loaded >= minimum) {
+        if (quorum.ready) {
           const project = await fetchProject(db).getInOrganization(
             domain.organizationId,
             domain.projectId,
@@ -487,7 +489,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
           })
         } else {
           await crudCustomDomain(db).update(domain.organizationId, domain.id, {
-            statusReason: `Certificate stored; waiting for the Rust edge (${loaded}/${minimum} replicas loaded).`,
+            statusReason: `Certificate stored; waiting for every serving Rust edge replica (${quorum.loaded}/${quorum.serving} loaded).`,
             nextRetryAt: new Date(deps.now().getTime() + RETRY_AFTER_MS),
             consecutiveFailures: 0,
           })

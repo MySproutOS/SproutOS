@@ -692,11 +692,13 @@ data "aws_ssm_parameter" "al2023_arm64" {
 }
 
 /*
-  Three roles, because three different things run here and they need different powers.
+  Four roles, because the machine, ordinary application, certificate worker, and ECS launcher need
+  different powers.
 
   - **`instance`** — the EC2 machine. It runs the ECS agent, which registers the instance with the
     cluster and polls for work.
   - **`task`** — the application inside the containers. The website, the API and the worker.
+  - **`acme_task`** — only the isolated certificate worker.
   - **`ecs_execution`** (in `ecs.tf`) — ECS itself, starting a task: pull the image, fetch the
     secret, write the logs.
 
@@ -743,6 +745,21 @@ resource "aws_iam_role" "task" {
   tags = local.tags
 }
 
+resource "aws_iam_role" "acme_task" {
+  name = "${var.name_prefix}-acme-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.tags
+}
+
 /*
   What the router is allowed to do.
 
@@ -752,7 +769,7 @@ resource "aws_iam_role" "task" {
 */
 resource "aws_iam_policy" "application" {
   name        = "${var.name_prefix}-application"
-  description = "What the website, API and worker may do. Attached to the instance role and the task role."
+  description = "What the website, API and ordinary worker may do. Attached to the instance role and ordinary task role."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -1091,8 +1108,9 @@ resource "aws_iam_role_policy_attachment" "task_control_plane_dns" {
   Keep the ACME account key, DNS-01 mutation, certificate-object writes, and router refresh grant
   off the shared application policy: that policy is also attached to the public-facing EC2/router
   role while the legacy release path exists. The current website/API/worker containers share one
-  ECS task role, so this is task-scoped rather than container-scoped; routers receive only read
-  access to versioned certificate objects above.
+  ECS task roles are shared by every container in a task, so the certificate poller is a separate
+  task and role. The public website, API, ordinary worker, and routers receive no account-key,
+  certificate-write, DNS-write, or restart capability.
 */
 resource "aws_iam_policy" "acme_worker" {
   name        = "${var.name_prefix}-acme-worker"
@@ -1127,11 +1145,35 @@ resource "aws_iam_policy" "acme_worker" {
         }
       },
       {
+        Sid      = "ChangeExactTenantAcmeTxt"
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+        Condition = {
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["_acme-challenge.${var.tenant_domain}"]
+            "route53:ChangeResourceRecordSetsRecordTypes"           = ["TXT"]
+            "route53:ChangeResourceRecordSetsActions"               = ["CREATE", "UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Sid      = "ChangeExactEgressAcmeTxt"
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}"
+        Condition = {
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["_acme-challenge.${var.egress_subdomain}.${var.control_plane_domain}"]
+            "route53:ChangeResourceRecordSetsRecordTypes"           = ["TXT"]
+            "route53:ChangeResourceRecordSetsActions"               = ["CREATE", "UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Sid    = "ReadAcmeZones"
         Effect = "Allow"
-        Action = [
-          "route53:ChangeResourceRecordSets",
-          "route53:ListResourceRecordSets",
-        ]
+        Action = ["route53:ListResourceRecordSets"]
         Resource = [
           "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}",
           "arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}",
@@ -1149,12 +1191,32 @@ resource "aws_iam_policy" "acme_worker" {
         # policy without introducing a Terraform dependency cycle.
         Resource = "arn:aws:autoscaling:${var.aws_region}:${var.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-router-*"
       },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
     ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "task_acme_worker" {
-  role       = aws_iam_role.task.name
+resource "aws_iam_role_policy_attachment" "acme_task_worker" {
+  role       = aws_iam_role.acme_task.name
   policy_arn = aws_iam_policy.acme_worker.arn
 }
 

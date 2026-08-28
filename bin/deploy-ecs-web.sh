@@ -222,6 +222,11 @@ rollback_service() {
   echo "rollback restored $current_task_arn" >&2
 }
 
+# The ACME worker is an IAM-isolated ECS service using the same immutable image. It settles before
+# the public task so a release never leaves the privileged worker on a different application build.
+IMAGE="$IMAGE" NAME_PREFIX="$NAME_PREFIX" ECS_CLUSTER="$CLUSTER" \
+  "$(dirname "$0")/deploy-ecs-acme-worker.sh"
+
 echo "migration succeeded; updating $CLUSTER/$SERVICE to $service_task_arn"
 aws ecs update-service \
   --cluster "$CLUSTER" \

@@ -4,6 +4,7 @@ import {
   activateCustomDomain,
   customDomainRetryAfter,
   deleteCertificateObjectVersions,
+  deleteCustomDomain,
   hasOwnershipTxt,
   nextRenewal,
   trafficPointsToIngress,
@@ -210,5 +211,79 @@ describe("custom-domain activation ordering", () => {
       },
     })
     expect(order).toEqual(["route", "pending", "cleanup", "active"])
+  })
+})
+
+describe("custom-domain deletion ordering", () => {
+  it("withdraws both request-path keys before deleting private-key material", async () => {
+    const order: string[] = []
+    await deleteCustomDomain({
+      withdrawRoute: () => {
+        order.push("route")
+        return Promise.resolve()
+      },
+      clearPending: () => {
+        order.push("pending")
+        return Promise.resolve()
+      },
+      deleteObjects: () => {
+        expect(order).toEqual(["route", "pending"])
+        order.push("objects")
+        return Promise.resolve()
+      },
+      invalidateCertificates: () => {
+        order.push("invalidate")
+        return Promise.resolve()
+      },
+      finishDelete: () => {
+        order.push("database")
+        return Promise.resolve()
+      },
+    })
+    expect(order).toEqual(["route", "pending", "objects", "invalidate", "database"])
+  })
+
+  it("recovers idempotently after a crash between withdrawal and object cleanup", async () => {
+    const routes = new Set(["app.example.com"])
+    const pending = new Set(["app.example.com"])
+    const objects = new Set(["version-1"])
+    let first = true
+    let finished = false
+    const run = () =>
+      deleteCustomDomain({
+        withdrawRoute: () => {
+          routes.delete("app.example.com")
+          return Promise.resolve()
+        },
+        clearPending: () => {
+          pending.delete("app.example.com")
+          return Promise.resolve()
+        },
+        deleteObjects: () => {
+          if (first) {
+            first = false
+            return Promise.reject(new Error("worker crashed"))
+          }
+          objects.delete("version-1")
+          return Promise.resolve()
+        },
+        invalidateCertificates: () => Promise.resolve(),
+        finishDelete: () => {
+          finished = true
+          return Promise.resolve()
+        },
+      })
+
+    await expect(run()).rejects.toThrow("worker crashed")
+    expect([...routes]).toEqual([])
+    expect([...pending]).toEqual([])
+    expect([...objects]).toEqual(["version-1"])
+    expect(finished).toBe(false)
+
+    await expect(run()).resolves.toBeUndefined()
+    expect([...routes]).toEqual([])
+    expect([...pending]).toEqual([])
+    expect([...objects]).toEqual([])
+    expect(finished).toBe(true)
   })
 })

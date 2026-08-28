@@ -5,7 +5,8 @@
 # they are the same instances. Two images with one lifecycle is bookkeeping without a benefit.
 #
 # The worker runs from this image too, as a third container in the same task with a different
-# command. One image, three containers, one instance — see `tofu/ecs.tf`. The free tier is 750
+# command. One image, four containers across two IAM-isolated tasks on one instance — see
+# `tofu/ecs.tf`. The free tier is 750
 # instance-hours a month in aggregate, which is one instance running continuously, so three
 # processes share it rather than three instances sitting mostly idle.
 

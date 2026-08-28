@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use crate::edge::ConfiguredResolver;
 
 pub const INVALIDATION_CHANNEL: &str = "certificates:invalidate";
+pub const SERVING_REPLICAS_KEY: &str = "cert:serving-replicas";
 const MAX_CERTIFICATE_OBJECT_BYTES: i64 = 1024 * 1024;
 const INVENTORY_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -55,20 +56,30 @@ impl PlatformCertificateAck {
 
     async fn acknowledge(&self) -> anyhow::Result<()> {
         let mut connection = self.valkey.clone();
-        redis::cmd("SET")
+        let expires_at = serving_expiry_ms(SystemTime::now(), self.ttl)?;
+        let mut pipeline = redis::pipe();
+        pipeline
+            .atomic()
+            .cmd("SET")
             .arg(platform_ack_key(&self.object_version, &self.instance_id))
             .arg("1")
             .arg("EX")
             .arg(self.ttl.as_secs())
-            .query_async::<()>(&mut connection)
-            .await?;
+            .ignore()
+            .cmd("ZADD")
+            .arg(SERVING_REPLICAS_KEY)
+            .arg(expires_at)
+            .arg(&self.instance_id)
+            .ignore();
+        pipeline.query_async::<()>(&mut connection).await?;
         Ok(())
     }
 
     /// Acknowledge only after the edge parsed the PEM, loaded exact certificates, and bound its
     /// listener. The recurring refresh makes a crashed instance disappear without explicit
-    /// deregistration and gives reconciliation a live-replica count rather than a boot-history
-    /// count.
+    /// deregistration and gives reconciliation durable serving membership rather than a static
+    /// replica count or boot history. The worker expires old sorted-set members atomically while
+    /// checking that every remaining member acknowledged the exact version.
     pub async fn start(self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         self.acknowledge().await?;
         Ok(tokio::spawn(async move {
@@ -82,6 +93,16 @@ impl PlatformCertificateAck {
             }
         }))
     }
+}
+
+fn serving_expiry_ms(now: SystemTime, ttl: Duration) -> anyhow::Result<u64> {
+    let milliseconds = now
+        .duration_since(UNIX_EPOCH)
+        .context("system clock precedes the Unix epoch")?
+        .checked_add(ttl)
+        .context("serving-replica expiry overflowed")?
+        .as_millis();
+    u64::try_from(milliseconds).context("serving-replica expiry exceeds u64 milliseconds")
 }
 
 fn platform_ack_key(object_version: &str, instance_id: &str) -> String {
@@ -582,6 +603,15 @@ mod tests {
         for vector in fixture.vectors {
             assert_eq!(certificate_version_key(&vector.version), vector.sha256);
         }
+    }
+
+    #[test]
+    fn serving_membership_expiry_tracks_the_ack_ttl() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        assert_eq!(
+            serving_expiry_ms(now, Duration::from_secs(90)).unwrap(),
+            1_090_000
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 /**
- * The website, the API and the background worker: one image, three containers, one instance.
+ * The website, the API and the ordinary background worker share one image and task. The ACME
+ * worker uses the same immutable image in a separate task because an ECS task role is shared by
+ * every container; task separation is the only real IAM boundary from the public processes.
  *
  * ## Why ECS on EC2 and not Fargate
  *
@@ -291,7 +293,8 @@ resource "aws_ecs_task_definition" "web" {
   # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
   # kernel decide what to kill.
   memory = 768
-  cpu    = 1024
+  # Leave 128 units for the dedicated ACME task on the same one-vCPU free-tier instance.
+  cpu = 896
 
   execution_role_arn = aws_iam_role.ecs_execution.arn
   task_role_arn      = aws_iam_role.task.arn
@@ -488,24 +491,6 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
         { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
-        { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
-        { name = "ROUTER_CERTIFICATE_MIN_ACKS", value = tostring(var.router_certificate_min_acks) },
-        { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
-        { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
-        { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
-        { name = "CONTROL_PLANE_DOMAIN", value = var.control_plane_domain },
-        { name = "CONTROL_PLANE_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
-        { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
-        { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        # These names are part of the stable naming contract, not runtime attributes. Referencing
-        # the ASG resources here makes every infrastructure-only task-definition plan inherit the
-        # router launch templates and tenant target groups, so an unrelated application contract
-        # correction cannot be reviewed or applied independently of an edge rollout.
-        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
-        { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
-        { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
-        { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
         { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
         { name = "LAMBDA_EXECUTION_ROLE_ARN", value = aws_iam_role.lambda_execution.arn },
         { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
@@ -536,6 +521,9 @@ resource "aws_ecs_task_definition" "web" {
         { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
         { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
         { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
+        # Scheduling is not an ACME capability. This ordinary worker inserts durable rows; only the
+        # dedicated ACME task role can claim and execute their privileged handlers.
+        { name = "ACME_JOBS_ENABLED", value = "1" },
       ]
 
       secrets = concat([
@@ -571,6 +559,70 @@ check "ecs_control_plane_container_isolation" {
     ])
     error_message = "Every ECS control-plane container must drop ALL capabilities and use no-new-privileges while the Docker seccomp exception is daemon-wide."
   }
+}
+
+/*
+  The certificate worker is deliberately a separate ECS task, not merely a fourth container.
+
+  Container environment filtering does not isolate IAM credentials: every container in one task
+  receives credentials for the same task role. This task can claim only the three ACME job kinds,
+  and its dedicated role is the only application principal that can read the account key, write
+  certificate objects, change the two exact ACME TXT names, or restart router ASGs.
+*/
+resource "aws_ecs_task_definition" "acme_worker" {
+  family       = "${var.name_prefix}-acme-worker"
+  network_mode = "bridge"
+  memory       = 128
+  cpu          = 128
+
+  execution_role_arn = aws_iam_role.ecs_execution.arn
+  task_role_arn      = aws_iam_role.acme_task.arn
+
+  container_definitions = jsonencode([{
+    name              = "acme-worker"
+    image             = var.web_image
+    essential         = true
+    memoryReservation = 128
+    command           = ["node", "/opt/sproutos/api/worker.js"]
+
+    environment = [
+      { name = "WORKER_PROFILE", value = "acme" },
+      { name = "AWS_REGION", value = var.aws_region },
+      { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
+      { name = "TENANT_DOMAIN", value = var.tenant_domain },
+      { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
+      { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
+      { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
+      { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
+      { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
+      { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
+      { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+      { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
+      { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : aws_autoscaling_group.router[colour].name]) },
+      { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
+      { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
+      { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
+      { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
+      { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
+      { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
+    ]
+
+    secrets = [{
+      name      = "DATABASE_SECRET"
+      valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+    }]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "acme-worker"
+      }
+    }
+  }])
+
+  tags = local.tags
 }
 
 /*
@@ -743,6 +795,32 @@ resource "aws_cloudwatch_metric_alarm" "ecs_in_service_hosts" {
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.ecs.name
+  }
+
+  tags = local.tags
+}
+
+resource "aws_ecs_service" "acme_worker" {
+  name            = "${var.name_prefix}-acme-worker"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.acme_worker.arn
+  desired_count   = var.ecs_instance_count
+
+  capacity_provider_strategy {
+    capacity_provider = aws_ecs_capacity_provider.main.name
+    weight            = 100
+  }
+
+  deployment_maximum_percent         = 100
+  deployment_minimum_healthy_percent = 0
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition, desired_count]
   }
 
   tags = local.tags

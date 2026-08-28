@@ -399,6 +399,17 @@ const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
   })
 }
 
+/**
+ * Certificate handlers run in their own ECS task role. Keeping the map separate is part of the
+ * IAM boundary: the ordinary worker cannot claim an ACME job and the privileged worker cannot
+ * claim unrelated customer work.
+ */
+export const ACME_HANDLERS: Record<string, JobHandler> = {
+  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
+  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
+  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   /*
     The GitHub webhook handlers.
@@ -448,9 +459,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
-  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
-  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
-  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
   [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
@@ -481,13 +489,13 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     })
   }
 
-  if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
+  if (process.env.ACME_JOBS_ENABLED === "1") {
     await enqueue(db, {
       /*
         Every minute. Most runs are a cheap durable-state check. During issuance this converges the
         DNS-01 order; after issuance it keeps the restart handoff visible until live router replicas
         acknowledge the exact immutable S3 version they loaded at boot. The explicit 0/1 rollout
-        variable is also the enablement signal, so an ordinary local worker with no platform AWS
+        scheduling flag is only an enqueue signal, so an ordinary local worker with no platform AWS
         resources does not create a permanently failing singleton job.
       */
       kind: JOB_KINDS.reconcilePlatformEdgeCertificate,
