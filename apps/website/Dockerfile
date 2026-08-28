@@ -85,10 +85,7 @@ RUN mkdir -p /prod/migrator/migrations /prod/migrator/seeds \
       --platform=node --format=esm --target=node24 \
       --outdir=/prod/migrator/migrations \
     && (cd apps/dbmigrator && node ../internal-api/build.mjs src/seed-entry.ts /prod/migrator/seed.mjs) \
-    && pnpm --filter=dbmigrator exec esbuild "src/seeds/*.ts" \
-      --bundle --packages=external \
-      --platform=node --format=esm --target=node24 \
-      --outdir=/prod/migrator/seeds \
+    && bin/build-db-seeds.sh /prod/migrator/seeds \
     && (cd apps/dbmigrator && node ../internal-api/build.mjs src/clickhouse-entry.ts /prod/migrator/clickhouse.mjs)
 
 # ---------------------------------------------------------------------------
