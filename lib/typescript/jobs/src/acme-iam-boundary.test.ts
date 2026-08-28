@@ -14,12 +14,16 @@ const handoff = await readFile(
   "utf8",
 )
 
-function resource(type: string, name: string): string {
+function resourceFrom(source: string, type: string, name: string): string {
   const marker = `resource "${type}" "${name}"`
-  const start = compute.indexOf(marker)
+  const start = source.indexOf(marker)
   if (start < 0) throw new Error(`Missing ${marker}`)
-  const next = compute.indexOf('\nresource "', start + marker.length)
-  return compute.slice(start, next < 0 ? undefined : next)
+  const next = source.indexOf('\nresource "', start + marker.length)
+  return source.slice(start, next < 0 ? undefined : next)
+}
+
+function resource(type: string, name: string): string {
+  return resourceFrom(compute, type, name)
 }
 
 describe("tenant-edge IAM boundary", () => {
@@ -66,7 +70,15 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain("task_role_arn      = aws_iam_role.acme_task.arn")
     expect(ecs).toContain('{ name = "WORKER_PROFILE", value = "acme" }')
     expect(ecs).toContain("var.acme_worker_enabled ? var.ecs_instance_count : 0")
-    expect(ecs).toContain("local.ecs_worker_parameter_names")
+    const acmeTask = resourceFrom(ecs, "aws_ecs_task_definition", "acme_worker")
+    expect(ecs).toContain("ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names")
+    expect(acmeTask).toContain("local.ecs_acme_worker_parameter_secrets")
+    expect(acmeTask).not.toContain("APK_SIGNER")
+    expect(acmeTask).not.toContain("ANDROID_DEVELOPER_ID_STATUS_API_KEY")
+    expect(resourceFrom(ecs, "aws_iam_role_policy", "acme_execution_secrets")).toContain(
+      "local.ecs_acme_parameter_arns",
+    )
+    expect(ecs).not.toContain("local.ecs_worker_parameter_names")
   })
 
   it("keeps private-key reads on a router-only instance role", () => {
