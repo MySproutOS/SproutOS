@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
@@ -14,8 +14,50 @@ pub fn validate_zip_structure(path: &Path) -> anyhow::Result<()> {
 }
 
 pub fn validate_unsigned_zip_structure(path: &Path) -> anyhow::Result<()> {
-    let file = File::open(path).context("could not open APK")?;
+    let mut file = File::open(path).context("could not open APK")?;
+    if contains_apk_signing_block(&mut file)? {
+        bail!("APK already contains an APK Signing Block")
+    }
+    file.rewind()?;
     validate_zip(file, true)
+}
+
+fn contains_apk_signing_block(file: &mut File) -> anyhow::Result<bool> {
+    const EOCD_MIN: u64 = 22;
+    const EOCD_MAX: u64 = EOCD_MIN + u16::MAX as u64;
+    const SIGNING_BLOCK_FOOTER: u64 = 24;
+    const MAGIC: &[u8; 16] = b"APK Sig Block 42";
+
+    let length = file.metadata()?.len();
+    if length < EOCD_MIN {
+        return Ok(false);
+    }
+    let tail_length = length.min(EOCD_MAX) as usize;
+    file.seek(SeekFrom::End(-(tail_length as i64)))?;
+    let mut tail = vec![0_u8; tail_length];
+    file.read_exact(&mut tail)?;
+    let eocd = (0..=tail.len() - EOCD_MIN as usize)
+        .rfind(|&index| {
+            tail[index..].starts_with(b"PK\x05\x06")
+                && u16::from_le_bytes([tail[index + 20], tail[index + 21]]) as usize
+                    == tail.len() - index - EOCD_MIN as usize
+        })
+        .context("APK ZIP end-of-central-directory record is missing")?;
+    if eocd + 20 > tail.len() {
+        bail!("APK ZIP end-of-central-directory record is truncated")
+    }
+    let central_offset = u32::from_le_bytes(
+        tail[eocd + 16..eocd + 20]
+            .try_into()
+            .expect("four-byte central directory offset"),
+    ) as u64;
+    if central_offset < SIGNING_BLOCK_FOOTER {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::Start(central_offset - SIGNING_BLOCK_FOOTER))?;
+    let mut footer = [0_u8; SIGNING_BLOCK_FOOTER as usize];
+    file.read_exact(&mut footer)?;
+    Ok(&footer[8..] == MAGIC)
 }
 
 fn validate_zip<R: Read + Seek>(reader: R, reject_signing_metadata: bool) -> anyhow::Result<()> {
@@ -129,6 +171,32 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("signing metadata")
+        );
+    }
+
+    #[test]
+    fn rejects_an_apk_signing_block_even_when_jar_metadata_is_absent() {
+        let mut bytes =
+            apk(&[("AndroidManifest.xml", b"binary"), ("classes.dex", b"dex")]).into_inner();
+        let eocd = bytes
+            .windows(4)
+            .rposition(|window| window == b"PK\x05\x06")
+            .unwrap();
+        let central_offset = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap());
+        let mut footer = vec![0_u8; 8];
+        footer.extend_from_slice(b"APK Sig Block 42");
+        bytes.splice(central_offset as usize..central_offset as usize, footer);
+        let moved_eocd = eocd + 24;
+        bytes[moved_eocd + 16..moved_eocd + 20]
+            .copy_from_slice(&(central_offset + 24).to_le_bytes());
+
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), bytes).unwrap();
+        assert!(
+            validate_unsigned_zip_structure(temp.path())
+                .unwrap_err()
+                .to_string()
+                .contains("APK Signing Block")
         );
     }
 }
