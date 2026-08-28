@@ -167,7 +167,7 @@ describe("the catalogue", () => {
   it("carries a verified client update without conflating it with a customer app", () => {
     const clientUpdate = toClientUpdate(
       {
-        packageName: "me.sproutos.client",
+        packageName: "com.sproutos.store",
         versionName: "2.0.0",
         versionCode: 20,
         sha256: "c".repeat(64),
@@ -186,7 +186,7 @@ describe("the catalogue", () => {
     })
 
     expect(catalogue.clientUpdate).toMatchObject({
-      packageName: "me.sproutos.client",
+      packageName: "com.sproutos.store",
       versionCode: 20,
       downloadUrl: "https://cdn.example/client/2.0.0.apk?sig=abc",
     })
@@ -197,7 +197,7 @@ describe("the catalogue", () => {
 describe("client updates", () => {
   it("rejects a release with the customer-app package or unverifiable metadata", () => {
     const base = {
-      packageName: "me.sproutos.client",
+      packageName: "com.sproutos.store",
       versionName: "2.0.0",
       versionCode: 20,
       sha256: "c".repeat(64),

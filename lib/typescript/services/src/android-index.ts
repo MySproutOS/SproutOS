@@ -46,7 +46,7 @@ export type AndroidApp = {
 }
 
 export type ClientUpdate = {
-  packageName: "me.sproutos.client"
+  packageName: "com.sproutos.store"
   versionName: string
   versionCode: number
   sha256: string
@@ -215,7 +215,7 @@ export function toClientUpdate(
   signedUrlFor: (key: string) => string,
 ): ClientUpdate | undefined {
   if (
-    row.packageName !== "me.sproutos.client" ||
+    row.packageName !== "com.sproutos.store" ||
     row.versionCode <= 0 ||
     row.sizeBytes <= 0 ||
     !/^[0-9a-f]{64}$/.test(row.sha256) ||

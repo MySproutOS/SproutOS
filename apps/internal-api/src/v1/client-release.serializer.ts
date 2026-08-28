@@ -1,7 +1,7 @@
 import { Type } from "typebox"
 
 export const clientReleaseSchemaResponse = Type.Object({
-  packageName: Type.Literal("me.sproutos.client"),
+  packageName: Type.Literal("com.sproutos.store"),
   versionName: Type.String(),
   versionCode: Type.Integer(),
   sha256: Type.String(),
@@ -12,7 +12,7 @@ export const clientReleaseSchemaResponse = Type.Object({
 })
 
 export const clientReleaseSchemaRequest = Type.Object({
-  package_name: Type.Literal("me.sproutos.client"),
+  package_name: Type.Literal("com.sproutos.store"),
   version_name: Type.String({ minLength: 1, maxLength: 100 }),
   version_code: Type.Integer({ minimum: 1 }),
   apk_object_key: Type.String({ minLength: 1, maxLength: 1024 }),

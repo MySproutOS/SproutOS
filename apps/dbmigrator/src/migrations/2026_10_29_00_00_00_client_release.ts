@@ -25,7 +25,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("created_at", "timestamptz", (col) => col.notNull().defaultTo(sql`now()`))
     .addCheckConstraint(
       "client_release_package_name_check",
-      sql`package_name = 'me.sproutos.client'`,
+      sql`package_name = 'com.sproutos.store'`,
     )
     .addCheckConstraint("client_release_version_code_check", sql`version_code > 0`)
     .addCheckConstraint("client_release_apk_size_bytes_check", sql`apk_size_bytes > 0`)

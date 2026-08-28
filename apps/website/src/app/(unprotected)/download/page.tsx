@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic"
  */
 
 type ClientRelease = {
-  packageName: "me.sproutos.client"
+  packageName: "com.sproutos.store"
   versionName: string
   versionCode: number
   sha256: string

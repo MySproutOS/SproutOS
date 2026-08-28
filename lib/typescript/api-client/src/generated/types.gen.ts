@@ -7062,7 +7062,7 @@ export type GetV1AndroidClientReleaseResponses = {
    * Latest client release
    */
   200: {
-    packageName: "me.sproutos.client"
+    packageName: "com.sproutos.store"
     versionName: string
     versionCode: number
     sha256: string
@@ -7078,7 +7078,7 @@ export type GetV1AndroidClientReleaseResponse =
 
 export type PostV1AndroidClientReleaseData = {
   body?: {
-    package_name: "me.sproutos.client"
+    package_name: "com.sproutos.store"
     version_name: string
     version_code: number
     apk_object_key: string

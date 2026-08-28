@@ -9,7 +9,7 @@ export function fetchClientRelease(db: Kysely<DB>) {
     return await db
       .selectFrom("clientRelease")
       .select(fields)
-      .where("packageName", "=", "me.sproutos.client")
+      .where("packageName", "=", "com.sproutos.store")
       .where("versionCode", "=", versionCode)
       .executeTakeFirst()
   }
@@ -20,7 +20,7 @@ export function fetchClientRelease(db: Kysely<DB>) {
     return await db
       .selectFrom("clientRelease")
       .select(fields)
-      .where("packageName", "=", "me.sproutos.client")
+      .where("packageName", "=", "com.sproutos.store")
       .orderBy("versionCode", "desc")
       .limit(1)
       .executeTakeFirst()

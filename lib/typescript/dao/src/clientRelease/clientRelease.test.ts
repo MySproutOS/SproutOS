@@ -24,7 +24,7 @@ afterAll(async () => {
 
 function release(versionCode: number) {
   return {
-    packageName: "me.sproutos.client",
+    packageName: "com.sproutos.store",
     versionName: `1.0.${versionCode}`,
     versionCode,
     apkObjectKey: `${objectPrefix}/${versionCode}.apk`,
