@@ -188,7 +188,7 @@ pub async fn receive_consent_and_store_refresh_token(
     let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);
     let authorization_url = authorization_url(&client_id, &redirect_uri, &state)?;
     println!(
-        "Open this URL in a browser to authorize Android Developer Console:\n{authorization_url}"
+        "Open this URL with the Google account that owns or administers the existing verified Play Console account to authorize Android Developer Console API access:\n{authorization_url}"
     );
 
     let (mut stream, peer) = tokio::time::timeout(Duration::from_secs(10 * 60), listener.accept())

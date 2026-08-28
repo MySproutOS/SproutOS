@@ -49,7 +49,7 @@ backed.
 | `ANDROID_DEVELOPER_CONSOLE_CLIENT_ID`          | Existing Google Web OAuth client id                         |
 | `ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET`      | Existing Google Web OAuth client secret; env only           |
 | `ANDROID_DEVELOPER_CONSOLE_REFRESH_TOKEN_PATH` | Mode-`0600` on-prem refresh-token file                      |
-| `ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT`  | Verified `developerAccounts/<id>` resource                  |
+| `ANDROID_DEVELOPER_CONSOLE_DEVELOPER_ACCOUNT`  | API-returned `developerAccounts/<id>` resource              |
 
 Initialize once, back up the result, then run under a service manager:
 
@@ -108,6 +108,21 @@ latest good release.
 
 ## Android Developer Console authorization
 
+Ur LLC's existing verified Google Play Console account is the developer identity for both Play
+and off-Play distribution. **Do not create or pay for a second Android Developer Console account.**
+Google's documented operator flow is Play Console > **Android developer verification** >
+**Package names** > **Register package name**. Existing eligible Play apps are automatically
+registered; an off-Play app can be registered from that same page.
+
+The Google Play Android Developer API (`androidpublisher.googleapis.com`) is the publishing API; its
+public REST surface does not expose this package-name verification flow. Google separately documents
+the Android Developer Console API below for CI/CD automation. Its public guide describes
+`developerAccounts/*` as Android Developer Console accounts and does not state that
+`ListDeveloperAccounts` returns an existing Play Console identity. Therefore enabling or authorizing
+that API is an interoperability test, not an instruction to create another developer account. The
+signer must not proceed to registration until an authenticated `ListDeveloperAccounts` call proves
+that the existing Play identity is available through the public API.
+
 The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
 `https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,
 and API keys are unsupported. The existing SproutOS Google Web OAuth client can be reused. In its
@@ -116,7 +131,7 @@ Google Cloud project:
 1. Enable **Android Developer Console API** in APIs & Services.
 2. Add the scope above to the OAuth consent screen's Data Access configuration.
 3. Add the exact Web-client redirect URI `http://127.0.0.1:8787/oauth/callback`.
-4. Use the Google account associated with a verified Android Developer Console developer account.
+4. Sign in with the Google account that owns/administers Ur LLC's verified Play Console account.
 
 Run the one-time receiver on the operator's Mac. The confidential client secret remains an
 environment value; the command never puts it in argv or output:
@@ -135,7 +150,8 @@ mode-`0600` file without printing it. Securely install that file on the signer a
 `/var/lib/sproutos-android-signer/android-developer-console-refresh-token`; do not copy it into the
 repository, shell history, Parameter Store, or an AWS-managed secret.
 
-Configure the service with all four values together:
+Only after authenticated account discovery returns a usable resource, configure the service with
+all four values together:
 
 - `ANDROID_DEVELOPER_CONSOLE_CLIENT_ID`
 - `ANDROID_DEVELOPER_CONSOLE_CLIENT_SECRET`
@@ -149,12 +165,17 @@ Google's current Console API guide documents the registration sequence and metho
 not publish the REST mutation schemas, ownership-proof upload transport, mutation idempotency, or a
 Discovery document without authorization. Therefore the signer continues to report
 `pending_registration`; it must not guess payloads or report `registered`. After the one-time human
-consent above, use authenticated discovery/live schema errors to implement and contract-test
+consent above, first call `ListDeveloperAccounts`. If the existing Play identity is absent, keep the
+job pending and use Play Console's documented manual registration flow; do not direct the operator
+to create an Android Developer Console account. If it is present, use authenticated discovery/live
+schema errors to implement and contract-test
 `ListDeveloperAccounts`, `CreateAndroidPackage`, `GetAndroidPackageRegistrationPolicy`,
 `CreateAndroidPackageKey`, managed ownership proof, justification, and reconciliation. The
 ownership APK must contain the API's opaque verification snippet verbatim at
 `assets/adi-registration.properties`, as shown by Android's official security sample.
 
-Official references: [Console API guide](https://developer.android.com/developer-verification/guides/developer-console-api),
+Official references: [Play Console guide](https://developer.android.com/developer-verification/guides/google-play-console),
+[Play Console registration help](https://support.google.com/googleplay/android-developer/answer/16984799),
+[Console API guide](https://developer.android.com/developer-verification/guides/developer-console-api),
 [OAuth Web Server flow](https://developers.google.com/identity/protocols/oauth2/web-server), and
 [ownership APK sample](https://github.com/android/security-samples/tree/main/AndroidDeveloperVerificationAPKSigningExample).
