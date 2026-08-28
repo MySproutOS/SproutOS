@@ -282,6 +282,11 @@ resource "aws_ecs_task_definition" "web" {
   family       = "${var.name_prefix}-web"
   network_mode = "bridge"
 
+  # Match the explicit defaults returned by ECS so a refresh after registration does not propose
+  # an identical replacement revision forever.
+  requires_compatibilities = []
+  enable_fault_injection   = false
+
   # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
   # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
   # kernel decide what to kill.
@@ -302,9 +307,13 @@ resource "aws_ecs_task_definition" "web" {
       ]
       linuxParameters = {
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
+      mountPoints    = []
+      systemControls = []
+      volumesFrom    = []
 
       portMappings = [{
         containerPort = 8080
@@ -355,9 +364,13 @@ resource "aws_ecs_task_definition" "web" {
       ]
       linuxParameters = {
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
+      mountPoints    = []
+      systemControls = []
+      volumesFrom    = []
 
       portMappings = [{
         containerPort = 3001
@@ -453,9 +466,15 @@ resource "aws_ecs_task_definition" "web" {
       ]
       linuxParameters = {
         capabilities = {
+          add  = []
           drop = ["ALL"]
         }
       }
+
+      portMappings   = []
+      mountPoints    = []
+      systemControls = []
+      volumesFrom    = []
 
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
