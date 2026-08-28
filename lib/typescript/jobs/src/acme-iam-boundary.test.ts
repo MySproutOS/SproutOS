@@ -130,6 +130,15 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain('availability_zone_rebalancing      = "ENABLED"')
     expect(ecs).toContain("deployment_maximum_percent         = 150")
     expect(ecs).toContain("deployment_minimum_healthy_percent = 100")
+    const acmeTaskStart = ecs.indexOf('resource "aws_ecs_task_definition" "acme_worker"')
+    const acmeTaskEnd = ecs.indexOf('resource "aws_cloudwatch_log_group" "ecs"', acmeTaskStart)
+    const acmeTask = ecs.slice(acmeTaskStart, acmeTaskEnd)
+    expect(acmeTask).toContain("requires_compatibilities = []")
+    expect(acmeTask).toContain("enable_fault_injection   = false")
+    expect(acmeTask).toContain("portMappings      = []")
+    expect(acmeTask).toContain("mountPoints       = []")
+    expect(acmeTask).toContain("systemControls    = []")
+    expect(acmeTask).toContain("volumesFrom       = []")
   })
 
   it("hands both exact applied task contracts to the release before rollout continues", () => {

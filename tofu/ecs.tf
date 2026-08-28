@@ -577,6 +577,10 @@ check "ecs_control_plane_container_isolation" {
 resource "aws_ecs_task_definition" "acme_worker" {
   family       = "${var.name_prefix}-acme-worker"
   network_mode = "bridge"
+  # Match the explicit defaults returned by ECS, just like the web task above, so refreshing the
+  # isolated task contract does not propose an identical replacement revision forever.
+  requires_compatibilities = []
+  enable_fault_injection   = false
   # A production-style bundle measured 139.4 MiB RSS before doing ACME work. 256 MiB leaves 84%
   # startup headroom and, together with the 640 MiB web task, fits within one registered host.
   memory = 256
@@ -591,6 +595,10 @@ resource "aws_ecs_task_definition" "acme_worker" {
     essential         = true
     memoryReservation = 192
     command           = ["node", "/opt/sproutos/api/worker.js"]
+    portMappings      = []
+    mountPoints       = []
+    systemControls    = []
+    volumesFrom       = []
 
     environment = concat([
       { name = "WORKER_PROFILE", value = "acme" },
