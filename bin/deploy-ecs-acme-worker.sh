@@ -11,7 +11,12 @@ fi
 
 CLUSTER="${ECS_CLUSTER:-$NAME_PREFIX}"
 SERVICE="${ECS_ACME_WORKER_SERVICE:-$NAME_PREFIX-acme-worker}"
-DEPLOYMENT_CONFIGURATION="maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+DEPLOYMENT_CONFIGURATION="maximumPercent=150,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+PLACEMENT_STRATEGY=(
+  "type=spread,field=attribute:ecs.availability-zone"
+  "type=binpack,field=memory"
+)
+PLACEMENT_CONSTRAINT="type=distinctInstance"
 
 service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
 status=$(jq -r '.services[0].status // empty' <<<"$service_json")
@@ -29,6 +34,10 @@ current_task=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
 desired=$(jq -r '.services[0].desiredCount // empty' <<<"$service_json")
 if [ -z "$current_task" ] || ! [[ "$desired" =~ ^[0-9]+$ ]]; then
   echo "ACME worker service has an invalid task definition or desired count" >&2
+  exit 1
+fi
+if [ "$desired" != "0" ] && [ "$desired" != "2" ]; then
+  echo "ACME worker desired count must be 0 while gated or 2 while enabled, got: $desired" >&2
   exit 1
 fi
 base_task="${ECS_BASE_ACME_TASK_DEFINITION:-$current_task}"
@@ -75,14 +84,22 @@ rollback() {
   echo "rolling $CLUSTER/$SERVICE back to $current_task" >&2
   aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
     --task-definition "$current_task" --desired-count "$desired" \
-    --deployment-configuration "$DEPLOYMENT_CONFIGURATION" --force-new-deployment >/dev/null
+    --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
+    --availability-zone-rebalancing ENABLED \
+    --placement-strategy "${PLACEMENT_STRATEGY[@]}" \
+    --placement-constraints "$PLACEMENT_CONSTRAINT" \
+    --force-new-deployment >/dev/null
   aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
 }
 
 echo "updating $CLUSTER/$SERVICE to $new_task"
 aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
   --task-definition "$new_task" --desired-count "$desired" \
-  --deployment-configuration "$DEPLOYMENT_CONFIGURATION" --force-new-deployment >/dev/null
+  --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
+  --availability-zone-rebalancing ENABLED \
+  --placement-strategy "${PLACEMENT_STRATEGY[@]}" \
+  --placement-constraints "$PLACEMENT_CONSTRAINT" \
+  --force-new-deployment >/dev/null
 if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
   echo "ACME worker release did not stabilize within the bounded ECS waiter" >&2
   rollback || true

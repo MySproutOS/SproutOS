@@ -1,7 +1,7 @@
 import { db } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { afterAll, describe, expect, it } from "vitest"
-import { up } from "./migrations/2026_10_31_00_00_00_acme_certificate_lifecycle"
+import { up } from "./migrations/2026_11_07_00_00_00_acme_certificate_lifecycle"
 
 const databaseReachable = await (async () => {
   try {

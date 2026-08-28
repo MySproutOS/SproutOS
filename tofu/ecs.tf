@@ -859,15 +859,25 @@ resource "aws_ecs_service" "acme_worker" {
     weight            = 100
   }
 
-  # Pack beside the 640 MiB web task. Spreading this 256 MiB task onto an empty instance would keep
-  # the ASG at two permanently and also consume the only host available for zero-downtime web roll.
+  # Keep one privileged worker in each serving zone and never place both replicas on one host.
+  # Within that availability constraint, binpack prefers the two web hosts over the rolling spare.
+  ordered_placement_strategy {
+    type  = "spread"
+    field = "attribute:ecs.availability-zone"
+  }
+
   ordered_placement_strategy {
     type  = "binpack"
     field = "memory"
   }
 
-  deployment_maximum_percent         = 100
-  deployment_minimum_healthy_percent = 0
+  placement_constraints {
+    type = "distinctInstance"
+  }
+
+  availability_zone_rebalancing      = "ENABLED"
+  deployment_maximum_percent         = 150
+  deployment_minimum_healthy_percent = 100
 
   deployment_circuit_breaker {
     enable   = true

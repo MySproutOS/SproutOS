@@ -25,7 +25,7 @@ case "$1 $2" in
         else
           task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-acme-worker:7"
         fi
-        printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","desiredCount":1,"runningCount":1,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[]}],"failures":[]}\n' "$task"
+        printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","desiredCount":%s,"runningCount":%s,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[]}],"failures":[]}\n' "$task" "${ACME_DESIRED_COUNT:-2}" "${ACME_DESIRED_COUNT:-2}"
         exit 0
       fi
       printf '{"services":[],"failures":[{"arn":"sproutos-acme-worker","reason":"MISSING"}]}\n'
@@ -263,6 +263,19 @@ grep -q 'ECS_WEB_DESIRED_COUNT must be 2' "$TEST_DIR/count-failure.out"
 # Once OpenTofu provisions the dedicated service, the same release updates its isolated task role
 # after the old, larger public revision has drained. This preserves the one spare host needed to
 # place the smaller public replacement during the first capacity-envelope rollout.
+: > "$STUB_CALLS"
+if ACME_PRESENT=1 ACME_DESIRED_COUNT=1 "$HERE/deploy-ecs-acme-worker.sh" \
+  >"$TEST_DIR/acme-count-failure.out" 2>&1; then
+  echo "a one-replica ACME worker deployment reported success" >&2
+  exit 1
+fi
+grep -q 'ACME worker desired count must be 0 while gated or 2 while enabled' \
+  "$TEST_DIR/acme-count-failure.out"
+if grep -q 'ecs update-service' "$STUB_CALLS"; then
+  echo "the one-replica ACME worker was mutated before refusal" >&2
+  exit 1
+fi
+
 unlink "$REGISTER_COUNT"
 unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
@@ -276,7 +289,9 @@ jq -e '
   .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab"
 ' "$CAPTURE/task-3.json" >/dev/null
 grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--desired-count 2 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--availability-zone-rebalancing ENABLED' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--placement-strategy type=spread,field=attribute:ecs.availability-zone type=binpack,field=memory .*--placement-constraints type=distinctInstance' "$STUB_CALLS"
 web_update_line=$(grep -n 'ecs update-service .*--service sproutos-web .*sproutos-web:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
 acme_update_line=$(grep -n 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
 if [ "$web_update_line" -ge "$acme_update_line" ]; then
