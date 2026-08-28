@@ -112,6 +112,8 @@ import { exportUser, type UserExport } from "./user/export"
 import { IMPERSONATION_MINUTES, impersonation, type StartImpersonation } from "./user/impersonation"
 import { crudUserPreference } from "./userPreference/crud"
 import { fetchUserPreference } from "./userPreference/fetch"
+import { crudCustomDomain } from "./customDomain/crud"
+import { CUSTOM_DOMAIN_FIELDS, fetchCustomDomain } from "./customDomain/fetch"
 
 export {
   ADMIN_ROLE_NAME,
@@ -137,6 +139,7 @@ export {
   crudAccount,
   crudAuditLog,
   crudBackgroundJob,
+  crudCustomDomain,
   crudMemberPermission,
   crudOrganization,
   crudOrganizationInvite,
@@ -168,6 +171,7 @@ export {
   fetchAgentCredential,
   fetchAgentSession,
   fetchBackgroundJob,
+  fetchCustomDomain,
   fetchGithubInstallation,
   fetchMemberPermission,
   fetchOrganization,
@@ -231,6 +235,7 @@ export {
   UpkeepStatus,
   StartImpersonation,
   UserExport,
+  CUSTOM_DOMAIN_FIELDS,
 }
 export { crudDeployment } from "./deployment/crud"
 export { fetchDeployment } from "./deployment/fetch"

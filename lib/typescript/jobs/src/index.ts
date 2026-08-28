@@ -92,6 +92,7 @@ export {
 } from "./static-publish"
 export { ProjectBusyError, withProjectLock } from "./project-lock"
 export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
+export { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 export {
   METERING_OUTBOX_BATCH_SIZE,
   METERING_OUTBOX_PUBLISH_TIMEOUT_MS,

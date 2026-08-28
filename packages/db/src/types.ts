@@ -370,16 +370,23 @@ export interface CreditTransaction {
 }
 
 export interface CustomDomain {
-  acmCertificateArn: string | null
-  acmValidationName: string | null
-  acmValidationValue: string | null
+  certificateExpiresAt: Timestamp | null
+  certificateIssuedAt: Timestamp | null
+  certificateObjectKey: string | null
+  certificateObjectVersion: string | null
+  claimExpiresAt: Generated<Timestamp>
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
   hostname: string
   id: string
   isApex: Generated<boolean>
+  lastCheckedAt: Timestamp | null
+  nextRenewalAt: Timestamp | null
+  nextRetryAt: Timestamp | null
   organizationId: string
   projectId: string
+  reconcileLeaseExpiresAt: Timestamp | null
+  reconcileLeaseToken: string | null
   status: Generated<string>
   statusReason: string | null
   updatedAt: Generated<Timestamp>

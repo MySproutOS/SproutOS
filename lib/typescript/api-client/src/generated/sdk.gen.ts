@@ -18,6 +18,7 @@ import {
   getV1OrgsByOrgSlugBillingStatementsResponseTransformer,
   getV1OrgsByOrgSlugBillingTransactionsResponseTransformer,
   getV1OrgsByOrgSlugBillingUsageResponseTransformer,
+  getV1OrgsByOrgSlugDomainsResponseTransformer,
   getV1OrgsByOrgSlugInvitesResponseTransformer,
   getV1OrgsByOrgSlugMembersResponseTransformer,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
@@ -60,7 +61,7 @@ import {
   postV1OrgsByOrgSlugApiKeysResponseTransformer,
   postV1OrgsByOrgSlugInvitesResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
-  postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponseTransformer,
@@ -163,6 +164,8 @@ import type {
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdErrors,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses,
+  GetV1OrgsByOrgSlugDomainsData,
+  GetV1OrgsByOrgSlugDomainsResponses,
   GetV1OrgsByOrgSlugErrors,
   GetV1OrgsByOrgSlugGithubOwnersData,
   GetV1OrgsByOrgSlugGithubOwnersErrors,
@@ -410,9 +413,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses,
@@ -1951,7 +1954,19 @@ export const postV1OrgsByOrgSlugDeploymentsByDeploymentIdRollback = <
   >({ url: "/v1/orgs/{orgSlug}/deployments/{deploymentId}/rollback", ...options })
 
 /**
- * The custom domains attached to a project, and what to publish for each
+ * Custom domains across the organization
+ */
+export const getV1OrgsByOrgSlugDomains = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugDomainsData, ThrowOnError>,
+): RequestResult<GetV1OrgsByOrgSlugDomainsResponses, unknown, ThrowOnError> =>
+  (options.client ?? client).get<GetV1OrgsByOrgSlugDomainsResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1OrgsByOrgSlugDomainsResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/domains",
+    ...options,
+  })
+
+/**
+ * Custom domains attached to a project
  */
 export const getV1OrgsByOrgSlugProjectsByProjectIdDomains = <ThrowOnError extends boolean = false>(
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData, ThrowOnError>,
@@ -1967,7 +1982,7 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdDomains = <ThrowOnError extend
   })
 
 /**
- * Attach a hostname to a project. Returns the records to publish.
+ * Claim a hostname and return the DNS records to publish
  */
 export const postV1OrgsByOrgSlugProjectsByProjectIdDomains = <ThrowOnError extends boolean = false>(
   options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData, ThrowOnError>,
@@ -1991,30 +2006,30 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdDomains = <ThrowOnError exten
   })
 
 /**
- * Check the published records and, if they are right, start serving the domain
+ * Wake asynchronous DNS and certificate reconciliation
  */
-export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerify = <
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck = <
   ThrowOnError extends boolean = false,
 >(
-  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData, ThrowOnError>,
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData, ThrowOnError>,
 ): RequestResult<
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors,
   ThrowOnError
 > =>
   (options.client ?? client).post<
-    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses,
-    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors,
     ThrowOnError
   >({
     responseTransformer:
-      postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponseTransformer,
-    url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}/verify",
+      postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}/check",
     ...options,
   })
 
 /**
- * Stop serving a domain and release its certificate
+ * Stop serving and asynchronously release a custom domain
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId = <
   ThrowOnError extends boolean = false,
@@ -2238,6 +2253,10 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns = <
       postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/workflows/{workflowId}/runs",
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   })
 
 /**

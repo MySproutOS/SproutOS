@@ -50,6 +50,7 @@ import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/service
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
+import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -104,6 +105,8 @@ export const JOB_KINDS = {
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
   meterNeonDatabases: METER_NEON_DATABASES_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
+  customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
+  customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -398,6 +401,8 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
+  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
+  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
 }
 
 /**
@@ -410,6 +415,11 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  await enqueue(db, {
+    kind: JOB_KINDS.customDomainScan,
+    idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
   await enqueue(db, {
     kind: JOB_KINDS.workflowScheduleScan,
     idempotencyKey: `${JOB_KINDS.workflowScheduleScan}:${now.toISOString().slice(0, 16)}`,

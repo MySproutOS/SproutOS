@@ -21,6 +21,7 @@ pub fn challenge_key(host: &str, token: &str) -> String {
 pub trait Http01Store: Send + Sync {
     async fn challenge(&self, host: &str, token: &str) -> anyhow::Result<Option<String>>;
     async fn route_is_active(&self, host: &str) -> anyhow::Result<bool>;
+    async fn domain_is_pending(&self, host: &str) -> anyhow::Result<bool>;
 }
 
 #[async_trait]
@@ -34,6 +35,13 @@ impl Http01Store for ConnectionManager {
         let mut connection = self.clone();
         let raw: Option<String> = connection.get(crate::route::route_key(host)).await?;
         Ok(raw.as_deref().and_then(crate::route::parse_route).is_some())
+    }
+
+    async fn domain_is_pending(&self, host: &str) -> anyhow::Result<bool> {
+        let mut connection = self.clone();
+        Ok(connection
+            .exists(format!("custom-domain:pending:{host}"))
+            .await?)
     }
 }
 
@@ -84,11 +92,18 @@ async fn handle(
             )
                 .into_response()
         }
-        Ok(false) => (
-            StatusCode::TOO_EARLY,
-            "This domain is still being configured.",
-        )
-            .into_response(),
+        Ok(false) => match store.domain_is_pending(&host).await {
+            Ok(true) => (
+                StatusCode::TOO_EARLY,
+                "This domain is still being configured.",
+            )
+                .into_response(),
+            Ok(false) => StatusCode::NOT_FOUND.into_response(),
+            Err(cause) => {
+                tracing::error!(%cause, %host, "HTTP pending-domain lookup failed");
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
+        },
         Err(cause) => {
             tracing::error!(%cause, %host, "HTTP route lookup failed");
             StatusCode::SERVICE_UNAVAILABLE.into_response()
@@ -161,6 +176,7 @@ mod tests {
     struct MemoryStore {
         challenges: HashMap<String, String>,
         active: HashSet<String>,
+        pending: HashSet<String>,
     }
 
     #[async_trait]
@@ -172,6 +188,10 @@ mod tests {
         async fn route_is_active(&self, host: &str) -> anyhow::Result<bool> {
             Ok(self.active.contains(host))
         }
+
+        async fn domain_is_pending(&self, host: &str) -> anyhow::Result<bool> {
+            Ok(self.pending.contains(host))
+        }
     }
 
     fn store() -> Arc<dyn Http01Store> {
@@ -181,6 +201,7 @@ mod tests {
                 "valid_token.thumbprint".into(),
             )]),
             active: HashSet::from(["app.example.test".into()]),
+            pending: HashSet::from(["pending.example.test".into()]),
         })
     }
 
@@ -229,6 +250,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pending.status(), StatusCode::TOO_EARLY);
+
+        let unknown = app(store())
+            .oneshot(
+                Request::get("/")
+                    .header("host", "unknown.example.test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
