@@ -470,6 +470,38 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.reconcileAndroidDeveloperRegistration]: reconcileAndroidDeveloperRegistrationsJob(),
 }
 
+const FALLBACK_PLATFORM_HANDLERS: Record<string, JobHandler> = {
+  ...PLATFORM_HANDLERS,
+  ...ACME_HANDLERS,
+}
+
+/**
+ * Select the kinds one worker process may claim during the isolated-worker rollout.
+ *
+ * Before the isolated ECS service exists, ordinary workers must continue draining deployment and
+ * teardown jobs or those rows remain queued forever: `claim` only selects kinds present in this
+ * map. Once enabled, platform workers relinquish those kinds and the ACME profile owns exactly its
+ * privileged map.
+ *
+ * This is the flag-zero production recovery, not a claim that one flag can coordinate a distributed
+ * rollout. Infrastructure must separately stage isolated capacity, handler ownership, and fallback
+ * IAM before applying the isolated-worker plan; that two-phase handoff is a separate change.
+ */
+export function handlersForWorkerProfile(
+  profile: "platform" | "acme",
+  isolatedAcmeJobsEnabled: boolean,
+): Record<string, JobHandler> {
+  if (profile === "acme") return ACME_HANDLERS
+  return isolatedAcmeJobsEnabled ? PLATFORM_HANDLERS : FALLBACK_PLATFORM_HANDLERS
+}
+
+/** Parse a task-definition feature gate without silently treating a typo as a rollout decision. */
+export function parseWorkerFlag(name: string, value: string | undefined): boolean {
+  if (value === undefined || value === "0") return false
+  if (value === "1") return true
+  throw new Error(`${name} must be 0 or 1`)
+}
+
 /**
  * Keep the recurring jobs scheduled.
  *

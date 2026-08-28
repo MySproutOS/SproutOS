@@ -1,4 +1,4 @@
-import { ACME_HANDLERS, PLATFORM_HANDLERS, scheduleRecurring, work } from "@lib/jobs"
+import { handlersForWorkerProfile, parseWorkerFlag, scheduleRecurring, work } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { hostname } from "node:os"
 
@@ -13,7 +13,8 @@ const profile = process.env.WORKER_PROFILE ?? "platform"
 if (profile !== "platform" && profile !== "acme") {
   throw new Error("WORKER_PROFILE must be platform or acme")
 }
-const handlers = profile === "acme" ? ACME_HANDLERS : PLATFORM_HANDLERS
+const isolatedAcmeJobsEnabled = parseWorkerFlag("ACME_JOBS_ENABLED", process.env.ACME_JOBS_ENABLED)
+const handlers = handlersForWorkerProfile(profile, isolatedAcmeJobsEnabled)
 const workerId = `${profile}:${hostname()}:${process.pid}`
 const controller = new AbortController()
 
