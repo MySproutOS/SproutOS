@@ -3161,6 +3161,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprout-template-protocol"
+version = "0.1.0"
+source = "git+https://github.com/MySproutOS/Deployment-Templates?rev=fea608ab7c8da209354e89df5fa4a98ee2cfcf45#fea608ab7c8da209354e89df5fa4a98ee2cfcf45"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "sprout-template-protocol-integration"
+version = "0.0.0"
+dependencies = [
+ "sprout-template-protocol",
+]
+
+[[package]]
 name = "sproutos-llm-proxy"
 version = "0.1.0"
 dependencies = [
