@@ -1,8 +1,10 @@
 import {
   CreateBucketCommand,
   GetObjectCommand,
+  ListObjectVersionsCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  PutBucketVersioningCommand,
   S3Client,
 } from "@aws-sdk/client-s3"
 import { db } from "@sproutos/db"
@@ -139,6 +141,12 @@ beforeAll(async () => {
     credentials: { accessKeyId: "test", secretAccessKey: "test" },
   })
   await s3.send(new CreateBucketCommand({ Bucket: SHARED })).catch(() => undefined)
+  await s3.send(
+    new PutBucketVersioningCommand({
+      Bucket: SHARED,
+      VersioningConfiguration: { Status: "Enabled" },
+    }),
+  )
   s3.destroy()
 
   proxy = await startStorageProxy(config!, PROXY_PORT, SHARED)
@@ -248,12 +256,24 @@ describe.runIf(reachable)("one bucket, many tenants", () => {
     await customer.send(
       new PutObjectCommand({ Bucket: logicalBucket, Key: "notes/remove.md", Body: "gone" }),
     )
+    // A normal object delete in this production-shaped bucket retains the prior bytes. Teardown
+    // must purge both versions, not merely hide the newest behind a delete marker.
+    await customer.send(
+      new PutObjectCommand({ Bucket: logicalBucket, Key: "notes/remove.md", Body: "gone-again" }),
+    )
     await driver.destroy(created.backendServiceId)
 
-    const remaining = await upstream().send(
+    const storage = upstream()
+    const remaining = await storage.send(
       new ListObjectsV2Command({ Bucket: SHARED, Prefix: `${logicalBucket}/` }),
     )
     expect(remaining.Contents ?? []).toHaveLength(0)
+    const retained = await storage.send(
+      new ListObjectVersionsCommand({ Bucket: SHARED, Prefix: `${logicalBucket}/` }),
+    )
+    expect(retained.Versions ?? []).toHaveLength(0)
+    expect(retained.DeleteMarkers ?? []).toHaveLength(0)
+    storage.destroy()
     await expect(
       customer.send(new ListObjectsV2Command({ Bucket: logicalBucket })),
     ).rejects.toThrow(/Access ?Denied|Forbidden|403/)
