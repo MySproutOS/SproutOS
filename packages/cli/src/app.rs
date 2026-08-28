@@ -64,12 +64,13 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
     {
         let credential = credential::resolve(dependencies.credentials, &account)?;
         // Verify membership/visibility before persisting a typo as the default.
+        let encoded_slug: String = url::form_urlencoded::byte_serialize(slug.as_bytes()).collect();
         let response = dependencies
             .backend
             .request(
                 request::ApiRequest {
                     method: request::Method::Get,
-                    path: format!("/v1/orgs/{slug}"),
+                    path: format!("/v1/orgs/{encoded_slug}"),
                     body: None,
                 },
                 Some(credential.expose()),
@@ -136,7 +137,7 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         confirm::require(
             cli.yes,
             dependencies.confirmation,
-            &format!("Continue with {}?", request::command_name(&cli.command)),
+            &destructive_prompt(&cli.command),
         )?;
     }
 
@@ -203,6 +204,23 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         data = found;
     }
     render(cli, request::command_name(&cli.command), data)
+}
+
+fn destructive_prompt(command: &Command) -> String {
+    match command {
+        Command::Project(ProjectArgs {
+            command: ProjectCommand::Delete { project },
+        }) => format!("Delete project `{project}` and queue its teardown?"),
+        Command::Env(EnvArgs {
+            command: EnvCommand::Unset {
+                project, env_id, ..
+            },
+        }) => format!("Unset environment variable `{env_id}` from project `{project}`?"),
+        Command::Service(ServiceArgs {
+            command: ServiceCommand::Delete { service },
+        }) => format!("Delete service `{service}` and its stored data?"),
+        _ => format!("Continue with {}?", request::command_name(command)),
+    }
 }
 
 fn read_stdin_value(command: &Command) -> Result<Option<String>> {
