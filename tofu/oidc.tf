@@ -303,6 +303,56 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "*"
       },
       {
+        /*
+          Registering an immutable ECS revision has no resource ARN yet, so AWS only supports `*`
+          here. This is registration, not execution: the two capabilities below remain scoped to
+          the platform's web service and migration family, and PassRole names the only two roles a
+          registered task may receive from this workflow.
+        */
+        Sid      = "RegisterWebTaskDefinitions"
+        Effect   = "Allow"
+        Action   = ["ecs:RegisterTaskDefinition"]
+        Resource = "*"
+      },
+      {
+        Sid    = "ReadWebDeploymentState"
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "ecs:DescribeTaskDefinition",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "UpdateTheWebService"
+        Effect   = "Allow"
+        Action   = ["ecs:UpdateService"]
+        Resource = aws_ecs_service.web.id
+      },
+      {
+        Sid      = "RunTheWebMigrationTask"
+        Effect   = "Allow"
+        Action   = ["ecs:RunTask"]
+        Resource = "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:task-definition/${var.name_prefix}-web-migrate:*"
+        Condition = {
+          ArnEquals = {
+            "ecs:cluster" = aws_ecs_cluster.main.arn
+          }
+        }
+      },
+      {
+        Sid      = "PassOnlyWebTaskRolesToECS"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = [aws_iam_role.task.arn, aws_iam_role.ecs_execution.arn]
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "ecs-tasks.amazonaws.com"
+          }
+        }
+      },
+      {
         Sid    = "MoveTraffic"
         Effect = "Allow"
         Action = ["elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyRule"]

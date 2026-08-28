@@ -506,6 +506,17 @@ resource "aws_ecs_service" "web" {
   deployment_maximum_percent         = 100
   deployment_minimum_healthy_percent = 0
 
+  # A waiter timing out is only CI noticing a broken deployment. The circuit breaker is ECS acting
+  # on it: stop launching the bad revision and restore the last completed task definition without
+  # requiring a second workflow run. This matters most after the one-time traffic move to green,
+  # when green is production rather than an idle staging target.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  health_check_grace_period_seconds = 120
+
   /*
     The idle colour, so ECS and the Auto Scaling groups never share a target group.
 

@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+#
+# Publish one immutable website/API/worker image through ECS.
+#
+# The service task and the migration task are deliberately separate. The service task owns fixed
+# host ports 8080 and 3001, so starting another copy merely to run a command can never be scheduled
+# on the same host. The migration definition contains only the API container's runtime contract,
+# with no ports, and runs to completion before the service sees the new task definition.
+#
+# Usage:
+#   IMAGE=ghcr.io/mysproutos/sproutos-web:<git-sha> \
+#   NAME_PREFIX=sproutos bin/deploy-ecs-web.sh [--cutover]
+#
+# `--cutover` is for a push-to-main release (or an explicitly approved manual cutover). It pins the
+# website and API rules to ECS's permanent green target groups. Re-running it is idempotent; unlike
+# the legacy blue/green command without `--to`, it never tries to send ECS traffic back to blue.
+set -euo pipefail
+
+CUTOVER=""
+case "${1:-}" in
+  "") ;;
+  --cutover) CUTOVER=1 ;;
+  *) echo "usage: deploy-ecs-web.sh [--cutover]" >&2; exit 2 ;;
+esac
+
+: "${NAME_PREFIX:?NAME_PREFIX is not set}"
+: "${IMAGE:?IMAGE is not set}"
+
+if ! [[ "$IMAGE" =~ :[0-9a-f]{12}$ ]]; then
+  echo "IMAGE must end in a 12-character lowercase Git SHA tag, got: $IMAGE" >&2
+  exit 2
+fi
+
+CLUSTER="${ECS_CLUSTER:-$NAME_PREFIX}"
+SERVICE="${ECS_SERVICE:-$NAME_PREFIX-web}"
+DESIRED="${ECS_WEB_DESIRED_COUNT:-1}"
+case "$DESIRED" in
+  ''|*[!0-9]*) echo "ECS_WEB_DESIRED_COUNT must be a non-negative integer" >&2; exit 2 ;;
+esac
+
+tmp_dir=$(mktemp -d)
+cleanup() {
+  unlink "$tmp_dir/service-task.json" 2>/dev/null || true
+  unlink "$tmp_dir/migration-task.json" 2>/dev/null || true
+  rmdir "$tmp_dir" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+service_status=$(jq -r '.services[0].status // empty' <<<"$service_json")
+if [ "$service_status" != "ACTIVE" ]; then
+  echo "ECS service $CLUSTER/$SERVICE is not ACTIVE" >&2
+  exit 1
+fi
+
+base_task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
+capacity_provider=$(jq -r '.services[0].capacityProviderStrategy[0].capacityProvider // empty' <<<"$service_json")
+if [ -z "$base_task_arn" ] || [ -z "$capacity_provider" ]; then
+  echo "ECS service has no task definition or capacity provider" >&2
+  exit 1
+fi
+
+base_json=$(aws ecs describe-task-definition --task-definition "$base_task_arn" --output json)
+base_family=$(jq -r '.taskDefinition.family // empty' <<<"$base_json")
+if [ -z "$base_family" ]; then
+  echo "could not read the current task-definition family" >&2
+  exit 1
+fi
+
+# Keep every field the current task definition is allowed to register, but none of AWS's output-
+# only revision/status/compatibility fields. Every service container gets the exact immutable tag.
+jq --arg image "$IMAGE" '
+  .taskDefinition
+  | {
+      family, taskRoleArn, executionRoleArn, networkMode,
+      containerDefinitions: [.containerDefinitions[] | .image = $image],
+      volumes, placementConstraints, requiresCompatibilities, cpu, memory,
+      ipcMode, pidMode, proxyConfiguration, inferenceAccelerators,
+      ephemeralStorage, runtimePlatform, enableFaultInjection
+    }
+  | with_entries(select(.value != null and .value != []))
+' <<<"$base_json" > "$tmp_dir/service-task.json"
+
+service_task_arn=$(aws ecs register-task-definition \
+  --cli-input-json "file://$tmp_dir/service-task.json" \
+  --query 'taskDefinition.taskDefinitionArn' --output text)
+if [ -z "$service_task_arn" ] || [ "$service_task_arn" = "None" ]; then
+  echo "register-task-definition returned no service task ARN" >&2
+  exit 1
+fi
+
+# Copy the API container because it owns the database and ClickHouse runtime contract. Remove its
+# listener port and health check, then replace its command with the ordered, fail-fast deploy path.
+jq --arg family "$base_family-migrate" --arg image "$IMAGE" '
+  .taskDefinition as $task
+  | ($task.containerDefinitions[] | select(.name == "api")) as $api
+  | {
+      family: $family,
+      taskRoleArn: $task.taskRoleArn,
+      executionRoleArn: $task.executionRoleArn,
+      networkMode: $task.networkMode,
+      containerDefinitions: [
+        $api
+        | .name = "migrate"
+        | .image = $image
+        | .essential = true
+        | .cpu = 128
+        | .memoryReservation = 128
+        | .command = ["sh", "-c", "node /opt/sproutos/api/migrate.mjs && node /opt/sproutos/api/seed.mjs && node /opt/sproutos/api/clickhouse.mjs"]
+        | del(.portMappings, .healthCheck, .dependsOn, .links, .volumesFrom)
+        | if .logConfiguration then
+            .logConfiguration.options["awslogs-stream-prefix"] = "migrate"
+          else . end
+      ],
+      volumes: $task.volumes,
+      placementConstraints: $task.placementConstraints,
+      requiresCompatibilities: $task.requiresCompatibilities,
+      ipcMode: $task.ipcMode,
+      pidMode: $task.pidMode,
+      proxyConfiguration: $task.proxyConfiguration,
+      inferenceAccelerators: $task.inferenceAccelerators,
+      ephemeralStorage: $task.ephemeralStorage,
+      runtimePlatform: $task.runtimePlatform,
+      enableFaultInjection: $task.enableFaultInjection
+    }
+  | with_entries(select(.value != null and .value != []))
+' <<<"$base_json" > "$tmp_dir/migration-task.json"
+
+migration_task_definition=$(aws ecs register-task-definition \
+  --cli-input-json "file://$tmp_dir/migration-task.json" \
+  --query 'taskDefinition.taskDefinitionArn' --output text)
+if [ -z "$migration_task_definition" ] || [ "$migration_task_definition" = "None" ]; then
+  echo "register-task-definition returned no migration task ARN" >&2
+  exit 1
+fi
+
+run_json=$(aws ecs run-task \
+  --cluster "$CLUSTER" \
+  --task-definition "$migration_task_definition" \
+  --capacity-provider-strategy "capacityProvider=$capacity_provider,weight=1" \
+  --count 1 \
+  --started-by "deploy-${GITHUB_RUN_ID:-manual}" \
+  --output json)
+
+failures=$(jq -r '.failures | length' <<<"$run_json")
+migration_task_arn=$(jq -r '.tasks[0].taskArn // empty' <<<"$run_json")
+if [ "$failures" != "0" ] || [ -z "$migration_task_arn" ]; then
+  echo "ECS refused to start the migration task:" >&2
+  jq -c '.failures' <<<"$run_json" >&2
+  exit 1
+fi
+
+echo "waiting for migration task $migration_task_arn"
+aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$migration_task_arn"
+migration_result=$(aws ecs describe-tasks \
+  --cluster "$CLUSTER" --tasks "$migration_task_arn" --output json)
+migration_exit=$(jq -r '.tasks[0].containers[] | select(.name == "migrate") | .exitCode // empty' <<<"$migration_result")
+if [ "$migration_exit" != "0" ]; then
+  echo "migration failed before the service was changed (exit=${migration_exit:-unknown})" >&2
+  jq -r '.tasks[0] | {stopCode, stoppedReason, containers: [.containers[] | {name, exitCode, reason}]}' \
+    <<<"$migration_result" >&2
+  exit 1
+fi
+
+echo "migration succeeded; updating $CLUSTER/$SERVICE to $service_task_arn"
+aws ecs update-service \
+  --cluster "$CLUSTER" \
+  --service "$SERVICE" \
+  --task-definition "$service_task_arn" \
+  --desired-count "$DESIRED" \
+  --force-new-deployment >/dev/null
+aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+settled_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+settled_task=$(jq -r '.services[0].taskDefinition // empty' <<<"$settled_json")
+settled_running=$(jq -r '.services[0].runningCount // -1' <<<"$settled_json")
+if [ "$settled_task" != "$service_task_arn" ] || [ "$settled_running" != "$DESIRED" ]; then
+  echo "ECS waiter returned but the requested release did not settle" >&2
+  echo "  task:    $settled_task (wanted $service_task_arn)" >&2
+  echo "  running: $settled_running (wanted $DESIRED)" >&2
+  exit 1
+fi
+
+if [ "$DESIRED" -gt 0 ]; then
+  while IFS= read -r target_group; do
+    # The backticks belong to the AWS JMESPath expression.
+    # shellcheck disable=SC2016
+    healthy=$(aws elbv2 describe-target-health --target-group-arn "$target_group" \
+      --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+    if ! [[ "$healthy" =~ ^[0-9]+$ ]] || [ "$healthy" -lt "$DESIRED" ]; then
+      echo "target group $target_group has $healthy healthy target(s), wanted $DESIRED" >&2
+      exit 1
+    fi
+  done < <(jq -r '.services[0].loadBalancers[].targetGroupArn' <<<"$settled_json")
+fi
+
+if [ -n "$CUTOVER" ]; then
+  : "${LISTENER_ARN:?LISTENER_ARN is not set for --cutover}"
+  : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set for --cutover}"
+  : "${API_RULE_ARN:?API_RULE_ARN is not set for --cutover}"
+  "$(dirname "$0")/cutover.sh" website --to green
+fi
+
+echo "ECS website release is stable on $service_task_arn"
