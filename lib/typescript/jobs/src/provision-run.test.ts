@@ -513,8 +513,11 @@ describe.runIf(reachable)("a provider response lost inside the background worker
   it("requeues the project job so the background retry reaches provider reconciliation", async () => {
     const seeded = await seed()
     await attachTemplate(seeded)
+    // Keep this worker scoped to the row under test. The full suite leaves legitimate
+    // project.provision work queued, and runOne correctly chooses the oldest matching row.
+    const queueKind = `test.project.provision.retry.${v7()}`
     const backgroundJobId = await enqueue(db, {
-      kind: "project.provision",
+      kind: queueKind,
       organizationId: seeded.orgId,
       payload: { projectJobId: seeded.projectJobId, userId: seeded.userId },
       maxAttempts: 2,
@@ -534,7 +537,7 @@ describe.runIf(reachable)("a provider response lost inside the background worker
     })
     const options = {
       workerId: `retry-${v7()}`,
-      handlers: { "project.provision": handler },
+      handlers: { [queueKind]: handler },
       leaseSeconds: 300,
     }
 
