@@ -36,6 +36,8 @@ backed.
 | --------------------------------- | ----------------------------------------------------------- |
 | `APK_SIGNER_API_URL`              | Public control-plane origin; HTTPS required except loopback |
 | `APK_SIGNER_TOKEN`                | Bearer credential; required and never accepted on argv      |
+| `APK_SIGNER_OPERATOR_TOKEN`       | Separate credential for client identity/release commands    |
+| `APK_SIGNER_OPERATOR_ID`          | API-configured audit principal for those operator commands  |
 | `APK_SIGNER_ID`                   | Stable machine label used for queue ownership               |
 | `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity                          |
 | `APK_SIGNER_STATE_DIR`            | Durable mode-`0700` crash-recovery journal                  |
@@ -63,13 +65,21 @@ writable allowlist containing only the state directory. Health is the process st
 structured poll/completion logs. There is deliberately no inbound health port on this firewall
 boundary; the API should report the signer's last successful poll as fleet health.
 
+The long-running service receives only `APK_SIGNER_TOKEN`. Keep `APK_SIGNER_OPERATOR_TOKEN` in a
+separate operator-only credential file and expose it only while running `client-identity` or
+`queue-client-release`. Configure the same non-secret `APK_SIGNER_OPERATOR_ID` on the API and for
+the operator command; the API binds the audit label to the credential instead of trusting a
+caller-supplied name. It refuses both credentials if they are configured to the same value. A
+compromised fleet poll token therefore cannot enqueue a catalogue-client APK for signing.
+
 ## Normalized job protocol
 
-All calls carry `Authorization: Bearer $APK_SIGNER_TOKEN`. Completion and failure requests also
-carry a stable `Idempotency-Key`. The signer retries callback transport failures, timeouts, rate
-limits, and server errors four times with bounded exponential backoff; the control plane durably
-deduplicates the callback per claim, including when its first response disappears after commit. A
-`204` claim is an idle queue.
+Fleet claim, completion, and failure calls carry `Authorization: Bearer $APK_SIGNER_TOKEN`.
+Operator-only catalogue identity, prepare, and finalize calls use `APK_SIGNER_OPERATOR_TOKEN`.
+Completion and failure requests also carry a stable `Idempotency-Key`. The signer retries callback
+transport failures, timeouts, rate limits, and server errors four times with bounded exponential
+backoff; the control plane durably deduplicates the callback per claim, including when its first
+response disappears after commit. A `204` claim is an idle queue.
 
 `POST /v1/apk-signing/claim` with `{ "signer_id": "signer-01" }` returns one of four discriminated
 jobs: the two per-project jobs below and the two fixed-client counterparts documented later. Claims
@@ -142,38 +152,36 @@ same job and object identities.
 
 ## Android Developer Console dependency
 
-Ur LLC's existing verified Google Play Console account is the developer identity for both Play
-and off-Play distribution. **Do not create or pay for a second Android Developer Console account.**
-Google's documented operator flow is Play Console > **Android developer verification** >
-**Package names** > **Register package name**. Existing eligible Play apps are automatically
-registered; an off-Play app can be registered from that same page.
+Ur LLC's existing verified Google Play Console identity is used for Play and off-Play distribution;
+do not create or pay for a second developer account. Google's current Android Developer Console API
+explicitly supports app distributors and automated CI/CD package-name registration. The integration
+must call `ListDeveloperAccounts` after consent and persist the selected verified account rather than
+inventing an account identifier.
 
 The Google Play Android Developer API (`androidpublisher.googleapis.com`) is the publishing API; its
-public REST surface does not expose this package-name verification flow. Google separately documents
-the Android Developer Console API below for CI/CD automation. Its public guide describes
-`developerAccounts/*` as Android Developer Console accounts and does not state that
-`ListDeveloperAccounts` returns an existing Play Console identity. Therefore enabling or authorizing
-that API is an interoperability test, not an instruction to create another developer account. The
-signer must not proceed to registration until an authenticated `ListDeveloperAccounts` call proves
-that the existing Play identity is available through the public API.
-
-SproutOS currently performs no Play publication API operation, so it must not request the
-`https://www.googleapis.com/auth/androidpublisher` scope. Android developer verification
-registration uses only `https://www.googleapis.com/auth/androiddeveloperconsole`. If Play upload,
-tracks, or releases are implemented later, request `androidpublisher` separately and only at that
-feature boundary.
+public REST surface is not this package-name verification flow. SproutOS currently performs no Play
+publication operation, so it must not request the
+`https://www.googleapis.com/auth/androidpublisher` scope. Android developer verification uses only
+`https://www.googleapis.com/auth/androiddeveloperconsole`.
 
 The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
 `https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,
-and API keys are unsupported. The signer intentionally reports `pending_registration` after key
-provisioning today. It must not report `registered` until the control plane and signer implement the
-official `CreateAndroidPackage`, registration-policy, key creation, ownership-proof, and state
-transitions and a human has granted the refresh token. This is the remaining external contract, not
-a reason to fabricate a successful registration.
+and API keys are unsupported. Its documented automated path uses one-time consent with
+`access_type=offline`, a securely stored refresh token, `CreateAndroidPackage`,
+`GetAndroidPackageRegistrationPolicy`, `CreateAndroidPackageKey`, and—when required—
+`VerifyAndroidPackageKeyOwnership` or `JustifyAndroidPackageKeyRegistration`.
+
+That registration client and ownership-proof APK flow are not implemented by this signer PR. The
+signer therefore truthfully reports `pending_registration` after tenant key provisioning and must
+not report `registered` until a separate **on-prem signer-side** command or reconciler durably
+completes the documented API state machine. The Google refresh token stays on that on-prem host;
+AWS may persist only non-secret registration status. This is a known implementation dependency,
+not API uncertainty and not a reason to fabricate successful registration.
 
 The merged control plane separately reconciles this certificate and package through Google's
-Android Developer ID Status API. Registration is completed through the verified Play Console
-operator flow; this signer has no Google credential and never fabricates `registered`.
+Android Developer ID Status API, but it neither registers packages nor holds the OAuth refresh
+token. Until the on-prem registration flow above is implemented, this signer has no Google
+credential and never fabricates `registered`.
 
 The registration reconciler keeps `android_app` in `pending_registration` until the exact package
 and certificate return `REGISTERED`. A different certificate fails closed, successful identities

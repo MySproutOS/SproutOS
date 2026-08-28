@@ -161,6 +161,19 @@ export async function prepareClientRelease(
       throw new ClientSigningConflictError("That catalogue-client version is already in progress")
     }
 
+    const active = await trx
+      .selectFrom("clientSignerJob")
+      .select("versionCode")
+      .where("clientSigningIdentityId", "=", identity.id)
+      .where("kind", "=", "sign_client_release")
+      .where("state", "in", ["awaiting_upload", "queued", "running"])
+      .executeTakeFirst()
+    if (active !== undefined) {
+      throw new ClientSigningConflictError(
+        `Catalogue-client version ${active.versionCode} must finish before another release is prepared`,
+      )
+    }
+
     const latest = await trx
       .selectFrom("clientRelease")
       .select("versionCode")
@@ -263,6 +276,25 @@ export async function claimClientSigningJob(
   const claimedAt = now()
   const staleBefore = new Date(claimedAt.getTime() - CLAIM_TIMEOUT_MS)
   return await db.transaction().execute(async (trx) => {
+    // The singleton identity row is the fleet-wide claim mutex. Without this lock two signer
+    // processes can claim adjacent versions concurrently and a later completion can permanently
+    // supersede the earlier job.
+    const identity = await trx
+      .selectFrom("clientSigningIdentity")
+      .select("id")
+      .where("packageName", "=", CLIENT_PACKAGE_NAME)
+      .forUpdate()
+      .executeTakeFirst()
+    if (identity === undefined) return undefined
+    const active = await trx
+      .selectFrom("clientSignerJob")
+      .select("id")
+      .where("clientSigningIdentityId", "=", identity.id)
+      .where("state", "=", "running")
+      .where("claimedAt", ">=", staleBefore)
+      .executeTakeFirst()
+    if (active !== undefined) return undefined
+
     const claim = await trx
       .with("candidate", (qb) =>
         qb
@@ -292,6 +324,7 @@ export async function claimClientSigningJob(
             ]),
           )
           .orderBy(sql`case when client_signer_job.kind = 'provision_client_key' then 0 else 1 end`)
+          .orderBy(sql`coalesce(client_signer_job.version_code, 0)`)
           .orderBy("clientSignerJob.createdAt")
           .limit(1)
           .forUpdate()

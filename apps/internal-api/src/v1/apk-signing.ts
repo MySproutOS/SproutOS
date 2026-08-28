@@ -164,7 +164,31 @@ const finalizeClientReleaseRequest = Type.Object({
 
 export function signerAuthorized(header: string | undefined): boolean {
   const expected = process.env.APK_SIGNER_TOKEN
-  if (expected === undefined || expected === "" || header?.startsWith("Bearer ") !== true)
+  if (
+    expected === undefined ||
+    expected === "" ||
+    expected === process.env.APK_SIGNER_OPERATOR_TOKEN ||
+    header?.startsWith("Bearer ") !== true
+  )
+    return false
+  return constantTimeEqualUtf8(header.slice(7), expected)
+}
+
+export function signerOperatorAuthorized(
+  header: string | undefined,
+  operatorSignerId: string,
+): boolean {
+  const expected = process.env.APK_SIGNER_OPERATOR_TOKEN
+  const expectedSignerId = process.env.APK_SIGNER_OPERATOR_ID
+  if (
+    expected === undefined ||
+    expected === "" ||
+    expectedSignerId === undefined ||
+    expectedSignerId === "" ||
+    operatorSignerId !== expectedSignerId ||
+    expected === process.env.APK_SIGNER_TOKEN ||
+    header?.startsWith("Bearer ") !== true
+  )
     return false
   return constantTimeEqualUtf8(header.slice(7), expected)
 }
@@ -347,9 +371,10 @@ const app: Hono = new Hono()
     }),
     validator("json", clientIdentityRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization")))
+      const json = c.req.valid("json")
+      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
         return c.json({ message: "Unauthorized" }, 401)
-      const identity = await ensureClientSigningIdentity(db, c.req.valid("json").signer_id)
+      const identity = await ensureClientSigningIdentity(db, json.signer_id)
       return c.json({
         package_name: identity.packageName,
         state: identity.state,
@@ -372,9 +397,9 @@ const app: Hono = new Hono()
     }),
     validator("json", prepareClientReleaseRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization")))
-        return c.json({ message: "Unauthorized" }, 401)
       const json = c.req.valid("json")
+      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
+        return c.json({ message: "Unauthorized" }, 401)
       let prepared: Awaited<ReturnType<typeof prepareClientRelease>>
       try {
         prepared = await prepareClientRelease(db, {
@@ -429,9 +454,9 @@ const app: Hono = new Hono()
     }),
     validator("json", finalizeClientReleaseRequest),
     async (c) => {
-      if (!signerAuthorized(c.req.header("Authorization")))
-        return c.json({ message: "Unauthorized" }, 401)
       const json = c.req.valid("json")
+      if (!signerOperatorAuthorized(c.req.header("Authorization"), json.signer_id))
+        return c.json({ message: "Unauthorized" }, 401)
       const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"), json)
       if (idempotencyKey === undefined)
         return c.json({ message: "A payload-bound SHA-256 Idempotency-Key is required" }, 400)

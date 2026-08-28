@@ -6,6 +6,34 @@ import { type Kysely, sql } from "kysely"
  * store itself, while the immutable object versions make every published release reproducible.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
+  // The package is an identity derived from the owning project, not editable metadata. Keep this
+  // at the database boundary so a generic DAO update or callback bug cannot move an installed app
+  // onto another package name.
+  await db.schema
+    .alterTable("android_app")
+    .addCheckConstraint(
+      "android_app_project_package_identity_check",
+      sql`package_name = 'me.sproutos.app.p' || replace(project_id::text, '-', '')`,
+    )
+    .execute()
+  await sql`
+    create function sproutos_android_app_identity_immutable() returns trigger as $$
+    begin
+      if new.project_id is distinct from old.project_id
+        or new.package_name is distinct from old.package_name then
+        raise exception 'android_app project/package identity is immutable'
+          using errcode = '23514';
+      end if;
+      return new;
+    end;
+    $$ language plpgsql
+  `.execute(db)
+  await sql`
+    create trigger android_app_identity_immutable
+      before update of project_id, package_name on android_app
+      for each row execute function sproutos_android_app_identity_immutable()
+  `.execute(db)
+
   await db.schema
     .createTable("client_signing_identity")
     .addColumn("id", "uuid", (col) => col.primaryKey())
@@ -178,4 +206,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema.dropTable("client_signer_job").execute()
   await db.schema.dropTable("client_signing_identity").execute()
+  await sql`drop trigger android_app_identity_immutable on android_app`.execute(db)
+  await sql`drop function sproutos_android_app_identity_immutable()`.execute(db)
+  await db.schema
+    .alterTable("android_app")
+    .dropConstraint("android_app_project_package_identity_check")
+    .execute()
 }
