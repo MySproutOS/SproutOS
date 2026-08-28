@@ -2,7 +2,12 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { describe, expect, it } from "vitest"
 import { SERVICE_KINDS } from "./services.serializer"
-import { connectionEnvironmentEntries, connectionResponse, hasProvisioningCredit } from "./services"
+import {
+  connectionEnvironmentEntries,
+  connectionResponse,
+  hasProvisioningCredit,
+  servicePublicEndpoint,
+} from "./services"
 
 describe("service connection contracts", () => {
   it("requires a positive spendable balance before provisioning", () => {
@@ -53,6 +58,48 @@ describe("service connection contracts", () => {
       { isSecret: true, key: "S3_ACCESS_KEY_ID", value: "SPROUTKEY" },
       { isSecret: true, key: "S3_SECRET_ACCESS_KEY", value: "secret:value" },
     ])
+  })
+
+  it("shows each active service at its public proxy rather than a Postgres provider host", () => {
+    const env = {
+      SERVICE_POSTGRES_PUBLIC_HOST: "postgres.sproutos.test",
+      SERVICE_POSTGRES_PUBLIC_PORT: "5432",
+      SERVICE_VALKEY_PUBLIC_HOST: "valkey.sproutos.test",
+      SERVICE_VALKEY_PUBLIC_PORT: "6379",
+      SERVICE_SEARCH_PUBLIC_HOST: "search.sproutos.test",
+      SERVICE_SEARCH_PUBLIC_PORT: "443",
+    }
+
+    expect(servicePublicEndpoint("postgres", "active", env)).toEqual({
+      host: "postgres.sproutos.test",
+      port: 5432,
+    })
+    expect(servicePublicEndpoint("valkey", "active", env)).toEqual({
+      host: "valkey.sproutos.test",
+      port: 6379,
+    })
+    expect(servicePublicEndpoint("elasticsearch", "active", env)).toEqual({
+      host: "search.sproutos.test",
+      port: 443,
+    })
+  })
+
+  it("keeps unfinished, unsupported, or malformed endpoints out of the list", () => {
+    expect(
+      servicePublicEndpoint("valkey", "provisioning", {
+        SERVICE_VALKEY_PUBLIC_HOST: "valkey.sproutos.test",
+      }),
+    ).toEqual({ host: null, port: null })
+    expect(servicePublicEndpoint("object_storage", "active", {})).toEqual({
+      host: null,
+      port: null,
+    })
+    expect(
+      servicePublicEndpoint("elasticsearch", "active", {
+        SERVICE_SEARCH_PUBLIC_HOST: "search.sproutos.test",
+        SERVICE_SEARCH_PUBLIC_PORT: "not-a-port",
+      }),
+    ).toEqual({ host: null, port: null })
   })
 })
 
