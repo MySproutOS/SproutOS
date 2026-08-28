@@ -85,8 +85,8 @@ function envNames(text) {
  * @returns {Set<string>}
  */
 function parameterStoreKeys() {
-  const block = /KEYS=\(([\s\S]*?)\n\)/.exec(putSecrets)
-  if (block === null || block[1] === undefined) {
+  const blocks = [...putSecrets.matchAll(/(?:^|\n)\s*KEYS=\(([\s\S]*?)\n\s*\)/g)]
+  if (blocks.length === 0) {
     throw new Error("bin/put-app-secrets.sh no longer declares KEYS=( ... )")
   }
   /*
@@ -98,7 +98,12 @@ function parameterStoreKeys() {
     Nine invented names appeared under "Stored and never read", which is how a real one stops being
     read: a report that is mostly noise is a report nobody finishes.
   */
-  const declarations = block[1].replaceAll(/#[^\n]*/g, "")
+  // Include mode-specific allowlists as well as the ordinary one. Android custody is intentionally
+  // writable only through ANDROID_CUSTODY_ONLY, but it is still a reachable Parameter Store input.
+  const declarations = blocks
+    .map((block) => block[1] ?? "")
+    .join("\n")
+    .replaceAll(/#[^\n]*/g, "")
   return new Set(envNames(declarations))
 }
 
@@ -124,7 +129,7 @@ function requestedByEcs() {
   /** @type {Set<string>} */
   const keys = new Set()
   for (const match of ecs.matchAll(
-    /ecs_(?:website|api|worker)_parameter_names\s*=\s*\[([\s\S]*?)\n\s*\]/g,
+    /ecs_(?:(?:android_)?(?:api|worker)|website)_parameter_names\s*=\s*[^[]*\[([\s\S]*?)\n\s*\]/g,
   )) {
     const list = match[1]
     if (list === undefined) continue
