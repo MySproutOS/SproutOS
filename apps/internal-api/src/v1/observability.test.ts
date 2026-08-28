@@ -199,7 +199,7 @@ describe.skipIf(!up)("TASK 34: observability", () => {
     // A stolen table must yield nothing that can be sent with.
     expect(stored.otlpIngestKeyHash).not.toContain(myKey)
     expect(stored.otlpIngestKeyHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(Number(stored.retentionDays)).toBe(7)
+    expect(stored.retentionDays).toBe(7)
 
     // And there is no route that reads it back.
     const fetched = await call(
@@ -260,6 +260,79 @@ describe.skipIf(!up)("TASK 34: observability", () => {
     )
     expect(ours.status).toBe(200)
     expect((ours.json.lines as Json[]).map((line) => line.message)).toEqual([`${marker} from mine`])
+  })
+
+  it("streams a scoped v1 SSE record with an exact resumable id", async ({ skip }) => {
+    if (!up) skip()
+    const marker = `follow-${v7()}`
+    await writeRuntimeLogs([
+      {
+        ts: new Date(),
+        projectId: myProject().id,
+        deploymentId: v7(),
+        requestId: v7(),
+        level: "info",
+        message: marker,
+      },
+    ])
+
+    const response = await app.request(
+      `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs/follow?search=${marker}`,
+      { headers: authHeaders(actor()), signal: AbortSignal.timeout(5_000) },
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get("content-type")).toContain("text/event-stream")
+    expect(response.headers.get("cache-control")).toContain("no-store")
+
+    const reader = response.body?.getReader()
+    expect(reader).toBeDefined()
+    const decoder = new TextDecoder()
+    let body = ""
+    while (!body.includes("event: log")) {
+      const chunk = await reader?.read()
+      expect(chunk?.done).toBe(false)
+      body += decoder.decode(chunk?.value, { stream: true })
+    }
+    await reader?.cancel()
+
+    const id = /^id: (1:[0-9]+:[0-9]+:[0-9A-F]{32,64})$/m.exec(body)?.[1]
+    expect(id).toBeDefined()
+    const data = body
+      .split("\n")
+      .find((line) => line.startsWith("data: {") && line.includes(`"message":"${marker}"`))
+    expect(data).toBeDefined()
+    const event = JSON.parse(data?.slice(6) ?? "{}") as Json
+    expect(event.schemaVersion).toBe(1)
+    expect(event.type).toBe("log")
+    expect(event.cursor).toBe(id)
+    expect((event.line as Json).cursor).toBe(id)
+
+    const malformed = await app.request(
+      `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs/follow?cursor=not-a-cursor`,
+      { headers: authHeaders(actor()) },
+    )
+    expect(malformed.status).toBe(400)
+
+    const mismatch = await app.request(
+      `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs/follow?cursor=${id}`,
+      {
+        headers: { ...authHeaders(actor()), "Last-Event-ID": `1:0:0:${"A".repeat(32)}` },
+      },
+    )
+    expect(mismatch.status).toBe(400)
+
+    const headerOnly = await app.request(
+      `/v1/orgs/${orgSlug}/projects/${myProject().id}/logs/follow?search=${marker}`,
+      {
+        headers: { ...authHeaders(actor()), "Last-Event-ID": id ?? "" },
+        signal: AbortSignal.timeout(5_000),
+      },
+    )
+    expect(headerOnly.status).toBe(200)
+    const headerReader = headerOnly.body?.getReader()
+    const firstHeaderChunk = await headerReader?.read()
+    expect(new TextDecoder().decode(firstHeaderChunk?.value)).toContain("event: ready")
+    await headerReader?.cancel()
   })
 
   it("refuses a batch with no key, a wrong key, or the wrong content type", async ({ skip }) => {

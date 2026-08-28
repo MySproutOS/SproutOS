@@ -29,6 +29,16 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use uuid::Uuid;
+
+/// Leaves enough room for JSON escaping and the rest of a 512 KiB SSE frame.
+pub const MAX_LOG_MESSAGE_BYTES: usize = 64 * 1024;
+
+pub fn messages_fit_stream(records: &[IncomingRecord]) -> bool {
+    records
+        .iter()
+        .all(|record| record.message.len() <= MAX_LOG_MESSAGE_BYTES)
+}
 
 /// The path the extension posts to.
 ///
@@ -64,6 +74,11 @@ pub struct IncomingRecord {
 #[derive(Debug, Clone, Serialize)]
 pub struct StampedRecord {
     pub ts: String,
+    /// When the router accepted the line, separate from the Lambda timestamp. Kafka's durable
+    /// partition/offset is the stream order; this timestamp remains useful for diagnosing delay.
+    pub ingested_at: String,
+    /// Stable across Kafka retries, so an at-least-once replay is one stream observation.
+    pub ingest_id: String,
     pub project_id: String,
     pub deployment_id: String,
     pub request_id: String,
@@ -83,6 +98,10 @@ pub struct StampedRecord {
 pub fn stamp(record: IncomingRecord, project_id: &str, deployment_id: &str) -> StampedRecord {
     StampedRecord {
         ts: record.ts,
+        ingested_at: chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S%.3f")
+            .to_string(),
+        ingest_id: Uuid::now_v7().simple().to_string().to_ascii_uppercase(),
         project_id: project_id.to_owned(),
         deployment_id: deployment_id.to_owned(),
         request_id: record.request_id,
@@ -215,6 +234,7 @@ mod tests {
         let stamped = stamp(record(), "project-from-token", "deployment-from-token");
         assert_eq!(stamped.project_id, "project-from-token");
         assert_eq!(stamped.deployment_id, "deployment-from-token");
+        assert_eq!(stamped.ingest_id.len(), 32);
     }
 
     /// A payload cannot carry a project at all — there is no field to put one in. This asserts the
@@ -253,5 +273,16 @@ mod tests {
         assert_eq!(bearer(Some("Bearer")), None);
         assert_eq!(bearer(Some("Bearer ")), None);
         assert_eq!(bearer(None), None);
+    }
+
+    #[test]
+    fn refuses_a_message_that_cannot_fit_the_cli_stream_frame() {
+        let mut too_large = record();
+        too_large.message = "x".repeat(MAX_LOG_MESSAGE_BYTES + 1);
+        assert!(!messages_fit_stream(&[too_large]));
+
+        let mut largest = record();
+        largest.message = "x".repeat(MAX_LOG_MESSAGE_BYTES);
+        assert!(messages_fit_stream(&[largest]));
     }
 }

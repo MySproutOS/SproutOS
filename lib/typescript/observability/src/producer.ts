@@ -1,5 +1,6 @@
 import { Kafka, type Producer } from "kafkajs"
-import type { RuntimeLog } from "./runtime-logs"
+import { v7 } from "uuid"
+import { assertRuntimeLogMessageSize, type RuntimeLog } from "./runtime-logs"
 
 /**
  * Putting runtime logs on the topic ClickHouse consumes.
@@ -12,9 +13,12 @@ import type { RuntimeLog } from "./runtime-logs"
 
 /** The wire form. Snake case, because ClickHouse's `JSONEachRow` matches column names exactly. */
 export function encode(log: RuntimeLog): string {
+  assertRuntimeLogMessageSize(log.message)
   return JSON.stringify({
     // ClickHouse's `DateTime64(3)` parses this form; an ISO string with a `Z` it does not.
     ts: log.ts.toISOString().replace("T", " ").replace("Z", ""),
+    ingested_at: new Date().toISOString().replace("T", " ").replace("Z", ""),
+    ingest_id: v7().replaceAll("-", "").toUpperCase(),
     project_id: log.projectId,
     deployment_id: log.deploymentId,
     request_id: log.requestId,

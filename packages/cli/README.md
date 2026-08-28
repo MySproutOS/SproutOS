@@ -31,8 +31,12 @@ stdout:
 ```
 
 Failures use the same version and a stable error object. Progress and prompts never enter JSON
-stdout. Streaming logs will use one JSON object per line only after an explicit output-schema
-version adds that mode.
+stdout. `sprout logs --follow --json` is the explicit streaming exception: it emits one complete
+version-1 success envelope per line. Each envelope contains one `log` event and its opaque resume
+cursor; partial JSON is never written. The CLI reconnects with that cursor and never puts its
+bearer credential in a URL. The checkpoint advances after each successfully flushed line rather
+than at the end of a connection, and first-byte, total-read, and between-chunk idle waits are all
+bounded.
 
 Destructive commands require an interactive confirmation or `--yes`. `--json` never prompts and
 therefore requires `--yes` for destructive operations.

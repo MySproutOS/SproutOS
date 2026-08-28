@@ -191,6 +191,8 @@ mod tests {
     fn report() -> StampedRecord {
         StampedRecord {
             ts: "2026-08-24 12:00:00.123".into(),
+            ingested_at: "2026-08-24 12:00:01.000".into(),
+            ingest_id: "A".repeat(32),
             project_id: claims().project_id,
             deployment_id: "01a03600-0000-7000-8000-0000000000de".into(),
             request_id: "lambda-request-1".into(),

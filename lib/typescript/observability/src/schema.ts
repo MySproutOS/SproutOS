@@ -1,5 +1,5 @@
 import { clickhouse } from "./client"
-import { RUNTIME_LOG_RETENTION_DAYS } from "./runtime-logs"
+import { RUNTIME_LOG_LEGACY_INGEST_KEY, RUNTIME_LOG_RETENTION_DAYS } from "./runtime-logs"
 
 export const USAGE_EVENT_RAW_TABLE = "usage_event_raw"
 export const USAGE_EVENT_QUEUE_TABLE = "usage_event_queue"
@@ -87,6 +87,10 @@ alter table log_record
 const RUNTIME_LOG_DDL = `
 create table if not exists runtime_log (
   ts DateTime64(3) CODEC(Delta, ZSTD(1)),
+  ingested_at DateTime64(3) DEFAULT ts CODEC(Delta, ZSTD(1)),
+  ingest_id String DEFAULT ${RUNTIME_LOG_LEGACY_INGEST_KEY} CODEC(ZSTD(1)),
+  ingest_partition UInt16 DEFAULT 0,
+  ingest_offset UInt64 DEFAULT 0,
   project_id UUID,
   deployment_id UUID,
   request_id String CODEC(ZSTD(1)),
@@ -104,6 +108,14 @@ order by (project_id, ts, request_id)
 ttl toDateTime(ts) + toIntervalDay(${RUNTIME_LOG_RETENTION_DAYS}) delete
 settings index_granularity = 8192, ttl_only_drop_parts = 1
 `
+
+const RUNTIME_LOG_INGESTED_AT_DDL =
+  "alter table runtime_log add column if not exists ingested_at DateTime64(3) default ts after ts"
+const RUNTIME_LOG_INGEST_ID_DDL = `alter table runtime_log add column if not exists ingest_id String default ${RUNTIME_LOG_LEGACY_INGEST_KEY} after ingested_at`
+const RUNTIME_LOG_INGEST_PARTITION_DDL =
+  "alter table runtime_log add column if not exists ingest_partition UInt16 default 0 after ingest_id"
+const RUNTIME_LOG_INGEST_OFFSET_DDL =
+  "alter table runtime_log add column if not exists ingest_offset UInt64 default 0 after ingest_partition"
 
 /*
   A token bloom filter, not a full text index.
@@ -151,6 +163,8 @@ function runtimeLogQueueDdl(brokers: string, topic: string): string {
   return `
 create table if not exists runtime_log_queue (
   ts DateTime64(3),
+  ingested_at DateTime64(3),
+  ingest_id String,
   project_id UUID,
   deployment_id UUID,
   request_id String,
@@ -171,6 +185,7 @@ settings
   -- One malformed message must not stop the consumer. Without this a single bad line wedges the
   -- whole topic and every project's logs stop, which is a far worse failure than losing one line.
   kafka_skip_broken_messages = 100,
+  input_format_defaults_for_omitted_fields = 1,
   -- Batch on the consumer rather than per message: the point of Kafka here is that ClickHouse gets
   -- large inserts instead of a part per log line.
   kafka_max_block_size = 65536
@@ -186,6 +201,9 @@ settings
 const RUNTIME_LOG_MV_DDL = `
 create materialized view if not exists runtime_log_mv to runtime_log as
 select ts, project_id, deployment_id, request_id, level, message,
+       if(empty(ingest_id), ts, ingested_at) as ingested_at,
+       if(empty(ingest_id), ${RUNTIME_LOG_LEGACY_INGEST_KEY}, ingest_id) as ingest_id,
+       toUInt16(_partition) as ingest_partition, toUInt64(_offset) as ingest_offset,
        duration_ms, billed_ms, memory_mb, init_ms, cold_start
 from runtime_log_queue
 `
@@ -382,6 +400,10 @@ export async function ensureSchema(): Promise<void> {
   await client.command({ query: LOG_RECORD_DDL })
   await client.command({ query: BODY_INDEX_DDL })
   await client.command({ query: RUNTIME_LOG_DDL })
+  await client.command({ query: RUNTIME_LOG_INGESTED_AT_DDL })
+  await client.command({ query: RUNTIME_LOG_INGEST_ID_DDL })
+  await client.command({ query: RUNTIME_LOG_INGEST_PARTITION_DDL })
+  await client.command({ query: RUNTIME_LOG_INGEST_OFFSET_DDL })
   await client.command({ query: RUNTIME_MESSAGE_INDEX_DDL })
   await client.command({ query: usageEventRawDdl(database) })
   await client.command({ query: usageEventStoredAtDdl(database) })
@@ -397,6 +419,11 @@ export async function ensureSchema(): Promise<void> {
   */
   if (!kafkaConfigured()) return
 
+  // Kafka engine tables cannot be altered. No consumer reads this one directly, so dropping the
+  // view first pauses consumption, then recreating the table with the same consumer group resumes
+  // at Kafka's durable offset. No message can fall between the old and new projections.
+  await client.command({ query: "drop table if exists runtime_log_mv" })
+  await client.command({ query: "drop table if exists runtime_log_queue" })
   await client.command({
     query: runtimeLogQueueDdl(
       process.env.KAFKA_BROKERS ?? "",

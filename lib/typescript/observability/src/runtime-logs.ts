@@ -1,4 +1,15 @@
 import { clickhouse } from "./client"
+import { v7 } from "uuid"
+
+/** Compatible with the CLI's 512 KiB SSE frame cap even under worst-case JSON escaping. */
+export const MAX_RUNTIME_LOG_MESSAGE_BYTES = 64 * 1024
+let directIngestOffset = BigInt(Date.now()) * 1_000n
+
+export function assertRuntimeLogMessageSize(message: string): void {
+  if (new TextEncoder().encode(message).byteLength > MAX_RUNTIME_LOG_MESSAGE_BYTES) {
+    throw new Error("Runtime log message exceeded the 64 KiB storage limit")
+  }
+}
 
 /**
  * A customer's Lambda logs, on their way to ClickHouse.
@@ -143,24 +154,34 @@ export function toRows(logGroup: string, deploymentId: string, events: LogEvent[
 /** Write a batch. */
 export async function writeRuntimeLogs(rows: RuntimeLog[]): Promise<void> {
   if (rows.length === 0) return
+  for (const row of rows) assertRuntimeLogMessageSize(row.message)
+
+  const ingestedAt = new Date().toISOString().replace("T", " ").replace("Z", "")
 
   await clickhouse().insert({
     table: "runtime_log",
     format: "JSONEachRow",
-    values: rows.map((row) => ({
-      // ClickHouse's `DateTime64(3)` parses this form; an ISO string with a `Z` it does not.
-      ts: row.ts.toISOString().replace("T", " ").replace("Z", ""),
-      project_id: row.projectId,
-      deployment_id: row.deploymentId,
-      request_id: row.requestId,
-      level: row.level,
-      message: row.message,
-      duration_ms: row.durationMs ?? null,
-      billed_ms: row.billedMs ?? null,
-      memory_mb: row.memoryMb ?? null,
-      init_ms: row.initMs ?? null,
-      cold_start: row.coldStart ?? null,
-    })),
+    values: rows.map((row) => {
+      directIngestOffset += 1n
+      return {
+        // ClickHouse's `DateTime64(3)` parses this form; an ISO string with a `Z` it does not.
+        ts: row.ts.toISOString().replace("T", " ").replace("Z", ""),
+        ingested_at: ingestedAt,
+        ingest_id: v7().replaceAll("-", "").toUpperCase(),
+        ingest_partition: 0,
+        ingest_offset: directIngestOffset.toString(),
+        project_id: row.projectId,
+        deployment_id: row.deploymentId,
+        request_id: row.requestId,
+        level: row.level,
+        message: row.message,
+        duration_ms: row.durationMs ?? null,
+        billed_ms: row.billedMs ?? null,
+        memory_mb: row.memoryMb ?? null,
+        init_ms: row.initMs ?? null,
+        cold_start: row.coldStart ?? null,
+      }
+    }),
   })
 }
 
@@ -210,6 +231,162 @@ export type RuntimeLogQuery = {
   /** Substring match on the message. The table carries a token bloom filter for this. */
   search?: string
   limit?: number
+}
+
+/**
+ * Versioned, opaque checkpoint used by the forward-only runtime-log stream.
+ *
+ * The Lambda timestamp is not a cursor: records can share a millisecond, and Kafka may deliver an
+ * older Lambda timestamp after newer output has already been displayed. The cursor is the Kafka
+ * partition and offset plus an ingest key stamped before Kafka. Projects are keyed to one
+ * partition, offsets strictly order arrivals, and the key survives a retry. Together they collapse
+ * an exact at-least-once replay without exposing a customer message in `Last-Event-ID` or a query
+ * string.
+ */
+export type RuntimeLogStreamCursor = {
+  ingestPartition: string
+  ingestOffset: string
+  ingestKey: string
+}
+
+const STREAM_CURSOR = /^1:([0-9]{1,5}):([0-9]{1,20}):([0-9A-F]{32,64})$/
+
+export function encodeRuntimeLogStreamCursor(cursor: RuntimeLogStreamCursor): string {
+  if (
+    !/^[0-9]{1,5}$/.test(cursor.ingestPartition) ||
+    !/^[0-9]{1,20}$/.test(cursor.ingestOffset) ||
+    !/^[0-9A-F]{32,64}$/.test(cursor.ingestKey)
+  ) {
+    throw new Error("Invalid runtime log stream cursor")
+  }
+  return `1:${cursor.ingestPartition}:${cursor.ingestOffset}:${cursor.ingestKey}`
+}
+
+export function decodeRuntimeLogStreamCursor(value: string): RuntimeLogStreamCursor {
+  const match = STREAM_CURSOR.exec(value)
+  if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) {
+    throw new Error("Invalid runtime log stream cursor")
+  }
+  return { ingestPartition: match[1], ingestOffset: match[2], ingestKey: match[3] }
+}
+
+export type StreamRuntimeLog = RuntimeLog & { cursor: string }
+
+export type RuntimeLogStreamQuery = {
+  projectId: string
+  since: Date
+  after?: RuntimeLogStreamCursor
+  level?: string
+  search?: string
+  limit?: number
+  signal?: AbortSignal
+}
+
+/*
+  The deterministic key assigned to rows that predate the router's ingest id.
+
+  ClickHouse resolves aliases early enough that reusing a projection alias in a predicate has
+  changed which value a query compared in the past. Keeping this expression explicit makes the
+  lexicographic checkpoint unambiguous. The separators prevent concatenation ambiguity.
+*/
+export const RUNTIME_LOG_LEGACY_INGEST_KEY = `hex(SHA256(concat(
+  toString(toUnixTimestamp64Milli(ts)), '\\0',
+  toString(deployment_id), '\\0', request_id, '\\0', level, '\\0', message, '\\0',
+  ifNull(toString(duration_ms), ''), '\\0', ifNull(toString(billed_ms), ''), '\\0',
+  ifNull(toString(memory_mb), ''), '\\0', ifNull(toString(init_ms), ''), '\\0',
+  ifNull(toString(cold_start), '')
+)))`
+
+/**
+ * Read logs oldest-first after an exact checkpoint.
+ *
+ * This is intentionally separate from `queryRuntimeLogs`, whose newest-first result is right for
+ * a page and unsafe for a stream: a burst larger than one page would make the oldest unseen rows
+ * disappear before the next poll. The stream drains forward in bounded pages instead.
+ */
+export async function queryRuntimeLogsAfter(
+  query: RuntimeLogStreamQuery,
+): Promise<StreamRuntimeLog[]> {
+  const limit = Math.min(Math.max(query.limit ?? 200, 1), 500)
+  const clauses = ["project_id = {projectId: UUID}", "ts >= {since: DateTime64(3)}"]
+  const params: Record<string, unknown> = {
+    projectId: query.projectId,
+    since: query.since.toISOString().replace("T", " ").replace("Z", ""),
+    limit,
+  }
+
+  if (query.after !== undefined) {
+    clauses.push(
+      `(runtime_log.ingest_partition, runtime_log.ingest_offset, runtime_log.ingest_id) > ` +
+        "(toUInt16({afterPartition: String}), toUInt64({afterOffset: String}), {afterIngestKey: String})",
+    )
+    params.afterPartition = query.after.ingestPartition
+    params.afterOffset = query.after.ingestOffset
+    params.afterIngestKey = query.after.ingestKey
+  }
+  if (query.level !== undefined) {
+    clauses.push("level = {level: String}")
+    params.level = query.level
+  }
+  if (query.search !== undefined && query.search !== "") {
+    clauses.push("positionCaseInsensitive(message, {search: String}) > 0")
+    params.search = query.search
+  }
+
+  const result = await clickhouse().query({
+    query: `
+      select distinct
+        toString(toUnixTimestamp64Milli(ts)) as ts_ms,
+        toString(runtime_log.ingest_partition) as cursor_partition,
+        toString(runtime_log.ingest_offset) as cursor_offset,
+        ingest_id,
+        deployment_id, request_id, level, message,
+        duration_ms, billed_ms, memory_mb, init_ms, cold_start
+      from runtime_log
+      where ${clauses.join(" and ")}
+      order by runtime_log.ingest_partition asc, runtime_log.ingest_offset asc,
+               runtime_log.ingest_id asc
+      limit {limit: UInt32}
+    `,
+    query_params: params,
+    format: "JSONEachRow",
+    ...(query.signal === undefined ? {} : { abort_signal: query.signal }),
+  })
+
+  type Row = {
+    ts_ms: string
+    cursor_partition: string
+    cursor_offset: string
+    ingest_id: string
+    deployment_id: string
+    request_id: string
+    level: string
+    message: string
+    duration_ms: number | null
+    billed_ms: number | null
+    memory_mb: number | null
+    init_ms: number | null
+    cold_start: boolean | null
+  }
+
+  return (await result.json<Row>()).map((row) => ({
+    ts: new Date(Number(row.ts_ms)),
+    projectId: query.projectId,
+    deploymentId: row.deployment_id,
+    requestId: row.request_id,
+    level: row.level,
+    message: row.message,
+    cursor: encodeRuntimeLogStreamCursor({
+      ingestPartition: row.cursor_partition,
+      ingestOffset: row.cursor_offset,
+      ingestKey: row.ingest_id,
+    }),
+    ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
+    ...(row.billed_ms === null ? {} : { billedMs: row.billed_ms }),
+    ...(row.memory_mb === null ? {} : { memoryMb: row.memory_mb }),
+    ...(row.init_ms === null ? {} : { initMs: row.init_ms }),
+    ...(row.cold_start === null ? {} : { coldStart: row.cold_start }),
+  }))
 }
 
 /**
