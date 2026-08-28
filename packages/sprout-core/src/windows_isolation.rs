@@ -1,4 +1,5 @@
 use std::{
+    error::Error as _,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -165,7 +166,7 @@ impl WindowsAppContainerCommand {
                 ..LaunchOptions::default()
             };
             let mut child = launch_in_container_with_io(&capabilities, &options)
-                .map_err(|error| SproutError::PluginSpawn(error.to_string()))?;
+                .map_err(|error| SproutError::PluginSpawn(error_chain(&error)))?;
             apply_process_limit(&child, limits.timeout)?;
             resume_suspended(&child)?;
             let mut stdin = child
@@ -210,6 +211,17 @@ impl WindowsAppContainerCommand {
         .await
         .map_err(|error| SproutError::PluginSpawn(error.to_string()))?
     }
+}
+
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    message
 }
 
 fn allowlisted_environment(

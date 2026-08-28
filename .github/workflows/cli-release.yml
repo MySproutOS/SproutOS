@@ -107,7 +107,16 @@ jobs:
       - name: Install Linux template isolation and provenance verifier
         if: matrix.os == 'linux'
         shell: bash
-        run: sudo apt-get update && sudo apt-get install --yes bubblewrap
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          # GitHub's hosted kernels disable unprivileged UID maps. Bubblewrap's supported setuid
+          # mode creates the same user/mount/PID namespaces and drops privilege before exec.
+          bubblewrap=$(command -v bwrap)
+          sudo chown root:root "$bubblewrap"
+          sudo chmod 4755 "$bubblewrap"
+          test "$(stat -c '%U:%G:%a' "$bubblewrap")" = root:root:4755
       - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22
         with:
           install-dir: ${{ matrix.os == 'windows' && 'C:\Program Files\cosign' || (matrix.os == 'macos' && matrix.arch == 'arm64' && '/opt/homebrew/bin' || '/usr/local/bin') }}
