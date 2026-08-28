@@ -26,6 +26,11 @@ import { enqueue } from "./queue"
 
 export const DEPLOYMENT_CATALOGUE_IMPORT_KIND = "catalogue.import_signed" as const
 export const DEPLOYMENT_CATALOGUE_DISCOVERY_KIND = "catalogue.discover_signed" as const
+/**
+ * Part of both scheduled idempotency keys. Bump only when a verifier change must create a fresh
+ * path past terminal jobs left by the prior verifier; the old dead letter remains as audit evidence.
+ */
+export const DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION = "github-app-v1" as const
 
 export function isTrustedDeploymentCatalogueWorkflow(claims: {
   repository: string
@@ -191,7 +196,7 @@ export function discoverDeploymentCatalogue(
     const importId = await dependencies.queue(db, {
       kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
       payload: discovered,
-      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${payload.window}:${discovered.ociDigest}`,
+      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION}:${payload.window}:${discovered.ociDigest}`,
       maxAttempts: 5,
     })
     console.info(
@@ -208,7 +213,7 @@ export async function scheduleDeploymentCatalogueReconciliation(
   return await enqueue(db, {
     kind: DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
     payload: { window },
-    idempotencyKey: `${DEPLOYMENT_CATALOGUE_DISCOVERY_KIND}:${window}`,
+    idempotencyKey: `${DEPLOYMENT_CATALOGUE_DISCOVERY_KIND}:${DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION}:${window}`,
     maxAttempts: 5,
   })
 }

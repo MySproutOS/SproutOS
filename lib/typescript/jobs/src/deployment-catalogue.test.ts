@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it, vi } from "vitest"
 import {
   DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
   DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION,
   discoverDeploymentCatalogue,
   isTrustedDeploymentCatalogueWorkflow,
   reconcileSignedDeploymentCatalogue,
@@ -121,6 +122,13 @@ function artifact(ociDigest: string, apps: unknown[]): DeploymentCatalogueArtifa
 
 async function cleanup(): Promise<void> {
   if (!reachable) return
+  await db
+    .deleteFrom("backgroundJob")
+    .where("idempotencyKey", "in", [
+      `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:2099-01-02:${FIRST_OCI_DIGEST}`,
+      `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION}:2099-01-02:${FIRST_OCI_DIGEST}`,
+    ])
+    .execute()
   await db.deleteFrom("storeListing").where("catalogueEntryId", "=", APP_ID).execute()
   await db
     .deleteFrom("deploymentCatalogueImport")
@@ -206,7 +214,7 @@ describe("scheduled catalogue discovery", () => {
     expect(queued).toMatchObject({
       kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
       payload: coordinates,
-      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:2099-01-02:${FIRST_OCI_DIGEST}`,
+      idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION}:2099-01-02:${FIRST_OCI_DIGEST}`,
       maxAttempts: 5,
     })
   })
@@ -222,6 +230,42 @@ describe("scheduled catalogue discovery", () => {
     ).rejects.toThrow("untrusted workflow")
     expect(queue).not.toHaveBeenCalled()
   })
+
+  it.runIf(reachable)(
+    "creates a new import path past the prior verifier's dead letter",
+    async () => {
+      const oldKey = `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:2099-01-02:${FIRST_OCI_DIGEST}`
+      const newKey = `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:discovered:${DEPLOYMENT_CATALOGUE_VERIFIER_GENERATION}:2099-01-02:${FIRST_OCI_DIGEST}`
+      const oldId = await enqueue(db, {
+        kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+        payload: coordinates,
+        idempotencyKey: oldKey,
+      })
+      await db
+        .updateTable("backgroundJob")
+        .set({ state: "dead_lettered", attempt: 5, finishedAt: new Date() })
+        .where("id", "=", oldId)
+        .execute()
+
+      await discoverDeploymentCatalogue({
+        discover: () => Promise.resolve(coordinates),
+        verify: () => Promise.resolve([{ verified: true }]),
+        queue: enqueue,
+      })(job, context)
+
+      expect(
+        await db
+          .selectFrom("backgroundJob")
+          .select(["idempotencyKey", "state"])
+          .where("idempotencyKey", "in", [oldKey, newKey])
+          .orderBy("idempotencyKey")
+          .execute(),
+      ).toEqual([
+        { idempotencyKey: oldKey, state: "dead_lettered" },
+        { idempotencyKey: newKey, state: "queued" },
+      ])
+    },
+  )
 })
 
 describe.skipIf(!reachable)("signed deployment catalogue reconciliation", () => {

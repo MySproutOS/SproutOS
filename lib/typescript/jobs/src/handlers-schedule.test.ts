@@ -23,7 +23,22 @@ afterAll(async () => {
 describe.skipIf(!reachable)("metering schedules", () => {
   it("schedules catalogue discovery once per day without requiring an existing import", async () => {
     const now = new Date(`${TEST_YEAR}-12-29T23:58:45.000Z`)
-    const key = `${JOB_KINDS.discoverDeploymentCatalogue}:${now.toISOString().slice(0, 10)}`
+    const oldKey = `${JOB_KINDS.discoverDeploymentCatalogue}:${now.toISOString().slice(0, 10)}`
+    const key = `${JOB_KINDS.discoverDeploymentCatalogue}:github-app-v1:${now.toISOString().slice(0, 10)}`
+    const oldId = await db
+      .insertInto("backgroundJob")
+      .values({
+        id: "019d1234-5678-7000-8000-000000000001",
+        kind: JOB_KINDS.discoverDeploymentCatalogue,
+        payload: { window: "2099-12-29" },
+        idempotencyKey: oldKey,
+        state: "dead_lettered",
+        attempt: 5,
+        finishedAt: new Date(),
+      })
+      .onConflict((oc) => oc.column("idempotencyKey").doUpdateSet({ state: "dead_lettered" }))
+      .returning("id")
+      .executeTakeFirstOrThrow()
 
     await scheduleRecurring(db, now)
     await scheduleRecurring(db, now)
@@ -41,6 +56,13 @@ describe.skipIf(!reachable)("metering schedules", () => {
         idempotencyKey: key,
       },
     ])
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select(["id", "state"])
+        .where("idempotencyKey", "=", oldKey)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ id: oldId.id, state: "dead_lettered" })
   })
 
   it("schedules Android registration reconciliation only when provider verification is configured", async () => {
