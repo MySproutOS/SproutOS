@@ -2,7 +2,7 @@ import type { DB } from "@sproutos/db"
 import { seal } from "@lib/envelope"
 import type { Kysely } from "kysely"
 import { v7 } from "uuid"
-import { neonApi, neonApiConfigFromEnv, type NeonConfig } from "./neon-api"
+import { NeonApiError, neonApi, neonApiConfigFromEnv, type NeonConfig } from "./neon-api"
 import { postgresUri } from "./naming"
 import { rolePasswordContext } from "./postgres"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
@@ -303,7 +303,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     // Deleting the project takes every branch with it, which is the point: a customer asking to
     // delete a database means all of it, not the primary branch and a scatter of previews.
     if (instance?.providerProjectId != null) {
-      await api.deleteProject(instance.providerProjectId).catch(() => undefined)
+      await deleteNeonProject(api, instance.providerProjectId)
     }
 
     await db
@@ -337,6 +337,21 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     resume,
     rotateCredentials,
     suspend,
+  }
+}
+
+/** Delete idempotently, while preserving every provider failure that still needs a retry. */
+export async function deleteNeonProject(
+  api: { deleteProject(projectId: string): Promise<void> },
+  providerProjectId: string,
+): Promise<void> {
+  try {
+    await api.deleteProject(providerProjectId)
+  } catch (error) {
+    // A retry after a successful provider delete is complete. Authentication, throttling and
+    // server failures are not: swallowing those marks a still-billable Neon project deleted in
+    // the control plane and ensures no later retry can find its provider id.
+    if (!(error instanceof NeonApiError && error.status === 404)) throw error
   }
 }
 

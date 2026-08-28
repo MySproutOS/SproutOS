@@ -60,6 +60,7 @@ import {
   scanStaticCloudFrontLogs,
   STATIC_CLOUDFRONT_METERING_KINDS,
 } from "./static-cloudfront-metering"
+import { ACCOUNT_TEARDOWN_KIND, tearDownAccount } from "./account-teardown"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -82,6 +83,7 @@ function tenMinuteWindow(now: Date): string {
  * retention policy in name only, and a delete that nothing finishes is worse than that.
  */
 export const JOB_KINDS = {
+  tearDownAccount: ACCOUNT_TEARDOWN_KIND,
   expireCreditHolds: "billing.expire_holds",
   importUsage: "billing.import_clickhouse_usage",
   relayMeteringOutbox: "billing.relay_metering_outbox",
@@ -398,6 +400,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
   [JOB_KINDS.tearDownProject]: tearDownProject(),
+  [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.workflowScheduleScan]: async (_job, { db }) => {
     const runs = await runDueWorkflowSchedules(db)

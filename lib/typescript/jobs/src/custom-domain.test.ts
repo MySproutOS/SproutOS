@@ -1,7 +1,9 @@
+import { DeleteObjectsCommand, ListObjectVersionsCommand, type S3Client } from "@aws-sdk/client-s3"
 import { describe, expect, it } from "vitest"
 import {
   activateCustomDomain,
   customDomainRetryAfter,
+  deleteCertificateObjectVersions,
   hasOwnershipTxt,
   nextRenewal,
   trafficPointsToIngress,
@@ -66,6 +68,84 @@ describe("certificate renewal fallback", () => {
     const now = new Date("2026-08-28T00:00:00Z")
     expect(customDomainRetryAfter(now, 1)).toEqual(new Date("2026-08-28T00:02:00Z"))
     expect(customDomainRetryAfter(now, 100)).toEqual(new Date("2026-08-28T17:04:00Z"))
+  })
+})
+
+describe("certificate deletion", () => {
+  it("purges every private-key version and delete marker", async () => {
+    const deleted: Array<{ Key?: string; VersionId?: string }> = []
+    let listed = 0
+    const s3 = {
+      send: (command: unknown) => {
+        if (command instanceof ListObjectVersionsCommand) {
+          listed += 1
+          return Promise.resolve(
+            listed === 1
+              ? {
+                  Versions: [
+                    { Key: "custom-domains/id/certificate.json", VersionId: "current" },
+                    { Key: "custom-domains/id/certificate.json", VersionId: "prior" },
+                  ],
+                  DeleteMarkers: [
+                    { Key: "custom-domains/id/certificate.json", VersionId: "marker" },
+                  ],
+                }
+              : {},
+          )
+        }
+        if (command instanceof DeleteObjectsCommand) {
+          deleted.push(...(command.input.Delete?.Objects ?? []))
+          return Promise.resolve({})
+        }
+        return Promise.reject(new Error(`unexpected ${command?.constructor.name}`))
+      },
+    } as unknown as Pick<S3Client, "send">
+
+    await deleteCertificateObjectVersions(
+      s3,
+      "certificates",
+      "custom-domains/id/certificate.json",
+      "current",
+    )
+
+    expect(deleted).toEqual([
+      { Key: "custom-domains/id/certificate.json", VersionId: "current" },
+      { Key: "custom-domains/id/certificate.json", VersionId: "prior" },
+      { Key: "custom-domains/id/certificate.json", VersionId: "marker" },
+    ])
+  })
+
+  it("does not finish deletion when S3 retains a private-key version", async () => {
+    const s3 = {
+      send: (command: unknown) => {
+        if (command instanceof ListObjectVersionsCommand) {
+          return Promise.resolve({
+            Versions: [{ Key: "custom-domains/id/certificate.json", VersionId: "current" }],
+          })
+        }
+        if (command instanceof DeleteObjectsCommand) {
+          return Promise.resolve({
+            Errors: [
+              {
+                Key: "custom-domains/id/certificate.json",
+                VersionId: "current",
+                Code: "AccessDenied",
+              },
+            ],
+          })
+        }
+        return Promise.reject(new Error(`unexpected ${command?.constructor.name}`))
+      },
+    } as unknown as Pick<S3Client, "send">
+
+    await expect(
+      deleteCertificateObjectVersions(
+        s3,
+        "certificates",
+        "custom-domains/id/certificate.json",
+        "current",
+      ),
+    ).rejects.toThrow(/current: AccessDenied/)
   })
 })
 
