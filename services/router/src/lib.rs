@@ -9,6 +9,7 @@
 //! that had no prior art in the repository.
 
 pub mod acme_http;
+pub mod certificates;
 pub mod credit;
 pub mod dispatch;
 pub mod edge;

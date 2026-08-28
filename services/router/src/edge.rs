@@ -1,11 +1,11 @@
 //! Opt-in TLS edge for customer hostnames.
 //!
-//! This is deliberately only the connection seam. Certificate persistence and ACME do not belong
-//! here: a later certificate manager can build the same exact-SNI resolver and replace its contents.
-//! Until then the edge starts only when explicitly configured with a listener, PEM files, and the
-//! names carried by that certificate. The existing ALB and protocol listeners remain intact.
+//! The platform wildcard and egress certificate comes from startup PEM files. Exact custom-domain
+//! certificates are immutable snapshots hot-swapped by `certificates`; handshakes see either the old
+//! complete inventory or the new one. The existing ALB and protocol listeners remain intact until
+//! the opt-in edge listener is configured.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use arc_swap::ArcSwap;
 use axum::Router as AxumRouter;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -116,18 +117,35 @@ fn sni_matches(pattern: &str, sni: &str) -> bool {
 }
 
 #[derive(Debug)]
-struct ConfiguredResolver {
-    names: HashSet<String>,
-    certificate: Arc<rustls::sign::CertifiedKey>,
+pub(crate) struct ConfiguredResolver {
+    platform_names: HashSet<String>,
+    platform_certificate: Arc<rustls::sign::CertifiedKey>,
+    custom: ArcSwap<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
 }
 
 impl ResolvesServerCert for ConfiguredResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<rustls::sign::CertifiedKey>> {
         let sni = client_hello.server_name()?;
-        self.names
+        self.resolve_name(sni)
+    }
+}
+
+impl ConfiguredResolver {
+    pub(crate) fn resolve_name(&self, sni: &str) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        if let Some(certificate) = self.custom.load().get(&sni.to_ascii_lowercase()) {
+            return Some(Arc::clone(certificate));
+        }
+        self.platform_names
             .iter()
             .any(|pattern| sni_matches(pattern, sni))
-            .then(|| Arc::clone(&self.certificate))
+            .then(|| Arc::clone(&self.platform_certificate))
+    }
+
+    pub(crate) fn replace_custom(
+        &self,
+        certificates: HashMap<String, Arc<rustls::sign::CertifiedKey>>,
+    ) {
+        self.custom.store(Arc::new(certificates));
     }
 }
 
@@ -152,7 +170,7 @@ pub fn host_matches_sni(host: Option<&str>, sni: &str) -> bool {
 pub struct Edge {
     http_config: Arc<ServerConfig>,
     egress_config: Arc<ServerConfig>,
-    configured_names: HashSet<String>,
+    resolver: Arc<ConfiguredResolver>,
     egress_sni: Option<String>,
     egress: Option<Arc<dyn EgressHandoff>>,
     http: AxumRouter,
@@ -226,8 +244,9 @@ impl Edge {
                 .with_context(|| format!("the TLS edge certificate does not cover {name}"))?;
         }
         let resolver = Arc::new(ConfiguredResolver {
-            names: configured_names.clone(),
-            certificate: certified,
+            platform_names: configured_names,
+            platform_certificate: certified,
+            custom: ArcSwap::from_pointee(HashMap::new()),
         });
         let mut http_config = ServerConfig::builder()
             .with_no_client_auth()
@@ -235,13 +254,13 @@ impl Edge {
         http_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let mut egress_config = ServerConfig::builder()
             .with_no_client_auth()
-            .with_cert_resolver(resolver);
+            .with_cert_resolver(resolver.clone());
         egress_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
         Ok(Self {
             http_config: Arc::new(http_config),
             egress_config: Arc::new(egress_config),
-            configured_names,
+            resolver,
             egress_sni: egress_sni.map(|name| name.to_ascii_lowercase()),
             egress,
             http,
@@ -279,12 +298,23 @@ impl Edge {
         .await
         .context("TLS edge handshake timed out")?
         .context("TLS edge handshake failed")?;
-        let sni = start.client_hello().server_name().map(str::to_owned);
-        let target = target_for_sni(
-            sni.as_deref(),
-            &self.configured_names,
-            self.egress_sni.as_deref(),
-        )?;
+        let sni = start
+            .client_hello()
+            .server_name()
+            .map(str::to_owned)
+            .ok_or(DispatchError::MissingSni)?;
+        if self.resolver.resolve_name(&sni).is_none() {
+            return Err(DispatchError::UnknownSni.into());
+        }
+        let target = if self
+            .egress_sni
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(&sni))
+        {
+            Target::Egress
+        } else {
+            Target::Http
+        };
         let config = match target {
             Target::Egress => Arc::clone(&self.egress_config),
             Target::Http => Arc::clone(&self.http_config),
@@ -293,17 +323,15 @@ impl Edge {
             .await
             .context("TLS edge handshake timed out")?
             .context("TLS edge handshake failed")?;
-        self.dispatch_tls(
-            tls,
-            target,
-            sni.expect("target classification requires SNI"),
-            peer,
-        )
-        .await
+        self.dispatch_tls(tls, target, sni, peer).await
     }
 
     fn connection_permit(&self) -> Option<OwnedSemaphorePermit> {
         Arc::clone(&self.connections).try_acquire_owned().ok()
+    }
+
+    pub(crate) fn resolver(&self) -> Arc<ConfiguredResolver> {
+        Arc::clone(&self.resolver)
     }
 
     async fn dispatch_tls<T>(
@@ -334,6 +362,7 @@ impl Edge {
 pub async fn start_from_env(
     egress: Option<Arc<SandboxForwardProxy>>,
     http: AxumRouter,
+    certificate_runtime: Option<crate::certificates::Runtime>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     let listen = match std::env::var("ROUTER_TLS_EDGE_LISTEN") {
         Ok(listen) => listen,
@@ -386,6 +415,11 @@ pub async fn start_from_env(
         http,
         max_connections,
     )?);
+    let certificate_runtime = certificate_runtime
+        .context("custom certificate inventory is required when the TLS edge is enabled")?;
+    let _inventory = crate::certificates::start(edge.resolver(), certificate_runtime)
+        .await
+        .context("initial custom certificate inventory failed")?;
     let listener = TcpListener::bind(&listen)
         .await
         .with_context(|| format!("could not bind {listen} for the TLS edge"))?;

@@ -91,6 +91,10 @@ impl PostgresRoutes {
         tokio::time::timeout(LOOKUP_TIMEOUT, client.query_one("select 1", &[])).await??;
         Ok(())
     }
+
+    pub fn pool(&self) -> Pool {
+        self.pool.clone()
+    }
 }
 
 const LOOKUP_SQL: &str = r#"
