@@ -89,5 +89,7 @@ pointer, then uses the existing deployment role to combine that contract with th
 serving; the promotion role itself cannot register or select code. Do not put a placeholder version
 in Parameter Store: ECS treats a missing referenced parameter as a task-start failure, while the
 website intentionally treats an absent variable as “no release yet.” Every later release uses the
-same explicit, production-environment-gated promotion; publishing a tag alone never selects
-production configuration.
+same explicit, dedicated-environment-gated promotion; publishing a tag alone never selects
+production configuration. The promotion job uses the dedicated, reviewer-protected
+`cli-release-production` environment; the shared `production` environment also serves automatic
+main deployments and is intentionally not its approval boundary.

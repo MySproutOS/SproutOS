@@ -128,6 +128,11 @@ export AWS_ACCOUNT_ID=123 AWS_REGION=us-east-1 CLI_DOWNLOAD_URL=https://sproutos
 # Workflow-dispatch input must cross into the shell through the environment. Interpolating it into
 # `run` source would let a crafted version alter the shell program before this script validates it.
 manual_workflow=$(<"$HERE/../.github/workflows/cli-promote.yml")
+grep -q '^    environment: cli-release-production$' <<<"$manual_workflow"
+if grep -q '^    environment: production$' <<<"$manual_workflow"; then
+  echo "CLI promotion shares the automatic deployment environment" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016
 test "$(grep -Fc 'run: bin/promote-cli-release.sh "$VERSION"' <<<"$manual_workflow")" -eq 2
 # shellcheck disable=SC2016
@@ -142,9 +147,21 @@ promotion_policy=$(sed -n '/resource "aws_iam_role_policy" "github_actions_cli_r
   "$HERE/../tofu/oidc.tf")
 promotion_role=$(sed -n '/resource "aws_iam_role" "github_actions_cli_release_promotion"/,/resource "aws_iam_role_policy" "github_actions_cli_release_promotion"/p' \
   "$HERE/../tofu/oidc.tf")
-grep -q 'environment:production' <<<"$promotion_role"
+deploy_role=$(sed -n '/resource "aws_iam_role" "deploy"/,/resource "aws_iam_role_policy" "deploy"/p' \
+  "$HERE/../tofu/oidc.tf")
+# Both OIDC roles preserve the repository-name and exact repository-ID subjects. The promotion role
+# must not accept the shared environment merely because the deploy role still needs it.
+test "$(grep -Fc 'repo:${var.github_repo}:environment:cli-release-production' <<<"$promotion_role")" -eq 1
+test "$(grep -Fc 'repo:${var.github_repo_ids}:environment:cli-release-production' <<<"$promotion_role")" -eq 1
+test "$(grep -Fc 'repo:${var.github_repo}:environment:cli-release-production' <<<"$deploy_role")" -eq 1
+test "$(grep -Fc 'repo:${var.github_repo_ids}:environment:cli-release-production' <<<"$deploy_role")" -eq 1
+test "$(grep -Fc '"repo:${' <<<"$promotion_role")" -eq 2
+if grep -q 'environment:production' <<<"$promotion_role"; then
+  echo "CLI promotion role trusts the shared production environment" >&2
+  exit 1
+fi
 if grep -q 'refs/tags/cli-v' <<<"$promotion_role"; then
-  echo "CLI promotion role trusts tag refs outside the production environment" >&2
+  echo "CLI promotion role trusts tag refs outside the dedicated promotion environment" >&2
   exit 1
 fi
 grep -q '"ssm:Overwrite" = "false"' <<<"$promotion_policy"

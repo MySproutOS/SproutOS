@@ -27,8 +27,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Publication and promotion are separate on purpose: an immutable tag cannot select the exact
     # task revision registered by a reviewed OpenTofu apply. Every production pointer change goes
-    # through this environment; the promotion role does not trust tag subjects directly.
-    environment: production
+    # through this CLI-only environment; the promotion role does not trust tag subjects directly.
+    # Ordinary main deployments use `production`, which deliberately has no reviewer gate.
+    environment: cli-release-production
     steps:
       - uses: actions/checkout@v5
 
