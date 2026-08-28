@@ -15,6 +15,13 @@ the event would undercount. Historical quantities must not be rewritten until an
 per-resource provider interval export or an explicitly approved aggregate adjustment supplies the
 correction quantities.
 
+One separate set is exact: Daytona records resource
+`b6c18a7b-93b4-422e-8c93-9bec5b1a9f2a` as successfully deleted at 07:12:48Z, while the mapped
+SproutOS resource `01a0414c-b28a-73ca-90f6-c35b032df6f9` emitted 27 events beginning between
+13:55:09Z and 14:39:52Z. Nine events per resource dimension total 5,365.642 CPU-seconds,
+10,731.284 GiB-seconds of memory, and 26,828.21 GiB-seconds of disk. Those events are safe to
+replace with zero-quantity higher versions; the mixed stop/restart interval above is not.
+
 ## What changed
 
 - A sandbox without `external_id` is never meterable, including after the row lock is acquired.
