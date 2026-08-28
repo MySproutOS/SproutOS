@@ -26,6 +26,10 @@ const rolloutVerify = await readFile(
   new URL("../../../../bin/verify-acme-worker-rollout.sh", import.meta.url),
   "utf8",
 )
+const rolloutPolicy = await readFile(
+  new URL("../../../../bin/lib/acme-rollout-policy.sh", import.meta.url),
+  "utf8",
+)
 
 function resourceFrom(source: string, type: string, name: string): string {
   const marker = `resource "${type}" "${name}"`
@@ -213,6 +217,7 @@ describe("tenant-edge IAM boundary", () => {
     expect(rolloutVerify).toContain('.rolloutState == "COMPLETED"')
     expect(rolloutVerify).toContain(".taskDefinitionArn == $task")
     expect(rolloutVerify).toContain("platform task ACME policy attachment")
-    expect(rolloutVerify).toContain("live application policy is not semantically identical")
+    expect(rolloutVerify).toContain("verify_acme_application_policy")
+    expect(rolloutPolicy).toContain("live application policy is not semantically identical")
   })
 })
