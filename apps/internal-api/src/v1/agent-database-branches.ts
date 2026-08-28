@@ -203,7 +203,7 @@ export function createAgentDatabaseBranchesApp(dependencies: Partial<Dependencie
           branch = await deps.create(db, deps.config(), {
             backendServiceId: scoped.backendServiceId,
             organizationId: scoped.organization.id,
-            label: `${scoped.sandbox.id.slice(-8)}-${requestedName}`,
+            label: requestedName,
             expiresAt,
             parentDatabaseBranchId: scoped.sandbox.databaseBranchId!,
             ownerSandboxId: scoped.sandbox.id,

@@ -699,25 +699,79 @@ describe("startSandbox", () => {
     expect(row.state).toBe("running")
   })
 
-  it("reprovisions when a stopped row points at a provider object that no longer exists", async ({
+  it("cleans every owned branch without renting a replacement when Daytona lost the object", async ({
     skip,
   }) => {
     if (!reachable) skip()
 
     const missingExternalId = `daytona-missing-${v7()}`
+    const backendServiceId = v7()
+    const instanceId = v7()
+    const defaultBranchId = v7()
+    const extraBranchId = v7()
+    const region = await db.selectFrom("region").select("id").executeTakeFirstOrThrow()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: backendServiceId,
+        organizationId,
+        projectId,
+        regionId: region.id,
+        name: `missing-${backendServiceId}`,
+        kind: "postgres",
+        status: "active",
+      })
+      .execute()
+    await db
+      .insertInto("databaseInstance")
+      .values({
+        id: instanceId,
+        backendServiceId,
+        projectId,
+        provider: "neon",
+        providerProjectId: `provider-${instanceId}`,
+        status: "active",
+      })
+      .execute()
+    await db
+      .insertInto("databaseBranch")
+      .values([
+        {
+          id: defaultBranchId,
+          databaseInstanceId: instanceId,
+          name: "missing-default",
+          kind: "dev",
+        },
+        { id: extraBranchId, databaseInstanceId: instanceId, name: "missing-extra", kind: "dev" },
+      ])
+      .execute()
     const sandbox = await crudSandbox(db).create({
       projectId,
       userId,
       externalId: missingExternalId,
+      databaseBranchId: defaultBranchId,
       provider: "daytona",
       state: "starting",
     })
+    await db
+      .insertInto("sandboxDatabaseBranch")
+      .values([
+        { sandboxId: sandbox.id, databaseBranchId: defaultBranchId },
+        { sandboxId: sandbox.id, databaseBranchId: extraBranchId },
+      ])
+      .execute()
+    const dropped: string[] = []
 
     await startSandbox(
       () =>
         ({
           start: () => Promise.reject(new SandboxNotFoundError(missingExternalId)),
         }) as never,
+      async (database, _config, databaseBranchId) => {
+        dropped.push(databaseBranchId)
+        await database.deleteFrom("databaseBranch").where("id", "=", databaseBranchId).execute()
+      },
+      () => ({}) as never,
     )(
       {
         id: v7(),
@@ -733,18 +787,15 @@ describe("startSandbox", () => {
       .select(["state", "externalId"])
       .where("id", "=", sandbox.id)
       .executeTakeFirstOrThrow()
-    expect(row).toEqual({ state: "starting", externalId: null })
+    expect(row).toEqual({ state: "stopped", externalId: null })
+    expect(new Set(dropped)).toEqual(new Set([defaultBranchId, extraBranchId]))
 
     const jobs = await db
       .selectFrom("backgroundJob")
       .select(["kind", "payload", "idempotencyKey"])
       .where("organizationId", "=", organizationId)
       .execute()
-    expect(jobs).toContainEqual({
-      kind: SANDBOX_KINDS.provision,
-      payload: { sandboxId: sandbox.id },
-      idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${missingExternalId}`,
-    })
+    expect(jobs).toEqual([])
   })
 })
 
@@ -916,7 +967,7 @@ describe("provisionSandbox", () => {
     ).toBe("failed")
   })
 
-  it("reprovisions when a failed retry points at a provider object that no longer exists", async ({
+  it("stops without reprovisioning when a failed retry points at a missing provider object", async ({
     skip,
   }) => {
     if (!reachable) skip()
@@ -948,18 +999,14 @@ describe("provisionSandbox", () => {
       .select(["state", "externalId"])
       .where("id", "=", sandbox.id)
       .executeTakeFirstOrThrow()
-    expect(row).toEqual({ state: "starting", externalId: null })
+    expect(row).toEqual({ state: "stopped", externalId: null })
 
-    const replacement = await db
+    const replacements = await db
       .selectFrom("backgroundJob")
       .select(["kind", "payload", "idempotencyKey"])
       .where("organizationId", "=", organizationId)
-      .executeTakeFirstOrThrow()
-    expect(replacement).toEqual({
-      kind: SANDBOX_KINDS.provision,
-      payload: { sandboxId: sandbox.id },
-      idempotencyKey: `${SANDBOX_KINDS.provision}:${sandbox.id}:missing:${missingExternalId}`,
-    })
+      .execute()
+    expect(replacements).toEqual([])
   })
 
   it("marks an external-id retry failed when driver configuration cannot be built", async ({

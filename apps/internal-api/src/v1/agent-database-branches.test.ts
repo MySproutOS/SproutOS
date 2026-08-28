@@ -26,6 +26,7 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
   let defaultBranchId = ""
   let regionId = ""
   let token = ""
+  let turnId = ""
   const createdInputs: {
     parentDatabaseBranchId?: string
     ownerSandboxId?: string
@@ -70,7 +71,7 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
           })
           .execute()
         await crudSandboxDatabaseBranch(database).create({
-          sandboxId: input.ownerSandboxId!,
+          sandboxId: input.ownerSandboxId,
           databaseBranchId,
         })
         return { databaseBranchId, name, uri: "postgres://branch-secret@pg.test/db" }
@@ -188,6 +189,7 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
       role: "user",
       inputText: "Test two schema alternatives",
     })
+    turnId = turn.id
     token = (
       await mintProxyToken(db, {
         actorUserId: user.id,
@@ -210,6 +212,24 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
 
   it("creates from the sandbox copy, returns a no-store URL, and deletes only an alternative", async () => {
     const path = `/v1/orgs/${organizationSlug}/projects/${projectId}/agent/actions/database-branches`
+    const invalid = await app.request(path, {
+      method: "POST",
+      headers: { Authorization: "Bearer invalid", "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "invalid" }),
+    })
+    expect(invalid.status).toBe(401)
+    expect(invalid.headers.get("www-authenticate")).toContain("invalid_token")
+
+    const crossScope = await app.request(
+      `/v1/orgs/${organizationSlug}/projects/${v7()}/agent/actions/database-branches`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "wrong-project" }),
+      },
+    )
+    expect(crossScope.status).toBe(404)
+
     const created = await app.request(path, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -265,5 +285,13 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
       "database:branch:create",
       "database:branch:delete",
     ])
+
+    await crudAgentSession(db).closeTurn(turnId, { resultSubtype: "success" })
+    const afterTurn = await app.request(path, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "too-late" }),
+    })
+    expect(afterTurn.status).toBe(401)
   })
 })

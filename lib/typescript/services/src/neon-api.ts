@@ -20,6 +20,8 @@
 
 import { ServiceNotConfiguredError } from "./types"
 
+const NEON_REQUEST_TIMEOUT_MS = 30_000
+
 export type NeonConfig = {
   apiKey: string
   /** `https://console.neon.tech/api/v2`. */
@@ -79,6 +81,7 @@ async function call<T>(
 ): Promise<T> {
   const response = await fetch(`${config.apiUrl}${path}`, {
     method,
+    signal: AbortSignal.timeout(NEON_REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       Accept: "application/json",

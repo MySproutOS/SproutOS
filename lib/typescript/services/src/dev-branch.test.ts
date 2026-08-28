@@ -2,6 +2,7 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
+import { Client } from "pg"
 
 import {
   assertDevBranchQuota,
@@ -9,10 +10,12 @@ import {
   DevBranchQuotaExceededError,
   DevBranchUnavailableError,
   dropDevBranch,
+  MAX_SANDBOX_DATABASE_BRANCHES,
 } from "./dev-branch"
 import { neonApi, neonApiConfigFromEnv } from "./neon-api"
 import { neonPostgresConfigFromEnv, parseNeonUri } from "./neon-postgres"
 import { rolePasswordContext } from "./postgres"
+import { databaseNameFor } from "./naming"
 
 /**
  * A sandbox's dev database, against real Neon and a real control plane.
@@ -56,6 +59,7 @@ const projectId = v7()
 const backendServiceId = v7()
 const instanceId = v7()
 const primaryBranchId = v7()
+const sandboxId = v7()
 
 describe("dev branch quotas", () => {
   it("refuses at both the per-sandbox and provider-wide boundary", () => {
@@ -94,6 +98,7 @@ afterAll(async () => {
       .deleteFrom("serviceCredential")
       .where("backendServiceId", "=", backendServiceId)
       .execute()
+    await tx.deleteFrom("sandbox").where("id", "=", sandboxId).execute()
     await tx.deleteFrom("databaseRole").execute()
     await tx.deleteFrom("databaseBranch").where("databaseInstanceId", "=", instanceId).execute()
     await tx.deleteFrom("databaseInstance").where("id", "=", instanceId).execute()
@@ -208,11 +213,17 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
         passwordKmsKeyId: sealed.kmsKeyId,
       })
       .execute()
+    await db
+      .insertInto("sandbox")
+      .values({ id: sandboxId, projectId, userId, state: "starting" })
+      .execute()
 
     const dev = await createDevBranch(db, config!.postgres, {
       backendServiceId,
       organizationId,
       label: "sbx-test",
+      ownerSandboxId: sandboxId,
+      maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
     })
 
     // The URI a sandbox is given names pg-proxy. A Neon host here would be a credential that works
@@ -220,6 +231,18 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
     expect(dev.uri).toContain(config!.postgres.publicHost)
     expect(dev.uri).not.toContain(neon.host)
     expect(dev.uri).not.toContain(neon.password)
+    expect(new URL(dev.uri).pathname).toBe(`/${databaseNameFor(backendServiceId)}`)
+
+    const client = new Client({ connectionString: dev.uri, connectionTimeoutMillis: 15_000 })
+    await client.connect()
+    try {
+      const connected = await client.query<{ database: string }>(
+        "select current_database() as database",
+      )
+      expect(connected.rows[0]?.database).toBe(neon.database)
+    } finally {
+      await client.end()
+    }
 
     const row = await db
       .selectFrom("databaseBranch")

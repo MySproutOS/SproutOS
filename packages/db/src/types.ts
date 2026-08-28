@@ -475,6 +475,9 @@ export interface CustomDomain {
 }
 
 export interface DatabaseBranch {
+  cleanupAttempts: Generated<number>
+  cleanupError: string | null
+  cleanupRetryAt: Timestamp | null
   createdAt: Generated<Timestamp>
   databaseInstanceId: string
   expiresAt: Timestamp | null
@@ -486,7 +489,10 @@ export interface DatabaseBranch {
   parentBranchId: string | null
   pooledHost: string | null
   providerBranchId: string | null
+  providerBranchName: string | null
   providerEndpointId: string | null
+  provisioningState: Generated<string>
+  reservationToken: string | null
   updatedAt: Generated<Timestamp>
 }
 

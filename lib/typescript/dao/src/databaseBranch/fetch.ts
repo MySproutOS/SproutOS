@@ -20,6 +20,7 @@ export function fetchDatabaseBranch(db: Kysely<DB>) {
       .where("expiresAt", "is not", null)
       .where("expiresAt", "<=", now)
       .where("isProtected", "=", false)
+      .where((eb) => eb.or([eb("cleanupRetryAt", "is", null), eb("cleanupRetryAt", "<=", now)]))
       .orderBy("expiresAt", "asc")
       .limit(limit)
       .execute()

@@ -31,4 +31,6 @@ export type EnvelopeConfig = {
   /** Overrides the KMS endpoint. Defaults to `AWS_ENDPOINT_URL` (LocalStack). */
   endpoint?: string
   region?: string
+  /** Cancels the KMS request without changing the process-wide client. */
+  abortSignal?: AbortSignal
 }

@@ -3,7 +3,12 @@ import type { NeonPostgresConfig } from "@lib/services"
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { destroySandbox, reapExpiredDatabaseBranches, SANDBOX_KINDS } from "./sandbox"
+import {
+  destroySandbox,
+  reapExpiredDatabaseBranches,
+  repairDeletingSandboxes,
+  SANDBOX_KINDS,
+} from "./sandbox"
 
 const reachable = await db
   .selectFrom("region")
@@ -26,6 +31,7 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
   const sandboxId = v7()
   const defaultBranchId = v7()
   const expiredBranchId = v7()
+  const secondExpiredBranchId = v7()
   const futureBranchId = v7()
   const dropped: string[] = []
   let destroyedProviderId: string | undefined
@@ -134,6 +140,14 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
           kind: "dev",
           expiresAt: new Date("2099-01-01T00:00:00Z"),
         },
+        {
+          id: secondExpiredBranchId,
+          databaseInstanceId: instanceId,
+          parentBranchId: defaultBranchId,
+          name: "sandbox-expired-second",
+          kind: "dev",
+          expiresAt: new Date("2020-01-02T00:00:00Z"),
+        },
       ])
       .execute()
     await crudSandbox(db).create({
@@ -144,7 +158,12 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
       externalId: `daytona-${sandboxId}`,
       state: "deleting",
     })
-    for (const databaseBranchId of [defaultBranchId, expiredBranchId, futureBranchId]) {
+    for (const databaseBranchId of [
+      defaultBranchId,
+      expiredBranchId,
+      secondExpiredBranchId,
+      futureBranchId,
+    ]) {
       await crudSandboxDatabaseBranch(db).create({ sandboxId, databaseBranchId })
     }
   })
@@ -160,12 +179,51 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
   })
 
   it("reaps expired alternatives and destruction removes every remaining owned branch", async () => {
-    await reapExpiredDatabaseBranches(drop, () => config)(
-      { id: v7(), kind: SANDBOX_KINDS.reapDatabaseBranches, payload: {} } as never,
+    await expect(
+      reapExpiredDatabaseBranches(
+        async (database, branchConfig, branchId) => {
+          if (branchId === expiredBranchId) throw new Error("oldest provider branch is locked")
+          await drop(database, branchConfig, branchId)
+        },
+        () => config,
+      )(
+        { id: v7(), kind: SANDBOX_KINDS.reapDatabaseBranches, payload: {} } as never,
+        { db } as never,
+      ),
+    ).rejects.toThrow("1 expired database branch cleanup attempt")
+    expect(dropped).toContain(secondExpiredBranchId)
+    expect(dropped).not.toContain(expiredBranchId)
+    expect(dropped).not.toContain(futureBranchId)
+    const deferred = await db
+      .selectFrom("databaseBranch")
+      .select(["cleanupAttempts", "cleanupRetryAt"])
+      .where("id", "=", expiredBranchId)
+      .executeTakeFirstOrThrow()
+    expect(deferred.cleanupAttempts).toBe(1)
+    expect(deferred.cleanupRetryAt).not.toBeNull()
+
+    await db
+      .insertInto("backgroundJob")
+      .values({
+        id: v7(),
+        kind: SANDBOX_KINDS.destroy,
+        organizationId,
+        payload: { sandboxId },
+        state: "dead_lettered",
+        idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandboxId}`,
+      })
+      .execute()
+    await repairDeletingSandboxes(
+      { id: v7(), kind: SANDBOX_KINDS.repairDestroy, payload: {} } as never,
       { db } as never,
     )
-    expect(dropped).toContain(expiredBranchId)
-    expect(dropped).not.toContain(futureBranchId)
+    const repaired = await db
+      .selectFrom("backgroundJob")
+      .select(["state", "idempotencyKey"])
+      .where("kind", "=", SANDBOX_KINDS.destroy)
+      .where("idempotencyKey", "like", `${SANDBOX_KINDS.destroy}:${sandboxId}:repair:%`)
+      .executeTakeFirstOrThrow()
+    expect(repaired.state).toBe("queued")
 
     await destroySandbox(
       () =>
@@ -188,7 +246,9 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
     )
 
     expect(destroyedProviderId).toBe(`daytona-${sandboxId}`)
-    expect(new Set(dropped)).toEqual(new Set([expiredBranchId, defaultBranchId, futureBranchId]))
+    expect(new Set(dropped)).toEqual(
+      new Set([secondExpiredBranchId, expiredBranchId, defaultBranchId, futureBranchId]),
+    )
     await expect(
       db.selectFrom("sandbox").select("id").where("id", "=", sandboxId).executeTakeFirst(),
     ).resolves.toBeUndefined()
@@ -196,7 +256,12 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
       db
         .selectFrom("databaseBranch")
         .select("id")
-        .where("id", "in", [defaultBranchId, expiredBranchId, futureBranchId])
+        .where("id", "in", [
+          defaultBranchId,
+          expiredBranchId,
+          secondExpiredBranchId,
+          futureBranchId,
+        ])
         .execute(),
     ).resolves.toEqual([])
   })
