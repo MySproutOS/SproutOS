@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { format } from "oxfmt"
 
 const directory = join(import.meta.dirname, "../src/content/docs")
 const docs = readdirSync(directory)
@@ -29,7 +30,17 @@ const docs = readdirSync(directory)
     return { ...metadata, content: match[2].trim() }
   })
 
-writeFileSync(
-  join(directory, "../../lib/docs.generated.ts"),
-  `// Generated from src/content/docs/*.md by scripts/generate-docs.ts.\nexport const GENERATED_DOCS = ${JSON.stringify(docs, null, 2)} as const\n`,
-)
+const outputPath = join(directory, "../../lib/docs.generated.ts")
+const source = `// Generated from src/content/docs/*.md by scripts/generate-docs.ts.\nexport const GENERATED_DOCS = ${JSON.stringify(docs, null, 2)} as const\n`
+async function writeGeneratedDocs(): Promise<void> {
+  const formatted = await format(outputPath, source, { semi: false })
+  if (formatted.errors.length > 0) {
+    throw new Error(`Could not format generated docs: ${formatted.errors[0]?.message}`)
+  }
+  writeFileSync(outputPath, formatted.code)
+}
+
+void writeGeneratedDocs().catch((error: unknown) => {
+  console.error(error)
+  process.exitCode = 1
+})

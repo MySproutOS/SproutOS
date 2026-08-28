@@ -50,6 +50,7 @@
     "@types/react-dom": "catalog:",
     "@vercel/config": "^0.6.1",
     "babel-plugin-react-compiler": "catalog:",
+    "oxfmt": "^0.64.0",
     "tailwindcss": "catalog:",
     "typescript": "catalog:"
   },
