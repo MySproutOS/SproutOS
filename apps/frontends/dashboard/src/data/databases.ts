@@ -121,8 +121,8 @@ function useServiceInvalidation(orgSlug: string) {
 /**
  * Creating returns the connection URI **once**.
  *
- * It is not stored anywhere the UI can read it again — revealing costs a separate audited request —
- * so the caller has to show it to the person now or lose it.
+ * It is not stored anywhere the UI can read it again, so the caller has to show it to the person
+ * now or lose it. Rotation is the recovery path: it issues a new URI and invalidates the old one.
  */
 export function useCreateBackendService(orgSlug: string) {
   const invalidate = useServiceInvalidation(orgSlug)
