@@ -148,6 +148,8 @@ pub struct SignerApi {
 }
 
 impl SignerApi {
+    const CALLBACK_ATTEMPTS: usize = 4;
+
     pub fn new(
         base_url: impl Into<String>,
         token: impl Into<String>,
@@ -198,6 +200,43 @@ impl SignerApi {
         let body: String = body.chars().take(1000).collect();
         bail!("{operation} was refused: {status} {body}")
     }
+
+    async fn callback(
+        &self,
+        request: reqwest::RequestBuilder,
+        operation: &str,
+    ) -> anyhow::Result<()> {
+        for attempt in 0..Self::CALLBACK_ATTEMPTS {
+            let response = request
+                .try_clone()
+                .context("signer callback request cannot be replayed")?
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => return Ok(()),
+                Ok(response)
+                    if attempt + 1 < Self::CALLBACK_ATTEMPTS
+                        && (response.status().is_server_error()
+                            || matches!(
+                                response.status(),
+                                reqwest::StatusCode::REQUEST_TIMEOUT
+                                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+                            )) => {}
+                Ok(response) => return Self::require_success(response, operation).await,
+                Err(cause) if attempt + 1 == Self::CALLBACK_ATTEMPTS => {
+                    return Err(cause).with_context(|| format!("could not deliver {operation}"));
+                }
+                Err(_) => {}
+            }
+
+            // The backend durably deduplicates the stable Idempotency-Key. Retrying the complete
+            // request is therefore safe even if the prior response disappeared after DB commit.
+            let delay = std::time::Duration::from_millis(250 * (1_u64 << attempt));
+            tokio::time::sleep(delay).await;
+        }
+        unreachable!("the bounded callback loop always returns on its last attempt")
+    }
 }
 
 impl ControlPlane for SignerApi {
@@ -227,14 +266,11 @@ impl ControlPlane for SignerApi {
     }
 
     async fn complete(&self, request: &CompleteRequest) -> anyhow::Result<()> {
-        let response = self
+        let callback = self
             .authorized(self.client.post(self.endpoint("complete")))
             .header("Idempotency-Key", idempotency_key(request)?)
-            .json(request)
-            .send()
-            .await
-            .context("could not reach the signer completion endpoint")?;
-        Self::require_success(response, "job completion").await
+            .json(request);
+        self.callback(callback, "job completion").await
     }
 
     async fn fail(&self, job_id: &str, error: &str) -> anyhow::Result<()> {
@@ -243,17 +279,14 @@ impl ControlPlane for SignerApi {
             signer_id: &self.signer_id,
             error,
         };
-        let response = self
+        let callback = self
             .authorized(self.client.post(self.endpoint("fail")))
             .header(
                 "Idempotency-Key",
                 hex::encode(Sha256::digest(serde_json::to_vec(&request)?)),
             )
-            .json(&request)
-            .send()
-            .await
-            .context("could not reach the signer failure endpoint")?;
-        Self::require_success(response, "job failure report").await
+            .json(&request);
+        self.callback(callback, "job failure report").await
     }
 
     async fn get_bytes(&self, url: &str, max_bytes: u64) -> anyhow::Result<Vec<u8>> {
@@ -415,7 +448,33 @@ fn validate_artifact_url(raw: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use axum::{
+        Router,
+        http::{HeaderMap, StatusCode},
+        routing::post,
+    };
+
     use super::*;
+
+    fn completion() -> CompleteRequest {
+        CompleteRequest::SignRelease {
+            job_id: "job".into(),
+            signer_id: "signer".into(),
+            signed_key: "key".into(),
+            signed_object_version: "version".into(),
+            signed_digest: "d".repeat(64),
+            size_bytes: 1,
+            package_name: "me.sproutos.app.pabc".into(),
+            version_code: 2,
+            version_name: "2.0".into(),
+            certificate_sha256: "c".repeat(64),
+        }
+    }
 
     #[test]
     fn refuses_plaintext_remote_control_plane() {
@@ -429,18 +488,7 @@ mod tests {
 
     #[test]
     fn completion_idempotency_key_is_stable() {
-        let request = CompleteRequest::SignRelease {
-            job_id: "job".into(),
-            signer_id: "signer".into(),
-            signed_key: "key".into(),
-            signed_object_version: "version".into(),
-            signed_digest: "d".repeat(64),
-            size_bytes: 1,
-            package_name: "me.sproutos.app.pabc".into(),
-            version_code: 2,
-            version_name: "2.0".into(),
-            certificate_sha256: "c".repeat(64),
-        };
+        let request = completion();
         assert_eq!(
             idempotency_key(&request).unwrap(),
             idempotency_key(&request).unwrap()
@@ -450,6 +498,51 @@ mod tests {
         assert_eq!(json["signed_object_version"], "version");
         assert_eq!(json["version_name"], "2.0");
         assert!(json.get("SignRelease").is_none());
+    }
+
+    #[tokio::test]
+    async fn retries_a_callback_with_the_same_idempotency_key() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let keys = Arc::new(Mutex::new(Vec::new()));
+        let handler_calls = Arc::clone(&calls);
+        let handler_keys = Arc::clone(&keys);
+        let app = Router::new().route(
+            "/v1/apk-signing/complete",
+            post(move |headers: HeaderMap| {
+                let calls = Arc::clone(&handler_calls);
+                let keys = Arc::clone(&handler_keys);
+                async move {
+                    keys.lock().unwrap().push(
+                        headers
+                            .get("Idempotency-Key")
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .to_owned(),
+                    );
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        // This is indistinguishable to the client from a response lost after the
+                        // backend committed. The replay-safe backend returns success next time.
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    } else {
+                        StatusCode::OK
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let api = SignerApi::new(format!("http://{address}"), "token", "signer").unwrap();
+        api.complete(&completion()).await.unwrap();
+        server.abort();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let keys = keys.lock().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], keys[1]);
+        assert_eq!(keys[0].len(), 64);
     }
 
     #[test]

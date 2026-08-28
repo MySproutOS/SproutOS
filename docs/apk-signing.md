@@ -66,7 +66,10 @@ boundary; the API should report the signer's last successful poll as fleet healt
 ## Normalized job protocol
 
 All calls carry `Authorization: Bearer $APK_SIGNER_TOKEN`. Completion and failure requests also
-carry a stable `Idempotency-Key`. A `204` claim is an idle queue.
+carry a stable `Idempotency-Key`. The signer retries callback transport failures, timeouts, rate
+limits, and server errors four times with bounded exponential backoff; the control plane durably
+deduplicates the callback per claim, including when its first response disappears after commit. A
+`204` claim is an idle queue.
 
 `POST /v1/apk-signing/claim` with `{ "signer_id": "signer-01" }` returns one of two discriminated
 jobs.
