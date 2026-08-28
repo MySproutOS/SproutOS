@@ -27,32 +27,6 @@ export function crudStoreListing(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  /**
-   * Moves a listing into `published` and records who decided that.
-   *
-   * `reviewed_by_user_id` and `reviewed_at` are set here rather than left to the caller because a
-   * published listing with no reviewer is indistinguishable from one that was published by a bug,
-   * and the store renders community-submitted markdown only once this has happened.
-   */
-  async function publish(
-    id: string,
-    reviewerUserId: string,
-  ): Promise<Selectable<DB["storeListing"]> | undefined> {
-    return await db
-      .updateTable("storeListing")
-      .set({
-        status: "published",
-        reviewedByUserId: reviewerUserId,
-        reviewedAt: new Date(),
-        rejectionReason: null,
-        updatedAt: new Date(),
-      })
-      .where("id", "=", id)
-      .where("deletedAt", "is", null)
-      .returningAll()
-      .executeTakeFirst()
-  }
-
   async function unpublish(
     id: string,
     reviewerUserId: string,
@@ -87,5 +61,5 @@ export function crudStoreListing(db: Kysely<DB>) {
       .execute()
   }
 
-  return { create, incrementInstallCount, publish, unpublish, update }
+  return { create, incrementInstallCount, unpublish, update }
 }

@@ -494,6 +494,22 @@ export interface DeploymentBuild {
   startedAt: Timestamp | null
 }
 
+export interface DeploymentCatalogueImport {
+  catalogueDigest: string
+  id: string
+  importedAt: Generated<Timestamp>
+  lastReconciledAt: Generated<Timestamp>
+  ociDigest: string
+  ociRepository: string
+  provenance: Json
+  signatureIdentity: string
+  signatureIssuer: string
+  sourceRef: string
+  sourceRepository: string
+  sourceSha: string
+  workflowRef: string
+}
+
 export interface GithubInstallation {
   accountLogin: string
   accountType: string
@@ -1064,12 +1080,20 @@ export interface StoreCategory {
 }
 
 export interface StoreListing {
+  capabilityReadiness: Generated<Json>
+  capabilityVerifiedAt: Timestamp | null
+  catalogueArchivedAt: Timestamp | null
+  catalogueEntryId: string | null
+  catalogueImportId: string | null
+  catalogueManifest: Json | null
+  catalogueSchemaVersion: number | null
   categoryId: string | null
   createdAt: Generated<Timestamp>
   defaultBranch: Generated<string>
   deletedAt: Timestamp | null
   descriptionMd: string
   dockerfilePath: Generated<string>
+  e2eVerifiedAt: Timestamp | null
   featuredRank: number | null
   forksCount: Generated<number>
   homepageUrl: string | null
@@ -1083,6 +1107,7 @@ export interface StoreListing {
   readmeEtag: string | null
   readmeMd: string | null
   rejectionReason: string | null
+  requiredCapabilities: Generated<Json>
   reviewedAt: Timestamp | null
   reviewedByUserId: string | null
   rootDir: Generated<string>
@@ -1093,7 +1118,10 @@ export interface StoreListing {
   submittedByUserId: string | null
   syncError: string | null
   tagline: string
+  templatePluginDigest: string | null
+  templatePluginRepository: string | null
   updatedAt: Generated<Timestamp>
+  upstreamCommit: string | null
   upstreamHost: Generated<string>
   upstreamOwner: string
   upstreamPushedAt: Timestamp | null
@@ -1354,6 +1382,7 @@ export interface DB {
   databaseRole: DatabaseRole
   deployment: Deployment
   deploymentBuild: DeploymentBuild
+  deploymentCatalogueImport: DeploymentCatalogueImport
   githubInstallation: GithubInstallation
   infraDeployment: InfraDeployment
   memberPermission: MemberPermission

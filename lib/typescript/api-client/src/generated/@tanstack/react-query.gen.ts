@@ -106,6 +106,7 @@ import {
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthLogout,
+  postV1DeployCatalogueImport,
   postV1DeployMigrate,
   postV1DeployRelease,
   postV1DeployStaticUploadUrl,
@@ -424,6 +425,8 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
+  PostV1DeployCatalogueImportData,
+  PostV1DeployCatalogueImportResponse,
   PostV1DeployMigrateData,
   PostV1DeployMigrateResponse,
   PostV1DeployReleaseData,
@@ -538,7 +541,6 @@ import type {
   PostV1OrgsByOrgSlugServicesResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishError,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
@@ -3531,17 +3533,17 @@ export const getV1OrgsByOrgSlugStoreListingsInfiniteOptions = (
 }
 
 /**
- * Publishes a listing, making it visible to unauthenticated visitors
+ * Checks whether a listing can be published by catalogue reconciliation
  */
 export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishMutation = (
   options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>>,
 ): UseMutationOptions<
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+  unknown,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
   Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
 > => {
   const mutationOptions: UseMutationOptions<
-    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
+    unknown,
     PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
     Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData>
   > = {
@@ -5029,6 +5031,33 @@ export const postV1InternalPgResolveMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1InternalPgResolve({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Queues an immutable Deployment-Templates catalogue import after GitHub OIDC identity verification.
+ */
+export const postV1DeployCatalogueImportMutation = (
+  options?: Partial<Options<PostV1DeployCatalogueImportData>>,
+): UseMutationOptions<
+  PostV1DeployCatalogueImportResponse,
+  DefaultError,
+  Options<PostV1DeployCatalogueImportData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1DeployCatalogueImportResponse,
+    DefaultError,
+    Options<PostV1DeployCatalogueImportData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1DeployCatalogueImport({
         ...options,
         ...fnOptions,
         throwOnError: true,

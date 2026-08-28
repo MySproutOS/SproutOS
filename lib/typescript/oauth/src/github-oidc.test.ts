@@ -51,6 +51,7 @@ function mint(
     ref: "refs/heads/main",
     sha: "abc123",
     workflow: "deploy",
+    workflow_ref: "MySproutOS/example/.github/workflows/deploy.yml@refs/heads/main",
     run_id: "42",
     actor: "someone",
     ...overrides.claims,
@@ -87,6 +88,9 @@ describe("verifyGitHubOidcToken", () => {
     expect(claims.repository).toBe("MySproutOS/example")
     expect(claims.ref).toBe("refs/heads/main")
     expect(claims.workflow).toBe("deploy")
+    expect(claims.workflowRef).toBe(
+      "MySproutOS/example/.github/workflows/deploy.yml@refs/heads/main",
+    )
   })
 
   it("refuses alg: none", async () => {
