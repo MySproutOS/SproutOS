@@ -124,6 +124,17 @@ export RELEASE_DIR="$TEST_DIR/release" STATE="$TEST_DIR/state" CAPTURE="$TEST_DI
 export CALLS="$TEST_DIR/calls" GITHUB_REPOSITORY=MySproutOS/SproutOS NAME_PREFIX=sproutos
 export AWS_ACCOUNT_ID=123 AWS_REGION=us-east-1 CLI_DOWNLOAD_URL=https://sproutos.me/download
 
+# Workflow-dispatch input must cross into the shell through the environment. Interpolating it into
+# `run` source would let a crafted version alter the shell program before this script validates it.
+manual_workflow=$(<"$HERE/../.github/workflows/cli-promote.yml")
+# shellcheck disable=SC2016
+test "$(grep -Fc 'run: bin/promote-cli-release.sh "$VERSION"' <<<"$manual_workflow")" -eq 2
+# shellcheck disable=SC2016
+if grep -Fq 'run: bin/promote-cli-release.sh "${{ inputs.version }}"' <<<"$manual_workflow"; then
+  echo "workflow-dispatch version is interpolated directly into shell source" >&2
+  exit 1
+fi
+
 # The shell refuses to select a task definition; IAM must enforce the same boundary if the workflow
 # is edited or compromised. Evidence records are append-only at IAM, not just by convention.
 promotion_policy=$(sed -n '/resource "aws_iam_role_policy" "github_actions_cli_release_promotion"/,$p' \

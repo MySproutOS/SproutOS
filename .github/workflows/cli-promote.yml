@@ -43,7 +43,8 @@ jobs:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
-        run: bin/promote-cli-release.sh "${{ inputs.version }}" --record-only
+          VERSION: ${{ inputs.version }}
+        run: bin/promote-cli-release.sh "$VERSION" --record-only
 
       # The OpenTofu revision adds only the SSM reference but carries its configured placeholder
       # image. Reuse the normal migration-first deploy authority to combine that reviewed contract
@@ -87,4 +88,5 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           NAME_PREFIX: ${{ vars.NAME_PREFIX }}
           CLI_DOWNLOAD_URL: https://${{ vars.CONTROL_PLANE_DOMAIN || 'sproutos.me' }}/download
-        run: bin/promote-cli-release.sh "${{ inputs.version }}"
+          VERSION: ${{ inputs.version }}
+        run: bin/promote-cli-release.sh "$VERSION"

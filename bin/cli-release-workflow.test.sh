@@ -26,4 +26,13 @@ test "$create_line" -lt "$verify_line"
 # shellcheck disable=SC2016
 grep -q 'gh release create "$TAG" dist/\*' <<<"$release_job"
 
+# Manifest v1 is already public. Keep the generator on its published four-field contract; source
+# identity belongs to the independently verified tag-bound attestations, not mutable manifest text.
+grep -Fq "'{schemaVersion:1,version:\$version,tag:\$tag,assets:\$assets}'" "$WORKFLOW"
+# shellcheck disable=SC2016
+if grep -Fq 'commitSha:$commitSha' "$WORKFLOW"; then
+  echo "manifest v1 gained an unpublished top-level field" >&2
+  exit 1
+fi
+
 echo "CLI release workflow tests passed"

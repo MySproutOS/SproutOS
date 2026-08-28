@@ -81,10 +81,10 @@ tag-bound provenance and source commit, then records the evidence at
 The pointer only moves forward by semantic version; an emergency rollback must be a separately
 reviewed operation rather than a disguised release promotion.
 
-The first CLI release predates automatic promotion. After the production IAM/task wiring is
-applied and the DB-backed `/download` change is deployed, run **Promote an existing CLI release**
-with its real published version and the exact task-definition ARN registered by that reviewed
-OpenTofu apply. The protected workflow records the pointer, then uses the existing deployment role
+The immutable `cli-v0.1.0` release predates automatic promotion. After the production IAM/task
+wiring is applied, run **Promote an existing CLI release** with `0.1.0` and the exact task-definition
+ARN registered by that reviewed OpenTofu apply. The protected workflow records the pointer, then
+uses the existing deployment role
 to combine that contract with the image already serving; the promotion role itself cannot register
 or select code. Do not put a placeholder version in Parameter Store: ECS treats a missing referenced
 parameter as a task-start failure, while the website intentionally treats an absent variable as “no

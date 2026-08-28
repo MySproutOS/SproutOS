@@ -189,9 +189,8 @@ jobs:
               '. + [{target:$target,os:$os,arch:$arch,url:$url,sha256:$sha256,sizeBytes:$size}]' \
               <<< "$entries")
           done
-          jq -n --arg version "$VERSION" --arg tag "$TAG" --arg commitSha "$GITHUB_SHA" \
-            --argjson assets "$entries" \
-            '{schemaVersion:1,version:$version,tag:$tag,commitSha:$commitSha,assets:$assets}' \
+          jq -n --arg version "$VERSION" --arg tag "$TAG" --argjson assets "$entries" \
+            '{schemaVersion:1,version:$version,tag:$tag,assets:$assets}' \
             > "sprout-v${VERSION}-manifest.json"
           jq -e '.schemaVersion == 1 and (.assets | length) == 5' \
             "sprout-v${VERSION}-manifest.json" >/dev/null

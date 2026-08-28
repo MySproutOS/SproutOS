@@ -189,10 +189,9 @@ parameters:
 - `/<name>/application/SPROUT_CLI_RELEASE_VERSION` is the small current-release pointer consumed by
   the website container.
 
-Do not apply this wiring, or merge it to production, until the first five-platform `cli-v*` release
-exists and GitHub reports `isImmutable: true`. The application change that renders the manifest on
-`/download` must also be deployed before promotion, otherwise the rollout cannot prove its public
-result.
+The first five-platform release, `cli-v0.1.0`, is published and GitHub reports it immutable. The
+application change that renders the manifest on `/download` is also on `main`; it must be deployed
+before promotion, otherwise the rollout cannot prove its public result.
 
 For the first release, save and review a plan after both dependencies are on `main`. It should add
 the least-privilege `${name_prefix}-cli-release-promotion` OIDC role/policy and register one web task
