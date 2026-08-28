@@ -22,8 +22,10 @@ export type ImportedUsageRollup = {
  *
  * Retrying this transaction is harmless: quantity is assigned, not added. The only additive field
  * is `charged_quantity`, and it receives the positive change in the separately tracked externally
- * settled subtotal. Ordinary charges already in that column therefore remain intact, while a hold
- * settlement is credited exactly once even if the same ClickHouse window is imported repeatedly.
+ * settled subtotal. Ordinary charges already in that column therefore remain intact, while the
+ * external component follows ClickHouse both upward and downward. That second direction matters
+ * when a BYO event is corrected or removed: leaving its old external quantity in `charged_quantity`
+ * would make later platform-funded usage in the same grain look paid already.
  */
 export async function applyImportedUsageRollups(
   db: Kysely<DB>,
@@ -53,11 +55,10 @@ export async function applyImportedUsageRollups(
             .doUpdateSet({
               quantity: sql`excluded.quantity`,
               chargedQuantity: sql`
-                usage_rollup.charged_quantity + greatest(
-                  excluded.externally_charged_quantity -
-                    usage_rollup.externally_charged_quantity,
+                greatest(
+                  usage_rollup.charged_quantity - usage_rollup.externally_charged_quantity,
                   0
-                )
+                ) + excluded.externally_charged_quantity
               `,
               externallyChargedQuantity: sql`excluded.externally_charged_quantity`,
               updatedAt: new Date(),

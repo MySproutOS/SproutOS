@@ -233,7 +233,9 @@ against. `deployment.runtime_class` defaults to `kata-fc`; `sandbox.runtime_clas
 
 `workflow_run.bytes_enqueued` and `valkey_dwell_ms` still have no writer. Their schema defaults are
 not measurements, and a zero in either column must not be presented as observed queue residency.
-The Valkey proxy can eventually measure residency, but it does not currently emit that usage.
+Queue residency is instead sampled from BullMQ-prefixed keys with exact Valkey `MEMORY USAGE`
+measurements every five minutes and integrated into `valkey_queue_byte_second`. A gap longer than
+six minutes resets the baseline rather than inventing usage between observations.
 
 ### OAuth provider — 8 tables
 
