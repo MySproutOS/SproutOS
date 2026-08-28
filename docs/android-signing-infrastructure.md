@@ -71,7 +71,38 @@ PUT URL cannot replace the storage key or move an existing object across custody
 ## Secrets and host prerequisites
 
 After the infrastructure-only apply, generate two independent high-entropy values in the local
-secret source and run `ANDROID_CUSTODY_ONLY=1 bin/put-app-secrets.sh`. This all-or-nothing mode
+secret source and run `ANDROID_CUSTODY_ONLY=1 bin/put-app-secrets.sh`. The source of truth must be
+an approved encrypted operator vault with independent records for the runtime and operator values;
+`.env` is only a mode-`0600` transfer file. One safe way to create that transfer file without
+printing either value or placing one on a command line is:
+
+```bash
+set +x
+umask 077
+ANDROID_CUSTODY_ENV=$(mktemp)
+{
+  printf 'APK_SIGNER_TOKEN='
+  openssl rand -hex 48
+  printf 'APK_SIGNER_OPERATOR_TOKEN='
+  openssl rand -hex 48
+} >"$ANDROID_CUSTODY_ENV"
+chmod 600 "$ANDROID_CUSTODY_ENV"
+```
+
+Import the two lines into their two distinct vault records before uploading them. Restore those two
+records into a second mode-`0600` file and use `cmp --silent` against the generated transfer file.
+That is the backup proof: merely having an SSM copy is not an independent recovery source. Keep
+shell tracing disabled, remove both plaintext files after the metadata and live probes succeed, and
+record only the vault record identifiers and drill date. Never put either value in a shell argument,
+CI secret, OpenTofu variable, plan, or state.
+
+Then upload from the transfer file:
+
+```bash
+ANDROID_CUSTODY_ONLY=1 bin/put-app-secrets.sh "$ANDROID_CUSTODY_ENV"
+```
+
+This all-or-nothing mode
 rejects a missing value or equal signer tokens, then writes the two values directly to the isolated
 `/sproutos/android-custody` Parameter Store path.
 OpenTofu creates no parameter value, so none enters state:
@@ -209,7 +240,15 @@ stage-two handoff is therefore mandatory and must use the exact pre-#192 image c
 
 ```bash
 tofu -chdir=tofu apply android-custody-delivery.tfplan
-IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos bin/handoff-ecs-task-definitions.sh
+ROLLOUT_STATE=$(tofu -chdir=tofu output -json acme_worker_rollout_state)
+case "$(jq -r '[.capacity_enabled, .handler_ownership_enabled, .fallback_iam_enabled] | join(" ")' <<<"$ROLLOUT_STATE")" in
+  'false false true') ACME_PHASE=A ;;
+  'true false true') ACME_PHASE=B ;;
+  'true true true') ACME_PHASE=C ;;
+  'true true false') ACME_PHASE=D ;;
+  *) echo 'refusing unknown ACME rollout state' >&2; exit 1 ;;
+esac
+IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos bin/handoff-ecs-task-definitions.sh "$ACME_PHASE"
 ```
 
 The handoff derives new service and migration revisions from the exact task-definition outputs,
@@ -224,7 +263,9 @@ only the OpenTofu output—and require all of the following before merging #192:
   dedicated execution role;
 - both service replicas and load-balancer targets are healthy.
 
-Finally, prove the current image's runtime boundary without claiming a queued job. Send a
+Finally, prove the current image's runtime boundary without claiming a queued job. Use one reserved
+probe UUID and first assert through a read-only operator database session that
+`android_signer_job` does not contain it. (`client_signer_job` does not exist until #192.) Send a
 well-formed `/v1/apk-signing/fail` body with no `Idempotency-Key`: the operator token must return
 `401`, while the runtime token must pass authentication and return `400` before any database write.
 Keep shell tracing disabled and feed the authorization header to curl over stdin so neither token
@@ -244,9 +285,22 @@ probe_signer_auth() {
 [[ "$(probe_signer_auth "$APK_SIGNER_TOKEN")" == 400 ]]
 ```
 
+Repeat the read-only database query afterward and require zero rows for the same probe UUID.
+This turns the expected `401`/`400` control flow into a no-write proof rather than inferring it from
+status codes. Do not add an idempotency key, use a real job identifier, or call claim/prepare/finalize
+during this handoff.
+
 Only after recording that live proof should #192 merge and deploy its missing/equal-token startup
 failure. A normal `tofu plan` keeps both delivery switches disabled, so it cannot silently introduce
 a missing SSM reference.
+
+Credential delivery and #192 deployment do not authorize real signing. Before provisioning the
+first key, complete the master-identity and signer-state restore drill in Retention and recovery,
+pin and verify the resulting key-object VersionId/certificate fingerprint, and satisfy every Alarm
+rollout prerequisite. In particular, the durable last-seen record and queue-health metric producer
+are still absent, so `android_signing_alarms_enabled` must remain `false` and real signing remains
+blocked. Do not enable silent or permanently `INSUFFICIENT_DATA` alarms as a substitute for those
+signals.
 
 The independent Google credential may be staged later: first use a metadata-only SSM check to prove
 its exact `/sproutos/android-worker` name is a `SecureString`, then save a plan with

@@ -198,6 +198,9 @@ require 'land a durable signer registry/last-seen record and a scheduled queue-h
   'operators must be told that last-seen and queue metrics do not exist yet'
 require 'bin/handoff-ecs-task-definitions\.sh' "$ROOT/docs/android-signing-infrastructure.md" \
   'stage two must explicitly deploy the registered task with the existing immutable pre-192 image'
+require 'bin/handoff-ecs-task-definitions\.sh "\$ACME_PHASE"' \
+  "$ROOT/docs/android-signing-infrastructure.md" \
+  'stage two must pass the live ACME rollout phase required by the handoff guard'
 require 'ignore_changes.*task_definition' "$ROOT/docs/android-signing-infrastructure.md" \
   'the runbook must explain why applying the saved plan does not update the live ECS service'
 
