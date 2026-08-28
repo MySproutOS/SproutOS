@@ -32,20 +32,20 @@ backed.
 
 ## Runtime configuration
 
-| Variable | Meaning |
-| --- | --- |
-| `APK_SIGNER_API_URL` | Public control-plane origin; HTTPS required except loopback |
-| `APK_SIGNER_TOKEN` | Bearer credential; required and never accepted on argv |
-| `APK_SIGNER_ID` | Stable machine label used for queue ownership |
-| `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity |
-| `APK_SIGNER_STATE_DIR` | Durable mode-`0700` crash-recovery journal |
-| `APK_SIGNER_ANDROID_SDK_ROOT` | SDK root containing `build-tools/<version>` |
-| `APK_SIGNER_KEYTOOL` | Optional explicit `keytool` path |
-| `APK_SIGNER_AAPT2` | Optional explicit `aapt2` path |
-| `APK_SIGNER_ZIPALIGN` | Optional explicit `zipalign` path |
-| `APK_SIGNER_APKSIGNER` | Optional explicit `apksigner` path |
-| `APK_SIGNER_POLL_SECONDS` | Idle poll interval, default 30 |
-| `APK_SIGNER_MAX_APK_BYTES` | Hard download ceiling, default 512 MiB |
+| Variable                          | Meaning                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `APK_SIGNER_API_URL`              | Public control-plane origin; HTTPS required except loopback |
+| `APK_SIGNER_TOKEN`                | Bearer credential; required and never accepted on argv      |
+| `APK_SIGNER_ID`                   | Stable machine label used for queue ownership               |
+| `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity                          |
+| `APK_SIGNER_STATE_DIR`            | Durable mode-`0700` crash-recovery journal                  |
+| `APK_SIGNER_ANDROID_SDK_ROOT`     | SDK root containing `build-tools/<version>`                 |
+| `APK_SIGNER_KEYTOOL`              | Optional explicit `keytool` path                            |
+| `APK_SIGNER_AAPT2`                | Optional explicit `aapt2` path                              |
+| `APK_SIGNER_ZIPALIGN`             | Optional explicit `zipalign` path                           |
+| `APK_SIGNER_APKSIGNER`            | Optional explicit `apksigner` path                          |
+| `APK_SIGNER_POLL_SECONDS`         | Idle poll interval, default 30                              |
+| `APK_SIGNER_MAX_APK_BYTES`        | Hard download ceiling, default 512 MiB                      |
 
 Initialize once, back up the result, then run under a service manager:
 
