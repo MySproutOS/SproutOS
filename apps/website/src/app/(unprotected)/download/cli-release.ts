@@ -76,7 +76,8 @@ export function parseCliReleaseManifest(
     manifest.version !== configuredVersion ||
     manifest.tag !== tag ||
     !Array.isArray(manifest.assets) ||
-    manifest.assets.length !== TARGETS.length
+    manifest.assets.length !== TARGETS.length ||
+    manifest.assets.some((asset) => typeof asset !== "object" || asset === null)
   ) {
     throw new Error("Invalid CLI release manifest")
   }

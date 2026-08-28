@@ -70,5 +70,9 @@ describe("the configured CLI release", () => {
     expect(() => parseCliReleaseManifest(badDigest, version)).toThrow(
       "Invalid CLI release manifest",
     )
+
+    expect(() =>
+      parseCliReleaseManifest({ ...manifest(), assets: [null, null, null, null, null] }, version),
+    ).toThrow("Invalid CLI release manifest")
   })
 })
