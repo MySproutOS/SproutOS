@@ -4,6 +4,7 @@ mod api;
 mod deploy;
 mod digest;
 mod error;
+mod isolation;
 mod oci;
 mod package;
 mod plugin;
@@ -18,6 +19,7 @@ pub use deploy::{
 };
 pub use digest::Sha256Digest;
 pub use error::{ErrorCode, ErrorEnvelope, Result, SproutError};
+pub use isolation::NativeIsolationProvider;
 pub use oci::{
     ArtifactLimits, ArtifactProvenance, OciDownloader, PLUGIN_EXECUTABLE_MEDIA_TYPE,
     PLUGIN_INDEX_ARTIFACT_TYPE, PLUGIN_MANIFEST_ARTIFACT_TYPE, PluginTarget, ProvenanceVerifier,
