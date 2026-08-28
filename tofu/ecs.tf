@@ -359,6 +359,9 @@ resource "aws_ecs_task_definition" "web" {
         { name = "API_PORT", value = "3001" },
         { name = "AWS_REGION", value = var.aws_region },
         { name = "TENANT_DOMAIN", value = var.tenant_domain },
+        # The API signs direct build uploads. Without this value it silently falls back to the
+        # nonexistent local-development bucket and every CLI/Action deploy fails at the first PUT.
+        { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
         { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
         { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },

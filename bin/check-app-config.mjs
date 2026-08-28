@@ -53,6 +53,22 @@ const templateEnv = readFileSync(".template.env", "utf8")
 const routerLogs = readFileSync("services/router/src/logs.rs", "utf8")
 const lambdaPublish = readFileSync("lib/typescript/lambda/src/publish.ts", "utf8")
 
+/*
+  Upload URLs are minted by the API process, while builds are consumed later by the worker.
+  Merely finding a variable somewhere in the shared task definition is therefore insufficient:
+  SERVICE_BUILD_BUCKET existed on the worker while the API used its development fallback, and a
+  real CLI deploy received a validly signed PUT URL for a bucket that did not exist.
+*/
+const apiContainer = /\n\s*name\s*=\s*"api"([\s\S]*?)\n\s*name\s*=\s*"worker"/.exec(ecs)?.[1]
+if (apiContainer === undefined) {
+  throw new Error("tofu/ecs.tf no longer has an API container followed by the worker container")
+}
+if (!/name\s*=\s*"SERVICE_BUILD_BUCKET"/.test(apiContainer)) {
+  throw new Error(
+    "the API container must receive SERVICE_BUILD_BUCKET because deploy.ts signs primary build uploads",
+  )
+}
+
 /**
  * Names that look like an environment variable, out of arbitrary text.
  *
