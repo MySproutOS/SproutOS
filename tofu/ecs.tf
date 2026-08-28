@@ -1,5 +1,7 @@
 /**
- * The website, the API and the background worker: one image, three containers, one instance.
+ * The website, the API and the ordinary background worker share one image and task. The ACME
+ * worker uses the same immutable image in a separate task because an ECS task role is shared by
+ * every container; task separation is the only real IAM boundary from the public processes.
  *
  * ## Why ECS on EC2 and not Fargate
  *
@@ -189,7 +191,8 @@ resource "aws_launch_template" "ecs" {
   vpc_security_group_ids = [aws_security_group.service.id]
 
   metadata_options {
-    http_tokens = "required"
+    http_tokens        = "required"
+    http_protocol_ipv6 = "disabled"
     # Two hops, not one: the ECS agent runs in a container and its request to the metadata service
     # crosses a network namespace, which counts as a hop. At one, the agent cannot read the
     # instance's credentials and the instance never joins the cluster — with no error that mentions
@@ -290,8 +293,12 @@ resource "aws_ecs_task_definition" "web" {
   # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
   # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
   # kernel decide what to kill.
-  memory = 768
-  cpu    = 1024
+  # Five hours of production service metrics observed a 389 MiB maximum before this split. A 640
+  # MiB ceiling retains 251 MiB (64%) headroom while leaving room for the isolated 256 MiB worker on
+  # the same 916 MiB registered t4g.micro instead of pinning a second instance at steady state.
+  memory = 640
+  # Leave 128 units for the dedicated ACME task on the same one-vCPU free-tier instance.
+  cpu = 896
 
   execution_role_arn = aws_iam_role.ecs_execution.arn
   task_role_arn      = aws_iam_role.task.arn
@@ -301,7 +308,7 @@ resource "aws_ecs_task_definition" "web" {
       name              = "website"
       image             = var.web_image
       essential         = true
-      memoryReservation = 320
+      memoryReservation = 256
       dockerSecurityOptions = [
         "no-new-privileges",
       ]
@@ -357,7 +364,7 @@ resource "aws_ecs_task_definition" "web" {
       name              = "api"
       image             = var.web_image
       essential         = true
-      memoryReservation = 320
+      memoryReservation = 256
       command           = ["node", "/opt/sproutos/api/server.js"]
       dockerSecurityOptions = [
         "no-new-privileges",
@@ -488,24 +495,6 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
         { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
-        { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
-        { name = "ROUTER_CERTIFICATE_MIN_ACKS", value = tostring(var.router_certificate_min_acks) },
-        { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
-        { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
-        { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
-        { name = "CONTROL_PLANE_DOMAIN", value = var.control_plane_domain },
-        { name = "CONTROL_PLANE_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
-        { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
-        { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        # These names are part of the stable naming contract, not runtime attributes. Referencing
-        # the ASG resources here makes every infrastructure-only task-definition plan inherit the
-        # router launch templates and tenant target groups, so an unrelated application contract
-        # correction cannot be reviewed or applied independently of an edge rollout.
-        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
-        { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
-        { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
-        { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
         { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
         { name = "LAMBDA_EXECUTION_ROLE_ARN", value = aws_iam_role.lambda_execution.arn },
         { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
@@ -536,6 +525,9 @@ resource "aws_ecs_task_definition" "web" {
         { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
         { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
         { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
+        # Scheduling is not an ACME capability. This ordinary worker inserts durable rows; only the
+        # dedicated ACME task role can claim and execute their privileged handlers.
+        { name = "ACME_JOBS_ENABLED", value = var.acme_worker_enabled ? "1" : "0" },
       ]
 
       secrets = concat([
@@ -571,6 +563,121 @@ check "ecs_control_plane_container_isolation" {
     ])
     error_message = "Every ECS control-plane container must drop ALL capabilities and use no-new-privileges while the Docker seccomp exception is daemon-wide."
   }
+}
+
+/*
+  The certificate worker is deliberately a separate ECS task, not merely a fourth container.
+
+  Container environment filtering does not isolate IAM credentials: every container in one task
+  receives credentials for the same task role. This task can claim only certificate reconciliation
+  and the deployment/teardown jobs that mutate tenant DNS. Its dedicated role is the only
+  application principal that can read the account key, write certificate objects, mutate DNS, or
+  restart router ASGs.
+*/
+resource "aws_ecs_task_definition" "acme_worker" {
+  family       = "${var.name_prefix}-acme-worker"
+  network_mode = "bridge"
+  # Match the explicit defaults returned by ECS, just like the web task above, so refreshing the
+  # isolated task contract does not propose an identical replacement revision forever.
+  requires_compatibilities = []
+  enable_fault_injection   = false
+  # A production-style bundle measured 139.4 MiB RSS before doing ACME work. 256 MiB leaves 84%
+  # startup headroom and, together with the 640 MiB web task, fits within one registered host.
+  memory = 256
+  cpu    = 128
+
+  execution_role_arn = aws_iam_role.ecs_execution.arn
+  task_role_arn      = aws_iam_role.acme_task.arn
+
+  container_definitions = jsonencode([{
+    name              = "acme-worker"
+    image             = var.web_image
+    essential         = true
+    memoryReservation = 192
+    command           = ["node", "/opt/sproutos/api/worker.js"]
+    portMappings      = []
+    mountPoints       = []
+    systemControls    = []
+    volumesFrom       = []
+
+    environment = concat([
+      { name = "WORKER_PROFILE", value = "acme" },
+      { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
+      { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
+      { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
+      { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
+      { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
+      { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+      { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
+      # ASG names are a stable naming contract. Depending on the resources here would couple an
+      # ACME task-contract correction to router launch-template and target-group rollout changes.
+      { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
+      { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
+      { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
+      { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
+      ], [
+      # The isolated worker also owns the four deployment/teardown handlers that mutate tenant DNS.
+      # Carry the ordinary worker's complete runtime contract so moving the IAM boundary does not
+      # turn static publication or project teardown into an environment-dependent failure.
+      { name = "AWS_REGION", value = var.aws_region },
+      { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
+      { name = "TENANT_DOMAIN", value = var.tenant_domain },
+      { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
+      { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
+      { name = "TENANT_STATIC_LOG_PREFIX", value = "tenant-static/" },
+      { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+      { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
+      { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
+      { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
+      { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
+      { name = "LAMBDA_EXECUTION_ROLE_ARN", value = aws_iam_role.lambda_execution.arn },
+      { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
+      { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
+      { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
+      { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
+      { name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database },
+      { name = "CLICKHOUSE_USER", value = "sproutos" },
+      { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
+      { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
+      { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
+      { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
+      { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
+      { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
+      { name = "SEARCH_ADMIN_URL", value = "https://${var.opensearch_subdomain}.${var.control_plane_domain}" },
+      { name = "LAMBDA_WEB_ADAPTER_LAYER_VERSION", value = tostring(var.lambda_web_adapter_layer_version) },
+      { name = "SERVICE_POSTGRES_PROVIDER", value = "neon" },
+      { name = "SERVICE_POSTGRES_PUBLIC_HOST", value = "${var.postgres_subdomain}.${var.control_plane_domain}" },
+      { name = "SERVICE_POSTGRES_PUBLIC_PORT", value = "5432" },
+      { name = "SERVICE_SEARCH_PUBLIC_HOST", value = "${var.search_subdomain}.${var.control_plane_domain}" },
+      { name = "SERVICE_SEARCH_PUBLIC_PORT", value = "443" },
+      { name = "SERVICE_VALKEY_PUBLIC_HOST", value = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}" },
+      { name = "SERVICE_VALKEY_PUBLIC_PORT", value = "6379" },
+      { name = "SERVICE_OBJECT_STORAGE_ENABLED", value = tostring(var.storage_proxy_enabled) },
+      { name = "SERVICE_OBJECT_STORAGE_REGION", value = var.aws_region },
+      { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
+      { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
+      { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
+    ])
+
+    secrets = concat([{
+      name      = "DATABASE_SECRET"
+      valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn
+      }], [for name in local.ecs_worker_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+    }])
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "acme-worker"
+      }
+    }
+  }])
+
+  tags = local.tags
 }
 
 /*
@@ -743,6 +850,52 @@ resource "aws_cloudwatch_metric_alarm" "ecs_in_service_hosts" {
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.ecs.name
+  }
+
+  tags = local.tags
+}
+
+resource "aws_ecs_service" "acme_worker" {
+  name            = "${var.name_prefix}-acme-worker"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.acme_worker.arn
+  # First apply with this disabled. The live web revision still reserves 768 MiB, so starting this
+  # 256 MiB task first would occupy the only spare host and make the 640 MiB web rollout impossible.
+  # After that web rollout drains the old revision, enable this worker and it binpacks beside web.
+  desired_count = var.acme_worker_enabled ? var.ecs_instance_count : 0
+
+  capacity_provider_strategy {
+    capacity_provider = aws_ecs_capacity_provider.main.name
+    weight            = 100
+  }
+
+  # Keep one privileged worker in each serving zone and never place both replicas on one host.
+  # Within that availability constraint, binpack prefers the two web hosts over the rolling spare.
+  ordered_placement_strategy {
+    type  = "spread"
+    field = "attribute:ecs.availability-zone"
+  }
+
+  ordered_placement_strategy {
+    type  = "binpack"
+    field = "memory"
+  }
+
+  placement_constraints {
+    type = "distinctInstance"
+  }
+
+  availability_zone_rebalancing      = "ENABLED"
+  deployment_maximum_percent         = 150
+  deployment_minimum_healthy_percent = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 
   tags = local.tags

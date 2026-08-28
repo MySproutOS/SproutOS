@@ -101,6 +101,19 @@ output "api_rule_arn" {
   value       = aws_lb_listener_rule.api.arn
 }
 
+# ECS services intentionally ignore task-definition drift because the release script owns image
+# revisions. After an infrastructure apply changes environment/IAM/container contracts, these exact
+# registered revisions are the only safe handoff into that release script.
+output "ecs_web_task_definition_arn" {
+  description = "Exact OpenTofu-registered web task revision to pass as ECS_BASE_TASK_DEFINITION after an infrastructure apply."
+  value       = aws_ecs_task_definition.web.arn
+}
+
+output "ecs_acme_worker_task_definition_arn" {
+  description = "Exact OpenTofu-registered ACME worker revision to pass as ECS_BASE_ACME_TASK_DEFINITION after an infrastructure apply."
+  value       = aws_ecs_task_definition.acme_worker.arn
+}
+
 # The search split's rule, so the cutover moves it with the router. Without it a release leaves
 # every customer's search service on the colour the router just drained, and the router looks fine.
 output "search_rule_arn" {

@@ -21,7 +21,6 @@ catalog:
   "@aws-sdk/client-cloudfront-keyvaluestore": ^3.1114.0
   "@aws-sdk/client-cloudwatch": ^3.1114.0
   "@aws-sdk/signature-v4a": ^3.1111.0
-  "@aws-sdk/client-acm": ^3.1114.0
   "@aws-sdk/client-auto-scaling": ^3.1114.0
   "@aws-sdk/client-elastic-load-balancing-v2": ^3.1114.0
   "@base-ui/react": ^1.7.0
@@ -32,6 +31,7 @@ catalog:
   "@fontsource-variable/bricolage-grotesque": ^5.3.0
   "@fontsource-variable/geist": ^5.3.0
   "@fontsource-variable/geist-mono": ^5.3.0
+  "@peculiar/x509": ^1.14.3
   # next tag for TypeScript 7 compatibility: https://github.com/hey-api/hey-api/issues/4235
   "@hey-api/openapi-ts": 0.0.0-next-20260819153534
   "@rolldown/plugin-babel": ^0.2.3

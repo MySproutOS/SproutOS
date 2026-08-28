@@ -434,14 +434,18 @@ export interface CreditTransaction {
 }
 
 export interface CustomDomain {
+  certificateDirectoryUrl: string | null
   certificateExpiresAt: Timestamp | null
   certificateIssuedAt: Timestamp | null
+  certificateIssuer: string | null
   certificateObjectKey: string | null
   certificateObjectVersion: string | null
   claimExpiresAt: Generated<Timestamp>
   consecutiveFailures: Generated<number>
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
+  deployedCertificateObjectKey: string | null
+  deployedCertificateObjectVersion: string | null
   hostname: string
   id: string
   isApex: Generated<boolean>
@@ -452,6 +456,9 @@ export interface CustomDomain {
   projectId: string
   reconcileLeaseExpiresAt: Timestamp | null
   reconcileLeaseToken: string | null
+  renewalInfoCertificateId: string | null
+  renewalInfoExplanationUrl: string | null
+  renewalInfoRetryAt: Timestamp | null
   status: Generated<string>
   statusReason: string | null
   updatedAt: Generated<Timestamp>
@@ -810,8 +817,10 @@ export interface PaymentMethod {
 }
 
 export interface PlatformEdgeCertificate {
+  certificateDirectoryUrl: string | null
   certificateExpiresAt: Timestamp | null
   certificateIssuedAt: Timestamp | null
+  certificateIssuer: string | null
   certificateObjectKey: string | null
   certificateObjectVersion: string | null
   consecutiveFailures: Generated<number>
@@ -822,7 +831,11 @@ export interface PlatformEdgeCertificate {
   nextRetryAt: Generated<Timestamp>
   reconcileLeaseExpiresAt: Timestamp | null
   reconcileLeaseToken: string | null
+  renewalInfoCertificateId: string | null
+  renewalInfoExplanationUrl: string | null
+  renewalInfoRetryAt: Timestamp | null
   restartRequestedObjectVersion: string | null
+  restartRequestIds: Json | null
   status: Generated<string>
   statusReason: string | null
   updatedAt: Generated<Timestamp>

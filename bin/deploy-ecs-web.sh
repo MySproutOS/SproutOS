@@ -268,6 +268,16 @@ if [ "$DESIRED" -gt 0 ]; then
   done < <(jq -r '.services[0].loadBalancers[].targetGroupArn' <<<"$settled_json")
 fi
 
+# Update the isolated certificate/deployment worker only after the old public task has drained.
+# The old task reserves 768 MiB; starting the 256 MiB worker first can occupy the spare host and
+# prevent ECS from placing the replacement 640 MiB public task. If the privileged release fails,
+# restore the public revision too so one release SHA remains authoritative across both services.
+if ! IMAGE="$IMAGE" NAME_PREFIX="$NAME_PREFIX" ECS_CLUSTER="$CLUSTER" \
+  "$(dirname "$0")/deploy-ecs-acme-worker.sh"; then
+  rollback_service || true
+  exit 1
+fi
+
 if [ -n "$CUTOVER" ]; then
   : "${LISTENER_ARN:?LISTENER_ARN is not set for --cutover}"
   : "${WEBSITE_RULE_ARN:?WEBSITE_RULE_ARN is not set for --cutover}"

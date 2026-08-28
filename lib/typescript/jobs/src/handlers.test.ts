@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { JOB_KINDS, PLATFORM_HANDLERS } from "./handlers"
+import { ACME_HANDLERS, JOB_KINDS, PLATFORM_HANDLERS } from "./handlers"
 
 /**
  * A declared job kind with no handler is invisible, not loud.
@@ -22,8 +22,9 @@ describe("PLATFORM_HANDLERS", () => {
   })
 
   it("registers a handler for every declared job kind", () => {
+    const handlers = { ...PLATFORM_HANDLERS, ...ACME_HANDLERS }
     const missing = Object.entries(JOB_KINDS)
-      .filter(([, kind]) => typeof PLATFORM_HANDLERS[kind] !== "function")
+      .filter(([, kind]) => typeof handlers[kind] !== "function")
       .map(([name, kind]) => `${name} ("${kind}")`)
 
     expect(missing).toEqual([])
@@ -33,9 +34,34 @@ describe("PLATFORM_HANDLERS", () => {
     // The other direction. A handler under a kind no caller can enqueue is dead code that reads
     // as coverage, and it is how a typo in a kind string hides.
     const declared = new Set<string>(Object.values(JOB_KINDS))
-    const orphans = Object.keys(PLATFORM_HANDLERS).filter((kind) => !declared.has(kind))
+    const orphans = Object.keys({ ...PLATFORM_HANDLERS, ...ACME_HANDLERS }).filter(
+      (kind) => !declared.has(kind),
+    )
 
     expect(orphans).toEqual([])
+  })
+
+  it("keeps privileged certificate kinds out of the ordinary worker", () => {
+    expect(Object.keys(ACME_HANDLERS).toSorted()).toEqual(
+      [
+        JOB_KINDS.customDomainReconcile,
+        JOB_KINDS.customDomainScan,
+        JOB_KINDS.publishRelease,
+        JOB_KINDS.reconcilePlatformEdgeCertificate,
+        JOB_KINDS.tearDownPreview,
+        JOB_KINDS.cleanUpStaticPreview,
+        JOB_KINDS.tearDownAccount,
+        JOB_KINDS.tearDownProject,
+      ].toSorted(),
+    )
+    for (const kind of Object.keys(ACME_HANDLERS)) {
+      expect(PLATFORM_HANDLERS[kind]).toBeUndefined()
+    }
+  })
+
+  it("keeps account teardown with the privileged project teardown it invokes", () => {
+    expect(ACME_HANDLERS[JOB_KINDS.tearDownAccount]).toBeTypeOf("function")
+    expect(PLATFORM_HANDLERS[JOB_KINDS.tearDownAccount]).toBeUndefined()
   })
 
   it("fails visibly when the authoritative ClickHouse importer is unconfigured", async () => {

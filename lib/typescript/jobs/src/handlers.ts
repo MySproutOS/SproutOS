@@ -399,6 +399,26 @@ const revokeValkeyAclUser: JobHandler = async (job, { db }) => {
   })
 }
 
+/**
+ * Certificate and DNS-mutating deployment handlers run in their own ECS task role. Keeping the
+ * map separate is part of the IAM boundary: the ordinary worker cannot claim privileged work and
+ * the privileged worker cannot claim unrelated customer work.
+ */
+export const ACME_HANDLERS: Record<string, JobHandler> = {
+  // These four are the only non-certificate jobs that mutate tenant DNS. They share the isolated
+  // deployment/certificate worker so the public website/API task role has no Route53 authority.
+  [JOB_KINDS.publishRelease]: publishRelease(),
+  [JOB_KINDS.tearDownPreview]: tearDownPreview(),
+  [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
+  [JOB_KINDS.tearDownProject]: tearDownProject(),
+  // Account teardown invokes project teardown inline before anonymising the user. It therefore
+  // needs the same certificate-object and tenant-DNS authority as a direct project teardown.
+  [JOB_KINDS.tearDownAccount]: tearDownAccount,
+  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
+  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
+  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
+}
+
 export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   /*
     The GitHub webhook handlers.
@@ -425,14 +445,9 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
     scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.upkeepResolveConflict]: resolveUpkeepConflict(),
-  [JOB_KINDS.publishRelease]: publishRelease(),
-  [JOB_KINDS.tearDownPreview]: tearDownPreview(),
-  [JOB_KINDS.cleanUpStaticPreview]: cleanUpStaticPreview(),
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
-  [JOB_KINDS.tearDownProject]: tearDownProject(),
-  [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.workflowRun]: workflowRunJob,
   [JOB_KINDS.workflowScheduleScan]: async (_job, { db }) => {
     const runs = await runDueWorkflowSchedules(db)
@@ -448,9 +463,6 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
-  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
-  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
-  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
   [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
@@ -481,25 +493,25 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     })
   }
 
-  if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
+  if (process.env.ACME_JOBS_ENABLED === "1") {
     await enqueue(db, {
       /*
         Every minute. Most runs are a cheap durable-state check. During issuance this converges the
         DNS-01 order; after issuance it keeps the restart handoff visible until live router replicas
         acknowledge the exact immutable S3 version they loaded at boot. The explicit 0/1 rollout
-        variable is also the enablement signal, so an ordinary local worker with no platform AWS
+        scheduling flag is only an enqueue signal, so an ordinary local worker with no platform AWS
         resources does not create a permanently failing singleton job.
       */
       kind: JOB_KINDS.reconcilePlatformEdgeCertificate,
       idempotencyKey: `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
       maxAttempts: 5,
     })
+    await enqueue(db, {
+      kind: JOB_KINDS.customDomainScan,
+      idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
   }
-  await enqueue(db, {
-    kind: JOB_KINDS.customDomainScan,
-    idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
-    maxAttempts: 5,
-  })
   if (process.env.TENANT_STATIC_DISTRIBUTION_ID !== undefined) {
     await enqueue(db, {
       /*

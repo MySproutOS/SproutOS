@@ -18,6 +18,19 @@ printf '%s\n' "$*" >> "$STUB_CALLS"
 
 case "$1 $2" in
   "ecs describe-services")
+    if [[ " $* " == *" --services sproutos-acme-worker "* ]]; then
+      if [ "${ACME_PRESENT:-}" = 1 ]; then
+        if [ -e "$ACME_UPDATED" ]; then
+          task=$(cat "$ACME_UPDATED")
+        else
+          task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-acme-worker:7"
+        fi
+        printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","desiredCount":%s,"runningCount":%s,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[]}],"failures":[]}\n' "$task" "${ACME_DESIRED_COUNT:-2}" "${ACME_DESIRED_COUNT:-2}"
+        exit 0
+      fi
+      printf '{"services":[],"failures":[{"arn":"sproutos-acme-worker","reason":"MISSING"}]}\n'
+      exit 0
+    fi
     if [ -e "$UPDATED" ]; then
       task=$(cat "$UPDATED")
       if [ "${AUTO_ROLLBACK:-}" = 1 ] && [ "$task" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8" ]; then
@@ -36,7 +49,12 @@ case "$1 $2" in
       if [ "$1" = "--task-definition" ]; then task_reference=$2; break; fi
       shift
     done
-    if [ "$task_reference" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42" ]; then
+    if [[ "$task_reference" == *"sproutos-acme-worker:"* ]]; then
+      cat <<JSON
+{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-acme-worker","taskRoleArn":"arn:acme-task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"128","memory":"128","containerDefinitions":[{"name":"acme-worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"],"environment":[{"name":"WORKER_PROFILE","value":"acme"}]}]}}
+JSON
+      exit 0
+    elif [ "$task_reference" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42" ]; then
       clickhouse_database=sproutos
     else
       clickhouse_database=observability
@@ -57,8 +75,10 @@ JSON
     cp "$input" "$CAPTURE/task-$count.json"
     if [ "$count" = 1 ]; then
       printf 'arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8\n'
-    else
+    elif [ "$count" = 2 ]; then
       printf 'arn:aws:ecs:us-east-1:123:task-definition/sproutos-web-migrate:3\n'
+    else
+      printf 'arn:aws:ecs:us-east-1:123:task-definition/sproutos-acme-worker:8\n'
     fi
     ;;
   "ecs run-task")
@@ -77,12 +97,18 @@ JSON
     printf '{"tasks":[{"stopCode":"EssentialContainerExited","stoppedReason":"done","containers":[{"name":"migrate","exitCode":%s}]}]}\n' "$exit_code"
     ;;
   "ecs update-service")
+    is_acme=""
+    [[ " $* " == *" --service sproutos-acme-worker "* ]] && is_acme=1
     task_definition=""
     while [ $# -gt 0 ]; do
       if [ "$1" = "--task-definition" ]; then task_definition=$2; break; fi
       shift
     done
-    printf '%s' "$task_definition" > "$UPDATED"
+    if [ -n "$is_acme" ]; then
+      printf '%s' "$task_definition" > "$ACME_UPDATED"
+    else
+      printf '%s' "$task_definition" > "$UPDATED"
+    fi
     ;;
   "elbv2 describe-target-health")
     printf '%s\n' "${TARGET_HEALTHY:-2}"
@@ -112,6 +138,7 @@ export STUB_CALLS="$TEST_DIR/calls"
 export REGISTER_COUNT="$TEST_DIR/register-count"
 export WAIT_COUNT="$TEST_DIR/wait-count"
 export UPDATED="$TEST_DIR/updated"
+export ACME_UPDATED="$TEST_DIR/acme-updated"
 export CAPTURE="$TEST_DIR/capture"
 export NAME_PREFIX=sproutos
 export IMAGE=ghcr.io/mysproutos/sproutos-web:0123456789ab
@@ -232,5 +259,92 @@ if ECS_WEB_DESIRED_COUNT=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/count-failure.o
 fi
 grep -q 'ECS_WEB_DESIRED_COUNT must be 2' "$TEST_DIR/count-failure.out"
 [ ! -s "$STUB_CALLS" ]
+
+# Once OpenTofu provisions the dedicated service, the same release updates its isolated task role
+# after the old, larger public revision has drained. This preserves the one spare host needed to
+# place the smaller public replacement during the first capacity-envelope rollout.
+: > "$STUB_CALLS"
+if ACME_PRESENT=1 ACME_DESIRED_COUNT=1 "$HERE/deploy-ecs-acme-worker.sh" \
+  >"$TEST_DIR/acme-count-failure.out" 2>&1; then
+  echo "a one-replica ACME worker deployment reported success" >&2
+  exit 1
+fi
+grep -q 'ACME worker desired count must be 0 while gated or 2 while enabled' \
+  "$TEST_DIR/acme-count-failure.out"
+if grep -q 'ecs update-service' "$STUB_CALLS"; then
+  echo "the one-replica ACME worker was mutated before refusal" >&2
+  exit 1
+fi
+
+unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+ACME_PRESENT=1 "$HERE/deploy-ecs-web.sh"
+jq -e '
+  .family == "sproutos-acme-worker" and
+  .taskRoleArn == "arn:acme-task-role" and
+  (.containerDefinitions | length) == 1 and
+  .containerDefinitions[0].name == "acme-worker" and
+  .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab"
+' "$CAPTURE/task-3.json" >/dev/null
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--desired-count 2 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--availability-zone-rebalancing ENABLED' "$STUB_CALLS"
+grep -q 'ecs update-service .*--service sproutos-acme-worker .*--placement-strategy type=spread,field=attribute:ecs.availability-zone type=binpack,field=memory .*--placement-constraints type=distinctInstance' "$STUB_CALLS"
+web_update_line=$(grep -n 'ecs update-service .*--service sproutos-web .*sproutos-web:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
+acme_update_line=$(grep -n 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
+if [ "$web_update_line" -ge "$acme_update_line" ]; then
+  echo "the isolated worker was updated before the public replacement drained" >&2
+  exit 1
+fi
+
+# An infrastructure apply only registers task definitions because both ECS services ignore that
+# drift. The handoff wrapper must read both exact OpenTofu revisions and pass them into one release;
+# otherwise rollout and ACME-directory flags remain stale on the running API/worker tasks.
+cat > "$TEST_DIR/bin/tofu" <<'TOFU'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${*: -1}" in
+  ecs_web_task_definition_arn)
+    printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-web:42\n'
+    ;;
+  ecs_acme_worker_task_definition_arn)
+    if [ "${BAD_ACME_OUTPUT:-}" = 1 ]; then
+      printf 'sproutos-acme-worker\n'
+    else
+      printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17\n'
+    fi
+    ;;
+  *) exit 1 ;;
+esac
+TOFU
+cat > "$TEST_DIR/bin/capture-task-handoff" <<'HANDOFF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n%s\n%s\n' \
+  "$ECS_BASE_TASK_DEFINITION" \
+  "$ECS_BASE_ACME_TASK_DEFINITION" \
+  "${1:-<no-argument>}" > "$TASK_HANDOFF_CAPTURE"
+HANDOFF
+chmod +x "$TEST_DIR/bin/tofu" "$TEST_DIR/bin/capture-task-handoff"
+export TASK_HANDOFF_CAPTURE="$TEST_DIR/task-handoff"
+ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" TOFU_DIR="$TEST_DIR/tofu" \
+  "$HERE/handoff-ecs-task-definitions.sh"
+sed -n '1p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
+  'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-web:42'
+sed -n '2p' "$TASK_HANDOFF_CAPTURE" | grep -qx \
+  'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17'
+sed -n '3p' "$TASK_HANDOFF_CAPTURE" | grep -qx '<no-argument>'
+unlink "$TASK_HANDOFF_CAPTURE"
+if BAD_ACME_OUTPUT=1 ECS_DEPLOY_SCRIPT="$TEST_DIR/bin/capture-task-handoff" \
+  TOFU_DIR="$TEST_DIR/tofu" "$HERE/handoff-ecs-task-definitions.sh" \
+  >"$TEST_DIR/task-handoff-failure.out" 2>&1; then
+  echo "a non-versioned ACME task output reached the deploy script" >&2
+  exit 1
+fi
+grep -q 'ecs_acme_worker_task_definition_arn is not an exact' \
+  "$TEST_DIR/task-handoff-failure.out"
+[ ! -e "$TASK_HANDOFF_CAPTURE" ]
 
 echo "deploy-ecs-web tests passed"

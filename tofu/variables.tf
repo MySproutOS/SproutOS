@@ -171,6 +171,19 @@ variable "tenant_edge_preview_enabled" {
   default     = false
 }
 
+variable "acme_worker_enabled" {
+  description = "Run the IAM-isolated certificate/deployment worker after the smaller web task is live. Keep false for the first infrastructure apply so the old 768 MiB web task retains the spare rollout host."
+  type        = bool
+  default     = false
+
+  validation {
+    condition = var.acme_worker_enabled || !(
+      var.tenant_edge_preview_enabled || var.tenant_edge_enabled || var.custom_domain_issuance_enabled
+    )
+    error_message = "The isolated ACME worker must be enabled before preview edge, tenant edge, or custom-domain issuance."
+  }
+}
+
 variable "custom_domain_issuance_enabled" {
   description = "Allow custom-domain claims and asynchronous ACME work independently of the generated-traffic DNS cutover. Enable first against staging on the preview edge."
   type        = bool
@@ -190,17 +203,6 @@ variable "tenant_edge_preview_colour" {
   validation {
     condition     = contains(["blue", "green"], var.tenant_edge_preview_colour)
     error_message = "The tenant edge preview colour must be blue or green."
-  }
-}
-
-variable "router_certificate_min_acks" {
-  description = "Minimum distinct router replicas that must acknowledge one certificate version before activation. Set to the live serving fleet size."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = floor(var.router_certificate_min_acks) == var.router_certificate_min_acks && var.router_certificate_min_acks > 0
-    error_message = "Router certificate acknowledgement quorum must be a positive integer."
   }
 }
 

@@ -182,6 +182,26 @@ The inspection prints only the non-secret database name and must report `sprouto
 requires an exact active ARN in the service's task family, derives both new definitions from it,
 runs migrations first, and changes the service only after a zero exit.
 
+The same handoff is mandatory for the isolated certificate worker. Both ECS services ignore
+`task_definition` drift so an ordinary apply cannot replace an application image behind the
+release workflow. That also means an apply which changes `ACME_JOBS_ENABLED`,
+`CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`, `PLATFORM_EDGE_ROLLOUT_ENABLED`, or either task's
+IAM/container contract has
+only _registered_ the new revision: it has not proved that any running task uses it. After every
+such apply, pass both exact OpenTofu outputs into one migration-first release of the already chosen
+immutable image:
+
+```bash
+IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
+  NAME_PREFIX=sproutos \
+  bin/handoff-ecs-task-definitions.sh
+```
+
+Do not continue merely because the apply or ECS waiter succeeded. Read both services back and
+verify their exact task-definition revisions match the release revisions derived from these two
+outputs. This command intentionally omits `--cutover`; configuration handoff is not permission to
+move traffic.
+
 ### Wiring the first Sprout CLI release
 
 `SPROUT_CLI_RELEASE_VERSION` is not an operator-supplied application secret and must not be added
@@ -276,31 +296,50 @@ production custom-domain activation, separate reviewed changes must prove all of
 - static CloudFront log reconciliation and delayed-delivery credit safeguards are deployed and
   verified independently of this dynamic edge.
 
-1. Apply with both `tenant_edge_preview_enabled` and `tenant_edge_enabled` false, then seed the
-   account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an
-   existing secret version.
-2. Deploy the edge-capable release normally. While both flags are false the worker may issue and
-   store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
-   from refreshing either router Auto Scaling group.
+1. Apply with `acme_worker_enabled`, `tenant_edge_preview_enabled`, and `tenant_edge_enabled` false,
+   then seed the account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to
+   overwrite an existing secret version. The worker stays at desired count zero during this apply:
+   the old web task reserves 768 MiB and must retain the second host for its replacement.
+2. Deploy the edge-capable release with the exact two-task handoff above and prove the live web task uses the new 640 MiB task
+   definition. Only then set `acme_worker_enabled = true`, save/review another plan, and apply it.
+   **Immediately after that apply, repeat the exact two-task handoff above** and verify the serving
+   platform workers now expose `ACME_JOBS_ENABLED=1`; the apply only registered that changed web
+   task definition, and without this second handoff no process schedules platform-certificate or
+   custom-domain reconciliation. Also verify both ACME service tasks run the exact ACME task
+   revision from the same handoff before waiting for certificate work.
+   The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
+   rollout if it instead pins the spare host. Rebuild the exact production Linux/arm64 image from
+   the final deployment commit and measure both startup and a staging issuance/deployment job before
+   enabling it; refuse the rollout if either approaches the 256 MiB hard limit. A macOS startup
+   measurement is only a regression signal because native plugin isolation exits before the worker
+   reaches its poll loop. While the edge flags remain false the worker may issue and store a Let's
+   Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it from refreshing
+   either router Auto Scaling group.
 3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
-   contains the new release. Apply a reviewed plan. This creates a separate dual-stack, EIP-backed
+   contains the new release. Apply a reviewed plan, then repeat the exact two-task handoff above so
+   the ACME workers actually receive `PLATFORM_EDGE_ROLLOUT_ENABLED=1`. This creates a separate dual-stack, EIP-backed
    edge NLB. Its listeners use public 80/443 so HTTP-01 and ordinary TLS clients exercise the real
    protocol, while `preview-ingress.<tenant-domain>` points only at this parallel balancer. This does
    not replace the live Postgres/Valkey NLB or move generated production DNS.
-4. Wait for the platform certificate row to become active and for the configured
-   `router_certificate_min_acks` quorum. Smoke the generated wildcard, tenant apex, exact egress
+4. Wait for the platform certificate row to become active after every live serving router in the
+   Valkey membership set acknowledges the exact version. Smoke the generated wildcard, tenant apex, exact egress
    hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
    Postgres and Valkey listeners through the unchanged data-plane NLB. Exercise preview over both
    IPv4 and IPv6 through the preview ingress name and confirm Lambda receives the viewer address
    from Proxy Protocol v2.
 5. While `tenant_edge_enabled` remains false, set `custom_domain_issuance_enabled = true` only after
-   a test hostname points at `preview-ingress.<tenant-domain>`. Exercise the complete asynchronous
+   a test hostname points at `preview-ingress.<tenant-domain>`. Apply, repeat the exact two-task
+   handoff above, and verify the serving API task now has `CUSTOM_DOMAINS_ENABLED=1` before creating
+   a claim. Exercise the complete asynchronous
    ownership and HTTP-01 flow against Let's Encrypt staging. This flag is deliberately independent
    of generated-traffic cutover; do not move the wildcard merely to test issuance. Turn the flag
    back off as soon as the controlled staging claim is created so other organizations cannot begin
-   claims during the preview.
-6. Change `acme_directory_url` from Let's Encrypt staging to production and repeat issuance and the
-   preview checks. Never reuse a staging certificate for the public cutover. The certificate row
+   claims during the preview. Save/review and apply the flag-off plan, repeat the exact two-task
+   handoff, and verify the serving API task has `CUSTOM_DOMAINS_ENABLED=0`; changing tfvars alone
+   does not close the issuance gate.
+6. Change `acme_directory_url` from Let's Encrypt staging to production, apply, and repeat the exact
+   two-task handoff above. Verify both running ACME tasks expose the production directory before
+   waking reconciliation, then repeat issuance and the preview checks. Never reuse a staging certificate for the public cutover. The certificate row
    must prove production-directory provenance before it is eligible for activation.
 7. Save and review a plan with `tenant_edge_enabled = true`. The preview NLB and its EIPs must remain
    in place, as must its existing public TCP 80/443 listeners: the plan moves generated A/AAAA plus
@@ -308,11 +347,14 @@ production custom-domain activation, separate reviewed changes must prove all of
    `aws_lb.tenant`, `aws_lb.tenant_edge[0]`, or either `aws_lb_listener.tenant_*[0]`; the existing
    data-plane NLB continues serving Postgres, Valkey, and the legacy egress rollback listener
    throughout the web-edge cutover.
-8. Apply that exact plan, update repository variables from `tofu output` (including
+8. Apply that exact plan, repeat the exact two-task handoff above, update repository variables from `tofu output` (including
    `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
    run the production browser and protocol smoke suite. Set `custom_domain_issuance_enabled = true`
    only after production-directory provenance and the remaining certificate lifecycle gates pass.
+   Save/review and apply that final flag plan, repeat the exact two-task handoff, and verify the
+   serving API task has `CUSTOM_DOMAINS_ENABLED=1` before accepting production claims.
 
+`acme_worker_enabled` is the explicit capacity/IAM rollout gate for the isolated worker.
 `tenant_edge_enabled` controls generated traffic and the egress DNS cutover;
 `custom_domain_issuance_enabled` controls API claim/check operations. Keep both decisions explicit
 in persistent tfvars. Reverting the edge flag in a later apply would attempt to move generated and

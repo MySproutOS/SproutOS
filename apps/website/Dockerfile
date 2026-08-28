@@ -4,10 +4,9 @@
 # built from one commit, and `cutover.sh` already had to move both listener rules at once because
 # they are the same instances. Two images with one lifecycle is bookkeeping without a benefit.
 #
-# The worker runs from this image too, as a third container in the same task with a different
-# command. One image, three containers, one instance — see `tofu/ecs.tf`. The free tier is 750
-# instance-hours a month in aggregate, which is one instance running continuously, so three
-# processes share it rather than three instances sitting mostly idle.
+# The ordinary worker runs from this image too, as a third container in the public task. The
+# certificate/deployment worker uses the same image in a separate IAM-isolated task. Each task
+# family has two replicas spread across two hosts; see `tofu/ecs.tf`.
 
 # Immutable supply-chain tools used by the worker. The Cosign image is pinned by its multi-arch
 # index digest; this build is linux/arm64, so BuildKit selects the attested arm64 executable. The

@@ -59,9 +59,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "tenant_certificates" {
 
     filter {}
 
-    # A router may retain the prior unexpired version while a replacement is rejected. Thirty-five
-    # days spans the renewal window plus propagation retries without paying to keep private keys
-    # after they can no longer be useful.
+    # The worker deletes an obsolete private-key VersionId as soon as every required router has
+    # acknowledged its replacement. This is the backstop for an interrupted cleanup: thirty-five
+    # days spans the renewal window plus propagation retries without retaining old keys forever.
     noncurrent_version_expiration {
       noncurrent_days = 35
     }

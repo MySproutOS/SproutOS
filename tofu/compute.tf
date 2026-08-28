@@ -692,11 +692,13 @@ data "aws_ssm_parameter" "al2023_arm64" {
 }
 
 /*
-  Three roles, because three different things run here and they need different powers.
+  Five roles, because the ECS machine, legacy website, router, ordinary application, certificate
+  worker, and ECS launcher do not all need the same powers.
 
-  - **`instance`** — the EC2 machine. It runs the ECS agent, which registers the instance with the
-    cluster and polls for work.
+  - **`instance`** — the ECS machine and the legacy website instance while that path remains.
+  - **`router_instance`** — only the Rust router instances, which must read TLS private keys.
   - **`task`** — the application inside the containers. The website, the API and the worker.
+  - **`acme_task`** — only the isolated certificate worker.
   - **`ecs_execution`** (in `ecs.tf`) — ECS itself, starting a task: pull the image, fetch the
     secret, write the logs.
 
@@ -711,6 +713,19 @@ data "aws_ssm_parameter" "al2023_arm64" {
 */
 resource "aws_iam_role" "instance" {
   name = "${var.name_prefix}-instance"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role" "router_instance" {
+  name = "${var.name_prefix}-router-instance"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -743,6 +758,21 @@ resource "aws_iam_role" "task" {
   tags = local.tags
 }
 
+resource "aws_iam_role" "acme_task" {
+  name = "${var.name_prefix}-acme-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.tags
+}
+
 /*
   What the router is allowed to do.
 
@@ -752,7 +782,7 @@ resource "aws_iam_role" "task" {
 */
 resource "aws_iam_policy" "application" {
   name        = "${var.name_prefix}-application"
-  description = "What the website, API and worker may do. Attached to the instance role and the task role."
+  description = "Shared application permissions for legacy services and ordinary ECS tasks."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -920,19 +950,6 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
-        /*
-          Versioned rustls certificate objects. The router reads an exact S3 VersionId before it
-          acknowledges readiness; the worker writes and deletes only inside this dedicated bucket.
-          No bucket-policy, ACL or public-access mutation is granted.
-        */
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-        ]
-        Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
-      },
-      {
         # Tenant object storage. Listing is limited to logical service prefixes in the one physical
         # bucket; no instance can list another platform bucket or the bucket root.
         Effect   = "Allow"
@@ -1019,16 +1036,6 @@ resource "aws_iam_policy" "application" {
       },
       {
         /*
-          Exact records for static tenant hosts. The wildcard continues to send Lambda projects to
-          the ALB; an exact record written after a static release wins in DNS and sends only that
-          hostname to CloudFront.
-        */
-        Effect   = "Allow"
-        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
-        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
-      },
-      {
-        /*
           Tenant build archives — the other half of the same deploy, which had no grant at all.
 
           The comment above applies unchanged: a presigned URL carries the signer's authority, so
@@ -1052,7 +1059,7 @@ resource "aws_iam_policy" "application" {
 }
 
 /*
-  Attached to both, for as long as both exist.
+  Attached to every application principal for as long as the legacy EC2 paths exist.
 
   The EC2 Auto Scaling groups still run the tarball release while ECS is brought up beside them, so
   the same permissions are needed in two places. When the old groups are retired this attachment
@@ -1063,8 +1070,85 @@ resource "aws_iam_role_policy_attachment" "instance_application" {
   policy_arn = aws_iam_policy.application.arn
 }
 
+resource "aws_iam_role_policy_attachment" "router_instance_application" {
+  role       = aws_iam_role.router_instance.name
+  policy_arn = aws_iam_policy.application.arn
+}
+
 resource "aws_iam_role_policy_attachment" "task_application" {
   role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.application.arn
+}
+
+/*
+  Router-only certificate reads. Keep private-key object access out of the public ECS website/API
+  task role; the router instances read an exact immutable VersionId and never list the bucket.
+*/
+resource "aws_iam_policy" "router_certificate_read" {
+  name        = "${var.name_prefix}-router-certificate-read"
+  description = "Read exact versioned rustls certificate objects from router instances."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:GetObjectVersion"]
+      Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "router_instance_certificate_read" {
+  role       = aws_iam_role.router_instance.name
+  policy_arn = aws_iam_policy.router_certificate_read.arn
+}
+
+/*
+  Static-tenant DNS mutation belongs to the isolated deployment/certificate worker, never to the
+  public website/API task or Rust router.
+
+  The legacy router instances and ECS control-plane task previously shared `application`, so the
+  router inherited the ability to rewrite tenant records even though its data path only reads
+  hostname routes from Valkey. The dedicated task may change only generated A/AAAA hosts below the
+  tenant suffix; ACME TXT mutation remains in its separately constrained statement below.
+*/
+resource "aws_iam_policy" "control_plane_dns" {
+  name        = "${var.name_prefix}-control-plane-dns"
+  description = "Publish exact static tenant records from the control-plane worker."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+        Condition = {
+          "ForAllValues:StringLike" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["*.${var.tenant_domain}"]
+          }
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsRecordTypes" = ["A", "AAAA"]
+            "route53:ChangeResourceRecordSetsActions"     = ["UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ListResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "acme_task_control_plane_dns" {
+  role       = aws_iam_role.acme_task.name
+  policy_arn = aws_iam_policy.control_plane_dns.arn
+}
+
+resource "aws_iam_role_policy_attachment" "acme_task_application" {
+  role       = aws_iam_role.acme_task.name
   policy_arn = aws_iam_policy.application.arn
 }
 
@@ -1074,8 +1158,10 @@ resource "aws_iam_role_policy_attachment" "task_application" {
   Keep the ACME account key, DNS-01 mutation, certificate-object writes, and router refresh grant
   off the shared application policy: that policy is also attached to the public-facing EC2/router
   role while the legacy release path exists. The current website/API/worker containers share one
-  ECS task role, so this is task-scoped rather than container-scoped; routers receive only read
-  access to versioned certificate objects above.
+  ECS task roles are shared by every container in a task, so the certificate poller is a separate
+  task and role. The public website, API, ordinary worker, and routers receive no account-key,
+  certificate-write, DNS-write, or restart capability. Static publication and teardown also run in
+  the isolated task because they need the separately constrained generated-host A/AAAA grant.
 */
 resource "aws_iam_policy" "acme_worker" {
   name        = "${var.name_prefix}-acme-worker"
@@ -1105,16 +1191,40 @@ resource "aws_iam_policy" "acme_worker" {
         Resource = aws_s3_bucket.tenant_certificates.arn
         Condition = {
           StringLike = {
-            "s3:prefix" = ["custom-domains/*"]
+            "s3:prefix" = ["custom-domains/*", "platform-edge/*"]
           }
         }
       },
       {
+        Sid      = "ChangeExactTenantAcmeTxt"
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+        Condition = {
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["_acme-challenge.${var.tenant_domain}"]
+            "route53:ChangeResourceRecordSetsRecordTypes"           = ["TXT"]
+            "route53:ChangeResourceRecordSetsActions"               = ["CREATE", "UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Sid      = "ChangeExactEgressAcmeTxt"
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}"
+        Condition = {
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["_acme-challenge.${var.egress_subdomain}.${var.control_plane_domain}"]
+            "route53:ChangeResourceRecordSetsRecordTypes"           = ["TXT"]
+            "route53:ChangeResourceRecordSetsActions"               = ["CREATE", "UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Sid    = "ReadAcmeZones"
         Effect = "Allow"
-        Action = [
-          "route53:ChangeResourceRecordSets",
-          "route53:ListResourceRecordSets",
-        ]
+        Action = ["route53:ListResourceRecordSets"]
         Resource = [
           "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}",
           "arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}",
@@ -1132,12 +1242,37 @@ resource "aws_iam_policy" "acme_worker" {
         # policy without introducing a Terraform dependency cycle.
         Resource = "arn:aws:autoscaling:${var.aws_region}:${var.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-router-*"
       },
+      {
+        Effect   = "Allow"
+        Action   = ["autoscaling:DescribeInstanceRefreshes"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:GenerateDataKey"]
+        Resource = aws_kms_key.secrets.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.aws_region}.amazonaws.com"
+          }
+        }
+      },
     ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "task_acme_worker" {
-  role       = aws_iam_role.task.name
+resource "aws_iam_role_policy_attachment" "acme_task_worker" {
+  role       = aws_iam_role.acme_task.name
   policy_arn = aws_iam_policy.acme_worker.arn
 }
 
@@ -1148,9 +1283,20 @@ resource "aws_iam_role_policy_attachment" "instance_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+
+resource "aws_iam_role_policy_attachment" "router_instance_ssm" {
+  role       = aws_iam_role.router_instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "instance" {
   name = "${var.name_prefix}-instance"
   role = aws_iam_role.instance.name
+}
+
+resource "aws_iam_instance_profile" "router" {
+  name = "${var.name_prefix}-router-instance"
+  role = aws_iam_role.router_instance.name
 }
 
 resource "aws_launch_template" "service" {
@@ -1161,7 +1307,7 @@ resource "aws_launch_template" "service" {
   instance_type = var.service_instance_type
 
   iam_instance_profile {
-    arn = aws_iam_instance_profile.instance.arn
+    arn = each.key == "router" ? aws_iam_instance_profile.router.arn : aws_iam_instance_profile.instance.arn
   }
 
   vpc_security_group_ids = [aws_security_group.service.id]
@@ -1199,7 +1345,7 @@ resource "aws_launch_template" "service" {
     node_version = var.node_version
 
     # Read at boot by both services now, to compose `DATABASE_URL`. The ARN is not a secret; what
-    # it names is, and reading it needs the instance role — which is the same role for both.
+    # it names is, and reading it needs each service's instance role.
     database_secret_arn        = aws_db_instance.control_plane.master_user_secret[0].secret_arn
     application_parameter_path = local.application_parameter_path
     envelope_kms_key_arn       = aws_kms_key.envelope.arn

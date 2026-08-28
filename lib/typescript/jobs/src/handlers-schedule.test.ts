@@ -53,6 +53,30 @@ describe.skipIf(!reachable)("metering schedules", () => {
     ])
   })
 
+  it("does not enqueue certificate jobs while the isolated worker is disabled", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const now = new Date(`${TEST_YEAR}-12-30T23:58:45.000Z`)
+    const previousAcmeJobs = process.env.ACME_JOBS_ENABLED
+    delete process.env.ACME_JOBS_ENABLED
+    try {
+      await scheduleRecurring(db, now)
+    } finally {
+      if (previousAcmeJobs !== undefined) process.env.ACME_JOBS_ENABLED = previousAcmeJobs
+    }
+
+    const certificateJobs = await db
+      .selectFrom("backgroundJob")
+      .select("kind")
+      .where("idempotencyKey", "in", [
+        `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+        `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
+      ])
+      .execute()
+    expect(certificateJobs).toEqual([])
+  })
+
   it("schedules metering and credit projections once per window", async ({ skip }) => {
     if (!reachable) skip()
     const now = new Date(`${TEST_YEAR}-12-31T23:58:45.000Z`)
@@ -71,18 +95,18 @@ describe.skipIf(!reachable)("metering schedules", () => {
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
-    const previousRollout = process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
     const previousStaticDistribution = process.env.TENANT_STATIC_DISTRIBUTION_ID
-    process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = "0"
+    const previousAcmeJobs = process.env.ACME_JOBS_ENABLED
+    process.env.ACME_JOBS_ENABLED = "1"
     process.env.TENANT_STATIC_DISTRIBUTION_ID = "EDISTRIBUTION"
     try {
       await scheduleRecurring(db, now)
       await scheduleRecurring(db, now)
     } finally {
-      if (previousRollout === undefined) delete process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
-      else process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = previousRollout
       if (previousStaticDistribution === undefined) delete process.env.TENANT_STATIC_DISTRIBUTION_ID
       else process.env.TENANT_STATIC_DISTRIBUTION_ID = previousStaticDistribution
+      if (previousAcmeJobs === undefined) delete process.env.ACME_JOBS_ENABLED
+      else process.env.ACME_JOBS_ENABLED = previousAcmeJobs
     }
 
     const scheduled = await db

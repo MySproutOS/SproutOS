@@ -5,9 +5,13 @@ import {
   Route53Client,
   type ResourceRecordSet,
 } from "@aws-sdk/client-route-53"
-import { AutoScalingClient, StartInstanceRefreshCommand } from "@aws-sdk/client-auto-scaling"
+import {
+  AutoScalingClient,
+  DescribeInstanceRefreshesCommand,
+  StartInstanceRefreshCommand,
+} from "@aws-sdk/client-auto-scaling"
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudPlatformEdgeCertificate } from "@lib/dao"
 import * as acme from "acme-client"
 import { Resolver, resolve4, resolveNs, resolveTxt } from "node:dns/promises"
@@ -16,6 +20,14 @@ import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import type { JobHandler } from "./worker"
 import { certificateVersionKey } from "./certificate-version"
+import { deleteCertificateObjectVersions } from "./certificate-objects"
+import { certificateDeploymentQuorum } from "./certificate-quorum"
+import {
+  configuredAcmeDirectoryUrl,
+  refreshRenewalSchedule,
+  scheduleIssuedCertificate,
+  type RenewalSchedule,
+} from "./acme-renewal"
 
 export const PLATFORM_EDGE_CERTIFICATE_KIND = "platform.edge_certificate_reconcile"
 export const PLATFORM_CERTIFICATE_OBJECT_KEY = "platform-edge/current.json"
@@ -92,6 +104,8 @@ export type PlatformCertificateDependencies = {
     deps: PlatformCertificateDependencies,
     config: PlatformCertificateConfig,
   ) => Promise<Certificate>
+  refreshRenewal: typeof refreshRenewalSchedule
+  scheduleIssued: typeof scheduleIssuedCertificate
 }
 
 function awsConfig() {
@@ -127,6 +141,8 @@ function dependencies(
       }),
     dns: options.dns ?? SYSTEM_DNS_LOOKUP,
     issue: options.issue ?? issuePlatformCertificate,
+    refreshRenewal: options.refreshRenewal ?? refreshRenewalSchedule,
+    scheduleIssued: options.scheduleIssued ?? scheduleIssuedCertificate,
   }
 }
 
@@ -177,7 +193,9 @@ export function platformCertificateConfig(): PlatformCertificateConfig {
     egressZoneId: required("PLATFORM_ACME_EGRESS_ZONE_ID"),
     bucket: required("TENANT_CERTIFICATE_BUCKET"),
     kmsKeyArn: required("TENANT_CERTIFICATE_KMS_KEY_ARN"),
-    objectKey: process.env.PLATFORM_CERTIFICATE_OBJECT_KEY ?? PLATFORM_CERTIFICATE_OBJECT_KEY,
+    // One stable key plus an exact VersionId is the certificate handoff protocol. Allowing an
+    // environment override can orphan the prior private-key version where cleanup cannot find it.
+    objectKey: PLATFORM_CERTIFICATE_OBJECT_KEY,
     routerAsgNames,
     rolloutEnabled: rollout === "1",
   }
@@ -185,14 +203,6 @@ export function platformCertificateConfig(): PlatformCertificateConfig {
 
 export function platformCertificateNames(config: PlatformCertificateConfig): string[] {
   return [config.tenantDomain, config.wildcardHostname, config.egressHostname]
-}
-
-function minimumCertificateAcks(): number {
-  const count = Number(process.env.ROUTER_CERTIFICATE_MIN_ACKS ?? "1")
-  if (!Number.isSafeInteger(count) || count < 1) {
-    throw new Error("ROUTER_CERTIFICATE_MIN_ACKS must be a positive integer")
-  }
-  return count
 }
 
 function challengeRecordName(identifier: string): string {
@@ -411,7 +421,7 @@ export async function issuePlatformCertificate(
   })
   const client = new acme.Client({
     accountKey: await accountKey(deps.secrets),
-    directoryUrl: process.env.ACME_DIRECTORY_URL ?? acme.directory.letsencrypt.staging,
+    directoryUrl: configuredAcmeDirectoryUrl(),
   })
   // The apex and wildcard authorizations share `_acme-challenge.<tenant-domain>`. acme-client may
   // invoke callbacks concurrently, so serialize read/modify/write updates or each callback can
@@ -469,8 +479,18 @@ export async function issuePlatformCertificate(
 }
 
 export function nextPlatformRenewal(expiresAt: Date): Date {
-  // TODO(platform-certificate): use ACME Renewal Information when acme-client exposes RFC 9773.
+  // Public compatibility name for the bounded fallback used when RFC 9773 is unavailable.
   return new Date(expiresAt.getTime() - RENEWAL_WINDOW_MS)
+}
+
+function nextCertificateWorkAt(schedule: RenewalSchedule): Date {
+  if (
+    schedule.renewalInfoRetryAt !== null &&
+    schedule.renewalInfoRetryAt < schedule.nextRenewalAt
+  ) {
+    return schedule.renewalInfoRetryAt
+  }
+  return schedule.nextRenewalAt
 }
 
 export function retryAfter(now: Date, consecutiveFailures: number): Date {
@@ -494,24 +514,6 @@ export function platformCertificateObject(
   })
 }
 
-async function loadedReplicaCount(valkey: Redis, objectVersion: string): Promise<number> {
-  let cursor = "0"
-  let count = 0
-  do {
-    // eslint-disable-next-line no-await-in-loop -- SCAN is cursor based and bounded per request.
-    const [next, keys] = await valkey.scan(
-      cursor,
-      "MATCH",
-      `cert:platform-loaded:${certificateVersionKey(objectVersion)}:*`,
-      "COUNT",
-      100,
-    )
-    cursor = next
-    count += keys.length
-  } while (cursor !== "0")
-  return count
-}
-
 export function platformVersionKey(objectVersion: string): string {
   return certificateVersionKey(objectVersion)
 }
@@ -519,10 +521,29 @@ export function platformVersionKey(objectVersion: string): string {
 export async function requestPlatformRestart(
   autoScaling: AutoScalingClient,
   config: PlatformCertificateConfig,
-): Promise<void> {
+): Promise<Record<string, string> | undefined> {
   if (!config.rolloutEnabled) {
     throw new Error("Platform edge rollout is disabled; refusing to refresh router instances")
   }
+  for (const autoScalingGroupName of config.routerAsgNames) {
+    // Do not adopt an arbitrary in-progress refresh as this certificate rollout. Wait until every
+    // group is idle, then start and persist the exact IDs returned by AWS.
+    // eslint-disable-next-line no-await-in-loop -- each ASG has an independent refresh history.
+    const current = await autoScaling.send(
+      new DescribeInstanceRefreshesCommand({ AutoScalingGroupName: autoScalingGroupName }),
+    )
+    if (
+      current.InstanceRefreshes?.some((refresh) =>
+        ["Pending", "InProgress", "Cancelling", "RollbackInProgress"].includes(
+          refresh.Status ?? "",
+        ),
+      )
+    ) {
+      return undefined
+    }
+  }
+
+  const refreshIds: Record<string, string> = {}
   for (const autoScalingGroupName of config.routerAsgNames) {
     try {
       // eslint-disable-next-line no-await-in-loop -- each accepted refresh is an independently auditable handoff.
@@ -545,13 +566,48 @@ export async function requestPlatformRestart(
       if (refresh.InstanceRefreshId === undefined) {
         throw new Error(`Auto Scaling accepted no instance refresh for ${autoScalingGroupName}`)
       }
+      refreshIds[autoScalingGroupName] = refresh.InstanceRefreshId
     } catch (error) {
-      // A previous attempt can have submitted a refresh and died before persisting the version.
-      // That refresh is the desired handoff, so treating this specific response as success makes
-      // the operation retry-safe without cancelling or replacing a healthy rollout.
       if (!(error instanceof Error) || error.name !== "InstanceRefreshInProgressFault") throw error
+      // A refresh raced the preflight. Do not persist it as ours; once it finishes a later retry
+      // starts a new, fully identified certificate rollout.
+      return undefined
     }
   }
+  return refreshIds
+}
+
+async function platformRefreshState(
+  autoScaling: AutoScalingClient,
+  refreshIds: Record<string, string>,
+): Promise<"running" | "successful" | "failed"> {
+  let running = false
+  for (const [autoScalingGroupName, instanceRefreshId] of Object.entries(refreshIds)) {
+    // eslint-disable-next-line no-await-in-loop -- status belongs to one exact ASG/refresh pair.
+    const response = await autoScaling.send(
+      new DescribeInstanceRefreshesCommand({
+        AutoScalingGroupName: autoScalingGroupName,
+        InstanceRefreshIds: [instanceRefreshId],
+      }),
+    )
+    const status = response.InstanceRefreshes?.[0]?.Status
+    if (status === "Successful") continue
+    if (["Pending", "InProgress", "Cancelling", "RollbackInProgress"].includes(status ?? "")) {
+      running = true
+      continue
+    }
+    return "failed"
+  }
+  return running ? "running" : "successful"
+}
+
+function recordedRefreshIds(value: unknown): Record<string, string> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  const entries = Object.entries(value)
+  if (entries.length === 0 || entries.some(([, id]) => typeof id !== "string" || id === "")) {
+    return undefined
+  }
+  return Object.fromEntries(entries)
 }
 
 export function reconcilePlatformEdgeCertificate(
@@ -564,10 +620,20 @@ export function reconcilePlatformEdgeCertificate(
     const leaseToken = v7()
     const state = await crudPlatformEdgeCertificate(db).claimReconciliation(leaseToken)
     if (state === undefined) return
-    let awaitingDeployment = state.status === "awaiting_deployment"
+    let awaitingDeployment = false
 
     try {
-      if (state.status === "awaiting_deployment" && state.certificateObjectVersion !== null) {
+      const directoryUrl = configuredAcmeDirectoryUrl()
+      const provenanceMatches =
+        state.certificateDirectoryUrl === directoryUrl &&
+        state.certificateIssuer !== null &&
+        state.renewalInfoCertificateId !== null
+      awaitingDeployment = state.status === "awaiting_deployment" && provenanceMatches
+      if (
+        state.status === "awaiting_deployment" &&
+        state.certificateObjectVersion !== null &&
+        provenanceMatches
+      ) {
         if (!config.rolloutEnabled) {
           await crudPlatformEdgeCertificate(db).update(leaseToken, {
             statusReason:
@@ -576,25 +642,72 @@ export function reconcilePlatformEdgeCertificate(
           })
           return
         }
-        if (state.restartRequestedObjectVersion !== state.certificateObjectVersion) {
-          await requestPlatformRestart(deps.autoScaling, config)
-          await crudPlatformEdgeCertificate(db).update(leaseToken, {
-            restartRequestedObjectVersion: state.certificateObjectVersion,
-          })
-        }
-        const loaded = await loadedReplicaCount(deps.valkey, state.certificateObjectVersion)
-        const minimum = minimumCertificateAcks()
-        if (loaded >= minimum) {
+        const quorum = await certificateDeploymentQuorum(
+          deps.valkey,
+          `cert:platform-loaded:${certificateVersionKey(state.certificateObjectVersion)}:`,
+        )
+        if (quorum.ready) {
+          await deleteCertificateObjectVersions(
+            deps.s3,
+            config.bucket,
+            config.objectKey,
+            new Set([state.certificateObjectVersion]),
+          )
+          const nextRetryAt =
+            state.nextRenewalAt === null
+              ? (state.certificateExpiresAt ?? deps.now())
+              : nextCertificateWorkAt({
+                  nextRenewalAt: state.nextRenewalAt,
+                  renewalInfoRetryAt: state.renewalInfoRetryAt,
+                  renewalInfoExplanationUrl: state.renewalInfoExplanationUrl,
+                  source: state.renewalInfoRetryAt === null ? "unsupported" : "ari",
+                })
           await crudPlatformEdgeCertificate(db).update(leaseToken, {
             status: "active",
             statusReason: null,
             deployedObjectVersion: state.certificateObjectVersion,
             consecutiveFailures: 0,
-            nextRetryAt: state.nextRenewalAt ?? state.certificateExpiresAt ?? deps.now(),
+            nextRetryAt,
           })
         } else {
+          const refreshIds = recordedRefreshIds(state.restartRequestIds)
+          if (
+            state.restartRequestedObjectVersion === state.certificateObjectVersion &&
+            refreshIds !== undefined
+          ) {
+            const refreshState = await platformRefreshState(deps.autoScaling, refreshIds)
+            if (refreshState === "running") {
+              await crudPlatformEdgeCertificate(db).update(leaseToken, {
+                statusReason: `Router refresh is still running; ${quorum.loaded}/${quorum.serving} serving replicas loaded the certificate.`,
+                nextRetryAt: new Date(deps.now().getTime() + 60_000),
+              })
+              return
+            }
+            await crudPlatformEdgeCertificate(db).update(leaseToken, {
+              restartRequestedObjectVersion: null,
+              restartRequestIds: null,
+              statusReason:
+                refreshState === "successful"
+                  ? "Router refresh completed without certificate quorum; scheduling a replacement refresh."
+                  : "Router refresh failed; scheduling a replacement refresh.",
+              nextRetryAt: new Date(deps.now().getTime() + 60_000),
+            })
+            return
+          }
+
+          const started = await requestPlatformRestart(deps.autoScaling, config)
+          if (started === undefined) {
+            await crudPlatformEdgeCertificate(db).update(leaseToken, {
+              statusReason:
+                "Another router refresh is in progress; waiting to submit an identified certificate rollout.",
+              nextRetryAt: new Date(deps.now().getTime() + 60_000),
+            })
+            return
+          }
           await crudPlatformEdgeCertificate(db).update(leaseToken, {
-            statusReason: `Certificate stored; a rolling router restart is required (${loaded}/${minimum} replicas loaded this version).`,
+            restartRequestedObjectVersion: state.certificateObjectVersion,
+            restartRequestIds: started,
+            statusReason: `Router certificate refresh started; ${quorum.loaded}/${quorum.serving} serving replicas loaded the certificate.`,
             nextRetryAt: new Date(deps.now().getTime() + 60_000),
           })
         }
@@ -602,19 +715,48 @@ export function reconcilePlatformEdgeCertificate(
       }
 
       const now = deps.now()
-      if (state.nextRetryAt > now) return
-      if (state.status === "active" && state.nextRenewalAt !== null && state.nextRenewalAt > now) {
-        return
+      if (provenanceMatches && state.nextRetryAt > now) return
+      if (
+        provenanceMatches &&
+        state.status === "active" &&
+        state.nextRenewalAt !== null &&
+        state.nextRenewalAt > now
+      ) {
+        if (
+          state.renewalInfoRetryAt !== null &&
+          state.renewalInfoRetryAt <= now &&
+          state.renewalInfoCertificateId !== null &&
+          state.certificateExpiresAt !== null
+        ) {
+          const schedule = await deps.refreshRenewal({
+            certificateId: state.renewalInfoCertificateId,
+            directoryUrl,
+            expiresAt: state.certificateExpiresAt,
+            now,
+          })
+          await crudPlatformEdgeCertificate(db).update(leaseToken, {
+            nextRenewalAt: schedule.nextRenewalAt,
+            renewalInfoRetryAt: schedule.renewalInfoRetryAt,
+            renewalInfoExplanationUrl: schedule.renewalInfoExplanationUrl,
+            nextRetryAt: nextCertificateWorkAt(schedule),
+          })
+          if (schedule.nextRenewalAt > now) return
+        } else {
+          return
+        }
       }
 
-      await crudPlatformEdgeCertificate(db).update(leaseToken, {
+      const issuing = await crudPlatformEdgeCertificate(db).update(leaseToken, {
         status: "issuing",
         statusReason:
-          state.deployedObjectVersion === null
-            ? "Issuing the initial platform edge certificate."
-            : "Renewing the platform edge certificate.",
+          !provenanceMatches && state.certificateObjectVersion !== null
+            ? "Replacing a platform certificate whose ACME issuer provenance does not match the configured directory."
+            : state.deployedObjectVersion === null
+              ? "Issuing the initial platform edge certificate."
+              : "Renewing the platform edge certificate.",
         nextRetryAt: new Date(now.getTime() + 10 * 60_000),
       })
+      if (issuing === undefined) return
 
       let heartbeatFailed = false
       const heartbeat = setInterval(() => {
@@ -633,6 +775,12 @@ export function reconcilePlatformEdgeCertificate(
       }
       if (heartbeatFailed)
         throw new Error("Lost the platform-certificate lease during ACME issuance")
+      const renewal = await deps.scheduleIssued({
+        certificatePem: certificate.certificatePem,
+        directoryUrl,
+        expiresAt: certificate.expiresAt,
+        now: deps.now(),
+      })
 
       const stored = await deps.s3.send(
         new PutObjectCommand({
@@ -648,26 +796,47 @@ export function reconcilePlatformEdgeCertificate(
         throw new Error("Certificate bucket versioning is not enabled; S3 returned no VersionId")
       }
 
-      await crudPlatformEdgeCertificate(db).update(leaseToken, {
+      const recorded = await crudPlatformEdgeCertificate(db).update(leaseToken, {
         status: "awaiting_deployment",
         statusReason: config.rolloutEnabled
           ? "Certificate issued; a rolling router restart is required."
           : "Certificate stored; waiting for PLATFORM_EDGE_ROLLOUT_ENABLED=1 before restarting routers.",
         certificateObjectKey: config.objectKey,
         certificateObjectVersion: stored.VersionId,
+        certificateIssuer: renewal.issuer,
+        certificateDirectoryUrl: directoryUrl,
         restartRequestedObjectVersion: null,
+        restartRequestIds: null,
         certificateIssuedAt: certificate.issuedAt,
         certificateExpiresAt: certificate.expiresAt,
-        nextRenewalAt: nextPlatformRenewal(certificate.expiresAt),
+        renewalInfoCertificateId: renewal.certificateId,
+        renewalInfoRetryAt: renewal.renewalInfoRetryAt,
+        renewalInfoExplanationUrl: renewal.renewalInfoExplanationUrl,
+        nextRenewalAt: renewal.nextRenewalAt,
         nextRetryAt: new Date(deps.now().getTime() + 60_000),
         consecutiveFailures: 0,
       })
+      if (recorded === undefined) {
+        await deps.s3.send(
+          new DeleteObjectCommand({
+            Bucket: config.bucket,
+            Key: config.objectKey,
+            VersionId: stored.VersionId,
+          }),
+        )
+        throw new Error("Lost the platform certificate lease after storing the certificate")
+      }
       awaitingDeployment = true
-      if (!config.rolloutEnabled) return
-      await requestPlatformRestart(deps.autoScaling, config)
-      await crudPlatformEdgeCertificate(db).update(leaseToken, {
-        restartRequestedObjectVersion: stored.VersionId,
-      })
+      await deleteCertificateObjectVersions(
+        deps.s3,
+        config.bucket,
+        config.objectKey,
+        new Set(
+          [stored.VersionId, state.deployedObjectVersion].filter(
+            (version): version is string => version !== null,
+          ),
+        ),
+      )
     } catch (error) {
       const failures = state.consecutiveFailures + 1
       await crudPlatformEdgeCertificate(db).update(leaseToken, {
