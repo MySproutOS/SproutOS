@@ -271,8 +271,10 @@ without withdrawing routes or destroying certificate material.
 To abandon preview, leave `tenant_edge_preview_enabled = true`, keep
 `tenant_edge_enabled = false`, and apply once so edge deletion protection is off; only then set the
 preview flag false and review the destroy plan. To roll back after cutover, use the same two applies
-after DNS and protocol smoke prove the legacy paths healthy. Never turn the global
-`deletion_protection` variable off merely to remove the preview NLB.
+after DNS and protocol smoke prove the legacy paths healthy. The parallel edge cannot be removed
+while any active custom hostname still points at either ingress alias: withdraw/migrate every route
+and certificate first. Never turn the global `deletion_protection` variable off merely to remove
+the preview NLB.
 
 ### Static-site metering
 
