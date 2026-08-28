@@ -489,6 +489,9 @@ importers:
       '@lib/workflows':
         specifier: workspace:*
         version: link:../../lib/typescript/workflows
+      '@peculiar/x509':
+        specifier: 'catalog:'
+        version: 1.14.3
       '@scalar/hono-api-reference':
         specifier: ^0.11.14
         version: 0.11.14(hono@4.13.3)
