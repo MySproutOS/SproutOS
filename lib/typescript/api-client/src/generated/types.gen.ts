@@ -6894,6 +6894,7 @@ export type PostV1ApkSigningCompleteData = {
         signer_id: string
         kind: "sign_release"
         signed_key: string
+        signed_object_version: string
         signed_digest: string
         size_bytes: number
         package_name: string
