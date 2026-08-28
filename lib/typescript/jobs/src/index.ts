@@ -25,7 +25,7 @@ export {
   type UpstreamComparison,
 } from "./upkeep-decision"
 export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
-export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
+export { ACME_HANDLERS, JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
 export {
   DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   importDeploymentCatalogue,

@@ -236,8 +236,8 @@ production custom-domain activation, separate reviewed changes must prove all of
    edge NLB. Its listeners use public 80/443 so HTTP-01 and ordinary TLS clients exercise the real
    protocol, while `preview-ingress.<tenant-domain>` points only at this parallel balancer. This does
    not replace the live Postgres/Valkey NLB or move generated production DNS.
-4. Wait for the platform certificate row to become active and for the configured
-   `router_certificate_min_acks` quorum. Smoke the generated wildcard, tenant apex, exact egress
+4. Wait for the platform certificate row to become active after every live serving router in the
+   Valkey membership set acknowledges the exact version. Smoke the generated wildcard, tenant apex, exact egress
    hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
    Postgres and Valkey listeners through the unchanged data-plane NLB. Exercise preview over both
    IPv4 and IPv6 through the preview ingress name and confirm Lambda receives the viewer address

@@ -38,14 +38,14 @@ describe.skipIf(!reachable)("metering schedules", () => {
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
-    const previousRollout = process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
-    process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = "0"
+    const previousAcmeJobs = process.env.ACME_JOBS_ENABLED
+    process.env.ACME_JOBS_ENABLED = "1"
     try {
       await scheduleRecurring(db, now)
       await scheduleRecurring(db, now)
     } finally {
-      if (previousRollout === undefined) delete process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
-      else process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = previousRollout
+      if (previousAcmeJobs === undefined) delete process.env.ACME_JOBS_ENABLED
+      else process.env.ACME_JOBS_ENABLED = previousAcmeJobs
     }
 
     const scheduled = await db

@@ -308,7 +308,6 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
     vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificate-bucket")
     vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
     vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
-    vi.stubEnv("ROUTER_CERTIFICATE_MIN_ACKS", "1")
     await db.deleteFrom("platformEdgeCertificate").where("id", "=", "platform").execute()
   })
   afterEach(() => vi.unstubAllEnvs())

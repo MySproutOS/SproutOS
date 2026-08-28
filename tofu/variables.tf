@@ -193,17 +193,6 @@ variable "tenant_edge_preview_colour" {
   }
 }
 
-variable "router_certificate_min_acks" {
-  description = "Minimum distinct router replicas that must acknowledge one certificate version before activation. Set to the live serving fleet size."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = floor(var.router_certificate_min_acks) == var.router_certificate_min_acks && var.router_certificate_min_acks > 0
-    error_message = "Router certificate acknowledgement quorum must be a positive integer."
-  }
-}
-
 variable "service_max_count" {
   description = "Ceiling per Auto Scaling group."
   type        = number

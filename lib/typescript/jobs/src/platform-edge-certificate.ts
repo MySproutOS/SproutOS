@@ -16,6 +16,7 @@ import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import type { JobHandler } from "./worker"
 import { certificateVersionKey } from "./certificate-version"
+import { certificateDeploymentQuorum } from "./certificate-quorum"
 import {
   configuredAcmeDirectoryUrl,
   refreshRenewalSchedule,
@@ -197,14 +198,6 @@ export function platformCertificateConfig(): PlatformCertificateConfig {
 
 export function platformCertificateNames(config: PlatformCertificateConfig): string[] {
   return [config.tenantDomain, config.wildcardHostname, config.egressHostname]
-}
-
-function minimumCertificateAcks(): number {
-  const count = Number(process.env.ROUTER_CERTIFICATE_MIN_ACKS ?? "1")
-  if (!Number.isSafeInteger(count) || count < 1) {
-    throw new Error("ROUTER_CERTIFICATE_MIN_ACKS must be a positive integer")
-  }
-  return count
 }
 
 function challengeRecordName(identifier: string): string {
@@ -516,24 +509,6 @@ export function platformCertificateObject(
   })
 }
 
-async function loadedReplicaCount(valkey: Redis, objectVersion: string): Promise<number> {
-  let cursor = "0"
-  let count = 0
-  do {
-    // eslint-disable-next-line no-await-in-loop -- SCAN is cursor based and bounded per request.
-    const [next, keys] = await valkey.scan(
-      cursor,
-      "MATCH",
-      `cert:platform-loaded:${certificateVersionKey(objectVersion)}:*`,
-      "COUNT",
-      100,
-    )
-    cursor = next
-    count += keys.length
-  } while (cursor !== "0")
-  return count
-}
-
 export function platformVersionKey(objectVersion: string): string {
   return certificateVersionKey(objectVersion)
 }
@@ -614,9 +589,12 @@ export function reconcilePlatformEdgeCertificate(
             restartRequestedObjectVersion: state.certificateObjectVersion,
           })
         }
-        const loaded = await loadedReplicaCount(deps.valkey, state.certificateObjectVersion)
-        const minimum = minimumCertificateAcks()
-        if (loaded >= minimum) {
+        const quorum = await certificateDeploymentQuorum(
+          deps.valkey,
+          `cert:platform-loaded:${certificateVersionKey(state.certificateObjectVersion)}:`,
+          deps.now(),
+        )
+        if (quorum.ready) {
           if (
             state.deployedObjectVersion !== null &&
             state.deployedObjectVersion !== state.certificateObjectVersion
@@ -647,7 +625,7 @@ export function reconcilePlatformEdgeCertificate(
           })
         } else {
           await crudPlatformEdgeCertificate(db).update(leaseToken, {
-            statusReason: `Certificate stored; a rolling router restart is required (${loaded}/${minimum} replicas loaded this version).`,
+            statusReason: `Certificate stored; waiting for every serving router after the rolling restart (${quorum.loaded}/${quorum.serving} loaded this version).`,
             nextRetryAt: new Date(deps.now().getTime() + 60_000),
           })
         }
