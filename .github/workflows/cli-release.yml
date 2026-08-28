@@ -18,10 +18,11 @@ permissions:
   contents: read
 
 concurrency:
-  # An SSM release pointer has one current value. Serialising tag workflows makes the later
-  # semantic-version check meaningful and prevents two verified releases racing to promote.
-  group: cli-release
-  cancel-in-progress: false
+  # Stale pull-request builds have no artifact or production authority and should not make every
+  # edit wait for five obsolete native builds. Tags share the non-cancelling production lane with
+  # explicit promotion so release publication cannot race a pointer change.
+  group: ${{ github.event_name == 'pull_request' && format('cli-release-pr-{0}', github.event.pull_request.number) || 'cli-release-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:

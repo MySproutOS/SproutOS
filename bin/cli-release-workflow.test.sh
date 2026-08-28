@@ -42,4 +42,12 @@ if grep -q 'configure-aws-credentials\|promote-cli-release' "$WORKFLOW"; then
   exit 1
 fi
 
+# Obsolete five-platform PR builds may cancel each other, but immutable tag publication shares a
+# non-cancelling lane with production promotion.
+grep -Fq "github.event_name == 'pull_request'" "$WORKFLOW"
+grep -Fq "'cli-release-production'" "$WORKFLOW"
+# shellcheck disable=SC2016
+grep -Fq 'cancel-in-progress: ${{ github.event_name' "$WORKFLOW"
+grep -Fq "group: cli-release-production" "$ROOT/.github/workflows/cli-promote.yml"
+
 echo "CLI release workflow tests passed"
