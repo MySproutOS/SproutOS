@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "packages/sprout-template-protocol",
   "lib/rust/srn",
   "lib/rust/metering-proto",
   "lib/rust/tenant-auth",
@@ -22,6 +23,7 @@ license = "BSD-3-Clause"
 repository = "https://github.com/Andrew-Chen-Wang/sproutos"
 
 [workspace.dependencies]
+sprout-template-protocol = { package = "sprout-template-protocol-integration", path = "packages/sprout-template-protocol" }
 sproutos-srn = { path = "lib/rust/srn" }
 sproutos-metering-proto = { path = "lib/rust/metering-proto" }
 sproutos-tenant-auth = { path = "lib/rust/tenant-auth" }
