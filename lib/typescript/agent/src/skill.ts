@@ -35,7 +35,7 @@ const EXCLUDE_ENTRY = "/.claude/skills/sproutos/"
 
 export type SkillInput = {
   workspace: Workspace
-  /** The API the deployed application and the action talk to, e.g. `https://api.sproutos.me`. */
+  /** The API the deployed application and the CLI talk to, e.g. `https://api.sproutos.me`. */
   apiUrl: string
   /** Where tenant applications are served, e.g. `sproutos.run`. */
   tenantDomain: string
@@ -162,9 +162,14 @@ them and deploys nothing itself.
 
 ## What a deploy actually is
 
-A GitHub Actions workflow builds the target, uploads a zip, and calls the platform. The platform
-publishes it as a Lambda version and moves an alias, so a release is atomic and a rollback is one
-API call rather than a rebuild.
+The \`sprout\` CLI is the only deployment orchestrator. It packages output deterministically,
+negotiates the upload, creates the release, and waits for a terminal result. The GitHub Marketplace
+action is a thin compatibility wrapper around a pinned \`sprout\` release; it does not implement a
+second deployment protocol.
+
+The platform publishes a server build as a Lambda version and moves an alias, so a release is
+atomic and a rollback is one API call rather than a rebuild. Static builds are activated as an
+immutable CDN tree. Android deploys upload exactly one raw unsigned APK for the on-prem signer.
 
 Add \`.github/workflows/sproutos.yml\`:
 
@@ -182,11 +187,14 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      # Build first. The action uploads finished output; it does not guess how this app builds.
+      - run: npm ci
+      - run: npm run build
       - uses: MySproutOS/sproutos-deploy-action@v1
         with:
-          preset: next            # next | hono | static | android
-          directory: apps/website # the target's root, relative to the repository
+          preset: next            # next | hono | web | static | android
+          directory: apps/website/.next/standalone
           project: ${project}
           api-url: ${input.apiUrl}
 \`\`\`
@@ -199,7 +207,37 @@ looks exactly like success.
 **\`id-token: write\` is required.** Without it there is no OIDC token, and the deploy fails at the
 first step with an authentication error that does not mention permissions.
 
-One workflow per deployable target, each with its own \`directory\` and \`project\`.
+One workflow per deployable target, each with its own \`directory\` and \`project\`. The wrapper maps
+these inputs to the same \`sprout-core\` operations used by the local CLI. It must never guess the
+project from the repository name. It exchanges GitHub's OIDC assertion for a short-lived deployment
+token and passes that token through the environment, never a command-line argument or repository
+secret.
+
+## Running the same deployment locally
+
+Install the checksummed \`sprout\` binary from the SproutOS download page, then:
+
+\`\`\`shell
+sprout auth login
+sprout org use my-team
+sprout deploy ${project} --preset next --path apps/website/.next/standalone
+\`\`\`
+
+Use \`SPROUTOS_TOKEN\` only for a trusted headless environment. Human login uses browser PKCE and the
+operating-system credential store. Commands provide stable \`--json\` output for agents and scripts;
+destructive commands require confirmation or \`--yes\`.
+
+## Deployment templates are catalogue-owned
+
+App Store eligibility and deployment behavior come only from the signed
+\`MySproutOS/Deployment-Templates\` catalogue. Resolve the exact upstream commit and immutable
+plugin digest recorded there. Never infer deployment behavior from an instruction file in an
+arbitrary upstream repository.
+
+A generated fork may contain \`.config/sproutos.toml\`. It is declarative and contains no secret
+values. It helps a human or coding agent understand services and bindings, but the imported signed
+catalogue remains authoritative. Template plugins receive structural input only: no network,
+GitHub, SproutOS, or customer credentials.
 
 ## Backend services
 
@@ -259,12 +297,16 @@ way to keep a process alive.
 
 ## Using this skill outside SproutOS
 
-Claude Code can load this file from \`.claude/skills/sproutos/SKILL.md\`. An AGENTS.md-based CLI
-agent can use the same instructions by appending the body to the repository's existing
-\`AGENTS.md\`; preserve the instructions already there rather than replacing the file.
+Download the public skill from \`https://sproutos.me/skills/sproutos/SKILL.md\`.
 
-A local agent runs on your machine and uses the model account you configured in that harness, so
-SproutOS does not charge sandbox or model usage for that work. Any resources you deploy to
-SproutOS are still metered normally.
+- Claude Code loads it from \`.claude/skills/sproutos/SKILL.md\` in the repository.
+- Codex loads an account-level copy from \`~/.codex/skills/sproutos/SKILL.md\`.
+- For an AGENTS.md-only harness, preserve the repository's existing \`AGENTS.md\` and add a short
+  instruction to read the downloaded skill. Never replace the project's own instructions.
+
+The skill contains instructions, not credentials. Authenticate \`sprout\` yourself. A local agent
+runs on your machine and uses the model account configured in that harness, so SproutOS does not
+charge sandbox or model usage for that work. Resources the agent creates on SproutOS are still
+metered normally.
 `
 }

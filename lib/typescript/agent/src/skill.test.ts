@@ -42,6 +42,8 @@ describe("installSproutosSkill", () => {
     expect(body).toContain("name: sproutos")
     // The project is interpolated so the snippet is copy-pasteable, not a form to fill in.
     expect(body).toContain("project: reddit-clone-web")
+    expect(body).toContain("sprout deploy reddit-clone-web")
+    expect(body).toContain("MySproutOS/Deployment-Templates")
     expect(body).toContain("sproutos.run")
   })
 
@@ -118,6 +120,8 @@ describe("the sandbox's own section", () => {
       const written = await readFile(join(workspace, ".claude/skills/sproutos/SKILL.md"), "utf8")
       expect(written).not.toContain("Where you are right now")
       expect(written).toContain("Deploying this repository on SproutOS")
+      expect(written).toContain("~/.codex/skills/sproutos/SKILL.md")
+      expect(written).not.toContain("SPROUT_OS_DEPLOY")
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
@@ -132,7 +136,8 @@ describe("the public skill", () => {
     })
 
     expect(body).toContain("MySproutOS/sproutos-deploy-action@v1")
-    expect(body).toContain("AGENTS.md-based CLI")
+    expect(body).toContain("AGENTS.md-only harness")
+    expect(body).toContain("~/.codex/skills/sproutos/SKILL.md")
     expect(body).not.toContain("Where you are right now")
   })
 })

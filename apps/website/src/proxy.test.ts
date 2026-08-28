@@ -279,11 +279,25 @@ describe("the store is reachable signed in or out", () => {
       expect(isRewrite(res)).toBe(false)
     })
 
+    it.each(["/skills/sproutos/SKILL.md"])("%s is downloadable signed out", async (url) => {
+      // A public coding-agent skill cannot require the session that using a local harness is meant
+      // to avoid. The route handler redirects to the public API copy after the proxy lets it pass.
+      const res = await proxy(makeRequest(url))
+      expect(isRewrite(res)).toBe(false)
+      expect(res.status).toBe(200)
+    })
+
     it.each(["/docs", "/docs/background-workers"])("%s renders Next.js signed in", async (url) => {
       mockValidate.mockResolvedValue(VALID_SESSION)
       const res = await proxy(makeRequest(url, "a-session-token"))
 
       expect(isRewrite(res)).toBe(false)
+    })
+
+    it.each(["/skills/sproutos/SKILL.md"])("%s stays public signed in", async (url) => {
+      const res = await proxy(makeRequest(url, "a-session-token"))
+      expect(isRewrite(res)).toBe(false)
+      expect(validateSessionToken).not.toHaveBeenCalled()
     })
   })
 })

@@ -49,6 +49,19 @@ describe("the documentation", () => {
     expect(text).toContain("blocking read")
   })
 
+  it("documents one CLI contract for Actions and local coding agents", () => {
+    const deployments = docBySlug("github-action")
+    const text = searchableText(deployments!)
+
+    expect(text).toContain("thin wrapper around a pinned")
+    expect(text).toContain("sprout deploy my-web-project")
+    expect(text).toContain("deployment-templates")
+    expect(text).toContain("~/.codex/skills/sproutos/skill.md")
+    expect(text).toContain("sandbox time or model usage")
+    expect(text).not.toContain("sprout_os_deploy")
+    expect(text).not.toContain("sproutos-apps")
+  })
+
   it("has a unique slug per page", () => {
     // Two pages on one slug is one page nobody can reach, and Next.js will not complain.
     expect(new Set(DOCS.map((doc) => doc.slug)).size).toBe(DOCS.length)
