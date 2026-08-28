@@ -246,8 +246,8 @@ secret.
 
 ## Running the same deployment locally
 
-Install the checksummed \`sprout\` v0.1.1 binary from
-\`https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.1\`, then:
+Install the checksummed \`sprout\` v0.1.2 binary from
+\`https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.2\`, then:
 
 \`\`\`shell
 sprout auth login

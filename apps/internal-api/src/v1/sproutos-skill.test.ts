@@ -11,7 +11,7 @@ describe("the public SproutOS skill", () => {
     expect(body).toContain(
       "MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180",
     )
-    expect(body).toContain("cli-v0.1.1")
+    expect(body).toContain("cli-v0.1.2")
     expect(body).toContain("c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1")
     expect(body).not.toContain("sproutos-deploy-action@v1")
     expect(body).toContain("sprout deploy <your-project-slug>")
