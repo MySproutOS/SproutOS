@@ -114,7 +114,7 @@ execution_policy = {
 }
 if defect == "broad-execution-role":
     execution_policy["Statement"][0]["Resource"].append(
-        base + "ANDROID_DEVELOPER_ID_STATUS_API_KEY"
+        base + "*"
     )
 print(json.dumps({
     "resource_changes": [

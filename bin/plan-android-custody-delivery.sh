@@ -71,6 +71,7 @@ trap 'rm -f "$plan_json"' EXIT
 PLAN_JSON="$plan_json" PARAMETER_PATH="$PARAMETER_PATH" AWS_REGION="$AWS_REGION" \
   AWS_ACCOUNT_ID="$account_id" python3 <<'PYTHON'
 import json
+import fnmatch
 import os
 import sys
 
@@ -139,7 +140,7 @@ for container_name, container in containers.items():
         )
 
 policy = json.loads(execution["policy"])
-android_parameter_arns = []
+custody_parameter_arns = []
 for statement in policy.get("Statement", []):
     actions = statement.get("Action", [])
     if isinstance(actions, str):
@@ -149,16 +150,22 @@ for statement in policy.get("Statement", []):
     resources = statement.get("Resource", [])
     if isinstance(resources, str):
         resources = [resources]
-    android_parameter_arns.extend(
-        arn for arn in resources
-        if "APK_SIGNER" in arn or "ANDROID_DEVELOPER" in arn
-    )
+    for arn in resources:
+        if not isinstance(arn, str):
+            continue
+        # Reject not only wrong Android-named resources, but every wildcard or descendant pattern
+        # capable of authorizing either custody parameter. A path wildcard contains neither token
+        # name and used to pass the narrower text filter here.
+        if arn.startswith(expected_prefix) or any(
+            fnmatch.fnmatchcase(expected_arn, arn) for expected_arn in task_secret_arns.values()
+        ):
+            custody_parameter_arns.append(arn)
 
 expected_arns = sorted(task_secret_arns.values())
-if sorted(android_parameter_arns) != expected_arns:
+if sorted(custody_parameter_arns) != expected_arns:
     sys.exit(
-        "Android custody delivery refused: execution-role Android SSM resources must be the two "
-        f"exact signer names; found {sorted(android_parameter_arns)!r}."
+        "Android custody delivery refused: execution-role SSM resources covering the custody path "
+        f"must be the two exact signer names; found {sorted(custody_parameter_arns)!r}."
     )
 
 print("Android custody metadata, task placement, and exact execution-role SSM plan verified.")
