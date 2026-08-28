@@ -1083,6 +1083,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1098,23 +1099,6 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       finishedAt: Date | null
       createdAt: Date
     }
-    jobs: Array<{
-      id: string
-      kind: string
-      state: string
-      progress: number
-      attempt: number
-      errorCode: string | null
-      errorMessage: string | null
-      steps: Array<{
-        key: string
-        label: string
-        state: string
-      }>
-      startedAt: Date | null
-      finishedAt: Date | null
-      createdAt: Date
-    }>
   }
 }
 
@@ -1158,6 +1142,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1173,6 +1158,24 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       finishedAt: Date | null
       createdAt: Date
     }
+    jobs: Array<{
+      id: string
+      projectId: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }>
     destroyed: Array<string>
     scheduledForTeardown: Array<string>
     retained: Array<string>
@@ -1397,6 +1400,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses = {
   200: {
     data: Array<{
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1449,6 +1453,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
    */
   200: {
     id: string
+    projectId: string
     kind: string
     state: string
     progress: number
@@ -6762,73 +6767,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

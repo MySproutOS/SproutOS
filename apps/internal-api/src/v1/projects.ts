@@ -281,6 +281,7 @@ const PROJECT_FIELDS = [
 
 const JOB_FIELDS = [
   "id",
+  "projectId",
   "kind",
   "state",
   "progress",
@@ -318,6 +319,7 @@ type JobRow = Pick<Selectable<DB["projectJob"]>, (typeof JOB_FIELDS)[number]>
 function serializeJob(job: JobRow) {
   return {
     id: job.id,
+    projectId: job.projectId,
     kind: job.kind,
     state: job.state,
     progress: job.progress,
@@ -329,6 +331,45 @@ function serializeJob(job: JobRow) {
     finishedAt: job.finishedAt?.toISOString() ?? null,
     createdAt: job.createdAt.toISOString(),
   }
+}
+
+/**
+ * Collects every live descendant before deletion, with children before their parents.
+ *
+ * The complete walk happens before the first row is changed. That matters for nested groups: once
+ * a child is soft-deleted it disappears from `listChildren`, so discovering and deleting in the
+ * same shallow loop can strand grandchildren permanently. The path guard turns corrupt cyclic
+ * topology into a loud failure instead of unbounded recursion.
+ */
+async function listDescendantsDeepestFirst(
+  organizationId: string,
+  rootProjectId: string,
+): Promise<{ id: string; isGroup: boolean }[]> {
+  const ordered: { id: string; isGroup: boolean }[] = []
+  const path = new Set([rootProjectId])
+  const visited = new Set<string>()
+
+  async function visit(parentProjectId: string): Promise<void> {
+    const children = await fetchProject(db).listChildren(organizationId, parentProjectId, [
+      "id",
+      "isGroup",
+    ])
+    for (const child of children) {
+      if (path.has(child.id)) {
+        throw new Error(`Project group topology contains a cycle at ${child.id}`)
+      }
+      if (visited.has(child.id)) continue
+
+      path.add(child.id)
+      await visit(child.id)
+      path.delete(child.id)
+      visited.add(child.id)
+      ordered.push(child)
+    }
+  }
+
+  await visit(rootProjectId)
+  return ordered
 }
 
 function serializeProject(
@@ -1437,13 +1478,13 @@ const app = new Hono()
 
       const childResults = []
       if (deleting.isGroup) {
-        const children = await fetchProject(db).listChildren(organization.id, projectId, ["id"])
-        for (const child of children) {
+        const descendants = await listDescendantsDeepestFirst(organization.id, projectId)
+        for (const descendant of descendants) {
           const removed = await provisionProject(db).remove({
             actorUserId: user.id,
             audit: auditContext(c),
             organizationId: organization.id,
-            projectId: child.id,
+            projectId: descendant.id,
             preserveEmptyGroups: true,
           })
           if (removed !== null) childResults.push(removed)
@@ -1455,6 +1496,7 @@ const app = new Hono()
         audit: auditContext(c),
         organizationId: organization.id,
         projectId,
+        preserveEmptyGroups: deleting.isGroup,
       })
 
       if (result === null) return throwNotFound(c, "Project not found")
@@ -1490,7 +1532,7 @@ const app = new Hono()
         job: serializeJob(result.job),
         jobs: [...childResults.map((child) => serializeJob(child.job)), serializeJob(result.job)],
         message:
-          `${deleting.isGroup ? `Group and ${childResults.length} child project(s)` : `Project "${result.project.slug}"`} are marked deleted and teardown jobs are queued child-first. ` +
+          `${deleting.isGroup ? `Group and ${childResults.length} descendant project(s)` : `Project "${result.project.slug}"`} are marked deleted and teardown jobs are queued deepest-first. ` +
           `Nothing has been destroyed yet, and billing history is never destroyed — ` +
           `usage events, rollups, statement line items, and audit rows still reference it. ` +
           repositoryNote,

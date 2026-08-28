@@ -265,6 +265,7 @@ export const projectSchemaResponse = Type.Object({
 
 const projectJob = Type.Object({
   id: UUID7String,
+  projectId: UUID7String,
   kind: Type.String(),
   state: Type.String(),
   progress: Type.Number(),
@@ -292,7 +293,6 @@ export const projectSchemaJobListResponse = Type.Object({
 export const projectSchemaCreateResponse = Type.Object({
   project: projectEntry,
   job: projectJob,
-  jobs: Type.Array(projectJob),
 })
 
 export const projectSchemaDeleteResponse = Type.Object({
@@ -303,6 +303,7 @@ export const projectSchemaDeleteResponse = Type.Object({
     deletedAt: Nullable(Type.String({ format: "date-time" })),
   }),
   job: projectJob,
+  jobs: Type.Array(projectJob),
   destroyed: Type.Array(Type.String()),
   scheduledForTeardown: Type.Array(Type.String()),
   retained: Type.Array(Type.String()),

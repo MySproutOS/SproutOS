@@ -1,4 +1,5 @@
 import { openEnvVarValue } from "@lib/envelope"
+import { tearDownProject } from "@lib/jobs"
 /* oxlint-disable no-await-in-loop */
 import { overhead, rateTimesQuantity } from "@lib/billing/money"
 import { db } from "@sproutos/db"
@@ -1358,6 +1359,7 @@ describe.skipIf(!reachable)("project routes", () => {
   */
   describe("groups", () => {
     let groupId = ""
+    let secondGroupId = ""
     let childId = ""
     /*
       Its own repository, not the shared fixture.
@@ -1415,6 +1417,7 @@ describe.skipIf(!reachable)("project routes", () => {
 
       expect(response.status).toBe(201)
       expect((response.json.project as Json).isGroup).toBe(true)
+      secondGroupId = (response.json.project as Json).id as string
     })
 
     /*
@@ -1574,25 +1577,153 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(response.json.primaryUrl).toBe("https://app.example.test")
     })
 
-    it("deletes a group's children instead of orphaning them", async () => {
-      const childIds = await db
-        .selectFrom("project")
-        .select("id")
-        .where("parentProjectId", "=", groupId)
-        .where("deletedAt", "is", null)
+    it("deletes and tears down an arbitrarily nested group deepest-first", async () => {
+      const removedSibling = await call(
+        "DELETE",
+        `/v1/orgs/${orgA}/projects/${secondGroupId}`,
+        alice,
+      )
+      expect(removedSibling.status).toBe(200)
+      expect(removedSibling.json.repositoryReleased).toBe(false)
+
+      const middle = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Middle Group",
+        isGroup: true,
+        parentProjectId: groupId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(middle.status).toBe(201)
+      const middleId = (middle.json.project as Json).id as string
+
+      const inner = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Inner Group",
+        isGroup: true,
+        parentProjectId: middleId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(inner.status).toBe(201)
+      const innerId = (inner.json.project as Json).id as string
+
+      const leaf = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Deployable Leaf",
+        rootDir: "apps/nested-leaf",
+        parentProjectId: innerId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(leaf.status).toBe(201)
+      const leafId = (leaf.json.project as Json).id as string
+
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId: leafId,
+          kind: "production",
+          gitSha: "c".repeat(40),
+          hostname: "nested.example.test",
+          status: "ready",
+        })
         .execute()
+      await db
+        .insertInto("projectEnvVar")
+        .values({
+          id: v7(),
+          projectId: leafId,
+          key: "NESTED_SECRET",
+          target: "all",
+          valueCiphertext: "sealed",
+          valueWrappedDek: "wrapped",
+          valueKmsKeyId: "alias/test",
+          isSecret: true,
+        })
+        .execute()
+
+      const liveTree = await sql<{ id: string }>`
+        with recursive tree as (
+          select id from project where id = ${groupId} and deleted_at is null
+          union all
+          select child.id
+          from project child
+          inner join tree parent on child.parent_project_id = parent.id
+          where child.deleted_at is null
+        )
+        select id from tree
+      `.execute(db)
       const response = await call("DELETE", `/v1/orgs/${orgA}/projects/${groupId}`, alice)
       expect(response.status).toBe(200)
-      expect((response.json.jobs as unknown[]).length).toBe(childIds.length + 1)
+      const jobs = response.json.jobs as Json[]
+      const jobProjectIds = jobs.map((job) => job.projectId as string)
+      const expectedTreeIds = liveTree.rows.map((project) => project.id)
+      expect(new Set(jobProjectIds)).toStrictEqual(new Set(expectedTreeIds))
+      expect(jobProjectIds.indexOf(leafId)).toBeLessThan(jobProjectIds.indexOf(innerId))
+      expect(jobProjectIds.indexOf(innerId)).toBeLessThan(jobProjectIds.indexOf(middleId))
+      expect(jobProjectIds.at(-1)).toBe(groupId)
+
+      const queued = await db
+        .selectFrom("backgroundJob")
+        .select(["payload", "state"])
+        .where("kind", "=", "project.teardown")
+        .execute()
+      const queuedTreeIds = queued
+        .filter(({ payload }) => {
+          const projectId = (payload as Json).projectId
+          return typeof projectId === "string" && expectedTreeIds.includes(projectId)
+        })
+        .map(({ payload }) => (payload as Json).projectId as string)
+      expect(new Set(queuedTreeIds)).toStrictEqual(new Set(expectedTreeIds))
 
       const rows = await db
         .selectFrom("project")
         .select(["id", "deletedAt", "state"])
-        .where("id", "in", [groupId, ...childIds.map((child) => child.id)])
+        .where("id", "in", expectedTreeIds)
         .orderBy("id")
         .execute()
-      expect(rows).toHaveLength(childIds.length + 1)
+      expect(rows).toHaveLength(expectedTreeIds.length)
       expect(rows.every((row) => row.deletedAt !== null && row.state === "deleting")).toBe(true)
+
+      const handler = tearDownProject({
+        lambda: { send: () => Promise.resolve({}) },
+        valkey: { del: () => Promise.resolve(1) },
+      } as never)
+      for (const job of jobs) {
+        await handler(
+          { payload: { projectId: job.projectId, projectJobId: job.id } } as never,
+          { db, keepAlive: () => Promise.resolve(true) } as never,
+        )
+      }
+
+      const completed = await db
+        .selectFrom("project")
+        .select(["id", "state"])
+        .where("id", "in", expectedTreeIds)
+        .execute()
+      expect(completed.every((project) => project.state === "deleted")).toBe(true)
+      expect(
+        await db
+          .selectFrom("project")
+          .select("id")
+          .where("parentProjectId", "in", expectedTreeIds)
+          .where("deletedAt", "is", null)
+          .execute(),
+      ).toHaveLength(0)
+
+      const deployment = await db
+        .selectFrom("deployment")
+        .select("status")
+        .where("id", "=", deploymentId)
+        .executeTakeFirstOrThrow()
+      expect(deployment.status).toBe("torn_down")
+      expect(
+        await db.selectFrom("projectEnvVar").select("id").where("projectId", "=", leafId).execute(),
+      ).toHaveLength(0)
+
+      const repository = await db
+        .selectFrom("repository")
+        .select("deletedAt")
+        .where("id", "=", groupRepositoryId)
+        .executeTakeFirstOrThrow()
+      expect(repository.deletedAt).not.toBeNull()
     })
   })
 })
