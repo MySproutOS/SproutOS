@@ -183,15 +183,19 @@ impl SearchMeter {
 /// zero-byte sample, not a malformed response. Require the complete zero-shard summary before
 /// accepting the omission so a changed or partially filtered response still fails visibly.
 fn primary_store_bytes(body: &serde_json::Value) -> Option<u64> {
-    body.pointer("/_all/primaries/store/size_in_bytes")
-        .and_then(serde_json::Value::as_u64)
-        .or_else(|| {
-            let shards = body.get("_shards")?;
-            (shards.get("total")?.as_u64()? == 0
-                && shards.get("successful")?.as_u64()? == 0
-                && shards.get("failed")?.as_u64()? == 0)
-                .then_some(0)
-        })
+    if let Some(all) = body.get("_all") {
+        // Once `_all` is present, it is the authoritative result. Do not reinterpret a malformed
+        // or partially filtered `_all` object as the separate, valid no-indices response.
+        return all
+            .pointer("/primaries/store/size_in_bytes")
+            .and_then(serde_json::Value::as_u64);
+    }
+
+    let shards = body.get("_shards")?;
+    (shards.get("total")?.as_u64()? == 0
+        && shards.get("successful")?.as_u64()? == 0
+        && shards.get("failed")?.as_u64()? == 0)
+        .then_some(0)
 }
 
 fn query_units(path: &str, body: &Bytes) -> Option<u64> {
@@ -276,14 +280,25 @@ mod tests {
         });
         assert_eq!(primary_store_bytes(&populated), Some(4096));
 
-        for malformed in [
+        for malformed_or_partial in [
             serde_json::json!({}),
             serde_json::json!({ "_shards": { "total": 0 } }),
+            serde_json::json!({ "_shards": { "successful": 0, "failed": 0 } }),
+            serde_json::json!({ "_shards": { "total": 0, "failed": 0 } }),
+            serde_json::json!({ "_shards": { "total": 0, "successful": 0 } }),
             serde_json::json!({
                 "_shards": { "total": 1, "successful": 0, "failed": 1 }
             }),
+            serde_json::json!({
+                "_all": {},
+                "_shards": { "total": 0, "successful": 0, "failed": 0 }
+            }),
+            serde_json::json!({
+                "_all": { "primaries": { "store": { "size_in_bytes": "0" } } },
+                "_shards": { "total": 0, "successful": 0, "failed": 0 }
+            }),
         ] {
-            assert_eq!(primary_store_bytes(&malformed), None);
+            assert_eq!(primary_store_bytes(&malformed_or_partial), None);
         }
     }
 
