@@ -42,7 +42,7 @@ secret. Do not add a long-lived SproutOS token to GitHub for this workflow. The 
 the repository and workflow identity before issuing a short-lived deployment credential.
 
 The action uploads build output; it does not decide how your application builds. Use `next`,
-`hono`, `static`, or `android` as the preset and point `directory` at the finished artifact. In a
+`hono`, `web`, `static`, or `android` as the preset and point `directory` at the finished artifact. In a
 monorepo, use one workflow step per deployable target and always name `project`.
 
 Internally, the wrapper exchanges GitHub's OIDC assertion for a short-lived deployment token and

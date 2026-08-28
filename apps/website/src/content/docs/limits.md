@@ -10,7 +10,7 @@ An invocation runs for at most 15 minutes. Split longer jobs and enqueue the rem
 
 ## Payloads and builds
 
-Request and response bodies are limited to 6 MB; use object storage for larger data. Deployable application bundles are limited to 250 MB uncompressed and are rejected before upload when over the build threshold.
+Request and response bodies are limited to 6 MB; use object storage for larger data. The deploy tooling refuses application bundles over 200 MB uncompressed, ahead of Lambda's 250 MB hard limit.
 
 ## Concurrency
 

@@ -74,12 +74,12 @@ function BillingSettings() {
               />
             )}
             {usage.data !== undefined && (
-              <Table className="table-fixed">
+              <Table className="min-w-[36rem] table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Line</TableHead>
-                    <TableHead className="w-28 text-right sm:w-36">Quantity</TableHead>
-                    <TableHead className="w-20 text-right sm:w-24">Cost</TableHead>
+                    <TableHead className="w-36 text-right">Quantity</TableHead>
+                    <TableHead className="w-28 text-right">Cost</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

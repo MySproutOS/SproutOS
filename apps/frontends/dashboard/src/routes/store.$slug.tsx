@@ -11,7 +11,11 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import { useLastOrganizationSlug } from "@frontends/dashboard/data/organizations"
-import { useForkListing, useStoreListing } from "@frontends/dashboard/data/store"
+import {
+  useForkListing,
+  useStoreListing,
+  useVisitStoreUpstream,
+} from "@frontends/dashboard/data/store"
 import { Spinner } from "@ui/base/ui/spinner"
 
 export const Route = createFileRoute("/store/$slug")({
@@ -24,6 +28,7 @@ function StoreListingDetail() {
   const { data: orgSlug } = useLastOrganizationSlug()
   const navigate = useNavigate()
   const fork = useForkListing(orgSlug ?? "")
+  const upstreamVisit = useVisitStoreUpstream()
 
   /*
     Generated once per mounted page, not per click.
@@ -58,6 +63,10 @@ function StoreListingDetail() {
         },
       },
     )
+  }
+
+  function recordUpstreamVisit() {
+    upstreamVisit.mutate({ path: { slug }, body: { kind: "visit_upstream" } })
   }
 
   return (
@@ -116,7 +125,7 @@ function StoreListingDetail() {
               <CardTitle className="flex items-center gap-2 text-base">
                 <span aria-hidden="true">{data.glyph}</span>
                 {data.name}
-                <Badge variant="muted">{data.version}</Badge>
+                <Badge variant="muted">Branch: {data.branch}</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
@@ -132,6 +141,7 @@ function StoreListingDetail() {
                       href={data.repoUrl}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={recordUpstreamVisit}
                       className="inline-flex max-w-full items-center gap-1 text-primary hover:underline"
                     >
                       <span className="truncate">{data.repo}</span>
@@ -168,7 +178,12 @@ function StoreListingDetail() {
                   variant="outline"
                   size="sm"
                   render={
-                    <a href={data.homepageUrl} target="_blank" rel="noopener noreferrer">
+                    <a
+                      href={data.homepageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={recordUpstreamVisit}
+                    >
                       Visit the original app
                       <ExternalLinkIcon />
                     </a>

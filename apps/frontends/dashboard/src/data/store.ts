@@ -6,6 +6,7 @@ import {
   getV1StoreListingsOptions,
   getV1StoreListingsQueryKey,
   postV1OrgsByOrgSlugProjectsMutation,
+  postV1StoreListingsBySlugEventsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type StoreListing = {
@@ -43,7 +44,7 @@ export type StoreListingDetail = StoreListing & {
   repo: string
   repoUrl: string
   homepageUrl: string | null
-  version: string
+  branch: string
   requires: string[]
 }
 
@@ -155,7 +156,7 @@ export function useStoreListing(slug: string) {
               `store_listing` records `default_branch` and a last-synced time, which is genuinely
               what a fork would take. Showing "v1.4.2" would be a version number we made up.
             */
-            version: listing.defaultBranch,
+            branch: listing.defaultBranch,
             /*
               What the project needs, as declared by its licence and platform.
 
@@ -168,6 +169,11 @@ export function useStoreListing(slug: string) {
             ),
           } satisfies StoreListingDetail),
   }
+}
+
+/** Record an upstream visit without delaying or blocking the external navigation. */
+export function useVisitStoreUpstream() {
+  return useMutation(postV1StoreListingsBySlugEventsMutation())
 }
 
 /**

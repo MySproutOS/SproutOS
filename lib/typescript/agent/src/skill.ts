@@ -248,7 +248,7 @@ repository. Each one is reached through a connection URI injected into the proje
 | --- | --- | --- |
 | \`postgres\` | \`DATABASE_URL\` | Reached through the SproutOS proxy, never a direct cloud credential |
 | \`valkey\` | \`VALKEY_URL\` | Redis-compatible; queue clients point here |
-| \`elasticsearch\` | \`SEARCH_URL\` | Tenant-scoped; index names are rewritten for you |
+| \`elasticsearch\` | \`ELASTICSEARCH_URL\` | Tenant-scoped; index names are rewritten for you |
 | \`object_storage\` | \`S3_*\` | S3-compatible, SigV4, scoped to your own bucket |
 
 **Never commit a connection URI.** They are issued once, and anything committed is a credential in
@@ -283,9 +283,9 @@ Those assets go to a **platform-managed bucket**, keyed by project — this is n
 There is no long-running process. A background worker that sits in a loop consuming a queue has no
 home: functions are request/response and are not running between requests.
 
-Background work is expressed as **workflows** — the platform starts them from a queue and bills only
-while they run. Porting a worker means moving each job handler into a workflow step, not finding a
-way to keep a process alive.
+For queue-backed jobs, expose a function handler that processes one \`queue.drain\` batch and
+returns. Use **workflows** for durable multi-step or scheduled automation. Do not turn every queue
+consumer into a workflow, and do not try to keep a permanent consumer process alive.
 
 ## Getting it wrong safely
 

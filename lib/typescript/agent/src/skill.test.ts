@@ -44,6 +44,8 @@ describe("installSproutosSkill", () => {
     expect(body).toContain("project: reddit-clone-web")
     expect(body).toContain("sprout deploy reddit-clone-web")
     expect(body).toContain("MySproutOS/Deployment-Templates")
+    expect(body).toContain("ELASTICSEARCH_URL")
+    expect(body).toContain("queue.drain")
     expect(body).toContain("sproutos.run")
   })
 
