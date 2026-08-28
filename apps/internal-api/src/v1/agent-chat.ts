@@ -53,6 +53,7 @@ import {
   agentChatSchemaSessionCreateRequest,
   agentChatSchemaSessionListResponse,
   agentChatSchemaSessionResponse,
+  agentChatSchemaTranscriptResponse,
 } from "./agent-chat.serializer"
 
 const errorResponse = {
@@ -198,6 +199,57 @@ const app = new Hono()
       )
     },
   )
+  .get(
+    "/:orgSlug/projects/:projectId/agent/sessions/:sessionId",
+    describeRoute({
+      description: "Reads an agent chat transcript and its persisted activity events",
+      responses: {
+        200: {
+          description: "Transcript",
+          content: { "application/json": { schema: resolver(agentChatSchemaTranscriptResponse) } },
+        },
+        403: { description: "Caller lacks project:read", ...errorResponse },
+        404: { description: "No such session", ...errorResponse },
+      },
+    }),
+    requirePermission("project:read", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const { projectId, sessionId } = c.req.param()
+      const session = await fetchAgentSession(db).getInOrganization(
+        c.var.organization.id,
+        projectId,
+        sessionId,
+      )
+      if (session === undefined) return throwNotFound(c, "Session not found")
+
+      const [turns, events] = await Promise.all([
+        fetchAgentSession(db).listTurns(sessionId),
+        fetchAgentSession(db).listEvents(sessionId, null),
+      ])
+      return c.json({
+        session: {
+          id: session.id,
+          title: session.title,
+          status: session.status,
+          createdAt: session.createdAt.toISOString(),
+          updatedAt: session.updatedAt.toISOString(),
+        },
+        turns: turns.map((turn) => ({
+          id: turn.id,
+          role: turn.role,
+          inputText: turn.inputText,
+          error: turn.error,
+          seq: turn.seq,
+          createdAt: turn.createdAt.toISOString(),
+        })),
+        events: events.map((event) => ({
+          ...event,
+          payload: typeof event.payload === "object" && event.payload !== null ? event.payload : {},
+          createdAt: event.createdAt.toISOString(),
+        })),
+      })
+    },
+  )
   .post(
     "/:orgSlug/projects/:projectId/agent/sessions/:sessionId/messages",
     describeRoute({
@@ -278,6 +330,7 @@ const app = new Hono()
         role: "user",
         inputText: prompt,
       })
+      await sessions.setStatus(sessionId, "active")
 
       return streamSSE(c, async (stream) => {
         // Events accumulate and are flushed in batches. A turn emits hundreds, and a round trip
@@ -295,7 +348,9 @@ const app = new Hono()
 
         const emit = async (event: AgentEvent) => {
           pending.push({ type: event.type, payload: event, agentTurnId: turn.id })
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+          await stream
+            .writeSSE({ event: event.type, data: JSON.stringify(event) })
+            .catch(() => undefined)
           if (pending.length >= 32) await flush()
         }
 
@@ -311,7 +366,7 @@ const app = new Hono()
                 projectId,
                 sessionId,
                 messages: [...history, { role: "user", content: prompt }],
-                signal: c.req.raw.signal,
+                signal: undefined,
               },
               emit,
             )
@@ -474,7 +529,7 @@ const app = new Hono()
               maxTurns: MAX_TURNS,
               // The browser going away should stop the run, not leave it burning tokens against
               // a balance nobody is watching.
-              signal: c.req.raw.signal,
+              signal: undefined,
             },
             emit,
           )
