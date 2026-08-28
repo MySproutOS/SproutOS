@@ -152,6 +152,7 @@ export {
   type NeonMeteringOptions,
 } from "./neon-metering"
 export {
+  ANDROID_VERSION_CODE_MAX,
   APK_MIME,
   androidVersionError,
   CLAIM_TIMEOUT_MS,

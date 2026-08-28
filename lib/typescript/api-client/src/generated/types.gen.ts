@@ -6852,6 +6852,10 @@ export type PostV1ApkSigningCompleteData = {
 
 export type PostV1ApkSigningCompleteErrors = {
   /**
+   * Missing or malformed idempotency key
+   */
+  400: unknown
+  /**
    * Missing or invalid signer token
    */
   401: unknown
@@ -6881,6 +6885,10 @@ export type PostV1ApkSigningFailData = {
 }
 
 export type PostV1ApkSigningFailErrors = {
+  /**
+   * Missing or malformed idempotency key
+   */
+  400: unknown
   /**
    * Missing or invalid signer token
    */

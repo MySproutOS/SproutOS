@@ -4,6 +4,7 @@ import { v7 } from "uuid"
 
 export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000
 export const APK_MIME = "application/vnd.android.package-archive"
+export const ANDROID_VERSION_CODE_MAX = 2_100_000_000
 
 export function packageNameForProject(projectId: string): string {
   return `me.sproutos.app.p${projectId.replaceAll("-", "")}`
@@ -99,6 +100,9 @@ export async function androidVersionError(
   projectId: string,
   versionCode: number,
 ): Promise<string | undefined> {
+  if (versionCode > ANDROID_VERSION_CODE_MAX) {
+    return `Android versionCode ${versionCode} must not exceed ${ANDROID_VERSION_CODE_MAX}`
+  }
   const latest = await db
     .selectFrom("androidApp")
     .leftJoin("androidSignerJob", "androidSignerJob.androidAppId", "androidApp.id")
@@ -129,6 +133,11 @@ export async function enqueueSigning(
   },
 ): Promise<string> {
   return await db.transaction().execute(async (trx) => {
+    if (input.versionCode < 1 || input.versionCode > ANDROID_VERSION_CODE_MAX) {
+      throw new Error(
+        `Android versionCode ${input.versionCode} must be between 1 and ${ANDROID_VERSION_CODE_MAX}`,
+      )
+    }
     const app = await ensureApp(trx, input.projectId)
     if (app.keyObjectKey === null) {
       await ensureProvisionJob(trx, app.id)

@@ -2,7 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment, fetchDeployment } from "@lib/dao"
-import { androidVersionError, enqueue, enqueueSigning, PUBLISH_KINDS } from "@lib/jobs"
+import {
+  ANDROID_VERSION_CODE_MAX,
+  androidVersionError,
+  enqueue,
+  enqueueSigning,
+  PUBLISH_KINDS,
+} from "@lib/jobs"
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { environmentFor } from "@lib/jobs"
 import {
@@ -159,7 +165,7 @@ const releaseRequest = Type.Object({
   migration_handler: Type.Optional(Type.String({ minLength: 1 })),
   /** The commit subject, so a deployment list reads like a history rather than a list of shas. */
   message: Type.Optional(Type.String({ maxLength: 500 })),
-  version_code: Type.Optional(Type.Integer({ minimum: 1 })),
+  version_code: Type.Optional(Type.Integer({ minimum: 1, maximum: ANDROID_VERSION_CODE_MAX })),
 })
 
 export function androidReleaseError(
@@ -172,6 +178,9 @@ export function androidReleaseError(
       : "`version_code` is only valid for Android."
   }
   if (input.version_code === undefined) return "The `android` preset requires `version_code`."
+  if (input.version_code > ANDROID_VERSION_CODE_MAX) {
+    return `Android versionCode must not exceed ${ANDROID_VERSION_CODE_MAX}.`
+  }
   if (input.key !== `raw/${projectId}/${input.digest}.apk`) {
     return "The Android artifact must be the raw APK uploaded for this project and digest."
   }

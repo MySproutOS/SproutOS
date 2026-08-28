@@ -102,6 +102,17 @@ describe("Android release identity", () => {
       }),
     ).toMatch(/only valid for Android/)
   })
+
+  it("refuses a version code above Android's supported maximum", () => {
+    expect(
+      androidReleaseError(PROJECT, {
+        preset: "android",
+        key: `raw/${PROJECT}/${digest}.apk`,
+        digest,
+        version_code: 2_100_000_001,
+      }),
+    ).toMatch(/2100000000/)
+  })
 })
 
 describe("static release identity", () => {

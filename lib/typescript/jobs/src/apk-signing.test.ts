@@ -148,6 +148,18 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     expect(first?.id).not.toBe(jobId)
   })
 
+  it("refuses a version code above Android's supported maximum before inserting", async () => {
+    const seeded = await seed()
+    await expect(
+      enqueueSigning(db, {
+        ...seeded,
+        unsignedKey: `raw/${seeded.projectId}/${"a".repeat(64)}.apk`,
+        unsignedDigest: "a".repeat(64),
+        versionCode: 2_100_000_001,
+      }),
+    ).rejects.toThrow(/between 1 and 2100000000/)
+  })
+
   it("makes a deployment terminal only after verified signing metadata matches", async () => {
     const { deploymentId, jobId } = await queue(7)
     await provision()
