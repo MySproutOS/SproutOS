@@ -43,7 +43,7 @@ export const servicesSchemaCreateRequest = Type.Object({
   projectId: Type.Optional(Nullable(UUID7String)),
 })
 
-/** The one response that carries a credential, returned once at creation and on explicit reveal. */
+/** The one response that carries a credential, returned once at creation or rotation. */
 export const servicesSchemaConnectionResponse = Type.Object({
   id: UUID7String,
   connectionUri: Type.String(),

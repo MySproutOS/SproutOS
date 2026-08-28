@@ -52,19 +52,19 @@ export const oauthGrantsSchemaRevokeRequest = Type.Object({
 
 export const oauthGrantsSchemaRevokeResponse = Type.Object({
   /**
-   * Kept databases, each with a **new** connection URI, shown exactly once.
+   * Kept databases. A newly issued user URI is shown exactly once.
    *
-   * Keeping cannot mean leaving the credential alone: the application minted it, so a database the
-   * user keeps would still be reachable by the application they just cut off. So the credential is
-   * rotated to one the user owns, which is the same operation as the rotate button on the Databases
-   * page and has the same consequence — the old URI stops working immediately.
+   * An existing user credential is never rotated merely because an OAuth grant is revoked. The URI
+   * is present only when the application created the service before the user had a credential.
    */
   kept: Type.Array(
     Type.Object({
       id: UUID7String,
       name: Type.String(),
       kind: Type.String(),
-      connectionUri: Type.String({ description: "Shown once. It cannot be retrieved again." }),
+      connectionUri: Type.Optional(
+        Type.String({ description: "Present only when a user credential had to be issued." }),
+      ),
       keyPrefix: Type.Optional(Type.String()),
     }),
   ),

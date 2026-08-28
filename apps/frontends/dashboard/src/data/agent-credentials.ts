@@ -3,6 +3,7 @@ import {
   deleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation,
   getV1OrgsByOrgSlugAgentCredentialsOptions,
   getV1OrgsByOrgSlugAgentCredentialsQueryKey,
+  patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation,
   postV1OrgsByOrgSlugAgentCredentialsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
@@ -87,6 +88,18 @@ export function useRevokeAgentCredential(orgSlug: string) {
   const queryClient = useQueryClient()
   return useMutation({
     ...deleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: getV1OrgsByOrgSlugAgentCredentialsQueryKey({ path: { orgSlug } }),
+      })
+    },
+  })
+}
+
+export function useRenameAgentCredential(orgSlug: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    ...patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation(),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: getV1OrgsByOrgSlugAgentCredentialsQueryKey({ path: { orgSlug } }),

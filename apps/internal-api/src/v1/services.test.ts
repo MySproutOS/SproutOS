@@ -2,9 +2,14 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { describe, expect, it } from "vitest"
 import { SERVICE_KINDS } from "./services.serializer"
-import { connectionEnvironmentEntries, connectionResponse } from "./services"
+import { connectionEnvironmentEntries, connectionResponse, hasProvisioningCredit } from "./services"
 
 describe("service connection contracts", () => {
+  it("requires a positive spendable balance before provisioning", () => {
+    expect(hasProvisioningCredit(-1n)).toBe(false)
+    expect(hasProvisioningCredit(0n)).toBe(false)
+    expect(hasProvisioningCredit(1n)).toBe(true)
+  })
   it("adds BullMQ's prefix only for Valkey", () => {
     expect(
       connectionEnvironmentEntries({

@@ -24,12 +24,15 @@ import { ErrorCode } from "../utils/errors.enum"
 import { throwBadRequest, throwNotFound } from "../utils/http-exception"
 import { auditContext } from "../utils/request-context"
 import {
+  AGENT_CREDENTIAL_KINDS,
   agentSchemaProxyRefreshRequest,
   agentSchemaProxyTokenRequest,
   agentSchemaProxyTokenResponse,
   agentSchemaConfig,
   agentSchemaConfigUpdateRequest,
+  agentSchemaCredential,
   agentSchemaCredentialCreateRequest,
+  agentSchemaCredentialUpdateRequest,
   agentSchemaCredentialIdParam,
   agentSchemaCredentialListResponse,
 } from "./agent.serializer"
@@ -188,6 +191,68 @@ const app = new Hono()
       } catch (error) {
         // agent_credential_label_live_key: one live label per organization, so a list stays
         // readable and "the OpenAI one" means something.
+        if (String(error).includes("agent_credential_label_live_key")) {
+          return throwBadRequest(
+            c,
+            "A credential with that label already exists",
+            ErrorCode.ResourceAlreadyExists,
+          )
+        }
+        throw error
+      }
+    },
+  )
+  .patch(
+    "/:orgSlug/agent/credentials/:credentialId",
+    describeRoute({
+      description: "Changes a model credential's display label without replacing its secret",
+      responses: {
+        200: {
+          description: "Updated credential metadata",
+          content: { "application/json": { schema: resolver(agentSchemaCredential) } },
+        },
+        400: { description: "Label already used", ...errorResponse },
+        403: { description: "Caller may not write credentials", ...errorResponse },
+        404: { description: "No such live credential", ...errorResponse },
+      },
+    }),
+    requirePermission("credential:write"),
+    validator("param", agentSchemaCredentialIdParam),
+    validator("json", agentSchemaCredentialUpdateRequest),
+    async (c) => {
+      const { credentialId } = c.req.valid("param")
+      const label = c.req.valid("json").label.trim()
+      if (label === "") return throwBadRequest(c, "label is empty")
+
+      try {
+        const updated = await crudAgentCredential(db).updateLabel(
+          c.var.organization.id,
+          credentialId,
+          label,
+        )
+        if (updated === undefined) return throwNotFound(c, "Credential not found")
+
+        await crudAuditLog(db).record({
+          organizationId: c.var.organization.id,
+          actorUserId: c.var.user.id,
+          action: "credential:write",
+          resourceSrn: srnFor("agent", c.var.organization.id, "credential", credentialId),
+          after: { label },
+          ...auditContext(c),
+        })
+
+        return c.json({
+          id: updated.id,
+          kind: updated.kind as (typeof AGENT_CREDENTIAL_KINDS)[number],
+          label: updated.label,
+          lastFour: updated.lastFour,
+          baseUrl: updated.baseUrl,
+          expiresAt: updated.expiresAt?.toISOString() ?? null,
+          lastVerifiedAt: updated.lastVerifiedAt?.toISOString() ?? null,
+          revokedAt: updated.revokedAt?.toISOString() ?? null,
+          createdAt: updated.createdAt.toISOString(),
+        })
+      } catch (error) {
         if (String(error).includes("agent_credential_label_live_key")) {
           return throwBadRequest(
             c,

@@ -270,7 +270,7 @@ describe.skipIf(!reachable)("valkey driver", () => {
       invariant this test was written for is exactly as strict as it was; what changed is that a
       sandbox's branch-scoped credential can also exist. See `sandbox_dev_branch`.
     */
-    ).rejects.toThrow(/service_credential_live_username_purpose_branch_key/)
+    ).rejects.toThrow(/service_credential_live_principal_key/)
   })
 
   /*

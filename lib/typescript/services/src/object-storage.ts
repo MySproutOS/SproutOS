@@ -20,6 +20,7 @@ import {
 import {
   ServiceNotConfiguredError,
   type ConnectionDetails,
+  type CredentialOwner,
   type ProvisionInput,
   type ProvisionResult,
   type ServiceDriver,
@@ -336,19 +337,26 @@ export function objectStorageDriver(
     return Math.max(0, ...issued.map((row) => versionOf(row.username))) + 1
   }
 
-  async function issue(backendServiceId: string): Promise<BucketCredential> {
+  async function issue(
+    backendServiceId: string,
+    owner?: CredentialOwner,
+  ): Promise<BucketCredential> {
     const credential = await tenantCredential(
       config.rootKey,
       backendServiceId,
       await nextVersion(backendServiceId),
     )
 
-    await db
+    let revoke = db
       .updateTable("serviceCredential")
       .set({ revokedAt: new Date() })
       .where("backendServiceId", "=", backendServiceId)
       .where("revokedAt", "is", null)
-      .execute()
+    revoke =
+      owner?.oauthGrantId == null
+        ? revoke.where("oauthGrantId", "is", null)
+        : revoke.where("oauthGrantId", "=", owner.oauthGrantId)
+    await revoke.execute()
 
     await db
       .insertInto("serviceCredential")
@@ -362,6 +370,7 @@ export function objectStorageDriver(
         secretHash: await hashGeneratedSecret(credential.secretAccessKey),
         lastFour: lastFour(credential.secretAccessKey),
         purpose: "tenant",
+        oauthGrantId: owner?.oauthGrantId ?? null,
       })
       .execute()
 
@@ -425,7 +434,7 @@ export function objectStorageDriver(
       )
     }
 
-    const credential = await issue(input.backendServiceId)
+    const credential = await issue(input.backendServiceId, input.credentialOwner)
 
     await db
       .updateTable("backendService")
@@ -466,8 +475,8 @@ export function objectStorageDriver(
     })
   }
 
-  async function rotateCredentials(backendServiceId: string) {
-    return { connectionUri: uriFor(backendServiceId, await issue(backendServiceId)) }
+  async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
+    return { connectionUri: uriFor(backendServiceId, await issue(backendServiceId, owner)) }
   }
 
   /**

@@ -21,7 +21,7 @@ import {
 } from "@ui/base/ui/empty-state"
 import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
-import { PlusIcon, TrashIcon } from "lucide-react"
+import { PencilIcon, PlusIcon, TrashIcon } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
@@ -30,6 +30,7 @@ import {
   type CredentialKind,
   useAgentCredentials,
   useCreateAgentCredential,
+  useRenameAgentCredential,
   useRevokeAgentCredential,
 } from "@frontends/dashboard/data/agent-credentials"
 
@@ -110,18 +111,25 @@ function AgentSettings() {
                 </TableCell>
                 <TableCell>
                   {credential.revokedAt === null && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Revoke ${credential.label}`}
-                      onClick={() => {
-                        revoke.mutate({
-                          path: { orgSlug, credentialId: credential.id },
-                        })
-                      }}
-                    >
-                      <TrashIcon />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <RenameCredentialDialog
+                        orgSlug={orgSlug}
+                        credentialId={credential.id}
+                        currentLabel={credential.label}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Revoke ${credential.label}`}
+                        onClick={() => {
+                          revoke.mutate({
+                            path: { orgSlug, credentialId: credential.id },
+                          })
+                        }}
+                      >
+                        <TrashIcon />
+                      </Button>
+                    </div>
                   )}
                 </TableCell>
               </TableRow>
@@ -130,6 +138,74 @@ function AgentSettings() {
         </Table>
       )}
     </PageBody>
+  )
+}
+
+function RenameCredentialDialog({
+  orgSlug,
+  credentialId,
+  currentLabel,
+}: {
+  orgSlug: string
+  credentialId: string
+  currentLabel: string
+}) {
+  const rename = useRenameAgentCredential(orgSlug)
+  const [open, setOpen] = useState(false)
+  const [label, setLabel] = useState(currentLabel)
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (next) setLabel(currentLabel)
+      }}
+    >
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm" aria-label={`Edit ${currentLabel}`}>
+            <PencilIcon />
+          </Button>
+        }
+      />
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit credential label</DialogTitle>
+          <DialogDescription>
+            This changes only the display label. The stored secret is not replaced.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`rename-${credentialId}`}>Label</Label>
+          <Input
+            id={`rename-${credentialId}`}
+            value={label}
+            onChange={(event) => {
+              setLabel(event.target.value)
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <Button
+            disabled={rename.isPending || label.trim() === "" || label.trim() === currentLabel}
+            onClick={() => {
+              rename.mutate(
+                { path: { orgSlug, credentialId }, body: { label: label.trim() } },
+                {
+                  onSuccess: () => {
+                    setOpen(false)
+                  },
+                },
+              )
+            }}
+          >
+            {rename.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

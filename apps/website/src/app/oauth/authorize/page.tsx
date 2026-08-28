@@ -29,6 +29,10 @@ function one(value: string | string[] | undefined): string | null {
   return value ?? null
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 /** Rendered when the request is too broken to answer, and too broken to answer *to*. */
 function Refusal({ title, detail }: { title: string; detail: string }) {
   return (
@@ -56,12 +60,22 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
   const state = one(params.state)
   const codeChallenge = one(params.code_challenge)
   const codeChallengeMethod = one(params.code_challenge_method) ?? "S256"
+  const intent = one(params.intent)
 
   if (clientId === null || redirectUri === null) {
     return (
       <Refusal
         title="Something is missing from this request"
         detail="An authorization request must name the application and where to send you back to. This one did not."
+      />
+    )
+  }
+
+  if (!isUuid(clientId)) {
+    return (
+      <Refusal
+        title="That application cannot ask for access"
+        detail="It is not registered here, or it has been suspended. If you were sent from somewhere claiming to be a SproutOS application, treat that link with suspicion."
       />
     )
   }
@@ -208,6 +222,12 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
       }}
       organizations={memberships}
       scopes={scopes}
+      optionalScopes={
+        intent === "create_personal_database" && scopes.includes("database:create")
+          ? ["database:create"]
+          : []
+      }
+      databaseIntent={intent === "create_personal_database"}
       redirectUri={redirectUri}
       state={state}
       codeChallenge={codeChallenge}

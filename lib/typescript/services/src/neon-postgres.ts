@@ -6,7 +6,13 @@ import { neonApi, neonApiConfigFromEnv, type NeonConfig } from "./neon-api"
 import { postgresUri } from "./naming"
 import { rolePasswordContext } from "./postgres"
 import { generateSecret, hashGeneratedSecret, lastFour, tenantUsername } from "./tenant-auth"
-import type { ConnectionDetails, ProvisionInput, ProvisionResult, ServiceDriver } from "./types"
+import type {
+  ConnectionDetails,
+  CredentialOwner,
+  ProvisionInput,
+  ProvisionResult,
+  ServiceDriver,
+} from "./types"
 import { SecretNotRecoverableError } from "./valkey"
 
 /**
@@ -189,6 +195,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
           username: details.username,
           secretHash: await hashGeneratedSecret(secret),
           lastFour: lastFour(secret),
+          oauthGrantId: input.credentialOwner?.oauthGrantId ?? null,
         })
         .execute()
     })
@@ -214,7 +221,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     return Promise.reject(new SecretNotRecoverableError(backendServiceId))
   }
 
-  async function rotateCredentials(backendServiceId: string) {
+  async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
     const service = await db
       .selectFrom("backendService")
       .select(["organizationId"])
@@ -228,12 +235,16 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
     // mean a Neon API call whose failure leaves the proxy unable to reach a database the customer
     // can still authenticate to.
     await db.transaction().execute(async (tx) => {
-      await tx
+      let revoke = tx
         .updateTable("serviceCredential")
         .set({ revokedAt: new Date() })
         .where("backendServiceId", "=", backendServiceId)
         .where("revokedAt", "is", null)
-        .execute()
+      revoke =
+        owner?.oauthGrantId == null
+          ? revoke.where("oauthGrantId", "is", null)
+          : revoke.where("oauthGrantId", "=", owner.oauthGrantId)
+      await revoke.execute()
 
       await tx
         .insertInto("serviceCredential")
@@ -243,6 +254,7 @@ export function neonPostgresDriver(db: Kysely<DB>, config: NeonPostgresConfig): 
           username: details.username,
           secretHash: await hashGeneratedSecret(secret),
           lastFour: lastFour(secret),
+          oauthGrantId: owner?.oauthGrantId ?? null,
         })
         .execute()
     })

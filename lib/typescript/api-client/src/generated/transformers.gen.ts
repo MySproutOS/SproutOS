@@ -41,6 +41,7 @@ import type {
   GetV1UserMeExportResponse,
   GetV1UserMeImpersonationResponse,
   GetV1UserMeProfileResponse,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
@@ -354,6 +355,22 @@ export const postV1OrgsByOrgSlugAgentCredentialsResponseTransformer = async (
     item.createdAt = new Date(item.createdAt)
     return item
   })
+  return data
+}
+
+export const patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponseTransformer = async (
+  data: any,
+): Promise<PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse> => {
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
+  if (data.lastVerifiedAt) {
+    data.lastVerifiedAt = new Date(data.lastVerifiedAt)
+  }
+  if (data.revokedAt) {
+    data.revokedAt = new Date(data.revokedAt)
+  }
+  data.createdAt = new Date(data.createdAt)
   return data
 }
 

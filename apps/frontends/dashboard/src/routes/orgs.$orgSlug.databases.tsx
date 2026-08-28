@@ -3,7 +3,6 @@ import {
   CheckIcon,
   CopyIcon,
   DatabaseIcon,
-  EyeIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -31,6 +30,7 @@ import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/base/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/base/ui/tooltip"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
@@ -43,7 +43,6 @@ import {
   useBackendServices,
   useCreateBackendService,
   useDeleteBackendService,
-  useRevealConnection,
   useRotateConnection,
 } from "@frontends/dashboard/data/databases"
 import { useProjects } from "@frontends/dashboard/data/projects"
@@ -73,7 +72,7 @@ function DatabasesList() {
       <PageBody>
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
           A database can stand on its own or belong to a project. Connection details are shown here;
-          the password is not — revealing it is a separate action and is recorded in the audit log.
+          passwords are shown only once, when a database is created or its credential is rotated.
         </p>
 
         {isPending && <ListSkeleton rows={3} />}
@@ -146,27 +145,10 @@ function DatabasesList() {
 }
 
 function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
-  const { reveal, isPending: revealing } = useRevealConnection(orgSlug)
   const [uri, setUri] = useState<string | null>(null)
 
   return (
     <span className="flex items-center justify-end gap-1">
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={revealing || service.status !== "active"}
-        onClick={() => {
-          reveal(service.id)
-            .then(setUri)
-            .catch(() => {
-              setUri(null)
-            })
-        }}
-      >
-        <EyeIcon />
-        <span className="sr-only">Reveal the connection URI for {service.name}</span>
-      </Button>
-
       <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
       <DeleteButton orgSlug={orgSlug} service={service} />
 
@@ -196,19 +178,28 @@ function RotateButton({
 
   return (
     <Dialog>
-      <DialogTrigger
-        render={
-          <Button variant="ghost" size="sm" disabled={service.status !== "active"}>
-            <RefreshCwIcon />
-            <span className="sr-only">Rotate the password for {service.name}</span>
-          </Button>
-        }
-      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DialogTrigger
+              render={
+                <Button variant="ghost" size="sm" disabled={service.status !== "active"}>
+                  <RefreshCwIcon />
+                  <span className="sr-only">Rotate the credential for {service.name}</span>
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipContent>
+          Issue a new connection URI for you. Your current URI stops working immediately.
+        </TooltipContent>
+      </Tooltip>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Rotate the password for {service.name}?</DialogTitle>
           <DialogDescription>
-            The current connection URI stops working immediately. Anything still using it — a
+            Your current connection URI stops working immediately. Anything still using it — a
             deployed app, a local script — will fail until you give it the new one.
           </DialogDescription>
         </DialogHeader>
@@ -318,8 +309,7 @@ function ConnectionDialog({
         <DialogHeader>
           <DialogTitle>Connection URI for {name}</DialogTitle>
           <DialogDescription>
-            This contains the password. It is not shown in the list, and reading it again is
-            recorded in the audit log.
+            This contains the password and will not be shown again. Copy it before closing.
           </DialogDescription>
         </DialogHeader>
         <code className="block max-h-32 overflow-y-auto rounded-lg border border-border bg-soil-800 p-3 font-mono text-[12px] break-all">
@@ -383,8 +373,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
         setCreatedName(name.trim())
         setName("")
         setOpen(false)
-        // Shown once, immediately. Nothing stores it, and reading it again costs an audited
-        // request — so losing this dialog means asking for it back on the record.
+        // Shown once, immediately. Nothing stores it, so losing this dialog means rotating it.
         setUri(connectionUri)
       })
       .catch(() => {

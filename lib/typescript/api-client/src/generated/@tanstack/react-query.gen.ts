@@ -94,6 +94,7 @@ import {
   getV1UserMeProfile,
   type Options,
   patchV1OrgsByOrgSlug,
+  patchV1OrgsByOrgSlugAgentCredentialsByCredentialId,
   patchV1OrgsByOrgSlugOauthClientsByClientId,
   patchV1OrgsByOrgSlugProjectsByProjectId,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
@@ -145,7 +146,6 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
   postV1OrgsByOrgSlugRoles,
   postV1OrgsByOrgSlugServices,
-  postV1OrgsByOrgSlugServicesByServiceIdConnection,
   postV1OrgsByOrgSlugServicesByServiceIdRotate,
   postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
@@ -391,6 +391,9 @@ import type {
   GetV1UserMePreferencesResponse,
   GetV1UserMeProfileData,
   GetV1UserMeProfileResponse,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
   PatchV1OrgsByOrgSlugData,
   PatchV1OrgsByOrgSlugError,
   PatchV1OrgsByOrgSlugOauthClientsByClientIdData,
@@ -523,9 +526,6 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesError,
   PostV1OrgsByOrgSlugRolesResponse,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionData,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
@@ -2445,6 +2445,33 @@ export const deleteV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation = (
   return mutationOptions
 }
 
+/**
+ * Changes a model credential's display label without replacing its secret
+ */
+export const patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdMutation = (
+  options?: Partial<Options<PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>>,
+): UseMutationOptions<
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
+  PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+  Options<PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
+    PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
+    Options<PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchV1OrgsByOrgSlugAgentCredentialsByCredentialId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugAgentConfigQueryKey = (
   options: Options<GetV1OrgsByOrgSlugAgentConfigData>,
 ) => createQueryKey("getV1OrgsByOrgSlugAgentConfig", options)
@@ -2654,33 +2681,6 @@ export const postV1OrgsByOrgSlugServicesMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1OrgsByOrgSlugServices({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
-/**
- * Reveals the connection URI. Audited, because a credential leaves the system
- */
-export const postV1OrgsByOrgSlugServicesByServiceIdConnectionMutation = (
-  options?: Partial<Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>>,
-): UseMutationOptions<
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
-  PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
-  Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
-    PostV1OrgsByOrgSlugServicesByServiceIdConnectionError,
-    Options<PostV1OrgsByOrgSlugServicesByServiceIdConnectionData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdConnection({
         ...options,
         ...fnOptions,
         throwOnError: true,

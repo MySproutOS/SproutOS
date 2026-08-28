@@ -10,6 +10,7 @@ import {
 } from "./tenant-auth"
 import {
   type ConnectionDetails,
+  type CredentialOwner,
   type ProvisionInput,
   type ProvisionResult,
   ServiceNotProvisionedError,
@@ -203,6 +204,7 @@ export function valkeyDriver(
     backendServiceId: string,
     username: string,
     purpose: "tenant" | "worker" = "tenant",
+    owner?: CredentialOwner,
   ): Promise<string> {
     const secret = generateSecret()
 
@@ -215,6 +217,7 @@ export function valkeyDriver(
         purpose,
         secretHash: await hashGeneratedSecret(secret),
         lastFour: lastFour(secret),
+        oauthGrantId: owner?.oauthGrantId ?? null,
       })
       .execute()
 
@@ -321,7 +324,7 @@ export function valkeyDriver(
       kind: "queue",
       resourceId: input.backendServiceId,
     })
-    const secret = await issue(input.backendServiceId, username)
+    const secret = await issue(input.backendServiceId, username, "tenant", input.credentialOwner)
 
     return {
       ...detailsFor(input.backendServiceId, username),
@@ -346,7 +349,7 @@ export function valkeyDriver(
     return detailsFor(backendServiceId, (await locate(backendServiceId)).username)
   }
 
-  async function rotateCredentials(backendServiceId: string) {
+  async function rotateCredentials(backendServiceId: string, owner?: CredentialOwner) {
     const existing = await latestTenantCredential(backendServiceId)
 
     /*
@@ -369,13 +372,17 @@ export function valkeyDriver(
     const outcome = await db.transaction().execute(async (trx) => {
       await lockValkeyAclUser(trx, existing.username)
       const cutoff = await valkeyCredentialGeneration(trx, existing.username)
-      await trx
+      let revoke = trx
         .updateTable("serviceCredential")
         .set({ revokedAt: new Date() })
         .where("backendServiceId", "=", backendServiceId)
         .where("purpose", "=", "tenant")
         .where("revokedAt", "is", null)
-        .execute()
+      revoke =
+        owner?.oauthGrantId == null
+          ? revoke.where("oauthGrantId", "is", null)
+          : revoke.where("oauthGrantId", "=", owner.oauthGrantId)
+      await revoke.execute()
       const revocation = await enqueueValkeyAclRevocation(trx, {
         generationId: cutoff,
         organizationId: existing.organizationId,
@@ -396,6 +403,7 @@ export function valkeyDriver(
           username: existing.username,
           secretHash: freshHash,
           lastFour: lastFour(fresh),
+          oauthGrantId: owner?.oauthGrantId ?? null,
         })
         .execute()
       await finishRevocation(trx, revocation)

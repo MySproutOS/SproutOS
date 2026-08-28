@@ -57,6 +57,22 @@ export function crudAgentCredential(db: Kysely<DB>) {
     return Number(result.numUpdatedRows) > 0
   }
 
+  async function updateLabel(
+    organizationId: string,
+    id: string,
+    label: string,
+  ): Promise<Selectable<DB["agentCredential"]> | undefined> {
+    return await db
+      .updateTable("agentCredential")
+      .set({ label, updatedAt: new Date() })
+      .where("id", "=", id)
+      .where("organizationId", "=", organizationId)
+      .where("deletedAt", "is", null)
+      .where("revokedAt", "is", null)
+      .returningAll()
+      .executeTakeFirst()
+  }
+
   async function softDeleteCredential(organizationId: string, id: string): Promise<boolean> {
     const result = await db
       .updateTable("agentCredential")
@@ -77,5 +93,5 @@ export function crudAgentCredential(db: Kysely<DB>) {
       .execute()
   }
 
-  return { createCredential, markVerified, revokeCredential, softDeleteCredential }
+  return { createCredential, markVerified, revokeCredential, softDeleteCredential, updateLabel }
 }

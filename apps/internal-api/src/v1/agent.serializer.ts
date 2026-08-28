@@ -48,6 +48,10 @@ export const agentSchemaCredentialIdParam = Type.Object({
   credentialId: UUID7String,
 })
 
+export const agentSchemaCredentialUpdateRequest = Type.Object({
+  label: Type.String({ minLength: 1, maxLength: 80 }),
+})
+
 export const agentSchemaConfig = Type.Object({
   agentCredentialId: Nullable(UUID7String),
   useSproutosCredits: Type.Boolean(),

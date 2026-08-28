@@ -1,8 +1,9 @@
 "use client"
 
 import { SproutMark } from "@website/components/icons"
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import { useEffect, useState } from "react"
+import Link from "next/link"
 
 const LINKS = [
   { href: "#app-store", label: "App store" },
@@ -60,7 +61,10 @@ export function Nav({ homeHref = "" }: { homeHref?: string }) {
           ))}
         </div>
 
-        <LoginWithGitHubButton size="sm" withArrow={false} />
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" render={<Link href="/login">Log In</Link>} />
+          <Button size="sm" render={<Link href="/login">Sign up for SproutOS</Link>} />
+        </div>
       </nav>
     </header>
   )

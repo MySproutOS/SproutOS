@@ -79,6 +79,34 @@ describe.skipIf(!reachable || !kms)("agent credentials", () => {
     expect(first.label).toBe("Primary")
   })
 
+  it("edits only the label and leaves the secret usable", async ({ skip }) => {
+    if (!reachable) skip()
+    const user = await createTestUser("agentrename")
+    const slug = await orgFor(user, "Agent Rename")
+    const created = await call("POST", `/v1/orgs/${slug}/agent/credentials`, user, {
+      kind: "anthropic_api_key",
+      label: "Before",
+      secret: SECRET,
+    })
+    const credentialId = (created.json.data as { id: string }[])[0].id
+
+    const renamed = await call(
+      "PATCH",
+      `/v1/orgs/${slug}/agent/credentials/${credentialId}`,
+      user,
+      { label: "After" },
+    )
+    expect(renamed.status).toBe(200)
+    expect(renamed.json.label).toBe("After")
+    expect(renamed.text).not.toContain(SECRET)
+
+    await call("PUT", `/v1/orgs/${slug}/agent/config`, user, { agentCredentialId: credentialId })
+    const resolved = await resolveAgentCredential(db, await organizationIdFor(slug))
+    expect(resolved.billing).toBe("byo")
+    if (resolved.billing !== "byo") throw new Error("unreachable")
+    expect(resolved.secret).toBe(SECRET)
+  })
+
   it("round-trips the secret through KMS for the run that needs it", async ({ skip }) => {
     if (!reachable) skip()
     const user = await createTestUser("agentrunner")
