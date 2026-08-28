@@ -2660,6 +2660,7 @@ dependencies = [
  "hmac 0.12.1",
  "hyper 1.11.0",
  "hyper-util",
+ "idna",
  "pg-proxy",
  "rcgen",
  "redis",

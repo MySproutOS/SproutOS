@@ -220,19 +220,20 @@ empty Secrets Manager container. Do not put an ACME private key in a variable or
    store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
    from refreshing either router Auto Scaling group.
 3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
-   contains the new release. Apply a reviewed plan. Temporary NLB listeners expose HTTP on 10080
-   and HTTPS on 10443 without moving production 80/443 or generated DNS.
+   contains the new release. Apply a reviewed plan. This creates a separate dual-stack, EIP-backed
+   edge NLB; temporary listeners expose HTTP on 10080 and HTTPS on 10443 without replacing the live
+   Postgres/Valkey NLB or moving production 80/443 and generated DNS.
 4. Wait for the platform certificate row to become active and for the configured
    `router_certificate_min_acks` quorum. Smoke the generated wildcard, tenant apex, exact egress
    hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
-   Postgres and Valkey listeners through the preview estate.
+   Postgres and Valkey listeners through the unchanged data-plane NLB. Exercise preview over both
+   IPv4 and IPv6 and confirm Lambda receives the viewer address from Proxy Protocol v2.
 5. Change `acme_directory_url` from Let's Encrypt staging to production and repeat issuance and the
    preview checks. Never reuse a staging certificate for the public cutover.
-6. Save and review a plan with `tenant_edge_enabled = true`. This assigns stable NLB Elastic IPs,
-   changes public 443 from AWS TLS termination to TCP passthrough, creates public port 80, and moves
-   the generated tenant apex/wildcard records to the NLB. On an existing NLB the subnet-to-EIP
-   change can require replacement, so inspect the saved plan and schedule the brief tenant-protocol
-   interruption explicitly.
+6. Save and review a plan with `tenant_edge_enabled = true`. The preview NLB and its EIPs must remain
+   in place: the plan adds public TCP 80/443 and moves generated A/AAAA plus ingress/egress DNS to
+   it. Refuse a plan which replaces `aws_lb.tenant`; that existing NLB continues serving Postgres,
+   Valkey, and the legacy egress rollback listener throughout the web-edge cutover.
 7. Apply that exact plan, update repository variables from `tofu output` (including
    `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
    run the production browser and protocol smoke suite before enabling custom-domain creation.

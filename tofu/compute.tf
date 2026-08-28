@@ -1213,7 +1213,7 @@ resource "aws_launch_template" "service" {
     acme_account_key_secret_id      = aws_secretsmanager_secret.acme_account_key.id
     acme_directory_url              = var.acme_directory_url
     tenant_edge_runtime_enabled     = var.tenant_edge_enabled || var.tenant_edge_preview_enabled
-    tenant_ingress_ipv4_addresses   = join(",", aws_eip.tenant_nlb[*].public_ip)
+    tenant_ingress_ipv4_addresses   = join(",", aws_eip.tenant_edge[*].public_ip)
     custom_domains_enabled          = var.tenant_edge_enabled
   }))
 
@@ -1504,7 +1504,7 @@ resource "aws_autoscaling_policy" "router" {
   satisfy either the remaining ALB service traffic or the tenant edge.
 */
 resource "aws_autoscaling_policy" "router_tenant_edge" {
-  for_each = local.service_colours
+  for_each = local.tenant_edge_provisioned ? local.service_colours : toset([])
 
   name                   = "${var.name_prefix}-router-${each.key}-tenant-edge-flows"
   autoscaling_group_name = aws_autoscaling_group.router[each.key].name
@@ -1519,7 +1519,7 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
       metric_dimension {
         name  = "LoadBalancer"
-        value = aws_lb.tenant.arn_suffix
+        value = aws_lb.tenant_edge[0].arn_suffix
       }
       metric_dimension {
         name  = "TargetGroup"

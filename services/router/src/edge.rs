@@ -18,6 +18,7 @@ use axum::Router as AxumRouter;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::serve::Listener as _;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnectionBuilder;
@@ -82,7 +83,8 @@ pub fn target_for_sni(
     configured_names: &HashSet<String>,
     egress_sni: Option<&str>,
 ) -> Result<Target, DispatchError> {
-    let sni = sni.ok_or(DispatchError::MissingSni)?.to_ascii_lowercase();
+    let sni = normalize_dns_name(sni.ok_or(DispatchError::MissingSni)?)
+        .ok_or(DispatchError::UnknownSni)?;
     if !configured_names
         .iter()
         .any(|pattern| sni_matches(pattern, &sni))
@@ -99,9 +101,13 @@ pub fn target_for_sni(
 }
 
 fn sni_matches(pattern: &str, sni: &str) -> bool {
-    let pattern = pattern.trim_end_matches('.');
-    let sni = sni.trim_end_matches('.');
-    if pattern.eq_ignore_ascii_case(sni) {
+    let Some(pattern) = normalize_dns_pattern(pattern) else {
+        return false;
+    };
+    let Some(sni) = normalize_dns_name(sni) else {
+        return false;
+    };
+    if pattern == sni {
         return true;
     }
     let Some(suffix) = pattern.strip_prefix("*.") else {
@@ -132,12 +138,13 @@ impl ResolvesServerCert for ConfiguredResolver {
 
 impl ConfiguredResolver {
     pub(crate) fn resolve_name(&self, sni: &str) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        if let Some(certificate) = self.custom.load().get(&sni.to_ascii_lowercase()) {
+        let sni = normalize_dns_name(sni)?;
+        if let Some(certificate) = self.custom.load().get(&sni) {
             return Some(Arc::clone(certificate));
         }
         self.platform_names
             .iter()
-            .any(|pattern| sni_matches(pattern, sni))
+            .any(|pattern| sni_matches(pattern, &sni))
             .then(|| Arc::clone(&self.platform_certificate))
     }
 
@@ -162,8 +169,32 @@ pub fn host_matches_sni(host: Option<&str>, sni: &str) -> bool {
             .filter(|(_, port)| port.parse::<u16>().is_ok())
             .map_or(host, |(name, _)| name)
     };
-    host.trim_end_matches('.')
-        .eq_ignore_ascii_case(sni.trim_end_matches('.'))
+    normalize_dns_name(host) == normalize_dns_name(sni)
+}
+
+fn normalize_dns_name(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('.');
+    let ascii = idna::domain_to_ascii(value).ok()?.to_ascii_lowercase();
+    let valid = !ascii.is_empty()
+        && ascii.len() <= 253
+        && ascii.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    valid.then_some(ascii)
+}
+
+fn normalize_dns_pattern(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('.');
+    value.strip_prefix("*.").map_or_else(
+        || normalize_dns_name(value),
+        |suffix| normalize_dns_name(suffix).map(|suffix| format!("*.{suffix}")),
+    )
 }
 
 /// A configured edge. Constructing it parses every key and certificate before a socket is bound.
@@ -189,9 +220,11 @@ impl Edge {
     ) -> anyhow::Result<Self> {
         let configured_names = names
             .into_iter()
-            .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
-            .filter(|name| !name.is_empty())
-            .collect::<HashSet<_>>();
+            .map(|name| {
+                normalize_dns_pattern(&name)
+                    .with_context(|| format!("invalid TLS edge SNI name {name:?}"))
+            })
+            .collect::<anyhow::Result<HashSet<_>>>()?;
         anyhow::ensure!(
             !configured_names.is_empty(),
             "the TLS edge has no SNI names"
@@ -200,6 +233,12 @@ impl Edge {
             max_connections > 0,
             "the TLS edge connection limit must be positive"
         );
+        let egress_sni = egress_sni
+            .map(|name| {
+                normalize_dns_name(&name)
+                    .with_context(|| format!("invalid TLS edge egress SNI {name:?}"))
+            })
+            .transpose()?;
         if let Some(egress_name) = egress_sni.as_deref() {
             anyhow::ensure!(
                 configured_names
@@ -261,16 +300,19 @@ impl Edge {
             http_config: Arc::new(http_config),
             egress_config: Arc::new(egress_config),
             resolver,
-            egress_sni: egress_sni.map(|name| name.to_ascii_lowercase()),
+            egress_sni,
             egress,
             http,
             connections: Arc::new(Semaphore::new(max_connections)),
         })
     }
 
-    pub async fn serve(self: Arc<Self>, listener: TcpListener) -> io::Result<()> {
+    pub async fn serve(
+        self: Arc<Self>,
+        mut listener: crate::proxy_protocol::ProxyProtocolListener,
+    ) -> io::Result<()> {
         loop {
-            let (stream, peer) = listener.accept().await?;
+            let (stream, peer) = listener.accept().await;
             let Some(permit) = self.connection_permit() else {
                 tracing::warn!(%peer, "TLS edge connection limit reached");
                 drop(stream);
@@ -279,7 +321,7 @@ impl Edge {
             let edge = Arc::clone(&self);
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Err(cause) = edge.serve_connection(stream).await {
+                if let Err(cause) = edge.serve_io(stream, peer).await {
                     tracing::debug!(%peer, %cause, "TLS edge connection ended");
                 }
             });
@@ -290,6 +332,13 @@ impl Edge {
         let peer = stream
             .peer_addr()
             .context("could not read TLS edge peer address")?;
+        self.serve_io(stream, peer).await
+    }
+
+    async fn serve_io<T>(&self, stream: T, peer: SocketAddr) -> anyhow::Result<()>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let start = tokio::time::timeout_at(
             deadline,
@@ -363,6 +412,7 @@ pub async fn start_from_env(
     egress: Option<Arc<SandboxForwardProxy>>,
     http: AxumRouter,
     certificate_runtime: Option<crate::certificates::Runtime>,
+    readiness: Arc<crate::edge_readiness::EdgeReadiness>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     let listen = match std::env::var("ROUTER_TLS_EDGE_LISTEN") {
         Ok(listen) => listen,
@@ -388,6 +438,9 @@ pub async fn start_from_env(
     };
     let certificate_path = std::env::var("ROUTER_TLS_EDGE_CERT_FILE")
         .context("ROUTER_TLS_EDGE_CERT_FILE is required when the TLS edge is enabled")?;
+    std::env::var("ROUTER_EDGE_READINESS_LISTEN")
+        .context("ROUTER_EDGE_READINESS_LISTEN is required when the TLS edge is enabled")?;
+    let proxy_protocol = crate::proxy_protocol::required_from_env()?;
     let key_path = std::env::var("ROUTER_TLS_EDGE_KEY_FILE")
         .context("ROUTER_TLS_EDGE_KEY_FILE is required when the TLS edge is enabled")?;
     let names = std::env::var("ROUTER_TLS_EDGE_SNI_NAMES")
@@ -430,9 +483,17 @@ pub async fn start_from_env(
         .start()
         .await
         .context("initial platform certificate acknowledgement failed")?;
+    let ready = readiness.tls_guard();
     tracing::info!(%listen, "opt-in TLS edge listening");
     Ok(Some(tokio::spawn(async move {
-        if let Err(cause) = edge.serve(listener).await {
+        let _ready = ready;
+        if let Err(cause) = edge
+            .serve(crate::proxy_protocol::ProxyProtocolListener::new(
+                listener,
+                proxy_protocol,
+            ))
+            .await
+        {
             tracing::error!(%cause, "TLS edge stopped serving");
         }
     })))
@@ -635,6 +696,15 @@ mod tests {
     }
 
     #[test]
+    fn configured_unicode_names_match_their_wire_sni_alabel() {
+        let names = HashSet::from(["BÜCHER.EXAMPLE.".to_owned()]);
+        assert_eq!(
+            target_for_sni(Some("xn--bcher-kva.example"), &names, None),
+            Ok(Target::Http)
+        );
+    }
+
+    #[test]
     fn host_must_match_sni_including_after_port_normalisation() {
         assert!(host_matches_sni(
             Some("APP.EXAMPLE.TEST:443"),
@@ -645,6 +715,10 @@ mod tests {
             "app.example.test"
         ));
         assert!(!host_matches_sni(None, "app.example.test"));
+        assert!(host_matches_sni(
+            Some("BÜCHER.EXAMPLE.:443"),
+            "xn--bcher-kva.example"
+        ));
     }
 
     #[tokio::test]
@@ -822,5 +896,63 @@ mod tests {
         let mut response = Vec::new();
         tls.read_to_end(&mut response).await.unwrap();
         assert!(String::from_utf8_lossy(&response).ends_with("127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn proxy_protocol_ipv6_source_becomes_the_trusted_http_peer() {
+        let fixture = fixture();
+        let http = AxumRouter::new().fallback(get(
+            |Extension(context): Extension<ConnectionContext>| async move {
+                context.peer.ip().to_string()
+            },
+        ));
+        let edge = Arc::new(
+            Edge::from_pem(
+                &fixture.certificate,
+                &fixture.key,
+                ["app.example.test".into()],
+                None,
+                None,
+                http,
+                DEFAULT_MAX_CONNECTIONS,
+            )
+            .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(
+            edge.serve(crate::proxy_protocol::ProxyProtocolListener::new(
+                listener, true,
+            )),
+        );
+
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let source: std::net::Ipv6Addr = "2001:db8::42".parse().unwrap();
+        let destination: std::net::Ipv6Addr = "2001:db8::80".parse().unwrap();
+        let mut prelude = b"\r\n\r\n\0\r\nQUIT\n".to_vec();
+        prelude.extend([0x21, 0x21, 0x00, 0x24]);
+        prelude.extend(source.octets());
+        prelude.extend(destination.octets());
+        prelude.extend(49152_u16.to_be_bytes());
+        prelude.extend(443_u16.to_be_bytes());
+        stream.write_all(&prelude).await.unwrap();
+
+        let client = ClientConfig::builder()
+            .with_root_certificates(fixture.roots)
+            .with_no_client_auth();
+        let mut tls = TlsConnector::from(Arc::new(client))
+            .connect(
+                ServerName::try_from("app.example.test".to_owned()).unwrap(),
+                stream,
+            )
+            .await
+            .unwrap();
+        tls.write_all(b"GET / HTTP/1.1\r\nHost: app.example.test\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        tls.read_to_end(&mut response).await.unwrap();
+        assert!(String::from_utf8_lossy(&response).contains("2001:db8::42"));
+        server.abort();
     }
 }

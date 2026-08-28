@@ -950,6 +950,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       region: string | null
       hasUpstreamUpdate: boolean
       isGroup: boolean
+      servingMode: "serverless" | "static" | null
       parentProjectId: string | null
       managedByOauthApp: {
         clientId: string
@@ -1062,6 +1063,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       region: string | null
       hasUpstreamUpdate: boolean
       isGroup: boolean
+      servingMode: "serverless" | "static" | null
       parentProjectId: string | null
       managedByOauthApp: {
         clientId: string
@@ -1211,6 +1213,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     region: string | null
     hasUpstreamUpdate: boolean
     isGroup: boolean
+    servingMode: "serverless" | "static" | null
     parentProjectId: string | null
     managedByOauthApp: {
       clientId: string
@@ -1314,6 +1317,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     region: string | null
     hasUpstreamUpdate: boolean
     isGroup: boolean
+    servingMode: "serverless" | "static" | null
     parentProjectId: string | null
     managedByOauthApp: {
       clientId: string
@@ -6664,3 +6668,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

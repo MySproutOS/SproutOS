@@ -324,7 +324,7 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
         { name = "TENANT_INGRESS_HOST", value = "ingress.${var.tenant_domain}" },
-        { name = "TENANT_INGRESS_IPV4_ADDRESSES", value = join(",", aws_eip.tenant_nlb[*].public_ip) },
+        { name = "TENANT_INGRESS_IPV4_ADDRESSES", value = join(",", aws_eip.tenant_edge[*].public_ip) },
         { name = "CUSTOM_DOMAINS_ENABLED", value = var.tenant_edge_enabled ? "1" : "0" },
         # The entrypoint composes DATABASE_URL from these plus the injected secret. The host and
         # database name are not secret; only the credentials are, and those arrive separately.

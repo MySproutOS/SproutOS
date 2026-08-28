@@ -13,6 +13,7 @@ function project(overrides: Partial<Project> & { id: string; name: string }): Pr
     region: "us-east-1",
     hasUpstreamUpdate: false,
     isGroup: false,
+    servingMode: "serverless",
     parentProjectId: null,
     managedByOauthApp: null,
     url: null,

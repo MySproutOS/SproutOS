@@ -126,18 +126,23 @@ output "valkey_listener_arn" {
 }
 
 output "forward_proxy_listener_arn" {
-  description = "Rust tenant TLS edge and sandbox egress listener on the tenant NLB. Set as FORWARD_PROXY_LISTENER_ARN."
-  value       = aws_lb_listener.forward_proxy.arn
+  description = "Serving sandbox egress listener: legacy TLS before cutover, Rust tenant TLS edge afterward. Set as FORWARD_PROXY_LISTENER_ARN."
+  value       = var.tenant_edge_enabled ? aws_lb_listener.tenant_https[0].arn : aws_lb_listener.forward_proxy.arn
 }
 
 output "tenant_http_listener_arn" {
-  description = "Rust tenant HTTP/ACME listener on the tenant NLB. Set as TENANT_HTTP_LISTENER_ARN."
+  description = "Rust tenant HTTP/ACME listener on the parallel dual-stack edge NLB. Set as TENANT_HTTP_LISTENER_ARN."
   value       = one(aws_lb_listener.tenant_http[*].arn)
 }
 
 output "tenant_ingress_ipv4_addresses" {
   description = "Stable NLB IPv4 fallback records for customer apex domains without DNS flattening."
-  value       = aws_eip.tenant_nlb[*].public_ip
+  value       = aws_eip.tenant_edge[*].public_ip
+}
+
+output "tenant_edge_dns_name" {
+  description = "Parallel dual-stack tenant edge NLB name for IPv4 and IPv6 preview smoke tests."
+  value       = local.tenant_edge_provisioned ? aws_lb.tenant_edge[0].dns_name : null
 }
 
 output "forum_static_bucket" {

@@ -27,6 +27,8 @@ export type Project = {
   hasUpstreamUpdate: boolean
   /** Holds other projects and deploys nothing itself. */
   isGroup: boolean
+  /** Static projects terminate at CloudFront and do not support custom domains yet. */
+  servingMode: "serverless" | "static" | null
   /** The group this belongs to, if any. */
   parentProjectId: string | null
   managedByOauthApp: { clientId: string; name: string } | null
@@ -130,6 +132,7 @@ export function useProjects(orgSlug: string) {
       region: project.region ?? "—",
       hasUpstreamUpdate: project.hasUpstreamUpdate,
       isGroup: project.isGroup,
+      servingMode: project.servingMode ?? null,
       parentProjectId: project.parentProjectId ?? null,
       managedByOauthApp: project.managedByOauthApp ?? null,
       url: project.url ?? null,
@@ -183,6 +186,7 @@ export function useProject(orgSlug: string, projectId: string) {
             url: project.url ?? null,
             hostname: project.hostname ?? null,
             isGroup: project.isGroup,
+            servingMode: project.servingMode ?? null,
             parentProjectId: project.parentProjectId ?? null,
             managedByOauthApp: project.managedByOauthApp ?? null,
             liveDeploymentId: project.liveDeploymentId ?? null,

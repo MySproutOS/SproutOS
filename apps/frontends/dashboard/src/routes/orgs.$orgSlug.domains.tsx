@@ -46,6 +46,7 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   CUSTOM_DOMAIN_STATUS_LABELS,
+  eligibleCustomDomainProjects,
   type CustomDomain,
   type CustomDomainStatus,
   useCheckCustomDomain,
@@ -134,9 +135,7 @@ function CustomDomains() {
 function CreateDomainDialog({ orgSlug }: { orgSlug: string }) {
   const projects = useProjects(orgSlug)
   const create = useCreateCustomDomain(orgSlug)
-  const eligibleProjects = (projects.data ?? []).filter(
-    (project) => !project.isGroup && project.liveDeploymentId !== null,
-  )
+  const eligibleProjects = eligibleCustomDomainProjects(projects.data ?? [])
   const [open, setOpen] = useState(false)
   const [projectId, setProjectId] = useState("")
   const [hostname, setHostname] = useState("")

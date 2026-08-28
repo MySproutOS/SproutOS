@@ -7,6 +7,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 import type { GetV1OrgsByOrgSlugDomainsResponse } from "@lib/api-client/generated/types.gen"
+import type { Project } from "./projects"
 
 export const CUSTOM_DOMAIN_POLL_INTERVAL_MS = 60_000
 
@@ -22,6 +23,13 @@ export const CUSTOM_DOMAIN_STATUS_LABELS = {
 
 export type CustomDomainStatus = keyof typeof CUSTOM_DOMAIN_STATUS_LABELS
 export type CustomDomain = GetV1OrgsByOrgSlugDomainsResponse["data"][number]
+
+export function eligibleCustomDomainProjects(projects: readonly Project[]): Project[] {
+  return projects.filter(
+    (project) =>
+      !project.isGroup && project.servingMode === "serverless" && project.liveDeploymentId !== null,
+  )
+}
 
 const NONTERMINAL_STATUSES = new Set<CustomDomainStatus>([
   "pending_dns",

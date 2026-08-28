@@ -371,6 +371,8 @@ PY
     {
       echo "ROUTER_TLS_EDGE_LISTEN=0.0.0.0:8443"
       echo "ROUTER_HTTP_EDGE_LISTEN=0.0.0.0:8081"
+      echo "ROUTER_EDGE_READINESS_LISTEN=0.0.0.0:8082"
+      echo "ROUTER_EDGE_PROXY_PROTOCOL=1"
       echo "ROUTER_TLS_EDGE_SNI_NAMES=${tenant_domain},*.${tenant_domain},${egress_subdomain}.${control_plane_domain}"
       echo "ROUTER_TLS_EDGE_EGRESS_SNI=${egress_subdomain}.${control_plane_domain}"
       echo "ROUTER_TLS_EDGE_MAX_CONNECTIONS=2048"

@@ -3,8 +3,10 @@ import { Nullable, UUID7String } from "../utils/common.serializer"
 
 const Hostname = Type.String({
   minLength: 4,
-  maxLength: 253,
-  pattern: "^(?!-)[a-z0-9-]{1,63}(?<!-)(\\.(?!-)[a-z0-9-]{1,63}(?<!-))+$",
+  // Unicode and case normalization happen before the hostname is stored. The A-label result has
+  // the DNS length/label checks; rejecting here would prevent a valid `bücher.example` request from
+  // ever reaching that normalization.
+  maxLength: 1_024,
 })
 
 export const customDomainSchemaCreateRequest = Type.Object({ hostname: Hostname })
