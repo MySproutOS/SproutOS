@@ -8,6 +8,7 @@ use aws_sdk_lambda::primitives::Blob;
 use aws_types::request_id::RequestId as _;
 use axum::body::Bytes;
 use axum::extract::State;
+use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 
@@ -227,7 +228,15 @@ pub async fn handle(
         );
     }
 
-    let status = StatusCode::from_u16(status_of(&reply)).unwrap_or(StatusCode::BAD_GATEWAY);
+    reply_response(&reply, bytes)
+}
+
+/// Turn an API Gateway HTTP API v2 reply into the response sent to the visitor.
+///
+/// Kept as one tested boundary because `cookies` are not ordinary JSON headers: v2 puts each one
+/// in a top-level array specifically so repeated `Set-Cookie` fields are not collapsed.
+fn reply_response(reply: &Reply, bytes: Vec<u8>) -> Response {
+    let status = StatusCode::from_u16(status_of(reply)).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut response = Response::builder().status(status);
 
     for (name, value) in &reply.headers {
@@ -241,9 +250,74 @@ pub async fn handle(
         }
     }
 
+    for cookie in &reply.cookies {
+        // Match ordinary response-header handling: one malformed value loses only itself, not the
+        // customer's otherwise valid response or the other cookies beside it.
+        if let Ok(cookie) = HeaderValue::from_str(cookie) {
+            response = response.header(SET_COOKIE, cookie);
+        }
+    }
+
     response
         .body(axum::body::Body::from(bytes))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    #[test]
+    fn forwards_every_v2_cookie_without_replacing_headers_or_each_other() {
+        let reply: Reply = serde_json::from_str(
+            r#"{
+                "statusCode": 201,
+                "headers": {
+                    "content-type": "application/json",
+                    "set-cookie": "legacy=kept; Path=/"
+                },
+                "cookies": [
+                    "session=abc; Path=/; HttpOnly; Secure; SameSite=Lax",
+                    "csrf=def; Path=/; Secure; SameSite=Strict"
+                ],
+                "body": "{}"
+            }"#,
+        )
+        .expect("reply deserialises");
+
+        let response = reply_response(&reply, b"{}".to_vec());
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let cookies = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().expect("valid cookie"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cookies,
+            [
+                "legacy=kept; Path=/",
+                "session=abc; Path=/; HttpOnly; Secure; SameSite=Lax",
+                "csrf=def; Path=/; Secure; SameSite=Strict",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_malformed_cookie_does_not_drop_the_response_or_valid_cookies() {
+        let reply: Reply = serde_json::from_str(
+            r#"{"statusCode":200,"cookies":["bad\nvalue","session=good; Path=/"],"body":"ok"}"#,
+        )
+        .expect("reply deserialises");
+
+        let response = reply_response(&reply, b"ok".to_vec());
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get_all(SET_COOKIE).iter().count(), 1);
+        assert_eq!(response.headers()[SET_COOKIE], "session=good; Path=/");
+    }
 }
 
 fn forwarded_headers(headers: &HeaderMap) -> HashMap<String, String> {
