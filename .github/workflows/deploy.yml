@@ -580,6 +580,8 @@ jobs:
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
           VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}
           FORWARD_PROXY_LISTENER_ARN: ${{ vars.FORWARD_PROXY_LISTENER_ARN }}
+          TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
+          TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}
           SERVICES: ${{ (inputs.service || 'both') == 'both' && 'website router' || inputs.service }}
           DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
 
@@ -652,3 +654,5 @@ jobs:
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
           VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}
           FORWARD_PROXY_LISTENER_ARN: ${{ vars.FORWARD_PROXY_LISTENER_ARN }}
+          TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
+          TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}

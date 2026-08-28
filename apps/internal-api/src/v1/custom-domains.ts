@@ -4,7 +4,7 @@ import { CUSTOM_DOMAIN_KINDS, enqueue } from "@lib/jobs"
 import { withdrawRoute } from "@lib/lambda"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
-import { CUSTOM_DOMAINS_DISABLED_REASON, CUSTOM_DOMAINS_ENABLED } from "@utils/feature-flags"
+import { customDomainsEnabled, CUSTOM_DOMAINS_DISABLED_REASON } from "@utils/feature-flags"
 import { Hono } from "hono"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
@@ -223,7 +223,7 @@ const routes = app
     validator("param", projectParam),
     validator("json", customDomainSchemaCreateRequest),
     async (c) => {
-      if (!CUSTOM_DOMAINS_ENABLED) {
+      if (!customDomainsEnabled(process.env.CUSTOM_DOMAINS_ENABLED)) {
         return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
       }
       const { projectId } = c.req.valid("param")
@@ -313,7 +313,7 @@ const routes = app
     requirePermission("project:update", paramResource("project", "project", "projectId")),
     validator("param", domainParam),
     async (c) => {
-      if (!CUSTOM_DOMAINS_ENABLED) {
+      if (!customDomainsEnabled(process.env.CUSTOM_DOMAINS_ENABLED)) {
         return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
       }
       const { projectId, domainId } = c.req.valid("param")

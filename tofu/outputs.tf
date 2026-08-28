@@ -56,7 +56,7 @@ output "aws_region" {
 }
 
 output "alb_dns_name" {
-  description = "Where Route 53 points both the control-plane domain and the tenant wildcard"
+  description = "Control-plane ALB DNS name; tenant wildcard moves to the NLB when tenant_edge_enabled is true."
   value       = aws_lb.main.dns_name
 }
 
@@ -126,8 +126,18 @@ output "valkey_listener_arn" {
 }
 
 output "forward_proxy_listener_arn" {
-  description = "Sandbox forward-proxy listener on the tenant NLB. Set as the FORWARD_PROXY_LISTENER_ARN repository variable."
+  description = "Rust tenant TLS edge and sandbox egress listener on the tenant NLB. Set as FORWARD_PROXY_LISTENER_ARN."
   value       = aws_lb_listener.forward_proxy.arn
+}
+
+output "tenant_http_listener_arn" {
+  description = "Rust tenant HTTP/ACME listener on the tenant NLB. Set as TENANT_HTTP_LISTENER_ARN."
+  value       = one(aws_lb_listener.tenant_http[*].arn)
+}
+
+output "tenant_ingress_ipv4_addresses" {
+  description = "Stable NLB IPv4 fallback records for customer apex domains without DNS flattening."
+  value       = aws_eip.tenant_nlb[*].public_ip
 }
 
 output "forum_static_bucket" {

@@ -831,45 +831,6 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
-        /*
-          Certificates for customer domains, issued while a customer waits.
-
-          Not in this file as resources, deliberately: a customer adding a domain cannot wait for an
-          apply, so the API requests the certificate itself. `tofu` owns the platform's own two
-          certificates and nothing else.
-
-          `RequestCertificate` takes no resource — a certificate that does not exist yet has no ARN
-          to scope to — so the grant is on the action and the tag conditions are what tie an issued
-          certificate back to the project that asked for it. `DeleteCertificate` is here because a
-          domain removed has to release its certificate or the account accumulates them forever.
-        */
-        Effect = "Allow"
-        Action = [
-          "acm:RequestCertificate",
-          "acm:DescribeCertificate",
-          "acm:DeleteCertificate",
-          "acm:AddTagsToCertificate",
-          "acm:ListCertificates",
-        ]
-        Resource = "*"
-      },
-      {
-        /*
-          Attaching and detaching those certificates on the one listener.
-
-          Scoped to this listener rather than `*`: the only thing the application has any business
-          doing to a load balancer is adding a customer's certificate to the listener customers are
-          served from, and a wildcard here would let a compromised API detach the platform's own.
-        */
-        Effect = "Allow"
-        Action = [
-          "elasticloadbalancing:AddListenerCertificates",
-          "elasticloadbalancing:RemoveListenerCertificates",
-          "elasticloadbalancing:DescribeListenerCertificates",
-        ]
-        Resource = aws_lb_listener.https.arn
-      },
-      {
         # The release the instance boots from, and the pointer that names it.
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
@@ -900,9 +861,11 @@ resource "aws_iam_policy" "application" {
           the instance has to fetch it at boot to compose `DATABASE_URL`. Scoped to the one secret
           RDS manages for this instance, not to `*`.
         */
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_db_instance.control_plane.master_user_secret[0].secret_arn]
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_db_instance.control_plane.master_user_secret[0].secret_arn,
+        ]
       },
       {
         /*
@@ -955,6 +918,19 @@ resource "aws_iam_policy" "application" {
             ]
           }
         }
+      },
+      {
+        /*
+          Versioned rustls certificate objects. The router reads an exact S3 VersionId before it
+          acknowledges readiness; the worker writes and deletes only inside this dedicated bucket.
+          No bucket-policy, ACL or public-access mutation is granted.
+        */
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+        ]
+        Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
       },
       {
         # Tenant object storage. Listing is limited to logical service prefixes in the one physical
@@ -1084,6 +1060,68 @@ resource "aws_iam_role_policy_attachment" "task_application" {
   policy_arn = aws_iam_policy.application.arn
 }
 
+/*
+  Certificate issuance is a control-plane responsibility, not a router capability.
+
+  Keep the ACME account key, DNS-01 mutation, certificate-object writes, and router refresh grant
+  off the shared application policy: that policy is also attached to the public-facing EC2/router
+  role while the legacy release path exists. The current website/API/worker containers share one
+  ECS task role, so this is task-scoped rather than container-scoped; routers receive only read
+  access to versioned certificate objects above.
+*/
+resource "aws_iam_policy" "acme_worker" {
+  name        = "${var.name_prefix}-acme-worker"
+  description = "Issue and publish tenant-edge certificates from the background worker."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.acme_account_key.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+        ]
+        Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets",
+        ]
+        Resource = [
+          "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}",
+          "arn:aws:route53:::hostedzone/${data.aws_route53_zone.main.zone_id}",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:GetChange"]
+        Resource = "arn:aws:route53:::change/*"
+      },
+      {
+        Effect = "Allow"
+        Action = ["autoscaling:StartInstanceRefresh"]
+        # Constructed instead of referencing the ASGs so their launch template may depend on this
+        # policy without introducing a Terraform dependency cycle.
+        Resource = "arn:aws:autoscaling:${var.aws_region}:${var.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-router-*"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "task_acme_worker" {
+  role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.acme_worker.arn
+}
+
 resource "aws_iam_role_policy_attachment" "instance_ssm" {
   role = aws_iam_role.instance.name
   # Session Manager instead of SSH. No key pairs to distribute, no port 22 open, and every session
@@ -1133,13 +1171,6 @@ resource "aws_launch_template" "service" {
     valkey_url       = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379"
     tenant_domain    = var.tenant_domain
 
-    # Where a customer domain's certificate is attached.
-    #
-    # The API refuses to activate a domain without this rather than skipping the attachment: a
-    # domain marked live with no certificate routes traffic and then fails TLS, which a visitor sees
-    # as a security warning on a hostname we just told the customer was working.
-    tenant_listener_arn = aws_lb_listener.https.arn
-
     lambda_web_adapter_layer_version = var.lambda_web_adapter_layer_version
     aws_account_id                   = var.aws_account_id
 
@@ -1166,16 +1197,24 @@ resource "aws_launch_template" "service" {
     # The backend the router's search split forwards to, on the OVH box behind its Traefik. Derived
     # rather than written down twice: `dns.tf` creates the record from the same variable, so the
     # name the instance is told and the name that resolves cannot drift apart.
-    opensearch_subdomain    = var.opensearch_subdomain
-    search_subdomain        = var.search_subdomain
-    storage_subdomain       = var.storage_subdomain
-    storage_proxy_enabled   = var.storage_proxy_enabled
-    postgres_subdomain      = var.postgres_subdomain
-    tenant_valkey_subdomain = var.tenant_valkey_subdomain
-    control_plane_domain    = var.control_plane_domain
-    llm_subdomain           = var.llm_subdomain
-    egress_subdomain        = var.egress_subdomain
-    tenant_objects_bucket   = aws_s3_bucket.tenant_objects.id
+    opensearch_subdomain            = var.opensearch_subdomain
+    search_subdomain                = var.search_subdomain
+    storage_subdomain               = var.storage_subdomain
+    storage_proxy_enabled           = var.storage_proxy_enabled
+    postgres_subdomain              = var.postgres_subdomain
+    tenant_valkey_subdomain         = var.tenant_valkey_subdomain
+    control_plane_domain            = var.control_plane_domain
+    llm_subdomain                   = var.llm_subdomain
+    egress_subdomain                = var.egress_subdomain
+    tenant_objects_bucket           = aws_s3_bucket.tenant_objects.id
+    tenant_certificate_bucket       = aws_s3_bucket.tenant_certificates.id
+    tenant_certificate_kms_key_arn  = aws_kms_key.secrets.arn
+    platform_certificate_object_key = "platform-edge/current.json"
+    acme_account_key_secret_id      = aws_secretsmanager_secret.acme_account_key.id
+    acme_directory_url              = var.acme_directory_url
+    tenant_edge_runtime_enabled     = var.tenant_edge_enabled || var.tenant_edge_preview_enabled
+    tenant_ingress_ipv4_addresses   = join(",", aws_eip.tenant_nlb[*].public_ip)
+    custom_domains_enabled          = var.tenant_edge_enabled
   }))
 
   metadata_options {
@@ -1259,8 +1298,8 @@ resource "aws_autoscaling_group" "router" {
       # be a target group with no targets: healthy-looking in the console, 503 from the balancer, and
       # nothing in any log saying why every agent turn failed.
       aws_lb_target_group.llm[each.key].arn,
-      # The Postgres, Valkey and authenticated forward-proxy splits, on the tenant network load
-      # balancer rather than the ALB — see `nlb.tf`.
+      # Postgres, Valkey, and both ports of the Rust tenant edge on the network load balancer.
+      # HTTPS also dispatches authenticated sandbox egress by SNI — see `nlb.tf`.
       aws_lb_target_group.postgres[each.key].arn,
       aws_lb_target_group.valkey[each.key].arn,
       aws_lb_target_group.forward_proxy[each.key].arn,
@@ -1275,6 +1314,10 @@ resource "aws_autoscaling_group" "router" {
       storage in replacement health only after the process has been observed healthy.
     */
     var.storage_proxy_enabled ? [aws_lb_target_group.storage[each.key].arn] : [],
+    var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? [
+      aws_lb_target_group.tenant_https[each.key].arn,
+      aws_lb_target_group.tenant_http[each.key].arn,
+    ] : [],
   )
 
   min_size         = 0
@@ -1449,6 +1492,42 @@ resource "aws_autoscaling_policy" "router" {
       resource_label         = "${aws_lb.main.arn_suffix}/${aws_lb_target_group.router[each.key].arn_suffix}"
     }
     target_value     = var.requests_per_target
+    disable_scale_in = true
+  }
+}
+
+/*
+  Tenant HTTPS no longer increments the ALB request metric once generated and custom hosts move to
+  the NLB. NewFlowCount is the closest load signal at that boundary: every browser connection and
+  CONNECT tunnel creates a flow, while idle keep-alives do not cause a CPU-only policy to guess.
+  Multiple target-tracking policies are intentional; Auto Scaling chooses enough capacity to
+  satisfy either the remaining ALB service traffic or the tenant edge.
+*/
+resource "aws_autoscaling_policy" "router_tenant_edge" {
+  for_each = local.service_colours
+
+  name                   = "${var.name_prefix}-router-${each.key}-tenant-edge-flows"
+  autoscaling_group_name = aws_autoscaling_group.router[each.key].name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    customized_metric_specification {
+      metric_name = "NewFlowCount"
+      namespace   = "AWS/NetworkELB"
+      statistic   = "Sum"
+      unit        = "Count"
+
+      metric_dimension {
+        name  = "LoadBalancer"
+        value = aws_lb.tenant.arn_suffix
+      }
+      metric_dimension {
+        name  = "TargetGroup"
+        value = aws_lb_target_group.tenant_https[each.key].arn_suffix
+      }
+    }
+
+    target_value     = var.tenant_edge_new_flows_per_target
     disable_scale_in = true
   }
 }

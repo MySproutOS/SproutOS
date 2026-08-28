@@ -85,12 +85,14 @@ VALKEY_URL=${valkey_url}
 # Conflating them meant a tenant hostname was one wildcard away from the apex that authenticates
 # our own users.
 TENANT_DOMAIN=${tenant_domain}
-
-# The HTTPS listener a customer domain's certificate is attached to.
-#
-# Read by the custom-domain route when a domain verifies. Absent, that route refuses to mark the
-# domain active — see its comment — rather than activating one that cannot serve HTTPS.
-TENANT_LISTENER_ARN=${tenant_listener_arn}
+TENANT_INGRESS_HOST=ingress.${tenant_domain}
+TENANT_INGRESS_IPV4_ADDRESSES=${tenant_ingress_ipv4_addresses}
+TENANT_CERTIFICATE_BUCKET=${tenant_certificate_bucket}
+TENANT_CERTIFICATE_KMS_KEY_ARN=${tenant_certificate_kms_key_arn}
+ACME_ACCOUNT_KEY_SECRET_ID=${acme_account_key_secret_id}
+ACME_CONTACT_EMAIL=acme@${control_plane_domain}
+ACME_DIRECTORY_URL=${acme_directory_url}
+CUSTOM_DOMAINS_ENABLED=${custom_domains_enabled ? "1" : "0"}
 
 # The Lambda Web Adapter layer version, for customer builds that are HTTP servers.
 #
@@ -332,6 +334,54 @@ fi
 # connection, so refusing to make the connection is the only thing that stops a suspended database
 # from costing money. Plain text because it names an internal address and carries no credential.
 if [ "$SERVICE" = "router" ]; then
+  if [ "${tenant_edge_runtime_enabled}" = "true" ]; then
+    # The wildcard/egress certificate is immutable startup input. The ACME worker writes one
+    # versioned JSON object, and a rolling instance refresh is the only activation mechanism; a
+    # half-updated fleet can therefore never silently share one logical version.
+    PLATFORM_CERT_VERSION=$(aws s3api get-object \
+      --bucket "${tenant_certificate_bucket}" \
+      --key "${platform_certificate_object_key}" \
+      --region "$REGION" \
+      --query VersionId \
+      --output text \
+      /tmp/router-platform-certificate.json)
+    if [ -z "$PLATFORM_CERT_VERSION" ] || [ "$PLATFORM_CERT_VERSION" = "None" ]; then
+      echo "the platform edge certificate object has no S3 VersionId" >&2
+      exit 1
+    fi
+
+    python3 - /tmp/router-platform-certificate.json <<'PY'
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+document = json.loads(source.read_text())
+if document.get("version") != 1:
+    raise SystemExit("unsupported platform edge certificate object version")
+for field in ("certificatePem", "privateKeyPem"):
+    if not isinstance(document.get(field), str) or not document[field].strip():
+        raise SystemExit(f"platform edge certificate object has no {field}")
+pathlib.Path("/etc/sproutos/router-edge-fullchain.pem").write_text(document["certificatePem"])
+pathlib.Path("/etc/sproutos/router-edge-private-key.pem").write_text(document["privateKeyPem"])
+PY
+    unlink /tmp/router-platform-certificate.json
+    chmod 0600 /etc/sproutos/router-edge-fullchain.pem /etc/sproutos/router-edge-private-key.pem
+
+    {
+      echo "ROUTER_TLS_EDGE_LISTEN=0.0.0.0:8443"
+      echo "ROUTER_HTTP_EDGE_LISTEN=0.0.0.0:8081"
+      echo "ROUTER_TLS_EDGE_SNI_NAMES=${tenant_domain},*.${tenant_domain},${egress_subdomain}.${control_plane_domain}"
+      echo "ROUTER_TLS_EDGE_EGRESS_SNI=${egress_subdomain}.${control_plane_domain}"
+      echo "ROUTER_TLS_EDGE_MAX_CONNECTIONS=2048"
+      echo "ROUTER_CERTIFICATE_BUCKET=${tenant_certificate_bucket}"
+      echo "ROUTER_CERTIFICATE_POLL_SECONDS=30"
+      echo "ROUTER_CERTIFICATE_ACK_TTL_SECONDS=180"
+      echo "ROUTER_TLS_EDGE_PLATFORM_CERT_VERSION=$PLATFORM_CERT_VERSION"
+      echo "ROUTER_INSTANCE_ID=$(tr -d '\n' </etc/machine-id)"
+    } >> /etc/sproutos/env
+  fi
+
   echo "PG_PROXY_RESOLVE_URL=https://api.${control_plane_domain}/v1/internal/pg/resolve" >> /etc/sproutos/env
 
   # The cluster the search split forwards to. The credential for it is a *secret* and arrives
@@ -528,6 +578,19 @@ Environment=HOME=/var/lib/sproutos
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+if [ "$SERVICE" = "router" ] && [ "${tenant_edge_runtime_enabled}" = "true" ]; then
+  install -d -m 0755 /etc/systemd/system/sproutos.service.d
+  cat > /etc/systemd/system/sproutos.service.d/router-edge-credentials.conf <<'UNIT'
+[Service]
+# systemd reads the root-owned sources before dropping to DynamicUser and exposes private,
+# read-only copies only inside this unit's credential directory.
+LoadCredential=router-edge-cert:/etc/sproutos/router-edge-fullchain.pem
+LoadCredential=router-edge-key:/etc/sproutos/router-edge-private-key.pem
+Environment=ROUTER_TLS_EDGE_CERT_FILE=%d/router-edge-cert
+Environment=ROUTER_TLS_EDGE_KEY_FILE=%d/router-edge-key
+UNIT
+fi
 
 systemctl daemon-reload
 systemctl enable --now sproutos.service

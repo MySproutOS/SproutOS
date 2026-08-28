@@ -1,17 +1,13 @@
 # The tenant data-plane load balancer.
 #
-# A second load balancer, and it is not a duplication of the first. The ALB carries HTTP and routes
-# on the `Host` header — that is what separates the website, the API, search and the unbounded set of
-# tenant hostnames across four target groups on one port. Postgres and RESP are not HTTP and carry no
-# host header, so an ALB cannot see them and a network load balancer cannot see the four things the
-# ALB is separating. Neither one replaces the other.
+# It complements rather than replaces the control-plane ALB. The website and API stay on ALB rules;
+# generated/custom tenant HTTP, sandbox egress, Postgres, and Valkey enter here. TCP 443 passes TLS
+# through to Rust, which owns certificates and dispatches tenant HTTP versus authenticated CONNECT
+# by SNI. Static projects remain the deliberate exception at CloudFront.
 #
-# **Replacing the ALB with this was considered and rejected.** It is not a saving: both are
-# $0.0225/hour. The straight swap collapses those four Host-based destinations into one, and "let the
-# router dispatch by Host instead" does not rescue it while the website and the router are separate
-# Auto Scaling groups on separate instances — the router would have to become a load balancer across
-# another fleet. It would also take out both `ALBRequestCountPerTarget` scaling policies, which have
-# no network-load-balancer equivalent, and the port-80 redirect, which is an ALB action.
+# Moving tenant HTTP here removes it from ALBRequestCountPerTarget, so the router also scales on the
+# NLB target group's NewFlowCount. Port 80 is a real Rust listener for HTTP-01 and redirects, not an
+# NLB redirect action.
 #
 # The cost is therefore real and additive: about $16.43/month for the balancer plus two public IPv4
 # addresses. There is no free tier absorbing it — this account bills `LoadBalancerUsage` at full rate
@@ -46,6 +42,15 @@ resource "aws_vpc_security_group_egress_rule" "tenant_nlb_out" {
   ip_protocol       = "-1"
 }
 
+# Stable addresses are the apex-domain fallback for DNS providers without ALIAS/ANAME flattening.
+# One per serving subnet is an NLB requirement; publishing only one would make an AZ outage an apex
+# outage even while the other load-balancer node remained healthy.
+resource "aws_eip" "tenant_nlb" {
+  count  = var.tenant_edge_enabled ? local.serving_zone_count : 0
+  domain = "vpc"
+  tags   = merge(local.tags, { Name = "${var.name_prefix}-tenant-nlb-${count.index + 1}" })
+}
+
 resource "aws_lb" "tenant" {
   name               = "${var.name_prefix}-tenant-nlb"
   load_balancer_type = "network"
@@ -54,7 +59,17 @@ resource "aws_lb" "tenant" {
   # The same two subnets as the ALB, for the same reason and at the same price: one public IPv4
   # address per subnet spanned, billed since 1 February 2024, and two availability zones is the
   # floor AWS accepts rather than a choice.
-  subnets = slice(aws_subnet.public[*].id, 0, local.serving_zone_count)
+  # Keep the live NLB in place through high-port preview. The final enable replaces it once to bind
+  # the published EIPs; production 80/443 and generated DNS move only in that same reviewed apply.
+  subnets = var.tenant_edge_enabled ? null : slice(aws_subnet.public[*].id, 0, local.serving_zone_count)
+
+  dynamic "subnet_mapping" {
+    for_each = var.tenant_edge_enabled ? range(local.serving_zone_count) : []
+    content {
+      subnet_id     = aws_subnet.public[subnet_mapping.value].id
+      allocation_id = aws_eip.tenant_nlb[subnet_mapping.value].id
+    }
+  }
 
   # A database connection is long-lived and mostly idle — a connection pool holds one open between
   # queries for as long as the application runs. The default 350-second idle timeout would close
@@ -295,15 +310,14 @@ resource "aws_vpc_security_group_ingress_rule" "service_valkey_from_nlb" {
 }
 
 # ---------------------------------------------------------------------------
-# The sandbox forward-proxy split
+# The Rust tenant HTTP/TLS edge
 # ---------------------------------------------------------------------------
 
-# Public deliberately, like the other customer-facing listeners. Daytona sandboxes do not have a
-# stable source range to allowlist, so authentication belongs to the proxy protocol and the service
-# behind this listener must fail closed. TLS terminates at the NLB before the HTTP CONNECT exchange.
+# Public deliberately. TLS stays encrypted through the NLB; rustls selects generated/custom tenant
+# HTTP or the authenticated sandbox CONNECT proxy from SNI and refuses every unknown hostname.
 resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
   security_group_id = aws_security_group.tenant_nlb.id
-  description       = "Authenticated HTTPS forward proxy from sandboxes"
+  description       = "Tenant HTTPS and authenticated sandbox egress"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
   from_port         = 443
@@ -320,8 +334,8 @@ resource "aws_lb_target_group" "forward_proxy" {
   protocol = "TCP"
   vpc_id   = aws_vpc.main.id
 
-  # The instance port is reachable only from the tenant NLB's security group. Preserving a sandbox
-  # source address would make that reference stop matching and require opening 3128 to the world.
+  # Legacy pre-edge path. The NLB terminates TLS and the router receives CONNECT on 3128 until the
+  # staged rustls edge passes its high-port smoke and tenant_edge_enabled is flipped.
   preserve_client_ip = false
 
   # The forward proxy is another listener in the router process. Its honest readiness signal is the
@@ -342,23 +356,130 @@ resource "aws_lb_target_group" "forward_proxy" {
   tags                 = { Name = "${var.name_prefix}-egress-${each.key}" }
 }
 
+resource "aws_lb_target_group" "tenant_https" {
+  for_each = local.service_colours
+
+  name               = "${var.name_prefix}-edge-${each.key}"
+  port               = 8443
+  protocol           = "TCP"
+  vpc_id             = aws_vpc.main.id
+  preserve_client_ip = true
+
+  health_check {
+    protocol            = "HTTP"
+    path                = "/healthz"
+    port                = "8080"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    matcher             = "200"
+  }
+
+  deregistration_delay = 300
+  tags                 = { Name = "${var.name_prefix}-edge-${each.key}" }
+}
+
+resource "terraform_data" "tenant_edge_mode" {
+  input = var.tenant_edge_enabled
+}
+
 resource "aws_lb_listener" "forward_proxy" {
   load_balancer_arn = aws_lb.tenant.arn
   port              = 443
-  protocol          = "TLS"
-  certificate_arn   = aws_acm_certificate.tenant.arn
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  protocol          = var.tenant_edge_enabled ? "TCP" : "TLS"
+  certificate_arn   = var.tenant_edge_enabled ? null : aws_acm_certificate.tenant.arn
+  ssl_policy        = var.tenant_edge_enabled ? null : "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
     type = "forward"
 
     forward {
       target_group {
-        arn    = aws_lb_target_group.forward_proxy["blue"].arn
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["blue"].arn : aws_lb_target_group.forward_proxy["blue"].arn
         weight = 100
       }
       target_group {
-        arn    = aws_lb_target_group.forward_proxy["green"].arn
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["green"].arn : aws_lb_target_group.forward_proxy["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes       = [default_action]
+    replace_triggered_by = [terraform_data.tenant_edge_mode]
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_forward_proxy_from_nlb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
+  from_port                    = 3128
+  to_port                      = 3128
+  description                  = "Legacy sandbox forward proxy from the tenant load balancer"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_tenant_https_from_nlb" {
+  security_group_id            = aws_security_group.service.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
+  from_port                    = 8443
+  to_port                      = 8443
+  description                  = "Rust tenant TLS edge from the tenant load balancer"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http" {
+  count = var.tenant_edge_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "ACME HTTP-01 and tenant HTTPS redirects"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+}
+
+resource "aws_lb_target_group" "tenant_http" {
+  for_each = local.service_colours
+
+  name               = "${var.name_prefix}-edge-http-${each.key}"
+  port               = 8081
+  protocol           = "TCP"
+  vpc_id             = aws_vpc.main.id
+  preserve_client_ip = true
+
+  health_check {
+    protocol            = "HTTP"
+    path                = "/healthz"
+    port                = "8080"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 15
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+  tags                 = { Name = "${var.name_prefix}-edge-http-${each.key}" }
+}
+
+resource "aws_lb_listener" "tenant_http" {
+  count = var.tenant_edge_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 80
+  protocol          = "TCP"
+
+  default_action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.tenant_http["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.tenant_http["green"].arn
         weight = 0
       }
     }
@@ -369,13 +490,63 @@ resource "aws_lb_listener" "forward_proxy" {
   }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "service_forward_proxy_from_nlb" {
+# Temporary listeners exercise the complete encrypted path with curl --resolve before port 443 or
+# generated DNS moves. They are absent by default and removed by the same apply that enables edge.
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http_preview" {
+  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Temporary Rust tenant HTTP edge smoke port"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 10080
+  to_port           = 10080
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_https_preview" {
+  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Temporary Rust tenant TLS edge smoke port"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 10443
+  to_port           = 10443
+}
+
+resource "aws_lb_listener" "tenant_https_preview" {
+  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 10443
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tenant_https[var.tenant_edge_preview_colour].arn
+  }
+}
+
+resource "aws_lb_listener" "tenant_http_preview" {
+  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 10080
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tenant_http[var.tenant_edge_preview_colour].arn
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_tenant_http_from_nlb" {
   security_group_id            = aws_security_group.service.id
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.tenant_nlb.id
-  from_port                    = 3128
-  to_port                      = 3128
-  description                  = "Sandbox forward proxy from the tenant load balancer"
+  from_port                    = 8081
+  to_port                      = 8081
+  description                  = "Rust tenant HTTP and ACME edge from the tenant load balancer"
 }
 
 /*
@@ -387,6 +558,22 @@ resource "aws_vpc_security_group_ingress_rule" "service_forward_proxy_from_nlb" 
 resource "aws_route53_record" "forward_proxy" {
   zone_id = data.aws_route53_zone.main.zone_id
   name    = "${var.egress_subdomain}.${var.control_plane_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
+    evaluate_target_health = false
+  }
+}
+
+/*
+  One stable traffic name for customer DNS instructions. Subdomains CNAME here; apex providers may
+  flatten it, and providers without flattening use the EIP A records returned by the API.
+*/
+resource "aws_route53_record" "tenant_ingress" {
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = "ingress.${var.tenant_domain}"
   type    = "A"
 
   alias {

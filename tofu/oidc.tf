@@ -306,7 +306,7 @@ resource "aws_iam_role_policy" "deploy" {
         Sid    = "MoveTraffic"
         Effect = "Allow"
         Action = ["elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyRule"]
-        Resource = [
+        Resource = concat([
           aws_lb_listener.https.arn,
           aws_lb_listener_rule.website.arn,
           # The API's rule moves with the website's — one release, two ports, see `bin/cutover.sh`.
@@ -331,7 +331,7 @@ resource "aws_iam_role_policy" "deploy" {
           # Omitting this ARN let fill prove the LLM target healthy, then made cutover fail with
           # AccessDenied after search had already moved to the new colour.
           aws_lb_listener_rule.llm.arn,
-        ]
+        ], var.tenant_edge_enabled ? [aws_lb_listener.tenant_http[0].arn] : [])
       },
     ]
   })
