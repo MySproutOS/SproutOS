@@ -64,7 +64,9 @@ import {
   STATIC_CLOUDFRONT_METERING_KINDS,
 } from "./static-cloudfront-metering"
 import {
+  DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
   DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  discoverDeploymentCatalogue,
   importDeploymentCatalogue,
   scheduleDeploymentCatalogueReconciliation,
 } from "./deployment-catalogue"
@@ -135,6 +137,7 @@ export const JOB_KINDS = {
   reconcilePlatformEdgeCertificate: PLATFORM_EDGE_CERTIFICATE_KIND,
   scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
   importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
+  discoverDeploymentCatalogue: DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
   importDeploymentCatalogue: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   reconcileStaticCloudFrontUsage: STATIC_CLOUDFRONT_METERING_KINDS.reconcile,
   reconcileAndroidDeveloperRegistration: ANDROID_REGISTRATION_RECONCILE_KIND,
@@ -465,6 +468,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
+  [JOB_KINDS.discoverDeploymentCatalogue]: discoverDeploymentCatalogue(),
   [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
   [JOB_KINDS.reconcileStaticCloudFrontUsage]: reconcileStaticCloudFrontUsage(),
   [JOB_KINDS.reconcileAndroidDeveloperRegistration]: reconcileAndroidDeveloperRegistrationsJob(),

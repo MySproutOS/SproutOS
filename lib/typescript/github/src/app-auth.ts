@@ -101,7 +101,11 @@ type PermissionLevel = "read" | "write"
  */
 export type InstallationTokenRequest =
   | {
-      purpose: "repository-picker" | "repository-name-check" | "repository-provision"
+      purpose:
+        | "repository-picker"
+        | "repository-name-check"
+        | "repository-provision"
+        | "catalogue-attestation-read"
     }
   | {
       purpose:
@@ -120,6 +124,7 @@ export type InstallationTokenRequest =
 type ResolvedInstallationTokenScope = {
   purpose: InstallationTokenRequest["purpose"]
   repositoryIds: readonly number[] | null
+  repositoryNames: readonly string[] | null
   permissions: Readonly<Partial<Record<RepositoryPermission, PermissionLevel>>>
 }
 
@@ -130,7 +135,12 @@ function exactRepositoryScope(
   if (!Number.isSafeInteger(request.repositoryId) || request.repositoryId <= 0) {
     throw new TypeError("GitHub repository id must be a positive safe integer")
   }
-  return { purpose: request.purpose, repositoryIds: [request.repositoryId], permissions }
+  return {
+    purpose: request.purpose,
+    repositoryIds: [request.repositoryId],
+    repositoryNames: null,
+    permissions,
+  }
 }
 
 function resolveInstallationTokenScope(
@@ -140,13 +150,30 @@ function resolveInstallationTokenScope(
     /* These endpoints inherently range across an installation. Neither token can write. */
     case "repository-picker":
     case "repository-name-check":
-      return { purpose: request.purpose, repositoryIds: null, permissions: { metadata: "read" } }
+      return {
+        purpose: request.purpose,
+        repositoryIds: null,
+        repositoryNames: null,
+        permissions: { metadata: "read" },
+      }
+
+    /* Platform catalogue verification is fixed to the one trusted source repository. */
+    case "catalogue-attestation-read":
+      return {
+        purpose: request.purpose,
+        repositoryIds: null,
+        repositoryNames: ["Deployment-Templates"],
+        // The OCI bundle is public. `gh` needs an authenticated repository identity, not contents;
+        // explicitly downscoping avoids inheriting every permission configured on the App.
+        permissions: { metadata: "read" },
+      }
 
     /* A repository that is about to be created has no id yet. Kept out of every sandbox path. */
     case "repository-provision":
       return {
         purpose: request.purpose,
         repositoryIds: null,
+        repositoryNames: null,
         permissions: { administration: "write", contents: "read" },
       }
 
@@ -172,11 +199,12 @@ function resolveInstallationTokenScope(
 
 function cacheKey(installationId: number, scope: ResolvedInstallationTokenScope): string {
   const repositories = scope.repositoryIds === null ? "all" : scope.repositoryIds.join(",")
+  const repositoryNames = scope.repositoryNames === null ? "all" : scope.repositoryNames.join(",")
   const permissions = Object.entries(scope.permissions)
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([permission, level]) => `${permission}:${level}`)
     .join(",")
-  return `${installationId}|${scope.purpose}|${repositories}|${permissions}`
+  return `${installationId}|${scope.purpose}|${repositories}|${repositoryNames}|${permissions}`
 }
 
 /**
@@ -225,6 +253,7 @@ export function createInstallationTokenStore(options: InstallationTokenStoreOpti
       credential: appJwt(options.signJwt()),
       body: {
         ...(scope.repositoryIds === null ? {} : { repository_ids: scope.repositoryIds }),
+        ...(scope.repositoryNames === null ? {} : { repositories: scope.repositoryNames }),
         permissions: scope.permissions,
       },
     })

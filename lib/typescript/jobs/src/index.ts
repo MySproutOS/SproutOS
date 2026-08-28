@@ -34,13 +34,17 @@ export {
   scheduleRecurring,
 } from "./handlers"
 export {
+  DEPLOYMENT_CATALOGUE_DISCOVERY_KIND,
   DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  discoverDeploymentCatalogue,
   importDeploymentCatalogue,
   isTrustedDeploymentCatalogueWorkflow,
   reconcileSignedDeploymentCatalogue,
   scheduleDeploymentCatalogueReconciliation,
 } from "./deployment-catalogue"
 export {
+  discoverCurrentDeploymentCatalogue,
+  DEPLOYMENT_CATALOGUE_RELEASE_API,
   DEPLOYMENT_TEMPLATES_REF,
   DEPLOYMENT_TEMPLATES_REPOSITORY,
   DEPLOYMENT_TEMPLATES_WORKFLOW_REF,

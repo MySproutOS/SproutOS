@@ -70,6 +70,8 @@ schedule and is left exactly as the caller gave it.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `billing.expire_holds`               | Frees reservations whose runner never came back. `availableBalance` subtracts active holds, so an abandoned one makes a customer's money unspendable. Charges nothing.                                                                                                |
 | `billing.generate_statements`        | Daily idempotent reconciliation of immutable usage debits into UTC-month statements, followed by finalization of elapsed periods. New charges attach their detail in the ledger transaction itself; the job repairs exact older debits without inventing attribution. |
+| `catalogue.discover_signed`          | Daily bootstrap and reconciliation entrypoint. Resolves the latest immutable Deployment-Templates release even with an empty database, checks its asset digest, verifies the exact trusted workflow provenance, then idempotently queues `catalogue.import_signed`.   |
+| `catalogue.import_signed`            | Pulls the discovered immutable GHCR digest, repeats signature/provenance verification, validates all signed catalogue documents, and transactionally reconciles listings. Blocked manifests remain drafts and removed entries are archived.                           |
 | `agent.purge_events`                 | Deletes agent transcripts past `expires_at`. `agent_event.payload` holds file contents from a customer's repository, and the 30-day default was a promise nothing kept. Bounded batches, so a neglected table cannot produce one statement that locks for minutes.    |
 | `platform.purge_deleted`             | Finishes a deletion in the stores Postgres has no foreign key into — Valkey keys, OpenSearch indices, ClickHouse log rows. See `@lib/reaper`. Hourly, and retried more than the others because it talks to three systems we do not run in-process.                    |
 | `platform.reconcile_search_security` | Hourly repair of missing or drifted OpenSearch users, roles, and mappings for live services. Reports orphan-shaped documents without deleting them, measures list/reload latency, and warns at the measured cardinality soft limit.                                   |
@@ -79,6 +81,17 @@ schedule and is left exactly as the caller gave it.
 | `analysis.repository`                | Reads a repository and says what it needs (TASKS 38–39).                                                                                                                                                                                                              |
 
 Every one of them exists because something earlier promised a thing and left nothing to do it.
+
+Catalogue provenance verification uses the platform's existing GitHub App identity. The worker
+resolves the App installation that can see `MySproutOS/Deployment-Templates`, mints an in-memory
+installation token scoped only to that repository with `metadata: read`, and passes it to the `gh`
+subprocess only as `GH_TOKEN`. The child environment is rebuilt from a small runtime allowlist, so
+the App private key, database URL, cloud credentials, and other worker secrets do not cross that
+boundary. The token is cached until the normal five-minute pre-expiry refresh boundary; no PAT or
+long-lived GitHub credential is stored for this job.
+The verifier generation is part of both discovery and import idempotency keys: this App-authenticated
+generation creates one fresh path past jobs dead-lettered by the earlier unauthenticated verifier,
+while leaving those terminal rows intact for audit instead of silently reviving them forever.
 
 ### Retention lives here, deletion does not
 

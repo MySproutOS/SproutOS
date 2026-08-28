@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { GitHubClient, GitHubRequest } from "@lib/github"
 import {
   DEPLOYMENT_CATALOGUE_ARTIFACT_TYPE,
   deploymentCatalogueInternals,
+  discoverCurrentDeploymentCatalogue,
   pullDeploymentCatalogue,
+  verifyDeploymentCatalogueProvenance,
 } from "./deployment-catalogue-oci"
 
 function response(bytes: Uint8Array, headers: Record<string, string> = {}): Response {
@@ -33,7 +36,73 @@ function fixture() {
   return { layers, manifest, digest: deploymentCatalogueInternals.sha256(manifest) }
 }
 
-afterEach(() => vi.unstubAllGlobals())
+function releaseFixture() {
+  const sourceSha = "a".repeat(40)
+  const ociDigest = `sha256:${"b".repeat(64)}`
+  const tag = `catalogue-${sourceSha}`
+  const subjects = Buffer.from(
+    JSON.stringify({
+      schemaVersion: 1,
+      sourceCommit: sourceSha,
+      subjects: [
+        {
+          kind: "catalogue",
+          id: "catalogue",
+          name: "ghcr.io/mysproutos/deployment-catalogue",
+          tag: `sha-${sourceSha}`,
+          digest: ociDigest,
+          layout: "oci/catalogue",
+        },
+      ],
+    }),
+  )
+  const subjectsUrl = `https://github.com/MySproutOS/Deployment-Templates/releases/download/${tag}/subjects.json`
+  const release = Buffer.from(
+    JSON.stringify([
+      {
+        tag_name: `isolation-proofs-${sourceSha}`,
+        target_commitish: sourceSha,
+        draft: false,
+        prerelease: false,
+        immutable: true,
+        published_at: "2099-01-02T00:00:01Z",
+        assets: [],
+      },
+      {
+        tag_name: `catalogue-${"c".repeat(40)}`,
+        target_commitish: "c".repeat(40),
+        draft: false,
+        prerelease: false,
+        immutable: true,
+        published_at: "2099-01-01T00:00:00Z",
+        assets: [],
+      },
+      {
+        tag_name: tag,
+        target_commitish: sourceSha,
+        draft: false,
+        prerelease: false,
+        immutable: true,
+        published_at: "2099-01-02T00:00:00Z",
+        assets: [
+          {
+            name: "subjects.json",
+            state: "uploaded",
+            content_type: "application/json",
+            browser_download_url: subjectsUrl,
+            digest: deploymentCatalogueInternals.sha256(subjects),
+            size: subjects.byteLength,
+          },
+        ],
+      },
+    ]),
+  )
+  return { ociDigest, release, sourceSha, subjects, subjectsUrl }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe("deployment catalogue OCI pull", () => {
   it("accepts only descriptor-hashed bytes from the exact three named layers", async () => {
@@ -77,5 +146,209 @@ describe("deployment catalogue OCI pull", () => {
       Promise.resolve(response(manifest, { "docker-content-digest": digest })),
     )
     await expect(pullDeploymentCatalogue(digest)).rejects.toThrow(/not a SproutOS/)
+  })
+})
+
+describe("deployment catalogue release discovery", () => {
+  it("discovers the exact digest and source commit from an immutable trusted release", async () => {
+    const data = releaseFixture()
+    vi.stubGlobal("fetch", (url: string) =>
+      Promise.resolve(response(url === data.subjectsUrl ? data.subjects : data.release)),
+    )
+
+    await expect(discoverCurrentDeploymentCatalogue()).resolves.toEqual({
+      ociDigest: data.ociDigest,
+      sourceSha: data.sourceSha,
+    })
+  })
+
+  it("refuses mutable releases and release assets whose bytes do not match GitHub's digest", async () => {
+    const mutable = releaseFixture()
+    const mutableRelease = JSON.parse(mutable.release.toString("utf8")) as Array<
+      Record<string, unknown>
+    >
+    mutableRelease[2].immutable = false
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(response(Buffer.from(JSON.stringify(mutableRelease)))),
+    )
+    await expect(discoverCurrentDeploymentCatalogue()).rejects.toThrow(/final immutable release/)
+
+    const changed = releaseFixture()
+    vi.stubGlobal("fetch", (url: string) =>
+      Promise.resolve(response(url === changed.subjectsUrl ? Buffer.from("{}") : changed.release)),
+    )
+    await expect(discoverCurrentDeploymentCatalogue()).rejects.toThrow(/immutable release asset/)
+  })
+
+  it("refuses a subject that points outside the trusted catalogue repository", async () => {
+    const data = releaseFixture()
+    const subjects = JSON.parse(data.subjects.toString("utf8")) as {
+      subjects: Array<{ name: string }>
+    }
+    subjects.subjects[0].name = "ghcr.io/attacker/deployment-catalogue"
+    const changedSubjects = Buffer.from(JSON.stringify(subjects))
+    const release = JSON.parse(data.release.toString("utf8")) as Array<{
+      assets: Array<{ digest: string; size: number }>
+    }>
+    release[2].assets[0].digest = deploymentCatalogueInternals.sha256(changedSubjects)
+    release[2].assets[0].size = changedSubjects.byteLength
+    vi.stubGlobal("fetch", (url: string) =>
+      Promise.resolve(
+        response(url === data.subjectsUrl ? changedSubjects : Buffer.from(JSON.stringify(release))),
+      ),
+    )
+
+    await expect(discoverCurrentDeploymentCatalogue()).rejects.toThrow(/trusted catalogue artifact/)
+  })
+
+  it("uses GitHub CLI's exact-workflow policy without mutually exclusive identity flags", () => {
+    const reference = `ghcr.io/mysproutos/deployment-catalogue@sha256:${"b".repeat(64)}`
+    const sourceSha = "a".repeat(40)
+    const args = deploymentCatalogueInternals.githubAttestationVerifyArguments(reference, sourceSha)
+
+    expect(args).toContain("--signer-workflow")
+    expect(args).not.toContain("--cert-identity")
+    expect(args.slice(args.indexOf("--source-ref"), args.indexOf("--source-ref") + 2)).toEqual([
+      "--source-ref",
+      "refs/heads/main",
+    ])
+    expect(
+      args.slice(args.indexOf("--source-digest"), args.indexOf("--source-digest") + 2),
+    ).toEqual(["--source-digest", sourceSha])
+    expect(args).toContain("--deny-self-hosted-runners")
+  })
+})
+
+describe("deployment catalogue provenance authentication", () => {
+  const ociDigest = `sha256:${"b".repeat(64)}`
+  const sourceSha = "a".repeat(40)
+  type TestExec = (
+    command: string,
+    args: readonly string[],
+    options: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
+  ) => Promise<{ stdout: string; stderr: string }>
+
+  it("injects the installation token only into gh with a minimal non-secret environment", async () => {
+    const calls: Array<{
+      command: string
+      options: { env?: NodeJS.ProcessEnv }
+    }> = []
+    const exec = vi.fn<TestExec>(
+      async (
+        command: string,
+        _args: readonly string[],
+        options: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
+      ) => {
+        calls.push({ command, options })
+        return await Promise.resolve({
+          stdout: command === "gh" ? '[{"verified":true}]' : "",
+          stderr: "",
+        })
+      },
+    )
+    const workerEnvironment = {
+      PATH: "/worker/bin",
+      HOME: "/worker/home",
+      TMPDIR: "/worker/tmp",
+      LANG: "C.UTF-8",
+      GITHUB_APP_PRIVATE_KEY: "private-key-must-not-cross",
+      DATABASE_URL: "postgresql://worker-secret",
+      STRIPE_SECRET_KEY: "stripe-secret",
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      CATALOGUE_TEST_ENV: "not-allowlisted",
+    }
+
+    await expect(
+      verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+        exec,
+        githubToken: async () => await Promise.resolve("ghs_catalogue_secret"),
+        environment: workerEnvironment,
+      }),
+    ).resolves.toHaveLength(1)
+
+    expect(calls.map((call) => call.command)).toStrictEqual(["cosign", "gh"])
+    expect(calls[0].options.env).toBeUndefined()
+    expect(calls[1].options.env).toStrictEqual({
+      PATH: "/worker/bin",
+      HOME: "/worker/home",
+      TMPDIR: "/worker/tmp",
+      LANG: "C.UTF-8",
+      GH_TOKEN: "ghs_catalogue_secret",
+    })
+  })
+
+  it("redacts a token even when gh echoes it in its failure", async () => {
+    const token = "ghs_must_never_escape"
+    const exec = vi.fn<TestExec>(async (command: string) => {
+      if (command === "gh") throw new Error(`authentication failed for ${token}`)
+      return await Promise.resolve({ stdout: "", stderr: "" })
+    })
+
+    const error = await verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+      exec,
+      githubToken: async () => await Promise.resolve(token),
+    }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain(token)
+    expect((error as Error).message).toContain("[REDACTED]")
+  })
+
+  it("fails closed without invoking gh when installation-token minting fails", async () => {
+    const exec = vi.fn<TestExec>(
+      async (_command: string) => await Promise.resolve({ stdout: "", stderr: "" }),
+    )
+
+    await expect(
+      verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
+        exec,
+        githubToken: () =>
+          Promise.reject(new Error("Deployment-Templates installation unavailable")),
+      }),
+    ).rejects.toThrow(/installation unavailable/)
+
+    expect(exec).toHaveBeenCalledTimes(1)
+    expect(exec.mock.calls[0][0]).toBe("cosign")
+  })
+
+  it("discovers the repository installation and reuses its narrow cached token", async () => {
+    const calls: GitHubRequest[] = []
+    let minted = 0
+    const client: GitHubClient = {
+      // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
+      async request<T>(request: GitHubRequest) {
+        calls.push(request)
+        const data =
+          request.method === "GET"
+            ? { id: 91_002 }
+            : {
+                token: `ghs_catalogue_${++minted}`,
+                expires_at: "2099-01-01T00:00:00Z",
+              }
+        return await Promise.resolve({
+          status: 200,
+          data: data as T,
+          rateLimit: { limit: 5000, remaining: 4999, resetAt: null },
+        })
+      },
+    }
+    const provider = deploymentCatalogueInternals.createCatalogueGitHubTokenProvider(
+      client,
+      () => "app.jwt.signature",
+    )
+
+    await expect(provider()).resolves.toBe("ghs_catalogue_1")
+    await expect(provider()).resolves.toBe("ghs_catalogue_1")
+
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toStrictEqual([
+      "GET /repos/MySproutOS/Deployment-Templates/installation",
+      "POST /app/installations/91002/access_tokens",
+      "GET /repos/MySproutOS/Deployment-Templates/installation",
+    ])
+    expect(calls[0].credential).toMatchObject({ kind: "app", token: "app.jwt.signature" })
+    expect(calls[1].body).toStrictEqual({
+      repositories: ["Deployment-Templates"],
+      permissions: { metadata: "read" },
+    })
   })
 })

@@ -333,6 +333,28 @@ describe("app authentication", () => {
     ])
   })
 
+  it("mints and caches a read-only token scoped to Deployment-Templates", async () => {
+    let minted = 0
+    const client = fakeClient({
+      "POST /app/installations/42/access_tokens": () => ({
+        token: `ghs_catalogue_${++minted}`,
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    })
+    const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
+
+    const first = await store.get(42, { purpose: "catalogue-attestation-read" })
+    const second = await store.get(42, { purpose: "catalogue-attestation-read" })
+
+    expect(first.token).toBe("ghs_catalogue_1")
+    expect(second.token).toBe("ghs_catalogue_1")
+    expect(client.calls).toHaveLength(1)
+    expect(client.calls[0].body).toStrictEqual({
+      repositories: ["Deployment-Templates"],
+      permissions: { metadata: "read" },
+    })
+  })
+
   it("rejects invalid repository identifiers before signing or calling GitHub", async () => {
     const client = fakeClient({})
     const signJwt = vi.fn<() => string>(() => "j.w.t")
