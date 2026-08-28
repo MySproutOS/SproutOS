@@ -250,7 +250,10 @@ resource "aws_launch_template" "ecs" {
   # Plugin execution needs a reviewed Docker seccomp profile before this host may join ECS. The
   # bootstrap pins the exact AL2023 Docker/runc builds used to materialize the profile and leaves
   # ECS stopped on any drift or validation failure.
-  user_data = base64encode(<<-EOT
+  # EC2 enforces its 16 KiB user-data limit after base64 decoding. The embedded, integrity-checked
+  # bootstrap and seccomp profile exceed that uncompressed; cloud-init detects gzip user data and
+  # expands it before executing the script.
+  user_data = base64gzip(<<-EOT
     #!/usr/bin/env bash
     set -euo pipefail
     install -d -m 0755 /usr/local/sbin
