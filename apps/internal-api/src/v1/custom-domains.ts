@@ -257,8 +257,8 @@ const routes = app
       ])
       if (project === undefined) return throwNotFound(c, "Project not found")
       if (project.isGroup) return throwBadRequest(c, "A project group serves no traffic")
-      if (project.servingMode === "static") {
-        return throwBadRequest(c, "Static custom domains are not supported yet")
+      if (project.servingMode !== "serverless") {
+        return throwBadRequest(c, "Only dynamic serverless projects support custom domains")
       }
       if (project.liveDeploymentId === null) {
         return throwBadRequest(c, "Deploy this project before adding a custom domain")

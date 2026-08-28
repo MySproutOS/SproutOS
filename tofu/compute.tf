@@ -1213,8 +1213,10 @@ resource "aws_launch_template" "service" {
     acme_account_key_secret_id      = aws_secretsmanager_secret.acme_account_key.id
     acme_directory_url              = var.acme_directory_url
     tenant_edge_runtime_enabled     = var.tenant_edge_enabled || var.tenant_edge_preview_enabled
+    tenant_ingress_host             = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}"
     tenant_ingress_ipv4_addresses   = join(",", aws_eip.tenant_edge[*].public_ip)
-    custom_domains_enabled          = var.tenant_edge_enabled
+    tenant_ingress_ipv6_addresses   = local.tenant_edge_provisioned ? join(",", local.tenant_edge_ipv6_addresses) : ""
+    custom_domains_enabled          = var.custom_domain_issuance_enabled
   }))
 
   metadata_options {

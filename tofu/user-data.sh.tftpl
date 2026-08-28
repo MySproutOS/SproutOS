@@ -85,8 +85,9 @@ VALKEY_URL=${valkey_url}
 # Conflating them meant a tenant hostname was one wildcard away from the apex that authenticates
 # our own users.
 TENANT_DOMAIN=${tenant_domain}
-TENANT_INGRESS_HOST=ingress.${tenant_domain}
+TENANT_INGRESS_HOST=${tenant_ingress_host}
 TENANT_INGRESS_IPV4_ADDRESSES=${tenant_ingress_ipv4_addresses}
+TENANT_INGRESS_IPV6_ADDRESSES=${tenant_ingress_ipv6_addresses}
 TENANT_CERTIFICATE_BUCKET=${tenant_certificate_bucket}
 TENANT_CERTIFICATE_KMS_KEY_ARN=${tenant_certificate_kms_key_arn}
 ACME_ACCOUNT_KEY_SECRET_ID=${acme_account_key_secret_id}

@@ -323,9 +323,10 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
-        { name = "TENANT_INGRESS_HOST", value = "ingress.${var.tenant_domain}" },
+        { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
         { name = "TENANT_INGRESS_IPV4_ADDRESSES", value = join(",", aws_eip.tenant_edge[*].public_ip) },
-        { name = "CUSTOM_DOMAINS_ENABLED", value = var.tenant_edge_enabled ? "1" : "0" },
+        { name = "TENANT_INGRESS_IPV6_ADDRESSES", value = local.tenant_edge_provisioned ? join(",", local.tenant_edge_ipv6_addresses) : "" },
+        { name = "CUSTOM_DOMAINS_ENABLED", value = var.custom_domain_issuance_enabled ? "1" : "0" },
         # The entrypoint composes DATABASE_URL from these plus the injected secret. The host and
         # database name are not secret; only the credentials are, and those arrive separately.
         { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
@@ -404,7 +405,7 @@ resource "aws_ecs_task_definition" "web" {
         { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
         { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
         { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
-        { name = "TENANT_INGRESS_HOST", value = "ingress.${var.tenant_domain}" },
+        { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
         { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
         { name = "ROUTER_CERTIFICATE_MIN_ACKS", value = tostring(var.router_certificate_min_acks) },
         { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },

@@ -381,7 +381,7 @@ resource "aws_iam_role_policy" "deploy" {
           # Omitting this ARN let fill prove the LLM target healthy, then made cutover fail with
           # AccessDenied after search had already moved to the new colour.
           aws_lb_listener_rule.llm.arn,
-          ], var.tenant_edge_enabled ? [
+          ], local.tenant_edge_provisioned ? [
           aws_lb_listener.tenant_http[0].arn,
           aws_lb_listener.tenant_https[0].arn,
         ] : [])

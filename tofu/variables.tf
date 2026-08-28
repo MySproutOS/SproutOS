@@ -166,13 +166,24 @@ variable "tenant_edge_enabled" {
 }
 
 variable "tenant_edge_preview_enabled" {
-  description = "Attach the Rust edge target groups and expose temporary 10080/10443 smoke listeners without moving production 80/443."
+  description = "Provision the parallel Rust edge NLB on public 80/443 and its preview ingress name without moving production tenant DNS."
   type        = bool
   default     = false
 }
 
+variable "custom_domain_issuance_enabled" {
+  description = "Allow custom-domain claims and asynchronous ACME work independently of the generated-traffic DNS cutover. Enable first against staging on the preview edge."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.custom_domain_issuance_enabled || var.tenant_edge_preview_enabled || var.tenant_edge_enabled
+    error_message = "Custom-domain issuance requires either the preview edge or the production tenant edge."
+  }
+}
+
 variable "tenant_edge_preview_colour" {
-  description = "Router colour explicitly filled with the edge-capable release for temporary high-port smoke traffic."
+  description = "Router colour explicitly filled with the edge-capable release for isolated preview traffic."
   type        = string
   default     = "blue"
 

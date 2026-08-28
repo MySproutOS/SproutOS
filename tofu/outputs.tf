@@ -140,9 +140,19 @@ output "tenant_ingress_ipv4_addresses" {
   value       = aws_eip.tenant_edge[*].public_ip
 }
 
+output "tenant_ingress_ipv6_addresses" {
+  description = "Stable NLB IPv6 fallback records for customer apex domains without DNS flattening."
+  value       = local.tenant_edge_provisioned ? local.tenant_edge_ipv6_addresses : []
+}
+
 output "tenant_edge_dns_name" {
   description = "Parallel dual-stack tenant edge NLB name for IPv4 and IPv6 preview smoke tests."
   value       = local.tenant_edge_provisioned ? aws_lb.tenant_edge[0].dns_name : null
+}
+
+output "tenant_edge_preview_ingress" {
+  description = "Stable dual-stack preview hostname that reaches edge ports 80 and 443 without moving production traffic."
+  value       = local.tenant_edge_provisioned ? "preview-ingress.${var.tenant_domain}" : null
 }
 
 output "forum_static_bucket" {

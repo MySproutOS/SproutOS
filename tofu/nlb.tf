@@ -299,6 +299,12 @@ resource "aws_vpc_security_group_ingress_rule" "service_valkey_from_nlb" {
 
 locals {
   tenant_edge_provisioned = var.tenant_edge_preview_enabled || var.tenant_edge_enabled
+  # Pin one address in each /64 so apex providers without ALIAS/ANAME can publish the same stable
+  # IPv6 frontend that the dual-stack NLB advertises. AWS otherwise assigns an address but the
+  # provider does not expose an omitted `subnet_mapping.ipv6_address` as a computed value.
+  tenant_edge_ipv6_addresses = [
+    for index in range(local.serving_zone_count) : cidrhost(aws_subnet.public[index].ipv6_cidr_block, 100)
+  ]
 }
 
 resource "aws_security_group" "tenant_edge_nlb" {
@@ -337,12 +343,16 @@ resource "aws_lb" "tenant_edge" {
     content {
       subnet_id     = aws_subnet.public[subnet_mapping.value].id
       allocation_id = aws_eip.tenant_edge[subnet_mapping.value].id
+      ipv6_address  = local.tenant_edge_ipv6_addresses[subnet_mapping.value]
     }
   }
 
   enable_cross_zone_load_balancing = true
-  enable_deletion_protection       = var.deletion_protection
-  tags                             = { Name = "${var.name_prefix}-tenant-edge" }
+  # Preview must be safely abortable without disabling deletion protection account-wide. Final
+  # cutover turns protection on in place. To retire a cut-over edge, first leave preview enabled
+  # while disabling the edge so this flips off, then remove preview in a second reviewed apply.
+  enable_deletion_protection = var.deletion_protection && var.tenant_edge_enabled
+  tags                       = { Name = "${var.name_prefix}-tenant-edge" }
 }
 
 # Public deliberately. TLS stays encrypted through the NLB; rustls selects generated/custom tenant
@@ -357,7 +367,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   security_group_id = aws_security_group.tenant_edge_nlb.id
   description       = "Tenant HTTPS and authenticated sandbox egress"
@@ -368,7 +378,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https_ipv6" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   security_group_id = aws_security_group.tenant_edge_nlb.id
   description       = "IPv6 tenant HTTPS and authenticated sandbox egress"
@@ -465,7 +475,7 @@ resource "aws_lb_listener" "forward_proxy" {
 }
 
 resource "aws_lb_listener" "tenant_https" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   load_balancer_arn = aws_lb.tenant_edge[0].arn
   port              = 443
@@ -476,15 +486,17 @@ resource "aws_lb_listener" "tenant_https" {
     forward {
       target_group {
         arn    = aws_lb_target_group.tenant_https["blue"].arn
-        weight = 100
+        weight = var.tenant_edge_preview_colour == "blue" ? 100 : 0
       }
       target_group {
         arn    = aws_lb_target_group.tenant_https["green"].arn
-        weight = 0
+        weight = var.tenant_edge_preview_colour == "green" ? 100 : 0
       }
     }
   }
 
+  # Created once for preview and retained through cutover. The selected preview colour is the
+  # initial owner; after that bin/cutover.sh owns both weights just like the other listeners.
   lifecycle { ignore_changes = [default_action] }
 }
 
@@ -507,7 +519,7 @@ resource "aws_vpc_security_group_ingress_rule" "service_tenant_https_from_nlb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   security_group_id = aws_security_group.tenant_edge_nlb.id
   description       = "ACME HTTP-01 and tenant HTTPS redirects"
@@ -518,7 +530,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http_ipv6" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   security_group_id = aws_security_group.tenant_edge_nlb.id
   description       = "IPv6 ACME HTTP-01 and tenant HTTPS redirects"
@@ -553,7 +565,7 @@ resource "aws_lb_target_group" "tenant_http" {
 }
 
 resource "aws_lb_listener" "tenant_http" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = local.tenant_edge_provisioned ? 1 : 0
 
   load_balancer_arn = aws_lb.tenant_edge[0].arn
   port              = 80
@@ -565,89 +577,18 @@ resource "aws_lb_listener" "tenant_http" {
     forward {
       target_group {
         arn    = aws_lb_target_group.tenant_http["blue"].arn
-        weight = 100
+        weight = var.tenant_edge_preview_colour == "blue" ? 100 : 0
       }
       target_group {
         arn    = aws_lb_target_group.tenant_http["green"].arn
-        weight = 0
+        weight = var.tenant_edge_preview_colour == "green" ? 100 : 0
       }
     }
   }
 
   lifecycle {
+    # Same persistent preview-to-production listener contract as HTTPS above.
     ignore_changes = [default_action]
-  }
-}
-
-# Temporary listeners exercise the complete encrypted path with curl --resolve before port 443 or
-# generated DNS moves. They are absent by default and removed by the same apply that enables edge.
-resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http_preview" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "Temporary Rust tenant HTTP edge smoke port"
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "tcp"
-  from_port         = 10080
-  to_port           = 10080
-}
-
-resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http_preview_ipv6" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "Temporary IPv6 Rust tenant HTTP edge smoke port"
-  cidr_ipv6         = "::/0"
-  ip_protocol       = "tcp"
-  from_port         = 10080
-  to_port           = 10080
-}
-
-resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_https_preview" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "Temporary Rust tenant TLS edge smoke port"
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "tcp"
-  from_port         = 10443
-  to_port           = 10443
-}
-
-resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_https_preview_ipv6" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "Temporary IPv6 Rust tenant TLS edge smoke port"
-  cidr_ipv6         = "::/0"
-  ip_protocol       = "tcp"
-  from_port         = 10443
-  to_port           = 10443
-}
-
-resource "aws_lb_listener" "tenant_https_preview" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  load_balancer_arn = aws_lb.tenant_edge[0].arn
-  port              = 10443
-  protocol          = "TCP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.tenant_https[var.tenant_edge_preview_colour].arn
-  }
-}
-
-resource "aws_lb_listener" "tenant_http_preview" {
-  count = var.tenant_edge_preview_enabled && !var.tenant_edge_enabled ? 1 : 0
-
-  load_balancer_arn = aws_lb.tenant_edge[0].arn
-  port              = 10080
-  protocol          = "TCP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.tenant_http[var.tenant_edge_preview_colour].arn
   }
 }
 
@@ -722,6 +663,37 @@ resource "aws_route53_record" "tenant_ingress_ipv6" {
 
   zone_id = aws_route53_zone.tenant.zone_id
   name    = "ingress.${var.tenant_domain}"
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_lb.tenant_edge[0].dns_name
+    zone_id                = aws_lb.tenant_edge[0].zone_id
+    evaluate_target_health = false
+  }
+}
+
+# A stable, non-production name for exercising platform certificates, HTTP-01, custom-domain SNI,
+# and both address families before generated traffic moves. Keep it after cutover so a staging test
+# hostname is not broken merely because the production listener replaced the preview listener.
+resource "aws_route53_record" "tenant_edge_preview" {
+  count = local.tenant_edge_provisioned ? 1 : 0
+
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = "preview-ingress.${var.tenant_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.tenant_edge[0].dns_name
+    zone_id                = aws_lb.tenant_edge[0].zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "tenant_edge_preview_ipv6" {
+  count = local.tenant_edge_provisioned ? 1 : 0
+
+  zone_id = aws_route53_zone.tenant.zone_id
+  name    = "preview-ingress.${var.tenant_domain}"
   type    = "AAAA"
 
   alias {

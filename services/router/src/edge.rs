@@ -92,7 +92,8 @@ pub fn target_for_sni(
         return Err(DispatchError::UnknownSni);
     }
     Ok(
-        if egress_sni.is_some_and(|host| host.eq_ignore_ascii_case(&sni)) {
+        if egress_sni.is_some_and(|host| normalize_dns_name(host).as_deref() == Some(sni.as_str()))
+        {
             Target::Egress
         } else {
             Target::Http
@@ -170,6 +171,27 @@ pub fn host_matches_sni(host: Option<&str>, sni: &str) -> bool {
             .map_or(host, |(name, _)| name)
     };
     normalize_dns_name(host) == normalize_dns_name(sni)
+}
+
+fn request_authority_matches_sni<B>(request: &Request<B>, sni: &str) -> bool {
+    // HTTP/1.1 normally carries the authority in Host. HTTP/2 carries it in `:authority`, which
+    // Hyper exposes through the URI rather than synthesizing a Host header. If both forms are
+    // present (including an HTTP/1 absolute-form request), require both to agree so a downstream
+    // framework cannot select a different tenant from the spelling the edge did not inspect.
+    let uri_authority = request
+        .uri()
+        .authority()
+        .map(|authority| authority.as_str());
+    let host = request
+        .headers()
+        .get("host")
+        .and_then(|value| value.to_str().ok());
+    let has_authority = uri_authority.is_some() || host.is_some();
+    has_authority
+        && uri_authority
+            .into_iter()
+            .chain(host)
+            .all(|authority| host_matches_sni(Some(authority), sni))
 }
 
 fn normalize_dns_name(value: &str) -> Option<String> {
@@ -350,15 +372,15 @@ impl Edge {
         let sni = start
             .client_hello()
             .server_name()
-            .map(str::to_owned)
-            .ok_or(DispatchError::MissingSni)?;
+            .ok_or(DispatchError::MissingSni)
+            .and_then(|name| normalize_dns_name(name).ok_or(DispatchError::UnknownSni))?;
         if self.resolver.resolve_name(&sni).is_none() {
             return Err(DispatchError::UnknownSni.into());
         }
         let target = if self
             .egress_sni
             .as_deref()
-            .is_some_and(|name| name.eq_ignore_ascii_case(&sni))
+            .is_some_and(|name| name == sni.as_str())
         {
             Target::Egress
         } else {
@@ -521,13 +543,7 @@ impl Service<Request<Incoming>> for HostGuard {
     }
 
     fn call(&mut self, mut request: Request<Incoming>) -> Self::Future {
-        if !host_matches_sni(
-            request
-                .headers()
-                .get("host")
-                .and_then(|value| value.to_str().ok()),
-            &self.sni,
-        ) {
+        if !request_authority_matches_sni(&request, &self.sni) {
             return Box::pin(async {
                 Ok((
                     StatusCode::MISDIRECTED_REQUEST,
@@ -705,6 +721,19 @@ mod tests {
     }
 
     #[test]
+    fn exact_egress_sni_uses_the_same_dns_normalization_as_certificates() {
+        let names = HashSet::from(["EGRESS.EXAMPLE.TEST.".to_owned()]);
+        assert_eq!(
+            target_for_sni(
+                Some("egress.example.test"),
+                &names,
+                Some("EGRESS.EXAMPLE.TEST.")
+            ),
+            Ok(Target::Egress)
+        );
+    }
+
+    #[test]
     fn host_must_match_sni_including_after_port_normalisation() {
         assert!(host_matches_sni(
             Some("APP.EXAMPLE.TEST:443"),
@@ -719,6 +748,30 @@ mod tests {
             Some("BÜCHER.EXAMPLE.:443"),
             "xn--bcher-kva.example"
         ));
+    }
+
+    #[test]
+    fn http2_authority_must_match_sni_even_without_a_host_header() {
+        let request = Request::builder()
+            .version(axum::http::Version::HTTP_2)
+            .uri("https://app.example.test/path")
+            .body(())
+            .unwrap();
+        assert!(request_authority_matches_sni(&request, "app.example.test"));
+        assert!(!request_authority_matches_sni(
+            &request,
+            "other.example.test"
+        ));
+    }
+
+    #[test]
+    fn conflicting_uri_authority_and_host_are_rejected() {
+        let request = Request::builder()
+            .uri("https://app.example.test/path")
+            .header("host", "other.example.test")
+            .body(())
+            .unwrap();
+        assert!(!request_authority_matches_sni(&request, "app.example.test"));
     }
 
     #[tokio::test]

@@ -4,16 +4,27 @@
 //! peer is the load balancer rather than the viewer. AWS prepends this header to both traffic and
 //! health checks when it is enabled on a target group. No other router listener uses this module.
 
+use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::pin::Pin;
 
 use axum::serve::Listener;
+use futures_util::stream::{FuturesUnordered, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 const SIGNATURE: [u8; 12] = *b"\r\n\r\n\0\r\nQUIT\n";
 const MAX_PAYLOAD_BYTES: usize = 4_096;
 const HEADER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+// Header parsing must not happen serially in `Listener::accept`: one client which opens a TCP
+// connection and sends nothing could otherwise stop the public listener from accepting anyone
+// else for the whole header timeout. Keep the work concurrent and bounded so the prelude does not
+// become either a head-of-line blocking primitive or an unbounded socket allocation primitive.
+const MAX_PENDING_HEADERS: usize = 1_024;
+
+type ParsedConnection = (BufReader<TcpStream>, SocketAddr);
+type PendingHeader = Pin<Box<dyn Future<Output = Option<ParsedConnection>> + Send>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Addresses {
@@ -126,11 +137,30 @@ where
 pub struct ProxyProtocolListener {
     inner: TcpListener,
     required: bool,
+    pending: FuturesUnordered<PendingHeader>,
 }
 
 impl ProxyProtocolListener {
     pub fn new(inner: TcpListener, required: bool) -> Self {
-        Self { inner, required }
+        Self {
+            inner,
+            required,
+            pending: FuturesUnordered::new(),
+        }
+    }
+}
+
+async fn parse_connection(stream: TcpStream, peer: SocketAddr) -> Option<ParsedConnection> {
+    match tokio::time::timeout(HEADER_TIMEOUT, read(stream)).await {
+        Ok(Ok((stream, addresses))) => Some((stream, addresses.map_or(peer, |value| value.source))),
+        Ok(Err(cause)) => {
+            tracing::warn!(%peer, %cause, "invalid tenant edge proxy prelude");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(%peer, "tenant edge proxy prelude timed out");
+            None
+        }
     }
 }
 
@@ -152,25 +182,50 @@ impl Listener for ProxyProtocolListener {
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         loop {
-            let (stream, peer) = match self.inner.accept().await {
-                Ok(value) => value,
-                Err(cause) => {
-                    tracing::error!(%cause, "tenant edge accept failed");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
             if !self.required {
-                return (BufReader::new(stream), peer);
+                match self.inner.accept().await {
+                    Ok((stream, peer)) => return (BufReader::new(stream), peer),
+                    Err(cause) => {
+                        tracing::error!(%cause, "tenant edge accept failed");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
+                continue;
             }
-            match tokio::time::timeout(HEADER_TIMEOUT, read(stream)).await {
-                Ok(Ok((stream, addresses))) => {
-                    return (stream, addresses.map_or(peer, |value| value.source));
+
+            if self.pending.len() >= MAX_PENDING_HEADERS {
+                if let Some(Some(connection)) = self.pending.next().await {
+                    return connection;
                 }
-                Ok(Err(cause)) => {
-                    tracing::warn!(%peer, %cause, "invalid tenant edge proxy prelude")
+                continue;
+            }
+
+            if self.pending.is_empty() {
+                match self.inner.accept().await {
+                    Ok((stream, peer)) => {
+                        self.pending.push(Box::pin(parse_connection(stream, peer)))
+                    }
+                    Err(cause) => {
+                        tracing::error!(%cause, "tenant edge accept failed");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
                 }
-                Err(_) => tracing::warn!(%peer, "tenant edge proxy prelude timed out"),
+                continue;
+            }
+
+            tokio::select! {
+                parsed = self.pending.next() => {
+                    if let Some(Some(connection)) = parsed {
+                        return connection;
+                    }
+                }
+                accepted = self.inner.accept() => match accepted {
+                    Ok((stream, peer)) => self.pending.push(Box::pin(parse_connection(stream, peer))),
+                    Err(cause) => {
+                        tracing::error!(%cause, "tenant edge accept failed");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                },
             }
         }
     }
@@ -274,5 +329,24 @@ mod tests {
         writer.write_all(&oversized).await.unwrap();
         drop(writer);
         assert!(read(reader).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn one_silent_prelude_does_not_block_the_next_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut listener = ProxyProtocolListener::new(listener, true);
+
+        let _silent = TcpStream::connect(address).await.unwrap();
+        let mut ready = TcpStream::connect(address).await.unwrap();
+        ready
+            .write_all(&header(0, 0x00, b"health metadata"))
+            .await
+            .unwrap();
+
+        let accepted = tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept())
+            .await
+            .expect("the complete second prelude must bypass the silent first connection");
+        assert_eq!(accepted.1.ip(), std::net::Ipv4Addr::LOCALHOST);
     }
 }
