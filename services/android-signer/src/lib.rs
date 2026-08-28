@@ -382,6 +382,9 @@ fn public_error(cause: &anyhow::Error) -> String {
         .unwrap_or_else(|| "signing failed".to_owned());
     let scrubbed = if message.contains("http://") || message.contains("https://") {
         "artifact transfer failed".to_owned()
+    } else if message.starts_with("Android tool failed:") {
+        // Tool stderr can contain restricted temporary paths and must remain on the signer host.
+        "Android signing tool failed".to_owned()
     } else {
         message
     };
@@ -418,5 +421,10 @@ mod tests {
     fn public_errors_do_not_echo_presigned_urls() {
         let error = anyhow::anyhow!("GET https://bucket/?X-Amz-Signature=secret failed");
         assert_eq!(public_error(&error), "artifact transfer failed");
+
+        let error = anyhow::anyhow!(
+            "Android tool failed: could not open /private/signer/key.p12 for password hunter2"
+        );
+        assert_eq!(public_error(&error), "Android signing tool failed");
     }
 }

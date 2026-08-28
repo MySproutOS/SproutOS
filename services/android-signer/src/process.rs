@@ -142,10 +142,7 @@ impl AndroidTools for CommandAndroidTools {
             &self.apksigner,
             &["verify".into(), apk.as_os_str().to_owned()],
         )?;
-        if result.success {
-            bail!("APK is already signed")
-        }
-        Ok(())
+        assert_apksigner_reports_unsigned(&result)
     }
 
     fn manifest(&self, apk: &Path) -> anyhow::Result<ApkManifest> {
@@ -225,6 +222,28 @@ impl AndroidTools for CommandAndroidTools {
         )?;
         parse_certificate_sha256(&output.stdout)
     }
+}
+
+fn assert_apksigner_reports_unsigned(result: &ToolOutput) -> anyhow::Result<()> {
+    if result.overflow {
+        bail!("Android tool output exceeded {OUTPUT_LIMIT} bytes")
+    }
+    if result.success {
+        bail!("APK is already signed")
+    }
+
+    // `apksigner verify` also exits non-zero for malformed input and tool failures. Only its
+    // explicit no-signature diagnostic proves that a structurally valid APK is unsigned; treating
+    // every failure as unsigned would make this check fail open.
+    let stdout = String::from_utf8_lossy(&result.stdout).to_ascii_lowercase();
+    let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
+    let diagnostic = format!("{stdout}\n{stderr}");
+    if diagnostic.contains("does not verify")
+        && (diagnostic.contains("no signatures") || diagnostic.contains("no signer"))
+    {
+        return Ok(());
+    }
+    bail!("Android signing tool could not establish that the APK is unsigned")
 }
 
 fn parse_badging(bytes: &[u8]) -> anyhow::Result<ApkManifest> {
@@ -463,6 +482,31 @@ mod tests {
             )
             .unwrap(),
             "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+        );
+    }
+
+    #[test]
+    fn unsigned_check_fails_closed_on_tool_and_parse_errors() {
+        let output = |success, stderr: &str| ToolOutput {
+            success,
+            stdout: Vec::new(),
+            stderr: stderr.as_bytes().to_vec(),
+            overflow: false,
+        };
+
+        assert!(
+            assert_apksigner_reports_unsigned(&output(
+                false,
+                "DOES NOT VERIFY\nERROR: No signatures",
+            ))
+            .is_ok()
+        );
+        assert!(assert_apksigner_reports_unsigned(&output(true, "")).is_err());
+        assert!(
+            assert_apksigner_reports_unsigned(&output(false, "unable to parse APK"))
+                .unwrap_err()
+                .to_string()
+                .contains("could not establish")
         );
     }
 }
