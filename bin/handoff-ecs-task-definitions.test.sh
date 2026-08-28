@@ -100,6 +100,15 @@ test "$(wc -l <"$TMP/deploy-calls" | tr -d ' ')" = "4"
 test "$(grep -c '^preflight$' "$TMP/verify-calls")" = "4"
 test "$(grep -c '^verified$' "$TMP/verify-calls")" = "4"
 
+# A caller environment must not weaken the post-deploy verifier. The wrapper owns both values:
+# phase-only before mutation, exact-contract after the deploy succeeds.
+: >"$TMP/deploy-calls"
+: >"$TMP/verify-calls"
+ACME_LIVE_PHASE_ONLY=1 run_handoff \
+  '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' A
+test "$(cat "$TMP/verify-calls")" = $'preflight\nverified'
+test "$(wc -l <"$TMP/deploy-calls" | tr -d ' ')" = "1"
+
 before=$(wc -l <"$TMP/deploy-calls" | tr -d ' ')
 if FAIL_LIVE_PHASE=1 run_handoff \
   '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' A \

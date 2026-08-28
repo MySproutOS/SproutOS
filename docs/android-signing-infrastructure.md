@@ -307,12 +307,14 @@ failure. A normal `tofu plan` keeps both delivery switches disabled, so it canno
 a missing SSM reference.
 
 Credential delivery and #192 deployment do not authorize real signing. Before provisioning the
-first key, complete the master-identity and signer-state restore drill in Retention and recovery,
-pin and verify the resulting key-object VersionId/certificate fingerprint, and satisfy every Alarm
-rollout prerequisite. In particular, the durable last-seen record and queue-health metric producer
-are still absent, so `android_signing_alarms_enabled` must remain `false` and real signing remains
-blocked. Do not enable silent or permanently `INSUFFICIENT_DATA` alarms as a substitute for those
-signals.
+first key, complete only the host-level master-identity, signer-state backup, and offline-master
+restore proof in Retention and recovery. Then provision the disposable internal identity described
+there and complete its pinned key-object VersionId, certificate, isolated database, and object
+restore drill. No `com.sproutos.store` or customer identity may exist before that second proof, and
+no release may be signed yet. Finally satisfy every Alarm rollout prerequisite. The durable
+last-seen record and queue-health metric producer are still absent, so `android_signing_alarms_enabled`
+must remain `false` and real signing remains blocked. Do not enable silent or permanently
+`INSUFFICIENT_DATA` alarms as a substitute for those signals.
 
 The independent Google credential may be staged later: first use a metadata-only SSM check to prove
 its exact `/sproutos/android-worker` name is a `SecureString`, then save a plan with

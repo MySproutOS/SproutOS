@@ -101,7 +101,32 @@ verify_service() {
       }
     | with_entries(select(.value != null and .value != []))
   ' <<<"$live_definition")
-  if { [ "$LIVE_PHASE_ONLY" != 1 ] && [ "$live_contract" != "$expected_contract" ]; } ||
+  compared_expected=$expected_contract
+  compared_live=$live_contract
+  if [ "$LIVE_PHASE_ONLY" = 1 ] && [ "$service_name" = "$WEB_SERVICE" ]; then
+    # Stage two intentionally adds these two entries to only the planned API contract. Remove only
+    # that known delta before comparison; every role, image, environment value, sibling-container
+    # secret, port, volume, and ACME task field remains exact.
+    compared_expected=$(jq -Sc '
+      .containerDefinitions |= map(
+        if .name == "api" then
+          .secrets = [(.secrets // [])[] | select(
+            .name != "APK_SIGNER_TOKEN" and .name != "APK_SIGNER_OPERATOR_TOKEN"
+          )]
+        else . end
+      )
+    ' <<<"$expected_contract")
+    compared_live=$(jq -Sc '
+      .containerDefinitions |= map(
+        if .name == "api" then
+          .secrets = [(.secrets // [])[] | select(
+            .name != "APK_SIGNER_TOKEN" and .name != "APK_SIGNER_OPERATOR_TOKEN"
+          )]
+        else . end
+      )
+    ' <<<"$live_contract")
+  fi
+  if [ "$compared_live" != "$compared_expected" ] ||
     ! jq -e --arg family "$family" --arg image "$IMAGE" --arg container "$container" '
       .taskDefinition.family == $family and
       ([.taskDefinition.containerDefinitions[].image] | unique) == [$image] and

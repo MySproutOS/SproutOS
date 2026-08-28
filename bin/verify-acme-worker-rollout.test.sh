@@ -72,11 +72,24 @@ case "$1 $2" in
     [ "${BAD_IMAGE:-}" = 1 ] && [[ "$task" != *:base ]] && image=wrong:image
     [ "${BAD_ROLE:-}" = 1 ] && [[ "$task" != *:base ]] && role=arn:aws:iam::a:role/wrong
     [ "${BAD_ENV:-}" = 1 ] && [ "$container" = worker ] && environment='[]'
-    [ "${BASE_CONTRACT_DRIFT:-}" = 1 ] && [[ "$task" == *:base ]] && environment='[{"name":"PLANNED_ONLY","value":"1"}]'
-    jq -nc --arg arn "$task" --arg family "$family" --arg role "$role" --arg image "$image" \
-      --arg container "$container" --argjson environment "$environment" '{taskDefinition:{
+    if [ "$family" = sproutos-web ]; then
+      api_secrets='[]'
+      if [ "${BASE_CONTRACT_DRIFT:-}" = 1 ] && [[ "$task" == *:base ]]; then
+        api_secrets='[{"name":"APK_SIGNER_TOKEN","valueFrom":"arn:runtime"},{"name":"APK_SIGNER_OPERATOR_TOKEN","valueFrom":"arn:operator"}]'
+      fi
+      containers=$(jq -nc --arg image "$image" --argjson environment "$environment" \
+        --argjson api_secrets "$api_secrets" '[
+          {name:"worker",image:$image,environment:$environment},
+          {name:"api",image:$image,secrets:$api_secrets}
+        ]')
+    else
+      containers=$(jq -nc --arg image "$image" --arg container "$container" \
+        --argjson environment "$environment" '[{name:$container,image:$image,environment:$environment}]')
+    fi
+    jq -nc --arg arn "$task" --arg family "$family" --arg role "$role" \
+      --argjson containers "$containers" '{taskDefinition:{
         taskDefinitionArn:$arn,family:$family,taskRoleArn:$role,executionRoleArn:"arn:aws:iam::a:role/execution",
-        containerDefinitions:[{name:$container,image:$image,environment:$environment}]}}'
+        containerDefinitions:$containers}}'
     ;;
   'ecs list-tasks')
     service=''
@@ -128,6 +141,11 @@ run_phase D
 # A saved stage-two plan intentionally changes the task contract before ECS serves it. Phase-only
 # verification must tolerate that planned delta while still refusing a missing live phase-A service.
 ACME_LIVE_PHASE_ONLY=1 BASE_CONTRACT_DRIFT=1 run_phase A
+if ACME_LIVE_PHASE_ONLY=1 BAD_ROLE=1 run_phase A >"$TMP/phase-role.out" 2>&1; then
+  echo "phase-only verifier accepted a live task-role contract mismatch" >&2
+  exit 1
+fi
+grep -q "not the exact reviewed contract" "$TMP/phase-role.out"
 if ACME_LIVE_PHASE_ONLY=1 MISSING_ACME_SERVICE=1 run_phase A \
   >"$TMP/missing-acme.out" 2>&1; then
   echo "phase-only verifier accepted a missing live ACME service" >&2
