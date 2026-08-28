@@ -5,7 +5,7 @@ import {
   ListResourceRecordSetsCommand,
   type Route53Client,
 } from "@aws-sdk/client-route-53"
-import type { S3Client } from "@aws-sdk/client-s3"
+import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3"
 import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { db } from "@sproutos/db"
 import type { Redis } from "ioredis"
@@ -210,6 +210,7 @@ describe("platform certificate lifecycle", () => {
     vi.stubEnv("PLATFORM_EDGE_ROLLOUT_ENABLED", "1")
     vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificate-bucket")
     vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
   })
   afterEach(() => vi.unstubAllEnvs())
 
@@ -306,6 +307,7 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
     vi.stubEnv("PLATFORM_EDGE_ROLLOUT_ENABLED", "0")
     vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificate-bucket")
     vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
     vi.stubEnv("ROUTER_CERTIFICATE_MIN_ACKS", "1")
     await db.deleteFrom("platformEdgeCertificate").where("id", "=", "platform").execute()
   })
@@ -342,6 +344,15 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
           privateKeyPem: "private-key",
           issuedAt: new Date("2099-01-01T00:00:00Z"),
           expiresAt: new Date("2099-04-01T00:00:00Z"),
+        }),
+      scheduleIssued: () =>
+        Promise.resolve({
+          certificateId: "aki.serial",
+          issuer: "CN=Staging Test CA",
+          nextRenewalAt: new Date("2099-03-02T00:00:00Z"),
+          renewalInfoRetryAt: null,
+          renewalInfoExplanationUrl: null,
+          source: "unsupported",
         }),
     })
     const context = {
@@ -387,5 +398,242 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
       .executeTakeFirstOrThrow()
     expect(active).toEqual({ status: "active", deployedObjectVersion: "s3-version-1" })
     expect(autoScalingSend).toHaveBeenCalledOnce()
+  })
+
+  it("forces staging material through a production order before it can be activated", async () => {
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-v02.example/directory")
+    await db
+      .insertInto("platformEdgeCertificate")
+      .values({
+        id: "platform",
+        status: "active",
+        certificateObjectKey: "platform-edge/current.json",
+        certificateObjectVersion: "staging-version",
+        deployedObjectVersion: "staging-version",
+        certificateIssuer: "CN=Fake LE Intermediate X1",
+        certificateDirectoryUrl: "https://acme-staging-v02.example/directory",
+        renewalInfoCertificateId: "staging.123",
+        certificateIssuedAt: new Date("2098-12-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2099-03-01T00:00:00Z"),
+        nextRenewalAt: new Date("2099-02-01T00:00:00Z"),
+        nextRetryAt: new Date("2099-02-01T00:00:00Z"),
+      })
+      .execute()
+    const issue = vi.fn<
+      () => Promise<{
+        certificatePem: string
+        privateKeyPem: string
+        issuedAt: Date
+        expiresAt: Date
+      }>
+    >(() =>
+      Promise.resolve({
+        certificatePem: "production-certificate",
+        privateKeyPem: "production-private-key",
+        issuedAt: new Date("2099-01-01T00:00:00Z"),
+        expiresAt: new Date("2099-04-01T00:00:00Z"),
+      }),
+    )
+    const handler = reconcilePlatformEdgeCertificate({
+      now: () => new Date("2099-01-01T00:00:00Z"),
+      autoScaling: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as AutoScalingClient,
+      route53: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as Route53Client,
+      s3: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(() =>
+          Promise.resolve({ VersionId: "production-version" }),
+        ),
+      } as unknown as S3Client,
+      secrets: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as SecretsManagerClient,
+      valkey: {
+        scan: vi.fn<(...arguments_: unknown[]) => Promise<[string, string[]]>>(),
+      } as unknown as Redis,
+      sleep: () => Promise.resolve(),
+      issue,
+      scheduleIssued: () =>
+        Promise.resolve({
+          certificateId: "production.456",
+          issuer: "CN=LE Intermediate R13",
+          nextRenewalAt: new Date("2099-03-02T00:00:00Z"),
+          renewalInfoRetryAt: new Date("2099-01-01T06:00:00Z"),
+          renewalInfoExplanationUrl: null,
+          source: "ari",
+        }),
+    })
+
+    await handler({} as never, {
+      db,
+      keepAlive: () => Promise.resolve(true),
+      signal: new AbortController().signal,
+    })
+
+    const state = await db
+      .selectFrom("platformEdgeCertificate")
+      .select([
+        "status",
+        "certificateDirectoryUrl",
+        "certificateObjectVersion",
+        "deployedObjectVersion",
+      ])
+      .where("id", "=", "platform")
+      .executeTakeFirstOrThrow()
+    expect(issue).toHaveBeenCalledOnce()
+    expect(state).toEqual({
+      status: "awaiting_deployment",
+      certificateDirectoryUrl: "https://acme-v02.example/directory",
+      certificateObjectVersion: "production-version",
+      deployedObjectVersion: "staging-version",
+    })
+  })
+
+  it("deletes the obsolete private-key version only after the replacement is acknowledged", async () => {
+    vi.stubEnv("PLATFORM_EDGE_ROLLOUT_ENABLED", "1")
+    await db
+      .insertInto("platformEdgeCertificate")
+      .values({
+        id: "platform",
+        status: "awaiting_deployment",
+        certificateObjectKey: "platform-edge/current.json",
+        certificateObjectVersion: "replacement-version",
+        restartRequestedObjectVersion: "replacement-version",
+        deployedObjectVersion: "obsolete-version",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateIssuedAt: new Date("2099-01-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2099-04-01T00:00:00Z"),
+        nextRenewalAt: new Date("2099-03-02T00:00:00Z"),
+        nextRetryAt: new Date("2099-01-01T00:00:00Z"),
+      })
+      .execute()
+    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>(() => Promise.resolve({}))
+    const handler = reconcilePlatformEdgeCertificate({
+      now: () => new Date("2099-01-01T00:00:00Z"),
+      autoScaling: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as AutoScalingClient,
+      route53: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as Route53Client,
+      s3: { send: s3Send } as unknown as S3Client,
+      secrets: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as SecretsManagerClient,
+      valkey: {
+        scan: vi.fn<(...arguments_: unknown[]) => Promise<[string, string[]]>>(() =>
+          Promise.resolve(["0", ["replacement-ack"]]),
+        ),
+      } as unknown as Redis,
+      sleep: () => Promise.resolve(),
+      issue: () => Promise.reject(new Error("unexpected issuance")),
+    })
+
+    await handler({} as never, {
+      db,
+      keepAlive: () => Promise.resolve(true),
+      signal: new AbortController().signal,
+    })
+
+    expect(s3Send).toHaveBeenCalledOnce()
+    const deletion = s3Send.mock.calls[0]?.[0]
+    expect(deletion).toBeInstanceOf(DeleteObjectCommand)
+    if (!(deletion instanceof DeleteObjectCommand)) throw new Error("missing version deletion")
+    expect(deletion.input).toMatchObject({
+      Bucket: "certificate-bucket",
+      Key: "platform-edge/current.json",
+      VersionId: "obsolete-version",
+    })
+    expect(
+      await db
+        .selectFrom("platformEdgeCertificate")
+        .select(["status", "deployedObjectVersion"])
+        .where("id", "=", "platform")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ status: "active", deployedObjectVersion: "replacement-version" })
+  })
+
+  it("refreshes ARI without issuing before the selected renewal time", async () => {
+    await db
+      .insertInto("platformEdgeCertificate")
+      .values({
+        id: "platform",
+        status: "active",
+        certificateObjectKey: "platform-edge/current.json",
+        certificateObjectVersion: "current-version",
+        deployedObjectVersion: "current-version",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        renewalInfoRetryAt: new Date("2099-01-01T00:00:00Z"),
+        certificateIssuedAt: new Date("2098-12-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2099-04-01T00:00:00Z"),
+        nextRenewalAt: new Date("2099-03-01T00:00:00Z"),
+        nextRetryAt: new Date("2099-01-01T00:00:00Z"),
+      })
+      .execute()
+    const refreshRenewal = vi.fn<
+      (options: {
+        certificateId: string
+        directoryUrl: string
+        expiresAt: Date
+        now: Date
+      }) => Promise<{
+        nextRenewalAt: Date
+        renewalInfoRetryAt: Date | null
+        renewalInfoExplanationUrl: string | null
+        source: "ari"
+      }>
+    >(() =>
+      Promise.resolve({
+        nextRenewalAt: new Date("2099-02-15T00:00:00Z"),
+        renewalInfoRetryAt: new Date("2099-01-02T00:00:00Z"),
+        renewalInfoExplanationUrl: "https://ca.example/current-advice",
+        source: "ari",
+      }),
+    )
+    const handler = reconcilePlatformEdgeCertificate({
+      now: () => new Date("2099-01-01T00:00:00Z"),
+      autoScaling: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as AutoScalingClient,
+      route53: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as Route53Client,
+      s3: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as S3Client,
+      secrets: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(),
+      } as unknown as SecretsManagerClient,
+      valkey: {} as Redis,
+      sleep: () => Promise.resolve(),
+      issue: () => Promise.reject(new Error("issued before ARI's selected time")),
+      refreshRenewal,
+    })
+
+    await handler({} as never, {
+      db,
+      keepAlive: () => Promise.resolve(true),
+      signal: new AbortController().signal,
+    })
+
+    expect(refreshRenewal).toHaveBeenCalledOnce()
+    expect(
+      await db
+        .selectFrom("platformEdgeCertificate")
+        .select(["status", "nextRenewalAt", "renewalInfoRetryAt", "nextRetryAt"])
+        .where("id", "=", "platform")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      status: "active",
+      nextRenewalAt: new Date("2099-02-15T00:00:00Z"),
+      renewalInfoRetryAt: new Date("2099-01-02T00:00:00Z"),
+      nextRetryAt: new Date("2099-01-02T00:00:00Z"),
+    })
   })
 })

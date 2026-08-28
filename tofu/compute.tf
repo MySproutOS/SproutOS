@@ -1019,16 +1019,6 @@ resource "aws_iam_policy" "application" {
       },
       {
         /*
-          Exact records for static tenant hosts. The wildcard continues to send Lambda projects to
-          the ALB; an exact record written after a static release wins in DNS and sends only that
-          hostname to CloudFront.
-        */
-        Effect   = "Allow"
-        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
-        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
-      },
-      {
-        /*
           Tenant build archives — the other half of the same deploy, which had no grant at all.
 
           The comment above applies unchanged: a presigned URL carries the signer's authority, so
@@ -1066,6 +1056,33 @@ resource "aws_iam_role_policy_attachment" "instance_application" {
 resource "aws_iam_role_policy_attachment" "task_application" {
   role       = aws_iam_role.task.name
   policy_arn = aws_iam_policy.application.arn
+}
+
+/*
+  DNS mutation belongs to the control-plane worker, never to the public Rust router.
+
+  The legacy router instances and ECS control-plane task previously shared `application`, so the
+  router inherited the ability to rewrite every exact record in the tenant zone even though its
+  data path only reads hostname routes from Valkey. Keep this attachment on the ECS task role; the
+  ASG instance role intentionally receives no Route 53 write action.
+*/
+resource "aws_iam_policy" "control_plane_dns" {
+  name        = "${var.name_prefix}-control-plane-dns"
+  description = "Publish exact static tenant records from the control-plane worker."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
+      Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "task_control_plane_dns" {
+  role       = aws_iam_role.task.name
+  policy_arn = aws_iam_policy.control_plane_dns.arn
 }
 
 /*

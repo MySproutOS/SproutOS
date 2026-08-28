@@ -188,4 +188,27 @@ describe("custom-domain activation ordering", () => {
     ).rejects.toThrow("Valkey unavailable")
     expect(markedActive).toBe(false)
   })
+
+  it("removes the obsolete private-key version before declaring the replacement active", async () => {
+    const order: string[] = []
+    await activateCustomDomain({
+      publishRoute: () => {
+        order.push("route")
+        return Promise.resolve()
+      },
+      clearPending: () => {
+        order.push("pending")
+        return Promise.resolve()
+      },
+      cleanupObsolete: () => {
+        order.push("cleanup")
+        return Promise.resolve()
+      },
+      markActive: () => {
+        order.push("active")
+        return Promise.resolve()
+      },
+    })
+    expect(order).toEqual(["route", "pending", "cleanup", "active"])
+  })
 })
