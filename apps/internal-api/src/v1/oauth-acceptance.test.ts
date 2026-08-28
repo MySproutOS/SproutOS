@@ -21,7 +21,19 @@ type Json = Record<string, unknown>
 const FASTAPI_FIXTURE = new URL("./fixtures/oauth-fastapi/", import.meta.url)
 const accessToken = `oauth_acceptance_${v7()}`
 const reachable = await databaseReachable()
-const kmsUp = await kmsReachable()
+const kmsUp = await (async () => {
+  if (await kmsReachable()) return true
+
+  // CI bootstraps this LocalStack alias but deliberately does not export KMS_KEY_ID. Adopt the
+  // known development alias only for a loopback endpoint; never turn a missing production key
+  // into an SDK call against an assumed AWS key.
+  const endpoint = process.env.AWS_ENDPOINT_URL
+  if (endpoint === undefined || !["127.0.0.1", "localhost"].includes(new URL(endpoint).hostname)) {
+    return false
+  }
+  process.env.KMS_KEY_ID = "alias/sproutos-dev"
+  return kmsReachable()
+})()
 const valkeyReachable = await (async () => {
   const client = new Redis(process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://localhost:41023", {
     connectTimeout: 500,
