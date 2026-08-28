@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::{fs, path::PathBuf};
 
 use tokio::process::Command;
@@ -22,11 +22,6 @@ pub struct NativeIsolationProvider {
 enum Backend {
     #[cfg(target_os = "linux")]
     Linux { bubblewrap: PathBuf },
-    #[cfg(target_os = "macos")]
-    MacOs {
-        sandbox_exec: PathBuf,
-        home: PathBuf,
-    },
 }
 
 impl NativeIsolationProvider {
@@ -43,24 +38,7 @@ impl NativeIsolationProvider {
                 backend: Backend::Linux { bubblewrap },
             })
         }
-        #[cfg(target_os = "macos")]
-        {
-            let sandbox_exec =
-                find_trusted_tool(&[Path::new("/usr/bin/sandbox-exec")], "sandbox-exec")?;
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .and_then(|path| path.canonicalize().ok())
-                .ok_or_else(|| {
-                    SproutError::IsolationUnavailable(
-                        "the caller home directory could not be resolved for credential denial"
-                            .into(),
-                    )
-                })?;
-            Ok(Self {
-                backend: Backend::MacOs { sandbox_exec, home },
-            })
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(target_os = "linux"))]
         {
             Err(SproutError::IsolationUnavailable(format!(
                 "native plugin isolation is not implemented for {}",
@@ -87,19 +65,22 @@ impl IsolationProvider for NativeIsolationProvider {
                 "plugin workspace is not a directory".into(),
             ));
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (&executable, &workspace);
 
         match &self.backend {
             #[cfg(target_os = "linux")]
             Backend::Linux { bubblewrap } => linux_command(bubblewrap, &executable, &workspace),
-            #[cfg(target_os = "macos")]
-            Backend::MacOs { sandbox_exec, home } => {
-                macos_command(sandbox_exec, home, &executable, &workspace)
-            }
+            #[cfg(not(target_os = "linux"))]
+            _ => Err(SproutError::IsolationUnavailable(format!(
+                "native plugin isolation is not implemented for {}",
+                std::env::consts::OS
+            ))),
         }
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn find_trusted_tool(candidates: &[&Path], name: &str) -> Result<PathBuf> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -128,7 +109,12 @@ fn linux_command(bubblewrap: &Path, executable: &Path, workspace: &Path) -> Resu
         "--die-with-parent",
         "--new-session",
         "--unshare-all",
+        "--unshare-user",
         "--unshare-pid",
+        "--disable-userns",
+        "--assert-userns-disabled",
+        "--cap-drop",
+        "ALL",
         "--clearenv",
         "--setenv",
         "LANG",
@@ -256,71 +242,24 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(raw))
 }
 
-#[cfg(target_os = "macos")]
-fn macos_command(
-    sandbox_exec: &Path,
-    home: &Path,
-    executable: &Path,
-    workspace: &Path,
-) -> Result<Command> {
-    let profile = macos_profile(home, executable, workspace)?;
-    let mut command = Command::new(sandbox_exec);
-    command.arg("-p").arg(profile).arg(executable);
-    Ok(command)
-}
-
-#[cfg(target_os = "macos")]
-fn macos_profile(home: &Path, executable: &Path, workspace: &Path) -> Result<String> {
-    let executable = seatbelt_path(executable)?;
-    let workspace = seatbelt_path(workspace)?;
-    let git = workspace_path(workspace.as_str(), ".git");
-    let mut rules = vec![
-        "(version 1)".to_owned(),
-        "(allow default)".to_owned(),
-        "(deny network*)".to_owned(),
-        "(deny process-fork)".to_owned(),
-        "(deny file-write*)".to_owned(),
-        format!("(allow file-read* (literal \"{executable}\"))"),
-        format!("(allow file-read* (subpath \"{workspace}\"))"),
-        format!("(allow file-write* (subpath \"{workspace}\"))"),
-        format!("(deny file-write* (subpath \"{git}\"))"),
-        // Keep plugins away from the login Keychain service as well as credential files.
-        "(deny mach-lookup (global-name \"com.apple.securityd\"))".to_owned(),
-        "(deny mach-lookup (global-name \"com.apple.securityd.xpc\"))".to_owned(),
-    ];
-    let home = seatbelt_path(home)?;
-    rules.insert(4, format!("(deny file-read* (subpath \"{home}\"))"));
-    Ok(rules.join("\n"))
-}
-
-#[cfg(target_os = "macos")]
-fn seatbelt_path(path: &Path) -> Result<String> {
-    let text = path.to_str().ok_or_else(|| {
-        SproutError::IsolationUnavailable("sandbox paths must be valid UTF-8".into())
-    })?;
-    if text.contains(['\0', '\n', '\r']) {
-        return Err(SproutError::IsolationUnavailable(
-            "sandbox path contains control characters".into(),
-        ));
-    }
-    Ok(text.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-#[cfg(target_os = "macos")]
-fn workspace_path(workspace: &str, child: &str) -> String {
-    format!("{}/{child}", workspace.trim_end_matches('/'))
-}
-
 #[cfg(test)]
 mod tests {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use std::{fs, os::unix::fs::PermissionsExt};
+    #[cfg(target_os = "linux")]
+    use std::fs;
 
-    #[cfg(target_os = "macos")]
-    use tempfile::tempdir;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::PermissionsExt;
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::*;
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn native_provider_is_explicitly_unsupported() {
+        assert!(matches!(
+            NativeIsolationProvider::detect(),
+            Err(SproutError::IsolationUnavailable(_))
+        ));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -372,7 +311,11 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(args.iter().any(|arg| arg == "--unshare-all"));
+        assert!(args.iter().any(|arg| arg == "--unshare-user"));
         assert!(args.iter().any(|arg| arg == "--unshare-pid"));
+        assert!(args.iter().any(|arg| arg == "--disable-userns"));
+        assert!(args.iter().any(|arg| arg == "--assert-userns-disabled"));
+        assert!(args.windows(2).any(|args| args == ["--cap-drop", "ALL"]));
         assert!(args.iter().any(|arg| arg == "--remount-ro"));
         assert!(args.iter().any(|arg| arg == "/dev/null"));
         assert!(args.iter().any(|arg| arg == "/workspace/.git"));
@@ -384,90 +327,56 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "linux")]
     #[test]
-    fn seatbelt_paths_are_escaped_as_data() {
-        let path = Path::new("/tmp/a\") (allow default)\n(allow network*)\n;");
-        let error = seatbelt_path(path).unwrap_err();
-        assert!(matches!(error, SproutError::IsolationUnavailable(_)));
-
-        let escaped = seatbelt_path(Path::new("/tmp/a\") (allow network*)")).unwrap();
-        assert_eq!(escaped, "/tmp/a\\\") (allow network*)");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn profile_keeps_executable_and_workspace_specific() {
-        let profile = macos_profile(
-            Path::new("/Users/person"),
-            Path::new("/private/tmp/plugin"),
-            Path::new("/private/tmp/work"),
-        )
-        .unwrap();
-        assert!(profile.contains("(deny network*)"));
-        assert!(profile.contains("(deny process-fork)"));
-        assert!(profile.contains("(deny file-read* (subpath \"/Users/person\"))"));
-        assert!(profile.contains("/private/tmp/work/.git"));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn native_provider_enforces_workspace_and_git_write_boundary() {
-        let root = tempdir().unwrap();
-        let workspace = root.path().join("workspace");
-        fs::create_dir_all(workspace.join(".git")).unwrap();
-        let outside = root.path().join("outside");
-        let plugin = root.path().join("plugin");
-        fs::write(
-            &plugin,
-            format!(
-                "#!/bin/sh\nprintf allowed > allowed\nprintf denied > '{}'\nprintf denied > .git/denied\n",
-                outside.display()
-            ),
-        )
-        .unwrap();
+    fn linux_command_accepts_workspace_without_git_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let plugin = directory.path().join("plugin");
+        let mut elf = vec![0_u8; 64];
+        elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        elf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+        fs::write(&plugin, elf).unwrap();
         fs::set_permissions(&plugin, fs::Permissions::from_mode(0o700)).unwrap();
-        let executable = VerifiedExecutable::for_test(plugin);
-        let provider = NativeIsolationProvider::detect().unwrap();
-        let mut command = provider.command(&executable, &workspace).unwrap();
-        command.current_dir(&workspace);
-        let output = command.output().await.unwrap();
-
-        assert!(!output.status.success());
-        assert_eq!(fs::read(workspace.join("allowed")).unwrap(), b"allowed");
-        assert!(!outside.exists());
-        assert!(!workspace.join(".git/denied").exists());
+        let command = linux_command(Path::new("/usr/bin/bwrap"), &plugin, &workspace).unwrap();
+        let args = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!args.iter().any(|arg| arg == "/workspace/.git"));
     }
 
-    #[cfg(target_os = "macos")]
+    /// Compile `tests/fixtures/linux_isolation_probe.c` as a static executable and set
+    /// `SPROUT_CORE_LINUX_ISOLATION_PROBE` to run this inside a UID-0, capable Linux container.
+    /// This is ignored in ordinary CI because its purpose is to prove that the exact root caller
+    /// loses mount capability at the real Bubblewrap boundary.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn seatbelt_denies_loopback_network() {
-        use std::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let address = listener.local_addr().unwrap();
-        let workspace = tempdir().unwrap();
-        let sandbox_exec =
-            find_trusted_tool(&[Path::new("/usr/bin/sandbox-exec")], "sandbox-exec").unwrap();
-        let netcat = Path::new("/usr/bin/nc").canonicalize().unwrap();
-        let home = tempdir().unwrap();
-        let profile = macos_profile(home.path(), &netcat, workspace.path()).unwrap();
-        let status = Command::new(sandbox_exec)
-            .arg("-p")
-            .arg(profile)
-            .arg(netcat)
-            .args([
-                "-z",
-                "-w",
-                "1",
-                &address.ip().to_string(),
-                &address.port().to_string(),
-            ])
-            .status()
-            .await
-            .unwrap();
-        assert!(!status.success());
-        assert!(listener.accept().is_err());
+    #[ignore = "requires root, trusted bwrap, and a precompiled static probe"]
+    async fn privileged_linux_provider_drops_root_capabilities() {
+        assert_eq!(unsafe { libc::geteuid() }, 0, "probe must start as UID 0");
+        let probe = std::env::var_os("SPROUT_CORE_LINUX_ISOLATION_PROBE")
+            .map(PathBuf::from)
+            .expect("SPROUT_CORE_LINUX_ISOLATION_PROBE is required");
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir(workspace.path().join(".git")).unwrap();
+        let executable = VerifiedExecutable::for_test(probe);
+        let provider = NativeIsolationProvider::detect().unwrap();
+        let mut command = provider.command(&executable, workspace.path()).unwrap();
+        command
+            .env_clear()
+            .env("LANG", "C")
+            .env("LC_ALL", "C")
+            .current_dir(workspace.path());
+        let output = command.output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "probe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(workspace.path().join("allowed")).unwrap(), b"ok");
+        assert!(!workspace.path().join(".git/denied").exists());
     }
 }

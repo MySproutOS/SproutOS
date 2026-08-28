@@ -143,6 +143,7 @@ impl<I: IsolationProvider> PluginRunner<I> {
             )));
         }
         let before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
+        before.reject_preexisting_hard_links()?;
         let mut command = self.isolation.command(executable, workspace)?;
         command
             .env_clear()
@@ -506,6 +507,33 @@ printf '{"changes":[]}'"#,
             )
             .await
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preexisting_hardlink_is_rejected_before_plugin_execution() {
+        let outside = tempdir().unwrap();
+        let canary = outside.path().join("credential");
+        fs::write(&canary, b"secret").unwrap();
+        let workspace = tempdir().unwrap();
+        fs::hard_link(&canary, workspace.path().join("linked")).unwrap();
+        let (_plugin_dir, plugin) = executable(
+            r#"printf mutated > linked
+printf ran > ran
+printf '{"changes":[]}'"#,
+        );
+        let error = PluginRunner::new(TestIsolation, ApplyLimits::default())
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::WorkspaceRejected);
+        assert_eq!(fs::read(canary).unwrap(), b"secret");
+        assert!(!workspace.path().join("ran").exists());
     }
 
     #[cfg(unix)]

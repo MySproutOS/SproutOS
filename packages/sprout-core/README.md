@@ -24,10 +24,12 @@ or launch the executable directly.
 `NativeIsolationProvider` is fail closed. Linux requires a root-owned, non-writable
 `/usr/bin/bwrap` or `/bin/bwrap` and accepts only statically linked ELF plugins; Bubblewrap exposes
 only the plugin, its workspace, and `/dev/null`, with all namespaces unshared, the private root
-remounted read-only, and `.git` separately remounted read-only. macOS uses the root-owned system `sandbox-exec`, denies
-network and child processes, hides the caller's home directory and Keychain service, and permits
-writes only below the workspace except `.git`. Windows and hosts missing these primitives return
-`IsolationUnavailable`; the plugin is never run without the full boundary.
+remounted read-only, `.git` separately remounted read-only, every capability dropped, and nested
+user namespaces disabled after setup. macOS and Windows return `IsolationUnavailable`: the
+available macOS Seatbelt interface cannot both default-deny arbitrary credential mounts and launch
+a general native executable without a broader file-read exception, and Windows has no implemented
+provider. Hosts missing the Linux primitive are likewise unsupported; the plugin is never run
+without the full boundary.
 
 The runner clears the environment, marks every non-stdio file descriptor close-on-exec, bounds
 stdout/stderr and runtime, kills the Unix process group on failure, and validates the declared
@@ -35,6 +37,7 @@ before/after workspace diff.
 
 Before enabling catalogue plugins in production, the ECS worker image and task definition must be
 proven with a real static-musl plugin: verify Bubblewrap user namespaces work under the task's exact
-kernel, capabilities, seccomp profile, and UID; then prove network denial, credential denial,
-read-only `.git`, process-tree death on timeout, and successful declared workspace output. Local or
-CI tests are not evidence for that production gate.
+kernel, capabilities, seccomp profile, and UID; then prove the plugin has zero effective
+capabilities, nested user namespaces remain disabled, network and credential access are denied,
+`.git` remains read-only even under a remount attempt, the process tree dies on timeout, and
+declared workspace output succeeds. Local or CI tests are not evidence for that production gate.
