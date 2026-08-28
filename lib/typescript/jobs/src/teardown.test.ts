@@ -13,6 +13,7 @@ import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { TEARDOWN_KIND, tearDownProject, type TeardownClients } from "./teardown"
+import { encodeShortId } from "@lib/services"
 
 /**
  * Against the docker-compose Postgres. What is asserted here is which rows change and which
@@ -56,6 +57,10 @@ const lambdaClients = {
   valkey: {
     del: (key: string) => {
       withdrawn.push(key)
+      return Promise.resolve(1)
+    },
+    eval: (_script: string, _keyCount: number, bindingKey: string) => {
+      withdrawn.push(bindingKey)
       return Promise.resolve(1)
     },
     publish: (channel: string, payload: string) => {
@@ -303,6 +308,19 @@ describe("tearing down a deleted project", () => {
         status: "active",
       })
       .execute()
+    const queueServiceId = v7()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: queueServiceId,
+        organizationId,
+        projectId,
+        regionId: region.id,
+        kind: "valkey",
+        name: "Teardown queue",
+        status: "active",
+      })
+      .execute()
     const sandboxId = v7()
     await db
       .insertInto("sandbox")
@@ -370,7 +388,10 @@ describe("tearing down a deleted project", () => {
     // does not leave its old host resolving.
     expect(
       withdrawn.every(
-        (key) => key.startsWith("route:") || key.startsWith("custom-domain:pending:"),
+        (key) =>
+          key.startsWith("route:") ||
+          key.startsWith("queue:") ||
+          key.startsWith("custom-domain:pending:"),
       ),
     ).toBe(true)
     expect(staticCleanup).toContain("edge:old-static.example.test")
@@ -389,6 +410,8 @@ describe("tearing down a deleted project", () => {
       .executeTakeFirstOrThrow()
     expect(deletedDomain.deletedAt).toBeInstanceOf(Date)
     expect(destroyedServices).toContain(`object_storage:${backendServiceId}`)
+    expect(destroyedServices).toContain(`valkey:${queueServiceId}`)
+    expect(withdrawn).toContain(`queue:${encodeShortId(queueServiceId)}`)
     expect(destroyedSandboxes).toContain(sandboxId)
     expect(
       await db.selectFrom("sandbox").select("id").where("id", "=", sandboxId).executeTakeFirst(),

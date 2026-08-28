@@ -3,7 +3,7 @@ import { LambdaClient } from "@aws-sdk/client-lambda"
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { Route53Client } from "@aws-sdk/client-route-53"
 import { S3Client } from "@aws-sdk/client-s3"
-import { tearDownDeployment } from "@lib/lambda"
+import { tearDownDeployment, withdrawQueue } from "@lib/lambda"
 import { Redis } from "ioredis"
 import {
   neonPostgresDriverFromEnv,
@@ -14,6 +14,7 @@ import {
   searchServiceConfigFromEnv,
   valkeyDriver,
   valkeyServiceConfigFromEnv,
+  encodeShortId,
 } from "@lib/services"
 import { tearDownCustomDomain, type CustomDomainDeletionDependencies } from "./custom-domain"
 import type { DB } from "@sproutos/db"
@@ -160,6 +161,25 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
           sandboxes: 0,
           workers: 0,
           envVars: 0,
+        }
+
+        /*
+          Queue bindings before compute and before provider teardown.
+
+          Each binding contains the tenant's one-time URI. Querying all Valkey services, including
+          already-soft-deleted rows, also adopts stale bindings left by the old one-service delete
+          path. The credential-free tombstone is idempotent, so a retried teardown and a concurrent
+          service delete agree and a late credential rotation cannot recreate the binding.
+        */
+        const queueServices = await db
+          .selectFrom("backendService")
+          .select("id")
+          .where("projectId", "=", projectId)
+          .where("kind", "=", "valkey")
+          .execute()
+        for (const queue of queueServices) {
+          await ownLease()
+          await withdrawQueue(aws.valkey, encodeShortId(queue.id))
         }
 
         /*

@@ -17,9 +17,11 @@ import {
   runMigration,
   publishLiveDeployment,
   publishRoute,
+  setQueueTarget,
   withdrawRoute,
   type Route,
 } from "@lib/lambda"
+import { encodeShortId } from "@lib/services"
 import type { DB } from "@sproutos/db"
 import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
@@ -172,6 +174,32 @@ export type PublishOptions = {
     tenantZoneId: string
     distributionDomain: string
     keyValueStoreArn: string
+  }
+}
+
+/**
+ * Point every live Valkey service attached to a project at its validated production alias.
+ *
+ * The binding holds a one-time credential, so this updates it in place. `setQueueTarget` is a
+ * compare-and-set and refuses to recreate a binding a concurrent service deletion withdrew.
+ */
+export async function syncProjectQueueTargets(
+  db: Kysely<DB>,
+  valkey: Redis,
+  projectId: string,
+  functionArn: string | null,
+): Promise<void> {
+  const queues = await db
+    .selectFrom("backendService")
+    .select("id")
+    .where("projectId", "=", projectId)
+    .where("kind", "=", "valkey")
+    .where("status", "=", "active")
+    .where("deletedAt", "is", null)
+    .execute()
+
+  for (const queue of queues) {
+    await setQueueTarget(valkey, encodeShortId(queue.id), projectId, functionArn)
   }
 }
 
@@ -430,6 +458,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
                 .set({ liveDeploymentId: previousLive.id, updatedAt: new Date() })
                 .where("id", "=", project.id)
                 .execute()
+              await syncProjectQueueTargets(db, clients.valkey, project.id, aliasArn)
               return
             }
 
@@ -449,6 +478,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
               .set({ liveDeploymentId: null, updatedAt: new Date() })
               .where("id", "=", project.id)
               .execute()
+            await syncProjectQueueTargets(db, clients.valkey, project.id, null)
           }
           compensate = restoreServerlessTraffic
 
@@ -851,6 +881,15 @@ export function publishRelease(options?: PublishOptions): JobHandler {
     */
           if (deployment.kind === "production") {
             await markProductionProjectReady(db, project.id, deploymentId)
+            /*
+              Queue target last, after both the route and durable live-deployment pointer agree.
+
+              Service creation can now safely publish its one-time credential without waiting on a
+              long deployment lock: before this point it either sees the old agreeing target or no
+              target, and this final sync repairs the latter. After this point it sees the new
+              agreeing target directly. Preview aliases never receive production queue work.
+            */
+            await syncProjectQueueTargets(db, clients.valkey, project.id, published.aliasArn)
           }
           await retirePreviousPreview()
         } catch (error) {
