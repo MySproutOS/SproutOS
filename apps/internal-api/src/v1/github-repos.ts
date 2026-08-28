@@ -131,7 +131,9 @@ const app = new Hono()
       }
 
       try {
-        const credential = await tokens.get(Number(installation.installationId))
+        const credential = await tokens.get(Number(installation.installationId), {
+          purpose: "repository-picker",
+        })
         const page = await listInstallationRepositories(createGitHubClient(), credential, {
           page: query.page ?? 1,
           perPage: query.perPage ?? 100,
@@ -333,7 +335,9 @@ const app = new Hono()
       }
 
       try {
-        const credential = await tokens.get(Number(installation.installationId))
+        const credential = await tokens.get(Number(installation.installationId), {
+          purpose: "repository-name-check",
+        })
         await getRepository(createGitHubClient(), credential, installation.accountLogin, name)
 
         // It resolved, so something is already there.

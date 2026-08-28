@@ -14,7 +14,12 @@ import { v7 } from "uuid"
   the part that is easy to get quietly wrong.
 */
 const minted =
-  vi.fn<(id: number) => Promise<{ token: string; installationId: number; expiresAt: Date }>>()
+  vi.fn<
+    (
+      id: number,
+      request: { purpose: "repository-provision" },
+    ) => Promise<{ token: string; installationId: number; expiresAt: Date }>
+  >()
 
 vi.mock("./app-auth", () => ({
   createInstallationTokenStore: () => ({ get: minted, clear: () => {} }),
@@ -29,6 +34,7 @@ let ownerUserId: string
 
 const PERSONAL = 970_001
 const ORGANIZATION = 970_002
+const PROVISION = { purpose: "repository-provision" } as const
 
 beforeAll(async () => {
   try {
@@ -38,7 +44,7 @@ beforeAll(async () => {
     return
   }
 
-  minted.mockImplementation((id) =>
+  minted.mockImplementation((id, _request) =>
     Promise.resolve({
       token: `ghs_${id}`,
       installationId: id,
@@ -104,7 +110,12 @@ describe("organizationGitHubCredential", () => {
   it("mints for the account the repository will live on", async ({ skip }) => {
     if (!reachable) return skip()
 
-    const credential = await organizationGitHubCredential(db, organizationId, "TestSproutOS")
+    const credential = await organizationGitHubCredential(
+      db,
+      organizationId,
+      PROVISION,
+      "TestSproutOS",
+    )
 
     expect(credential).toMatchObject({ kind: "installation", token: `ghs_${ORGANIZATION}` })
   })
@@ -112,7 +123,12 @@ describe("organizationGitHubCredential", () => {
   it("matches the account login case-insensitively", async ({ skip }) => {
     if (!reachable) return skip()
 
-    const credential = await organizationGitHubCredential(db, organizationId, "testsproutos")
+    const credential = await organizationGitHubCredential(
+      db,
+      organizationId,
+      PROVISION,
+      "testsproutos",
+    )
 
     expect(credential).toMatchObject({ token: `ghs_${ORGANIZATION}` })
   })
@@ -122,7 +138,7 @@ describe("organizationGitHubCredential", () => {
   }) => {
     if (!reachable) return skip()
 
-    expect(await organizationGitHubCredential(db, organizationId)).toMatchObject({
+    expect(await organizationGitHubCredential(db, organizationId, PROVISION)).toMatchObject({
       kind: "installation",
     })
   })
@@ -134,13 +150,15 @@ describe("organizationGitHubCredential", () => {
   it("returns undefined when the account has no installation", async ({ skip }) => {
     if (!reachable) return skip()
 
-    expect(await organizationGitHubCredential(db, organizationId, "somebody-else")).toBeUndefined()
+    expect(
+      await organizationGitHubCredential(db, organizationId, PROVISION, "somebody-else"),
+    ).toBeUndefined()
   })
 
   it("returns undefined for an organization with none at all", async ({ skip }) => {
     if (!reachable) return skip()
 
-    expect(await organizationGitHubCredential(db, v7())).toBeUndefined()
+    expect(await organizationGitHubCredential(db, v7(), PROVISION)).toBeUndefined()
   })
 
   /*
@@ -157,7 +175,7 @@ describe("organizationGitHubCredential", () => {
       .execute()
 
     expect(
-      await organizationGitHubCredential(db, organizationId, "Andrew-Chen-Wang"),
+      await organizationGitHubCredential(db, organizationId, PROVISION, "Andrew-Chen-Wang"),
     ).toBeUndefined()
 
     await db

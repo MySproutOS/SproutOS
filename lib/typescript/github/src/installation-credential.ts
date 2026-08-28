@@ -1,6 +1,10 @@
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
-import { createInstallationTokenStore, envAppJwtSigner } from "./app-auth"
+import {
+  createInstallationTokenStore,
+  envAppJwtSigner,
+  type InstallationTokenRequest,
+} from "./app-auth"
 import { createGitHubClient } from "./client"
 import { MissingGitHubAppConfigError } from "./errors"
 import { installationToken } from "./types"
@@ -25,6 +29,7 @@ import type { GitHubCredential } from "./types"
 export async function organizationGitHubCredential(
   db: Kysely<DB>,
   organizationId: string,
+  request: InstallationTokenRequest,
   accountLogin?: string,
 ): Promise<GitHubCredential | undefined> {
   let query = db
@@ -61,7 +66,7 @@ export async function organizationGitHubCredential(
   }
 
   store ??= createInstallationTokenStore({ client: createGitHubClient(), signJwt })
-  const minted = await store.get(Number(installation.installationId))
+  const minted = await store.get(Number(installation.installationId), request)
   return installationToken(minted.token, minted.installationId, minted.expiresAt)
 }
 

@@ -166,7 +166,7 @@ function dependencies(
   resolve: (input: UpstreamConflictInput) => Promise<UpstreamConflictResolution>,
 ): UpkeepResolutionDeps {
   return {
-    credentialFor: (id) =>
+    credentialFor: (id, _request) =>
       Promise.resolve(installationToken("test-token", id, new Date(Date.now() + 60_000))),
     resolve: resolve,
   }

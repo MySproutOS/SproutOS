@@ -625,7 +625,12 @@ async function resolveOwnRepository(
   ])
   if (known) return known
 
-  const credential = await organizationGitHubCredential(db, organizationId)
+  const repositoryId = Number(githubRepoId)
+  if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) return undefined
+  const credential = await organizationGitHubCredential(db, organizationId, {
+    purpose: "project-repository-read",
+    repositoryId,
+  })
   if (credential === undefined) return undefined
 
   const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)

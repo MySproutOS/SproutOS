@@ -412,6 +412,7 @@ async function bootstrap(
         "project.slug as slug",
         "project.productionBranch as branch",
         "repository.id as repositoryId",
+        "repository.githubRepoId as githubRepoId",
         "repository.ownerLogin as owner",
         "repository.name as name",
       ])
@@ -444,7 +445,10 @@ async function bootstrap(
       inside the safe range, and the alternative is a token request against `/app/installations/
       [object Object]` — a 404 that reads like an uninstalled App.
     */
-    const token = await tokens.get(Number(installation.installationId))
+    const token = await tokens.get(Number(installation.installationId), {
+      purpose: "sandbox-clone",
+      repositoryId: Number(project.githubRepoId),
+    })
 
     const user = await db
       .selectFrom("user")

@@ -146,7 +146,7 @@ function stubClient(
 function deps(client: GitHubClient): UpkeepDeps {
   return {
     client,
-    credentialFor: (id) =>
+    credentialFor: (id, _request) =>
       Promise.resolve(installationToken("stub-token", id, new Date(Date.now() + 3_600_000))),
   }
 }
