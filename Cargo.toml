@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "packages/cli",
   "packages/sprout-template-protocol",
   "packages/sprout-core",
   "lib/rust/srn",
