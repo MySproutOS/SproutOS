@@ -1,41 +1,90 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely } from "kysely"
+import { sql, type Kysely, type Transaction } from "kysely"
 import { v7 } from "uuid"
 
-/**
- * The queue an on-premises signer polls.
- *
- * **The platform does not hold the Android signing key.** A dedicated machine on somebody's
- * premises does: it polls for work, downloads the unsigned APK, signs it, and uploads the result.
- * The key never reaches AWS, a CI runner, or this repository.
- *
- * That matters more here than it would elsewhere. SproutOS is developer of record for every app it
- * publishes, so its signing key is the identity of every customer app at once — a key on a machine
- * that also serves public HTTP has an enormous attack surface for what it protects.
- *
- * The signer is behind a firewall: it can reach out, nothing can reach in. So the platform cannot
- * push and the signer polls, which also means the signer can be offline for a day without anything
- * being lost.
- */
-
-/**
- * How long a claim is honoured before the job is offered again.
- *
- * A signer that dies holding a claim must not block the queue forever, and signing an APK is
- * seconds of work — so this is generous by two orders of magnitude and still short enough that a
- * crashed signer costs one poll interval rather than an afternoon.
- */
 export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000
+export const APK_MIME = "application/vnd.android.package-archive"
 
-export type SigningJob = {
-  id: string
-  deploymentId: string
-  projectId: string
-  unsignedKey: string
-  unsignedDigest: string
+export function packageNameForProject(projectId: string): string {
+  return `me.sproutos.app.p${projectId.replaceAll("-", "")}`
 }
 
-/** Queue an APK for signing. One job per deployment — the unique constraint says so. */
+type JobDb = Kysely<DB> | Transaction<DB>
+export type SigningJob =
+  | { id: string; kind: "provision_key"; androidAppId: string; packageName: string }
+  | {
+      id: string
+      kind: "sign_release"
+      androidAppId: string
+      packageName: string
+      projectId: string
+      deploymentId: string
+      unsignedKey: string
+      unsignedDigest: string
+      versionCode: number
+      previousVersionCode: number
+      certificateSha256: string
+      keyObjectKey: string
+      keyObjectVersion: string
+    }
+
+async function ensureApp(db: JobDb, projectId: string) {
+  const found = await db
+    .selectFrom("androidApp")
+    .selectAll()
+    .where("projectId", "=", projectId)
+    .executeTakeFirst()
+  if (found !== undefined) return found
+  await db
+    .insertInto("androidApp")
+    .values({ id: v7(), projectId, packageName: packageNameForProject(projectId) })
+    .onConflict((oc) => oc.column("projectId").doNothing())
+    .execute()
+  return await db
+    .selectFrom("androidApp")
+    .selectAll()
+    .where("projectId", "=", projectId)
+    .executeTakeFirstOrThrow()
+}
+
+export async function ensureAndroidSetup(db: Kysely<DB>, projectId: string) {
+  return await db.transaction().execute(async (trx) => {
+    const app = await ensureApp(trx, projectId)
+    if (app.keyObjectKey === null) {
+      await trx
+        .insertInto("androidSignerJob")
+        .values({ id: v7(), androidAppId: app.id, kind: "provision_key", state: "queued" })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    }
+    return app
+  })
+}
+
+export async function androidVersionError(
+  db: Kysely<DB>,
+  projectId: string,
+  versionCode: number,
+): Promise<string | undefined> {
+  const latest = await db
+    .selectFrom("androidApp")
+    .leftJoin("androidSignerJob", "androidSignerJob.androidAppId", "androidApp.id")
+    .select((eb) => [
+      "androidApp.lastAcceptedVersionCode",
+      eb.fn.max("androidSignerJob.versionCode").as("latestQueuedVersionCode"),
+    ])
+    .where("androidApp.projectId", "=", projectId)
+    .groupBy("androidApp.lastAcceptedVersionCode")
+    .executeTakeFirst()
+  const latestVersion = Math.max(
+    latest?.lastAcceptedVersionCode ?? 0,
+    latest?.latestQueuedVersionCode ?? 0,
+  )
+  return versionCode > latestVersion
+    ? undefined
+    : `Android versionCode ${versionCode} must exceed ${latestVersion}`
+}
+
 export async function enqueueSigning(
   db: Kysely<DB>,
   input: {
@@ -43,44 +92,49 @@ export async function enqueueSigning(
     projectId: string
     unsignedKey: string
     unsignedDigest: string
+    versionCode: number
   },
 ): Promise<string> {
-  const id = v7()
-  await db
-    .insertInto("apkSigningJob")
-    .values({
-      id,
-      deploymentId: input.deploymentId,
-      projectId: input.projectId,
-      unsignedKey: input.unsignedKey,
-      unsignedDigest: input.unsignedDigest,
-      status: "pending",
-    })
-    // Re-releasing the same deployment is not an error and must not create a second job: two
-    // signers each producing a signed artifact for one release means whichever uploads last wins,
-    // silently.
-    .onConflict((oc) => oc.column("deploymentId").doNothing())
-    .execute()
-
-  // Read the id back rather than returning the one we generated. `doNothing` writes no row and
-  // returns none, so on the second call `id` is a UUID that exists nowhere — a caller storing it
-  // against the release would hold a reference to a job that was never created.
-  const job = await db
-    .selectFrom("apkSigningJob")
-    .select("id")
-    .where("deploymentId", "=", input.deploymentId)
-    .executeTakeFirstOrThrow()
-
-  return job.id
+  return await db.transaction().execute(async (trx) => {
+    const app = await ensureApp(trx, input.projectId)
+    if (app.keyObjectKey === null) {
+      await trx
+        .insertInto("androidSignerJob")
+        .values({ id: v7(), androidAppId: app.id, kind: "provision_key", state: "queued" })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    }
+    if (input.versionCode <= app.lastAcceptedVersionCode) {
+      throw new Error(
+        `Android versionCode ${input.versionCode} must exceed ${app.lastAcceptedVersionCode}`,
+      )
+    }
+    await trx
+      .insertInto("androidSignerJob")
+      .values({
+        id: v7(),
+        androidAppId: app.id,
+        kind: "sign_release",
+        state: "queued",
+        deploymentId: input.deploymentId,
+        projectId: input.projectId,
+        unsignedKey: input.unsignedKey,
+        unsignedDigest: input.unsignedDigest,
+        inputMime: APK_MIME,
+        versionCode: input.versionCode,
+      })
+      .onConflict((oc) => oc.doNothing())
+      .execute()
+    return (
+      await trx
+        .selectFrom("androidSignerJob")
+        .select("id")
+        .where("deploymentId", "=", input.deploymentId)
+        .executeTakeFirstOrThrow()
+    ).id
+  })
 }
 
-/**
- * Claim the oldest pending job, if there is one.
- *
- * The row is selected and locked inside the same statement that records the claim. `SKIP LOCKED`
- * lets another signer move to the next job instead of waiting, while the timeout makes a claim held
- * by a dead signer eligible again.
- */
 export async function claimSigningJob(
   db: Kysely<DB>,
   signerId: string,
@@ -88,94 +142,324 @@ export async function claimSigningJob(
 ): Promise<SigningJob | undefined> {
   const claimedAt = now()
   const staleBefore = new Date(claimedAt.getTime() - CLAIM_TIMEOUT_MS)
-
-  const claimed = await db
+  const claim = await db
     .with("candidate", (qb) =>
       qb
-        .selectFrom("apkSigningJob")
-        .select("id")
+        .selectFrom("androidSignerJob")
+        .innerJoin("androidApp", "androidApp.id", "androidSignerJob.androidAppId")
+        .select("androidSignerJob.id")
         .where((eb) =>
           eb.or([
-            eb("status", "=", "pending"),
-            // A claim that has gone stale is available again. Without this a signer that crashed
-            // mid-job takes that release out of the queue permanently.
-            eb.and([eb("status", "=", "claimed"), eb("claimedAt", "<", staleBefore)]),
+            eb("androidSignerJob.state", "=", "queued"),
+            eb.and([
+              eb("androidSignerJob.state", "=", "running"),
+              eb("androidSignerJob.claimedAt", "<", staleBefore),
+            ]),
           ]),
         )
-        .orderBy("createdAt", "asc")
+        .where((eb) =>
+          eb.or([
+            eb("androidSignerJob.kind", "=", "provision_key"),
+            eb.and([
+              eb("androidSignerJob.kind", "=", "sign_release"),
+              eb("androidApp.keyObjectKey", "is not", null),
+              eb("androidApp.keyObjectVersion", "is not", null),
+              eb("androidApp.certificateSha256", "is not", null),
+            ]),
+          ]),
+        )
+        .orderBy(sql`case when android_signer_job.kind = 'provision_key' then 0 else 1 end`)
+        .orderBy("androidSignerJob.createdAt")
         .limit(1)
         .forUpdate()
         .skipLocked(),
     )
-    .updateTable("apkSigningJob")
+    .updateTable("androidSignerJob")
     .from("candidate")
-    .set({ status: "claimed", claimedBy: signerId, claimedAt, updatedAt: claimedAt })
-    .whereRef("apkSigningJob.id", "=", "candidate.id")
-    .returning([
-      "apkSigningJob.id as id",
-      "apkSigningJob.deploymentId as deploymentId",
-      "apkSigningJob.projectId as projectId",
-      "apkSigningJob.unsignedKey as unsignedKey",
-      "apkSigningJob.unsignedDigest as unsignedDigest",
-    ])
+    .set({ state: "running", claimedBy: signerId, claimedAt, updatedAt: claimedAt })
+    .whereRef("androidSignerJob.id", "=", "candidate.id")
+    .returning("androidSignerJob.id")
     .executeTakeFirst()
+  if (claim === undefined) return undefined
 
-  return claimed
+  const row = await db
+    .selectFrom("androidSignerJob")
+    .innerJoin("androidApp", "androidApp.id", "androidSignerJob.androidAppId")
+    .select([
+      "androidSignerJob.id",
+      "androidSignerJob.kind",
+      "androidSignerJob.androidAppId",
+      "androidSignerJob.projectId",
+      "androidSignerJob.deploymentId",
+      "androidSignerJob.unsignedKey",
+      "androidSignerJob.unsignedDigest",
+      "androidSignerJob.versionCode",
+      "androidApp.packageName",
+      "androidApp.lastAcceptedVersionCode as previousVersionCode",
+      "androidApp.certificateSha256",
+      "androidApp.keyObjectKey",
+      "androidApp.keyObjectVersion",
+    ])
+    .where("androidSignerJob.id", "=", claim.id)
+    .executeTakeFirstOrThrow()
+  if (row.kind === "provision_key") {
+    return {
+      id: row.id,
+      kind: "provision_key",
+      androidAppId: row.androidAppId,
+      packageName: row.packageName,
+    }
+  }
+  if (
+    row.projectId === null ||
+    row.deploymentId === null ||
+    row.unsignedKey === null ||
+    row.unsignedDigest === null ||
+    row.versionCode === null ||
+    row.certificateSha256 === null ||
+    row.keyObjectKey === null ||
+    row.keyObjectVersion === null
+  )
+    throw new Error(`Android signing job ${row.id} is incomplete`)
+  return {
+    id: row.id,
+    kind: "sign_release",
+    androidAppId: row.androidAppId,
+    packageName: row.packageName,
+    projectId: row.projectId,
+    deploymentId: row.deploymentId,
+    unsignedKey: row.unsignedKey,
+    unsignedDigest: row.unsignedDigest,
+    versionCode: row.versionCode,
+    previousVersionCode: row.previousVersionCode,
+    certificateSha256: row.certificateSha256,
+    keyObjectKey: row.keyObjectKey,
+    keyObjectVersion: row.keyObjectVersion,
+  }
 }
 
-/** Record a signed artifact against the job that produced it. */
+export async function completeKeyProvision(
+  db: Kysely<DB>,
+  input: {
+    jobId: string
+    signerId: string
+    keyObjectKey: string
+    keyObjectVersion: string
+    certificateSha256: string
+    developerConsoleState: "pending_registration" | "registered"
+  },
+): Promise<boolean> {
+  return await db.transaction().execute(async (trx) => {
+    const held = await trx
+      .selectFrom("androidSignerJob")
+      .select("androidAppId")
+      .where("id", "=", input.jobId)
+      .where("kind", "=", "provision_key")
+      .where("state", "=", "running")
+      .where("claimedBy", "=", input.signerId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (
+      held === undefined ||
+      input.keyObjectKey !== `keys/${held.androidAppId}/signing.keystore.enc`
+    ) {
+      return false
+    }
+    const job = await trx
+      .updateTable("androidSignerJob")
+      .set({ state: "succeeded", signedAt: new Date(), updatedAt: new Date() })
+      .where("id", "=", input.jobId)
+      .where("kind", "=", "provision_key")
+      .where("state", "=", "running")
+      .where("claimedBy", "=", input.signerId)
+      .returning("androidAppId")
+      .executeTakeFirst()
+    if (job === undefined) return false
+    await trx
+      .updateTable("androidApp")
+      .set({
+        keyObjectKey: input.keyObjectKey,
+        keyObjectVersion: input.keyObjectVersion,
+        certificateSha256: input.certificateSha256,
+        developerConsoleState: input.developerConsoleState,
+        developerConsoleError: null,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", job.androidAppId)
+      .execute()
+    return true
+  })
+}
+
 export async function completeSigning(
   db: Kysely<DB>,
-  input: { jobId: string; signerId: string; signedKey: string; signedDigest: string },
+  input: {
+    jobId: string
+    signerId: string
+    signedKey: string
+    signedObjectVersion: string
+    signedDigest: string
+    signedSizeBytes: bigint
+    packageName: string
+    versionCode: number
+    versionName: string
+    certificateSha256: string
+  },
 ): Promise<boolean> {
-  const updated = await db
-    .updateTable("apkSigningJob")
-    .set({
-      status: "signed",
-      signedKey: input.signedKey,
-      signedDigest: input.signedDigest,
-      signedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where("id", "=", input.jobId)
-    // Only the signer holding the claim may complete it. Otherwise a signer whose claim expired
-    // mid-upload could overwrite the artifact a second signer has already produced.
-    .where("claimedBy", "=", input.signerId)
-    .where("status", "=", "claimed")
-    .returning("id")
-    .executeTakeFirst()
+  return await db.transaction().execute(async (trx) => {
+    const job = await trx
+      .selectFrom("androidSignerJob")
+      .innerJoin("androidApp", "androidApp.id", "androidSignerJob.androidAppId")
+      .select([
+        "androidSignerJob.androidAppId",
+        "androidSignerJob.deploymentId",
+        "androidSignerJob.versionCode",
+        "androidApp.packageName",
+        "androidApp.certificateSha256",
+        "androidApp.lastAcceptedVersionCode",
+      ])
+      .where("androidSignerJob.id", "=", input.jobId)
+      .where("androidSignerJob.kind", "=", "sign_release")
+      .where("androidSignerJob.state", "=", "running")
+      .where("androidSignerJob.claimedBy", "=", input.signerId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (
+      job === undefined ||
+      job.deploymentId === null ||
+      job.versionCode !== input.versionCode ||
+      job.packageName !== input.packageName ||
+      job.certificateSha256 !== input.certificateSha256 ||
+      input.versionCode <= job.lastAcceptedVersionCode ||
+      input.signedKey !== `signed/${job.androidAppId}/${input.jobId}.apk`
+    )
+      return false
 
-  return updated !== undefined
+    await trx
+      .updateTable("androidSignerJob")
+      .set({
+        state: "succeeded",
+        signedKey: input.signedKey,
+        signedObjectVersion: input.signedObjectVersion,
+        signedDigest: input.signedDigest,
+        signedSizeBytes: input.signedSizeBytes,
+        versionName: input.versionName,
+        signedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where("id", "=", input.jobId)
+      .execute()
+    await trx
+      .updateTable("androidApp")
+      .set({
+        lastAcceptedVersionCode: input.versionCode,
+        latestGoodDeploymentId: job.deploymentId,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", job.androidAppId)
+      .execute()
+    await trx
+      .updateTable("deployment")
+      .set({ status: "ready", failureReason: null, updatedAt: new Date() })
+      .where("id", "=", job.deploymentId)
+      .execute()
+    return true
+  })
 }
 
-/** Report a failure and put the job back, or give up after enough attempts. */
 export async function failSigning(
   db: Kysely<DB>,
-  input: { jobId: string; signerId: string; error: string; maxAttempts?: number },
-): Promise<void> {
-  const maxAttempts = input.maxAttempts ?? 3
-
-  const job = await db
-    .selectFrom("apkSigningJob")
-    .select(["attempts"])
-    .where("id", "=", input.jobId)
-    .executeTakeFirst()
-
-  const attempts = (job?.attempts ?? 0) + 1
-
-  await db
-    .updateTable("apkSigningJob")
-    .set({
-      // Back to pending until it has failed enough times to be somebody's problem rather than a
-      // retry. A signing failure is usually a transient one — the signer restarting mid-job.
-      status: attempts >= maxAttempts ? "failed" : "pending",
-      attempts,
-      lastError: input.error.slice(0, 2000),
-      claimedBy: null,
-      claimedAt: null,
-      updatedAt: new Date(),
-    })
-    .where("id", "=", input.jobId)
-    .where("claimedBy", "=", input.signerId)
-    .execute()
+  input: {
+    jobId: string
+    signerId: string
+    error: string
+    developerConsoleState?: "ownership_required" | "failed"
+    maxAttempts?: number
+  },
+): Promise<boolean> {
+  return await db.transaction().execute(async (trx) => {
+    const job = await trx
+      .selectFrom("androidSignerJob")
+      .select(["androidAppId", "attempts", "deploymentId", "kind"])
+      .where("id", "=", input.jobId)
+      .where("state", "=", "running")
+      .where("claimedBy", "=", input.signerId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (job === undefined) return false
+    const attempts = job.attempts + 1
+    const terminal = attempts >= (input.maxAttempts ?? 3)
+    await trx
+      .updateTable("androidSignerJob")
+      .set({
+        state: terminal ? "failed" : "queued",
+        attempts,
+        error: input.error.slice(0, 2000),
+        claimedBy: null,
+        claimedAt: null,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", input.jobId)
+      .execute()
+    if (terminal) {
+      await trx
+        .updateTable("androidApp")
+        .set({
+          lastError: input.error.slice(0, 2000),
+          ...(job.kind === "provision_key"
+            ? {
+                developerConsoleState: input.developerConsoleState ?? "failed",
+                developerConsoleError: input.error.slice(0, 2000),
+              }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where("id", "=", job.androidAppId)
+        .execute()
+      if (job.kind === "provision_key") {
+        const blocked = await trx
+          .selectFrom("androidSignerJob")
+          .select("deploymentId")
+          .where("androidAppId", "=", job.androidAppId)
+          .where("kind", "=", "sign_release")
+          .where("state", "=", "queued")
+          .where("deploymentId", "is not", null)
+          .execute()
+        await trx
+          .updateTable("androidSignerJob")
+          .set({ state: "failed", error: input.error.slice(0, 2000), updatedAt: new Date() })
+          .where("androidAppId", "=", job.androidAppId)
+          .where("kind", "=", "sign_release")
+          .where("state", "=", "queued")
+          .execute()
+        const deploymentIds = blocked
+          .map((row) => row.deploymentId)
+          .filter((id): id is string => id !== null)
+        if (deploymentIds.length > 0) {
+          await trx
+            .updateTable("deployment")
+            .set({
+              status: "error",
+              failureReason: input.error.slice(0, 2000),
+              updatedAt: new Date(),
+            })
+            .where("id", "in", deploymentIds)
+            .execute()
+        }
+      }
+      if (job.deploymentId !== null)
+        await trx
+          .updateTable("deployment")
+          .set({
+            status: "error",
+            failureReason: input.error.slice(0, 2000),
+            updatedAt: new Date(),
+          })
+          .where("id", "=", job.deploymentId)
+          .execute()
+    }
+    return true
+  })
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  androidReleaseError,
   mintDeployToken,
   readDeployToken,
   releasePreviewNumber,
@@ -59,6 +60,47 @@ describe("deploy tokens", () => {
     for (const malformed of ["", "a", "a.b", "a.b.c.d"]) {
       expect(readDeployToken(malformed, SECRET, now)).toBeUndefined()
     }
+  })
+})
+
+describe("Android release identity", () => {
+  const digest = "b".repeat(64)
+
+  it("requires a monotonic version code and the raw token-bound APK key", () => {
+    expect(
+      androidReleaseError(PROJECT, {
+        preset: "android",
+        key: `raw/${PROJECT}/${digest}.apk`,
+        digest,
+      }),
+    ).toMatch(/version_code/)
+    expect(
+      androidReleaseError(PROJECT, {
+        preset: "android",
+        key: `builds/${PROJECT}/${digest}.zip`,
+        digest,
+        version_code: 2,
+      }),
+    ).toMatch(/raw APK/)
+    expect(
+      androidReleaseError(PROJECT, {
+        preset: "android",
+        key: `raw/${PROJECT}/${digest}.apk`,
+        digest,
+        version_code: 2,
+      }),
+    ).toBeUndefined()
+  })
+
+  it("does not accept Android-only version metadata on another preset", () => {
+    expect(
+      androidReleaseError(PROJECT, {
+        preset: "next",
+        key: `builds/${PROJECT}/${digest}.zip`,
+        digest,
+        version_code: 2,
+      }),
+    ).toMatch(/only valid for Android/)
   })
 })
 

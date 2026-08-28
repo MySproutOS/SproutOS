@@ -197,6 +197,48 @@ export interface AgentUsage {
   source: string
 }
 
+export interface AndroidApp {
+  certificateSha256: string | null
+  createdAt: Generated<Timestamp>
+  developerConsoleError: string | null
+  developerConsoleState: Generated<string>
+  id: string
+  keyObjectKey: string | null
+  keyObjectVersion: string | null
+  lastAcceptedVersionCode: Generated<number>
+  lastError: string | null
+  latestGoodDeploymentId: string | null
+  packageName: string
+  projectId: string
+  updatedAt: Generated<Timestamp>
+  verifiedSetupCommit: string | null
+}
+
+export interface AndroidSignerJob {
+  androidAppId: string
+  attempts: Generated<number>
+  claimedAt: Timestamp | null
+  claimedBy: string | null
+  createdAt: Generated<Timestamp>
+  deploymentId: string | null
+  error: string | null
+  id: string
+  inputMime: string | null
+  kind: string
+  projectId: string | null
+  signedAt: Timestamp | null
+  signedDigest: string | null
+  signedKey: string | null
+  signedObjectVersion: string | null
+  signedSizeBytes: Int8 | null
+  state: string
+  unsignedDigest: string | null
+  unsignedKey: string | null
+  updatedAt: Generated<Timestamp>
+  versionCode: number | null
+  versionName: string | null
+}
+
 export interface ApiKey {
   createdAt: Generated<Timestamp>
   expiresAt: Timestamp | null
@@ -209,24 +251,6 @@ export interface ApiKey {
   revokedAt: Timestamp | null
   scopes: Generated<string[]>
   userId: string
-}
-
-export interface ApkSigningJob {
-  attempts: Generated<number>
-  claimedAt: Timestamp | null
-  claimedBy: string | null
-  createdAt: Generated<Timestamp>
-  deploymentId: string
-  id: string
-  lastError: string | null
-  projectId: string
-  signedAt: Timestamp | null
-  signedDigest: string | null
-  signedKey: string | null
-  status: Generated<string>
-  unsignedDigest: string
-  unsignedKey: string
-  updatedAt: Generated<Timestamp>
 }
 
 export interface AuditLog {
@@ -1335,8 +1359,9 @@ export interface DB {
   agentSessionEntry: AgentSessionEntry
   agentTurn: AgentTurn
   agentUsage: AgentUsage
+  androidApp: AndroidApp
+  androidSignerJob: AndroidSignerJob
   apiKey: ApiKey
-  apkSigningJob: ApkSigningJob
   auditLog: AuditLog
   backendService: BackendService
   backgroundJob: BackgroundJob

@@ -13,6 +13,8 @@ const signedUrlFor = (key: string) => `https://cdn.example/${key}?sig=abc`
 
 function row(overrides: Partial<AppRow> = {}): AppRow {
   return {
+    androidAppId: "01900000-0000-7000-8000-000000000001",
+    projectId: "01900000-0000-7000-8000-000000000002",
     packageName: "me.sproutos.example",
     label: "Example",
     summary: "An example",
@@ -21,6 +23,8 @@ function row(overrides: Partial<AppRow> = {}): AppRow {
     sha256: "a".repeat(64),
     sizeBytes: 1_024,
     signedKey: "signed/p/d.apk",
+    signedObjectVersion: "v1",
+    certificateSha256: "b".repeat(64),
     iconUrl: null,
     ...overrides,
   }
@@ -28,6 +32,8 @@ function row(overrides: Partial<AppRow> = {}): AppRow {
 
 function app(overrides: Partial<AndroidApp> = {}): AndroidApp {
   return {
+    androidAppId: "01900000-0000-7000-8000-000000000001",
+    projectId: "01900000-0000-7000-8000-000000000002",
     packageName: "me.sproutos.example",
     label: "Example",
     summary: "",
@@ -35,6 +41,7 @@ function app(overrides: Partial<AndroidApp> = {}): AndroidApp {
     versionCode: 1,
     sha256: "a".repeat(64),
     sizeBytes: 1_024,
+    certificateSha256: "b".repeat(64),
     downloadUrl: "https://cdn.example/x",
     ...overrides,
   }
@@ -146,13 +153,13 @@ describe("the catalogue", () => {
   it("declares a version an old client can refuse", () => {
     const catalogue = buildCatalogue({ publicApps: [], personalApps: [], personalSites: [] })
 
-    expect(catalogue.version).toBe(1)
+    expect(catalogue.version).toBe(2)
     expect(isReadable(catalogue.version)).toBe(true)
     /*
       A newer catalogue read by an older client would be *partially* understood, which is the
       dangerous kind: a section it does not know about looks like an empty one, and a customer
       concludes their apps are gone.
     */
-    expect(isReadable(2)).toBe(false)
+    expect(isReadable(1)).toBe(false)
   })
 })

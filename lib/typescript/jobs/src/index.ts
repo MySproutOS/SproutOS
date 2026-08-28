@@ -152,9 +152,13 @@ export {
   type NeonMeteringOptions,
 } from "./neon-metering"
 export {
+  APK_MIME,
+  androidVersionError,
   CLAIM_TIMEOUT_MS,
   claimSigningJob,
+  completeKeyProvision,
   completeSigning,
+  ensureAndroidSetup,
   enqueueSigning,
   failSigning,
   type SigningJob,

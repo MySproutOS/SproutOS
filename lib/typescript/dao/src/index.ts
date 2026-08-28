@@ -259,6 +259,10 @@ export {
 }
 export { crudDeployment } from "./deployment/crud"
 export { fetchDeployment } from "./deployment/fetch"
+export { crudAndroidApp } from "./androidApp/crud"
+export { fetchAndroidApp } from "./androidApp/fetch"
+export { crudAndroidSignerJob } from "./androidSignerJob/crud"
+export { fetchAndroidSignerJob } from "./androidSignerJob/fetch"
 export { crudDeploymentBuild } from "./deploymentBuild/crud"
 export { fetchPlacement, type Placement } from "./cluster/placement"
 export {
