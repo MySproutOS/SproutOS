@@ -47,15 +47,48 @@ async function ensureApp(db: JobDb, projectId: string) {
     .executeTakeFirstOrThrow()
 }
 
+async function ensureProvisionJob(db: JobDb, androidAppId: string): Promise<void> {
+  await db
+    .insertInto("androidSignerJob")
+    .values({ id: v7(), androidAppId, kind: "provision_key", state: "queued" })
+    .onConflict((oc) => oc.doNothing())
+    .execute()
+  // The per-app identity must remain unique, so recovery reuses the one normalized provision job
+  // instead of creating a second key identity. A new setup/deploy request is the explicit retry.
+  const retried = await db
+    .updateTable("androidSignerJob")
+    .set({
+      state: "queued",
+      attempts: 0,
+      error: null,
+      claimedBy: null,
+      claimedAt: null,
+      callbackIdempotencyKey: null,
+      updatedAt: new Date(),
+    })
+    .where("androidAppId", "=", androidAppId)
+    .where("kind", "=", "provision_key")
+    .where("state", "=", "failed")
+    .executeTakeFirst()
+  if (retried.numUpdatedRows > 0n) {
+    await db
+      .updateTable("androidApp")
+      .set({
+        developerConsoleState: "pending",
+        developerConsoleError: null,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", androidAppId)
+      .execute()
+  }
+}
+
 export async function ensureAndroidSetup(db: Kysely<DB>, projectId: string) {
   return await db.transaction().execute(async (trx) => {
     const app = await ensureApp(trx, projectId)
     if (app.keyObjectKey === null) {
-      await trx
-        .insertInto("androidSignerJob")
-        .values({ id: v7(), androidAppId: app.id, kind: "provision_key", state: "queued" })
-        .onConflict((oc) => oc.doNothing())
-        .execute()
+      await ensureProvisionJob(trx, app.id)
     }
     return app
   })
@@ -98,11 +131,7 @@ export async function enqueueSigning(
   return await db.transaction().execute(async (trx) => {
     const app = await ensureApp(trx, input.projectId)
     if (app.keyObjectKey === null) {
-      await trx
-        .insertInto("androidSignerJob")
-        .values({ id: v7(), androidAppId: app.id, kind: "provision_key", state: "queued" })
-        .onConflict((oc) => oc.doNothing())
-        .execute()
+      await ensureProvisionJob(trx, app.id)
     }
     if (input.versionCode <= app.lastAcceptedVersionCode) {
       throw new Error(
@@ -176,7 +205,13 @@ export async function claimSigningJob(
     )
     .updateTable("androidSignerJob")
     .from("candidate")
-    .set({ state: "running", claimedBy: signerId, claimedAt, updatedAt: claimedAt })
+    .set({
+      state: "running",
+      claimedBy: signerId,
+      claimedAt,
+      callbackIdempotencyKey: null,
+      updatedAt: claimedAt,
+    })
     .whereRef("androidSignerJob.id", "=", "candidate.id")
     .returning("androidSignerJob.id")
     .executeTakeFirst()
@@ -247,18 +282,18 @@ export async function completeKeyProvision(
     keyObjectVersion: string
     certificateSha256: string
     developerConsoleState: "pending_registration" | "registered"
+    idempotencyKey: string
   },
 ): Promise<boolean> {
   return await db.transaction().execute(async (trx) => {
     const held = await trx
       .selectFrom("androidSignerJob")
-      .select("androidAppId")
+      .select(["androidAppId", "callbackIdempotencyKey"])
       .where("id", "=", input.jobId)
       .where("kind", "=", "provision_key")
-      .where("state", "=", "running")
-      .where("claimedBy", "=", input.signerId)
       .forUpdate()
       .executeTakeFirst()
+    if (held?.callbackIdempotencyKey === input.idempotencyKey) return true
     if (
       held === undefined ||
       input.keyObjectKey !== `keys/${held.androidAppId}/signing.keystore.enc`
@@ -267,7 +302,12 @@ export async function completeKeyProvision(
     }
     const job = await trx
       .updateTable("androidSignerJob")
-      .set({ state: "succeeded", signedAt: new Date(), updatedAt: new Date() })
+      .set({
+        state: "succeeded",
+        callbackIdempotencyKey: input.idempotencyKey,
+        signedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where("id", "=", input.jobId)
       .where("kind", "=", "provision_key")
       .where("state", "=", "running")
@@ -305,6 +345,7 @@ export async function completeSigning(
     versionCode: number
     versionName: string
     certificateSha256: string
+    idempotencyKey: string
   },
 ): Promise<boolean> {
   return await db.transaction().execute(async (trx) => {
@@ -315,18 +356,22 @@ export async function completeSigning(
         "androidSignerJob.androidAppId",
         "androidSignerJob.deploymentId",
         "androidSignerJob.versionCode",
+        "androidSignerJob.state",
+        "androidSignerJob.claimedBy",
+        "androidSignerJob.callbackIdempotencyKey",
         "androidApp.packageName",
         "androidApp.certificateSha256",
         "androidApp.lastAcceptedVersionCode",
       ])
       .where("androidSignerJob.id", "=", input.jobId)
       .where("androidSignerJob.kind", "=", "sign_release")
-      .where("androidSignerJob.state", "=", "running")
-      .where("androidSignerJob.claimedBy", "=", input.signerId)
       .forUpdate()
       .executeTakeFirst()
+    if (job?.callbackIdempotencyKey === input.idempotencyKey) return true
     if (
       job === undefined ||
+      job.state !== "running" ||
+      job.claimedBy !== input.signerId ||
       job.deploymentId === null ||
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
@@ -345,6 +390,7 @@ export async function completeSigning(
         signedDigest: input.signedDigest,
         signedSizeBytes: input.signedSizeBytes,
         versionName: input.versionName,
+        callbackIdempotencyKey: input.idempotencyKey,
         signedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -377,18 +423,26 @@ export async function failSigning(
     error: string
     developerConsoleState?: "ownership_required" | "failed"
     maxAttempts?: number
+    idempotencyKey: string
   },
 ): Promise<boolean> {
   return await db.transaction().execute(async (trx) => {
     const job = await trx
       .selectFrom("androidSignerJob")
-      .select(["androidAppId", "attempts", "deploymentId", "kind"])
+      .select(["androidAppId", "attempts", "deploymentId", "kind", "callbackIdempotencyKey"])
+      .where("id", "=", input.jobId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (job?.callbackIdempotencyKey === input.idempotencyKey) return true
+    if (job === undefined) return false
+    const held = await trx
+      .selectFrom("androidSignerJob")
+      .select("id")
       .where("id", "=", input.jobId)
       .where("state", "=", "running")
       .where("claimedBy", "=", input.signerId)
-      .forUpdate()
       .executeTakeFirst()
-    if (job === undefined) return false
+    if (held === undefined) return false
     const attempts = job.attempts + 1
     const terminal = attempts >= (input.maxAttempts ?? 3)
     await trx
@@ -399,6 +453,7 @@ export async function failSigning(
         error: input.error.slice(0, 2000),
         claimedBy: null,
         claimedAt: null,
+        callbackIdempotencyKey: input.idempotencyKey,
         updatedAt: new Date(),
       })
       .where("id", "=", input.jobId)

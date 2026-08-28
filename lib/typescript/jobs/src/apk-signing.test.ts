@@ -8,6 +8,7 @@ import {
   completeKeyProvision,
   completeSigning,
   enqueueSigning,
+  ensureAndroidSetup,
   failSigning,
   packageNameForProject,
 } from "./apk-signing"
@@ -26,6 +27,8 @@ const created: {
   id: string
 }[] = []
 const projects: string[] = []
+const KEY_1 = "1".repeat(64)
+const KEY_2 = "2".repeat(64)
 
 async function seed() {
   const userId = v7(),
@@ -109,16 +112,18 @@ async function provision() {
   const job = await claimSigningJob(db, "signer")
   expect(job?.kind).toBe("provision_key")
   if (job?.kind !== "provision_key") throw new Error("expected provisioning job")
-  expect(
-    await completeKeyProvision(db, {
-      jobId: job.id,
-      signerId: "signer",
-      keyObjectKey: `keys/${job.androidAppId}/signing.keystore.enc`,
-      keyObjectVersion: "v1",
-      certificateSha256: "b".repeat(64),
-      developerConsoleState: "pending_registration",
-    }),
-  ).toBe(true)
+  const completion = {
+    jobId: job.id,
+    signerId: "signer",
+    keyObjectKey: `keys/${job.androidAppId}/signing.keystore.enc`,
+    keyObjectVersion: "v1",
+    certificateSha256: "b".repeat(64),
+    developerConsoleState: "pending_registration" as const,
+    idempotencyKey: KEY_1,
+  }
+  expect(await completeKeyProvision(db, completion)).toBe(true)
+  expect(await completeKeyProvision(db, completion)).toBe(true)
+  expect(await completeKeyProvision(db, { ...completion, idempotencyKey: KEY_2 })).toBe(false)
 }
 
 afterAll(async () => {
@@ -149,20 +154,24 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     const signing = await claimSigningJob(db, "signer")
     expect(signing?.id).toBe(jobId)
     if (signing?.kind !== "sign_release") throw new Error("expected signing job")
-    expect(
-      await completeSigning(db, {
-        jobId,
-        signerId: "signer",
-        signedKey: `signed/${signing.androidAppId}/${jobId}.apk`,
-        signedObjectVersion: "signed-v1",
-        signedDigest: "c".repeat(64),
-        signedSizeBytes: 42n,
-        packageName: signing.packageName,
-        versionCode: 7,
-        versionName: "1.0.0",
-        certificateSha256: signing.certificateSha256,
-      }),
-    ).toBe(true)
+    const completion = {
+      jobId,
+      signerId: "signer",
+      signedKey: `signed/${signing.androidAppId}/${jobId}.apk`,
+      signedObjectVersion: "signed-v1",
+      signedDigest: "c".repeat(64),
+      signedSizeBytes: 42n,
+      packageName: signing.packageName,
+      versionCode: 7,
+      versionName: "1.0.0",
+      certificateSha256: signing.certificateSha256,
+      idempotencyKey: KEY_1,
+    }
+    expect(await completeSigning(db, completion)).toBe(true)
+    // The response can disappear after the transaction commits. The same callback must converge
+    // instead of turning a successful release into an apparent lost-claim failure.
+    expect(await completeSigning(db, completion)).toBe(true)
+    expect(await completeSigning(db, { ...completion, idempotencyKey: KEY_2 })).toBe(false)
     expect(
       (
         await db
@@ -199,6 +208,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         versionCode: 1,
         versionName: "1",
         certificateSha256: held.certificateSha256,
+        idempotencyKey: KEY_1,
       }),
     ).toBe(false)
   })
@@ -208,7 +218,13 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     await provision()
     await claimSigningJob(db, "signer")
     expect(
-      await failSigning(db, { jobId, signerId: "signer", error: "invalid APK", maxAttempts: 1 }),
+      await failSigning(db, {
+        jobId,
+        signerId: "signer",
+        error: "invalid APK",
+        maxAttempts: 1,
+        idempotencyKey: KEY_1,
+      }),
     ).toBe(true)
     expect(
       await db
@@ -219,8 +235,42 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     ).toMatchObject({ status: "error", failureReason: "invalid APK" })
   })
 
+  it("records a retried failure callback only once per claim", async () => {
+    const { jobId } = await queue()
+    await provision()
+    await claimSigningJob(db, "signer")
+    const failure = {
+      jobId,
+      signerId: "signer",
+      error: "temporary tool failure",
+      maxAttempts: 3,
+      idempotencyKey: KEY_1,
+    }
+    expect(await failSigning(db, failure)).toBe(true)
+    expect(await failSigning(db, failure)).toBe(true)
+    expect(
+      await db
+        .selectFrom("androidSignerJob")
+        .select(["state", "attempts"])
+        .where("id", "=", jobId)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({ state: "queued", attempts: 1 })
+
+    // A new claim clears the old callback key, so the same diagnostic on a genuinely new attempt
+    // is counted rather than mistaken for another delivery of the prior callback.
+    await claimSigningJob(db, "signer")
+    expect(await failSigning(db, failure)).toBe(true)
+    expect(
+      await db
+        .selectFrom("androidSignerJob")
+        .select("attempts")
+        .where("id", "=", jobId)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({ attempts: 2 })
+  })
+
   it("fails blocked releases when per-app key provisioning is terminal", async () => {
-    const { deploymentId } = await queue()
+    const { deploymentId, projectId } = await queue()
     const provisioning = await claimSigningJob(db, "signer")
     if (provisioning?.kind !== "provision_key") throw new Error("expected provisioning job")
     expect(
@@ -230,6 +280,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         error: "Developer Console ownership proof required",
         developerConsoleState: "ownership_required",
         maxAttempts: 1,
+        idempotencyKey: KEY_1,
       }),
     ).toBe(true)
     expect(
@@ -241,6 +292,25 @@ describe.runIf(reachable)("the Android signer state machine", () => {
     ).toMatchObject({
       status: "error",
       failureReason: "Developer Console ownership proof required",
+    })
+
+    await ensureAndroidSetup(db, projectId)
+    expect(
+      await db
+        .selectFrom("androidApp")
+        .select(["developerConsoleState", "developerConsoleError", "lastError"])
+        .where("projectId", "=", projectId)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({
+      developerConsoleState: "pending",
+      developerConsoleError: null,
+      lastError: null,
+    })
+    const retried = await claimSigningJob(db, "replacement-signer")
+    expect(retried).toMatchObject({
+      id: provisioning.id,
+      kind: "provision_key",
+      androidAppId: provisioning.androidAppId,
     })
   })
 })

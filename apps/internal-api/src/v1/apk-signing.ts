@@ -105,6 +105,11 @@ function s3(): S3Client {
 }
 
 const URL_TTL_S = 3600
+const IDEMPOTENCY_KEY = /^[0-9a-f]{64}$/
+
+export function callbackIdempotencyKey(header: string | undefined): string | undefined {
+  return header !== undefined && IDEMPOTENCY_KEY.test(header) ? header : undefined
+}
 
 const app: Hono = new Hono()
   .post(
@@ -197,6 +202,7 @@ const app: Hono = new Hono()
       description: "Complete a key-provisioning or signed-release job.",
       responses: {
         200: { description: "Recorded" },
+        400: { description: "Missing or malformed idempotency key" },
         401: { description: "Missing or invalid signer token" },
         409: { description: "The claim or reported identity no longer matches" },
       },
@@ -205,6 +211,9 @@ const app: Hono = new Hono()
     async (c) => {
       if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
+      const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"))
+      if (idempotencyKey === undefined)
+        return c.json({ message: "A SHA-256 Idempotency-Key is required" }, 400)
       const json = c.req.valid("json")
       const client = s3()
       const uploaded = await client.send(
@@ -235,6 +244,7 @@ const app: Hono = new Hono()
               keyObjectVersion: json.encrypted_key_object_version,
               certificateSha256: json.certificate_sha256,
               developerConsoleState: json.developer_console_state,
+              idempotencyKey,
             })
           : await completeSigning(db, {
               jobId: json.job_id,
@@ -247,6 +257,7 @@ const app: Hono = new Hono()
               versionCode: json.version_code,
               versionName: json.version_name,
               certificateSha256: json.certificate_sha256,
+              idempotencyKey,
             })
       if (!recorded)
         return c.json({ message: "The claim or reported app identity no longer matches" }, 409)
@@ -259,6 +270,7 @@ const app: Hono = new Hono()
       description: "Report a signer failure; terminal failure marks its Android deployment failed.",
       responses: {
         200: { description: "Recorded" },
+        400: { description: "Missing or malformed idempotency key" },
         401: { description: "Missing or invalid signer token" },
         409: { description: "The signer no longer holds the claim" },
       },
@@ -267,12 +279,16 @@ const app: Hono = new Hono()
     async (c) => {
       if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
+      const idempotencyKey = callbackIdempotencyKey(c.req.header("Idempotency-Key"))
+      if (idempotencyKey === undefined)
+        return c.json({ message: "A SHA-256 Idempotency-Key is required" }, 400)
       const json = c.req.valid("json")
       const recorded = await failSigning(db, {
         jobId: json.job_id,
         signerId: json.signer_id,
         error: json.error,
         developerConsoleState: json.developer_console_state,
+        idempotencyKey,
       })
       if (!recorded) return c.json({ message: "The signer no longer holds the claim" }, 409)
       return c.json({})

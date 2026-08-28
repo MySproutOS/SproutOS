@@ -50,6 +50,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("input_mime", "text")
     .addColumn("signed_size_bytes", "bigint")
     .addColumn("signed_object_version", "text")
+    .addColumn("callback_idempotency_key", "text")
     .execute()
 
   await sql`delete from android_signer_job`.execute(db)
@@ -79,6 +80,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     alter table android_signer_job
       add constraint android_signer_job_kind_check check (kind in ('provision_key', 'sign_release')),
       add constraint android_signer_job_state_check check (state in ('queued', 'running', 'succeeded', 'failed')),
+      add constraint android_signer_job_callback_key_check check (
+        callback_idempotency_key is null or callback_idempotency_key ~ '^[0-9a-f]{64}$'
+      ),
       add constraint android_signer_job_shape_check check ((
         kind = 'provision_key'
         and deployment_id is null
@@ -133,6 +137,7 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     alter table android_signer_job
       drop constraint android_signer_job_kind_check,
       drop constraint android_signer_job_state_check,
+      drop constraint android_signer_job_callback_key_check,
       drop constraint android_signer_job_shape_check,
       add column status text,
       add column last_error text;
@@ -159,6 +164,7 @@ export async function down(db: Kysely<unknown>): Promise<void> {
       drop column input_mime,
       drop column signed_size_bytes,
       drop column signed_object_version,
+      drop column callback_idempotency_key,
       add constraint apk_signing_job_status_check
         check (status in ('pending', 'claimed', 'signed', 'failed')),
       add constraint apk_signing_job_deployment_key unique (deployment_id);

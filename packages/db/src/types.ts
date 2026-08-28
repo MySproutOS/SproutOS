@@ -217,6 +217,7 @@ export interface AndroidApp {
 export interface AndroidSignerJob {
   androidAppId: string
   attempts: Generated<number>
+  callbackIdempotencyKey: string | null
   claimedAt: Timestamp | null
   claimedBy: string | null
   createdAt: Generated<Timestamp>
