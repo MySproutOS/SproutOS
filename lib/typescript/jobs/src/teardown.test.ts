@@ -344,25 +344,11 @@ describe("tearing down a deleted project", () => {
       })
       .where("id", "=", customDomainId)
       .execute()
-    await expect(handler()(job({ projectId }), context())).rejects.toThrow(/retry teardown/)
-    expect(
-      (
-        await db
-          .selectFrom("project")
-          .select("state")
-          .where("id", "=", projectId)
-          .executeTakeFirstOrThrow()
-      ).state,
-    ).toBe("deleting")
-    expect(certificateCleanup).not.toContain("DeleteObjectsCommand")
-    expect(deletedFunctions).toHaveLength(0)
-    await db
-      .updateTable("customDomain")
-      .set({ reconcileLeaseToken: null, reconcileLeaseExpiresAt: null })
-      .where("id", "=", customDomainId)
-      .execute()
-
+    // Deletion is the fence: it revokes a stale issuer's lease before removing the route and
+    // certificate material. Waiting for that lease to expire would leave a deleted project live,
+    // while the issuer's conditional writes already prevent it from resurrecting this row.
     await handler()(job({ projectId }), context())
+    expect(certificateCleanup).toContain("DeleteObjectsCommand")
 
     const deployments = await db
       .selectFrom("deployment")
