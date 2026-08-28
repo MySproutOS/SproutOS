@@ -213,6 +213,18 @@ The tenant edge also has a two-phase interlock. Its rollout defaults keep the ex
 listener and generated tenant DNS unchanged while OpenTofu creates the certificate bucket and the
 empty Secrets Manager container. Do not put an ACME private key in a variable or state file.
 
+This network/parser hardening is not by itself authorization to cut over. Before step 6 or any
+production custom-domain activation, separate reviewed changes must prove all of these launch gates:
+
+- certificate rows persist ACME issuer/directory provenance and changing staging to production
+  forces a new order rather than activating or renewing staging material;
+- renewal scheduling follows ACME Renewal Information when offered, with a bounded fallback;
+- deletion and supersession clean up every versioned certificate/key object after route withdrawal;
+- Route 53 mutation is absent from the public router instance role and exists only on the narrowly
+  scoped certificate/deployment worker role;
+- static CloudFront log reconciliation and delayed-delivery credit safeguards are deployed and
+  verified independently of this dynamic edge.
+
 1. Apply with both `tenant_edge_preview_enabled` and `tenant_edge_enabled` false, then seed the
    account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an
    existing secret version.
@@ -220,26 +232,49 @@ empty Secrets Manager container. Do not put an ACME private key in a variable or
    store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
    from refreshing either router Auto Scaling group.
 3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
-   contains the new release. Apply a reviewed plan. Temporary NLB listeners expose HTTP on 10080
-   and HTTPS on 10443 without moving production 80/443 or generated DNS.
+   contains the new release. Apply a reviewed plan. This creates a separate dual-stack, EIP-backed
+   edge NLB. Its listeners use public 80/443 so HTTP-01 and ordinary TLS clients exercise the real
+   protocol, while `preview-ingress.<tenant-domain>` points only at this parallel balancer. This does
+   not replace the live Postgres/Valkey NLB or move generated production DNS.
 4. Wait for the platform certificate row to become active and for the configured
    `router_certificate_min_acks` quorum. Smoke the generated wildcard, tenant apex, exact egress
    hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
-   Postgres and Valkey listeners through the preview estate.
-5. Change `acme_directory_url` from Let's Encrypt staging to production and repeat issuance and the
-   preview checks. Never reuse a staging certificate for the public cutover.
-6. Save and review a plan with `tenant_edge_enabled = true`. This assigns stable NLB Elastic IPs,
-   changes public 443 from AWS TLS termination to TCP passthrough, creates public port 80, and moves
-   the generated tenant apex/wildcard records to the NLB. On an existing NLB the subnet-to-EIP
-   change can require replacement, so inspect the saved plan and schedule the brief tenant-protocol
-   interruption explicitly.
-7. Apply that exact plan, update repository variables from `tofu output` (including
+   Postgres and Valkey listeners through the unchanged data-plane NLB. Exercise preview over both
+   IPv4 and IPv6 through the preview ingress name and confirm Lambda receives the viewer address
+   from Proxy Protocol v2.
+5. While `tenant_edge_enabled` remains false, set `custom_domain_issuance_enabled = true` only after
+   a test hostname points at `preview-ingress.<tenant-domain>`. Exercise the complete asynchronous
+   ownership and HTTP-01 flow against Let's Encrypt staging. This flag is deliberately independent
+   of generated-traffic cutover; do not move the wildcard merely to test issuance. Turn the flag
+   back off as soon as the controlled staging claim is created so other organizations cannot begin
+   claims during the preview.
+6. Change `acme_directory_url` from Let's Encrypt staging to production and repeat issuance and the
+   preview checks. Never reuse a staging certificate for the public cutover. The certificate row
+   must prove production-directory provenance before it is eligible for activation.
+7. Save and review a plan with `tenant_edge_enabled = true`. The preview NLB and its EIPs must remain
+   in place, as must its existing public TCP 80/443 listeners: the plan moves generated A/AAAA plus
+   ingress/egress DNS to them without a destroy/create listener gap. Refuse a plan which replaces
+   `aws_lb.tenant`, `aws_lb.tenant_edge[0]`, or either `aws_lb_listener.tenant_*[0]`; the existing
+   data-plane NLB continues serving Postgres, Valkey, and the legacy egress rollback listener
+   throughout the web-edge cutover.
+8. Apply that exact plan, update repository variables from `tofu output` (including
    `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
-   run the production browser and protocol smoke suite before enabling custom-domain creation.
+   run the production browser and protocol smoke suite. Set `custom_domain_issuance_enabled = true`
+   only after production-directory provenance and the remaining certificate lifecycle gates pass.
 
-`tenant_edge_enabled` is also the application feature flag. The API must not accept a customer
-domain while only the preview listeners exist. Keep the setting in the persistent tfvars after
-cutover; reverting it in a later apply would attempt to move traffic back to the legacy listener.
+`tenant_edge_enabled` controls generated traffic and the egress DNS cutover;
+`custom_domain_issuance_enabled` controls API claim/check operations. Keep both decisions explicit
+in persistent tfvars. Reverting the edge flag in a later apply would attempt to move generated and
+egress traffic back to the legacy listeners; reverting only issuance stops new/check-now API work
+without withdrawing routes or destroying certificate material.
+
+To abandon preview, leave `tenant_edge_preview_enabled = true`, keep
+`tenant_edge_enabled = false`, and apply once so edge deletion protection is off; only then set the
+preview flag false and review the destroy plan. To roll back after cutover, use the same two applies
+after DNS and protocol smoke prove the legacy paths healthy. The parallel edge cannot be removed
+while any active custom hostname still points at either ingress alias: withdraw/migrate every route
+and certificate first. Never turn the global `deletion_protection` variable off merely to remove
+the preview NLB.
 
 ### Static-site metering
 

@@ -18,6 +18,7 @@ use axum::Router as AxumRouter;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::serve::Listener as _;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnectionBuilder;
@@ -25,7 +26,7 @@ use hyper_util::service::TowerToHyperService;
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_rustls::LazyConfigAcceptor;
@@ -36,6 +37,11 @@ use sproutos_sandbox_forward_proxy::SandboxForwardProxy;
 
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const DEFAULT_MAX_CONNECTIONS: usize = 1_024;
+// A fatal TLS alert is still a plaintext record until the server has selected a certificate and
+// completed enough of the handshake to derive traffic keys. Writing the exact RFC 6066 alert here
+// avoids both unsafe default-certificate fallback and rustls' generic `access_denied` response when
+// its resolver returns no certificate.
+const UNRECOGNIZED_NAME_ALERT: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x70];
 
 /// Socket metadata established by the edge rather than supplied by the request.
 #[derive(Debug, Clone)]
@@ -82,7 +88,8 @@ pub fn target_for_sni(
     configured_names: &HashSet<String>,
     egress_sni: Option<&str>,
 ) -> Result<Target, DispatchError> {
-    let sni = sni.ok_or(DispatchError::MissingSni)?.to_ascii_lowercase();
+    let sni = normalize_dns_name(sni.ok_or(DispatchError::MissingSni)?)
+        .ok_or(DispatchError::UnknownSni)?;
     if !configured_names
         .iter()
         .any(|pattern| sni_matches(pattern, &sni))
@@ -90,7 +97,8 @@ pub fn target_for_sni(
         return Err(DispatchError::UnknownSni);
     }
     Ok(
-        if egress_sni.is_some_and(|host| host.eq_ignore_ascii_case(&sni)) {
+        if egress_sni.is_some_and(|host| normalize_dns_name(host).as_deref() == Some(sni.as_str()))
+        {
             Target::Egress
         } else {
             Target::Http
@@ -99,9 +107,13 @@ pub fn target_for_sni(
 }
 
 fn sni_matches(pattern: &str, sni: &str) -> bool {
-    let pattern = pattern.trim_end_matches('.');
-    let sni = sni.trim_end_matches('.');
-    if pattern.eq_ignore_ascii_case(sni) {
+    let Some(pattern) = normalize_dns_pattern(pattern) else {
+        return false;
+    };
+    let Some(sni) = normalize_dns_name(sni) else {
+        return false;
+    };
+    if pattern == sni {
         return true;
     }
     let Some(suffix) = pattern.strip_prefix("*.") else {
@@ -132,12 +144,13 @@ impl ResolvesServerCert for ConfiguredResolver {
 
 impl ConfiguredResolver {
     pub(crate) fn resolve_name(&self, sni: &str) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        if let Some(certificate) = self.custom.load().get(&sni.to_ascii_lowercase()) {
+        let sni = normalize_dns_name(sni)?;
+        if let Some(certificate) = self.custom.load().get(&sni) {
             return Some(Arc::clone(certificate));
         }
         self.platform_names
             .iter()
-            .any(|pattern| sni_matches(pattern, sni))
+            .any(|pattern| sni_matches(pattern, &sni))
             .then(|| Arc::clone(&self.platform_certificate))
     }
 
@@ -162,8 +175,53 @@ pub fn host_matches_sni(host: Option<&str>, sni: &str) -> bool {
             .filter(|(_, port)| port.parse::<u16>().is_ok())
             .map_or(host, |(name, _)| name)
     };
-    host.trim_end_matches('.')
-        .eq_ignore_ascii_case(sni.trim_end_matches('.'))
+    normalize_dns_name(host) == normalize_dns_name(sni)
+}
+
+fn request_authority_matches_sni<B>(request: &Request<B>, sni: &str) -> bool {
+    // HTTP/1.1 normally carries the authority in Host. HTTP/2 carries it in `:authority`, which
+    // Hyper exposes through the URI rather than synthesizing a Host header. If both forms are
+    // present (including an HTTP/1 absolute-form request), require both to agree so a downstream
+    // framework cannot select a different tenant from the spelling the edge did not inspect.
+    let uri_authority = request
+        .uri()
+        .authority()
+        .map(|authority| authority.as_str());
+    let host = request
+        .headers()
+        .get("host")
+        .and_then(|value| value.to_str().ok());
+    let has_authority = uri_authority.is_some() || host.is_some();
+    has_authority
+        && uri_authority
+            .into_iter()
+            .chain(host)
+            .all(|authority| host_matches_sni(Some(authority), sni))
+}
+
+fn normalize_dns_name(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('.');
+    let ascii = idna::domain_to_ascii(value).ok()?.to_ascii_lowercase();
+    let valid = !ascii.is_empty()
+        && ascii.len() <= 253
+        && ascii.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    valid.then_some(ascii)
+}
+
+fn normalize_dns_pattern(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('.');
+    value.strip_prefix("*.").map_or_else(
+        || normalize_dns_name(value),
+        |suffix| normalize_dns_name(suffix).map(|suffix| format!("*.{suffix}")),
+    )
 }
 
 /// A configured edge. Constructing it parses every key and certificate before a socket is bound.
@@ -189,9 +247,11 @@ impl Edge {
     ) -> anyhow::Result<Self> {
         let configured_names = names
             .into_iter()
-            .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
-            .filter(|name| !name.is_empty())
-            .collect::<HashSet<_>>();
+            .map(|name| {
+                normalize_dns_pattern(&name)
+                    .with_context(|| format!("invalid TLS edge SNI name {name:?}"))
+            })
+            .collect::<anyhow::Result<HashSet<_>>>()?;
         anyhow::ensure!(
             !configured_names.is_empty(),
             "the TLS edge has no SNI names"
@@ -200,6 +260,12 @@ impl Edge {
             max_connections > 0,
             "the TLS edge connection limit must be positive"
         );
+        let egress_sni = egress_sni
+            .map(|name| {
+                normalize_dns_name(&name)
+                    .with_context(|| format!("invalid TLS edge egress SNI {name:?}"))
+            })
+            .transpose()?;
         if let Some(egress_name) = egress_sni.as_deref() {
             anyhow::ensure!(
                 configured_names
@@ -261,16 +327,19 @@ impl Edge {
             http_config: Arc::new(http_config),
             egress_config: Arc::new(egress_config),
             resolver,
-            egress_sni: egress_sni.map(|name| name.to_ascii_lowercase()),
+            egress_sni,
             egress,
             http,
             connections: Arc::new(Semaphore::new(max_connections)),
         })
     }
 
-    pub async fn serve(self: Arc<Self>, listener: TcpListener) -> io::Result<()> {
+    pub async fn serve(
+        self: Arc<Self>,
+        mut listener: crate::proxy_protocol::ProxyProtocolListener,
+    ) -> io::Result<()> {
         loop {
-            let (stream, peer) = listener.accept().await?;
+            let (stream, peer) = listener.accept().await;
             let Some(permit) = self.connection_permit() else {
                 tracing::warn!(%peer, "TLS edge connection limit reached");
                 drop(stream);
@@ -279,7 +348,7 @@ impl Edge {
             let edge = Arc::clone(&self);
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Err(cause) = edge.serve_connection(stream).await {
+                if let Err(cause) = edge.serve_io(stream, peer).await {
                     tracing::debug!(%peer, %cause, "TLS edge connection ended");
                 }
             });
@@ -290,6 +359,13 @@ impl Edge {
         let peer = stream
             .peer_addr()
             .context("could not read TLS edge peer address")?;
+        self.serve_io(stream, peer).await
+    }
+
+    async fn serve_io<T>(&self, stream: T, peer: SocketAddr) -> anyhow::Result<()>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let start = tokio::time::timeout_at(
             deadline,
@@ -301,15 +377,17 @@ impl Edge {
         let sni = start
             .client_hello()
             .server_name()
-            .map(str::to_owned)
-            .ok_or(DispatchError::MissingSni)?;
-        if self.resolver.resolve_name(&sni).is_none() {
-            return Err(DispatchError::UnknownSni.into());
-        }
+            .ok_or(DispatchError::MissingSni)
+            .and_then(|name| normalize_dns_name(name).ok_or(DispatchError::UnknownSni));
+        let sni = match sni {
+            Ok(sni) if self.resolver.resolve_name(&sni).is_some() => sni,
+            Ok(_) => return Err(reject_unrecognized_name(start, DispatchError::UnknownSni).await),
+            Err(error) => return Err(reject_unrecognized_name(start, error).await),
+        };
         let target = if self
             .egress_sni
             .as_deref()
-            .is_some_and(|name| name.eq_ignore_ascii_case(&sni))
+            .is_some_and(|name| name == sni.as_str())
         {
             Target::Egress
         } else {
@@ -357,12 +435,35 @@ impl Edge {
     }
 }
 
+async fn reject_unrecognized_name<T>(
+    mut start: tokio_rustls::server::StartHandshake<T>,
+    error: DispatchError,
+) -> anyhow::Error
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    if let Err(cause) = start.io.write_all(&UNRECOGNIZED_NAME_ALERT).await {
+        return anyhow::Error::new(error).context(format!(
+            "could not send TLS unrecognized_name alert: {cause}"
+        ));
+    }
+    // Flush before returning and dropping the transport. A client must deterministically receive
+    // the alert rather than an EOF whose timing depends on the kernel's socket buffers.
+    if let Err(cause) = start.io.shutdown().await {
+        return anyhow::Error::new(error).context(format!(
+            "could not finish TLS unrecognized_name alert: {cause}"
+        ));
+    }
+    error.into()
+}
+
 /// Start the edge only when its listen address is set. Existing public paths remain authoritative
 /// when it is absent, which makes this safe to ship before an NLB listener points at it.
 pub async fn start_from_env(
     egress: Option<Arc<SandboxForwardProxy>>,
     http: AxumRouter,
     certificate_runtime: Option<crate::certificates::Runtime>,
+    readiness: Arc<crate::edge_readiness::EdgeReadiness>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     let listen = match std::env::var("ROUTER_TLS_EDGE_LISTEN") {
         Ok(listen) => listen,
@@ -388,6 +489,9 @@ pub async fn start_from_env(
     };
     let certificate_path = std::env::var("ROUTER_TLS_EDGE_CERT_FILE")
         .context("ROUTER_TLS_EDGE_CERT_FILE is required when the TLS edge is enabled")?;
+    std::env::var("ROUTER_EDGE_READINESS_LISTEN")
+        .context("ROUTER_EDGE_READINESS_LISTEN is required when the TLS edge is enabled")?;
+    let proxy_protocol = crate::proxy_protocol::required_from_env()?;
     let key_path = std::env::var("ROUTER_TLS_EDGE_KEY_FILE")
         .context("ROUTER_TLS_EDGE_KEY_FILE is required when the TLS edge is enabled")?;
     let names = std::env::var("ROUTER_TLS_EDGE_SNI_NAMES")
@@ -430,9 +534,17 @@ pub async fn start_from_env(
         .start()
         .await
         .context("initial platform certificate acknowledgement failed")?;
+    let ready = readiness.tls_guard();
     tracing::info!(%listen, "opt-in TLS edge listening");
     Ok(Some(tokio::spawn(async move {
-        if let Err(cause) = edge.serve(listener).await {
+        let _ready = ready;
+        if let Err(cause) = edge
+            .serve(crate::proxy_protocol::ProxyProtocolListener::new(
+                listener,
+                proxy_protocol,
+            ))
+            .await
+        {
             tracing::error!(%cause, "TLS edge stopped serving");
         }
     })))
@@ -460,13 +572,7 @@ impl Service<Request<Incoming>> for HostGuard {
     }
 
     fn call(&mut self, mut request: Request<Incoming>) -> Self::Future {
-        if !host_matches_sni(
-            request
-                .headers()
-                .get("host")
-                .and_then(|value| value.to_str().ok()),
-            &self.sni,
-        ) {
+        if !request_authority_matches_sni(&request, &self.sni) {
             return Box::pin(async {
                 Ok((
                     StatusCode::MISDIRECTED_REQUEST,
@@ -523,12 +629,15 @@ mod tests {
 
     struct RecordingEgress(AtomicBool);
 
+    const CONNECT_WITH_EAGER_BYTES: &[u8] =
+        b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\nEAGER";
+
     #[async_trait::async_trait]
     impl EgressHandoff for RecordingEgress {
         async fn serve(&self, mut connection: Box<dyn EdgeIo>) -> io::Result<()> {
-            let mut request = [0_u8; 4];
+            let mut request = vec![0_u8; CONNECT_WITH_EAGER_BYTES.len()];
             connection.read_exact(&mut request).await?;
-            if request == *b"PING" {
+            if request == CONNECT_WITH_EAGER_BYTES {
                 self.0.store(true, Ordering::SeqCst);
                 connection.write_all(b"PONG").await?;
             }
@@ -608,6 +717,42 @@ mod tests {
         Ok(tls)
     }
 
+    async fn connect_with_versions(
+        listener: TcpListener,
+        edge: Arc<Edge>,
+        roots: rustls::RootCertStore,
+        versions: &[&'static rustls::SupportedProtocolVersion],
+    ) -> anyhow::Result<tokio_rustls::client::TlsStream<TcpStream>> {
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            edge.serve_connection(stream).await
+        });
+        let client = ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(versions)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let stream = TcpStream::connect(address).await?;
+        let tls = TlsConnector::from(Arc::new(client))
+            .connect(ServerName::try_from("app.example.test".to_owned())?, stream)
+            .await?;
+        drop(server);
+        Ok(tls)
+    }
+
+    fn assert_unrecognized_name(error: io::Error) {
+        let rustls_error = error
+            .get_ref()
+            .and_then(|cause| cause.downcast_ref::<rustls::Error>())
+            .expect("TLS client error must retain the rustls alert");
+        assert_eq!(
+            rustls_error,
+            &rustls::Error::AlertReceived(rustls::AlertDescription::UnrecognisedName)
+        );
+    }
+
     #[test]
     fn missing_and_unknown_sni_are_never_dispatched() {
         let names = HashSet::from(["app.example.test".to_owned()]);
@@ -635,6 +780,28 @@ mod tests {
     }
 
     #[test]
+    fn configured_unicode_names_match_their_wire_sni_alabel() {
+        let names = HashSet::from(["BÜCHER.EXAMPLE.".to_owned()]);
+        assert_eq!(
+            target_for_sni(Some("xn--bcher-kva.example"), &names, None),
+            Ok(Target::Http)
+        );
+    }
+
+    #[test]
+    fn exact_egress_sni_uses_the_same_dns_normalization_as_certificates() {
+        let names = HashSet::from(["EGRESS.EXAMPLE.TEST.".to_owned()]);
+        assert_eq!(
+            target_for_sni(
+                Some("egress.example.test"),
+                &names,
+                Some("EGRESS.EXAMPLE.TEST.")
+            ),
+            Ok(Target::Egress)
+        );
+    }
+
+    #[test]
     fn host_must_match_sni_including_after_port_normalisation() {
         assert!(host_matches_sni(
             Some("APP.EXAMPLE.TEST:443"),
@@ -645,6 +812,34 @@ mod tests {
             "app.example.test"
         ));
         assert!(!host_matches_sni(None, "app.example.test"));
+        assert!(host_matches_sni(
+            Some("BÜCHER.EXAMPLE.:443"),
+            "xn--bcher-kva.example"
+        ));
+    }
+
+    #[test]
+    fn http2_authority_must_match_sni_even_without_a_host_header() {
+        let request = Request::builder()
+            .version(axum::http::Version::HTTP_2)
+            .uri("https://app.example.test/path")
+            .body(())
+            .unwrap();
+        assert!(request_authority_matches_sni(&request, "app.example.test"));
+        assert!(!request_authority_matches_sni(
+            &request,
+            "other.example.test"
+        ));
+    }
+
+    #[test]
+    fn conflicting_uri_authority_and_host_are_rejected() {
+        let request = Request::builder()
+            .uri("https://app.example.test/path")
+            .header("host", "other.example.test")
+            .body(())
+            .unwrap();
+        assert!(!request_authority_matches_sni(&request, "app.example.test"));
     }
 
     #[tokio::test]
@@ -664,7 +859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_sni_is_rejected_during_the_tls_handshake() {
+    async fn unknown_sni_receives_the_exact_unrecognized_name_alert() {
         let fixture = fixture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -677,18 +872,59 @@ mod tests {
             .with_root_certificates(fixture.roots)
             .with_no_client_auth();
         let stream = TcpStream::connect(address).await.unwrap();
-        let result = TlsConnector::from(Arc::new(client))
+        let error = TlsConnector::from(Arc::new(client))
             .connect(
                 ServerName::try_from("unknown.example.test".to_owned()).unwrap(),
                 stream,
             )
-            .await;
-        assert!(result.is_err());
-        assert!(server.await.unwrap().is_err());
+            .await
+            .unwrap_err();
+        assert_unrecognized_name(error);
+        assert_eq!(
+            server
+                .await
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<DispatchError>(),
+            Some(&DispatchError::UnknownSni)
+        );
     }
 
     #[tokio::test]
-    async fn exact_egress_sni_hands_the_decrypted_stream_to_the_proxy_seam() {
+    async fn missing_sni_receives_the_exact_unrecognized_name_alert() {
+        let fixture = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            edge.serve_connection(stream).await
+        });
+        let client = ClientConfig::builder()
+            .with_root_certificates(fixture.roots)
+            .with_no_client_auth();
+        let stream = TcpStream::connect(address).await.unwrap();
+        // rustls deliberately omits the SNI extension for an IP address ServerName.
+        let error = TlsConnector::from(Arc::new(client))
+            .connect(
+                ServerName::try_from("127.0.0.1".to_owned()).unwrap(),
+                stream,
+            )
+            .await
+            .unwrap_err();
+        assert_unrecognized_name(error);
+        assert_eq!(
+            server
+                .await
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<DispatchError>(),
+            Some(&DispatchError::MissingSni)
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_egress_sni_hands_connect_and_eager_bytes_to_the_proxy_seam() {
         let fixture = fixture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let handoff = Arc::new(RecordingEgress(AtomicBool::new(false)));
@@ -696,7 +932,7 @@ mod tests {
         let mut tls = connect(listener, edge, fixture.roots, "egress.example.test")
             .await
             .unwrap();
-        tls.write_all(b"PING").await.unwrap();
+        tls.write_all(CONNECT_WITH_EAGER_BYTES).await.unwrap();
         let mut response = [0_u8; 4];
         tls.read_exact(&mut response).await.unwrap();
         assert_eq!(&response, b"PONG");
@@ -737,6 +973,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_http_negotiates_tls12_and_tls13() {
+        for (versions, expected) in [
+            (
+                &[&rustls::version::TLS12][..],
+                rustls::ProtocolVersion::TLSv1_2,
+            ),
+            (
+                &[&rustls::version::TLS13][..],
+                rustls::ProtocolVersion::TLSv1_3,
+            ),
+        ] {
+            let fixture = fixture();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+            let tls = connect_with_versions(listener, edge, fixture.roots, versions)
+                .await
+                .unwrap();
+            assert_eq!(tls.get_ref().1.protocol_version(), Some(expected));
+        }
+    }
+
+    #[tokio::test]
     async fn alpn_is_selected_by_sni_before_the_handshake_completes() {
         let fixture = fixture();
         let handoff = Arc::new(RecordingEgress(AtomicBool::new(false)));
@@ -770,6 +1028,42 @@ mod tests {
             egress_tls.get_ref().1.alpn_protocol(),
             Some(b"http/1.1".as_slice())
         );
+    }
+
+    #[tokio::test]
+    async fn negotiated_http2_serves_a_real_request_with_sni_authority() {
+        let fixture = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+        let tls = connect_with_alpn(
+            listener,
+            edge,
+            fixture.roots,
+            "app.example.test",
+            vec![b"h2".to_vec()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tls))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        let response = sender
+            .send_request(
+                Request::builder()
+                    .version(axum::http::Version::HTTP_2)
+                    .uri("https://app.example.test/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(sender);
+        connection.abort();
     }
 
     #[test]
@@ -822,5 +1116,63 @@ mod tests {
         let mut response = Vec::new();
         tls.read_to_end(&mut response).await.unwrap();
         assert!(String::from_utf8_lossy(&response).ends_with("127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn proxy_protocol_ipv6_source_becomes_the_trusted_http_peer() {
+        let fixture = fixture();
+        let http = AxumRouter::new().fallback(get(
+            |Extension(context): Extension<ConnectionContext>| async move {
+                context.peer.ip().to_string()
+            },
+        ));
+        let edge = Arc::new(
+            Edge::from_pem(
+                &fixture.certificate,
+                &fixture.key,
+                ["app.example.test".into()],
+                None,
+                None,
+                http,
+                DEFAULT_MAX_CONNECTIONS,
+            )
+            .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(
+            edge.serve(crate::proxy_protocol::ProxyProtocolListener::new(
+                listener, true,
+            )),
+        );
+
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let source: std::net::Ipv6Addr = "2001:db8::42".parse().unwrap();
+        let destination: std::net::Ipv6Addr = "2001:db8::80".parse().unwrap();
+        let mut prelude = b"\r\n\r\n\0\r\nQUIT\n".to_vec();
+        prelude.extend([0x21, 0x21, 0x00, 0x24]);
+        prelude.extend(source.octets());
+        prelude.extend(destination.octets());
+        prelude.extend(49152_u16.to_be_bytes());
+        prelude.extend(443_u16.to_be_bytes());
+        stream.write_all(&prelude).await.unwrap();
+
+        let client = ClientConfig::builder()
+            .with_root_certificates(fixture.roots)
+            .with_no_client_auth();
+        let mut tls = TlsConnector::from(Arc::new(client))
+            .connect(
+                ServerName::try_from("app.example.test".to_owned()).unwrap(),
+                stream,
+            )
+            .await
+            .unwrap();
+        tls.write_all(b"GET / HTTP/1.1\r\nHost: app.example.test\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        tls.read_to_end(&mut response).await.unwrap();
+        assert!(String::from_utf8_lossy(&response).contains("2001:db8::42"));
+        server.abort();
     }
 }

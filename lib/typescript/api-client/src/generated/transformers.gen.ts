@@ -2,6 +2,7 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetAdminUsersResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
@@ -47,6 +48,7 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenResponse,
@@ -835,5 +837,25 @@ export const getV1UserMeImpersonationResponseTransformer = async (
   if (data.expiresAt) {
     data.expiresAt = new Date(data.expiresAt)
   }
+  return data
+}
+
+export const getAdminUsersResponseTransformer = async (
+  data: any,
+): Promise<GetAdminUsersResponse> => {
+  data.items = data.items.map((item: any) => {
+    if (item.deletedAt) {
+      item.deletedAt = new Date(item.deletedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postAdminUsersImpersonateResponseTransformer = async (
+  data: any,
+): Promise<PostAdminUsersImpersonateResponse> => {
+  data.expiresAt = new Date(data.expiresAt)
   return data
 }

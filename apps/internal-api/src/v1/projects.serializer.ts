@@ -217,6 +217,8 @@ const projectEntry = Type.Object({
   hasUpstreamUpdate: Type.Boolean(),
   /** Holds other projects; deploys nothing itself. */
   isGroup: Type.Boolean(),
+  /** Static projects terminate at CloudFront and cannot use the Rust custom-domain edge yet. */
+  servingMode: Nullable(Type.Union([Type.Literal("serverless"), Type.Literal("static")])),
   /** The group this belongs to, if any. */
   parentProjectId: Nullable(UUID7String),
   /** Application whose OAuth grant created this project or group, if any. */

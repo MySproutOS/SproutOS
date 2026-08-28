@@ -48,6 +48,29 @@ const HOP_BY_HOP: [&str; 8] = [
     "upgrade",
 ];
 
+/// Address assertions set by CDNs and reverse proxies. On the Rust edge the socket/Proxy Protocol
+/// context is authoritative, so forwarding any client-supplied spelling invites a tenant framework
+/// to trust a spoof even though Lambda's own `sourceIp` is correct.
+const UNTRUSTED_CLIENT_ADDRESS_HEADERS: [&str; 17] = [
+    "client-ip",
+    "cf-connecting-ip",
+    "cf-connecting-ipv6",
+    "fastly-client-ip",
+    "fly-client-ip",
+    "true-client-ip",
+    "x-appengine-user-ip",
+    "x-azure-clientip",
+    "x-client-ip",
+    "x-cluster-client-ip",
+    "x-envoy-external-address",
+    "x-original-forwarded-for",
+    "x-originating-ip",
+    "x-proxyuser-ip",
+    "x-remote-addr",
+    "x-real-ip",
+    "x-remote-ip",
+];
+
 /// The load balancer's probe. Answered before host resolution, because the probe has no tenant.
 pub const HEALTH_PATH: &str = "/healthz";
 
@@ -331,7 +354,9 @@ fn forwarded_headers(
         .filter(|(name, _)| !HOP_BY_HOP.contains(&name.as_str()))
         .filter(|(name, _)| {
             trusted.is_none()
-                || (name.as_str() != "forwarded" && !name.as_str().starts_with("x-forwarded-"))
+                || (name.as_str() != "forwarded"
+                    && !name.as_str().starts_with("x-forwarded-")
+                    && !UNTRUSTED_CLIENT_ADDRESS_HEADERS.contains(&name.as_str()))
         })
         .filter_map(|(name, value)| {
             value
@@ -545,6 +570,11 @@ mod tests {
             ("x-forwarded-host", "attacker.example"),
             ("x-forwarded-proto", "http"),
             ("x-forwarded-port", "80"),
+            ("x-real-ip", "198.51.100.10"),
+            ("true-client-ip", "198.51.100.11"),
+            ("cf-connecting-ip", "198.51.100.12"),
+            ("x-envoy-external-address", "198.51.100.13"),
+            ("x-original-forwarded-for", "198.51.100.14"),
             ("x-real-header", "kept"),
         ]);
         let context = crate::edge::ConnectionContext {
@@ -560,6 +590,11 @@ mod tests {
         assert_eq!(forwarded["x-forwarded-host"], "app.example.test");
         assert_eq!(forwarded["x-forwarded-proto"], "https");
         assert_eq!(forwarded["x-forwarded-port"], "443");
+        assert!(!forwarded.contains_key("x-real-ip"));
+        assert!(!forwarded.contains_key("true-client-ip"));
+        assert!(!forwarded.contains_key("cf-connecting-ip"));
+        assert!(!forwarded.contains_key("x-envoy-external-address"));
+        assert!(!forwarded.contains_key("x-original-forwarded-for"));
         assert_eq!(
             forwarded["forwarded"],
             "for=203.0.113.7;proto=https;host=\"app.example.test\""

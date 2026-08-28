@@ -186,7 +186,7 @@ pub fn plan(prefix: &str, method: &Method, path: &str) -> Result<Plan, RouteErro
             return Err(RouteError::Refused(format!("/{first}")));
         }
         if first.is_empty() {
-            allow_method(method, &[Method::GET, Method::HEAD], "/")?;
+            allow_method(method, &[Method::GET], "/")?;
             if !rest.is_empty() {
                 return Err(RouteError::Refused(path.to_owned()));
             }
@@ -501,6 +501,7 @@ mod tests {
         // Every client hits `/` on connect; refusing it makes well-behaved clients fail at startup.
         assert_eq!(path_of("/").unwrap(), "/");
         assert_eq!(path_of("").unwrap(), "/");
+        assert!(plan(PREFIX, &Method::HEAD, "/").is_err());
     }
 
     #[test]
