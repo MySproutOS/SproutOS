@@ -178,7 +178,9 @@ async fn rearm_wake(valkey: &ConnectionManager, pending: &Pending) {
     let mut connection = valkey.clone();
     let result: Result<(), redis::RedisError> = redis::cmd("ZADD")
         .arg(MASTER_WAKE_KEY)
-        .arg("GT")
+        // Keep a concurrent immediate enqueue, but pull a much later delayed-job alarm forward.
+        // `GT` here would let tomorrow's BullMQ alarm hide today's failed Celery dispatch.
+        .arg("LT")
         .arg(retry_at)
         .arg(format!("{}/{}", pending.resource, pending.queue))
         .query_async(&mut connection)
@@ -257,12 +259,18 @@ pub async fn dispatch_once<I: WorkerInvoker>(valkey: &ConnectionManager, invoker
         let raw: Result<Option<String>, redis::RedisError> =
             redis::AsyncCommands::get(&mut connection, binding_key(&pending.resource)).await;
 
-        let Ok(Some(raw)) = raw else {
-            // A wake for a queue with no binding: the service was destroyed between the enqueue
-            // and this pass, or was never published. Dropped rather than retried — there is
-            // nothing to invoke and the next enqueue will wake it again if it comes back.
-            tracing::debug!(resource = pending.resource, "no binding for a woken queue");
-            continue;
+        let raw = match raw {
+            Ok(Some(raw)) => raw,
+            Ok(None) => {
+                // The service was destroyed between enqueue and dispatch, or was never published.
+                tracing::debug!(resource = pending.resource, "no binding for a woken queue");
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(%error, resource = pending.resource, "could not read queue binding");
+                rearm_wake(valkey, &pending).await;
+                continue;
+            }
         };
 
         let Ok(binding) = serde_json::from_str::<QueueBinding>(&raw) else {
@@ -547,6 +555,10 @@ mod tests {
         let queue = format!("celery-{}", uuid::Uuid::now_v7().simple());
         let member = format!("{resource}/{queue}");
         let binding = binding_key(&resource);
+        let delayed = delayed_key(&Pending {
+            resource: resource.clone(),
+            queue: queue.clone(),
+        });
         let project_id = uuid::Uuid::now_v7().to_string();
         let organization_id = uuid::Uuid::now_v7().to_string();
         let mut connection = manager.clone();
@@ -564,6 +576,7 @@ mod tests {
         let _: () = redis::pipe()
             .atomic()
             .set(&binding, seed(None))
+            .zadd(&delayed, "delayed-job", (now_ms() + 86_400_000) * 4096)
             .zadd(MASTER_WAKE_KEY, &member, now_ms())
             .query_async(&mut connection)
             .await
@@ -576,8 +589,8 @@ mod tests {
             .await
             .expect("read absent-target retry");
         assert!(
-            absent_target_retry.is_some_and(|score| score > now_ms()),
-            "an attached queue without a function lost its wake"
+            absent_target_retry.is_some_and(|score| score > now_ms() && score < now_ms() + 60_000),
+            "a later BullMQ alarm hid the attached queue's immediate retry: {absent_target_retry:?}"
         );
 
         let _: () = redis::pipe()
@@ -630,6 +643,7 @@ mod tests {
 
         let _: () = redis::cmd("DEL")
             .arg(&binding)
+            .arg(delayed)
             .arg(crate::credit::credit_key(&organization_id))
             .query_async(&mut connection)
             .await

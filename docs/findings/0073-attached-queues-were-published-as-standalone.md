@@ -33,7 +33,9 @@ Queue binding is a lifecycle rather than a one-time provision side effect:
 - target updates are atomic compare-and-sets and credential publication refuses a tombstone, so
   neither deployment nor a late rotation can resurrect deleted credentials;
 - a transient missing target, exhausted balance, or Lambda invocation error rearms the exact wake
-  after a bounded delay. Celery and immediate BullMQ jobs no longer need another enqueue to recover.
+  after a bounded delay, pulling it ahead of any later BullMQ delayed-job alarm without overwriting
+  a concurrent immediate enqueue. Celery and immediate BullMQ jobs no longer need another enqueue
+  to recover.
 
 The release integration test starts with an attached binding that has no function and proves
 publication points it at the same alias as HTTP without changing its URI or project identity. The
