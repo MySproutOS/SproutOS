@@ -63,7 +63,7 @@ v2 became effective, five usage transactions totaling 21,683 micro-USD were post
 an AI or sandbox grain. Every later AI and sandbox transaction used v2's zero-fee items. Therefore
 the exact additional AI/sandbox adjustment is **0 micro-USD**.
 
-## A separate PostgreSQL correction remains exact and unapplied
+## The separate PostgreSQL correction was applied exactly once
 
 One 21,672-micro usage transaction landed after the earlier PostgreSQL correction but before v2
 became effective. Its idempotency key is a SHA-256 digest of four `rollup-id=quantity` watermarks.
@@ -79,11 +79,20 @@ fourth grain rather than guessing it:
 The old book charged 19,350 micro-USD of usage plus 2,322 of 12% overhead: 21,672 total. Under the
 settled policy, the same grains are 12,632 compute, 30 and 17 storage, and 1 queue micro-USD. Compute
 gets 253 micro-USD of 2% overhead, storage gets zero, and the queue's unchanged 12% policy rounds
-to 1 micro-USD. The correct total is 12,934 micro-USD, so the exact unapplied PostgreSQL correction
-is **8,738 micro-USD**.
+to 1 micro-USD. The correct total is 12,934 micro-USD, so the exact PostgreSQL correction is
+**8,738 micro-USD**.
 
-This finding records that amount; it does not post it. Any correction remains an explicit,
-reviewable append-only adjustment rather than a mutation of an existing ledger entry.
+After this audit, that correction was posted exactly once as append-only adjustment transaction
+`01a04825-4db9-7777-b103-fce913782cf3`. Its idempotency key is
+`adjustment:postgres-v1-policy:01a045b4-13a3-75bc-b707-4547b486534f`, and its
+`credit_transaction` reference points to the original 21,672-micro-USD usage transaction. Its two
+ledger legs are +8,738 micro-USD to `user_credit` and -8,738 micro-USD to `platform_revenue`.
+
+A follow-up read-only production audit found exactly one transaction with that key. The current
+operation is therefore a no-op: do not post another adjustment. Any future operator must check the
+exact idempotency key first; the ledger's `post()` path returns the existing transaction rather
+than creating another one. If this correction itself ever needs reversing, add a separately keyed,
+balanced counter-transaction instead of editing or deleting either immutable entry.
 
 ## The check that matters
 
