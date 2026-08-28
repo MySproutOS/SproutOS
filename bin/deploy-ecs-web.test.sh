@@ -60,7 +60,7 @@ JSON
       clickhouse_database=observability
     fi
     cat <<JSON
-{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"},{"name":"CLICKHOUSE_DATABASE","value":"$clickhouse_database"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"]}]}}
+{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"},{"name":"CLICKHOUSE_DATABASE","value":"$clickhouse_database"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"},{"name":"APK_SIGNER_TOKEN","valueFrom":"arn:runtime"},{"name":"APK_SIGNER_OPERATOR_TOKEN","valueFrom":"arn:operator"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"],"secrets":[]}]}}
 JSON
     ;;
   "ecs register-task-definition")
@@ -150,7 +150,9 @@ export API_RULE_ARN=arn:api-rule
 
 jq -e '
   .family == "sproutos-web" and
-  ([.containerDefinitions[].image] | unique == ["ghcr.io/mysproutos/sproutos-web:0123456789ab"])
+  ([.containerDefinitions[].image] | unique == ["ghcr.io/mysproutos/sproutos-web:0123456789ab"]) and
+  ([.containerDefinitions[] | select(.name == "api") | .secrets[] | select(.name | startswith("APK_SIGNER_")) | .name] | sort) == ["APK_SIGNER_OPERATOR_TOKEN", "APK_SIGNER_TOKEN"] and
+  ([.containerDefinitions[] | select(.name != "api") | (.secrets // [])[] | select(.name | startswith("APK_SIGNER_"))] | length) == 0
 ' "$CAPTURE/task-1.json" >/dev/null
 jq -e '
   .family == "sproutos-web-migrate" and
@@ -158,6 +160,7 @@ jq -e '
   .containerDefinitions[0].name == "migrate" and
   (.containerDefinitions[0].portMappings == null) and
   (.containerDefinitions[0].secrets[] | select(.name == "DATABASE_SECRET")) and
+  ([.containerDefinitions[0].secrets[] | select(.name | startswith("APK_SIGNER_"))] | length) == 0 and
   (.containerDefinitions[0].command[2] | contains("migrate.mjs") and contains("seed.mjs") and contains("clickhouse.mjs"))
 ' "$CAPTURE/task-2.json" >/dev/null
 grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
@@ -286,7 +289,8 @@ jq -e '
   .taskRoleArn == "arn:acme-task-role" and
   (.containerDefinitions | length) == 1 and
   .containerDefinitions[0].name == "acme-worker" and
-  .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab"
+  .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab" and
+  ([.containerDefinitions[0].secrets // [] | .[] | select(.name | startswith("APK_SIGNER_"))] | length) == 0
 ' "$CAPTURE/task-3.json" >/dev/null
 grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
 grep -q 'ecs update-service .*--service sproutos-acme-worker .*--desired-count 2 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"

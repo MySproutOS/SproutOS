@@ -153,13 +153,16 @@ Before provisioning the first app key:
 5. record the restore-drill date and custodians without recording private-key bytes or bearer
    tokens.
 
-After the first per-app and catalogue-client identities are provisioned, verify that Postgres pins
-an exact `keys/` object VersionId and certificate SHA-256, and that S3 reports that exact version as
-SSE-KMS under this bucket's key. A delete marker does not destroy a pinned version; recovery reads
-the recorded VersionId directly. Never "restore" by copying ciphertext to a new current version or
-editing the database by hand. First restore the control-plane database, then use the recorded object
-version and an offline-restored master identity to verify the certificate on an isolated signer. A
-documented restore drill must succeed before live customer signing.
+The first identity after that host-level restore proof must belong to a disposable internal test
+app, not `com.sproutos.store` and not a customer. Provision it without signing or publishing a
+release. Verify that Postgres pins an exact `keys/` object VersionId and certificate SHA-256, and
+that S3 reports that exact version as SSE-KMS under this bucket's key. Restore the control-plane
+database to an isolated recovery database, restore one offline master backup to an isolated signer,
+fetch the recorded object VersionId directly, and prove the recovered certificate fingerprint
+matches. A delete marker does not destroy a pinned version; never "restore" by copying ciphertext to
+a new current version or editing the database by hand. Only after this complete DB/object/master
+recovery drill may an identity be provisioned for `com.sproutos.store` or a customer, and signing
+still waits on the Alarm rollout gate below.
 
 `prevent_destroy`, `force_destroy = false`, versioning, and the non-expiring `keys/` lifecycle stop
 routine code and OpenTofu from erasing upgrade identities. They do not protect against losing every
@@ -234,12 +237,18 @@ aws ecs describe-task-definition --task-definition "$CURRENT_TASK_DEFINITION" --
     '[.taskDefinition.containerDefinitions[] | select(.name == "website" or .name == "api" or .name == "worker") | .image] | length == 3 and all(. == $image)'
 ```
 
-Apply only the reviewed saved plan. This registers a new task contract, but both ECS services have
+Before applying, prove that the phase recorded in state is also the exact live ECS/IAM phase. The
+phase-only verifier deliberately ignores the expected task-definition delta in the saved plan, but
+still requires stable service counts, worker ownership flags, isolated ACME service presence, and
+the exact fallback IAM policy state. It currently fails because production has no ACME service while
+phase A requires a stable zero-count service; stop here until the active ACME repair resolves that
+mismatch.
+
+Apply only the reviewed saved plan after that proof passes. This registers a new task contract, but both ECS services have
 `lifecycle.ignore_changes = [task_definition]`; the apply intentionally does **not** launch it. The
 stage-two handoff is therefore mandatory and must use the exact pre-#192 image captured above:
 
 ```bash
-tofu -chdir=tofu apply android-custody-delivery.tfplan
 ROLLOUT_STATE=$(tofu -chdir=tofu output -json acme_worker_rollout_state)
 case "$(jq -r '[.capacity_enabled, .handler_ownership_enabled, .fallback_iam_enabled] | join(" ")' <<<"$ROLLOUT_STATE")" in
   'false false true') ACME_PHASE=A ;;
@@ -248,6 +257,9 @@ case "$(jq -r '[.capacity_enabled, .handler_ownership_enabled, .fallback_iam_ena
   'true true false') ACME_PHASE=D ;;
   *) echo 'refusing unknown ACME rollout state' >&2; exit 1 ;;
 esac
+ACME_LIVE_PHASE_ONLY=1 IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos \
+  bin/verify-acme-worker-rollout.sh "$ACME_PHASE"
+tofu -chdir=tofu apply android-custody-delivery.tfplan
 IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos bin/handoff-ecs-task-definitions.sh "$ACME_PHASE"
 ```
 

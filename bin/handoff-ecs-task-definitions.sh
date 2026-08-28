@@ -64,6 +64,12 @@ if ! valid_task_arn "$acme_task_arn" "$NAME_PREFIX-acme-worker"; then
   exit 1
 fi
 
+# The OpenTofu task outputs may intentionally be ahead of the serving task after the saved apply,
+# so the preflight checks live phase signals without demanding task-contract equality. It still
+# proves stable service counts, worker ownership flags, isolated-service presence, and IAM policy
+# state before any migration task or service update can start.
+ACME_LIVE_PHASE_ONLY=1 TOFU_DIR="$TOFU_DIR" "$VERIFY_SCRIPT" "$EXPECTED_PHASE"
+
 ECS_BASE_TASK_DEFINITION="$web_task_arn" \
   ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn" \
   "$DEPLOY_SCRIPT"

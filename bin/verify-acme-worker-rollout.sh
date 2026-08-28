@@ -10,6 +10,11 @@ fi
 : "${IMAGE:?IMAGE is not set}"
 
 PHASE=$1
+LIVE_PHASE_ONLY=${ACME_LIVE_PHASE_ONLY:-0}
+if [ "$LIVE_PHASE_ONLY" != 0 ] && [ "$LIVE_PHASE_ONLY" != 1 ]; then
+  echo "ACME_LIVE_PHASE_ONLY must be 0 or 1" >&2
+  exit 2
+fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOFU_DIR="${TOFU_DIR:-$HERE/../tofu}"
 CLUSTER="${ECS_CLUSTER:-$NAME_PREFIX}"
@@ -96,7 +101,7 @@ verify_service() {
       }
     | with_entries(select(.value != null and .value != []))
   ' <<<"$live_definition")
-  if [ "$live_contract" != "$expected_contract" ] ||
+  if { [ "$LIVE_PHASE_ONLY" != 1 ] && [ "$live_contract" != "$expected_contract" ]; } ||
     ! jq -e --arg family "$family" --arg image "$IMAGE" --arg container "$container" '
       .taskDefinition.family == $family and
       ([.taskDefinition.containerDefinitions[].image] | unique) == [$image] and

@@ -45,7 +45,15 @@ cat >"$TMP/verify" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 test "$1" = "$EXPECTED_PHASE"
-echo verified >>"$VERIFY_CALLS"
+if [ "${ACME_LIVE_PHASE_ONLY:-0}" = 1 ]; then
+  if [ "${FAIL_LIVE_PHASE:-0}" = 1 ]; then
+    echo "live phase mismatch" >&2
+    exit 1
+  fi
+  echo preflight >>"$VERIFY_CALLS"
+else
+  echo verified >>"$VERIFY_CALLS"
+fi
 STUB
 chmod +x "$TMP/verify"
 
@@ -89,5 +97,16 @@ fi
 grep -q "must contain boolean rollout gates" "$TMP/malformed.out"
 
 test "$(wc -l <"$TMP/deploy-calls" | tr -d ' ')" = "4"
-test "$(wc -l <"$TMP/verify-calls" | tr -d ' ')" = "4"
+test "$(grep -c '^preflight$' "$TMP/verify-calls")" = "4"
+test "$(grep -c '^verified$' "$TMP/verify-calls")" = "4"
+
+before=$(wc -l <"$TMP/deploy-calls" | tr -d ' ')
+if FAIL_LIVE_PHASE=1 run_handoff \
+  '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}' A \
+  >"$TMP/live-mismatch.out" 2>&1; then
+  echo "handoff accepted a state-vs-live ACME phase mismatch" >&2
+  exit 1
+fi
+test "$(wc -l <"$TMP/deploy-calls" | tr -d ' ')" = "$before"
+grep -q "live phase mismatch" "$TMP/live-mismatch.out"
 echo "ACME task-definition handoff rejects every unsafe rollout state"

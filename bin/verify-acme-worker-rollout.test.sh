@@ -34,6 +34,14 @@ case "$1 $2" in
     acme='arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:9'
     pending=${BAD_PENDING:-0}
     rollout=${BAD_ROLLOUT:-COMPLETED}
+    if [ "${MISSING_ACME_SERVICE:-}" = 1 ]; then
+      jq -nc --arg web "$web" --arg rollout "$rollout" --argjson pending "$pending" '{
+        services: [
+          {serviceName:"sproutos-web",status:"ACTIVE",taskDefinition:$web,desiredCount:2,runningCount:2,pendingCount:$pending,
+           deployments:[{status:"PRIMARY",taskDefinition:$web,desiredCount:2,runningCount:2,pendingCount:$pending,rolloutState:$rollout}]}
+        ], failures:[{arn:"sproutos-acme-worker",reason:"MISSING"}]}'
+      exit
+    fi
     jq -nc --arg web "$web" --arg acme "$acme" --arg rollout "$rollout" \
       --argjson pending "$pending" --argjson acmeCount "$ACME_COUNT" '{
       services: [
@@ -64,6 +72,7 @@ case "$1 $2" in
     [ "${BAD_IMAGE:-}" = 1 ] && [[ "$task" != *:base ]] && image=wrong:image
     [ "${BAD_ROLE:-}" = 1 ] && [[ "$task" != *:base ]] && role=arn:aws:iam::a:role/wrong
     [ "${BAD_ENV:-}" = 1 ] && [ "$container" = worker ] && environment='[]'
+    [ "${BASE_CONTRACT_DRIFT:-}" = 1 ] && [[ "$task" == *:base ]] && environment='[{"name":"PLANNED_ONLY","value":"1"}]'
     jq -nc --arg arn "$task" --arg family "$family" --arg role "$role" --arg image "$image" \
       --arg container "$container" --argjson environment "$environment" '{taskDefinition:{
         taskDefinitionArn:$arn,family:$family,taskRoleArn:$role,executionRoleArn:"arn:aws:iam::a:role/execution",
@@ -115,6 +124,16 @@ run_phase() {
 run_phase A
 run_phase C
 run_phase D
+
+# A saved stage-two plan intentionally changes the task contract before ECS serves it. Phase-only
+# verification must tolerate that planned delta while still refusing a missing live phase-A service.
+ACME_LIVE_PHASE_ONLY=1 BASE_CONTRACT_DRIFT=1 run_phase A
+if ACME_LIVE_PHASE_ONLY=1 MISSING_ACME_SERVICE=1 run_phase A \
+  >"$TMP/missing-acme.out" 2>&1; then
+  echo "phase-only verifier accepted a missing live ACME service" >&2
+  exit 1
+fi
+grep -q "ECS service lookup failed" "$TMP/missing-acme.out"
 
 ordered='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["route53:ListResourceRecordSets","route53:ChangeResourceRecordSets"],"Resource":["arn:aws:route53:::hostedzone/Z2","arn:aws:route53:::hostedzone/Z1"],"Condition":{"StringEquals":{"aws:ResourceTag/Environment":["prod","shared"]}}}]}'
 reordered='{"Statement":[{"Resource":["arn:aws:route53:::hostedzone/Z1","arn:aws:route53:::hostedzone/Z2"],"Condition":{"StringEquals":{"aws:ResourceTag/Environment":["shared","prod"]}},"Action":["route53:ChangeResourceRecordSets","route53:ListResourceRecordSets"],"Effect":"Allow"}],"Version":"2012-10-17"}'
