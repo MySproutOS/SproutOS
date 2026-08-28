@@ -128,6 +128,20 @@ describe.skipIf(!up)("usage this period", () => {
     expect(priced).toBeUndefined()
   })
 
+  it("keeps retained retired meters from breaking the current bill", async ({ skip }) => {
+    if (!up) skip()
+    const before = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+
+    await meter("site_vcpu_second", "3600")
+
+    const after = await call("GET", `/v1/orgs/${orgSlug}/billing/usage`, actor())
+    expect(after.status).toBe(200)
+    expect((after.json.lines as Json[]).some((line) => line.dimension === "site_vcpu_second")).toBe(
+      false,
+    )
+    expect(after.json.totalMicroUsd).toBe(before.json.totalMicroUsd)
+  })
+
   it("rates a dimension against the price book and adds overhead", async ({ skip }) => {
     if (!up) skip()
     await meter("site_request", "1000000")

@@ -21,7 +21,7 @@ function SettingsLayout() {
   return (
     <>
       <PageHeader title="Settings" />
-      <div className="flex items-center gap-1 border-b border-border px-5">
+      <div className="flex max-w-full items-center gap-1 overflow-x-auto border-b border-border px-5">
         <Link to="/orgs/$orgSlug/settings/profile" params={{ orgSlug }} className={tabClassName}>
           Profile
         </Link>
