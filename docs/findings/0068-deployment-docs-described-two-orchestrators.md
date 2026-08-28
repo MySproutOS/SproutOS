@@ -28,8 +28,16 @@ catalogue. A generated `.config/sproutos.toml` is declarative context, not execu
 ## What stops it recurring
 
 The public GitHub guide and the downloadable skill now name the same ownership graph, local CLI
-syntax, OIDC boundary, and catalogue provenance. Tests reject the superseded manifest and mirror
-names and assert that local-harness installation and the no-sandbox-charge boundary remain present.
+syntax, OIDC boundary, and catalogue provenance. Tests reject repository-discovered executable
+authority and assert that local-harness installation and the no-sandbox-charge boundary remain
+present.
+
+The follow-up after the implementation shipped pins the guide to evidence that exists: the
+`cli-v0.1.0` release, deploy-action commit
+`0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180`, and Deployment-Templates commit
+`c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1`. The action verifies the release manifest, checksum,
+source revision, and GitHub artifact attestation before execution. Generated template workflows pin
+the full action commit rather than a mutable tag.
 
 ## Historical context
 
