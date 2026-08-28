@@ -111,10 +111,13 @@ import { fetchStoreListingScreenshot } from "./storeListingScreenshot/fetch"
 import { fetchStoreListingTag, type StoreListingTagRow } from "./storeListingTag/fetch"
 import { crudUpstreamSyncRun, recordUpkeepRun, type RecordSyncRun } from "./upstreamSyncRun/crud"
 import {
+  cadenceIsDue,
   CONSECUTIVE_FAILURE_LIMIT,
   fetchUpkeepStatus,
+  type AutoUpdateCadence,
   type UpkeepOutcome,
   type UpkeepStatus,
+  type UpkeepTrigger,
 } from "./upstreamSyncRun/policy"
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
@@ -149,6 +152,8 @@ export {
   AgentConfigUpsert,
   AgentCredentialKind,
   AgentEventRow,
+  AutoUpdateCadence,
+  cadenceIsDue,
   CONSECUTIVE_FAILURE_LIMIT,
   allocateOrganizationSlug,
   allocateProjectSlug,
@@ -269,6 +274,7 @@ export {
   SystemRoleStatement,
   UpkeepOutcome,
   UpkeepStatus,
+  UpkeepTrigger,
   StartImpersonation,
   UserExport,
   CUSTOM_DOMAIN_FIELDS,

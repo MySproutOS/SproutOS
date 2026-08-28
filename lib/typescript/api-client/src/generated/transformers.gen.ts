@@ -58,6 +58,7 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
@@ -216,6 +217,19 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsResponseTransformer = asyn
 export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse> => {
+  if (data.startedAt) {
+    data.startedAt = new Date(data.startedAt)
+  }
+  if (data.finishedAt) {
+    data.finishedAt = new Date(data.finishedAt)
+  }
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse> => {
   if (data.startedAt) {
     data.startedAt = new Date(data.startedAt)
   }

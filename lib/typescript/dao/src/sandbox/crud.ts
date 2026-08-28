@@ -48,7 +48,7 @@ export function crudSandbox(db: Kysely<DB>) {
   ): Promise<Selectable<DB["sandbox"]>> {
     return await db
       .insertInto("sandbox")
-      .values({ id: v7(), ...data })
+      .values({ id: v7(), purpose: "development", ...data })
       .returningAll()
       .executeTakeFirstOrThrow()
   }
@@ -58,8 +58,8 @@ export function crudSandbox(db: Kysely<DB>) {
   ): Promise<Selectable<DB["sandbox"]> | undefined> {
     return await db
       .insertInto("sandbox")
-      .values({ id: v7(), ...data })
-      .onConflict((oc) => oc.columns(["projectId", "userId"]).doNothing())
+      .values({ id: v7(), purpose: "development", ...data })
+      .onConflict((oc) => oc.columns(["projectId", "userId", "purpose"]).doNothing())
       .returningAll()
       .executeTakeFirst()
   }

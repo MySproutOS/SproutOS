@@ -1,5 +1,6 @@
+/* oxlint-disable typescript/require-await -- GitHub client test doubles implement an async interface */
 import type { GitHubClient, GitHubRequest } from "@lib/github"
-import { GitHubApiError, installationToken } from "@lib/github"
+import { GitHubApiError, installationToken, repositoryTagState } from "@lib/github"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -29,7 +30,11 @@ const created: {
   id: string
 }[] = []
 
-async function seed(options: { behindBy: number; aheadBy: number }) {
+async function seed(options: {
+  behindBy: number
+  aheadBy: number
+  provenance?: "fork" | "template"
+}) {
   const userId = v7()
   const orgId = v7()
   const installId = v7()
@@ -81,8 +86,8 @@ async function seed(options: { behindBy: number; aheadBy: number }) {
       ownerLogin: "acme",
       name: `fork-${suffix}`,
       defaultBranch: "main",
-      provenance: "fork",
-      isFork: true,
+      provenance: options.provenance ?? "fork",
+      isFork: (options.provenance ?? "fork") === "fork",
       upstreamFullName: "upstream/app",
       upstreamDefaultBranch: "main",
       githubInstallationId: installId,
@@ -149,11 +154,11 @@ function deps(client: GitHubClient): UpkeepDeps {
 /** A live lease and an un-aborted signal — what the worker hands a handler it just claimed. */
 const context = { db, keepAlive: () => Promise.resolve(true), signal: new AbortController().signal }
 
-function jobFor(repositoryId: string): Job {
+function jobFor(repositoryId: string, trigger: "interval" | "tag" = "interval"): Job {
   return {
     id: v7(),
     kind: "upkeep.repository",
-    payload: { repositoryId },
+    payload: { repositoryId, trigger },
     attempt: 1,
     maxAttempts: 2,
     organizationId: null,
@@ -240,5 +245,151 @@ describe.skipIf(!reachable)("upkeepRepository", () => {
       .execute()
 
     expect(suggestions).toHaveLength(1)
+  })
+
+  it("does not compare or record a run when the upstream tag set is unchanged", async () => {
+    const { repoId } = await seed({ behindBy: 0, aheadBy: 0 })
+    const tags = [{ name: "v1.0.0", commit: { sha: "a".repeat(40) } }]
+    const tagClient: GitHubClient = {
+      request: async <T>(request: GitHubRequest) => {
+        expect(request.path).toContain("/tags")
+        return {
+          status: 200,
+          data: tags as T,
+          rateLimit: { limit: null, remaining: null, resetAt: null },
+        }
+      },
+    }
+
+    const credential = installationToken("stub-token", 1, new Date(Date.now() + 3_600_000))
+    const existing = await repositoryTagState(tagClient, credential, "upstream/app")
+    await db
+      .updateTable("repository")
+      .set({ upstreamTagFingerprint: existing.fingerprint })
+      .where("id", "=", repoId)
+      .execute()
+
+    await upkeepRepository(deps(tagClient))(jobFor(repoId, "tag"), context)
+    const remembered = await db
+      .selectFrom("repository")
+      .select("upstreamTagFingerprint")
+      .where("id", "=", repoId)
+      .executeTakeFirstOrThrow()
+    expect(remembered.upstreamTagFingerprint).toBe(existing.fingerprint)
+    expect(await outcomes(repoId)).toHaveLength(0)
+  })
+
+  it("runs the ordinary sync once when a tag target changes", async () => {
+    const { repoId } = await seed({ behindBy: 1, aheadBy: 0 })
+    const paths: string[] = []
+    const tagClient: GitHubClient = {
+      request: async <T>(request: GitHubRequest) => {
+        paths.push(request.path)
+        const rateLimit = { limit: null, remaining: null, resetAt: null }
+        if (request.path.endsWith("/tags")) {
+          return {
+            status: 200,
+            data: [{ name: "v2.0.0", commit: { sha: "b".repeat(40) } }] as T,
+            rateLimit,
+          }
+        }
+        if (request.path.includes("/compare/")) {
+          return {
+            status: 200,
+            data: {
+              status: "ahead",
+              ahead_by: 1,
+              behind_by: 0,
+              commits: [{ sha: "b".repeat(40) }],
+              base_commit: { sha: "a".repeat(40) },
+            } as T,
+            rateLimit,
+          }
+        }
+        return {
+          status: 200,
+          data: { merge_type: "fast-forward", base_branch: "main" } as T,
+          rateLimit,
+        }
+      },
+    }
+
+    await upkeepRepository(deps(tagClient))(jobFor(repoId, "tag"), context)
+    expect(paths.some((path) => path.includes("/compare/"))).toBe(true)
+    expect(paths.some((path) => path.endsWith("/merge-upstream"))).toBe(true)
+    expect(await outcomes(repoId)).toHaveLength(1)
+  })
+
+  it("routes a template-generated copy through the trusted tree reconciler", async () => {
+    const { repoId } = await seed({ behindBy: 2, aheadBy: 1, provenance: "template" })
+    const client: GitHubClient = {
+      request: () => Promise.reject(new Error("template copies must not call merge-upstream")),
+    }
+    const seen: unknown[] = []
+
+    await upkeepRepository({
+      ...deps(client),
+      reconcileTemplate: (input) => {
+        seen.push(input)
+        return Promise.resolve({
+          outcome: "merged",
+          upstreamSha: "upstream-v2",
+          targetSha: "target-v1",
+          mergeSha: "target-v2",
+          behindBy: 2,
+          aheadBy: 1,
+          changedFiles: ["app.ts"],
+        })
+      },
+    })(jobFor(repoId), context)
+
+    expect(seen).toMatchObject([
+      {
+        owner: "acme",
+        branch: "main",
+        upstreamFullName: "upstream/app",
+        token: "stub-token",
+      },
+    ])
+    const [run] = await outcomes(repoId)
+    expect(run).toMatchObject({
+      outcome: "up_to_date",
+      mergeType: "merge",
+      upstreamSha: "upstream-v2",
+      behindBy: 2,
+      aheadBy: 1,
+    })
+  })
+
+  it("reports template tree conflicts to subscribed projects without pushing a merge", async () => {
+    const { repoId, projectId } = await seed({
+      behindBy: 1,
+      aheadBy: 1,
+      provenance: "template",
+    })
+    const client: GitHubClient = {
+      request: () => Promise.reject(new Error("template copies must not call merge-upstream")),
+    }
+
+    await upkeepRepository({
+      ...deps(client),
+      reconcileTemplate: () =>
+        Promise.resolve({
+          outcome: "conflict",
+          upstreamSha: "upstream-v2",
+          targetSha: "target-v1",
+          behindBy: 1,
+          aheadBy: 1,
+          conflicts: ["app.ts"],
+        }),
+    })(jobFor(repoId), context)
+
+    expect((await outcomes(repoId))[0]?.outcome).toBe("conflict")
+    const suggestion = await db
+      .selectFrom("projectUpdateSuggestion")
+      .select("summary")
+      .where("projectId", "=", projectId)
+      .executeTakeFirstOrThrow()
+    expect(suggestion.summary).toContain("app.ts")
   })
 })

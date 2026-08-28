@@ -5,6 +5,7 @@ import {
   createInstallationTokenStore,
   envAppJwtSigner,
   GitHubApiError,
+  repositoryTagState,
   type GitHubClient,
   type GitHubCredential,
   syncWithUpstream,
@@ -13,8 +14,14 @@ import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { decideUpkeepAction } from "./upkeep-decision"
 import type { JobHandler } from "./worker"
+import type { UpkeepTrigger } from "@lib/dao"
+import {
+  reconcileTemplateUpstream,
+  type TemplateUpstreamInput,
+  type TemplateUpstreamResult,
+} from "./template-upstream"
 
-type UpkeepPayload = { repositoryId: string }
+type UpkeepPayload = { repositoryId: string; trigger?: UpkeepTrigger }
 
 /**
  * What the handler needs from GitHub, as an argument rather than a global.
@@ -27,6 +34,7 @@ type UpkeepPayload = { repositoryId: string }
 export type UpkeepDeps = {
   client: GitHubClient
   credentialFor: (installationId: number) => Promise<GitHubCredential>
+  reconcileTemplate?: (input: TemplateUpstreamInput) => Promise<TemplateUpstreamResult>
 }
 
 /**
@@ -85,8 +93,9 @@ async function subscribedProjects(db: Kysely<DB>, repositoryId: string): Promise
  * pull request, which is visible and honest rather than silent.
  */
 export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
-  return async (job, { db }) => {
-    const { repositoryId } = job.payload as UpkeepPayload
+  return async (job, context) => {
+    const { db } = context
+    const { repositoryId, trigger = "interval" } = job.payload as UpkeepPayload
 
     const repository = await db
       .selectFrom("repository")
@@ -95,8 +104,10 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         "ownerLogin",
         "name",
         "defaultBranch",
+        "provenance",
         "upstreamFullName",
         "upstreamDefaultBranch",
+        "upstreamTagFingerprint",
         "githubInstallationId",
       ])
       .where("id", "=", repositoryId)
@@ -139,6 +150,119 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
     const { client, credentialFor } = deps ?? defaultDeps()
     const credential = await credentialFor(Number(installation.installationId))
 
+    let observedTagFingerprint: string | undefined
+    if (trigger === "tag") {
+      const tags = await repositoryTagState(client, credential, repository.upstreamFullName)
+
+      if (tags.fingerprint === repository.upstreamTagFingerprint) {
+        await db
+          .updateTable("repository")
+          .set({ upstreamTagCheckedAt: new Date(), updatedAt: new Date() })
+          .where("id", "=", repositoryId)
+          .execute()
+        return
+      }
+
+      // Establishing an empty baseline is not an update. Once a baseline exists, however, removing
+      // the last tag is still a tag-set change and follows the same safe sync path as an addition
+      // or moved tag.
+      if (!tags.hasTags && repository.upstreamTagFingerprint === null) {
+        await db
+          .updateTable("repository")
+          .set({
+            upstreamTagCheckedAt: new Date(),
+            upstreamTagFingerprint: tags.fingerprint,
+            updatedAt: new Date(),
+          })
+          .where("id", "=", repositoryId)
+          .execute()
+        return
+      }
+      observedTagFingerprint = tags.fingerprint
+    }
+
+    if (repository.provenance === "template") {
+      const base = await db
+        .selectFrom("upstreamSyncRun")
+        .select("upstreamSha")
+        .where("repositoryId", "=", repositoryId)
+        .where("branch", "=", repository.defaultBranch)
+        .where("outcome", "=", "up_to_date")
+        .where("upstreamSha", "is not", null)
+        .orderBy("id", "desc")
+        .executeTakeFirst()
+
+      let result: TemplateUpstreamResult
+      try {
+        result = await (deps?.reconcileTemplate ?? reconcileTemplateUpstream)({
+          owner: repository.ownerLogin,
+          repo: repository.name,
+          branch: repository.defaultBranch,
+          upstreamFullName: repository.upstreamFullName,
+          upstreamBranch: repository.upstreamDefaultBranch ?? repository.defaultBranch,
+          token: credential.token,
+          baseUpstreamSha: base?.upstreamSha,
+          signal: context.signal,
+        })
+      } catch (error) {
+        await recordUpkeepRun(db).record({
+          repositoryId,
+          branch: repository.defaultBranch,
+          outcome: "failed",
+        })
+        throw error
+      }
+
+      if (result.outcome === "conflict") {
+        const run = await recordUpkeepRun(db).record({
+          repositoryId,
+          branch: repository.defaultBranch,
+          outcome: "conflict",
+          upstreamSha: result.upstreamSha,
+          forkSha: result.targetSha,
+          behindBy: result.behindBy,
+          aheadBy: result.aheadBy,
+          mergeType: null,
+        })
+        if (observedTagFingerprint !== undefined) {
+          await recordObservedTag(db, repositoryId, observedTagFingerprint)
+        }
+        await recordUpkeepRun(db).suggestToProjects(
+          run.id,
+          await subscribedProjects(db, repositoryId),
+          `${repository.upstreamFullName} conflicts with local changes in: ${result.conflicts.join(", ")}.`,
+        )
+        return
+      }
+
+      await recordUpkeepRun(db).record({
+        repositoryId,
+        branch: repository.defaultBranch,
+        outcome: "up_to_date",
+        upstreamSha: result.upstreamSha,
+        forkSha: result.outcome === "merged" ? result.mergeSha : result.targetSha,
+        behindBy: result.behindBy,
+        aheadBy: result.aheadBy,
+        mergeType: result.outcome === "merged" ? "merge" : "none",
+      })
+
+      await db
+        .updateTable("repository")
+        .set({
+          lastSyncedAt: new Date(),
+          ...(observedTagFingerprint === undefined
+            ? {}
+            : {
+                upstreamTagCheckedAt: new Date(),
+                upstreamTagFingerprint: observedTagFingerprint,
+              }),
+          updatedAt: new Date(),
+        })
+        .where("id", "=", repositoryId)
+        .execute()
+      return
+    }
+
     const position = await compareWithUpstream(client, credential, {
       owner: repository.ownerLogin,
       repo: repository.name,
@@ -160,6 +284,9 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         aheadBy: position.aheadBy,
         mergeType: "none",
       })
+      if (observedTagFingerprint !== undefined) {
+        await recordObservedTag(db, repositoryId, observedTagFingerprint)
+      }
       return
     }
 
@@ -186,7 +313,16 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
 
       await db
         .updateTable("repository")
-        .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
+        .set({
+          lastSyncedAt: new Date(),
+          ...(observedTagFingerprint === undefined
+            ? {}
+            : {
+                upstreamTagCheckedAt: new Date(),
+                upstreamTagFingerprint: observedTagFingerprint,
+              }),
+          updatedAt: new Date(),
+        })
         .where("id", "=", repositoryId)
         .execute()
     } catch (error) {
@@ -206,6 +342,10 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
 
       if (!conflicted) throw error
 
+      if (observedTagFingerprint !== undefined) {
+        await recordObservedTag(db, repositoryId, observedTagFingerprint)
+      }
+
       await recordUpkeepRun(db).suggestToProjects(
         run.id,
         await subscribedProjects(db, repositoryId),
@@ -213,4 +353,21 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
       )
     }
   }
+}
+
+async function recordObservedTag(
+  db: Kysely<DB>,
+  repositoryId: string,
+  fingerprint: string,
+): Promise<void> {
+  const now = new Date()
+  await db
+    .updateTable("repository")
+    .set({
+      upstreamTagCheckedAt: now,
+      upstreamTagFingerprint: fingerprint,
+      updatedAt: now,
+    })
+    .where("id", "=", repositoryId)
+    .execute()
 }

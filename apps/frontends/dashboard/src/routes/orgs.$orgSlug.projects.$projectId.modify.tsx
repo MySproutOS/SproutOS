@@ -24,7 +24,6 @@ import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/base/ui/select"
 import { SkeletonText } from "@ui/base/ui/skeleton"
-import { Switch } from "@ui/base/ui/switch"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PrimaryProjectSelect } from "@frontends/dashboard/components/projects/primary-project-select"
@@ -35,7 +34,10 @@ import {
   useRegions,
   useUpdateProject,
   useDeleteProject,
+  type AutoUpdateCadence,
 } from "@frontends/dashboard/data/projects"
+
+type UpdateSchedule = "off" | AutoUpdateCadence
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/modify")({
   component: ModifyProject,
@@ -83,6 +85,8 @@ function ModifyProject() {
             description={data.description}
             region={data.region}
             autoUpdateForks={data.autoUpdateForks}
+            autoUpdateCadence={data.autoUpdateCadence}
+            upstreamFullName={data.upstreamFullName}
             isGroup={data.isGroup}
             primaryChildProjectId={data.primaryChildProjectId}
           />
@@ -99,6 +103,8 @@ function ModifyForm({
   description: initialDescription,
   region: initialRegion,
   autoUpdateForks: initialAutoUpdate,
+  autoUpdateCadence: initialAutoUpdateCadence,
+  upstreamFullName,
   isGroup,
   primaryChildProjectId: initialPrimaryChildProjectId,
 }: {
@@ -108,13 +114,17 @@ function ModifyForm({
   description: string
   region: string
   autoUpdateForks: boolean
+  autoUpdateCadence: AutoUpdateCadence
+  upstreamFullName: string | null
   isGroup: boolean
   primaryChildProjectId: string | null
 }) {
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState(initialDescription)
   const [region, setRegion] = useState(initialRegion)
-  const [autoUpdate, setAutoUpdate] = useState(initialAutoUpdate)
+  const [updateSchedule, setUpdateSchedule] = useState<UpdateSchedule>(
+    initialAutoUpdate ? initialAutoUpdateCadence : "off",
+  )
   const [primaryChildProjectId, setPrimaryChildProjectId] = useState(
     initialPrimaryChildProjectId ?? "none",
   )
@@ -151,7 +161,8 @@ function ModifyForm({
           name: name.trim(),
           description: description.trim() === "" ? null : description.trim(),
           ...(region === initialRegion || region === "—" ? {} : { region }),
-          autoUpdateEnabled: autoUpdate,
+          autoUpdateEnabled: updateSchedule !== "off",
+          ...(updateSchedule === "off" ? {} : { autoUpdateCadence: updateSchedule }),
           ...(isGroup
             ? {
                 primaryChildProjectId:
@@ -240,13 +251,37 @@ function ModifyForm({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="auto-update">Auto-update forks</Label>
-              <div className="flex h-8 items-center gap-[9px]">
-                <Switch id="auto-update" checked={autoUpdate} onCheckedChange={setAutoUpdate} />
-                <span className="text-[13px] text-muted-foreground">
-                  {autoUpdate ? "On" : "Off"}
-                </span>
-              </div>
+              <Label htmlFor="auto-update-schedule">Updates from upstream</Label>
+              <Select
+                items={[
+                  { label: "Off", value: "off" },
+                  { label: "When a tag changes", value: "tag" },
+                  { label: "Daily", value: "daily" },
+                  { label: "Weekly", value: "weekly" },
+                  { label: "Monthly", value: "monthly" },
+                ]}
+                disabled={upstreamFullName === null}
+                value={updateSchedule}
+                onValueChange={(value: string | null) => {
+                  if (value !== null) setUpdateSchedule(value as UpdateSchedule)
+                }}
+              >
+                <SelectTrigger id="auto-update-schedule">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">Off</SelectItem>
+                  <SelectItem value="tag">When a tag changes</SelectItem>
+                  <SelectItem value="daily">Daily</SelectItem>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {upstreamFullName === null
+                  ? "This repository was not copied from an upstream repository."
+                  : `Tracking ${upstreamFullName}. Updates can change any repository file, including GitHub Actions workflows. Tag updates run when its Git tags change; monthly means every 30 days. Scheduled updates catch up after downtime.`}
+              </p>
             </div>
           </div>
 

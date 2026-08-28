@@ -337,7 +337,7 @@ describe("the sandbox vocabulary", () => {
     await crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" })
     await expect(
       crudSandbox(db).create({ projectId, userId: ownerUserId, state: "starting" }),
-    ).rejects.toThrow(/sandbox_project_user_key/)
+    ).rejects.toThrow(/sandbox_project_user_purpose_key/)
   })
 
   it("does not allow the word the failure path first used", ({ skip }) => {

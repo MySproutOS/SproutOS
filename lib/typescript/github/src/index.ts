@@ -58,7 +58,9 @@ export {
 export {
   type CompareTarget,
   compareWithUpstream,
+  repositoryTagState,
   positionFromComparison,
+  type RepositoryTagState,
   type RawComparison,
   type SyncResult,
   syncWithUpstream,
@@ -66,3 +68,4 @@ export {
 } from "./upstream"
 export { REPOSITORY_SCOPE, userGitHubCredential, userGitHubIdentity } from "./user-credential"
 export { linkInstallation, type InstallationFacts } from "./link-installation"
+export { ensurePullRequest, type PullRequestResult } from "./pull-requests"

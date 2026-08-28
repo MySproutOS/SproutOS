@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { positionFromComparison, type RawComparison } from "./upstream"
+import type { GitHubClient } from "./client"
+import { installationToken } from "./types"
+import { positionFromComparison, repositoryTagState, type RawComparison } from "./upstream"
 
 /**
  * The frame-of-reference flip, pinned.
@@ -67,5 +69,48 @@ describe("positionFromComparison", () => {
       upstreamSha: "",
       changedFiles: 0,
     })
+  })
+})
+
+describe("repositoryTagState", () => {
+  const credential = installationToken("test", 1, new Date("2030-01-01T00:00:00Z"))
+
+  function clientFor(pages: unknown[][]): GitHubClient {
+    let index = 0
+    return {
+      request: <T>() =>
+        Promise.resolve({
+          status: 200,
+          data: (pages[index++] ?? []) as T,
+          rateLimit: { limit: null, remaining: null, resetAt: null },
+        }),
+    }
+  }
+
+  it("fingerprints the complete tag set independent of response order", async () => {
+    const tags = Array.from({ length: 101 }, (_, index) => ({
+      name: `v${index}`,
+      commit: { sha: index.toString(16).padStart(40, "0") },
+    }))
+    const first = await repositoryTagState(
+      clientFor([tags.slice(0, 100), tags.slice(100)]),
+      credential,
+      "upstream/app",
+    )
+    const second = await repositoryTagState(
+      clientFor([[...tags].reverse().slice(0, 100), [...tags].reverse().slice(100)]),
+      credential,
+      "upstream/app",
+    )
+
+    expect(first).toEqual(second)
+    expect(first.hasTags).toBe(true)
+    expect(first.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it("has a stable empty fingerprint when upstream has no tags", async () => {
+    const state = await repositoryTagState(clientFor([[]]), credential, "upstream/app")
+    expect(state.hasTags).toBe(false)
+    expect(state.fingerprint).toMatch(/^[0-9a-f]{64}$/)
   })
 })

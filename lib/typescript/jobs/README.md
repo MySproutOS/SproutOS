@@ -108,10 +108,17 @@ testable without a poller running.
 
 Two job kinds, and a rule about when to stop.
 
-**`upkeep.scan`** finds repositories due for upkeep and enqueues one `upkeep.repository` job each,
-keyed on the repository and the day. Scan-then-fan-out rather than one large job, because a single
+**`upkeep.scan`** finds repositories due under their `tag`, daily, weekly, or monthly policy and
+enqueues one `upkeep.repository` job each, keyed on the repository and the day. Off is represented
+only by `auto_update_enabled = false`. Interval eligibility is derived from the last durable sync
+run, so missed scheduler windows catch up instead of disappearing. Scan-then-fan-out rather than one large job, because a single
 job holding a lease while it reconciles two hundred forks is two hundred failures riding on one
 lease.
+
+Tag mode polls the complete upstream tag set once per day and fingerprints tag names plus target
+commits. A changed fingerprint triggers the same guarded upstream sync; an unchanged poll advances
+only `repository.upstream_tag_checked_at`. No `upstream_sync_run` is written for work that did not
+happen.
 
 **One job per _repository_, not per project.** TASK 21 lets several projects share a repository —
 in this schema that means a monorepo, since `project_repository_target_live_key` is unique on
@@ -152,9 +159,17 @@ and paying a model to perform a mechanical fast-forward would be absurd.
 The decision reads `behindBy`, not GitHub's `status` label: a comparison can report `diverged`
 while `behindBy` is 0 depending on the base.
 
-Both merge paths go through GitHub's `merge-upstream` endpoint, server-side. No runner, no
-checkout, nothing to bill — which is why the fast-forward row costs nothing, and why the
-reconcile row currently costs nothing either.
+Forks go through GitHub's `merge-upstream` endpoint, server-side. Template-generated copies cannot:
+GitHub gives them unrelated history. The trusted worker instead finds the upstream commit whose
+tree matches the copy's generated root, performs an explicit three-way `ort` tree merge, and pushes
+the result with an exact remote-head lease. It never checks out or executes repository files. A
+missing base match, textual conflict, concurrent push, or Git older than 2.38 refuses the update.
+
+The upstream is nevertheless a supply-chain trust boundary. A clean update may change a GitHub
+Actions workflow, and pushing it can cause GitHub to execute that workflow under the repository's
+own policy. Store templates are curated for that reason. This is the same boundary a fork accepts
+when GitHub's `merge-upstream` moves its production branch; “the worker executes no files” does not
+mean “the resulting repository can never execute them.”
 
 ### † The agent reconciliation is not built yet
 
@@ -164,11 +179,10 @@ merge, which resolves everything that is not a genuine textual conflict. What co
 conflict is recorded as `conflict` and raised to every subscribed project as a
 `project_update_suggestion` — visible to a person, rather than silently dropped.
 
-What is missing is the agent resolving a real conflict. That path needs the merge performed in a
-workspace and then pushed, and **the push cannot come from the runner**: the agent sandbox is never
-given a push credential, so the trusted job has to push on the agent's behalf. That seam does not
-exist yet, and inventing it inside this handler would put a write credential in the one place the
-isolation model says it must never be.
+What is missing is the agent resolving a real conflict. The trusted worker can now perform and push
+the deterministic merge for a template copy, but the agent sandbox is still never given its write
+credential. An agent-assisted resolution therefore needs a bounded diff returned to this trusted
+push path; it must not move the credential into the sandbox.
 
 Until then a conflicted fork produces a suggestion, not a pull request. The `pr_opened` outcome and
 the `sproutos/upkeep-<sha12>` branch name are reserved for that work and are not yet written by

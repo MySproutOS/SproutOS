@@ -10,6 +10,7 @@ import {
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
+export type AutoUpdateCadence = "tag" | "daily" | "weekly" | "monthly"
 
 export type Project = {
   id: string
@@ -47,6 +48,8 @@ export type ProjectDetail = Project & {
   hostname: string | null
   runtime: string
   autoUpdateForks: boolean
+  autoUpdateCadence: AutoUpdateCadence
+  upstreamFullName: string | null
   createdLabel: string
 }
 
@@ -203,6 +206,8 @@ export function useProject(orgSlug: string, projectId: string) {
             liveDeploymentId: project.liveDeploymentId ?? null,
             runtime: project.kind,
             autoUpdateForks: project.autoUpdateEnabled,
+            autoUpdateCadence: project.autoUpdateCadence,
+            upstreamFullName: project.repository.upstreamFullName,
             createdLabel: relativeLabel(project.createdAt),
           } satisfies ProjectDetail),
   }

@@ -67,6 +67,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponseTransformer,
@@ -445,6 +446,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealData,
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdRevealResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
@@ -1077,6 +1081,28 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId = <
   >({
     responseTransformer: getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer,
     url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}",
+    ...options,
+  })
+
+/**
+ * Cancels a queued or running agent-assisted upstream resolution
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}/cancel",
     ...options,
   })
 
