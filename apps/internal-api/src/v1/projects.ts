@@ -6,6 +6,7 @@ import {
 } from "@lib/envelope"
 import {
   GITHUB_EVENT_KINDS,
+  installationDiscoveryIdempotencyKey,
   JOB_KINDS,
   enqueue,
   manifestDigestForCatalogueEntry,
@@ -1206,12 +1207,18 @@ const app = new Hono()
         arrives to reconsider it — installing the App before creating the first project left it
         permanently invisible, and this route is the moment that stops being true.
 
-        Keyed on the login, so several projects under one account queue one discovery.
+        Keyed on the App identity and login, so several projects under one account queue one
+        discovery while an App rollover gets a fresh authoritative pass. Without the App id, the
+        terminal job created by the old App absorbed every attempt to discover the replacement.
       */
       if (plan.mode === "create") {
         await enqueue(db, {
           kind: GITHUB_EVENT_KINDS.installationDiscover,
-          idempotencyKey: `${GITHUB_EVENT_KINDS.installationDiscover}:${organization.id}:${plan.ownerLogin.toLowerCase()}`,
+          idempotencyKey: installationDiscoveryIdempotencyKey({
+            appId: process.env.GITHUB_APP_ID,
+            login: plan.ownerLogin,
+            organizationId: organization.id,
+          }),
           payload: { login: plan.ownerLogin, organizationId: organization.id },
           maxAttempts: 3,
         })

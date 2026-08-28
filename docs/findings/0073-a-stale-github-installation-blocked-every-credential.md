@@ -22,3 +22,7 @@ a stale suspension can recover without waiting for a webhook that may never be r
 
 The database tests cover both rollover failures and assert that a provider outage does not trigger
 credential roulette.
+
+Discovery jobs are now idempotent per GitHub App id as well as organization and login. A project
+created after an App rollover therefore performs a new authoritative discovery instead of joining
+the terminal discovery job created by the old App.

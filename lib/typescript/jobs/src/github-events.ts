@@ -40,6 +40,25 @@ export const GITHUB_EVENT_KINDS = {
   unhandled: "github.unhandled",
 } as const
 
+/**
+ * One discovery per App identity, organization, and GitHub account.
+ *
+ * A key containing only organization + login made the first successful discovery permanent. When
+ * production moved to another GitHub App, every later project creation collided with the terminal
+ * job from the old App, so the replacement installation could never be reconciled. The numeric App
+ * id is public identity, not a credential, and is exactly the epoch that changes when the authority
+ * behind `/app/installations` changes.
+ */
+export function installationDiscoveryIdempotencyKey(input: {
+  appId?: string
+  login: string
+  organizationId: string
+}): string {
+  const configuredAppId = input.appId?.trim()
+  const appId = configuredAppId && configuredAppId.length > 0 ? configuredAppId : "unconfigured"
+  return `${GITHUB_EVENT_KINDS.installationDiscover}:${appId}:${input.organizationId}:${input.login.toLowerCase()}`
+}
+
 /** The shape the receiver queues. */
 type Delivery = { event?: string; delivery?: string; body?: Record<string, unknown> }
 
