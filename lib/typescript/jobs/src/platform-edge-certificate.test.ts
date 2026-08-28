@@ -332,8 +332,8 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
         send: vi.fn<(command: unknown) => Promise<unknown>>(),
       } as unknown as SecretsManagerClient,
       valkey: {
-        scan: vi.fn<(...arguments_: unknown[]) => Promise<[string, string[]]>>(() =>
-          Promise.resolve(["0", loaded ? ["ack"] : []]),
+        eval: vi.fn<(...arguments_: unknown[]) => Promise<[number, number]>>(() =>
+          Promise.resolve([1, loaded ? 1 : 0]),
         ),
       } as unknown as Redis,
       sleep: () => Promise.resolve(),
@@ -450,7 +450,7 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
         send: vi.fn<(command: unknown) => Promise<unknown>>(),
       } as unknown as SecretsManagerClient,
       valkey: {
-        scan: vi.fn<(...arguments_: unknown[]) => Promise<[string, string[]]>>(),
+        eval: vi.fn<(...arguments_: unknown[]) => Promise<[number, number]>>(),
       } as unknown as Redis,
       sleep: () => Promise.resolve(),
       issue,
@@ -524,8 +524,8 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
         send: vi.fn<(command: unknown) => Promise<unknown>>(),
       } as unknown as SecretsManagerClient,
       valkey: {
-        scan: vi.fn<(...arguments_: unknown[]) => Promise<[string, string[]]>>(() =>
-          Promise.resolve(["0", ["replacement-ack"]]),
+        eval: vi.fn<(...arguments_: unknown[]) => Promise<[number, number]>>(() =>
+          Promise.resolve([1, 1]),
         ),
       } as unknown as Redis,
       sleep: () => Promise.resolve(),
