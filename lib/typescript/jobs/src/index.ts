@@ -39,6 +39,10 @@ export {
   DEPLOYMENT_TEMPLATES_WORKFLOW_REF,
 } from "./deployment-catalogue-oci"
 export {
+  manifestDigestForCatalogueEntry,
+  parseCatalogueAppManifest,
+} from "./deployment-catalogue-schema"
+export {
   importStaticCloudFrontLog,
   parseStaticCloudFrontLog,
   scanStaticCloudFrontLogs,

@@ -99,6 +99,7 @@ export {
   type NeonProject,
   type NeonProjectConsumption,
 } from "./neon-api"
+export { serviceDriverFromEnv } from "./from-env"
 export {
   type AndroidApp,
   type AndroidSite,

@@ -504,6 +504,9 @@ importers:
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sproutos/sprout-node':
+        specifier: workspace:*
+        version: link:../../packages/sprout-node
       '@utils/cookies':
         specifier: workspace:*
         version: link:../../lib/typescript/utils/cookies

@@ -3,6 +3,7 @@ import type { DB } from "@sproutos/db"
 import type { Kysely, Selectable, Transaction } from "kysely"
 import { crudAuditLog } from "../auditLog/crud"
 import { crudProjectJob, initialSteps, type ProjectJobKind } from "../projectJob/crud"
+import { crudProjectTemplateInstall } from "../projectTemplateInstall/crud"
 import { crudRepository } from "../repository/crud"
 import type { AuditContext } from "../organization/provision"
 import { crudProject } from "./crud"
@@ -50,6 +51,17 @@ export type ProvisionProjectInput = {
   autoUpdateEnabled: boolean
   autoUpdateMode: string
   storeListingId: string | null
+  /** Signed catalogue snapshot consumed by the worker. Never reconstructed from a newer import. */
+  templateInstall?: {
+    catalogueImportId: string
+    catalogueEntryId: string
+    catalogueDigest: string
+    manifestDigest: string
+    deploymentTemplatesCommit: string
+    manifest: DB["projectTemplateInstall"]["manifest"]
+    pluginRepository: string
+    pluginDigest: string
+  }
   repository: RepositoryPlan
   jobKind: ProjectJobKind
   /**
@@ -171,6 +183,18 @@ export function provisionProject(db: Kysely<DB>) {
         steps: JSON.stringify(initialSteps(input.jobKind)),
         idempotencyKey: input.idempotencyKey ?? null,
       })
+
+      if (input.templateInstall !== undefined) {
+        if (input.storeListingId === null) {
+          throw new Error("a template install requires a store listing")
+        }
+        await crudProjectTemplateInstall(tx).create({
+          ...input.templateInstall,
+          organizationId: input.organizationId,
+          projectId: project.id,
+          storeListingId: input.storeListingId,
+        })
+      }
 
       await crudAuditLog(tx).record({
         organizationId: input.organizationId,

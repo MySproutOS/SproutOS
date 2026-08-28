@@ -83,6 +83,7 @@ describe.skipIf(!reachable)("project routes", () => {
   let orgBId: string
 
   const listingId = v7()
+  const fixtureHex = listingId.replaceAll("-", "")
   const catalogueImportId = v7()
   const listingSlug = `proj-test-listing-${listingId.slice(-8)}`
 
@@ -107,7 +108,6 @@ describe.skipIf(!reachable)("project routes", () => {
     orgBId = trackOrganization(b.json.id as string)
     orgB = b.json.slug as string
 
-    const fixtureHex = listingId.replaceAll("-", "")
     await db
       .insertInto("deploymentCatalogueImport")
       .values({
@@ -123,7 +123,14 @@ describe.skipIf(!reachable)("project routes", () => {
         signatureIdentity:
           "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
         signatureIssuer: "https://token.actions.githubusercontent.com",
-        provenance: { fixture: true },
+        provenance: {
+          materials: [
+            {
+              uri: `apps/${listingSlug}/manifest-source.json`,
+              digest: `sha256:${fixtureHex.repeat(2)}`,
+            },
+          ],
+        },
       })
       .execute()
 
@@ -144,7 +151,45 @@ describe.skipIf(!reachable)("project routes", () => {
         catalogueEntryId: listingSlug,
         catalogueImportId,
         catalogueSchemaVersion: 1,
-        catalogueManifest: { fixture: true },
+        catalogueManifest: {
+          schema_version: 1,
+          id: listingSlug,
+          name: "Forkable Fixture",
+          pitch: "Something to fork",
+          description_md: "A published listing the project suite forks.",
+          homepage: null,
+          repository: {
+            url: `https://github.com/example/forkable-${listingId.slice(-8)}`,
+            commit: fixtureHex.repeat(2).slice(0, 40),
+          },
+          license: "MIT",
+          platform: "web",
+          readiness: {
+            status: "live",
+            blocked_reasons: [],
+            e2e_evidence: {
+              workflow_run_url: "https://github.com/MySproutOS/Deployment-Templates/actions/runs/1",
+              tested_at: "2026-08-28T00:00:00.000Z",
+              upstream_commit: fixtureHex.repeat(2).slice(0, 40),
+              plugin_digest: `sha256:${fixtureHex.repeat(2)}`,
+            },
+          },
+          plugin: {
+            repository: "ghcr.io/mysproutos/project-test-plugin",
+            digest: `sha256:${fixtureHex.repeat(2)}`,
+            protocol_version: 1,
+          },
+          deployment: {
+            preset: "static",
+            runtime: "static",
+            architecture: "arm64",
+            migration: null,
+            required_capabilities: [],
+          },
+          services: [],
+          user_inputs: [],
+          generated_inputs: [],
+        },
         upstreamCommit: fixtureHex.repeat(2).slice(0, 40),
         templatePluginRepository: "ghcr.io/mysproutos/project-test-plugin",
         templatePluginDigest: `sha256:${fixtureHex.repeat(2)}`,
@@ -160,9 +205,9 @@ describe.skipIf(!reachable)("project routes", () => {
     if (usageRollupIds.length > 0) {
       await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
+    await cleanupFixtures()
     await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
     await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
-    await cleanupFixtures()
   })
 
   describe("creating a project", () => {
@@ -188,6 +233,17 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(job.kind).toBe("fork")
       expect(job.state).toBe("queued")
       expect((job.steps as unknown[]).length).toBeGreaterThan(0)
+
+      const install = await db
+        .selectFrom("projectTemplateInstall")
+        .select(["catalogueImportId", "pluginDigest", "state"])
+        .where("projectId", "=", forkedProjectId)
+        .executeTakeFirstOrThrow()
+      expect(install).toMatchObject({
+        catalogueImportId,
+        pluginDigest: `sha256:${fixtureHex.repeat(2)}`,
+        state: "configuring",
+      })
     })
 
     /**

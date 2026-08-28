@@ -364,6 +364,11 @@ function parseApp(value: unknown, index: number): CatalogueApp {
   return result
 }
 
+/** Revalidate the immutable manifest snapshot before a worker trusts it. */
+export function parseCatalogueAppManifest(value: unknown): CatalogueApp {
+  return parseApp(value, 0)
+}
+
 function canonical(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "string")
     return JSON.stringify(value)
@@ -498,6 +503,20 @@ export function verifyPluginLock(
     if (item.artifact !== expected || !material.has(`${expected}\0${app.plugin.digest}`))
       throw new Error(`plugin-lock provenance does not match ${app.id}`)
   }
+}
+
+/** Resolve the signed source-manifest digest recorded by the imported catalogue provenance. */
+export function manifestDigestForCatalogueEntry(provenance: unknown, entryId: string): string {
+  const row = object(provenance, "catalogue provenance")
+  const materials = array(row.materials, "catalogue provenance.materials")
+  const uri = `apps/${entryId}/manifest-source.json`
+  for (const [index, value] of materials.entries()) {
+    const material = object(value, `catalogue provenance.materials[${index}]`)
+    if (material.uri === uri) {
+      return pattern(material.digest, DIGEST, `catalogue provenance material ${uri}`)
+    }
+  }
+  throw new Error(`catalogue provenance has no source manifest for ${entryId}`)
 }
 
 export const deploymentCatalogueSchemaInternals = { canonical, digest }

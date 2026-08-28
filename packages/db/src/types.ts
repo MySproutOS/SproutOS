@@ -860,6 +860,37 @@ export interface ProjectJob {
   updatedAt: Generated<Timestamp>
 }
 
+export interface ProjectTemplateInstall {
+  applyResult: Json | null
+  catalogueDigest: string
+  catalogueEntryId: string
+  catalogueImportId: string
+  createdAt: Generated<Timestamp>
+  deploymentTemplatesCommit: string
+  failureCode: string | null
+  failureMessage: string | null
+  manifest: Json
+  manifestDigest: string
+  organizationId: string
+  pluginDigest: string
+  pluginRepository: string
+  preparedCommitSha: string | null
+  projectId: string
+  state: Generated<string>
+  storeListingId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface ProjectTemplateService {
+  backendServiceId: string
+  bindings: Json
+  createdAt: Generated<Timestamp>
+  kind: string
+  projectId: string
+  provisionedAt: Timestamp | null
+  serviceKey: string
+}
+
 export interface ProjectUpdateSuggestion {
   createdAt: Generated<Timestamp>
   id: string
@@ -1411,6 +1442,8 @@ export interface DB {
   projectEnvVar: ProjectEnvVar
   projectFile: ProjectFile
   projectJob: ProjectJob
+  projectTemplateInstall: ProjectTemplateInstall
+  projectTemplateService: ProjectTemplateService
   projectUpdateSuggestion: ProjectUpdateSuggestion
   refund: Refund
   region: Region

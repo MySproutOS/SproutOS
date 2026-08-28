@@ -4,7 +4,7 @@ import {
   sealEnvVarValue,
   sealProjectFileContents,
 } from "@lib/envelope"
-import { GITHUB_EVENT_KINDS, JOB_KINDS, enqueue } from "@lib/jobs"
+import { GITHUB_EVENT_KINDS, JOB_KINDS, enqueue, manifestDigestForCatalogueEntry } from "@lib/jobs"
 import {
   allocateProjectSlug,
   autoUpdateDefaultFor,
@@ -16,6 +16,7 @@ import {
   crudProjectUpdateSuggestion,
   crudStoreListingEvent,
   fetchAgentCredential,
+  fetchDeploymentCatalogueImport,
   fetchGithubInstallation,
   fetchProject,
   fetchProjectEnvVar,
@@ -773,6 +774,9 @@ const app = new Hono()
       */
       let listingRootDir: string | null = null
       let listingDockerfilePath: string | null = null
+      let templateInstall:
+        | Parameters<ReturnType<typeof provisionProject>["create"]>[0]["templateInstall"]
+        | undefined = undefined
 
       if (source.type === "repository") {
         const repository = await resolveOwnRepository(organization.id, source)
@@ -791,6 +795,11 @@ const app = new Hono()
           "upstreamRepo",
           "rootDir",
           "dockerfilePath",
+          "catalogueImportId",
+          "catalogueEntryId",
+          "catalogueManifest",
+          "templatePluginRepository",
+          "templatePluginDigest",
         ])
 
         if (!listing || listing.status !== "published") {
@@ -815,6 +824,35 @@ const app = new Hono()
         }
 
         storeListingId = listing.id
+        if (
+          listing.catalogueImportId === null ||
+          listing.catalogueEntryId === null ||
+          listing.catalogueManifest === null ||
+          listing.templatePluginRepository === null ||
+          listing.templatePluginDigest === null
+        ) {
+          throw new Error("published catalogue listing is missing signed template provenance")
+        }
+        const catalogueImport = await fetchDeploymentCatalogueImport(db).getOne(
+          listing.catalogueImportId,
+          ["catalogueDigest", "sourceSha", "provenance"],
+        )
+        if (catalogueImport === undefined) {
+          throw new Error("published catalogue listing points at a missing catalogue import")
+        }
+        templateInstall = {
+          catalogueImportId: listing.catalogueImportId,
+          catalogueEntryId: listing.catalogueEntryId,
+          catalogueDigest: catalogueImport.catalogueDigest,
+          manifestDigest: manifestDigestForCatalogueEntry(
+            catalogueImport.provenance,
+            listing.catalogueEntryId,
+          ),
+          deploymentTemplatesCommit: catalogueImport.sourceSha,
+          manifest: listing.catalogueManifest,
+          pluginRepository: listing.templatePluginRepository,
+          pluginDigest: listing.templatePluginDigest,
+        }
         listingRootDir = listing.rootDir
         listingDockerfilePath = listing.dockerfilePath
         jobKind = "fork"
@@ -992,6 +1030,7 @@ const app = new Hono()
         rootDir,
         slug,
         storeListingId,
+        ...(templateInstall === undefined ? {} : { templateInstall }),
         isGroup: json.isGroup ?? false,
         parentProjectId,
         regionId: selectedRegion?.id ?? null,

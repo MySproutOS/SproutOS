@@ -58,6 +58,7 @@
     "@lib/workflows": "workspace:*",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
+    "@sproutos/sprout-node": "workspace:*",
     "@utils/cookies": "workspace:*",
     "@utils/crypto": "workspace:*",
     "@utils/feature-flags": "workspace:*",
