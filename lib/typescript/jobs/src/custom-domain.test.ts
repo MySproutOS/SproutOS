@@ -1,16 +1,30 @@
-import { DeleteObjectsCommand, ListObjectVersionsCommand, type S3Client } from "@aws-sdk/client-s3"
-import { describe, expect, it } from "vitest"
+import { DeleteObjectCommand, ListObjectVersionsCommand, type S3Client } from "@aws-sdk/client-s3"
+import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
+import { crudCustomDomain } from "@lib/dao"
+import { db } from "@sproutos/db"
+import { sql } from "kysely"
+import type { Redis } from "ioredis"
+import { v7 } from "uuid"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import {
   activateCustomDomain,
   customDomainRetryAfter,
-  deleteCertificateObjectVersions,
   deleteCustomDomain,
   hasOwnershipTxt,
   nextRenewal,
+  reconcileCustomDomain,
   trafficPointsToIngress,
 } from "./custom-domain"
 
 const absent = (): Promise<never> => Promise.reject(new Error("not found"))
+const databaseReachable = await (async () => {
+  try {
+    await sql`select 1`.execute(db)
+    return true
+  } catch {
+    return false
+  }
+})()
 
 describe("custom-domain DNS checks", () => {
   it("joins split TXT chunks before comparing the ownership proof", async () => {
@@ -69,84 +83,6 @@ describe("certificate renewal fallback", () => {
     const now = new Date("2026-08-28T00:00:00Z")
     expect(customDomainRetryAfter(now, 1)).toEqual(new Date("2026-08-28T00:02:00Z"))
     expect(customDomainRetryAfter(now, 100)).toEqual(new Date("2026-08-28T17:04:00Z"))
-  })
-})
-
-describe("certificate deletion", () => {
-  it("purges every private-key version and delete marker", async () => {
-    const deleted: Array<{ Key?: string; VersionId?: string }> = []
-    let listed = 0
-    const s3 = {
-      send: (command: unknown) => {
-        if (command instanceof ListObjectVersionsCommand) {
-          listed += 1
-          return Promise.resolve(
-            listed === 1
-              ? {
-                  Versions: [
-                    { Key: "custom-domains/id/certificate.json", VersionId: "current" },
-                    { Key: "custom-domains/id/certificate.json", VersionId: "prior" },
-                  ],
-                  DeleteMarkers: [
-                    { Key: "custom-domains/id/certificate.json", VersionId: "marker" },
-                  ],
-                }
-              : {},
-          )
-        }
-        if (command instanceof DeleteObjectsCommand) {
-          deleted.push(...(command.input.Delete?.Objects ?? []))
-          return Promise.resolve({})
-        }
-        return Promise.reject(new Error(`unexpected ${command?.constructor.name}`))
-      },
-    } as unknown as Pick<S3Client, "send">
-
-    await deleteCertificateObjectVersions(
-      s3,
-      "certificates",
-      "custom-domains/id/certificate.json",
-      "current",
-    )
-
-    expect(deleted).toEqual([
-      { Key: "custom-domains/id/certificate.json", VersionId: "current" },
-      { Key: "custom-domains/id/certificate.json", VersionId: "prior" },
-      { Key: "custom-domains/id/certificate.json", VersionId: "marker" },
-    ])
-  })
-
-  it("does not finish deletion when S3 retains a private-key version", async () => {
-    const s3 = {
-      send: (command: unknown) => {
-        if (command instanceof ListObjectVersionsCommand) {
-          return Promise.resolve({
-            Versions: [{ Key: "custom-domains/id/certificate.json", VersionId: "current" }],
-          })
-        }
-        if (command instanceof DeleteObjectsCommand) {
-          return Promise.resolve({
-            Errors: [
-              {
-                Key: "custom-domains/id/certificate.json",
-                VersionId: "current",
-                Code: "AccessDenied",
-              },
-            ],
-          })
-        }
-        return Promise.reject(new Error(`unexpected ${command?.constructor.name}`))
-      },
-    } as unknown as Pick<S3Client, "send">
-
-    await expect(
-      deleteCertificateObjectVersions(
-        s3,
-        "certificates",
-        "custom-domains/id/certificate.json",
-        "current",
-      ),
-    ).rejects.toThrow(/current: AccessDenied/)
   })
 })
 
@@ -285,5 +221,248 @@ describe("custom-domain deletion ordering", () => {
     expect([...pending]).toEqual([])
     expect([...objects]).toEqual([])
     expect(finished).toBe(true)
+  })
+})
+
+describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
+  const userId = v7()
+  const organizationId = v7()
+  const repositoryId = v7()
+  const projectId = v7()
+  const domainId = v7()
+  const issuingDomainId = v7()
+
+  beforeAll(async () => {
+    await db
+      .insertInto("user")
+      .values({ id: userId, email: `${userId}@example.test` })
+      .execute()
+    await db
+      .insertInto("organization")
+      .values({
+        id: organizationId,
+        slug: `delete-recovery-${organizationId}`,
+        name: "Delete recovery",
+        kind: "personal",
+        ownerUserId: userId,
+      })
+      .execute()
+    await db
+      .insertInto("repository")
+      .values({
+        id: repositoryId,
+        organizationId,
+        githubRepoId: Date.now() + 1,
+        ownerLogin: "test",
+        name: `delete-recovery-${repositoryId}`,
+        provenance: "new",
+      })
+      .execute()
+    await db
+      .insertInto("project")
+      .values({
+        id: projectId,
+        organizationId,
+        repositoryId,
+        name: "Delete recovery",
+        slug: `delete-recovery-${projectId}`,
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: domainId,
+        organizationId,
+        projectId,
+        hostname: `${domainId}.example.test`,
+        verificationToken: "proof",
+      })
+      .execute()
+    await crudCustomDomain(db).beginDelete(organizationId, domainId)
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: issuingDomainId,
+        organizationId,
+        projectId,
+        hostname: `${issuingDomainId}.example.test`,
+        verificationToken: "proof",
+        status: "active",
+        certificateObjectKey: `custom-domains/${issuingDomainId}/current.json`,
+        certificateObjectVersion: "old-version",
+        deployedCertificateObjectKey: `custom-domains/${issuingDomainId}/current.json`,
+        deployedCertificateObjectVersion: "old-version",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateIssuedAt: new Date("2026-01-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2026-09-01T00:00:00Z"),
+        nextRenewalAt: new Date("2026-08-01T00:00:00Z"),
+        nextRetryAt: new Date("2026-08-01T00:00:00Z"),
+      })
+      .execute()
+  })
+
+  afterAll(async () => {
+    await db.deleteFrom("organization").where("id", "=", organizationId).execute()
+    await db.deleteFrom("user").where("id", "=", userId).execute()
+    await db.destroy()
+  })
+
+  it("keeps deleting durable when route withdrawal crashes", async () => {
+    const handler = reconcileCustomDomain({
+      withdrawRoute: () => Promise.reject(new Error("Valkey unavailable during withdrawal")),
+    })
+    await expect(
+      handler({ payload: { domainId } } as never, {
+        db,
+        keepAlive: () => Promise.resolve(true),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Valkey unavailable during withdrawal")
+
+    const deleting = await db
+      .selectFrom("customDomain")
+      .select(["status", "reconcileLeaseToken", "nextRetryAt"])
+      .where("id", "=", domainId)
+      .executeTakeFirstOrThrow()
+    expect(deleting.status).toBe("deleting")
+    expect(deleting.reconcileLeaseToken).toBeNull()
+    expect(deleting.nextRetryAt).toBeInstanceOf(Date)
+  })
+
+  it("deletes an initial-issuance object that crashed before its DB version was recorded", async () => {
+    vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificates")
+    try {
+      let listedPrefix: string | undefined
+      const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) => {
+        if (command instanceof ListObjectVersionsCommand) {
+          listedPrefix = command.input.Prefix
+          return Promise.resolve({
+            Versions: [
+              {
+                Key: `custom-domains/${domainId}/current.json`,
+                VersionId: "untracked-first-issuance",
+              },
+            ],
+          })
+        }
+        return Promise.resolve({})
+      })
+      const handler = reconcileCustomDomain({
+        withdrawRoute: () => Promise.resolve(),
+        s3: { send: s3Send } as unknown as S3Client,
+        valkey: {
+          del: vi.fn<(key: string) => Promise<number>>(() => Promise.resolve(1)),
+          publish: vi.fn<(channel: string, message: string) => Promise<number>>(() =>
+            Promise.resolve(1),
+          ),
+        } as unknown as Redis,
+      })
+      await expect(
+        handler({ payload: { domainId } } as never, {
+          db,
+          keepAlive: () => Promise.resolve(true),
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toBeUndefined()
+
+      expect(listedPrefix).toBe(`custom-domains/${domainId}/current.json`)
+      expect(
+        s3Send.mock.calls.some(
+          ([command]) =>
+            command instanceof DeleteObjectCommand &&
+            command.input.VersionId === "untracked-first-issuance",
+        ),
+      ).toBe(true)
+      const deleted = await db
+        .selectFrom("customDomain")
+        .select("deletedAt")
+        .where("id", "=", domainId)
+        .executeTakeFirstOrThrow()
+      expect(deleted.deletedAt).toBeInstanceOf(Date)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it("fences an issuance paused across beginDelete and removes its untracked private key", async () => {
+    vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificates")
+    vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
+    let releaseIssue!: () => void
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const issueGate = new Promise<void>((resolve) => {
+      releaseIssue = resolve
+    })
+    const publishRoute = vi.fn<() => Promise<void>>(() => Promise.resolve())
+    const valkeyPublish = vi.fn<() => Promise<number>>(() => Promise.resolve(1))
+    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
+      Promise.resolve(
+        command instanceof DeleteObjectCommand ? {} : { VersionId: "orphan-version" },
+      ),
+    )
+    const handler = reconcileCustomDomain({
+      now: () => new Date("2026-08-28T00:00:00Z"),
+      issue: async () => {
+        markStarted()
+        await issueGate
+        return {
+          certificatePem: "certificate",
+          privateKeyPem: "private-key",
+          issuedAt: new Date("2026-08-28T00:00:00Z"),
+          expiresAt: new Date("2026-11-28T00:00:00Z"),
+        }
+      },
+      scheduleIssued: () =>
+        Promise.resolve({
+          certificateId: "aki.new",
+          issuer: "CN=Staging Test CA",
+          nextRenewalAt: new Date("2026-10-28T00:00:00Z"),
+          renewalInfoRetryAt: null,
+          renewalInfoExplanationUrl: null,
+          source: "unsupported",
+        }),
+      publishRoute,
+      s3: { send: s3Send } as unknown as S3Client,
+      secrets: {
+        send: vi.fn<(command: unknown) => Promise<unknown>>(() => Promise.resolve({})),
+      } as unknown as SecretsManagerClient,
+      valkey: {
+        set: vi.fn<(key: string, value: string, ...arguments_: string[]) => Promise<"OK">>(() =>
+          Promise.resolve("OK"),
+        ),
+        del: vi.fn<(key: string) => Promise<number>>(() => Promise.resolve(1)),
+        publish: valkeyPublish,
+      } as unknown as Redis,
+    })
+    const running = handler({ payload: { domainId: issuingDomainId } } as never, {
+      db,
+      keepAlive: () => Promise.resolve(true),
+      signal: new AbortController().signal,
+    })
+    await started
+    await crudCustomDomain(db).beginDelete(organizationId, issuingDomainId)
+    releaseIssue()
+    await expect(running).resolves.toBeUndefined()
+
+    expect(publishRoute).not.toHaveBeenCalled()
+    expect(valkeyPublish).not.toHaveBeenCalled()
+    expect(s3Send.mock.calls.some(([command]) => command instanceof DeleteObjectCommand)).toBe(true)
+    expect(
+      await db
+        .selectFrom("customDomain")
+        .select(["status", "certificateObjectVersion", "reconcileLeaseToken"])
+        .where("id", "=", issuingDomainId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      status: "deleting",
+      certificateObjectVersion: "old-version",
+      reconcileLeaseToken: null,
+    })
+    vi.unstubAllEnvs()
   })
 })

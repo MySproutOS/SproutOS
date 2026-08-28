@@ -17,6 +17,9 @@ describe("tenant-edge IAM boundary", () => {
     expect(resource("aws_iam_policy", "application")).not.toContain(
       "route53:ChangeResourceRecordSets",
     )
+    expect(resource("aws_iam_policy", "application")).not.toContain(
+      "aws_s3_bucket.tenant_certificates",
+    )
     expect(resource("aws_iam_role_policy_attachment", "instance_application")).toContain(
       "aws_iam_policy.application.arn",
     )
@@ -26,10 +29,18 @@ describe("tenant-edge IAM boundary", () => {
     expect(resource("aws_iam_policy", "control_plane_dns")).toContain(
       "route53:ChangeResourceRecordSets",
     )
-    expect(resource("aws_iam_role_policy_attachment", "task_control_plane_dns")).toContain(
+    expect(resource("aws_iam_role_policy_attachment", "acme_task_control_plane_dns")).toContain(
+      "aws_iam_role.acme_task.name",
+    )
+    expect(resource("aws_iam_role_policy_attachment", "acme_task_control_plane_dns")).not.toContain(
       "aws_iam_role.task.name",
     )
+    const deploymentDns = resource("aws_iam_policy", "control_plane_dns")
+    expect(deploymentDns).toContain("route53:ChangeResourceRecordSetsNormalizedRecordNames")
+    expect(deploymentDns).toContain('["*.${var.tenant_domain}"]')
+    expect(deploymentDns).toContain('["A", "AAAA"]')
     expect(resource("aws_iam_policy", "acme_worker")).toContain("route53:ChangeResourceRecordSets")
+    expect(resource("aws_iam_policy", "acme_worker")).toContain("s3:ListBucketVersions")
     expect(resource("aws_iam_role_policy_attachment", "acme_task_worker")).toContain(
       "aws_iam_role.acme_task.name",
     )
@@ -44,6 +55,20 @@ describe("tenant-edge IAM boundary", () => {
     )
     expect(ecs).toContain("task_role_arn      = aws_iam_role.acme_task.arn")
     expect(ecs).toContain('{ name = "WORKER_PROFILE", value = "acme" }')
+    expect(ecs).toContain("var.acme_worker_enabled ? var.ecs_instance_count : 0")
+    expect(ecs).toContain("local.ecs_worker_parameter_names")
+  })
+
+  it("keeps private-key reads on router instances rather than the public ECS task role", () => {
+    const reader = resource("aws_iam_policy", "router_certificate_read")
+    expect(reader).toContain("s3:GetObjectVersion")
+    expect(reader).toContain("aws_s3_bucket.tenant_certificates")
+    expect(
+      resource("aws_iam_role_policy_attachment", "instance_router_certificate_read"),
+    ).toContain("aws_iam_role.instance.name")
+    expect(resource("aws_iam_role_policy_attachment", "task_application")).not.toContain(
+      "router_certificate_read",
+    )
   })
 
   it("limits Route 53 writes to the two exact ACME TXT names", () => {
@@ -57,5 +82,13 @@ describe("tenant-edge IAM boundary", () => {
     expect(policy).toContain('["TXT"]')
     expect(policy).toContain('"route53:ChangeResourceRecordSetsActions"')
     expect(policy).not.toContain('"A", "AAAA"')
+  })
+
+  it("fits the measured worker beside the bounded web task on one registered host", () => {
+    expect(ecs).toContain("memory = 640")
+    expect(ecs).toContain("memory = 256")
+    expect(ecs).toContain("memoryReservation = 192")
+    expect(ecs).toContain('type  = "binpack"')
+    expect(ecs).toContain('field = "memory"')
   })
 })

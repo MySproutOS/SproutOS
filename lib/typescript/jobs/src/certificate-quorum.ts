@@ -15,8 +15,9 @@ export type CertificateQuorum = {
 
 const QUORUM_SCRIPT = `
 local members_key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
-local ack_prefix = ARGV[2]
+local clock = redis.call('TIME')
+local now_ms = (clock[1] * 1000) + math.floor(clock[2] / 1000)
+local ack_prefix = ARGV[1]
 redis.call('ZREMRANGEBYSCORE', members_key, '-inf', now_ms)
 local members = redis.call('ZRANGE', members_key, 0, -1)
 local loaded = 0
@@ -38,15 +39,8 @@ return {#members, loaded}
 export async function certificateDeploymentQuorum(
   valkey: Redis,
   ackPrefix: string,
-  now: Date,
 ): Promise<CertificateQuorum> {
-  const result = await valkey.eval(
-    QUORUM_SCRIPT,
-    1,
-    ROUTER_SERVING_REPLICAS_KEY,
-    String(now.getTime()),
-    ackPrefix,
-  )
+  const result = await valkey.eval(QUORUM_SCRIPT, 1, ROUTER_SERVING_REPLICAS_KEY, ackPrefix)
   if (!Array.isArray(result) || result.length !== 2) {
     throw new Error("Valkey returned an invalid certificate quorum result")
   }

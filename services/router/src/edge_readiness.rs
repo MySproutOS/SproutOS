@@ -17,6 +17,7 @@ use axum::routing::get;
 pub struct EdgeReadiness {
     http: AtomicBool,
     tls: AtomicBool,
+    tls_certificate_membership: AtomicBool,
 }
 
 impl EdgeReadiness {
@@ -36,12 +37,17 @@ impl EdgeReadiness {
         }
     }
 
+    pub(crate) fn set_tls_certificate_membership(&self, ready: bool) {
+        self.tls_certificate_membership
+            .store(ready, Ordering::SeqCst);
+    }
+
     fn http_ready(&self) -> bool {
         self.http.load(Ordering::SeqCst)
     }
 
     fn tls_ready(&self) -> bool {
-        self.tls.load(Ordering::SeqCst)
+        self.tls.load(Ordering::SeqCst) && self.tls_certificate_membership.load(Ordering::SeqCst)
     }
 }
 
@@ -131,7 +137,12 @@ mod tests {
         let http = state.http_guard();
         let tls = state.tls_guard();
         assert!(state.http_ready());
+        assert!(!state.tls_ready());
+        state.set_tls_certificate_membership(true);
         assert!(state.tls_ready());
+        state.set_tls_certificate_membership(false);
+        assert!(!state.tls_ready());
+        state.set_tls_certificate_membership(true);
         drop(http);
         assert!(!state.http_ready());
         assert!(state.tls_ready());

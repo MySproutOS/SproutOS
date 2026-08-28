@@ -531,7 +531,7 @@ pub async fn start_from_env(
         .await
         .with_context(|| format!("could not bind {listen} for the TLS edge"))?;
     let _platform_ack = platform_ack
-        .start()
+        .start(Arc::clone(&readiness))
         .await
         .context("initial platform certificate acknowledgement failed")?;
     let ready = readiness.tls_guard();

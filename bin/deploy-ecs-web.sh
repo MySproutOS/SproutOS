@@ -212,11 +212,6 @@ rollback_service() {
   echo "rollback restored $current_task_arn" >&2
 }
 
-# The ACME worker is an IAM-isolated ECS service using the same immutable image. It settles before
-# the public task so a release never leaves the privileged worker on a different application build.
-IMAGE="$IMAGE" NAME_PREFIX="$NAME_PREFIX" ECS_CLUSTER="$CLUSTER" \
-  "$(dirname "$0")/deploy-ecs-acme-worker.sh"
-
 echo "migration succeeded; updating $CLUSTER/$SERVICE to $service_task_arn"
 aws ecs update-service \
   --cluster "$CLUSTER" \
@@ -258,6 +253,16 @@ if [ "$DESIRED" -gt 0 ]; then
       exit 1
     fi
   done < <(jq -r '.services[0].loadBalancers[].targetGroupArn' <<<"$settled_json")
+fi
+
+# Update the isolated certificate/deployment worker only after the old public task has drained.
+# The old task reserves 768 MiB; starting the 256 MiB worker first can occupy the spare host and
+# prevent ECS from placing the replacement 640 MiB public task. If the privileged release fails,
+# restore the public revision too so one release SHA remains authoritative across both services.
+if ! IMAGE="$IMAGE" NAME_PREFIX="$NAME_PREFIX" ECS_CLUSTER="$CLUSTER" \
+  "$(dirname "$0")/deploy-ecs-acme-worker.sh"; then
+  rollback_service || true
+  exit 1
 fi
 
 if [ -n "$CUTOVER" ]; then

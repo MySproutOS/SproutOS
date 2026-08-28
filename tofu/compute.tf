@@ -937,19 +937,6 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
-        /*
-          Versioned rustls certificate objects. The router reads an exact S3 VersionId before it
-          acknowledges readiness; the worker writes and deletes only inside this dedicated bucket.
-          No bucket-policy, ACL or public-access mutation is granted.
-        */
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-        ]
-        Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
-      },
-      {
         # Tenant object storage. Listing is limited to logical service prefixes in the one physical
         # bucket; no instance can list another platform bucket or the bucket root.
         Effect   = "Allow"
@@ -1068,12 +1055,36 @@ resource "aws_iam_role_policy_attachment" "task_application" {
 }
 
 /*
-  DNS mutation belongs to the control-plane worker, never to the public Rust router.
+  Router-only certificate reads. Keep private-key object access out of the public ECS website/API
+  task role; the router instances read an exact immutable VersionId and never list the bucket.
+*/
+resource "aws_iam_policy" "router_certificate_read" {
+  name        = "${var.name_prefix}-router-certificate-read"
+  description = "Read exact versioned rustls certificate objects from router instances."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:GetObjectVersion"]
+      Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "instance_router_certificate_read" {
+  role       = aws_iam_role.instance.name
+  policy_arn = aws_iam_policy.router_certificate_read.arn
+}
+
+/*
+  Static-tenant DNS mutation belongs to the isolated deployment/certificate worker, never to the
+  public website/API task or Rust router.
 
   The legacy router instances and ECS control-plane task previously shared `application`, so the
-  router inherited the ability to rewrite every exact record in the tenant zone even though its
-  data path only reads hostname routes from Valkey. Keep this attachment on the ECS task role; the
-  ASG instance role intentionally receives no Route 53 write action.
+  router inherited the ability to rewrite tenant records even though its data path only reads
+  hostname routes from Valkey. The dedicated task may change only generated A/AAAA hosts below the
+  tenant suffix; ACME TXT mutation remains in its separately constrained statement below.
 */
 resource "aws_iam_policy" "control_plane_dns" {
   name        = "${var.name_prefix}-control-plane-dns"
@@ -1081,17 +1092,38 @@ resource "aws_iam_policy" "control_plane_dns" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
-      Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+        Condition = {
+          "ForAllValues:StringLike" = {
+            "route53:ChangeResourceRecordSetsNormalizedRecordNames" = ["*.${var.tenant_domain}"]
+          }
+          "ForAllValues:StringEquals" = {
+            "route53:ChangeResourceRecordSetsRecordTypes" = ["A", "AAAA"]
+            "route53:ChangeResourceRecordSetsActions"     = ["UPSERT", "DELETE"]
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ListResourceRecordSets"]
+        Resource = "arn:aws:route53:::hostedzone/${aws_route53_zone.tenant.zone_id}"
+      },
+    ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "task_control_plane_dns" {
-  role       = aws_iam_role.task.name
+resource "aws_iam_role_policy_attachment" "acme_task_control_plane_dns" {
+  role       = aws_iam_role.acme_task.name
   policy_arn = aws_iam_policy.control_plane_dns.arn
+}
+
+resource "aws_iam_role_policy_attachment" "acme_task_application" {
+  role       = aws_iam_role.acme_task.name
+  policy_arn = aws_iam_policy.application.arn
 }
 
 /*
@@ -1102,7 +1134,8 @@ resource "aws_iam_role_policy_attachment" "task_control_plane_dns" {
   role while the legacy release path exists. The current website/API/worker containers share one
   ECS task roles are shared by every container in a task, so the certificate poller is a separate
   task and role. The public website, API, ordinary worker, and routers receive no account-key,
-  certificate-write, DNS-write, or restart capability.
+  certificate-write, DNS-write, or restart capability. Static publication and teardown also run in
+  the isolated task because they need the separately constrained generated-host A/AAAA grant.
 */
 resource "aws_iam_policy" "acme_worker" {
   name        = "${var.name_prefix}-acme-worker"
@@ -1132,7 +1165,7 @@ resource "aws_iam_policy" "acme_worker" {
         Resource = aws_s3_bucket.tenant_certificates.arn
         Condition = {
           StringLike = {
-            "s3:prefix" = ["custom-domains/*"]
+            "s3:prefix" = ["custom-domains/*", "platform-edge/*"]
           }
         }
       },
@@ -1182,6 +1215,11 @@ resource "aws_iam_policy" "acme_worker" {
         # Constructed instead of referencing the ASGs so their launch template may depend on this
         # policy without introducing a Terraform dependency cycle.
         Resource = "arn:aws:autoscaling:${var.aws_region}:${var.aws_account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-router-*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["autoscaling:DescribeInstanceRefreshes"]
+        Resource = "*"
       },
       {
         Effect   = "Allow"

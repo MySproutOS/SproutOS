@@ -47,6 +47,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("renewal_info_certificate_id", "text")
     .addColumn("renewal_info_retry_at", "timestamptz")
     .addColumn("renewal_info_explanation_url", "text")
+    .addColumn("restart_request_ids", "jsonb")
     .execute()
   await db.schema
     .alterTable("platform_edge_certificate")
@@ -109,5 +110,6 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     .dropColumn("renewal_info_certificate_id")
     .dropColumn("renewal_info_retry_at")
     .dropColumn("renewal_info_explanation_url")
+    .dropColumn("restart_request_ids")
     .execute()
 }

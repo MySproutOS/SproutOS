@@ -247,7 +247,8 @@ grep -q 'ECS waiter returned but the requested release did not settle' "$TEST_DI
 [ "$(grep -c 'ecs update-service' "$STUB_CALLS")" = 1 ]
 
 # Once OpenTofu provisions the dedicated service, the same release updates its isolated task role
-# before changing the public website/API service.
+# after the old, larger public revision has drained. This preserves the one spare host needed to
+# place the smaller public replacement during the first capacity-envelope rollout.
 unlink "$REGISTER_COUNT"
 unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
@@ -262,5 +263,11 @@ jq -e '
 ' "$CAPTURE/task-3.json" >/dev/null
 grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
 grep -q 'ecs update-service .*--service sproutos-acme-worker .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
+web_update_line=$(grep -n 'ecs update-service .*--service sproutos-web .*sproutos-web:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
+acme_update_line=$(grep -n 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
+if [ "$web_update_line" -ge "$acme_update_line" ]; then
+  echo "the isolated worker was updated before the public replacement drained" >&2
+  exit 1
+fi
 
 echo "deploy-ecs-web tests passed"
