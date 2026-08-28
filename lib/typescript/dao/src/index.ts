@@ -116,11 +116,21 @@ import { crudCustomDomain } from "./customDomain/crud"
 import { CUSTOM_DOMAIN_FIELDS, fetchCustomDomain } from "./customDomain/fetch"
 import { crudPlatformEdgeCertificate } from "./platformEdgeCertificate/crud"
 import { fetchPlatformEdgeCertificate } from "./platformEdgeCertificate/fetch"
+import {
+  type CatalogueListingInput,
+  crudDeploymentCatalogueImport,
+  type ReconcileDeploymentCatalogueInput,
+} from "./deploymentCatalogueImport/crud"
+import { fetchDeploymentCatalogueImport } from "./deploymentCatalogueImport/fetch"
 
 export {
   ADMIN_ROLE_NAME,
   crudPlatformEdgeCertificate,
   fetchPlatformEdgeCertificate,
+  crudDeploymentCatalogueImport,
+  fetchDeploymentCatalogueImport,
+  CatalogueListingInput,
+  ReconcileDeploymentCatalogueInput,
   AgentConfigUpsert,
   AgentCredentialKind,
   AgentEventRow,

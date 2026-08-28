@@ -111,6 +111,7 @@ beforeAll(async () => {
       repositoryId,
       name: "Workflows",
       slug: `wf-${projectId}`,
+      kind: "workflow",
     })
     .execute()
 })
@@ -164,6 +165,58 @@ describe.skipIf(!up)("the organization's workflows", () => {
     // and a fourth state meaning "nothing yet" is one every list has to explain.
     expect(entry?.health).toBe("healthy")
     expect(entry?.lastRunAt).toBeNull()
+  })
+
+  it("keeps a workflow associated with a repository group out of the standalone list", async ({
+    skip,
+  }) => {
+    if (!up) skip()
+    const groupId = v7()
+    const associatedProjectId = v7()
+    const associatedWorkflowId = v7()
+    await db
+      .insertInto("project")
+      .values([
+        {
+          id: groupId,
+          organizationId,
+          repositoryId,
+          name: "Repository Group",
+          slug: `group-${groupId}`,
+          isGroup: true,
+          rootDir: "group",
+        },
+        {
+          id: associatedProjectId,
+          organizationId,
+          repositoryId,
+          name: "Associated Workflow",
+          slug: `associated-${associatedProjectId}`,
+          kind: "workflow",
+          parentProjectId: groupId,
+          rootDir: "associated",
+        },
+      ])
+      .execute()
+    await db
+      .insertInto("workflow")
+      .values({
+        id: associatedWorkflowId,
+        projectId: associatedProjectId,
+        slug: `wf-${associatedWorkflowId}`,
+        name: "Associated",
+        queueName: `q-${associatedWorkflowId}`,
+      })
+      .execute()
+
+    const response = await call("GET", `/v1/orgs/${orgSlug}/workflows`, actor())
+    expect((response.json.data as Json[]).some((row) => row.id === associatedWorkflowId)).toBe(
+      false,
+    )
+
+    await db.deleteFrom("workflow").where("id", "=", associatedWorkflowId).execute()
+    await db.deleteFrom("project").where("id", "=", associatedProjectId).execute()
+    await db.deleteFrom("project").where("id", "=", groupId).execute()
   })
 
   it("does not report a disabled schedule as a schedule", async ({ skip }) => {

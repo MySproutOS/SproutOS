@@ -1,4 +1,5 @@
 import { openEnvVarValue } from "@lib/envelope"
+import { tearDownProject } from "@lib/jobs"
 /* oxlint-disable no-await-in-loop */
 import { overhead, rateTimesQuantity } from "@lib/billing/money"
 import { db } from "@sproutos/db"
@@ -82,6 +83,7 @@ describe.skipIf(!reachable)("project routes", () => {
   let orgBId: string
 
   const listingId = v7()
+  const catalogueImportId = v7()
   const listingSlug = `proj-test-listing-${listingId.slice(-8)}`
 
   let forkedProjectId = ""
@@ -105,6 +107,26 @@ describe.skipIf(!reachable)("project routes", () => {
     orgBId = trackOrganization(b.json.id as string)
     orgB = b.json.slug as string
 
+    const fixtureHex = listingId.replaceAll("-", "")
+    await db
+      .insertInto("deploymentCatalogueImport")
+      .values({
+        id: catalogueImportId,
+        ociRepository: "ghcr.io/mysproutos/deployment-catalogue",
+        ociDigest: `sha256:${fixtureHex.repeat(2)}`,
+        catalogueDigest: `sha256:${fixtureHex.repeat(2)}`,
+        sourceRepository: "MySproutOS/Deployment-Templates",
+        workflowRef:
+          "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        sourceRef: "refs/heads/main",
+        sourceSha: fixtureHex.repeat(2).slice(0, 40),
+        signatureIdentity:
+          "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        signatureIssuer: "https://token.actions.githubusercontent.com",
+        provenance: { fixture: true },
+      })
+      .execute()
+
     await db
       .insertInto("storeListing")
       .values({
@@ -119,6 +141,15 @@ describe.skipIf(!reachable)("project routes", () => {
         defaultBranch: "main",
         platform: "web",
         status: "published",
+        catalogueEntryId: listingSlug,
+        catalogueImportId,
+        catalogueSchemaVersion: 1,
+        catalogueManifest: { fixture: true },
+        upstreamCommit: fixtureHex.repeat(2).slice(0, 40),
+        templatePluginRepository: "ghcr.io/mysproutos/project-test-plugin",
+        templatePluginDigest: `sha256:${fixtureHex.repeat(2)}`,
+        capabilityVerifiedAt: new Date(),
+        e2eVerifiedAt: new Date(),
       })
       .execute()
   })
@@ -130,6 +161,7 @@ describe.skipIf(!reachable)("project routes", () => {
       await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
     await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
+    await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
     await cleanupFixtures()
   })
 
@@ -1248,39 +1280,34 @@ describe.skipIf(!reachable)("project routes", () => {
       await db.deleteFrom("usageRollup").where("id", "in", ids).execute()
     })
 
-    it("shows the region of the project's backend service, and null before it has one", async () => {
+    it("persists the project region and description", async () => {
       const { id: projectId } = await ownProject("Regioned")
 
       const before = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
       const beforeEntry = (before.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
-      // A project has no region of its own — it is where its *data* lives that matters, and that is
-      // a property of a backend service it may not have yet.
       expect(beforeEntry?.region).toBeNull()
 
-      const region = await db.selectFrom("region").select(["id", "code"]).executeTakeFirstOrThrow()
-      const serviceId = v7()
-      await db
-        .insertInto("backendService")
-        .values({
-          id: serviceId,
-          organizationId: orgAId,
-          projectId,
-          regionId: region.id,
-          name: "Queue",
-          kind: "valkey",
-          status: "active",
-        })
-        .execute()
+      const region = await db
+        .selectFrom("region")
+        .select(["id", "code"])
+        .where("isActive", "=", true)
+        .executeTakeFirstOrThrow()
+      const updated = await call("PATCH", `/v1/orgs/${orgA}/projects/${projectId}`, alice, {
+        description: "A customer-visible description",
+        region: region.code,
+      })
+      expect(updated.status).toBe(200)
+      expect(updated.json.description).toBe("A customer-visible description")
+      expect(updated.json.region).toBe(region.code)
 
       const after = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
       const afterEntry = (after.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
       expect(afterEntry?.region).toBe(region.code)
-
-      await db.deleteFrom("backendService").where("id", "=", serviceId).execute()
+      expect(afterEntry?.description).toBe("A customer-visible description")
     })
 
     it("flags a fork only while its latest sync says it is behind", async () => {
@@ -1363,6 +1390,7 @@ describe.skipIf(!reachable)("project routes", () => {
   */
   describe("groups", () => {
     let groupId = ""
+    let secondGroupId = ""
     let childId = ""
     /*
       Its own repository, not the shared fixture.
@@ -1420,6 +1448,7 @@ describe.skipIf(!reachable)("project routes", () => {
 
       expect(response.status).toBe(201)
       expect((response.json.project as Json).isGroup).toBe(true)
+      secondGroupId = (response.json.project as Json).id as string
     })
 
     /*
@@ -1537,6 +1566,195 @@ describe.skipIf(!reachable)("project routes", () => {
       })
 
       expect(response.status).toBe(400)
+    })
+
+    it("sets a deployable child as the group primary and derives its active domain", async () => {
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId: childId,
+          kind: "production",
+          gitSha: "b".repeat(40),
+          status: "ready",
+          url: "https://generated.sproutos.run",
+          hostname: "generated.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deploymentId })
+        .where("id", "=", childId)
+        .execute()
+      await db
+        .insertInto("customDomain")
+        .values({
+          id: v7(),
+          organizationId: orgAId,
+          projectId: childId,
+          hostname: "app.example.test",
+          verificationToken: "test-token",
+          status: "active",
+        })
+        .execute()
+
+      const response = await call("PATCH", `/v1/orgs/${orgA}/projects/${groupId}`, alice, {
+        primaryChildProjectId: childId,
+      })
+      expect(response.status).toBe(200)
+      expect(response.json.primaryChildProjectId).toBe(childId)
+      expect(response.json.primaryHostname).toBe("app.example.test")
+      expect(response.json.primaryUrl).toBe("https://app.example.test")
+    })
+
+    it("deletes and tears down an arbitrarily nested group deepest-first", async () => {
+      const removedSibling = await call(
+        "DELETE",
+        `/v1/orgs/${orgA}/projects/${secondGroupId}`,
+        alice,
+      )
+      expect(removedSibling.status).toBe(200)
+      expect(removedSibling.json.repositoryReleased).toBe(false)
+
+      const middle = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Middle Group",
+        isGroup: true,
+        parentProjectId: groupId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(middle.status).toBe(201)
+      const middleId = (middle.json.project as Json).id as string
+
+      const inner = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Inner Group",
+        isGroup: true,
+        parentProjectId: middleId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(inner.status).toBe(201)
+      const innerId = (inner.json.project as Json).id as string
+
+      const leaf = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Nested Deployable Leaf",
+        rootDir: "apps/nested-leaf",
+        parentProjectId: innerId,
+        source: { type: "repository", repositoryId: groupRepositoryId },
+      })
+      expect(leaf.status).toBe(201)
+      const leafId = (leaf.json.project as Json).id as string
+
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId: leafId,
+          kind: "production",
+          gitSha: "c".repeat(40),
+          hostname: "nested.example.test",
+          status: "ready",
+        })
+        .execute()
+      await db
+        .insertInto("projectEnvVar")
+        .values({
+          id: v7(),
+          projectId: leafId,
+          key: "NESTED_SECRET",
+          target: "all",
+          valueCiphertext: "sealed",
+          valueWrappedDek: "wrapped",
+          valueKmsKeyId: "alias/test",
+          isSecret: true,
+        })
+        .execute()
+
+      const liveTree = await sql<{ id: string }>`
+        with recursive tree as (
+          select id from project where id = ${groupId} and deleted_at is null
+          union all
+          select child.id
+          from project child
+          inner join tree parent on child.parent_project_id = parent.id
+          where child.deleted_at is null
+        )
+        select id from tree
+      `.execute(db)
+      const response = await call("DELETE", `/v1/orgs/${orgA}/projects/${groupId}`, alice)
+      expect(response.status).toBe(200)
+      const jobs = response.json.jobs as Json[]
+      const jobProjectIds = jobs.map((job) => job.projectId as string)
+      const expectedTreeIds = liveTree.rows.map((project) => project.id)
+      expect(new Set(jobProjectIds)).toStrictEqual(new Set(expectedTreeIds))
+      expect(jobProjectIds.indexOf(leafId)).toBeLessThan(jobProjectIds.indexOf(innerId))
+      expect(jobProjectIds.indexOf(innerId)).toBeLessThan(jobProjectIds.indexOf(middleId))
+      expect(jobProjectIds.at(-1)).toBe(groupId)
+
+      const queued = await db
+        .selectFrom("backgroundJob")
+        .select(["payload", "state"])
+        .where("kind", "=", "project.teardown")
+        .execute()
+      const queuedTreeIds = queued
+        .filter(({ payload }) => {
+          const projectId = (payload as Json).projectId
+          return typeof projectId === "string" && expectedTreeIds.includes(projectId)
+        })
+        .map(({ payload }) => (payload as Json).projectId as string)
+      expect(new Set(queuedTreeIds)).toStrictEqual(new Set(expectedTreeIds))
+
+      const rows = await db
+        .selectFrom("project")
+        .select(["id", "deletedAt", "state"])
+        .where("id", "in", expectedTreeIds)
+        .orderBy("id")
+        .execute()
+      expect(rows).toHaveLength(expectedTreeIds.length)
+      expect(rows.every((row) => row.deletedAt !== null && row.state === "deleting")).toBe(true)
+
+      const handler = tearDownProject({
+        lambda: { send: () => Promise.resolve({}) },
+        valkey: { del: () => Promise.resolve(1) },
+      } as never)
+      for (const job of jobs) {
+        await handler(
+          { payload: { projectId: job.projectId, projectJobId: job.id } } as never,
+          { db, keepAlive: () => Promise.resolve(true) } as never,
+        )
+      }
+
+      const completed = await db
+        .selectFrom("project")
+        .select(["id", "state"])
+        .where("id", "in", expectedTreeIds)
+        .execute()
+      expect(completed.every((project) => project.state === "deleted")).toBe(true)
+      expect(
+        await db
+          .selectFrom("project")
+          .select("id")
+          .where("parentProjectId", "in", expectedTreeIds)
+          .where("deletedAt", "is", null)
+          .execute(),
+      ).toHaveLength(0)
+
+      const deployment = await db
+        .selectFrom("deployment")
+        .select("status")
+        .where("id", "=", deploymentId)
+        .executeTakeFirstOrThrow()
+      expect(deployment.status).toBe("torn_down")
+      expect(
+        await db.selectFrom("projectEnvVar").select("id").where("projectId", "=", leafId).execute(),
+      ).toHaveLength(0)
+
+      const repository = await db
+        .selectFrom("repository")
+        .select("deletedAt")
+        .where("id", "=", groupRepositoryId)
+        .executeTakeFirstOrThrow()
+      expect(repository.deletedAt).not.toBeNull()
     })
   })
 })

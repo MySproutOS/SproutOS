@@ -60,6 +60,11 @@ import {
   scanStaticCloudFrontLogs,
   STATIC_CLOUDFRONT_METERING_KINDS,
 } from "./static-cloudfront-metering"
+import {
+  DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  importDeploymentCatalogue,
+  scheduleDeploymentCatalogueReconciliation,
+} from "./deployment-catalogue"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -119,6 +124,7 @@ export const JOB_KINDS = {
   reconcilePlatformEdgeCertificate: PLATFORM_EDGE_CERTIFICATE_KIND,
   scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
   importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
+  importDeploymentCatalogue: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -418,6 +424,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
+  [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
 }
 
 /**
@@ -429,6 +436,8 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
  */
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
+
+  await scheduleDeploymentCatalogueReconciliation(db, now)
 
   if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
     await enqueue(db, {

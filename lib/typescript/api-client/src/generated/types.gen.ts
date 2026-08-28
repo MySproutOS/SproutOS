@@ -928,6 +928,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
     data: Array<{
       id: string
       name: string
+      description: string | null
       slug: string
       kind: string
       state: string
@@ -955,6 +956,9 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
         clientId: string
         name: string
       } | null
+      primaryChildProjectId: string | null
+      primaryUrl: string | null
+      primaryHostname: string | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -969,6 +973,8 @@ export type GetV1OrgsByOrgSlugProjectsResponse =
 export type PostV1OrgsByOrgSlugProjectsData = {
   body?: {
     name: string
+    description?: string | null
+    region?: string | null
     slug?: string
     kind?: "site" | "workflow"
     rootDir?: string
@@ -1040,6 +1046,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
     project: {
       id: string
       name: string
+      description: string | null
       slug: string
       kind: string
       state: string
@@ -1067,12 +1074,16 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
         clientId: string
         name: string
       } | null
+      primaryChildProjectId: string | null
+      primaryUrl: string | null
+      primaryHostname: string | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1131,6 +1142,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1146,6 +1158,24 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       finishedAt: Date | null
       createdAt: Date
     }
+    jobs: Array<{
+      id: string
+      projectId: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }>
     destroyed: Array<string>
     scheduledForTeardown: Array<string>
     retained: Array<string>
@@ -1189,6 +1219,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
   200: {
     id: string
     name: string
+    description: string | null
     slug: string
     kind: string
     state: string
@@ -1216,6 +1247,9 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       clientId: string
       name: string
     } | null
+    primaryChildProjectId: string | null
+    primaryUrl: string | null
+    primaryHostname: string | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1244,6 +1278,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponse =
 export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
   body?: {
     name?: string
+    description?: string | null
+    region?: string | null
     slug?: string
     rootDir?: string
     dockerfilePath?: string
@@ -1254,6 +1290,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
     isGroup?: boolean
+    primaryChildProjectId?: string | null
   }
   path: {
     orgSlug: string
@@ -1292,6 +1329,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
   200: {
     id: string
     name: string
+    description: string | null
     slug: string
     kind: string
     state: string
@@ -1319,6 +1357,9 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       clientId: string
       name: string
     } | null
+    primaryChildProjectId: string | null
+    primaryUrl: string | null
+    primaryHostname: string | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1359,6 +1400,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses = {
   200: {
     data: Array<{
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1411,6 +1453,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
    */
   200: {
     id: string
+    projectId: string
     kind: string
     state: string
     progress: number
@@ -2903,6 +2946,66 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses = {
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    sessionId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions/{sessionId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such session
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses = {
+  /**
+   * Transcript
+   */
+  200: {
+    session: {
+      id: string
+      title: string | null
+      status: string
+      createdAt: Date
+      updatedAt: Date
+    }
+    turns: Array<{
+      id: string
+      role: string
+      inputText: string | null
+      error: string | null
+      seq: number
+      createdAt: Date
+    }>
+    events: Array<{
+      seq: string
+      type: string
+      payload: {
+        [key: string]: unknown
+      }
+      agentTurnId: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses]
 
 export type GetV1OrgsByOrgSlugServicesData = {
   body?: never
@@ -4490,6 +4593,10 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
   /**
+   * Publication is controlled by the signed catalogue
+   */
+  400: ErrorResponseT
+  /**
    * Caller lacks store:listing:moderate
    */
   403: ErrorResponseT
@@ -4501,23 +4608,6 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
-  /**
-   * The published listing
-   */
-  200: {
-    id: string
-    slug: string
-    status: string
-    reviewedByUserId: string | null
-    reviewedAt: Date | null
-    rejectionReason: string | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
   body?: {
@@ -6354,6 +6444,36 @@ export type PostV1InternalPgResolveResponses = {
 
 export type PostV1InternalPgResolveResponse =
   PostV1InternalPgResolveResponses[keyof PostV1InternalPgResolveResponses]
+
+export type PostV1DeployCatalogueImportData = {
+  body?: {
+    oidc_token: string
+    oci_digest: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/catalogue/import"
+}
+
+export type PostV1DeployCatalogueImportErrors = {
+  /**
+   * The OIDC token or trusted workflow identity did not verify
+   */
+  401: unknown
+}
+
+export type PostV1DeployCatalogueImportResponses = {
+  /**
+   * The signed catalogue was queued for verification and reconciliation
+   */
+  202: {
+    job_id: string
+    oci_digest: string
+  }
+}
+
+export type PostV1DeployCatalogueImportResponse =
+  PostV1DeployCatalogueImportResponses[keyof PostV1DeployCatalogueImportResponses]
 
 export type PostV1DeployTokenData = {
   body?: {
