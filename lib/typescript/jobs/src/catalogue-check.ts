@@ -1,7 +1,6 @@
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import { sql } from "kysely"
-import { verifyDeploymentMirror } from "@lib/github"
 import type { JobHandler } from "./worker"
 
 /**
@@ -60,8 +59,6 @@ export async function listingsDueForCheck(
     slug: string
     upstreamOwner: string
     upstreamRepo: string
-    deploymentSourceOwner: string | null
-    deploymentSourceRepo: string | null
     defaultBranch: string
     rootDir: string
     dockerfilePath: string
@@ -76,8 +73,6 @@ export async function listingsDueForCheck(
       "slug",
       "upstreamOwner",
       "upstreamRepo",
-      "deploymentSourceOwner",
-      "deploymentSourceRepo",
       "defaultBranch",
       "rootDir",
       "dockerfilePath",
@@ -141,37 +136,13 @@ export function verifyCatalogue(
     contextSubdir: string
     dockerfilePath: string
   }) => Promise<{ ok: boolean; detail: string }>,
-  verifyMirror: typeof verifyDeploymentMirror = verifyDeploymentMirror,
 ): JobHandler {
   return async (_job, { db }) => {
     const due = await listingsDueForCheck(db)
 
     for (const listing of due) {
-      if (listing.deploymentSourceOwner === null || listing.deploymentSourceRepo === null) {
-        await recordVerification(db, listing.id, {
-          ok: false,
-          detail: "The listing has no SproutOS-Apps deployment mirror.",
-        })
-        continue
-      }
-
-      const instructionsPath = await verifyMirror({
-        upstreamOwner: listing.upstreamOwner,
-        mirrorOwner: listing.deploymentSourceOwner,
-        repo: listing.deploymentSourceRepo,
-        branch: listing.defaultBranch,
-      })
-      if (instructionsPath === null) {
-        await recordVerification(db, listing.id, {
-          ok: false,
-          detail:
-            "The deployment mirror is behind upstream, lacks SPROUT_OS_DEPLOY.md, or changes other source files.",
-        })
-        continue
-      }
-
       const outcome = await build({
-        repositoryUrl: `https://github.com/${listing.deploymentSourceOwner}/${listing.deploymentSourceRepo}.git`,
+        repositoryUrl: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}.git`,
         ref: listing.defaultBranch,
         contextSubdir: listing.rootDir,
         dockerfilePath: listing.dockerfilePath,

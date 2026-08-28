@@ -698,9 +698,6 @@ const app = new Hono()
           "upstreamRepo",
           "rootDir",
           "dockerfilePath",
-          "deploymentInstructionsPath",
-          "deploymentSourceOwner",
-          "deploymentSourceRepo",
         ])
 
         if (!listing || listing.status !== "published") {
@@ -739,7 +736,7 @@ const app = new Hono()
           private: source.private ?? true,
           provenance: "fork",
           upstreamDefaultBranch: listing.defaultBranch,
-          upstreamFullName: `${listing.deploymentSourceOwner ?? listing.upstreamOwner}/${listing.deploymentSourceRepo ?? listing.upstreamRepo}`,
+          upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
         }
       } else {
         const ownerLogin = source.ownerLogin ?? forkDestination

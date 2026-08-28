@@ -16,7 +16,6 @@ import { validator } from "../utils/validator"
 import { authMiddleware, authNoThrowMiddleware } from "../middleware"
 import { collectionResource, paramResource, requirePermission } from "../rbac"
 import { estimateListingCosts } from "@lib/billing"
-import { verifyDeploymentMirror } from "@lib/github"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
 import { throwBadRequest, throwNotFound } from "../utils/http-exception"
 import { cursorPaginate, decodeCursor } from "../utils/pagination"
@@ -363,7 +362,6 @@ export const storeModeration = new Hono()
           description: "The published listing",
           content: { "application/json": { schema: resolver(storeSchemaModerationResponse) } },
         },
-        400: { description: "The deployment mirror has no instruction marker", ...errorResponse },
         403: { description: "Caller lacks store:listing:moderate", ...errorResponse },
         404: { description: "No such listing", ...errorResponse },
       },
@@ -375,37 +373,10 @@ export const storeModeration = new Hono()
       const organization = c.var.organization
       const { listingId } = c.req.valid("param")
 
-      const before = await fetchStoreListing(db).getOne(listingId, [
-        "id",
-        "slug",
-        "status",
-        "defaultBranch",
-        "deploymentSourceOwner",
-        "deploymentSourceRepo",
-        "upstreamOwner",
-      ])
+      const before = await fetchStoreListing(db).getOne(listingId, ["id", "slug", "status"])
       if (!before) return throwNotFound(c, "Listing not found")
 
-      if (before.deploymentSourceOwner === null || before.deploymentSourceRepo === null) {
-        return throwBadRequest(c, "Listing has no SproutOS-Apps deployment mirror")
-      }
-      const instructionsPath = await verifyDeploymentMirror({
-        upstreamOwner: before.upstreamOwner,
-        mirrorOwner: before.deploymentSourceOwner,
-        repo: before.deploymentSourceRepo,
-        branch: before.defaultBranch,
-      })
-      if (instructionsPath === null) {
-        return throwBadRequest(
-          c,
-          "The deployment mirror must contain SPROUT_OS_DEPLOY.md at its root or under .config",
-        )
-      }
-
       const listing = await db.transaction().execute(async (tx) => {
-        await crudStoreListing(tx).update(listingId, {
-          deploymentInstructionsPath: instructionsPath,
-        })
         const row = await crudStoreListing(tx).publish(listingId, user.id)
         if (row === undefined) return undefined
 

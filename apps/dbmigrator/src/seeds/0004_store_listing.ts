@@ -102,9 +102,9 @@ const LISTINGS: Listing[] = [
     name: "Twenty",
     tagline: "An open-source CRM that does not bill per seat to stay usable.",
     descriptionMd:
-      "Fork Twenty when you want a CRM your team can shape instead of renting a fixed workflow. " +
-      "Start with contacts, companies, opportunities, pipelines, APIs, and webhooks, then use your " +
-      "own repository to change the product and keep control of its data.",
+      "Contacts, companies, opportunities and a customisable pipeline, with an API and webhooks " +
+      "for the rest. The open alternative to Salesforce, and the largest application in the store " +
+      "— it wants a real database rather than the cheapest instance.",
     categorySlug: "productivity",
     upstreamOwner: "twentyhq",
     upstreamRepo: "twenty",
@@ -231,19 +231,12 @@ export async function seed(db: Kysely<any>): Promise<void> {
       await db
         .updateTable("store_listing")
         .set({
-          name: listing.name,
-          tagline: listing.tagline,
-          description_md: listing.descriptionMd,
-          homepage_url: listing.homepageUrl,
           root_dir: listing.rootDir,
           dockerfile_path: listing.dockerfilePath,
           default_branch: listing.defaultBranch,
           upstream_owner: listing.upstreamOwner,
           upstream_repo: listing.upstreamRepo,
           upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
-          deployment_source_owner: "SproutOS-Apps",
-          deployment_source_repo: listing.upstreamRepo,
-          deployment_instructions_path: "SPROUT_OS_DEPLOY.md",
         })
         .where("id", "=", text(existing, "id"))
         .execute()
@@ -264,9 +257,6 @@ export async function seed(db: Kysely<any>): Promise<void> {
         upstream_owner: listing.upstreamOwner,
         upstream_repo: listing.upstreamRepo,
         upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
-        deployment_source_owner: "SproutOS-Apps",
-        deployment_source_repo: listing.upstreamRepo,
-        deployment_instructions_path: "SPROUT_OS_DEPLOY.md",
         homepage_url: listing.homepageUrl,
         root_dir: listing.rootDir,
         dockerfile_path: listing.dockerfilePath,
