@@ -14,9 +14,12 @@ legacy_database="$(sed -n 's/^CLICKHOUSE_DATABASE=\([^[:space:]]*\)$/\1/p' "$leg
 [ -n "$legacy_database" ]
 [ "$ecs_database" = "$legacy_database" ]
 
-reference_count="$(grep -c 'name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database' "$ecs_file")"
-if [ "$reference_count" -ne 2 ]; then
-  echo "expected API and worker to share local.ecs_clickhouse_database; found $reference_count references" >&2
+web_references="$(sed -n '/^resource "aws_ecs_task_definition" "web" {$/,/^}$/p' "$ecs_file" \
+  | grep -c 'name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database')"
+acme_references="$(sed -n '/^resource "aws_ecs_task_definition" "acme_worker" {$/,/^}$/p' "$ecs_file" \
+  | grep -c 'name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database')"
+if [ "$web_references" -ne 2 ] || [ "$acme_references" -ne 1 ]; then
+  echo "expected API + platform worker (2) and ACME worker (1) to share local.ecs_clickhouse_database; found $web_references + $acme_references" >&2
   exit 1
 fi
 
@@ -25,4 +28,4 @@ if grep -q 'name = "CLICKHOUSE_DATABASE", value = "' "$ecs_file"; then
   exit 1
 fi
 
-echo "ECS API and worker use the legacy production ClickHouse database: $ecs_database"
+echo "ECS API, platform worker, and ACME worker use the legacy production ClickHouse database: $ecs_database"
