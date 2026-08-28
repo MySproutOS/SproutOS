@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
-import { crudDeployment, fetchDeployment } from "@lib/dao"
+import { crudDeployment, fetchDeployment, fetchProject } from "@lib/dao"
 import {
   ANDROID_VERSION_CODE_MAX,
   androidVersionError,
@@ -26,6 +26,10 @@ import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { Type } from "typebox"
 import { validator } from "../utils/validator"
+import { authMiddleware } from "../middleware"
+import { paramResource, requirePermission } from "../rbac"
+import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { UUID7String } from "../utils/common.serializer"
 import { deployStatusSchemaParam, deployStatusSchemaResponse } from "./deploy.serializer"
 
 /**
@@ -66,8 +70,16 @@ function tokenSecret(): string {
 }
 
 /** `<projectId>.<expiry>.<hmac>` — small enough for a header, and carries its own expiry. */
-export function mintDeployToken(projectId: string, expiresAt: number, secret: string): string {
-  const body = `${projectId}.${expiresAt}`
+export function mintDeployToken(
+  projectId: string,
+  expiresAt: number,
+  secret: string,
+  actorUserId?: string,
+): string {
+  const body =
+    actorUserId === undefined
+      ? `${projectId}.${expiresAt}`
+      : `${projectId}.${expiresAt}.${actorUserId}`
   const mac = createHmac("sha256", secret).update(body).digest("base64url")
   return `${body}.${mac}`
 }
@@ -76,12 +88,18 @@ export function readDeployToken(
   token: string,
   secret: string,
   now: () => number = Date.now,
-): { projectId: string } | undefined {
+): { projectId: string; actorUserId?: string } | undefined {
   const parts = token.split(".")
-  if (parts.length !== 3) return undefined
+  if (parts.length !== 3 && parts.length !== 4) return undefined
 
-  const [projectId, expiry, mac] = parts as [string, string, string]
-  const expected = createHmac("sha256", secret).update(`${projectId}.${expiry}`).digest("base64url")
+  const projectId = parts[0]
+  const expiry = parts[1]
+  const actorUserId = parts.length === 4 ? parts[2] : undefined
+  const mac = parts.at(-1)
+  if (projectId === undefined || expiry === undefined || mac === undefined) return undefined
+  const body =
+    actorUserId === undefined ? `${projectId}.${expiry}` : `${projectId}.${expiry}.${actorUserId}`
+  const expected = createHmac("sha256", secret).update(body).digest("base64url")
 
   // Constant-time: the comparison is against a value the caller chooses and can vary a byte at a
   // time, which is exactly the shape a timing attack needs.
@@ -90,7 +108,7 @@ export function readDeployToken(
   if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined
 
   if (Number(expiry) <= Math.floor(now() / 1000)) return undefined
-  return { projectId }
+  return actorUserId === undefined ? { projectId } : { projectId, actorUserId }
 }
 
 const tokenRequest = Type.Object({
@@ -106,6 +124,7 @@ const tokenRequest = Type.Object({
   project: Type.Optional(Type.String({ minLength: 1 })),
 })
 const tokenResponse = Type.Object({ token: Type.String(), expires_in: Type.Integer() })
+const interactiveTokenParam = Type.Object({ orgSlug: Type.String(), projectId: UUID7String })
 
 function androidArtifactBucket(): string {
   const configured = process.env.ANDROID_ARTIFACT_BUCKET
@@ -233,13 +252,49 @@ const releaseResponse = Type.Object({
 })
 
 /** The bearer token on the two calls that follow the exchange. */
-function bearer(header: string | undefined): { projectId: string } | undefined {
+function bearer(
+  header: string | undefined,
+): { projectId: string; actorUserId?: string } | undefined {
   const token = header?.startsWith("Bearer ") === true ? header.slice(7) : undefined
   if (token === undefined) return undefined
   return readDeployToken(token, tokenSecret())
 }
 
 const deploy: Hono = new Hono()
+  .post(
+    "/orgs/:orgSlug/projects/:projectId/deploy-token",
+    describeRoute({
+      description: "Authorize an interactive deployment of one project",
+      security: [{ bearerAuth: [] }, { sessionCookie: [] }],
+      responses: {
+        200: {
+          description: "A project-bound deploy token",
+          content: { "application/json": { schema: resolver(tokenResponse) } },
+        },
+        400: { description: "The project is a group and cannot deploy" },
+        403: { description: "Caller lacks deployment:write" },
+        404: { description: "No such project in this organization" },
+      },
+    }),
+    authMiddleware,
+    validator("param", interactiveTokenParam),
+    requirePermission("deployment:write", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const { projectId } = c.req.valid("param")
+      const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
+        "id",
+        "isGroup",
+      ])
+      if (project === undefined) return throwNotFound(c, "Project not found")
+      if (project.isGroup) return throwBadRequest(c, "A project group cannot be deployed")
+
+      const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS
+      return c.json({
+        token: mintDeployToken(project.id, expiresAt, tokenSecret(), c.var.user.id),
+        expires_in: TOKEN_TTL_SECONDS,
+      })
+    },
+  )
   .post(
     "/deploy/token",
     describeRoute({
@@ -571,13 +626,11 @@ const deploy: Hono = new Hono()
         migrationHandler: json.migration_handler ?? null,
         migrationStatus: json.migration_key === undefined ? "skipped" : "pending",
         /*
-          Null, and deliberately so.
-
-          This request authenticated as a *repository* through GitHub OIDC; there is no user in the
-          exchange. Attributing it to one would be a fabrication on the very field that exists to
-          say who shipped it, so CI deploys have no author and the UI shows the repository.
+          Interactive deploy tokens carry the user who passed live RBAC. Repository tokens do not:
+          GitHub OIDC proves a repository, not a person, so CI deploys remain unattributed rather
+          than fabricating an author.
         */
-        createdByUserId: null,
+        createdByUserId: authorized.actorUserId ?? null,
         projectId: authorized.projectId,
         // `preview` for anything that is not production, so a branch build cannot take a
         // production hostname by naming itself one.

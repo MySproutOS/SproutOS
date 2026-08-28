@@ -207,6 +207,9 @@ importers:
 
   apps/dbmigrator:
     dependencies:
+      '@lib/oauth-provider':
+        specifier: workspace:*
+        version: link:../../lib/typescript/oauth-provider
       '@lib/observability':
         specifier: workspace:*
         version: link:../../lib/typescript/observability
@@ -616,6 +619,9 @@ importers:
       '@lib/oauth':
         specifier: workspace:*
         version: link:../../lib/typescript/oauth
+      '@lib/oauth-provider':
+        specifier: workspace:*
+        version: link:../../lib/typescript/oauth-provider
       '@sproutos/db':
         specifier: workspace:*
         version: link:../../packages/db

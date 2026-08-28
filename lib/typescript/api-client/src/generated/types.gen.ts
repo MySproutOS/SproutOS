@@ -44,6 +44,45 @@ export type ErrorResponseT = {
   error: ErrorObjectT
 }
 
+export type PostV1AuthCliTokenData = {
+  body?: {
+    code: string
+    clientId: string
+    redirectUri: string
+    codeVerifier: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/auth/cli/token"
+}
+
+export type PostV1AuthCliTokenErrors = {
+  /**
+   * The code, client, redirect, or verifier is invalid
+   */
+  400: ErrorResponseT
+}
+
+export type PostV1AuthCliTokenError = PostV1AuthCliTokenErrors[keyof PostV1AuthCliTokenErrors]
+
+export type PostV1AuthCliTokenResponses = {
+  /**
+   * A scoped API key shown once
+   */
+  201: {
+    key: string
+    scopes: Array<string>
+    expiresAt: Date | null
+    organization: {
+      id: string
+      slug: string
+    }
+  }
+}
+
+export type PostV1AuthCliTokenResponse =
+  PostV1AuthCliTokenResponses[keyof PostV1AuthCliTokenResponses]
+
 export type GetV1AuthMeData = {
   body?: never
   path?: never
@@ -62,6 +101,14 @@ export type GetV1AuthMeResponses = {
       email: string
       isAdmin: boolean
     } | null
+    organization: {
+      id: string
+      slug: string
+    } | null
+    authentication: {
+      kind: "session" | "oauth" | "api_key"
+      scopes: Array<string> | null
+    } | null
   }
 }
 
@@ -75,6 +122,9 @@ export type PostV1AuthLogoutData = {
 }
 
 export type PostV1AuthLogoutErrors = {
+  /**
+   * Logout failed
+   */
   500: ErrorResponseT
 }
 
@@ -90,6 +140,34 @@ export type PostV1AuthLogoutResponses = {
 }
 
 export type PostV1AuthLogoutResponse = PostV1AuthLogoutResponses[keyof PostV1AuthLogoutResponses]
+
+export type PostV1AuthCliRevokeData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/auth/cli/revoke"
+}
+
+export type PostV1AuthCliRevokeErrors = {
+  /**
+   * The bearer credential is not a CLI API key
+   */
+  400: ErrorResponseT
+}
+
+export type PostV1AuthCliRevokeError = PostV1AuthCliRevokeErrors[keyof PostV1AuthCliRevokeErrors]
+
+export type PostV1AuthCliRevokeResponses = {
+  /**
+   * The current CLI key was revoked
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type PostV1AuthCliRevokeResponse =
+  PostV1AuthCliRevokeResponses[keyof PostV1AuthCliRevokeResponses]
 
 export type PostV1InvitesAcceptData = {
   body?: {
@@ -6616,6 +6694,44 @@ export type PostV1InternalPgResolveResponses = {
 
 export type PostV1InternalPgResolveResponse =
   PostV1InternalPgResolveResponses[keyof PostV1InternalPgResolveResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-token"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors = {
+  /**
+   * The project is a group and cannot deploy
+   */
+  400: unknown
+  /**
+   * Caller lacks deployment:write
+   */
+  403: unknown
+  /**
+   * No such project in this organization
+   */
+  404: unknown
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses = {
+  /**
+   * A project-bound deploy token
+   */
+  200: {
+    token: string
+    expires_in: number
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses]
 
 export type PostV1DeployTokenData = {
   body?: {

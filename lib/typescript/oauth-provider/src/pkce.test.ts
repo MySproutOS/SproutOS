@@ -1,7 +1,11 @@
 import { encodeBase64UrlNoPadding, sha256Utf8 } from "@utils/crypto"
 import { describe, expect, it } from "vitest"
 import { verifyPkce } from "./pkce"
-import { assertRegisteredRedirect, assertValidRedirectRegistration } from "./redirect"
+import {
+  assertRegisteredRedirect,
+  assertValidRedirectRegistration,
+  matchesRegisteredRedirect,
+} from "./redirect"
 import { OAuthError } from "./errors"
 
 const VERIFIER = "a".repeat(43)
@@ -65,6 +69,39 @@ describe("assertRegisteredRedirect", () => {
 
   it("refuses a client with nothing registered", () => {
     expect(() => assertRegisteredRedirect("https://app.example.com/cb", [])).toThrow(OAuthError)
+  })
+
+  it("allows only the ephemeral port to vary for an RFC 8252 loopback template", () => {
+    const template = "http://127.0.0.1/oauth/callback"
+
+    expect(matchesRegisteredRedirect("http://127.0.0.1:49152/oauth/callback", template)).toBe(true)
+    expect(assertRegisteredRedirect("http://127.0.0.1:65535/oauth/callback", [template])).toBe(
+      "http://127.0.0.1:65535/oauth/callback",
+    )
+  })
+
+  it("does not widen any other part of a loopback redirect", () => {
+    const template = "http://127.0.0.1/oauth/callback"
+    for (const attempt of [
+      "http://localhost:49152/oauth/callback",
+      "http://[::1]:49152/oauth/callback",
+      "http://127.0.0.1:49152/oauth/callback/",
+      "http://127.0.0.1:49152/oauth/callback?next=/evil",
+      "http://127.0.0.1:49152/other",
+      "https://127.0.0.1:49152/oauth/callback",
+    ]) {
+      expect(matchesRegisteredRedirect(attempt, template)).toBe(false)
+      expect(() => assertRegisteredRedirect(attempt, [template])).toThrow(OAuthError)
+    }
+  })
+
+  it("keeps a registered fixed loopback port exact", () => {
+    expect(
+      matchesRegisteredRedirect(
+        "http://127.0.0.1:49153/oauth/callback",
+        "http://127.0.0.1:49152/oauth/callback",
+      ),
+    ).toBe(false)
   })
 })
 

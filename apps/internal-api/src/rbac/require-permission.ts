@@ -45,12 +45,28 @@ const ORGANIZATION_FIELDS = ["id", "slug", "name", "kind", "ownerUserId"] as con
 async function resolveOrganization(
   c: Context,
   userId: string,
+  auth: AuthContext,
 ): Promise<OrganizationContext | null> {
+  const credentialOrganizationId = auth.kind === "session" ? null : auth.organizationId
   const slug = c.req.param("orgSlug")
 
   if (slug !== undefined && slug !== "") {
     const bySlug = await fetchOrganization(db).getBySlug(slug, [...ORGANIZATION_FIELDS])
+    if (
+      bySlug !== undefined &&
+      credentialOrganizationId !== null &&
+      bySlug.id !== credentialOrganizationId
+    ) {
+      return null
+    }
     return bySlug ?? null
+  }
+
+  if (credentialOrganizationId !== null) {
+    const scoped = await fetchOrganization(db).getOne(credentialOrganizationId, [
+      ...ORGANIZATION_FIELDS,
+    ])
+    return scoped ?? null
   }
 
   const lastOrganizationId = await fetchUserPreference(db).getLastOrganizationId(userId)
@@ -70,8 +86,9 @@ async function resolveOrganization(
 async function resolveMembership(
   c: Context,
   userId: string,
+  auth: AuthContext,
 ): Promise<{ organization: OrganizationContext; membership: MembershipContext } | null> {
-  const organization = await resolveOrganization(c, userId)
+  const organization = await resolveOrganization(c, userId, auth)
   if (organization === null) return null
 
   const membership = await fetchOrganizationMember(db).getForUser(organization.id, userId)
@@ -93,7 +110,7 @@ async function resolveMembership(
  */
 export function requireMembership() {
   return createMiddleware<{ Variables: PermissionVariables }>(async (c, next) => {
-    const resolved = await resolveMembership(c, c.var.user.id)
+    const resolved = await resolveMembership(c, c.var.user.id, c.var.auth)
     if (resolved === null) return throwNotFound(c, "Organization not found")
 
     c.set("organization", resolved.organization)
@@ -138,7 +155,7 @@ export function requirePermission(
       return throwForbidden(c, "Forbidden", ErrorCode.InsufficientPermissions)
     }
 
-    const resolved = await resolveMembership(c, user.id)
+    const resolved = await resolveMembership(c, user.id, c.var.auth)
     if (resolved === null) return throwNotFound(c, "Organization not found")
 
     const { organization, membership } = resolved

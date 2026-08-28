@@ -48,6 +48,7 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
+  PostV1AuthCliTokenResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenResponse,
@@ -70,6 +71,15 @@ import type {
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
 } from "./types.gen"
+
+export const postV1AuthCliTokenResponseTransformer = async (
+  data: any,
+): Promise<PostV1AuthCliTokenResponse> => {
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
+  return data
+}
 
 export const getV1OrgsResponseTransformer = async (data: any): Promise<GetV1OrgsResponse> => {
   data.data = data.data.map((item: any) => {

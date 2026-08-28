@@ -58,8 +58,10 @@ function invalidToken(c: Context): never {
  * anonymous request and produce a 401 that says the wrong thing.
  */
 export async function authenticateBearer(c: Context): Promise<BearerResult | null> {
-  const token = readBearerToken(c.req.header("authorization"))
-  if (token === null) return null
+  const header = c.req.header("authorization")
+  if (header === undefined) return null
+  const token = readBearerToken(header)
+  if (token === null) invalidToken(c)
 
   /*
     An API key and an OAuth token travel in the same header and are told apart by the key's prefix.
@@ -81,7 +83,13 @@ export async function authenticateBearer(c: Context): Promise<BearerResult | nul
 
     return {
       user,
-      auth: { kind: "api_key", scopes: resolved.scopes, apiKeyId: resolved.id },
+      auth: {
+        kind: "api_key",
+        scopes: resolved.scopes,
+        organizationId: resolved.organizationId,
+        apiKeyId: resolved.id,
+        oauthGrantId: resolved.oauthGrantId,
+      },
     }
   }
 
@@ -90,6 +98,7 @@ export async function authenticateBearer(c: Context): Promise<BearerResult | nul
     !introspected.active ||
     introspected.userId === undefined ||
     introspected.oauthClientId === undefined ||
+    introspected.organizationId === undefined ||
     // Refused rather than defaulted. A token with no grant cannot have anything it creates
     // attributed to one, so it could mint a credential that revoking consent would never find.
     introspected.oauthGrantId === undefined
@@ -105,6 +114,7 @@ export async function authenticateBearer(c: Context): Promise<BearerResult | nul
     auth: {
       kind: "oauth",
       scopes: introspected.scopes ?? [],
+      organizationId: introspected.organizationId,
       oauthClientId: introspected.oauthClientId,
       oauthGrantId: introspected.oauthGrantId,
     },

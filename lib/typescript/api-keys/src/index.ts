@@ -24,6 +24,8 @@ export const KEY_PREFIX = "sk_live_"
 /** Characters of the key shown in a list. Enough to recognise, far too few to use. */
 export const DISPLAY_PREFIX_LENGTH = KEY_PREFIX.length + 8
 
+export class InactiveGrantError extends Error {}
+
 export function generateKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   return `${KEY_PREFIX}${Buffer.from(bytes).toString("base64url")}`
@@ -50,6 +52,7 @@ export type ResolvedKey = {
   organizationId: string
   userId: string
   scopes: string[]
+  oauthGrantId: string | null
 }
 
 /**
@@ -68,11 +71,16 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
   const row = await db
     .selectFrom("apiKey")
     .innerJoin("organization", "organization.id", "apiKey.organizationId")
+    .leftJoin("oauthGrant", "oauthGrant.id", "apiKey.oauthGrantId")
     .select([
       "apiKey.id as id",
       "apiKey.organizationId as organizationId",
       "apiKey.userId as userId",
       "apiKey.scopes as scopes",
+      "apiKey.oauthGrantId as oauthGrantId",
+      "oauthGrant.revokedAt as grantRevokedAt",
+      "oauthGrant.organizationId as grantOrganizationId",
+      "oauthGrant.userId as grantUserId",
     ])
     .where("apiKey.keyHash", "=", await hashKey(key))
     .where("apiKey.revokedAt", "is", null)
@@ -83,7 +91,23 @@ export async function resolveKey(db: Kysely<DB>, key: string): Promise<ResolvedK
     .where("organization.deletedAt", "is", null)
     .executeTakeFirst()
 
-  return row === undefined ? undefined : { ...row, scopes: row.scopes ?? [] }
+  if (row === undefined) return undefined
+  if (
+    row.oauthGrantId !== null &&
+    (row.grantRevokedAt !== null ||
+      row.grantOrganizationId !== row.organizationId ||
+      row.grantUserId !== row.userId)
+  ) {
+    return undefined
+  }
+
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    userId: row.userId,
+    scopes: row.scopes ?? [],
+    oauthGrantId: row.oauthGrantId,
+  }
 }
 
 /**
@@ -108,6 +132,7 @@ export type IssueInput = {
   name: string
   scopes: string[]
   expiresAt?: Date | null
+  oauthGrantId?: string | null
 }
 
 /** Mints a key. The plaintext is returned once and never stored. */
@@ -117,20 +142,37 @@ export async function issueKey(
 ): Promise<{ id: string; key: string; prefix: string }> {
   const key = generateKey()
   const id = v7()
+  const keyHash = await hashKey(key)
 
-  await db
-    .insertInto("apiKey")
-    .values({
-      id,
-      organizationId: input.organizationId,
-      userId: input.userId,
-      name: input.name,
-      keyHash: await hashKey(key),
-      prefix: displayPrefix(key),
-      scopes: input.scopes,
-      expiresAt: input.expiresAt ?? null,
-    })
-    .execute()
+  await db.transaction().execute(async (tx) => {
+    if (input.oauthGrantId !== undefined && input.oauthGrantId !== null) {
+      const grant = await tx
+        .selectFrom("oauthGrant")
+        .select("id")
+        .where("id", "=", input.oauthGrantId)
+        .where("organizationId", "=", input.organizationId)
+        .where("userId", "=", input.userId)
+        .where("revokedAt", "is", null)
+        .forShare()
+        .executeTakeFirst()
+      if (grant === undefined) throw new InactiveGrantError("The OAuth grant is no longer active")
+    }
+
+    await tx
+      .insertInto("apiKey")
+      .values({
+        id,
+        organizationId: input.organizationId,
+        userId: input.userId,
+        name: input.name,
+        keyHash,
+        prefix: displayPrefix(key),
+        scopes: input.scopes,
+        expiresAt: input.expiresAt ?? null,
+        oauthGrantId: input.oauthGrantId ?? null,
+      })
+      .execute()
+  })
 
   return { id, key, prefix: displayPrefix(key) }
 }

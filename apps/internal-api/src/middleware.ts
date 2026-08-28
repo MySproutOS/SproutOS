@@ -77,8 +77,20 @@ export type AuthContext =
     thing that gets revoked. A credential minted under a token is attributed to the grant so that
     withdrawing consent can find it — see the `oauth_grant_scoped_credentials` migration.
   */
-  | { kind: "oauth"; scopes: string[]; oauthClientId: string; oauthGrantId: string }
-  | { kind: "api_key"; scopes: string[]; apiKeyId: string }
+  | {
+      kind: "oauth"
+      scopes: string[]
+      organizationId: string
+      oauthClientId: string
+      oauthGrantId: string
+    }
+  | {
+      kind: "api_key"
+      scopes: string[]
+      organizationId: string
+      apiKeyId: string
+      oauthGrantId: string | null
+    }
 
 export const authMiddleware = createMiddleware<{
   Variables: {
@@ -133,4 +145,42 @@ export const authNoThrowMiddleware = createMiddleware<{
   }
 
   await next()
+})
+
+export const optionalAuthMiddleware = createMiddleware<{
+  Variables: {
+    user: SessionUser | null
+    session: AuthSession | null
+    auth: AuthContext | null
+  }
+}>(async (c, next) => {
+  const authorization = c.req.header("authorization")
+  if (authorization !== undefined) {
+    const bearer = await authenticateBearer(c)
+    if (bearer === null) {
+      c.header("WWW-Authenticate", 'Bearer error="invalid_token"')
+      return throwHTTPException(401, ErrorCode.Unauthenticated, "The token is not valid")
+    }
+
+    c.set("user", bearer.user)
+    c.set("session", null)
+    c.set("auth", bearer.auth)
+    await next()
+    return undefined
+  }
+
+  try {
+    const authenticated = await getSession(c)
+    c.set("user", authenticated.user)
+    c.set("session", authenticated.session)
+    c.set("auth", { kind: "session", scopes: null })
+  } catch (error) {
+    if (!(error instanceof HTTPException) || error.status !== 401) throw error
+    c.set("user", null)
+    c.set("session", null)
+    c.set("auth", null)
+  }
+
+  await next()
+  return undefined
 })

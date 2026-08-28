@@ -57,6 +57,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postV1AuthCliTokenResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
@@ -348,6 +349,12 @@ import type {
   PostV1ApkSigningFailData,
   PostV1ApkSigningFailErrors,
   PostV1ApkSigningFailResponses,
+  PostV1AuthCliRevokeData,
+  PostV1AuthCliRevokeErrors,
+  PostV1AuthCliRevokeResponses,
+  PostV1AuthCliTokenData,
+  PostV1AuthCliTokenErrors,
+  PostV1AuthCliTokenResponses,
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
@@ -430,6 +437,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses,
@@ -543,10 +553,38 @@ export type Options<
   meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta
 }
 
+/**
+ * Exchange a Sprout CLI PKCE authorization code for an organization-scoped API key
+ */
+export const postV1AuthCliToken = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1AuthCliTokenData, ThrowOnError>,
+): RequestResult<PostV1AuthCliTokenResponses, PostV1AuthCliTokenErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1AuthCliTokenResponses,
+    PostV1AuthCliTokenErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1AuthCliTokenResponseTransformer,
+    url: "/v1/auth/cli/token",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
 export const getV1AuthMe = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1AuthMeData, ThrowOnError>,
 ): RequestResult<GetV1AuthMeResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1AuthMeResponses, unknown, ThrowOnError>({
+    security: [
+      { scheme: "bearer", type: "http" },
+      {
+        in: "cookie",
+        name: "session",
+        type: "apiKey",
+      },
+    ],
     url: "/v1/auth/me",
     ...options,
   })
@@ -555,8 +593,35 @@ export const postV1AuthLogout = <ThrowOnError extends boolean = false>(
   options?: Options<PostV1AuthLogoutData, ThrowOnError>,
 ): RequestResult<PostV1AuthLogoutResponses, PostV1AuthLogoutErrors, ThrowOnError> =>
   (options?.client ?? client).post<PostV1AuthLogoutResponses, PostV1AuthLogoutErrors, ThrowOnError>(
-    { url: "/v1/auth/logout", ...options },
+    {
+      security: [
+        { scheme: "bearer", type: "http" },
+        {
+          in: "cookie",
+          name: "session",
+          type: "apiKey",
+        },
+      ],
+      url: "/v1/auth/logout",
+      ...options,
+    },
   )
+
+/**
+ * Revoke the Sprout CLI API key presented as a bearer credential
+ */
+export const postV1AuthCliRevoke = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1AuthCliRevokeData, ThrowOnError>,
+): RequestResult<PostV1AuthCliRevokeResponses, PostV1AuthCliRevokeErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1AuthCliRevokeResponses,
+    PostV1AuthCliRevokeErrors,
+    ThrowOnError
+  >({
+    security: [{ scheme: "bearer", type: "http" }],
+    url: "/v1/auth/cli/revoke",
+    ...options,
+  })
 
 /**
  * Redeems an invite token and joins the organization
@@ -3319,6 +3384,35 @@ export const postV1InternalPgResolve = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options?.headers,
     },
+  })
+
+/**
+ * Authorize an interactive deployment of one project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeployToken = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+    ThrowOnError
+  >({
+    security: [
+      { scheme: "bearer", type: "http" },
+      {
+        in: "cookie",
+        name: "session",
+        type: "apiKey",
+      },
+    ],
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-token",
+    ...options,
   })
 
 /**

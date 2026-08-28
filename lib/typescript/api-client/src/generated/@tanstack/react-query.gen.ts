@@ -105,6 +105,8 @@ import {
   patchV1UserMeProfile,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
+  postV1AuthCliRevoke,
+  postV1AuthCliToken,
   postV1AuthLogout,
   postV1DeployMigrate,
   postV1DeployRelease,
@@ -135,6 +137,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerify,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
+  postV1OrgsByOrgSlugProjectsByProjectIdDeployToken,
   postV1OrgsByOrgSlugProjectsByProjectIdDomains,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
@@ -424,6 +427,12 @@ import type {
   PatchV1UserMeProfileResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
+  PostV1AuthCliRevokeData,
+  PostV1AuthCliRevokeError,
+  PostV1AuthCliRevokeResponse,
+  PostV1AuthCliTokenData,
+  PostV1AuthCliTokenError,
+  PostV1AuthCliTokenResponse,
   PostV1AuthLogoutData,
   PostV1AuthLogoutError,
   PostV1AuthLogoutResponse,
@@ -497,6 +506,8 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
@@ -591,6 +602,33 @@ import type {
   PutV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdGraphResponse,
 } from "../types.gen"
 
+/**
+ * Exchange a Sprout CLI PKCE authorization code for an organization-scoped API key
+ */
+export const postV1AuthCliTokenMutation = (
+  options?: Partial<Options<PostV1AuthCliTokenData>>,
+): UseMutationOptions<
+  PostV1AuthCliTokenResponse,
+  PostV1AuthCliTokenError,
+  Options<PostV1AuthCliTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1AuthCliTokenResponse,
+    PostV1AuthCliTokenError,
+    Options<PostV1AuthCliTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1AuthCliToken({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export type QueryKey<TOptions extends Options> = [
   Pick<TOptions, "baseUrl" | "body" | "headers" | "path" | "query"> & {
     _id: string
@@ -666,6 +704,33 @@ export const postV1AuthLogoutMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1AuthLogout({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Revoke the Sprout CLI API key presented as a bearer credential
+ */
+export const postV1AuthCliRevokeMutation = (
+  options?: Partial<Options<PostV1AuthCliRevokeData>>,
+): UseMutationOptions<
+  PostV1AuthCliRevokeResponse,
+  PostV1AuthCliRevokeError,
+  Options<PostV1AuthCliRevokeData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1AuthCliRevokeResponse,
+    PostV1AuthCliRevokeError,
+    Options<PostV1AuthCliRevokeData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1AuthCliRevoke({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -5120,6 +5185,33 @@ export const postV1InternalPgResolveMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1InternalPgResolve({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Authorize an interactive deployment of one project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeployTokenMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
+  DefaultError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponse,
+    DefaultError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDeployToken({
         ...options,
         ...fnOptions,
         throwOnError: true,
