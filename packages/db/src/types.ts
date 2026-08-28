@@ -912,14 +912,11 @@ export interface ProjectUpdateSuggestion {
 export interface ProviderUsageReconciliation {
   createdAt: Generated<Timestamp>
   id: string
-  importedEgressBytes: Numeric
   importedRequests: Numeric
   observedAt: Timestamp
   periodStart: Timestamp
   provider: string
-  providerEgressBytes: Numeric
   providerRequests: Numeric
-  residualEgressBytes: Numeric
   residualRequests: Numeric
   resourceId: string
   status: string

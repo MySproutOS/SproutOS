@@ -30,11 +30,8 @@ describe.skipIf(!reachable)("provider usage reconciliation DAO", () => {
       resourceId,
       periodStart,
       providerRequests: "10",
-      providerEgressBytes: "100",
       importedRequests: "8",
-      importedEgressBytes: "80",
       residualRequests: "2",
-      residualEgressBytes: "20",
       status: "platform_overhead",
       observedAt,
     })
@@ -44,11 +41,8 @@ describe.skipIf(!reachable)("provider usage reconciliation DAO", () => {
       resourceId,
       periodStart,
       providerRequests: "10",
-      providerEgressBytes: "100",
       importedRequests: "10",
-      importedEgressBytes: "100",
       residualRequests: "0",
-      residualEgressBytes: "0",
       status: "matched",
       observedAt: new Date("2099-01-06T00:00:00.000Z"),
     })

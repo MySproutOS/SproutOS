@@ -137,7 +137,9 @@ output "tenant_static_log_bucket" {
 
 # A durable reconciliation row is the audit record; these metrics make lag and a settled residual
 # visible without an operator polling Postgres. Pending delivery is expected inside the grace
-# window, while platform overhead means AWS still observed usage after that window closed.
+# window, while platform overhead means AWS still observed requests after that window closed.
+# Bytes are deliberately excluded because CloudWatch BytesDownloaded and standard-log sc-bytes
+# have different documented method/header boundaries.
 resource "aws_cloudwatch_log_metric_filter" "tenant_static_pending_delivery" {
   name           = "${var.name_prefix}-tenant-static-pending-delivery"
   log_group_name = aws_cloudwatch_log_group.ecs.name
@@ -166,7 +168,7 @@ resource "aws_cloudwatch_log_metric_filter" "tenant_static_platform_overhead" {
 
 resource "aws_cloudwatch_metric_alarm" "tenant_static_platform_overhead" {
   alarm_name          = "${var.name_prefix}-tenant-static-platform-overhead"
-  alarm_description   = "CloudFront provider totals still exceed attributable static usage after the delivery grace period. Residual is platform overhead, never tenant usage."
+  alarm_description   = "CloudFront viewer-request count still exceeds imported standard-log rows after the delivery grace period. Residual is platform overhead, never tenant usage."
   namespace           = "SproutOS/Billing"
   metric_name         = "StaticCloudFrontPlatformOverheadDays"
   statistic           = "Sum"

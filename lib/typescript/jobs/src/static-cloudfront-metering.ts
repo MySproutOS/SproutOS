@@ -80,7 +80,6 @@ type ImportDependencies = {
 }
 
 type ReconciliationTotals = {
-  egressBytes: string
   requests: string
 }
 
@@ -91,13 +90,10 @@ type ReconciliationDependencies = {
   store?: (
     db: Kysely<DB>,
     input: {
-      importedEgressBytes: string
       importedRequests: string
       observedAt: Date
       periodStart: Date
-      providerEgressBytes: string
       providerRequests: string
-      residualEgressBytes: string
       residualRequests: string
       resourceId: string
       status: "matched" | "pending_delivery" | "platform_overhead"
@@ -526,7 +522,13 @@ async function storeEvents(db: Kysely<DB>, events: UsageEventRecord[]): Promise<
   }
 }
 
-/** Fetch one immutable object and stage retry-stable request and egress events in the outbox. */
+/**
+ * Fetch one immutable object and stage retry-stable request and egress events in the outbox.
+ *
+ * FUTURE: if seconds-level visibility becomes necessary, replace this standard-log source with
+ * 100% CloudFront real-time logs through Kinesis and a checkpointed consumer. Sampling cannot be
+ * used for billing, and cache hits must remain on CloudFront instead of being routed through Rust.
+ */
 export function importStaticCloudFrontLog(dependencies: ImportDependencies = {}): JobHandler {
   let client: S3Client | undefined
   const get =
@@ -590,28 +592,26 @@ async function cloudFrontProviderTotals(
   end: Date,
 ): Promise<ReconciliationTotals> {
   const client = new CloudWatchClient({ region: "us-east-1" })
-  const total = async (metricName: "BytesDownloaded" | "Requests"): Promise<string> => {
-    const response = await client.send(
-      new GetMetricStatisticsCommand({
-        Namespace: "AWS/CloudFront",
-        MetricName: metricName,
-        Dimensions: [
-          { Name: "DistributionId", Value: distributionId },
-          { Name: "Region", Value: "Global" },
-        ],
-        StartTime: start,
-        EndTime: end,
-        Period: 86_400,
-        Statistics: ["Sum"],
-      }),
-    )
-    return providerMetricTotal(
+  const response = await client.send(
+    new GetMetricStatisticsCommand({
+      Namespace: "AWS/CloudFront",
+      MetricName: "Requests",
+      Dimensions: [
+        { Name: "DistributionId", Value: distributionId },
+        { Name: "Region", Value: "Global" },
+      ],
+      StartTime: start,
+      EndTime: end,
+      Period: 86_400,
+      Statistics: ["Sum"],
+    }),
+  )
+  return {
+    requests: providerMetricTotal(
       response.Datapoints?.reduce((sum, point) => sum + (point.Sum ?? 0), 0),
-      metricName,
-    )
+      "Requests",
+    ),
   }
-  const [requests, egressBytes] = await Promise.all([total("Requests"), total("BytesDownloaded")])
-  return { egressBytes, requests }
 }
 
 function closedUtcDay(now: Date, daysAgo: number): Date {
@@ -619,9 +619,15 @@ function closedUtcDay(now: Date, daysAgo: number): Date {
 }
 
 /**
- * Compare provider aggregates with canonical ClickHouse rows without manufacturing tenant usage.
+ * Compare the provider request count with canonical ClickHouse rows without manufacturing usage.
  *
- * Standard logs are best effort. During the documented delivery window a positive residual is
+ * AWS defines both the CloudWatch Requests metric and one standard-log row as a viewer request
+ * across all methods, so those counts have a bounded, like-for-like interpretation. We
+ * intentionally do not compare bytes: standard-log sc-bytes includes response headers and all
+ * methods, while BytesDownloaded is defined only for GET and HEAD and AWS does not document those
+ * values as equivalent. A byte comparison here would manufacture a false residual.
+ *
+ * Standard logs are best effort. During the documented delivery window a positive request gap is
  * `pending_delivery`; after the grace period it becomes `platform_overhead`. Neither state writes
  * a usage event, rollup, hold, or ledger entry. Credit enforcement therefore never treats usage
  * that has not been attributed yet as a customer debit, and the prepaid hard floor remains the
@@ -666,13 +672,10 @@ export function reconcileStaticCloudFrontUsage(
         importedTotals(start, end),
       ])
       const providerRequests = integerQuantity(provider.requests, "provider requests")
-      const providerBytes = integerQuantity(provider.egressBytes, "provider egress bytes")
       const importedRequests = integerQuantity(imported.requests, "imported requests")
-      const importedBytes = integerQuantity(imported.egressBytes, "imported egress bytes")
       const residualRequests =
         providerRequests > importedRequests ? providerRequests - importedRequests : 0n
-      const residualBytes = providerBytes > importedBytes ? providerBytes - importedBytes : 0n
-      const hasResidual = residualRequests > 0n || residualBytes > 0n
+      const hasResidual = residualRequests > 0n
       const graceEnds = new Date(end.getTime() + STATIC_CLOUDFRONT_DELIVERY_GRACE_HOURS * 3_600_000)
       const status = !hasResidual
         ? "matched"
@@ -681,13 +684,10 @@ export function reconcileStaticCloudFrontUsage(
           : "platform_overhead"
 
       await store(db, {
-        importedEgressBytes: importedBytes.toString(),
         importedRequests: importedRequests.toString(),
         observedAt: now,
         periodStart: start,
-        providerEgressBytes: providerBytes.toString(),
         providerRequests: providerRequests.toString(),
-        residualEgressBytes: residualBytes.toString(),
         residualRequests: residualRequests.toString(),
         resourceId: distributionId,
         status,
@@ -698,11 +698,10 @@ export function reconcileStaticCloudFrontUsage(
           event: "static_cloudfront_usage_reconciliation",
           periodStart: start.toISOString(),
           providerRequests: providerRequests.toString(),
-          providerEgressBytes: providerBytes.toString(),
           importedRequests: importedRequests.toString(),
-          importedEgressBytes: importedBytes.toString(),
           residualRequests: residualRequests.toString(),
-          residualEgressBytes: residualBytes.toString(),
+          comparisonSemantics: "viewer_request_count_only",
+          byteComparison: "unsupported_non_equivalent_definitions",
           residualAllocation: "platform_overhead",
           status,
         }),

@@ -22,11 +22,10 @@ type Row = {
 }
 
 export type StaticCloudFrontUsageTotals = {
-  egressBytes: string
   requests: string
 }
 
-/** Deduplicated canonical totals for one closed CloudFront event-time window. */
+/** Deduplicated request count for one closed CloudFront event-time window. */
 export async function staticCloudFrontUsageTotals(
   start: Date,
   end: Date,
@@ -34,8 +33,7 @@ export async function staticCloudFrontUsageTotals(
   const result = await clickhouse().query({
     query: `
 select
-  toString(coalesce(sumIf(quantity, dimension = 'site_request'), toDecimal128(0, 9))) as requests,
-  toString(coalesce(sumIf(quantity, dimension = 'site_egress_byte'), toDecimal128(0, 9))) as egress_bytes
+  toString(coalesce(sumIf(quantity, dimension = 'site_request'), toDecimal128(0, 9))) as requests
 from ${USAGE_EVENT_RAW_TABLE} final
 where source = 'cloudfront-standard-v2'
   and occurred_at >= parseDateTime64BestEffort({start:String}, 3, 'UTC')
@@ -44,9 +42,9 @@ where source = 'cloudfront-standard-v2'
     query_params: { start: start.toISOString(), end: end.toISOString() },
     format: "JSONEachRow",
   })
-  const [row] = await result.json<{ egress_bytes: string; requests: string }>()
+  const [row] = await result.json<{ requests: string }>()
   if (row === undefined) throw new Error("ClickHouse returned no static CloudFront usage totals")
-  return { egressBytes: row.egress_bytes, requests: row.requests }
+  return { requests: row.requests }
 }
 
 /** A cutoff from the same clock that writes `stored_at`, taken before the affected-grain query. */

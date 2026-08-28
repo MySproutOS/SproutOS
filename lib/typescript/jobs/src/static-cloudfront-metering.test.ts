@@ -276,13 +276,13 @@ describe("static CloudFront metering", () => {
     ).toThrow(/invalid sc-bytes/)
   })
 
-  it("records delayed provider residual without creating attributable usage", async () => {
+  it("records a comparable request-count gap without inventing a byte residual", async () => {
     const reconciliations: Record<string, unknown>[] = []
     const handler = reconcileStaticCloudFrontUsage({
       distributionId: "EDISTRIBUTION",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
-      providerTotals: () => Promise.resolve({ requests: "10", egressBytes: "1000" }),
-      importedTotals: () => Promise.resolve({ requests: "8.000000000", egressBytes: "900" }),
+      providerTotals: () => Promise.resolve({ requests: "10" }),
+      importedTotals: () => Promise.resolve({ requests: "8.000000000" }),
       store: (_db, input) => {
         reconciliations.push(input)
         return Promise.resolve()
@@ -301,11 +301,11 @@ describe("static CloudFront metering", () => {
       providerRequests: "10",
       importedRequests: "8",
       residualRequests: "2",
-      providerEgressBytes: "1000",
-      importedEgressBytes: "900",
-      residualEgressBytes: "100",
       resourceId: "EDISTRIBUTION",
     })
+    expect(reconciliations[0]).not.toHaveProperty("providerEgressBytes")
+    expect(reconciliations[0]).not.toHaveProperty("importedEgressBytes")
+    expect(reconciliations[0]).not.toHaveProperty("residualEgressBytes")
   })
 
   it("converges provider corrections absolutely and never invents a negative residual", async () => {
@@ -313,8 +313,8 @@ describe("static CloudFront metering", () => {
     const handler = reconcileStaticCloudFrontUsage({
       distributionId: "EDISTRIBUTION",
       now: () => new Date("2026-08-28T12:00:00.000Z"),
-      providerTotals: () => Promise.resolve({ requests: "9", egressBytes: "900" }),
-      importedTotals: () => Promise.resolve({ requests: "10.000000000", egressBytes: "1000" }),
+      providerTotals: () => Promise.resolve({ requests: "9" }),
+      importedTotals: () => Promise.resolve({ requests: "10.000000000" }),
       store: (_db, input) => {
         reconciliations.push(input)
         return Promise.resolve()
@@ -326,12 +326,7 @@ describe("static CloudFront metering", () => {
 
     expect(reconciliations).toHaveLength(6)
     expect(
-      reconciliations.every(
-        (row) =>
-          row.status === "matched" &&
-          row.residualRequests === "0" &&
-          row.residualEgressBytes === "0",
-      ),
+      reconciliations.every((row) => row.status === "matched" && row.residualRequests === "0"),
     ).toBe(true)
     expect(reconciliations.slice(0, 3)).toEqual(reconciliations.slice(3))
   })
