@@ -1,4 +1,5 @@
 import { db } from "@sproutos/db"
+import { randomUUID } from "node:crypto"
 import { sql } from "kysely"
 import { afterAll, describe, expect, it } from "vitest"
 
@@ -20,11 +21,66 @@ async function constraint(table: string, name: string): Promise<string> {
   return result.rows[0]?.definition ?? ""
 }
 
+const packageFor = (projectId: string) => `me.sproutos.app.p${projectId.replaceAll("-", "")}`
+
 afterAll(async () => {
   if (reachable) await db.destroy()
 })
 
 describe.runIf(reachable)("the catalogue-client signing schema", () => {
+  it("binds every tenant package name to its immutable project UUID", async () => {
+    const definition = await constraint("android_app", "android_app_project_package_identity_check")
+    expect(definition).toContain("me.sproutos.app.p")
+    expect(definition).toContain("replace((project_id)::text, '-'::text, ''::text)")
+
+    const suffix = randomUUID().replaceAll("-", "")
+    const userId = randomUUID()
+    const organizationId = randomUUID()
+    const firstRepositoryId = randomUUID()
+    const secondRepositoryId = randomUUID()
+    const firstProjectId = randomUUID()
+    const secondProjectId = randomUUID()
+    const appId = randomUUID()
+
+    try {
+      await sql`insert into "user" (id, email)
+        values (${userId}, ${`${suffix}@example.test`})`.execute(db)
+      await sql`insert into organization (id, slug, name, kind, owner_user_id)
+        values (${organizationId}, ${`identity-${suffix}`}, 'Identity test', 'personal', ${userId})`.execute(
+        db,
+      )
+      await sql`
+        insert into repository
+          (id, organization_id, github_repo_id, owner_login, name, provenance)
+          values
+            (${firstRepositoryId}, ${organizationId}, 1, 'test', 'first', 'new'),
+            (${secondRepositoryId}, ${organizationId}, 2, 'test', 'second', 'new')
+      `.execute(db)
+      await sql`
+        insert into project (id, organization_id, repository_id, name, slug)
+          values
+            (${firstProjectId}, ${organizationId}, ${firstRepositoryId}, 'First', 'first'),
+            (${secondProjectId}, ${organizationId}, ${secondRepositoryId}, 'Second', 'second')
+      `.execute(db)
+      await sql`insert into android_app (id, project_id, package_name)
+        values (${appId}, ${firstProjectId}, ${packageFor(firstProjectId)})`.execute(db)
+
+      await expect(
+        sql`update android_app set package_name = ${packageFor(secondProjectId)} where id = ${appId}`.execute(
+          db,
+        ),
+      ).rejects.toThrow(/project\/package identity is immutable/)
+      await expect(
+        sql`update android_app
+          set project_id = ${secondProjectId}, package_name = ${packageFor(secondProjectId)}
+          where id = ${appId}`.execute(db),
+      ).rejects.toThrow(/project\/package identity is immutable/)
+    } finally {
+      await sql`delete from organization where id = ${organizationId}`.execute(db)
+      await sql`delete from "user" where id = ${userId}`.execute(db)
+    }
+  })
+
   it("fixes the singleton package and immutable key path", async () => {
     expect(
       await constraint("client_signing_identity", "client_signing_identity_package_check"),

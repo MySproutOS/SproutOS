@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest"
 import {
   CLIENT_KEY_OBJECT_KEY,
   CLIENT_PACKAGE_NAME,
+  ClientSigningConflictError,
   claimClientSigningJob,
   completeClientKeyProvision,
   completeClientSigning,
@@ -12,6 +13,7 @@ import {
   finalizeClientReleaseUpload,
   prepareClientRelease,
 } from "./client-apk-signing"
+import { CLAIM_TIMEOUT_MS } from "./apk-signing"
 
 const reachable = await (async () => {
   try {
@@ -215,29 +217,60 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
     ).toEqual({ ...prepared, state: "succeeded" })
   })
 
-  it("rejects a lower completion after a higher version wins", async () => {
+  it("serializes catalogue releases until the active version succeeds", async () => {
     await provision()
     await queuedRelease(2)
-    await queuedRelease(3)
-    const low = await claimClientSigningJob(db, "low")
-    const high = await claimClientSigningJob(db, "high")
-    if (low?.kind !== "sign_client_release" || high?.kind !== "sign_client_release")
-      throw new Error("expected release jobs")
-    const complete = async (job: typeof low, signerId: string, key: string) =>
+    await expect(
+      prepareClientRelease(db, {
+        operatorSignerId: "operator",
+        packageName: CLIENT_PACKAGE_NAME,
+        unsignedDigest: "b".repeat(64),
+        sizeBytes: 123n,
+        versionCode: 3,
+      }),
+    ).rejects.toBeInstanceOf(ClientSigningConflictError)
+
+    const firstClaimAt = new Date("2026-08-28T12:00:00.000Z")
+    const versionTwo = await claimClientSigningJob(db, "signer-2", () => firstClaimAt)
+    if (versionTwo?.kind !== "sign_client_release") throw new Error("expected release job")
+    expect(
+      await claimClientSigningJob(db, "signer-3", () => new Date(firstClaimAt.getTime() + 1)),
+    ).toBeUndefined()
+    const recovered = await claimClientSigningJob(
+      db,
+      "signer-recovery",
+      () => new Date(firstClaimAt.getTime() + CLAIM_TIMEOUT_MS + 1),
+    )
+    expect(recovered).toEqual(versionTwo)
+    expect(
+      await claimClientSigningJob(
+        db,
+        "signer-4",
+        () => new Date(firstClaimAt.getTime() + CLAIM_TIMEOUT_MS + 2),
+      ),
+    ).toBeUndefined()
+    expect(
       await completeClientSigning(db, {
-        jobId: job.id,
-        signerId,
-        signedKey: `signed/client/${job.id}.apk`,
-        signedObjectVersion: `signed-v${job.versionCode}`,
-        signedDigest: key.repeat(64),
+        jobId: versionTwo.id,
+        signerId: "signer-recovery",
+        signedKey: `signed/client/${versionTwo.id}.apk`,
+        signedObjectVersion: "signed-v2",
+        signedDigest: "2".repeat(64),
         signedSizeBytes: 456n,
         packageName: CLIENT_PACKAGE_NAME,
-        versionCode: job.versionCode,
-        versionName: `${job.versionCode}`,
+        versionCode: 2,
+        versionName: "2",
         certificateSha256: CERTIFICATE,
-        idempotencyKey: key.repeat(64),
-      })
-    expect(await complete(high, "high", "3")).toBe(true)
-    expect(await complete(low, "low", "2")).toBe(false)
+        idempotencyKey: KEY_2,
+      }),
+    ).toBe(true)
+
+    await queuedRelease(3)
+    const versionThree = await claimClientSigningJob(db, "signer-3")
+    expect(versionThree).toMatchObject({
+      kind: "sign_client_release",
+      versionCode: 3,
+      previousVersionCode: 2,
+    })
   })
 })

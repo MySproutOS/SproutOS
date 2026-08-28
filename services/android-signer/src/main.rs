@@ -50,7 +50,7 @@ struct ClientApiArgs {
         default_value = "https://api.sproutos.me"
     )]
     api_url: String,
-    #[arg(long, env = "APK_SIGNER_ID")]
+    #[arg(long, env = "APK_SIGNER_OPERATOR_ID")]
     signer_id: String,
 }
 
@@ -168,7 +168,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn client_api(args: ClientApiArgs) -> anyhow::Result<SignerApi> {
-    let token = std::env::var("APK_SIGNER_TOKEN").context("APK_SIGNER_TOKEN is not set")?;
+    let token = std::env::var("APK_SIGNER_OPERATOR_TOKEN")
+        .context("APK_SIGNER_OPERATOR_TOKEN is not set")?;
     SignerApi::new(args.api_url, token, args.signer_id)
 }
 
