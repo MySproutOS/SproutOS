@@ -219,6 +219,8 @@ fn plugin_seccomp_filter() -> Result<OwnedFd> {
 fn plugin_seccomp_program() -> Vec<u8> {
     const BPF_LD_W_ABS: u16 = 0x20;
     const BPF_JMP_JEQ_K: u16 = 0x15;
+    #[cfg(target_arch = "x86_64")]
+    const BPF_JMP_JGE_K: u16 = 0x35;
     const BPF_RET_K: u16 = 0x06;
     const SECCOMP_DATA_NR_OFFSET: u32 = 0;
     const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
@@ -230,6 +232,11 @@ fn plugin_seccomp_program() -> Vec<u8> {
     const AUDIT_ARCH_NATIVE: u32 = 0xc000_00b7;
     #[cfg(target_arch = "x86_64")]
     const AUDIT_ARCH_NATIVE: u32 = 0xc000_003e;
+    // x86-64 and x32 intentionally share AUDIT_ARCH_X86_64. A deny-list that compares only the
+    // native syscall numbers is bypassable by setting bit 30, so reject the complete x32 ABI before
+    // evaluating any syscall-specific rule.
+    #[cfg(target_arch = "x86_64")]
+    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     compile_error!("native plugin seccomp is implemented only for Linux arm64 and amd64");
@@ -268,6 +275,21 @@ fn plugin_seccomp_program() -> Vec<u8> {
             value: SECCOMP_DATA_NR_OFFSET,
         },
     ];
+    #[cfg(target_arch = "x86_64")]
+    instructions.extend([
+        Instruction {
+            code: BPF_JMP_JGE_K,
+            jt: 0,
+            jf: 1,
+            value: X32_SYSCALL_BIT,
+        },
+        Instruction {
+            code: BPF_RET_K,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_RET_ERRNO | libc::EPERM as u32,
+        },
+    ]);
     for syscall in [
         libc::SYS_clone,
         libc::SYS_clone3,
@@ -529,6 +551,87 @@ mod tests {
                         instruction[7],
                     ]) == syscall as u32
             }));
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn plugin_seccomp_filter_rejects_x32_namespace_syscall_aliases() {
+        const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
+        const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+        const SECCOMP_RET_ERRNO_EPERM: u32 = 0x0005_0000 | libc::EPERM as u32;
+        const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+
+        let program = plugin_seccomp_program();
+        for syscall in [
+            libc::SYS_clone,
+            libc::SYS_clone3,
+            libc::SYS_unshare,
+            libc::SYS_setns,
+        ] {
+            assert_eq!(
+                evaluate_classic_bpf(&program, AUDIT_ARCH_X86_64, syscall as u32),
+                SECCOMP_RET_ERRNO_EPERM,
+            );
+            assert_eq!(
+                evaluate_classic_bpf(
+                    &program,
+                    AUDIT_ARCH_X86_64,
+                    syscall as u32 | X32_SYSCALL_BIT,
+                ),
+                SECCOMP_RET_ERRNO_EPERM,
+                "x32 alias bypassed syscall {syscall}",
+            );
+        }
+        assert_eq!(
+            evaluate_classic_bpf(&program, AUDIT_ARCH_X86_64, libc::SYS_getpid as u32),
+            SECCOMP_RET_ALLOW,
+        );
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn evaluate_classic_bpf(program: &[u8], architecture: u32, syscall: u32) -> u32 {
+        let instructions = program.chunks_exact(8).collect::<Vec<_>>();
+        assert_eq!(instructions.len() * 8, program.len());
+        let mut accumulator = 0_u32;
+        let mut index = 0_usize;
+        loop {
+            let instruction = instructions[index];
+            let code = u16::from_ne_bytes([instruction[0], instruction[1]]);
+            let jump_true = instruction[2] as usize;
+            let jump_false = instruction[3] as usize;
+            let value = u32::from_ne_bytes([
+                instruction[4],
+                instruction[5],
+                instruction[6],
+                instruction[7],
+            ]);
+            match code {
+                0x20 => {
+                    accumulator = match value {
+                        0 => syscall,
+                        4 => architecture,
+                        _ => panic!("unexpected seccomp data offset {value}"),
+                    };
+                    index += 1;
+                }
+                0x15 => {
+                    index += 1 + if accumulator == value {
+                        jump_true
+                    } else {
+                        jump_false
+                    };
+                }
+                0x35 => {
+                    index += 1 + if accumulator >= value {
+                        jump_true
+                    } else {
+                        jump_false
+                    };
+                }
+                0x06 => return value,
+                _ => panic!("unexpected classic-BPF opcode {code:#x}"),
+            }
         }
     }
 

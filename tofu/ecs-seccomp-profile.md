@@ -28,8 +28,10 @@ arguments:
 `unshare` and `setns` remain denied. After setup, Bubblewrap consumes a sealed classic-BPF program
 from one explicitly inherited descriptor and installs it in both its PID-namespace init and the
 plugin. That second filter denies `clone`, `clone3`, `unshare`, and `setns`; the plugin cannot reuse
-the setup exception. Bubblewrap closes the filter descriptor before `exec`, while core marks every
-other non-stdio descriptor close-on-exec.
+the setup exception. On amd64 it rejects the complete x32 syscall-number range before comparing
+native syscall numbers because x32 shares `AUDIT_ARCH_X86_64` and could otherwise bypass a native
+deny-list by setting bit 30. Bubblewrap closes the filter descriptor before `exec`, while core marks
+every other non-stdio descriptor close-on-exec.
 
 The profile is daemon-wide because ECS does not expose Docker's per-container seccomp selector.
 The host is dedicated to the SproutOS ECS task, privileged containers are disabled in the ECS

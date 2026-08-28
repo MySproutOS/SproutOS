@@ -14,6 +14,19 @@ trap cleanup EXIT
 call_log="$test_root/calls"
 mkdir -p "$test_root/etc/ecs"
 
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+assert_equal() {
+  local actual="$1"
+  local expected="$2"
+  local description="$3"
+  if [[ "$actual" != "$expected" ]]; then
+    fail "$description: expected $expected, found $actual"
+  fi
+}
+
 make_mock() {
   local name="$1"
   shift
@@ -47,12 +60,14 @@ SPROUT_RUNC_RPM=runc-1.3.5-1.amzn2023.0.2.aarch64 \
 bash "$SCRIPT_DIR/ecs-host-bootstrap.sh"
 
 cmp --silent "$profile" "$test_root/etc/docker/sproutos-seccomp.json"
-[[ -n "$(find "$test_root/etc/docker/sproutos-seccomp.json" -prune -perm 0444 -print)" ]]
+if [[ -z "$(find "$test_root/etc/docker/sproutos-seccomp.json" -prune -perm 0444 -print)" ]]; then
+  fail 'installed seccomp profile is not mode 0444'
+fi
 grep -Fxq 'ECS_CLUSTER=sproutos' "$test_root/etc/ecs/ecs.config"
 grep -Fxq 'ECS_DISABLE_PRIVILEGED=true' "$test_root/etc/ecs/ecs.config"
-[[ "$(sed -n '1p' "$call_log")" == 'systemctl stop ecs' ]]
+assert_equal "$(sed -n '1p' "$call_log")" 'systemctl stop ecs' 'bootstrap did not stop ECS first'
 grep -Fxq 'systemctl restart docker' "$call_log"
-[[ "$(tail -1 "$call_log")" == 'systemctl restart ecs' ]]
+assert_equal "$(tail -1 "$call_log")" 'systemctl restart ecs' 'bootstrap did not restart ECS last'
 
 # Version drift fails before service mutation.
 : >"$call_log"
@@ -70,7 +85,9 @@ if PATH="$mock_bin:$PATH" \
   echo 'bootstrap accepted an unreviewed Docker version' >&2
   exit 1
 fi
-[[ ! -s "$call_log" ]]
+if [[ -s "$call_log" ]]; then
+  fail 'version drift mutated services before failing'
+fi
 
 # An unmanaged daemon config is never overwritten.
 make_mock rpm \
@@ -90,6 +107,8 @@ if PATH="$mock_bin:$PATH" \
   echo 'bootstrap overwrote unmanaged daemon configuration' >&2
   exit 1
 fi
-[[ ! -s "$call_log" ]]
+if [[ -s "$call_log" ]]; then
+  fail 'unmanaged daemon configuration mutated services before failing'
+fi
 
 echo 'ECS host seccomp bootstrap is pinned, validated, and fail closed'
