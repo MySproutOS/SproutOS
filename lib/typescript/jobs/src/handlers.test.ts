@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { ACME_HANDLERS, JOB_KINDS, PLATFORM_HANDLERS } from "./handlers"
+import {
+  ACME_HANDLERS,
+  handlersForWorkerProfile,
+  JOB_KINDS,
+  parseWorkerFlag,
+  PLATFORM_HANDLERS,
+} from "./handlers"
 
 /**
  * A declared job kind with no handler is invisible, not loud.
@@ -110,5 +116,65 @@ describe("PLATFORM_HANDLERS", () => {
       if (previous === undefined) delete process.env.VALKEY_PROXY_ACL_ROOT_KEY
       else process.env.VALKEY_PROXY_ACL_ROOT_KEY = previous
     }
+  })
+})
+
+describe("worker-profile handler ownership", () => {
+  it.each([
+    {
+      enabled: false,
+      runningProfiles: ["platform" as const],
+      owner: "platform" as const,
+    },
+    {
+      enabled: true,
+      runningProfiles: ["platform" as const, "acme" as const],
+      owner: "acme" as const,
+    },
+  ])("gives every privileged kind exactly one live owner when enabled=$enabled", (state) => {
+    const profiles = Object.fromEntries(
+      state.runningProfiles.map((profile) => [
+        profile,
+        handlersForWorkerProfile(profile, state.enabled),
+      ]),
+    )
+
+    for (const kind of Object.keys(ACME_HANDLERS)) {
+      const owners = state.runningProfiles.filter(
+        (profile) => profiles[profile]?.[kind] !== undefined,
+      )
+      expect(owners, `${kind} must have no ownership gap or overlap`).toEqual([state.owner])
+    }
+  })
+
+  it.each([false, true])(
+    "keeps ordinary kinds exclusively on the platform profile when enabled=%s",
+    (enabled) => {
+      const platform = handlersForWorkerProfile("platform", enabled)
+      const acme = handlersForWorkerProfile("acme", enabled)
+
+      for (const kind of Object.keys(PLATFORM_HANDLERS)) {
+        expect(platform[kind], `${kind} disappeared from the platform worker`).toBe(
+          PLATFORM_HANDLERS[kind],
+        )
+        expect(acme[kind], `${kind} leaked into the ACME worker`).toBeUndefined()
+      }
+    },
+  )
+
+  it.each([false, true])("gives the ACME profile its exact map when enabled=%s", (enabled) => {
+    expect(handlersForWorkerProfile("acme", enabled)).toBe(ACME_HANDLERS)
+  })
+
+  it.each(["true", "yes", "", "2"])("rejects malformed worker flag %j", (value) => {
+    expect(() => parseWorkerFlag("ACME_JOBS_ENABLED", value)).toThrow(
+      "ACME_JOBS_ENABLED must be 0 or 1",
+    )
+  })
+
+  it("parses explicit task-definition flags and defaults absence to disabled", () => {
+    expect(parseWorkerFlag("FLAG", undefined)).toBe(false)
+    expect(parseWorkerFlag("FLAG", "0")).toBe(false)
+    expect(parseWorkerFlag("FLAG", "1")).toBe(true)
   })
 })

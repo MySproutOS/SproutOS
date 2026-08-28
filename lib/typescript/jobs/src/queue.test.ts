@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { claim, enqueue, fail, heartbeat, reclaimExpired } from "./queue"
 import { runOne } from "./worker"
+import { handlersForWorkerProfile, JOB_KINDS } from "./handlers"
 
 /*
   The *tail* of a UUIDv7, not the head.
@@ -201,6 +202,41 @@ describe.skipIf(!reachable)("leases", () => {
 })
 
 describe.skipIf(!reachable)("runOne", () => {
+  it("claims a queued deploy.release through the disabled-isolation fallback", async ({ skip }) => {
+    if (!reachable) skip()
+    const id = await enqueue(db, {
+      kind: JOB_KINDS.publishRelease,
+      idempotencyKey: `test:${v7()}`,
+      priority: 1_000_000,
+      payload: { deploymentId: v7() },
+    })
+    const selected = handlersForWorkerProfile("platform", false)
+    expect(selected[JOB_KINDS.publishRelease]).toBeTypeOf("function")
+    const selectedPublishOnly = Object.fromEntries(
+      Object.entries(selected).filter(([kind]) => kind === JOB_KINDS.publishRelease),
+    )
+
+    let executions = 0
+    try {
+      const result = await runOne(db, {
+        workerId: `fallback-platform-${v7()}`,
+        handlers: {
+          ...selectedPublishOnly,
+          [JOB_KINDS.publishRelease]: () => {
+            executions += 1
+            return Promise.resolve()
+          },
+        },
+      })
+
+      expect(result).toBe("ran")
+      expect(executions).toBe(1)
+      expect((await row(id)).state).toBe("succeeded")
+    } finally {
+      await db.deleteFrom("backgroundJob").where("id", "=", id).execute()
+    }
+  })
+
   it("runs a handler and marks the job done", async ({ skip }) => {
     if (!reachable) skip()
     const kind = `test_kind_run_${v7().slice(-12)}`
