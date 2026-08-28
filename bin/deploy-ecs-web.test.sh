@@ -316,6 +316,9 @@ case "${*: -1}" in
       printf 'arn:aws:ecs:us-east-1:123456789012:task-definition/sproutos-acme-worker:17\n'
     fi
     ;;
+  acme_worker_rollout_state)
+    printf '{"capacity_enabled":false,"handler_ownership_enabled":false,"fallback_iam_enabled":true}\n'
+    ;;
   *) exit 1 ;;
 esac
 TOFU

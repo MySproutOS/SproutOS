@@ -26,9 +26,10 @@ and privileged handlers. Once isolation is enabled, the platform profile relinqu
 kinds and the ACME profile retains its exact map. Tests cover both live-profile configurations, a
 real queued `deploy.release` claim, and malformed flag values.
 
-This hotfix relies on the legacy production task role still having the authority those deployment
-handlers require. It does **not** make the current single flag an atomic rollout protocol. Before
-applying the isolated-worker infrastructure, a separate change must stage capacity first, transfer
-handler ownership second, and remove fallback IAM last; disabling must reverse that order. Mixed
-task revisions should temporarily overlap because `FOR UPDATE SKIP LOCKED` prevents a double claim.
-A total ownership gap is the failure this finding records.
+The rollout now has three independent gates. `acme_worker_enabled` stages capacity and scheduling,
+`acme_handler_ownership_enabled` transfers privileged kinds only after that capacity exists, and
+`acme_fallback_iam_enabled` retains the platform task's legacy authority until the transfer is
+proven. OpenTofu validation and the exact-task handoff reject both isolated ownership without
+capacity and platform ownership without fallback IAM. Disabling reverses the order. Mixed task
+revisions temporarily overlap because `FOR UPDATE SKIP LOCKED` prevents a double claim; a total
+ownership gap is the failure this finding records.

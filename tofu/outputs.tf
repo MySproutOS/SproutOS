@@ -114,6 +114,15 @@ output "ecs_acme_worker_task_definition_arn" {
   value       = aws_ecs_task_definition.acme_worker.arn
 }
 
+output "acme_worker_rollout_state" {
+  description = "Capacity, handler ownership, and fallback-IAM gates checked by the exact ECS task handoff."
+  value = {
+    capacity_enabled          = var.acme_worker_enabled
+    handler_ownership_enabled = var.acme_handler_ownership_enabled
+    fallback_iam_enabled      = var.acme_fallback_iam_enabled
+  }
+}
+
 # The search split's rule, so the cutover moves it with the router. Without it a release leaves
 # every customer's search service on the colour the router just drained, and the router looks fine.
 output "search_rule_arn" {

@@ -489,10 +489,10 @@ const FALLBACK_PLATFORM_HANDLERS: Record<string, JobHandler> = {
  */
 export function handlersForWorkerProfile(
   profile: "platform" | "acme",
-  isolatedAcmeJobsEnabled: boolean,
+  isolatedAcmeHandlerOwnershipEnabled: boolean,
 ): Record<string, JobHandler> {
   if (profile === "acme") return ACME_HANDLERS
-  return isolatedAcmeJobsEnabled ? PLATFORM_HANDLERS : FALLBACK_PLATFORM_HANDLERS
+  return isolatedAcmeHandlerOwnershipEnabled ? PLATFORM_HANDLERS : FALLBACK_PLATFORM_HANDLERS
 }
 
 /** Parse a task-definition feature gate without silently treating a typo as a rollout decision. */

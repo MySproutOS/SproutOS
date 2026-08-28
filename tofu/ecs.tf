@@ -585,6 +585,9 @@ resource "aws_ecs_task_definition" "web" {
         # Scheduling is not an ACME capability. This ordinary worker inserts durable rows; only the
         # dedicated ACME task role can claim and execute their privileged handlers.
         { name = "ACME_JOBS_ENABLED", value = var.acme_worker_enabled ? "1" : "0" },
+        # Ownership moves only after isolated capacity is healthy. Keeping this separate from the
+        # scheduler/capacity gate makes both the forward and reverse rollout overlap safely.
+        { name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = var.acme_handler_ownership_enabled ? "1" : "0" },
       ]
 
       secrets = concat([
