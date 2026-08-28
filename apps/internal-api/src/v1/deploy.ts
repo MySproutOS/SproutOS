@@ -3,6 +3,8 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment, fetchDeployment, fetchProject } from "@lib/dao"
 import {
+  ANDROID_VERSION_CODE_MAX,
+  androidVersionError,
   DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   enqueue,
   enqueueSigning,
@@ -144,8 +146,14 @@ const catalogueImportResponse = Type.Object({
   oci_digest: Type.String(),
 })
 
+function androidArtifactBucket(): string {
+  const configured = process.env.ANDROID_ARTIFACT_BUCKET
+  if (configured !== undefined && configured !== "") return configured
+  if (process.env.NODE_ENV === "production") throw new Error("ANDROID_ARTIFACT_BUCKET is required")
+  return process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
+}
 const uploadRequest = Type.Object({
-  project: Type.String({ minLength: 1 }),
+  project: Type.Optional(Type.String({ minLength: 1 })),
   digest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
   preset: Type.String({ minLength: 1 }),
 })
@@ -164,7 +172,7 @@ const staticUploadRequest = Type.Object({
 })
 
 const releaseRequest = Type.Object({
-  project: Type.String({ minLength: 1 }),
+  project: Type.Optional(Type.String({ minLength: 1 })),
   key: Type.String({ minLength: 1 }),
   digest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
   // Absent when the build produced no assets — an API has none — so both are optional and are
@@ -195,7 +203,27 @@ const releaseRequest = Type.Object({
   migration_handler: Type.Optional(Type.String({ minLength: 1 })),
   /** The commit subject, so a deployment list reads like a history rather than a list of shas. */
   message: Type.Optional(Type.String({ maxLength: 500 })),
+  version_code: Type.Optional(Type.Integer({ minimum: 1, maximum: ANDROID_VERSION_CODE_MAX })),
 })
+
+export function androidReleaseError(
+  projectId: string,
+  input: { preset: string; key: string; digest: string; version_code?: number },
+): string | undefined {
+  if (input.preset !== "android") {
+    return input.version_code === undefined
+      ? undefined
+      : "`version_code` is only valid for Android."
+  }
+  if (input.version_code === undefined) return "The `android` preset requires `version_code`."
+  if (input.version_code > ANDROID_VERSION_CODE_MAX) {
+    return `Android versionCode must not exceed ${ANDROID_VERSION_CODE_MAX}.`
+  }
+  if (input.key !== `raw/${projectId}/${input.digest}.apk`) {
+    return "The Android artifact must be the raw APK uploaded for this project and digest."
+  }
+  return undefined
+}
 
 export function staticReleaseError(
   projectId: string,
@@ -490,8 +518,13 @@ const deploy: Hono = new Hono()
         place. That makes a redeploy of an unchanged artifact idempotent rather than accumulating
         copies — the action already produces a reproducible archive for exactly this reason.
       */
-      const key = `builds/${authorized.projectId}/${digest}.zip`
-      const bucket = process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
+      const android = c.req.valid("json").preset === "android"
+      const key = android
+        ? `raw/${authorized.projectId}/${digest}.apk`
+        : `builds/${authorized.projectId}/${digest}.zip`
+      const bucket = android
+        ? androidArtifactBucket()
+        : (process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts")
 
       const client = new S3Client({
         region: process.env.AWS_REGION ?? "us-east-1",
@@ -502,7 +535,11 @@ const deploy: Hono = new Hono()
 
       const url = await getSignedUrl(
         client,
-        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: "application/zip" }),
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ContentType: android ? "application/vnd.android.package-archive" : "application/zip",
+        }),
         // Long enough for a large upload on a slow runner, short enough that a URL in a log is
         // useless before anyone reads it.
         { expiresIn: 900 },
@@ -580,6 +617,8 @@ const deploy: Hono = new Hono()
 
       const staticError = staticReleaseError(authorized.projectId, json)
       if (staticError !== undefined) return c.json({ message: staticError }, 400)
+      const androidError = androidReleaseError(authorized.projectId, json)
+      if (androidError !== undefined) return c.json({ message: androidError }, 400)
 
       const prNumber = releasePreviewNumber(json.environment, json.ref)
       if (prNumber === undefined) {
@@ -608,6 +647,11 @@ const deploy: Hono = new Hono()
           },
           400,
         )
+      }
+
+      if (json.preset === "android") {
+        const versionError = await androidVersionError(db, authorized.projectId, json.version_code!)
+        if (versionError !== undefined) return c.json({ message: versionError }, 400)
       }
 
       const deployment = await crudDeployment(db).create({
@@ -665,11 +709,9 @@ const deploy: Hono = new Hono()
         machine SproutOS does not operate. So the release queues a signing job and the deployment
         waits.
 
-        The key recorded is the uploaded archive, not a bare APK: the action packages a directory,
-        which for the `android` preset contains the unsigned APK. The signer unzips it. Uploading
-        the APK on its own would be tidier and is worth doing when the action next changes; doing it
-        now would mean a version skew where a customer on the old action silently queues a job no
-        signer can read.
+        The key recorded is the raw unsigned APK. Android deliberately has no archive compatibility
+        path: accepting a wrapper here would queue an artifact the signer refuses and leave the
+        deployment waiting forever.
       */
       if (json.preset === "android") {
         await enqueueSigning(db, {
@@ -677,6 +719,7 @@ const deploy: Hono = new Hono()
           projectId: authorized.projectId,
           unsignedKey: json.key,
           unsignedDigest: json.digest,
+          versionCode: json.version_code!,
         })
       } else {
         /*

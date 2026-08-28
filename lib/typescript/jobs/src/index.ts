@@ -188,13 +188,38 @@ export {
   type NeonMeteringOptions,
 } from "./neon-metering"
 export {
+  ANDROID_VERSION_CODE_MAX,
+  APK_MIME,
+  androidVersionError,
   CLAIM_TIMEOUT_MS,
   claimSigningJob,
+  completeKeyProvision,
   completeSigning,
+  type DeveloperConsoleState,
+  type AndroidRegistrationProviderState,
+  ensureAndroidSetup,
   enqueueSigning,
   failSigning,
+  recordDeveloperConsoleState,
+  recordDeveloperConsoleCheckFailure,
+  recordVerifiedSetupCommit,
   type SigningJob,
 } from "./apk-signing"
+export {
+  ANDROID_REGISTRATION_BATCH_SIZE,
+  ANDROID_REGISTRATION_CLAIM_MS,
+  ANDROID_REGISTRATION_CIRCUIT_VERSION,
+  ANDROID_REGISTRATION_DAILY_LIMIT,
+  ANDROID_REGISTRATION_RECONCILE_KIND,
+  ANDROID_REGISTRATION_REVALIDATE_MS,
+  AndroidDeveloperStatusError,
+  androidRegistrationConfigFingerprint,
+  androidRegistrationQueueHealth,
+  GoogleAndroidDeveloperStatusChecker,
+  reconcileAndroidDeveloperRegistrations,
+  reconcileAndroidDeveloperRegistrationsJob,
+  type AndroidDeveloperStatusChecker,
+} from "./android-developer-registration"
 export {
   cleanUpStaticPreview,
   environmentFor,

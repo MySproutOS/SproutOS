@@ -200,6 +200,69 @@ export interface AgentUsage {
   source: string
 }
 
+export interface AndroidApp {
+  certificateSha256: string | null
+  createdAt: Generated<Timestamp>
+  developerConsoleCheckAttempts: Generated<number>
+  developerConsoleClaimExpiresAt: Timestamp | null
+  developerConsoleClaimToken: string | null
+  developerConsoleError: string | null
+  developerConsoleLastCheckedAt: Timestamp | null
+  developerConsoleLastFailure: string | null
+  developerConsoleNextCheckAt: Generated<Timestamp>
+  developerConsoleProviderState: string | null
+  developerConsoleState: Generated<string>
+  id: string
+  keyObjectKey: string | null
+  keyObjectVersion: string | null
+  lastAcceptedVersionCode: Generated<number>
+  lastError: string | null
+  latestGoodDeploymentId: string | null
+  packageName: string
+  projectId: string
+  updatedAt: Generated<Timestamp>
+  verifiedSetupCommit: string | null
+}
+
+export interface AndroidRegistrationReconcilerState {
+  id: string
+  lastCompletedAt: Timestamp | null
+  lastFailure: string | null
+  lastSeenAt: Timestamp | null
+  quotaProviderDate: Generated<Timestamp>
+  quotaReserved: Generated<number>
+  terminalBlockedAt: Timestamp | null
+  terminalConfigFingerprint: string | null
+  terminalFailureKind: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AndroidSignerJob {
+  androidAppId: string
+  attempts: Generated<number>
+  callbackIdempotencyKey: string | null
+  claimedAt: Timestamp | null
+  claimedBy: string | null
+  createdAt: Generated<Timestamp>
+  deploymentId: string | null
+  error: string | null
+  id: string
+  inputMime: string | null
+  kind: string
+  projectId: string | null
+  signedAt: Timestamp | null
+  signedDigest: string | null
+  signedKey: string | null
+  signedObjectVersion: string | null
+  signedSizeBytes: Int8 | null
+  state: string
+  unsignedDigest: string | null
+  unsignedKey: string | null
+  updatedAt: Generated<Timestamp>
+  versionCode: number | null
+  versionName: string | null
+}
+
 export interface ApiKey {
   createdAt: Generated<Timestamp>
   expiresAt: Timestamp | null
@@ -213,24 +276,6 @@ export interface ApiKey {
   revokedAt: Timestamp | null
   scopes: Generated<string[]>
   userId: string
-}
-
-export interface ApkSigningJob {
-  attempts: Generated<number>
-  claimedAt: Timestamp | null
-  claimedBy: string | null
-  createdAt: Generated<Timestamp>
-  deploymentId: string
-  id: string
-  lastError: string | null
-  projectId: string
-  signedAt: Timestamp | null
-  signedDigest: string | null
-  signedKey: string | null
-  status: Generated<string>
-  unsignedDigest: string
-  unsignedKey: string
-  updatedAt: Generated<Timestamp>
 }
 
 export interface AuditLog {
@@ -1425,8 +1470,10 @@ export interface DB {
   agentSessionEntry: AgentSessionEntry
   agentTurn: AgentTurn
   agentUsage: AgentUsage
+  androidApp: AndroidApp
+  androidRegistrationReconcilerState: AndroidRegistrationReconcilerState
+  androidSignerJob: AndroidSignerJob
   apiKey: ApiKey
-  apkSigningJob: ApkSigningJob
   auditLog: AuditLog
   backendService: BackendService
   backgroundJob: BackgroundJob

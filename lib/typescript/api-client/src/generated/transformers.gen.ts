@@ -15,6 +15,7 @@ import type {
   GetV1OrgsByOrgSlugMembersResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
@@ -56,6 +57,8 @@ import type {
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
@@ -326,6 +329,48 @@ export const getV1OrgsByOrgSlugRepositoriesResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugRepositoriesResponse> => {
   data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse> => {
+  if (data.developerConsoleLastCheckedAt) {
+    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  }
+  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.jobs = data.jobs.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse> => {
+  if (data.developerConsoleLastCheckedAt) {
+    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  }
+  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.jobs = data.jobs.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse> => {
+  if (data.developerConsoleLastCheckedAt) {
+    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  }
+  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.jobs = data.jobs.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
     return item
   })

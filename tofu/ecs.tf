@@ -72,6 +72,7 @@ locals {
   ]
 
   ecs_worker_parameter_names = [
+    "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
     "CLICKHOUSE_PASSWORD",
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",

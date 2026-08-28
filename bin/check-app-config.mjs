@@ -48,6 +48,7 @@ import { readFileSync } from "node:fs"
 
 const putSecrets = readFileSync("bin/put-app-secrets.sh", "utf8")
 const userData = readFileSync("tofu/user-data.sh.tftpl", "utf8")
+const ecs = readFileSync("tofu/ecs.tf", "utf8")
 const templateEnv = readFileSync(".template.env", "utf8")
 const routerLogs = readFileSync("services/router/src/logs.rs", "utf8")
 const lambdaPublish = readFileSync("lib/typescript/lambda/src/publish.ts", "utf8")
@@ -99,6 +100,21 @@ function requestedAtBoot() {
     for (const key of envNames(list)) keys.add(key)
   }
   if (keys.size === 0) throw new Error("tofu/user-data.sh.tftpl no longer calls write_app_secrets")
+  return keys
+}
+
+/** Parameter names injected directly into ECS task definitions. */
+function requestedByEcs() {
+  /** @type {Set<string>} */
+  const keys = new Set()
+  for (const match of ecs.matchAll(
+    /ecs_(?:website|api|worker)_parameter_names\s*=\s*\[([\s\S]*?)\n\s*\]/g,
+  )) {
+    const list = match[1]
+    if (list === undefined) continue
+    for (const key of envNames(list.replaceAll(/#[^\n]*/g, ""))) keys.add(key)
+  }
+  if (keys.size === 0) throw new Error("tofu/ecs.tf no longer declares ECS parameter allowlists")
   return keys
 }
 
@@ -216,6 +232,7 @@ const NOT_OUR_CONFIGURATION = new Set([
 
 const inParameterStore = parameterStoreKeys()
 const requested = requestedAtBoot()
+const requestedEcs = requestedByEcs()
 const direct = writtenDirectly()
 
 /*
@@ -283,7 +300,7 @@ for (const key of [...requested].sort((a, b) => a.localeCompare(b))) {
   never read is a credential sitting in an account for no reason.
 */
 for (const key of [...inParameterStore].sort((a, b) => a.localeCompare(b))) {
-  if (!requested.has(key) && !direct.has(key)) {
+  if (!requested.has(key) && !requestedEcs.has(key) && !direct.has(key)) {
     warnings.push(
       `${key} is written to Parameter Store by put-app-secrets.sh but no write_app_secrets call ` +
         `asks for it, so no instance ever reads it.`,
