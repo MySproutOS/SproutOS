@@ -6,7 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/b
 import { Money } from "@ui/base/ui/money"
 import { Progress } from "@ui/base/ui/progress"
 import { Skeleton } from "@ui/base/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@ui/base/ui/table"
 import { AddCreditDialog } from "@frontends/dashboard/components/billing/add-credit-dialog"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
@@ -60,7 +68,7 @@ function BillingSettings() {
           <CardHeader>
             <CardTitle>This month</CardTitle>
             <CardDescription>
-              Metered from the append-only ledger, not from a running total.
+              Usage is measured durably; charges are posted to the append-only credit ledger.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -87,9 +95,13 @@ function BillingSettings() {
                     <Fragment key={line.id}>
                       {usage.data?.[index - 1]?.category !== line.category && (
                         <TableRow>
-                          <TableCell colSpan={3} className="bg-muted/30 py-2 text-xs font-semibold">
+                          <TableHead
+                            colSpan={3}
+                            scope="rowgroup"
+                            className="h-auto bg-muted/30 py-2 text-xs font-semibold normal-case tracking-normal"
+                          >
                             {line.category}
-                          </TableCell>
+                          </TableHead>
                         </TableRow>
                       )}
                       <TableRow>
@@ -109,6 +121,26 @@ function BillingSettings() {
                     </Fragment>
                   ))}
                 </TableBody>
+                {usage.summary !== undefined && (
+                  <TableFooter>
+                    {usage.summary.overheadMicros > 0n && (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-right text-muted-foreground">
+                          Platform fee
+                        </TableCell>
+                        <TableCell money>{formatMicroUsd(usage.summary.overheadMicros)}</TableCell>
+                      </TableRow>
+                    )}
+                    <TableRow>
+                      <TableCell colSpan={2} className="text-right font-semibold">
+                        Total
+                      </TableCell>
+                      <TableCell money className="font-semibold">
+                        {formatMicroUsd(usage.summary.totalMicros)}
+                      </TableCell>
+                    </TableRow>
+                  </TableFooter>
+                )}
               </Table>
             )}
           </CardContent>

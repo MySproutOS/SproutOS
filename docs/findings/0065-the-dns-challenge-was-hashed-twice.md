@@ -1,4 +1,4 @@
-# 0064: The DNS challenge was hashed twice
+# 0065: The DNS challenge was hashed twice
 
 ## What was wrong
 

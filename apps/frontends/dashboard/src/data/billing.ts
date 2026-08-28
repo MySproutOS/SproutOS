@@ -24,12 +24,30 @@ export type UsageLine = {
   costMicros: bigint
 }
 
-const CATEGORY_ORDER = ["Sandbox", "Postgres", "Cache", "AI", "Sites", "Workflows", "Search"]
+export type UsageSummary = {
+  subtotalMicros: bigint
+  overheadMicros: bigint
+  totalMicros: bigint
+}
+
+const CATEGORY_ORDER = [
+  "Sandbox",
+  "Postgres",
+  "Cache",
+  "Queue",
+  "AI",
+  "Sites",
+  "Workflows",
+  "Search",
+]
 
 /** Customer-facing service taxonomy. It does not imply that every category has every meter yet. */
 export function usageCategory(dimension: string): string {
   if (dimension.startsWith("sandbox_")) return "Sandbox"
   if (dimension.startsWith("db_")) return "Postgres"
+  if (dimension === "valkey_queue_byte_second" || dimension === "workflow_job_enqueued") {
+    return "Queue"
+  }
   if (dimension.startsWith("valkey_")) return "Cache"
   if (dimension.startsWith("ai_")) return "AI"
   if (dimension.startsWith("site_")) return "Sites"
@@ -40,7 +58,7 @@ export function usageCategory(dimension: string): string {
 
 export function usageDescription(dimension: string): string | null {
   return dimension === "valkey_queue_byte_second"
-    ? "Queue residency: queued payload bytes multiplied by how long they remain queued."
+    ? "Storage over time: queued data measured by how many bytes existed and for how long."
     : null
 }
 
@@ -180,6 +198,14 @@ export function useUsageLines(orgSlug: string) {
 
   return {
     ...query,
+    summary:
+      query.data === undefined
+        ? undefined
+        : ({
+            subtotalMicros: BigInt(query.data.subtotalMicroUsd),
+            overheadMicros: BigInt(query.data.overheadMicroUsd),
+            totalMicros: BigInt(query.data.totalMicroUsd),
+          } satisfies UsageSummary),
     data: query.data?.lines
       .map((line): UsageLine => ({
         id: line.dimension,

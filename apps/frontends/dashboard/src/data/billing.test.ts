@@ -45,12 +45,11 @@ describe("creditRunway", () => {
 })
 
 describe("usage service categories", () => {
-  it("keeps queue storage under Cache without calling it ordinary cache usage", () => {
-    expect(usageCategory("valkey_queue_byte_second")).toBe("Cache")
+  it("separates workflow queues from ordinary cache usage", () => {
+    expect(usageCategory("valkey_queue_byte_second")).toBe("Queue")
+    expect(usageCategory("workflow_job_enqueued")).toBe("Queue")
     expect(usageCategory("valkey_cache_byte_second")).toBe("Cache")
-    expect(usageDescription("valkey_queue_byte_second")).toBe(
-      "Queue residency: queued payload bytes multiplied by how long they remain queued.",
-    )
+    expect(usageDescription("valkey_queue_byte_second")).toContain("queued data")
     expect(usageCategory("sandbox_cpu_second")).toBe("Sandbox")
     expect(usageCategory("db_compute_cu_second")).toBe("Postgres")
     expect(usageCategory("ai_input_token")).toBe("AI")
