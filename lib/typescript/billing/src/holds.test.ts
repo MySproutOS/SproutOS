@@ -187,7 +187,9 @@ describe("settleHold", () => {
     expect(await availableBalance(db, organizationId)).toBe(before - 112_000n)
   })
 
-  it("charges an overrun in full rather than eating the difference", async ({ skip }) => {
+  it("caps an overrun at prepaid credit and never creates debt for a later top-up", async ({
+    skip,
+  }) => {
     if (!reachable) skip()
     const before = await availableBalance(db, organizationId)
 
@@ -197,11 +199,25 @@ describe("settleHold", () => {
       resourceType: "agent_run",
       ttlSeconds: 600,
     })
-    // The provider's bill is not bounded by our reservation. Discarding the excess would mean
-    // paying for it ourselves.
-    await settleHold(db, { holdId, actual: 300_000n, idempotencyKey: key() })
+    const settlement = await settleHold(db, {
+      holdId,
+      actual: before + 300_000n,
+      idempotencyKey: key(),
+    })
 
-    expect(await availableBalance(db, organizationId)).toBe(before - 300_000n)
+    expect(settlement.chargedMicroUsd).toBe(before)
+    expect(await availableBalance(db, organizationId)).toBe(0n)
+
+    await post(db, {
+      organizationId,
+      kind: "topup",
+      idempotencyKey: key(),
+      postings: [
+        { account: "stripe_clearing", amount: -FUNDING },
+        { account: "user_credit", amount: FUNDING },
+      ],
+    })
+    expect(await availableBalance(db, organizationId)).toBe(FUNDING)
   })
 
   it("releases rather than posting an all-zero transaction", async ({ skip }) => {
