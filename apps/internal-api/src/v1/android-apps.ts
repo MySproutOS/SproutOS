@@ -24,6 +24,7 @@ async function status(organizationId: string, projectId: string) {
   const android = await fetchAndroidApp(db).getForProject(projectId, [
     "id",
     "packageName",
+    "developerConsoleAccount",
     "developerConsoleState",
     "developerConsoleProviderState",
     "developerConsoleCheckAttempts",
@@ -56,6 +57,7 @@ async function status(organizationId: string, projectId: string) {
             ? ("ready_for_signing" as const)
             : ("configuring" as const),
     developerConsoleState: android.developerConsoleState,
+    developerConsoleAccount: android.developerConsoleAccount,
     developerConsoleProviderState: android.developerConsoleProviderState,
     developerConsoleCheckAttempts: android.developerConsoleCheckAttempts,
     developerConsoleLastCheckedAt: android.developerConsoleLastCheckedAt?.toISOString() ?? null,

@@ -204,6 +204,7 @@ export interface AndroidApp {
   certificateSha256: string | null
   createdAt: Generated<Timestamp>
   developerConsoleCheckAttempts: Generated<number>
+  developerConsoleAccount: string | null
   developerConsoleClaimExpiresAt: Timestamp | null
   developerConsoleClaimToken: string | null
   developerConsoleError: string | null
@@ -394,6 +395,11 @@ export interface ClientSignerJob {
 export interface ClientSigningIdentity {
   certificateSha256: string | null
   createdAt: Generated<Timestamp>
+  developerConsoleError: string | null
+  developerConsoleAccount: string | null
+  developerConsoleLastCheckedAt: Timestamp | null
+  developerConsoleProviderState: string | null
+  developerConsoleState: Generated<string>
   id: string
   keyObjectKey: string | null
   keyObjectVersion: string | null

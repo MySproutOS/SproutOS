@@ -13,6 +13,15 @@ export function fetchClientRelease(db: Kysely<DB>) {
       .select(fields)
       .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
       .where("versionCode", "=", versionCode)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("clientSigningIdentity")
+            .select("clientSigningIdentity.id")
+            .where("clientSigningIdentity.packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+            .where("clientSigningIdentity.developerConsoleState", "=", "registered"),
+        ),
+      )
       .executeTakeFirst()
   }
 
@@ -23,6 +32,15 @@ export function fetchClientRelease(db: Kysely<DB>) {
       .selectFrom("clientRelease")
       .select(fields)
       .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("clientSigningIdentity")
+            .select("clientSigningIdentity.id")
+            .where("clientSigningIdentity.packageName", "=", SPROUTOS_ANDROID_PACKAGE)
+            .where("clientSigningIdentity.developerConsoleState", "=", "registered"),
+        ),
+      )
       .orderBy("versionCode", "desc")
       .limit(1)
       .executeTakeFirst()

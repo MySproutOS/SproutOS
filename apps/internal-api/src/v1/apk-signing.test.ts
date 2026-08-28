@@ -141,6 +141,7 @@ describe("signer callback idempotency", () => {
           version_code: 2,
           version_name: "0.2.0",
           certificate_sha256: "c".repeat(64),
+          developer_console_account: "developerAccounts/123",
         },
         "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
       ],

@@ -137,6 +137,7 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
+        developer_console_account: String,
     },
     ProvisionClientKey {
         job_id: String,
@@ -158,6 +159,7 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
+        developer_console_account: String,
     },
 }
 
@@ -669,6 +671,7 @@ mod tests {
             version_code: 2,
             version_name: "2.0".into(),
             certificate_sha256: "c".repeat(64),
+            developer_console_account: "developerAccounts/123".into(),
         }
     }
 
@@ -843,6 +846,7 @@ mod tests {
             version_code: 2,
             version_name: "0.2.0".into(),
             certificate_sha256: "c".repeat(64),
+            developer_console_account: "developerAccounts/123".into(),
         };
         let fail = FailRequest {
             job_id,

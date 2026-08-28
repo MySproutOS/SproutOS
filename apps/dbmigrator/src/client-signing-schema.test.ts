@@ -123,4 +123,24 @@ describe.runIf(reachable)("the catalogue-client signing schema", () => {
       "claim_token",
     )
   })
+
+  it("stores only bounded non-secret catalogue-client registration state", async () => {
+    const state = await constraint(
+      "client_signing_identity",
+      "client_signing_identity_developer_console_state_check",
+    )
+    const provider = await constraint(
+      "client_signing_identity",
+      "client_signing_identity_developer_console_provider_state_check",
+    )
+    expect(state).toContain("pending_registration")
+    expect(state).toContain("registered")
+    expect(provider).toContain("REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT")
+    expect(
+      await constraint(
+        "client_signing_identity",
+        "client_signing_identity_registered_developer_account_check",
+      ),
+    ).toContain("developer_console_account IS NOT NULL")
+  })
 })

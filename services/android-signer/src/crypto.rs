@@ -157,6 +157,10 @@ pub struct AppSigningSecret {
     pub password: String,
     pub alias: String,
     pub certificate_sha256: String,
+    /// DER X.509 certificate. Public, but kept beside the key so registration can use the exact
+    /// certificate whose digest was recorded without invoking another parser.
+    #[serde(default)]
+    pub certificate_der_base64: String,
 }
 
 impl AppSigningSecret {

@@ -101,6 +101,7 @@ export function crudAndroidApp(db: Kysely<DB>) {
                 ? eb.val(true)
                 : eb("androidApp.id", "in", input.androidAppIds),
             )
+            .where("developerConsoleAccount", "is not", null)
             .where("developerConsoleNextCheckAt", "<=", input.now)
             .where((eb) =>
               eb.or([

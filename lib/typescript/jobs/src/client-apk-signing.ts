@@ -3,6 +3,7 @@ import { sql, type Kysely, type Transaction } from "kysely"
 import { randomBytes } from "node:crypto"
 import { v7 } from "uuid"
 import { ANDROID_VERSION_CODE_MAX, APK_MIME, CLAIM_TIMEOUT_MS } from "./apk-signing"
+import type { AndroidRegistrationProviderState } from "./apk-signing"
 
 export const CLIENT_PACKAGE_NAME = "com.sproutos.store"
 export const CLIENT_KEY_OBJECT_KEY = "keys/client/signing.keystore.enc"
@@ -102,6 +103,8 @@ export async function ensureClientSigningIdentity(db: Kysely<DB>, operatorSigner
     return await trx
       .selectFrom("clientSigningIdentity")
       .select(["packageName", "state", "certificateSha256"])
+      .select(["developerConsoleState", "developerConsoleProviderState", "developerConsoleError"])
+      .select("developerConsoleAccount")
       .where("id", "=", identity.id)
       .executeTakeFirstOrThrow()
   })
@@ -524,6 +527,7 @@ export async function completeClientSigning(
     versionCode: number
     versionName: string
     certificateSha256: string
+    developerConsoleAccount: string
     idempotencyKey: string
   },
 ): Promise<boolean> {
@@ -537,6 +541,7 @@ export async function completeClientSigning(
       )
       .select([
         "clientSignerJob.state",
+        "clientSignerJob.clientSigningIdentityId",
         "clientSignerJob.claimedBy",
         "clientSignerJob.claimToken",
         "clientSignerJob.versionCode",
@@ -551,6 +556,8 @@ export async function completeClientSigning(
         "clientSignerJob.versionName",
         "clientSigningIdentity.packageName",
         "clientSigningIdentity.certificateSha256",
+        "clientSigningIdentity.developerConsoleState",
+        "clientSigningIdentity.developerConsoleAccount",
       ])
       .where("clientSignerJob.id", "=", input.jobId)
       .where("clientSignerJob.kind", "=", "sign_client_release")
@@ -568,7 +575,8 @@ export async function completeClientSigning(
         job.versionName === input.versionName &&
         job.versionCode === input.versionCode &&
         job.packageName === input.packageName &&
-        job.certificateSha256 === input.certificateSha256
+        job.certificateSha256 === input.certificateSha256 &&
+        job.developerConsoleAccount === input.developerConsoleAccount
       )
     }
     if (
@@ -592,21 +600,23 @@ export async function completeClientSigning(
       .executeTakeFirst()
     if (input.versionCode <= (latest?.versionCode ?? 0)) return false
     const now = new Date()
-    await trx
-      .insertInto("clientRelease")
-      .values({
-        id: v7(),
-        packageName: CLIENT_PACKAGE_NAME,
-        versionName: input.versionName,
-        versionCode: input.versionCode,
-        apkObjectKey: input.signedKey,
-        apkObjectVersion: input.signedObjectVersion,
-        apkSha256: input.signedDigest,
-        apkSizeBytes: input.signedSizeBytes,
-        certificateSha256: input.certificateSha256,
-        verifiedAt: now,
-      })
-      .execute()
+    if (job.developerConsoleState === "registered") {
+      await trx
+        .insertInto("clientRelease")
+        .values({
+          id: v7(),
+          packageName: CLIENT_PACKAGE_NAME,
+          versionName: input.versionName,
+          versionCode: input.versionCode,
+          apkObjectKey: input.signedKey,
+          apkObjectVersion: input.signedObjectVersion,
+          apkSha256: input.signedDigest,
+          apkSizeBytes: input.signedSizeBytes,
+          certificateSha256: input.certificateSha256,
+          verifiedAt: now,
+        })
+        .execute()
+    }
     await trx
       .updateTable("clientSignerJob")
       .set({
@@ -626,7 +636,106 @@ export async function completeClientSigning(
       })
       .where("id", "=", input.jobId)
       .execute()
+    await trx
+      .updateTable("clientSigningIdentity")
+      .set({ developerConsoleAccount: input.developerConsoleAccount, updatedAt: now })
+      .where("id", "=", job.clientSigningIdentityId)
+      .execute()
     return true
+  })
+}
+
+/**
+ * Record only public provider status and release signed client artifacts after independent proof.
+ * OAuth credentials and ownership tokens never cross this boundary.
+ */
+export async function reconcileClientDeveloperRegistration(
+  db: Kysely<DB>,
+  providerState: AndroidRegistrationProviderState,
+  checkedAt: Date = new Date(),
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const identity = await trx
+      .selectFrom("clientSigningIdentity")
+      .select(["id", "certificateSha256", "developerConsoleAccount"])
+      .where("packageName", "=", CLIENT_PACKAGE_NAME)
+      .forUpdate()
+      .executeTakeFirst()
+    if (
+      identity === undefined ||
+      identity.certificateSha256 === null ||
+      identity.developerConsoleAccount === null
+    )
+      return
+    const certificateSha256 = identity.certificateSha256
+    const registered = providerState === "REGISTERED"
+    const wrongCertificate = providerState === "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
+    await trx
+      .updateTable("clientSigningIdentity")
+      .set({
+        developerConsoleState: registered
+          ? "registered"
+          : wrongCertificate
+            ? "failed"
+            : "pending_registration",
+        developerConsoleProviderState: providerState,
+        developerConsoleLastCheckedAt: checkedAt,
+        developerConsoleError: wrongCertificate
+          ? "Package name is registered with another signing certificate"
+          : null,
+        updatedAt: checkedAt,
+      })
+      .where("id", "=", identity.id)
+      .execute()
+    if (!registered) return
+
+    const pending = await trx
+      .selectFrom("clientSignerJob")
+      .select([
+        "signedKey",
+        "signedObjectVersion",
+        "signedDigest",
+        "signedSizeBytes",
+        "versionCode",
+        "versionName",
+        "signedAt",
+      ])
+      .where("clientSigningIdentityId", "=", identity.id)
+      .where("kind", "=", "sign_client_release")
+      .where("state", "=", "succeeded")
+      .where("signedKey", "is not", null)
+      .orderBy("versionCode")
+      .execute()
+    await Promise.all(
+      pending.map(async (release) => {
+        if (
+          release.signedKey === null ||
+          release.signedObjectVersion === null ||
+          release.signedDigest === null ||
+          release.signedSizeBytes === null ||
+          release.versionCode === null ||
+          release.versionName === null ||
+          release.signedAt === null
+        )
+          return
+        await trx
+          .insertInto("clientRelease")
+          .values({
+            id: v7(),
+            packageName: CLIENT_PACKAGE_NAME,
+            versionName: release.versionName,
+            versionCode: release.versionCode,
+            apkObjectKey: release.signedKey,
+            apkObjectVersion: release.signedObjectVersion,
+            apkSha256: release.signedDigest,
+            apkSizeBytes: BigInt(release.signedSizeBytes),
+            certificateSha256,
+            verifiedAt: release.signedAt,
+          })
+          .onConflict((conflict) => conflict.columns(["packageName", "versionCode"]).doNothing())
+          .execute()
+      }),
+    )
   })
 }
 
