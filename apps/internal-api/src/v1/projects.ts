@@ -1061,7 +1061,7 @@ const app = new Hono()
           organizationId: organization.id,
           productionBranch,
           repositoryId: plan.id,
-          createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
+          createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
         })
       }
 
@@ -1140,7 +1140,7 @@ const app = new Hono()
       const provisioned = await provisionProject(db).create({
         ...(templateProjectId === undefined ? {} : { projectId: templateProjectId }),
         actorUserId: user.id,
-        createdByOauthGrantId: c.var.auth.kind === "oauth" ? c.var.auth.oauthGrantId : null,
+        createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),

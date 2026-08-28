@@ -14,12 +14,29 @@ const SECRET = "test-secret"
 const NOW = 1_800_000_000_000
 const now = () => NOW
 const PROJECT = "01a01e12-1700-76ac-9713-dd208babdf5a"
+const USER = "01a01e12-1700-76ac-9713-dd208babdf5b"
 
 describe("deploy tokens", () => {
   it("round-trips the project it was minted for", () => {
     const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, SECRET)
 
     expect(readDeployToken(token, SECRET, now)).toEqual({ projectId: PROJECT })
+  })
+
+  it("attributes an interactive token without changing the repository token format", () => {
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, SECRET, USER)
+
+    expect(readDeployToken(token, SECRET, now)).toEqual({ projectId: PROJECT, actorUserId: USER })
+    expect(token.split(".")).toHaveLength(4)
+  })
+
+  it("refuses an edited interactive actor", () => {
+    const token = mintDeployToken(PROJECT, Math.floor(NOW / 1000) + 900, SECRET, USER)
+    const [projectId, expiry, , mac] = token.split(".")
+
+    expect(
+      readDeployToken(`${projectId}.${expiry}.somebody-else.${mac}`, SECRET, now),
+    ).toBeUndefined()
   })
 
   it("refuses a token signed with a different secret", () => {

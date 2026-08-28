@@ -21,11 +21,56 @@ export function assertRegisteredRedirect(requested: string, registered: readonly
 
   // No default. RFC 6749 permits omitting redirect_uri when exactly one is registered; OAuth 2.1
   // does not, because a client that stops sending it stops noticing when the registration changes.
-  if (!registered.includes(requested)) {
+  if (!registered.some((candidate) => matchesRegisteredRedirect(requested, candidate))) {
     throw new OAuthError("invalid_request", "redirect_uri does not match a registered URI")
   }
 
   return requested
+}
+
+function loopbackTemplateMatch(requested: string, registered: string): boolean {
+  let actual: URL
+  let template: URL
+  try {
+    actual = new URL(requested)
+    template = new URL(registered)
+  } catch {
+    return false
+  }
+
+  /*
+    RFC 8252 section 7.3 permits native applications to choose an ephemeral loopback port.
+
+    This is deliberately the whole exception. The registered URI must be the literal IPv4
+    loopback template with no port, and the request may vary only that port. `localhost`, IPv6,
+    paths, queries, fragments and credentials do not get normalized or widened.
+  */
+  if (
+    template.protocol !== "http:" ||
+    template.hostname !== "127.0.0.1" ||
+    template.port !== "" ||
+    template.username !== "" ||
+    template.password !== "" ||
+    template.hash !== ""
+  ) {
+    return false
+  }
+
+  return (
+    actual.protocol === template.protocol &&
+    actual.hostname === template.hostname &&
+    actual.port !== "" &&
+    actual.pathname === template.pathname &&
+    actual.search === template.search &&
+    actual.hash === "" &&
+    actual.username === "" &&
+    actual.password === ""
+  )
+}
+
+/** Exact for every web client; RFC 8252's port-only exception for one loopback template. */
+export function matchesRegisteredRedirect(requested: string, registered: string): boolean {
+  return requested === registered || loopbackTemplateMatch(requested, registered)
 }
 
 /**
