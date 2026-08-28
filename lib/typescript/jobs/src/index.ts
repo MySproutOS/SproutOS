@@ -153,7 +153,11 @@ export {
   type StaticPlatform,
 } from "./static-publish"
 export { ProjectBusyError, withProjectLock } from "./project-lock"
-export { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } from "./github-events"
+export {
+  GITHUB_EVENT_HANDLERS,
+  GITHUB_EVENT_KINDS,
+  installationDiscoveryIdempotencyKey,
+} from "./github-events"
 export { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 export {
   nextPlatformRenewal,

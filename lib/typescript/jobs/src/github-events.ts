@@ -40,6 +40,26 @@ export const GITHUB_EVENT_KINDS = {
   unhandled: "github.unhandled",
 } as const
 
+/**
+ * One discovery per project operation, App identity, organization, and GitHub account.
+ *
+ * A key containing only organization + login made the first successful discovery permanent. When
+ * production moved to another GitHub App, every later project creation collided with the terminal
+ * job from the old App. App identity alone is not enough either: a terminal "not installed" result
+ * predates a later installation or a missed webhook. The project id is a stable operation epoch:
+ * retries of one create deduplicate, while a later create always asks GitHub again.
+ */
+export function installationDiscoveryIdempotencyKey(input: {
+  appId?: string
+  login: string
+  operationId: string
+  organizationId: string
+}): string {
+  const configuredAppId = input.appId?.trim()
+  const appId = configuredAppId && configuredAppId.length > 0 ? configuredAppId : "unconfigured"
+  return `${GITHUB_EVENT_KINDS.installationDiscover}:${appId}:${input.organizationId}:${input.login.toLowerCase()}:${input.operationId}`
+}
+
 /** The shape the receiver queues. */
 type Delivery = { event?: string; delivery?: string; body?: Record<string, unknown> }
 

@@ -6,7 +6,7 @@ import {
   type InstallationTokenRequest,
 } from "./app-auth"
 import { createGitHubClient } from "./client"
-import { MissingGitHubAppConfigError } from "./errors"
+import { GitHubNotFoundError, GitHubValidationError, MissingGitHubAppConfigError } from "./errors"
 import { installationToken } from "./types"
 import type { GitHubCredential } from "./types"
 
@@ -22,9 +22,10 @@ import type { GitHubCredential } from "./types"
  *
  * That shape — an error promising a remedy no code implements — is `docs/findings/0006`.
  *
- * `undefined` rather than a throw for every "not available" case: no installation, no App key, or
- * an account whose installation was suspended. The caller still has the user token to fall back to,
- * and it is the caller that knows whether running out of options is fatal.
+ * `undefined` rather than a throw when no candidate can mint: no installation, no App key, a
+ * genuinely suspended installation, or rows belonging to an old App. The caller still has the
+ * user token to fall back to, and it is the caller that knows whether running out of options is
+ * fatal.
  */
 export async function organizationGitHubCredential(
   db: Kysely<DB>,
@@ -34,12 +35,9 @@ export async function organizationGitHubCredential(
 ): Promise<GitHubCredential | undefined> {
   let query = db
     .selectFrom("githubInstallation")
-    .select(["installationId", "accountLogin"])
+    .select(["installationId", "accountLogin", "suspendedAt"])
     .where("organizationId", "=", organizationId)
     .where("deletedAt", "is", null)
-    // A suspended installation still has a row and still mints nothing. Excluded here so the caller
-    // falls back rather than discovering it as a 403 from GitHub several frames down.
-    .where("suspendedAt", "is", null)
 
   /*
     Prefer the installation on the account the repository will actually live on.
@@ -53,12 +51,28 @@ export async function organizationGitHubCredential(
     query = query.where((eb) => eb.fn("lower", ["accountLogin"]), "=", accountLogin.toLowerCase())
   }
 
-  const installation = await query.orderBy("id", "desc").executeTakeFirst()
-  if (installation === undefined) return undefined
+  /*
+    All candidates, including a row whose last webhook said it was suspended.
+
+    The row is a cache of GitHub state, not the authority. During an App rollover an old App's
+    installation and the replacement App's installation can both be present, and a missed
+    `unsuspend` delivery can leave the usable one marked suspended forever. Choosing one row made
+    either condition fatal: GitHub's 401/404/422 escaped as an API 500 and no later installation or
+    user credential was ever tried.
+
+    Minting is the authoritative, narrowly scoped check. A genuinely suspended installation is
+    refused by GitHub and skipped below; a stale suspension succeeds and becomes usable again
+    without trusting the cache over the provider.
+  */
+  const installations = await query.orderBy("id", "desc").execute()
+  if (installations.length === 0) return undefined
 
   let signJwt: () => string
   try {
     signJwt = envAppJwtSigner()
+    // The factory is deliberately lazy so a rotated key is read for every mint. Invoke it once
+    // here: catching around construction alone can never observe missing configuration.
+    signJwt()
   } catch (error) {
     // A deployment without the App key configured. Not fatal: the user's own token still works.
     if (error instanceof MissingGitHubAppConfigError) return undefined
@@ -66,8 +80,53 @@ export async function organizationGitHubCredential(
   }
 
   store ??= createInstallationTokenStore({ client: createGitHubClient(), signJwt })
-  const minted = await store.get(Number(installation.installationId), request)
-  return installationToken(minted.token, minted.installationId, minted.expiresAt)
+  for (const installation of installations) {
+    try {
+      const installationId = Number(installation.installationId)
+
+      /*
+        A suspended row is being tried precisely because the database cache may be stale. A token
+        cached before the suspension proves only that minting worked in the past; returning it
+        would bypass the authoritative check this path exists to make. Evict this installation's
+        scopes first so `get` must ask GitHub now.
+      */
+      if (installation.suspendedAt !== null) store.clear(installationId)
+
+      // Deliberately sequential: the first usable credential wins, and parallel mints would issue
+      // live tokens for every stale candidate before we know whether the first one was sufficient.
+      // eslint-disable-next-line no-await-in-loop
+      const minted = await store.get(installationId, request)
+      return installationToken(minted.token, minted.installationId, minted.expiresAt)
+    } catch (error) {
+      /*
+        These are permanent for this candidate, not for the operation.
+
+        - not-found: the row belongs to an old App, or the installation was removed;
+        - the one recognized validation refusal: an exact repository is outside this installation's
+          selected repositories.
+
+        Authentication failures and every other validation failure are App-wide until proven
+        otherwise: a bad JWT, rotated key, or missing App permission will fail every candidate.
+        They must escape instead of being disguised as "no installation".
+      */
+      if (error instanceof GitHubNotFoundError || repositoryOutsideInstallation(error)) {
+        continue
+      }
+      if (error instanceof MissingGitHubAppConfigError) return undefined
+      throw error
+    }
+  }
+
+  return undefined
+}
+
+function repositoryOutsideInstallation(error: unknown): boolean {
+  if (!(error instanceof GitHubValidationError)) return false
+  const message = error.message.trim().toLowerCase().replace(/\.$/, "")
+  return (
+    message === "the repository is not accessible to the parent installation" ||
+    message === "the repository does not exist or is inaccessible to the parent installation"
+  )
 }
 
 /**

@@ -6,6 +6,7 @@ import {
 } from "@lib/envelope"
 import {
   GITHUB_EVENT_KINDS,
+  installationDiscoveryIdempotencyKey,
   JOB_KINDS,
   enqueue,
   manifestDigestForCatalogueEntry,
@@ -1206,12 +1207,19 @@ const app = new Hono()
         arrives to reconsider it — installing the App before creating the first project left it
         permanently invisible, and this route is the moment that stops being true.
 
-        Keyed on the login, so several projects under one account queue one discovery.
+        Keyed on this project operation as well as the App identity and login. A retry of this
+        create deduplicates, while a later project creation rechecks a newly installed App or a
+        webhook that never arrived.
       */
       if (plan.mode === "create") {
         await enqueue(db, {
           kind: GITHUB_EVENT_KINDS.installationDiscover,
-          idempotencyKey: `${GITHUB_EVENT_KINDS.installationDiscover}:${organization.id}:${plan.ownerLogin.toLowerCase()}`,
+          idempotencyKey: installationDiscoveryIdempotencyKey({
+            appId: process.env.GITHUB_APP_ID,
+            login: plan.ownerLogin,
+            operationId: provisioned.project.id,
+            organizationId: organization.id,
+          }),
           payload: { login: plan.ownerLogin, organizationId: organization.id },
           maxAttempts: 3,
         })

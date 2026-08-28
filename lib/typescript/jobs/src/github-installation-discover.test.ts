@@ -33,7 +33,8 @@ vi.mock("@lib/github", async (importOriginal) => ({
   MissingGitHubAppConfigError: class extends Error {},
 }))
 
-const { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS } = await import("./github-events")
+const { GITHUB_EVENT_HANDLERS, GITHUB_EVENT_KINDS, installationDiscoveryIdempotencyKey } =
+  await import("./github-events")
 
 let reachable = false
 let organizationId: string
@@ -54,6 +55,45 @@ const stored = async () =>
     .select(["organizationId", "accountLogin", "repositorySelection"])
     .where("installationId", "=", String(INSTALLATION_ID))
     .executeTakeFirst()
+
+describe("installation discovery identity", () => {
+  it("gets a fresh job when the configured GitHub App changes", () => {
+    const first = installationDiscoveryIdempotencyKey({
+      appId: "4657519",
+      login: "Andrew-Chen-Wang",
+      operationId: "first-project",
+      organizationId: "organization",
+    })
+    const replacement = installationDiscoveryIdempotencyKey({
+      appId: "4716574",
+      login: "andrew-chen-wang",
+      operationId: "first-project",
+      organizationId: "organization",
+    })
+
+    expect(first).not.toBe(replacement)
+    expect(replacement).toBe(
+      "github.installation.discover:4716574:organization:andrew-chen-wang:first-project",
+    )
+  })
+
+  it("gets a fresh job after a later installation or missed webhook", () => {
+    const beforeInstallation = installationDiscoveryIdempotencyKey({
+      appId: "4716574",
+      login: "Andrew-Chen-Wang",
+      operationId: "first-project",
+      organizationId: "organization",
+    })
+    const afterInstallation = installationDiscoveryIdempotencyKey({
+      appId: "4716574",
+      login: "Andrew-Chen-Wang",
+      operationId: "later-project",
+      organizationId: "organization",
+    })
+
+    expect(beforeInstallation).not.toBe(afterInstallation)
+  })
+})
 
 beforeAll(async () => {
   try {
