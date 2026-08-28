@@ -14,8 +14,8 @@ export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch", "object_sto
  * Never carries a connection URI.
  *
  * The URI holds a password, and a list endpoint is the wrong place for one: it is cached by
- * clients, logged by proxies, and rendered on a page nobody meant to expose. Revealing is a
- * separate, audited POST.
+ * clients, logged by proxies, and rendered on a page nobody meant to expose. The credential is
+ * shown once by the create or rotate response and is not recoverable afterwards.
  */
 export const servicesSchemaService = Type.Object({
   id: UUID7String,
