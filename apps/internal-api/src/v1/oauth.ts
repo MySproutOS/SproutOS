@@ -18,7 +18,7 @@ import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
 import { validate as validateUUID, v7 } from "uuid"
 import { authMiddleware } from "../middleware"
-import { ACTIONS } from "../rbac"
+import { ACTIONS, isGrantableAction } from "../rbac"
 import { auditContext } from "../utils/request-context"
 import {
   oauthSchemaConsentRequest,
@@ -176,9 +176,7 @@ const app = new Hono()
 
         // A person can only grant what they themselves hold. Checked here rather than at the
         // resource server alone, so a grant never records a permission the user never had.
-        const unknown = body.scopes.filter(
-          (scope) => !(ACTIONS as readonly string[]).includes(scope),
-        )
+        const unknown = body.scopes.filter((scope) => !isGrantableAction(scope))
         if (unknown.length > 0) {
           throw new OAuthError("invalid_scope", `Not a known scope: ${unknown.join(", ")}`)
         }

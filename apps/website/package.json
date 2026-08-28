@@ -22,6 +22,7 @@
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
     "@lib/oauth": "workspace:*",
+    "@lib/oauth-provider": "workspace:*",
     "@sproutos/db": "workspace:*",
     "@tailwindcss/postcss": "catalog:",
     "@tailwindcss/typography": "^0.5.20",

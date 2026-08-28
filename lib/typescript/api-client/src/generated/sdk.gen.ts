@@ -11,7 +11,6 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
-  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -58,7 +57,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
-  postAdminUsersImpersonateResponseTransformer,
+  postV1AuthCliTokenResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
@@ -128,8 +127,6 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
-  GetAdminUsersData,
-  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
@@ -347,9 +344,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateErrors,
-  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimErrors,
   PostV1ApkSigningClaimResponses,
@@ -359,6 +353,12 @@ import type {
   PostV1ApkSigningFailData,
   PostV1ApkSigningFailErrors,
   PostV1ApkSigningFailResponses,
+  PostV1AuthCliRevokeData,
+  PostV1AuthCliRevokeErrors,
+  PostV1AuthCliRevokeResponses,
+  PostV1AuthCliTokenData,
+  PostV1AuthCliTokenErrors,
+  PostV1AuthCliTokenResponses,
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
@@ -441,6 +441,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses,
@@ -556,10 +559,38 @@ export type Options<
   meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta
 }
 
+/**
+ * Exchange a Sprout CLI PKCE authorization code for an organization-scoped API key
+ */
+export const postV1AuthCliToken = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1AuthCliTokenData, ThrowOnError>,
+): RequestResult<PostV1AuthCliTokenResponses, PostV1AuthCliTokenErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1AuthCliTokenResponses,
+    PostV1AuthCliTokenErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1AuthCliTokenResponseTransformer,
+    url: "/v1/auth/cli/token",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
 export const getV1AuthMe = <ThrowOnError extends boolean = false>(
   options?: Options<GetV1AuthMeData, ThrowOnError>,
 ): RequestResult<GetV1AuthMeResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1AuthMeResponses, unknown, ThrowOnError>({
+    security: [
+      { scheme: "bearer", type: "http" },
+      {
+        in: "cookie",
+        name: "session",
+        type: "apiKey",
+      },
+    ],
     url: "/v1/auth/me",
     ...options,
   })
@@ -568,8 +599,35 @@ export const postV1AuthLogout = <ThrowOnError extends boolean = false>(
   options?: Options<PostV1AuthLogoutData, ThrowOnError>,
 ): RequestResult<PostV1AuthLogoutResponses, PostV1AuthLogoutErrors, ThrowOnError> =>
   (options?.client ?? client).post<PostV1AuthLogoutResponses, PostV1AuthLogoutErrors, ThrowOnError>(
-    { url: "/v1/auth/logout", ...options },
+    {
+      security: [
+        { scheme: "bearer", type: "http" },
+        {
+          in: "cookie",
+          name: "session",
+          type: "apiKey",
+        },
+      ],
+      url: "/v1/auth/logout",
+      ...options,
+    },
   )
+
+/**
+ * Revoke the Sprout CLI API key presented as a bearer credential
+ */
+export const postV1AuthCliRevoke = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1AuthCliRevokeData, ThrowOnError>,
+): RequestResult<PostV1AuthCliRevokeResponses, PostV1AuthCliRevokeErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1AuthCliRevokeResponses,
+    PostV1AuthCliRevokeErrors,
+    ThrowOnError
+  >({
+    security: [{ scheme: "bearer", type: "http" }],
+    url: "/v1/auth/cli/revoke",
+    ...options,
+  })
 
 /**
  * Redeems an invite token and joins the organization
@@ -3370,6 +3428,35 @@ export const postV1DeployCatalogueImport = <ThrowOnError extends boolean = false
   })
 
 /**
+ * Authorize an interactive deployment of one project
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdDeployToken = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors,
+    ThrowOnError
+  >({
+    security: [
+      { scheme: "bearer", type: "http" },
+      {
+        in: "cookie",
+        name: "session",
+        type: "apiKey",
+      },
+    ],
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/deploy-token",
+    ...options,
+  })
+
+/**
  * Exchange a GitHub Actions OIDC token for a short-lived SproutOS deploy token. Called by the deploy action.
  */
 export const postV1DeployToken = <ThrowOnError extends boolean = false>(
@@ -3550,40 +3637,4 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
-  })
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsers = <ThrowOnError extends boolean = false>(
-  options?: Options<GetAdminUsersData, ThrowOnError>,
-): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
-    responseTransformer: getAdminUsersResponseTransformer,
-    url: "/admin/users",
-    ...options,
-  })
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
-  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
-): RequestResult<
-  PostAdminUsersImpersonateResponses,
-  PostAdminUsersImpersonateErrors,
-  ThrowOnError
-> =>
-  (options?.client ?? client).post<
-    PostAdminUsersImpersonateResponses,
-    PostAdminUsersImpersonateErrors,
-    ThrowOnError
-  >({
-    responseTransformer: postAdminUsersImpersonateResponseTransformer,
-    url: "/admin/users/impersonate",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
   })

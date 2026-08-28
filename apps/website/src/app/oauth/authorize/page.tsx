@@ -3,6 +3,7 @@ import { availableBalance } from "@lib/billing/ledger"
 import { formatBalanceMicroUsd } from "@lib/billing/money"
 import { redirect } from "next/navigation"
 import { getCurrentSession } from "@website/lib/auth"
+import { matchesRegisteredRedirect } from "@lib/oauth-provider"
 import { ConsentForm } from "./consent-form"
 
 /**
@@ -114,12 +115,14 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
     .execute()
 
   /*
-    Exact string comparison, deliberately. A "does it start with" check is what turns one
-    registered `https://app.example.com/callback` into every URL underneath it, and a normalising
-    comparison is a set of parser differences waiting to disagree with whatever the token endpoint
-    does later.
+    The provider's one redirect matcher, deliberately. Web and custom-scheme redirects remain
+    exact; only a registered literal-loopback template permits the ephemeral port variation RFC
+    8252 requires for a native CLI. Sharing the matcher keeps authorization and redemption from
+    disagreeing about where a code may be delivered.
   */
-  const redirectIsRegistered = registered.some((row) => row.uri === redirectUri)
+  const redirectIsRegistered = registered.some((row) =>
+    matchesRegisteredRedirect(redirectUri, row.uri),
+  )
 
   if (!redirectIsRegistered) {
     return (

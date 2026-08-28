@@ -207,6 +207,7 @@ export interface ApiKey {
   keyHash: string
   lastUsedAt: Timestamp | null
   name: string
+  oauthGrantId: string | null
   organizationId: string
   prefix: string
   revokedAt: Timestamp | null

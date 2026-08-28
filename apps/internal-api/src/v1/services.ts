@@ -216,7 +216,7 @@ async function attributeToGrant(auth: AuthContext, backendServiceId: string): Pr
   // The value, not the `Context` it came from: Hono's context is invariant in its variables, so a
   // helper typed on a narrower one cannot accept a route's wider one — and typing it as a bare
   // `Context` makes `auth` an `any`, which turns the `kind` check below into no check at all.
-  if (auth.kind !== "oauth") return
+  if (auth.kind === "session" || auth.oauthGrantId === null) return
 
   await db
     .updateTable("backendService")
@@ -234,7 +234,7 @@ async function attributeToGrant(auth: AuthContext, backendServiceId: string): Pr
 }
 
 function credentialOwner(auth: AuthContext): { oauthGrantId: string | null } {
-  return { oauthGrantId: auth.kind === "oauth" ? auth.oauthGrantId : null }
+  return { oauthGrantId: auth.kind === "session" ? null : auth.oauthGrantId }
 }
 
 const app = new Hono()
