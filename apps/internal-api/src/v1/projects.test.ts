@@ -1693,8 +1693,16 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(rows.every((row) => row.deletedAt !== null && row.state === "deleting")).toBe(true)
 
       const handler = tearDownProject({
+        customDomains: {
+          bucket: "test-certificate-bucket",
+          s3: { send: () => Promise.resolve({}) },
+        },
         lambda: { send: () => Promise.resolve({}) },
-        valkey: { del: () => Promise.resolve(1) },
+        valkey: {
+          del: () => Promise.resolve(1),
+          eval: () => Promise.resolve(1),
+          publish: () => Promise.resolve(1),
+        },
       } as never)
       for (const job of jobs) {
         await handler(
