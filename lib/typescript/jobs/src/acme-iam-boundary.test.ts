@@ -132,6 +132,11 @@ describe("tenant-edge IAM boundary", () => {
     expect(handoff).toContain('ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn"')
     expect(handoff).toContain('"$DEPLOY_SCRIPT"')
     expect(deploy).toContain("bin/handoff-ecs-task-definitions.sh")
+    expect(deploy).toContain("ACME_JOBS_ENABLED")
+    expect(deploy).toContain(
+      "Immediately after that apply, repeat the exact two-task handoff above",
+    )
+    expect(deploy).toContain("`ACME_JOBS_ENABLED=1`")
     expect(deploy).toContain("ACME_DIRECTORY_URL")
     expect(deploy).toContain("PLATFORM_EDGE_ROLLOUT_ENABLED")
     expect(deploy).toContain("CUSTOM_DOMAINS_ENABLED")

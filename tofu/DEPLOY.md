@@ -184,8 +184,9 @@ runs migrations first, and changes the service only after a zero exit.
 
 The same handoff is mandatory for the isolated certificate worker. Both ECS services ignore
 `task_definition` drift so an ordinary apply cannot replace an application image behind the
-release workflow. That also means an apply which changes `CUSTOM_DOMAINS_ENABLED`,
-`ACME_DIRECTORY_URL`, `PLATFORM_EDGE_ROLLOUT_ENABLED`, or either task's IAM/container contract has
+release workflow. That also means an apply which changes `ACME_JOBS_ENABLED`,
+`CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`, `PLATFORM_EDGE_ROLLOUT_ENABLED`, or either task's
+IAM/container contract has
 only _registered_ the new revision: it has not proved that any running task uses it. After every
 such apply, pass both exact OpenTofu outputs into one migration-first release of the already chosen
 immutable image:
@@ -301,6 +302,11 @@ production custom-domain activation, separate reviewed changes must prove all of
    the old web task reserves 768 MiB and must retain the second host for its replacement.
 2. Deploy the edge-capable release with the exact two-task handoff above and prove the live web task uses the new 640 MiB task
    definition. Only then set `acme_worker_enabled = true`, save/review another plan, and apply it.
+   **Immediately after that apply, repeat the exact two-task handoff above** and verify the serving
+   platform workers now expose `ACME_JOBS_ENABLED=1`; the apply only registered that changed web
+   task definition, and without this second handoff no process schedules platform-certificate or
+   custom-domain reconciliation. Also verify both ACME service tasks run the exact ACME task
+   revision from the same handoff before waiting for certificate work.
    The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
    rollout if it instead pins the spare host. Rebuild the exact production Linux/arm64 image from
    the final deployment commit and measure both startup and a staging issuance/deployment job before
@@ -328,7 +334,9 @@ production custom-domain activation, separate reviewed changes must prove all of
    ownership and HTTP-01 flow against Let's Encrypt staging. This flag is deliberately independent
    of generated-traffic cutover; do not move the wildcard merely to test issuance. Turn the flag
    back off as soon as the controlled staging claim is created so other organizations cannot begin
-   claims during the preview.
+   claims during the preview. Save/review and apply the flag-off plan, repeat the exact two-task
+   handoff, and verify the serving API task has `CUSTOM_DOMAINS_ENABLED=0`; changing tfvars alone
+   does not close the issuance gate.
 6. Change `acme_directory_url` from Let's Encrypt staging to production, apply, and repeat the exact
    two-task handoff above. Verify both running ACME tasks expose the production directory before
    waking reconciliation, then repeat issuance and the preview checks. Never reuse a staging certificate for the public cutover. The certificate row
@@ -343,6 +351,8 @@ production custom-domain activation, separate reviewed changes must prove all of
    `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
    run the production browser and protocol smoke suite. Set `custom_domain_issuance_enabled = true`
    only after production-directory provenance and the remaining certificate lifecycle gates pass.
+   Save/review and apply that final flag plan, repeat the exact two-task handoff, and verify the
+   serving API task has `CUSTOM_DOMAINS_ENABLED=1` before accepting production claims.
 
 `acme_worker_enabled` is the explicit capacity/IAM rollout gate for the isolated worker.
 `tenant_edge_enabled` controls generated traffic and the egress DNS cutover;
