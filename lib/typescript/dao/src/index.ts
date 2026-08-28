@@ -12,6 +12,15 @@ import {
 import { crudOrganization } from "./organization/crud"
 import { fetchOrganization } from "./organization/fetch"
 import {
+  prepareAccountOrganizationsForTeardown,
+  prepareAccountOrganizationsForTeardownInTransaction,
+  prepareOrganizationTeardown,
+  prepareOrganizationTeardownInTransaction,
+  type PrepareAccountOrganizationsResult,
+  type PreparedProjectTeardown,
+  type PrepareOrganizationTeardownResult,
+} from "./organization/teardown"
+import {
   type AuditContext,
   type ProvisionedOrganization,
   provisionOrganization,
@@ -146,6 +155,13 @@ export {
   crudCustomDomain,
   crudMemberPermission,
   crudOrganization,
+  prepareAccountOrganizationsForTeardown,
+  prepareAccountOrganizationsForTeardownInTransaction,
+  prepareOrganizationTeardown,
+  prepareOrganizationTeardownInTransaction,
+  PrepareAccountOrganizationsResult,
+  PreparedProjectTeardown,
+  PrepareOrganizationTeardownResult,
   crudOrganizationInvite,
   crudOrganizationMember,
   crudProject,

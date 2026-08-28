@@ -47,6 +47,7 @@ export function fetchProject(db: Kysely<DB>) {
       .select([
         "project.id as id",
         "project.name as name",
+        "project.description as description",
         "project.slug as slug",
         "project.kind as kind",
         "project.state as state",
@@ -67,6 +68,8 @@ export function fetchProject(db: Kysely<DB>) {
         */
         "project.isGroup as isGroup",
         "project.parentProjectId as parentProjectId",
+        "project.primaryChildProjectId as primaryChildProjectId",
+        "project.regionId as regionId",
         "project.liveDeploymentId as liveDeploymentId",
         "project.dockerfilePath as dockerfilePath",
         "project.scaleMode as scaleMode",
@@ -113,5 +116,26 @@ export function fetchProject(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { findConflictingTarget, getBySlug, getInOrganization, listInOrganizationQuery }
+  async function listChildren<T extends (keyof DB["project"])[]>(
+    organizationId: string,
+    parentProjectId: string,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["project"]>, T[number]>[]> {
+    return await db
+      .selectFrom("project")
+      .select(fields)
+      .where("organizationId", "=", organizationId)
+      .where("parentProjectId", "=", parentProjectId)
+      .where("deletedAt", "is", null)
+      .orderBy("createdAt", "asc")
+      .execute()
+  }
+
+  return {
+    findConflictingTarget,
+    getBySlug,
+    getInOrganization,
+    listChildren,
+    listInOrganizationQuery,
+  }
 }
