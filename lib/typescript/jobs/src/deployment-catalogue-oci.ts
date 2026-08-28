@@ -345,6 +345,7 @@ type Exec = (
 type CatalogueVerificationDependencies = {
   exec: Exec
   githubToken: () => Promise<string>
+  environment?: NodeJS.ProcessEnv
 }
 
 const defaultExec: Exec = async (command, args, options) =>
@@ -402,6 +403,22 @@ function safeVerificationError(error: unknown, token: string): Error {
   return new Error(`GitHub catalogue attestation verification failed: ${message}`)
 }
 
+/**
+ * `gh` needs process discovery, a home directory, temporary storage and locale settings. It does
+ * not need the worker's database, payment, AWS or GitHub App signing credentials. Building a new
+ * object from an allowlist prevents any current or future worker secret from crossing this process
+ * boundary merely because it was added to the task definition environment.
+ */
+function githubCliEnvironment(token: string, source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const child: NodeJS.ProcessEnv = {}
+  for (const name of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL"] as const) {
+    const value = source[name]
+    if (value !== undefined) child[name] = value
+  }
+  child.GH_TOKEN = token
+  return child
+}
+
 function githubAttestationVerifyArguments(reference: string, sourceSha: string): string[] {
   return [
     "attestation",
@@ -457,7 +474,7 @@ export async function verifyDeploymentCatalogueProvenance(
     result = await dependencies.exec("gh", githubAttestationVerifyArguments(reference, sourceSha), {
       timeout: 60_000,
       maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GH_TOKEN: githubToken },
+      env: githubCliEnvironment(githubToken, dependencies.environment ?? process.env),
     })
   } catch (error) {
     throw safeVerificationError(error, githubToken)
@@ -471,6 +488,7 @@ export async function verifyDeploymentCatalogueProvenance(
 
 export const deploymentCatalogueInternals = {
   createCatalogueGitHubTokenProvider,
+  githubCliEnvironment,
   githubAttestationVerifyArguments,
   parseManifest,
   sha256,

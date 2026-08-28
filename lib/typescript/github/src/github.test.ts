@@ -351,7 +351,7 @@ describe("app authentication", () => {
     expect(client.calls).toHaveLength(1)
     expect(client.calls[0].body).toStrictEqual({
       repositories: ["Deployment-Templates"],
-      permissions: { contents: "read", metadata: "read" },
+      permissions: { metadata: "read" },
     })
   })
 

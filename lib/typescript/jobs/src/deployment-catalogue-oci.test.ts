@@ -102,7 +102,6 @@ function releaseFixture() {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  delete process.env.CATALOGUE_TEST_ENV
 })
 
 describe("deployment catalogue OCI pull", () => {
@@ -229,7 +228,7 @@ describe("deployment catalogue provenance authentication", () => {
     options: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
   ) => Promise<{ stdout: string; stderr: string }>
 
-  it("injects the installation token only into gh while preserving the worker environment", async () => {
+  it("injects the installation token only into gh with a minimal non-secret environment", async () => {
     const calls: Array<{
       command: string
       options: { env?: NodeJS.ProcessEnv }
@@ -247,19 +246,33 @@ describe("deployment catalogue provenance authentication", () => {
         })
       },
     )
-    process.env.CATALOGUE_TEST_ENV = "preserved"
+    const workerEnvironment = {
+      PATH: "/worker/bin",
+      HOME: "/worker/home",
+      TMPDIR: "/worker/tmp",
+      LANG: "C.UTF-8",
+      GITHUB_APP_PRIVATE_KEY: "private-key-must-not-cross",
+      DATABASE_URL: "postgresql://worker-secret",
+      STRIPE_SECRET_KEY: "stripe-secret",
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      CATALOGUE_TEST_ENV: "not-allowlisted",
+    }
 
     await expect(
       verifyDeploymentCatalogueProvenance(ociDigest, sourceSha, {
         exec,
         githubToken: async () => await Promise.resolve("ghs_catalogue_secret"),
+        environment: workerEnvironment,
       }),
     ).resolves.toHaveLength(1)
 
     expect(calls.map((call) => call.command)).toStrictEqual(["cosign", "gh"])
     expect(calls[0].options.env).toBeUndefined()
-    expect(calls[1].options.env).toMatchObject({
-      CATALOGUE_TEST_ENV: "preserved",
+    expect(calls[1].options.env).toStrictEqual({
+      PATH: "/worker/bin",
+      HOME: "/worker/home",
+      TMPDIR: "/worker/tmp",
+      LANG: "C.UTF-8",
       GH_TOKEN: "ghs_catalogue_secret",
     })
   })
@@ -335,7 +348,7 @@ describe("deployment catalogue provenance authentication", () => {
     expect(calls[0].credential).toMatchObject({ kind: "app", token: "app.jwt.signature" })
     expect(calls[1].body).toStrictEqual({
       repositories: ["Deployment-Templates"],
-      permissions: { contents: "read", metadata: "read" },
+      permissions: { metadata: "read" },
     })
   })
 })

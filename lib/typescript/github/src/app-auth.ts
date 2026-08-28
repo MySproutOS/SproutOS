@@ -163,7 +163,9 @@ function resolveInstallationTokenScope(
         purpose: request.purpose,
         repositoryIds: null,
         repositoryNames: ["Deployment-Templates"],
-        permissions: { contents: "read", metadata: "read" },
+        // The OCI bundle is public. `gh` needs an authenticated repository identity, not contents;
+        // explicitly downscoping avoids inheriting every permission configured on the App.
+        permissions: { metadata: "read" },
       }
 
     /* A repository that is about to be created has no id yet. Kept out of every sandbox path. */

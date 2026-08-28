@@ -84,9 +84,11 @@ Every one of them exists because something earlier promised a thing and left not
 
 Catalogue provenance verification uses the platform's existing GitHub App identity. The worker
 resolves the App installation that can see `MySproutOS/Deployment-Templates`, mints an in-memory
-installation token scoped only to that repository with `contents: read` and `metadata: read`, and
-passes it to the `gh` subprocess only as `GH_TOKEN`. It is cached until the normal five-minute
-pre-expiry refresh boundary; no PAT or long-lived GitHub credential is stored for this job.
+installation token scoped only to that repository with `metadata: read`, and passes it to the `gh`
+subprocess only as `GH_TOKEN`. The child environment is rebuilt from a small runtime allowlist, so
+the App private key, database URL, cloud credentials, and other worker secrets do not cross that
+boundary. The token is cached until the normal five-minute pre-expiry refresh boundary; no PAT or
+long-lived GitHub credential is stored for this job.
 The verifier generation is part of both discovery and import idempotency keys: this App-authenticated
 generation creates one fresh path past jobs dead-lettered by the earlier unauthenticated verifier,
 while leaving those terminal rows intact for audit instead of silently reviving them forever.
