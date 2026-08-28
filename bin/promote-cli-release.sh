@@ -230,15 +230,16 @@ if [ "$has_ref" != 1 ]; then
   exit 1
 fi
 
-if [ "$pointer_changed" = 1 ]; then
-  # Deliberately omit --task-definition. IAM enforces that omission too: this authority can force
-  # the serving image to reread SSM, but cannot deploy a different image or task contract.
-  aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
-    --force-new-deployment >/dev/null
-  # The AWS waiter itself is bounded (40 attempts, 15 seconds apart); do not turn a failed rollout
-  # into a workflow that waits forever.
-  aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
-fi
+# Always restart, including an idempotent retry. The previous run can fail after moving SSM but
+# before ECS starts a new task; treating an equal pointer as complete would then leave the process
+# on its old startup value forever. Deliberately omit --task-definition. IAM enforces that omission
+# too: this authority can force the serving image to reread SSM, but cannot deploy another image or
+# task contract.
+aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+  --force-new-deployment >/dev/null
+# The AWS waiter itself is bounded (40 attempts, 15 seconds apart); do not turn a failed rollout
+# into a workflow that waits forever.
+aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
 
 settled=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
 jq -e --arg task "$task_arn" '

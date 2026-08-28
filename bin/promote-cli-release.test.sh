@@ -148,14 +148,16 @@ if grep -q '^ecs ' "$CALLS"; then
 fi
 
 # Simulate the normal deploy role carrying the reviewed OpenTofu SSM reference into the serving
-# image. A retry proves the public result without another pointer write or ECS restart.
+# image. A retry proves the public result without another pointer write, but still restarts ECS so
+# it can recover from an earlier run that moved SSM and failed before task replacement.
 : >"$TEST_DIR/state/updated"
 : >"$CALLS"
 "$HERE/promote-cli-release.sh" "$version"
-if grep -q '^ssm put-parameter\|^ecs update-service' "$CALLS"; then
-  echo "idempotent release rewrote the pointer or restarted ECS" >&2
+if grep -q '^ssm put-parameter' "$CALLS"; then
+  echo "idempotent release rewrote the pointer" >&2
   exit 1
 fi
+grep -q '^ecs update-service .*--force-new-deployment' "$CALLS"
 
 # A later verified pointer change force-restarts the serving task without registering or selecting
 # a task definition. That is the entire ECS authority the promotion role needs.
