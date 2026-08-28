@@ -71,7 +71,6 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
   postV1OrgsByOrgSlugProjectsResponseTransformer,
-  postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
@@ -348,6 +347,9 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1DeployCatalogueImportData,
+  PostV1DeployCatalogueImportErrors,
+  PostV1DeployCatalogueImportResponses,
   PostV1DeployMigrateData,
   PostV1DeployMigrateErrors,
   PostV1DeployMigrateResponses,
@@ -471,7 +473,6 @@ import type {
   PostV1OrgsByOrgSlugServicesResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses,
@@ -2396,26 +2397,18 @@ export const getV1OrgsByOrgSlugStoreListings = <ThrowOnError extends boolean = f
   })
 
 /**
- * Publishes a listing, making it visible to unauthenticated visitors
+ * Checks whether a listing can be published by catalogue reconciliation
  */
 export const postV1OrgsByOrgSlugStoreListingsByListingIdPublish = <
   ThrowOnError extends boolean = false,
 >(
   options: Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData, ThrowOnError>,
-): RequestResult<
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
-  ThrowOnError
-> =>
+): RequestResult<unknown, PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors, ThrowOnError> =>
   (options.client ?? client).post<
-    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
+    unknown,
     PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
     ThrowOnError
-  >({
-    responseTransformer: postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
-    url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish",
-    ...options,
-  })
+  >({ url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish", ...options })
 
 /**
  * Takes a listing out of the public catalogue
@@ -3235,6 +3228,29 @@ export const postV1InternalPgResolve = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({
     url: "/v1/internal/pg/resolve",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Queues an immutable Deployment-Templates catalogue import after GitHub OIDC identity verification.
+ */
+export const postV1DeployCatalogueImport = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployCatalogueImportData, ThrowOnError>,
+): RequestResult<
+  PostV1DeployCatalogueImportResponses,
+  PostV1DeployCatalogueImportErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostV1DeployCatalogueImportResponses,
+    PostV1DeployCatalogueImportErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/catalogue/import",
     ...options,
     headers: {
       "Content-Type": "application/json",

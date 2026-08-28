@@ -83,6 +83,7 @@ describe.skipIf(!reachable)("project routes", () => {
   let orgBId: string
 
   const listingId = v7()
+  const catalogueImportId = v7()
   const listingSlug = `proj-test-listing-${listingId.slice(-8)}`
 
   let forkedProjectId = ""
@@ -106,6 +107,26 @@ describe.skipIf(!reachable)("project routes", () => {
     orgBId = trackOrganization(b.json.id as string)
     orgB = b.json.slug as string
 
+    const fixtureHex = listingId.replaceAll("-", "")
+    await db
+      .insertInto("deploymentCatalogueImport")
+      .values({
+        id: catalogueImportId,
+        ociRepository: "ghcr.io/mysproutos/deployment-catalogue",
+        ociDigest: `sha256:${fixtureHex.repeat(2)}`,
+        catalogueDigest: `sha256:${fixtureHex.repeat(2)}`,
+        sourceRepository: "MySproutOS/Deployment-Templates",
+        workflowRef:
+          "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        sourceRef: "refs/heads/main",
+        sourceSha: fixtureHex.repeat(2).slice(0, 40),
+        signatureIdentity:
+          "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        signatureIssuer: "https://token.actions.githubusercontent.com",
+        provenance: { fixture: true },
+      })
+      .execute()
+
     await db
       .insertInto("storeListing")
       .values({
@@ -120,6 +141,15 @@ describe.skipIf(!reachable)("project routes", () => {
         defaultBranch: "main",
         platform: "web",
         status: "published",
+        catalogueEntryId: listingSlug,
+        catalogueImportId,
+        catalogueSchemaVersion: 1,
+        catalogueManifest: { fixture: true },
+        upstreamCommit: fixtureHex.repeat(2).slice(0, 40),
+        templatePluginRepository: "ghcr.io/mysproutos/project-test-plugin",
+        templatePluginDigest: `sha256:${fixtureHex.repeat(2)}`,
+        capabilityVerifiedAt: new Date(),
+        e2eVerifiedAt: new Date(),
       })
       .execute()
   })
@@ -131,6 +161,7 @@ describe.skipIf(!reachable)("project routes", () => {
       await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
     await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
+    await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
     await cleanupFixtures()
   })
 

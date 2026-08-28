@@ -27,6 +27,18 @@ export {
 export { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 export { JOB_KINDS, PLATFORM_HANDLERS, scheduleRecurring } from "./handlers"
 export {
+  DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  importDeploymentCatalogue,
+  isTrustedDeploymentCatalogueWorkflow,
+  reconcileSignedDeploymentCatalogue,
+  scheduleDeploymentCatalogueReconciliation,
+} from "./deployment-catalogue"
+export {
+  DEPLOYMENT_TEMPLATES_REF,
+  DEPLOYMENT_TEMPLATES_REPOSITORY,
+  DEPLOYMENT_TEMPLATES_WORKFLOW_REF,
+} from "./deployment-catalogue-oci"
+export {
   importStaticCloudFrontLog,
   parseStaticCloudFrontLog,
   scanStaticCloudFrontLogs,

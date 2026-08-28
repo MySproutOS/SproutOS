@@ -62,7 +62,6 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
@@ -674,15 +673,6 @@ export const getV1OrgsByOrgSlugStoreListingsResponseTransformer = async (
     item.createdAt = new Date(item.createdAt)
     return item
   })
-  return data
-}
-
-export const postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer = async (
-  data: any,
-): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse> => {
-  if (data.reviewedAt) {
-    data.reviewedAt = new Date(data.reviewedAt)
-  }
   return data
 }
 

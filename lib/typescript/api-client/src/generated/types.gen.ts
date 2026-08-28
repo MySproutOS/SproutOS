@@ -4593,6 +4593,10 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
   /**
+   * Publication is controlled by the signed catalogue
+   */
+  400: ErrorResponseT
+  /**
    * Caller lacks store:listing:moderate
    */
   403: ErrorResponseT
@@ -4604,23 +4608,6 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
-  /**
-   * The published listing
-   */
-  200: {
-    id: string
-    slug: string
-    status: string
-    reviewedByUserId: string | null
-    reviewedAt: Date | null
-    rejectionReason: string | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
   body?: {
@@ -6457,6 +6444,36 @@ export type PostV1InternalPgResolveResponses = {
 
 export type PostV1InternalPgResolveResponse =
   PostV1InternalPgResolveResponses[keyof PostV1InternalPgResolveResponses]
+
+export type PostV1DeployCatalogueImportData = {
+  body?: {
+    oidc_token: string
+    oci_digest: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/catalogue/import"
+}
+
+export type PostV1DeployCatalogueImportErrors = {
+  /**
+   * The OIDC token or trusted workflow identity did not verify
+   */
+  401: unknown
+}
+
+export type PostV1DeployCatalogueImportResponses = {
+  /**
+   * The signed catalogue was queued for verification and reconciliation
+   */
+  202: {
+    job_id: string
+    oci_digest: string
+  }
+}
+
+export type PostV1DeployCatalogueImportResponse =
+  PostV1DeployCatalogueImportResponses[keyof PostV1DeployCatalogueImportResponses]
 
 export type PostV1DeployTokenData = {
   body?: {

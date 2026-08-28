@@ -2,7 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { crudDeployment, fetchDeployment } from "@lib/dao"
-import { enqueue, enqueueSigning, PUBLISH_KINDS } from "@lib/jobs"
+import {
+  DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+  enqueue,
+  enqueueSigning,
+  isTrustedDeploymentCatalogueWorkflow,
+  PUBLISH_KINDS,
+} from "@lib/jobs"
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { environmentFor } from "@lib/jobs"
 import {
@@ -100,6 +106,15 @@ const tokenRequest = Type.Object({
   project: Type.Optional(Type.String({ minLength: 1 })),
 })
 const tokenResponse = Type.Object({ token: Type.String(), expires_in: Type.Integer() })
+
+const catalogueImportRequest = Type.Object({
+  oidc_token: Type.String({ minLength: 1 }),
+  oci_digest: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+})
+const catalogueImportResponse = Type.Object({
+  job_id: Type.String(),
+  oci_digest: Type.String(),
+})
 
 const uploadRequest = Type.Object({
   project: Type.String({ minLength: 1 }),
@@ -207,6 +222,45 @@ function bearer(header: string | undefined): { projectId: string } | undefined {
 }
 
 const deploy: Hono = new Hono()
+  .post(
+    "/deploy/catalogue/import",
+    describeRoute({
+      description:
+        "Queues an immutable Deployment-Templates catalogue import after GitHub OIDC identity verification.",
+      responses: {
+        202: {
+          description: "The signed catalogue was queued for verification and reconciliation",
+          content: { "application/json": { schema: resolver(catalogueImportResponse) } },
+        },
+        401: { description: "The OIDC token or trusted workflow identity did not verify" },
+      },
+    }),
+    validator("json", catalogueImportRequest),
+    async (c) => {
+      const { oidc_token, oci_digest } = c.req.valid("json")
+      let claims: Awaited<ReturnType<typeof verifyGitHubOidcToken>>
+      try {
+        claims = await verifyGitHubOidcToken(oidc_token)
+      } catch (cause) {
+        console.error(`catalogue import OIDC verification refused: ${String(cause)}`)
+        return c.json({ message: "The OIDC token did not verify" }, 401)
+      }
+      if (!isTrustedDeploymentCatalogueWorkflow(claims)) {
+        console.error(
+          `catalogue import refused repository=${claims.repository} ref=${claims.ref} workflow_ref=${claims.workflowRef}`,
+        )
+        return c.json({ message: "The OIDC token did not verify" }, 401)
+      }
+
+      const jobId = await enqueue(db, {
+        kind: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
+        payload: { ociDigest: oci_digest, sourceSha: claims.sha },
+        idempotencyKey: `${DEPLOYMENT_CATALOGUE_IMPORT_KIND}:oidc:${claims.runId}:${oci_digest}`,
+        maxAttempts: 5,
+      })
+      return c.json({ job_id: jobId, oci_digest }, 202)
+    },
+  )
   .post(
     "/deploy/token",
     describeRoute({
