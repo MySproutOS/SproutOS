@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use reqwest::Method;
@@ -176,7 +180,7 @@ impl Backend for CoreBackend {
                     kind: PackageKind::SiteZip,
                 }
             },
-            static_assets: parse_static_paths(&args.static_paths)?,
+            static_assets: static_asset_input(args.preset, &args.path, &args.static_paths)?,
             migration: args
                 .migration_path
                 .as_ref()
@@ -210,7 +214,22 @@ impl Backend for CoreBackend {
     }
 }
 
-fn parse_static_paths(values: &[String]) -> Result<Option<DeployArtifactInput>> {
+fn static_asset_input(
+    preset: DeployPreset,
+    primary_path: &Path,
+    values: &[String],
+) -> Result<Option<DeployArtifactInput>> {
+    if values.is_empty() && matches!(preset, DeployPreset::Static) {
+        // Static releases still carry the protocol's required primary archive, but their files
+        // are served from the independently identified asset archive. Match the deploy action's
+        // default by publishing the selected build directory at the URL root as well.
+        return Ok(Some(DeployArtifactInput::StaticPaths {
+            paths: vec![StaticPath {
+                source: primary_path.to_owned(),
+                prefix: String::new(),
+            }],
+        }));
+    }
     if values.is_empty() {
         return Ok(None);
     }
@@ -327,12 +346,47 @@ mod tests {
     #[test]
     fn static_mapping_splits_from_the_right_for_windows_drive_letters() {
         let input = vec![r"C:\build\public:assets".to_owned()];
-        let Some(DeployArtifactInput::StaticPaths { paths }) = parse_static_paths(&input).unwrap()
+        let Some(DeployArtifactInput::StaticPaths { paths }) =
+            static_asset_input(DeployPreset::Next, Path::new("ignored"), &input).unwrap()
         else {
             panic!("expected static paths")
         };
         assert_eq!(paths[0].source, PathBuf::from(r"C:\build\public"));
         assert_eq!(paths[0].prefix, "assets");
+    }
+
+    #[test]
+    fn static_preset_publishes_the_primary_directory_at_the_root_by_default() {
+        let Some(DeployArtifactInput::StaticPaths { paths }) =
+            static_asset_input(DeployPreset::Static, Path::new("custom-output"), &[]).unwrap()
+        else {
+            panic!("expected the static preset to publish its primary directory")
+        };
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].source, PathBuf::from("custom-output"));
+        assert_eq!(paths[0].prefix, "");
+    }
+
+    #[test]
+    fn explicit_static_paths_override_the_static_preset_default() {
+        let input = vec!["public:assets".to_owned()];
+        let Some(DeployArtifactInput::StaticPaths { paths }) =
+            static_asset_input(DeployPreset::Static, Path::new("dist"), &input).unwrap()
+        else {
+            panic!("expected explicit static paths")
+        };
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].source, PathBuf::from("public"));
+        assert_eq!(paths[0].prefix, "assets");
+    }
+
+    #[test]
+    fn runtime_presets_do_not_gain_implicit_static_assets() {
+        assert!(
+            static_asset_input(DeployPreset::Hono, Path::new("dist"), &[])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
