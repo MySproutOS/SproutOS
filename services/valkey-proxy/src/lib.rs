@@ -80,6 +80,14 @@ pub async fn serve(
     info!(tenant = %identity, "authenticated");
 
     /*
+      AUTH and the first application command can arrive in one TCP read. `authenticate` consumes
+      only AUTH and intentionally leaves the next complete or partial RESP frame in `buffer`.
+      Chain those already-read bytes in front of the socket so the forwarding loop sees them
+      without waiting for another client write that may never come.
+    */
+    let authenticated_buffer = buffer.split().freeze();
+
+    /*
       `tokio::io::split`, not the borrowed `TcpStream::split`.
 
       The upstream may now be a TLS session rather than a socket, so the halves come from the
@@ -88,7 +96,8 @@ pub async fn serve(
       platform would point it at.
     */
     let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);
-    let (mut client_read, mut client_write) = client.split();
+    let (client_read, mut client_write) = client.split();
+    let mut client_read = std::io::Cursor::new(authenticated_buffer).chain(client_read);
 
     let mut upstream_buffer = BytesMut::with_capacity(READ_BUFFER);
 

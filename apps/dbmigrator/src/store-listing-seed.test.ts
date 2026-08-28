@@ -40,22 +40,13 @@ describe.runIf(reachable)("the store listing seed", () => {
     expect(await allowedStatuses()).toContain(LISTING_ARCHIVED)
   })
 
-  it("leaves no published listing without a Dockerfile path", async () => {
-    // The premise of the store is that a listed application deploys. A published row whose
-    // `dockerfile_path` points nowhere is a fork that dies at the build, after the customer has
-    // a repository — which is exactly what two thirds of the original catalogue did.
+  it("leaves no unsigned published listing", async () => {
     const bad = await db
       .selectFrom("storeListing")
-      .select(["slug", "dockerfilePath", "rootDir"])
+      .select(["slug"])
       .where("status", "=", "published")
       .where("deletedAt", "is", null)
-      .where((eb) =>
-        eb.or([
-          eb("dockerfilePath", "=", ""),
-          eb("dockerfilePath", "like", "/%"),
-          eb("rootDir", "=", ""),
-        ]),
-      )
+      .where("catalogueEntryId", "is", null)
       .execute()
 
     expect(bad).toEqual([])

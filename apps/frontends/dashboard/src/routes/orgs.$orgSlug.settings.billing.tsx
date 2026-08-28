@@ -6,7 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/b
 import { Money } from "@ui/base/ui/money"
 import { Progress } from "@ui/base/ui/progress"
 import { Skeleton } from "@ui/base/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@ui/base/ui/table"
 import { AddCreditDialog } from "@frontends/dashboard/components/billing/add-credit-dialog"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody } from "@frontends/dashboard/components/shell/page-header"
@@ -60,7 +68,7 @@ function BillingSettings() {
           <CardHeader>
             <CardTitle>This month</CardTitle>
             <CardDescription>
-              Metered from the append-only ledger, not from a running total.
+              Usage is measured durably; charges are posted to the append-only credit ledger.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -74,12 +82,12 @@ function BillingSettings() {
               />
             )}
             {usage.data !== undefined && (
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Line</TableHead>
-                    <TableHead className="w-36 text-right">Quantity</TableHead>
-                    <TableHead className="w-24 text-right">Cost</TableHead>
+                    <TableHead className="w-28 text-right sm:w-36">Quantity</TableHead>
+                    <TableHead className="w-20 text-right sm:w-24">Cost</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -87,19 +95,25 @@ function BillingSettings() {
                     <Fragment key={line.id}>
                       {usage.data?.[index - 1]?.category !== line.category && (
                         <TableRow>
-                          <TableCell colSpan={3} className="bg-muted/30 text-xs font-medium">
+                          <TableHead
+                            colSpan={3}
+                            scope="rowgroup"
+                            className="h-auto bg-muted/30 py-2 text-xs font-semibold normal-case tracking-normal"
+                          >
                             {line.category}
-                          </TableCell>
+                          </TableHead>
                         </TableRow>
                       )}
                       <TableRow>
-                        <TableCell>
-                          <div>{line.label}</div>
+                        <TableCell className="min-w-0 whitespace-normal py-2 pl-7 sm:pl-9">
+                          <div className="break-words">{line.label}</div>
                           {line.description !== null && (
-                            <div className="text-xs text-muted-foreground">{line.description}</div>
+                            <div className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">
+                              {line.description}
+                            </div>
                           )}
                         </TableCell>
-                        <TableCell numeric className="text-right">
+                        <TableCell numeric className="whitespace-normal break-words text-right">
                           {line.quantity}
                         </TableCell>
                         <TableCell money>{formatMicroUsd(line.costMicros)}</TableCell>
@@ -107,6 +121,26 @@ function BillingSettings() {
                     </Fragment>
                   ))}
                 </TableBody>
+                {usage.summary !== undefined && (
+                  <TableFooter>
+                    {usage.summary.overheadMicros > 0n && (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-right text-muted-foreground">
+                          Platform fee
+                        </TableCell>
+                        <TableCell money>{formatMicroUsd(usage.summary.overheadMicros)}</TableCell>
+                      </TableRow>
+                    )}
+                    <TableRow>
+                      <TableCell colSpan={2} className="text-right font-semibold">
+                        Total
+                      </TableCell>
+                      <TableCell money className="font-semibold">
+                        {formatMicroUsd(usage.summary.totalMicros)}
+                      </TableCell>
+                    </TableRow>
+                  </TableFooter>
+                )}
               </Table>
             )}
           </CardContent>

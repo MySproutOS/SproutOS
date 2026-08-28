@@ -356,12 +356,9 @@ export const storeModeration = new Hono()
   .post(
     "/:orgSlug/store/listings/:listingId/publish",
     describeRoute({
-      description: "Publishes a listing, making it visible to unauthenticated visitors",
+      description: "Checks whether a listing can be published by catalogue reconciliation",
       responses: {
-        200: {
-          description: "The published listing",
-          content: { "application/json": { schema: resolver(storeSchemaModerationResponse) } },
-        },
+        400: { description: "Publication is controlled by the signed catalogue", ...errorResponse },
         403: { description: "Caller lacks store:listing:moderate", ...errorResponse },
         404: { description: "No such listing", ...errorResponse },
       },
@@ -369,40 +366,15 @@ export const storeModeration = new Hono()
     validator("param", storeSchemaListingIdParam),
     requirePermission("store:listing:moderate", paramResource("store", "listing", "listingId")),
     async (c) => {
-      const user = c.var.user
-      const organization = c.var.organization
       const { listingId } = c.req.valid("param")
 
-      const before = await fetchStoreListing(db).getOne(listingId, ["id", "slug", "status"])
-      if (!before) return throwNotFound(c, "Listing not found")
+      const listing = await fetchStoreListing(db).getOne(listingId, ["id"])
+      if (!listing) return throwNotFound(c, "Listing not found")
 
-      const listing = await db.transaction().execute(async (tx) => {
-        const row = await crudStoreListing(tx).publish(listingId, user.id)
-        if (row === undefined) return undefined
-
-        await crudAuditLog(tx).record({
-          organizationId: organization.id,
-          actorUserId: user.id,
-          action: "store:listing:publish",
-          resourceSrn: srnFor("store", organization.id, "listing", listingId),
-          before: { status: before.status },
-          after: { status: row.status, slug: row.slug },
-          ...auditContext(c),
-        })
-
-        return row
-      })
-
-      if (listing === undefined) return throwNotFound(c, "Listing not found")
-
-      return c.json({
-        id: listing.id,
-        slug: listing.slug,
-        status: listing.status,
-        reviewedByUserId: listing.reviewedByUserId,
-        reviewedAt: listing.reviewedAt?.toISOString() ?? null,
-        rejectionReason: listing.rejectionReason,
-      })
+      // Publication status is part of the signed Deployment-Templates document. A moderator may
+      // remove an unsafe listing immediately, but cannot promote an unsigned or upstream-blocked
+      // row around provenance, capability, and E2E verification.
+      return throwBadRequest(c, "Publication is controlled by the verified signed catalogue")
     },
   )
   .post(

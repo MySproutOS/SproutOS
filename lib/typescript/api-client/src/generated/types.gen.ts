@@ -951,6 +951,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       region: string | null
       hasUpstreamUpdate: boolean
       isGroup: boolean
+      servingMode: "serverless" | "static" | null
       parentProjectId: string | null
       managedByOauthApp: {
         clientId: string
@@ -1069,6 +1070,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       region: string | null
       hasUpstreamUpdate: boolean
       isGroup: boolean
+      servingMode: "serverless" | "static" | null
       parentProjectId: string | null
       managedByOauthApp: {
         clientId: string
@@ -1242,6 +1244,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     region: string | null
     hasUpstreamUpdate: boolean
     isGroup: boolean
+    servingMode: "serverless" | "static" | null
     parentProjectId: string | null
     managedByOauthApp: {
       clientId: string
@@ -1352,6 +1355,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     region: string | null
     hasUpstreamUpdate: boolean
     isGroup: boolean
+    servingMode: "serverless" | "static" | null
     parentProjectId: string | null
     managedByOauthApp: {
       clientId: string
@@ -4593,6 +4597,10 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
   /**
+   * Publication is controlled by the signed catalogue
+   */
+  400: ErrorResponseT
+  /**
    * Caller lacks store:listing:moderate
    */
   403: ErrorResponseT
@@ -4604,23 +4612,6 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError =
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors]
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses = {
-  /**
-   * The published listing
-   */
-  200: {
-    id: string
-    slug: string
-    status: string
-    reviewedByUserId: string | null
-    reviewedAt: Date | null
-    rejectionReason: string | null
-  }
-}
-
-export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponse =
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses]
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
   body?: {
@@ -6458,6 +6449,36 @@ export type PostV1InternalPgResolveResponses = {
 export type PostV1InternalPgResolveResponse =
   PostV1InternalPgResolveResponses[keyof PostV1InternalPgResolveResponses]
 
+export type PostV1DeployCatalogueImportData = {
+  body?: {
+    oidc_token: string
+    oci_digest: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/deploy/catalogue/import"
+}
+
+export type PostV1DeployCatalogueImportErrors = {
+  /**
+   * The OIDC token or trusted workflow identity did not verify
+   */
+  401: unknown
+}
+
+export type PostV1DeployCatalogueImportResponses = {
+  /**
+   * The signed catalogue was queued for verification and reconciliation
+   */
+  202: {
+    job_id: string
+    oci_digest: string
+  }
+}
+
+export type PostV1DeployCatalogueImportResponse =
+  PostV1DeployCatalogueImportResponses[keyof PostV1DeployCatalogueImportResponses]
+
 export type PostV1DeployTokenData = {
   body?: {
     oidc_token: string
@@ -6767,3 +6788,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

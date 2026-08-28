@@ -163,11 +163,13 @@ export async function requestSandboxDestroy(
 }
 
 /**
- * Meter every running sandbox up to now.
+ * Meter every provider-backed sandbox up to now.
  *
  * **Not only at stop.** A stop that never completes — a crashed worker, a provider timeout, a
  * sandbox someone forgets — would otherwise be free compute for as long as it runs, and free
  * compute has no error state. So the bill accrues on a schedule and stopping settles the tail.
+ * Daytona continues billing a stopped container's reserved disk until it is archived or deleted,
+ * so stopped provider objects remain candidates but emit only `sandbox_disk_gib_second`.
  *
  * Quantity comes from our own numbers: the resource shape we asked the provider for, and the
  * interval between `metered_through` and now, both of which are rows in this database. Nothing here
@@ -178,7 +180,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
   const due = await db
     .selectFrom("sandbox")
     .select("id")
-    .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
+    .where("sandbox.state", "in", ["starting", "running", "idle", "stopped", "deleting"])
     // `starting` begins before Daytona creates anything. Until it returns an id there is no
     // provider object consuming resources, regardless of how long this row has waited in a queue.
     .where("sandbox.externalId", "is not", null)
@@ -205,6 +207,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
         .select([
           "sandbox.id",
           "sandbox.projectId",
+          "sandbox.state",
           "sandbox.cpu",
           "sandbox.memoryGib",
           "sandbox.diskGib",
@@ -216,7 +219,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
           "project.organizationId",
         ])
         .where("sandbox.id", "=", candidate.id)
-        .where("sandbox.state", "in", ["starting", "running", "idle", "deleting"])
+        .where("sandbox.state", "in", ["starting", "running", "idle", "stopped", "deleting"])
         // Re-check under the row lock: provider-loss recovery can clear the id after the outer
         // sweep selected this candidate.
         .where("sandbox.externalId", "is not", null)
@@ -241,25 +244,37 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
       const idleDeadline = new Date(
         new Date(sandbox.lastActivityAt).getTime() + sandbox.idleTimeoutS * 1000,
       )
-      const now = sandbox.alwaysOn || databaseNow <= idleDeadline ? databaseNow : idleDeadline
+      const computeThrough =
+        sandbox.state === "stopped"
+          ? new Date(sandbox.meteredThrough ?? sandbox.createdAt)
+          : sandbox.alwaysOn || databaseNow <= idleDeadline
+            ? databaseNow
+            : idleDeadline
 
       // Null means never metered. `created_at`, not the epoch — the difference is forty years of
       // compute nobody ran.
       const from = sandbox.meteredThrough ?? sandbox.createdAt
-      const seconds = (now.getTime() - new Date(from).getTime()) / 1000
+      const diskSeconds = (databaseNow.getTime() - new Date(from).getTime()) / 1000
       // A clock that went backwards, or a row metered in the same millisecond twice. Neither is
       // billable.
-      if (seconds <= 0) return false
+      if (diskSeconds <= 0) return false
+
+      const computeSeconds = Math.max(
+        0,
+        (computeThrough.getTime() - new Date(from).getTime()) / 1000,
+      )
 
       const quantities: Record<keyof typeof DIMENSIONS, number> = {
-        cpu: seconds * sandbox.cpu,
-        memoryGib: seconds * sandbox.memoryGib,
-        diskGib: seconds * sandbox.diskGib,
+        cpu: computeSeconds * sandbox.cpu,
+        memoryGib: computeSeconds * sandbox.memoryGib,
+        diskGib: diskSeconds * sandbox.diskGib,
       }
 
       const outbox = crudMeteringOutbox(tx)
       await Promise.all(
         (Object.keys(DIMENSIONS) as (keyof typeof DIMENSIONS)[]).map(async (key) => {
+          if (quantities[key] <= 0) return
+          const through = key === "diskGib" ? databaseNow : computeThrough
           const event = usageEventRecord({
             source: "sandbox",
             /*
@@ -278,9 +293,9 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
             resourceId: sandbox.id,
             dimension: DIMENSIONS[key],
             quantity: quantities[key].toString(),
-            occurredAt: now,
+            occurredAt: through,
             windowStart: new Date(from),
-            windowEnd: now,
+            windowEnd: through,
             nodeId: null,
             podUid: null,
             chargedExternally: false,
@@ -296,7 +311,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
 
       await tx
         .updateTable("sandbox")
-        .set({ meteredThrough: now })
+        .set({ meteredThrough: databaseNow })
         .where("id", "=", sandbox.id)
         .execute()
 

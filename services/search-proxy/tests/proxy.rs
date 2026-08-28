@@ -964,6 +964,26 @@ async fn cluster_wide_endpoints_are_refused() {
 }
 
 #[tokio::test]
+async fn the_version_banner_is_available_to_authenticated_clients() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision(&url).await;
+    let (status, body) = as_tenant(address, &tenant, reqwest::Method::GET, "/", None).await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"version\""), "{body}");
+
+    let (status, body) = as_tenant(address, &tenant, reqwest::Method::HEAD, "/", None).await;
+    assert_eq!(status, 403, "HEAD / returned {status}: {body}");
+    cleanup(&url, &[&tenant]).await;
+}
+
+#[tokio::test]
 async fn an_unauthenticated_request_reaches_nothing() {
     let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };

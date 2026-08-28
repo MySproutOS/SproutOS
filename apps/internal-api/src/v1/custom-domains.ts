@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto"
+import { isIP } from "node:net"
+import { domainToASCII } from "node:url"
 import { crudAuditLog, crudCustomDomain, fetchCustomDomain, fetchProject } from "@lib/dao"
 import { CUSTOM_DOMAIN_KINDS, enqueue } from "@lib/jobs"
 import { withdrawRoute } from "@lib/lambda"
@@ -44,6 +46,19 @@ function platformValkey(): Redis {
 
 export function verificationName(hostname: string): string {
   return `_sproutos-challenge.${hostname}`
+}
+
+export function normalizeCustomDomainHostname(value: string): string | null {
+  const hostname = domainToASCII(value.trim().replace(/\.$/, "")).toLowerCase()
+  const valid =
+    hostname.length >= 4 &&
+    hostname.length <= 253 &&
+    hostname.includes(".") &&
+    isIP(hostname) === 0 &&
+    hostname
+      .split(".")
+      .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$|^[a-z0-9]$/.test(label))
+  return valid ? hostname : null
 }
 
 /** Public-Suffix-List classification; private suffixes are zones to their users too. */
@@ -227,7 +242,8 @@ const routes = app
         return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
       }
       const { projectId } = c.req.valid("param")
-      const hostname = c.req.valid("json").hostname.toLowerCase()
+      const hostname = normalizeCustomDomainHostname(c.req.valid("json").hostname)
+      if (hostname === null) return throwBadRequest(c, "Hostname is not a valid DNS name")
       const registrable = getDomain(hostname, { allowPrivateDomains: true })
       if (registrable === null) return throwBadRequest(c, "Hostname is not a registrable domain")
 
@@ -241,8 +257,8 @@ const routes = app
       ])
       if (project === undefined) return throwNotFound(c, "Project not found")
       if (project.isGroup) return throwBadRequest(c, "A project group serves no traffic")
-      if (project.servingMode === "static") {
-        return throwBadRequest(c, "Static custom domains are not supported yet")
+      if (project.servingMode !== "serverless") {
+        return throwBadRequest(c, "Only dynamic serverless projects support custom domains")
       }
       if (project.liveDeploymentId === null) {
         return throwBadRequest(c, "Deploy this project before adding a custom domain")

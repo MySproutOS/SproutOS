@@ -135,7 +135,10 @@ describe.skipIf(!reachable)("OpenSearch Security reconciliation", () => {
       "GET",
       `/_plugins/_security/api/roles/${role}`,
     )
-    expect(repairedRole[role]?.cluster_permissions).toEqual(["cluster_composite_ops"])
+    expect(repairedRole[role]?.cluster_permissions).toEqual([
+      "cluster_composite_ops",
+      "cluster:monitor/main",
+    ])
     expect(
       await searchAdminRequest<Record<string, unknown>>(
         config!,

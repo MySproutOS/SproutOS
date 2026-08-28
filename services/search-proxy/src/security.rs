@@ -94,7 +94,7 @@ impl SecurityManager {
             "role",
             &format!("roles/{}", identity.role),
             json!({
-                "cluster_permissions": ["cluster_composite_ops"],
+                "cluster_permissions": ["cluster_composite_ops", "cluster:monitor/main"],
                 "index_permissions": [{
                     "index_patterns": [format!("{prefix}*")],
                     "allowed_actions": [
