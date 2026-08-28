@@ -5,8 +5,10 @@ import {
   fetchOrganization,
   fetchUserPreference,
   impersonation,
+  prepareAccountOrganizationsForTeardownInTransaction,
 } from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
+import { enqueue, JOB_KINDS } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { encodeHexLowerCase, sha256Utf8 } from "@utils/crypto"
 import { Hono } from "hono"
@@ -436,29 +438,45 @@ const app = new Hono()
     async (c) => {
       const user = c.var.user
 
-      const result = await crudUser(db).deleteUser(user.id)
+      const prepared = await db.transaction().execute(async (transaction) => {
+        const result = await prepareAccountOrganizationsForTeardownInTransaction(
+          transaction,
+          user.id,
+        )
+        if (!result.ok) return result
 
-      if (!result.ok && result.reason === "not_found") {
-        return throwNotFound(c, "User not found")
-      }
-      if (!result.ok) {
-        /*
-          409, and it names the organizations.
+        const disabled = await crudUser(transaction).beginUserDeletion(user.id)
+        if (!disabled.ok) {
+          throw new Error(`Account ${user.id} changed while deletion was being prepared`)
+        }
+        if (result.projects.length === 0) return result
 
-          Someone has to be responsible for a team's data and its bill. Orphaning them or cascading
-          the delete are both worse than saying so, and a message that does not say *which* teams
-          leaves the person to guess.
-        */
+        await enqueue(transaction, {
+          kind: JOB_KINDS.tearDownAccount,
+          idempotencyKey: `${JOB_KINDS.tearDownAccount}:${user.id}`,
+          payload: { userId: user.id, projects: result.projects },
+          maxAttempts: 10,
+        })
+        return result
+      })
+      if (!prepared.ok) {
         return throwConflict(
           c,
-          `Transfer or delete these organizations first: ${result.organizations
-            .map((organization) => organization.slug)
-            .join(", ")}`,
+          `Transfer these shared organizations before deleting your account: ${prepared.organizations.join(", ")}`,
         )
       }
 
-      // The cookie goes with the account. Without this the browser keeps a session token whose
-      // row was just deleted, and the next request is a confusing 401 rather than a sign-out.
+      if (prepared.projects.length === 0) {
+        // Nothing external can fail, so there is no reason to leave a tombstone job between the
+        // request and anonymisation.
+        const completed = await crudUser(db).completeUserDeletion(user.id)
+        if (!completed.ok) {
+          throw new Error(`Account ${user.id} could not be anonymised after teardown preparation`)
+        }
+      }
+
+      // Sign out immediately. The durable job anonymises the row only after every provider
+      // teardown succeeds, so a failed cleanup never becomes an unowned resource.
       deleteCookie(c, "session", { path: "/", domain: cookieDomain() })
 
       return c.json({}, 200)

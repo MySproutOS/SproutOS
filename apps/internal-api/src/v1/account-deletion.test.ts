@@ -1,5 +1,6 @@
 /* oxlint-disable no-await-in-loop */
 import { db } from "@sproutos/db"
+import { accountTeardown, enqueue, JOB_KINDS } from "@lib/jobs"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import app from "../index"
@@ -59,12 +60,11 @@ afterAll(async () => {
 })
 
 describe.skipIf(!up)("closing an account", () => {
-  it("refuses while the person still owns an organization, and names it", async ({ skip }) => {
+  it("automatically deletes an organization the person owns alone", async ({ skip }) => {
     if (!up) skip()
     /*
-      Someone has to be responsible for a team's data and its bill. Orphaning it or cascading the
-      delete are both worse than saying so — and a message that does not say *which* team leaves
-      the person to guess.
+      There is nobody to transfer a one-person organization to. Its provider resources are part of
+      the account deletion, while GitHub repositories remain untouched unless separately requested.
     */
     const user = await person("close-owner")
     const created = await app.request("/v1/orgs", {
@@ -76,17 +76,272 @@ describe.skipIf(!up)("closing an account", () => {
     trackOrganization(organization.id as string)
 
     const response = await call("DELETE", "/v1/user/me/delete", user)
-    expect(response.status).toBe(409)
-    expect(JSON.stringify(response.json)).toContain(organization.slug as string)
+    expect(response.status).toBe(200)
 
-    // And the account is untouched — a refusal must not half-close it.
     const row = await db
       .selectFrom("user")
       .select(["deletedAt", "email"])
       .where("id", "=", user.id)
       .executeTakeFirstOrThrow()
+    expect(row.deletedAt).not.toBeNull()
+    expect(row.email.endsWith("@invalid")).toBe(true)
+    expect(
+      (
+        await db
+          .selectFrom("organization")
+          .select("deletedAt")
+          .where("id", "=", organization.id as string)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).not.toBeNull()
+  })
+
+  it("clears every project before anonymising the owner and never deletes their GitHub repository", async ({
+    skip,
+  }) => {
+    if (!up) skip()
+    const user = await person("close-resources")
+    const created = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: authHeaders(user),
+      body: JSON.stringify({ name: `Resources ${v7()}` }),
+    })
+    const organization = (await created.json()) as Json
+    const organizationId = organization.id as string
+    trackOrganization(organizationId)
+
+    const repositoryId = v7()
+    const githubRepoId = BigInt(`0x${repositoryId.replaceAll("-", "").slice(-15)}`)
+    const githubInstallationId = v7()
+    await db
+      .insertInto("githubInstallation")
+      .values({
+        id: githubInstallationId,
+        organizationId,
+        installationId: githubRepoId + 1n,
+        accountLogin: "customer",
+        accountType: "User",
+        repositorySelection: "selected",
+        installedByUserId: user.id,
+      })
+      .execute()
+    await db
+      .insertInto("repository")
+      .values({
+        id: repositoryId,
+        organizationId,
+        githubRepoId,
+        ownerLogin: "customer",
+        name: "keep-me",
+        provenance: "new",
+        githubInstallationId,
+      })
+      .execute()
+    const groupId = v7()
+    const projectId = v7()
+    await db
+      .insertInto("project")
+      .values({
+        id: groupId,
+        organizationId,
+        repositoryId,
+        name: "Repository group",
+        slug: `group-${groupId.slice(-12)}`,
+        isGroup: true,
+      })
+      .execute()
+    await db
+      .insertInto("project")
+      .values({
+        id: projectId,
+        organizationId,
+        repositoryId,
+        parentProjectId: groupId,
+        name: "Web",
+        slug: `web-${projectId.slice(-12)}`,
+      })
+      .execute()
+
+    // A dead-lettered project-only deletion must not consume the organization deletion's enqueue.
+    // Reusing the project-only idempotency key would return this terminal row without reviving it.
+    const oldTeardownId = await enqueue(db, {
+      kind: JOB_KINDS.tearDownProject,
+      organizationId,
+      idempotencyKey: `${JOB_KINDS.tearDownProject}:${projectId}`,
+      payload: { projectId, projectJobId: v7() },
+    })
+    await db
+      .updateTable("backgroundJob")
+      .set({ state: "dead_lettered", finishedAt: new Date() })
+      .where("id", "=", oldTeardownId)
+      .execute()
+
+    // A person can delete the organization and immediately delete their account before its first
+    // project job runs. Account deletion must adopt that in-flight teardown instead of seeing no
+    // active organization and anonymising the owner while resources remain.
+    expect((await call("DELETE", `/v1/orgs/${organization.slug as string}`, user)).status).toBe(200)
+
+    const adoptedProjectJob = await db
+      .selectFrom("projectJob")
+      .select("id")
+      .where("projectId", "=", projectId)
+      .where("kind", "=", "delete")
+      .orderBy("createdAt", "desc")
+      .executeTakeFirstOrThrow()
+    const adoptedTeardown = await db
+      .selectFrom("backgroundJob")
+      .select(["id", "idempotencyKey", "state"])
+      .where(
+        "idempotencyKey",
+        "=",
+        `${JOB_KINDS.tearDownProject}:${projectId}:${adoptedProjectJob.id}`,
+      )
+      .executeTakeFirstOrThrow()
+    expect(adoptedTeardown.id).not.toBe(oldTeardownId)
+    expect(adoptedTeardown.state).toBe("queued")
+
+    expect((await call("DELETE", "/v1/user/me/delete", user)).status).toBe(200)
+
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select(["id", "payload"])
+      .where("idempotencyKey", "=", `${JOB_KINDS.tearDownAccount}:${user.id}`)
+      .executeTakeFirstOrThrow()
+    const payload =
+      typeof queued.payload === "string"
+        ? (JSON.parse(queued.payload) as { projects: Array<{ projectId: string }> })
+        : (queued.payload as { projects: Array<{ projectId: string }> })
+    expect(payload.projects.map((project) => project.projectId)).toEqual([projectId])
+
+    // The account is disabled immediately, but its identity is not anonymised until provider
+    // cleanup succeeds. A failed provider call must therefore be retryable and must not turn a
+    // still-running resource into an ownerless one.
+    const beforeCleanup = await db
+      .selectFrom("user")
+      .select(["deletedAt", "email"])
+      .where("id", "=", user.id)
+      .executeTakeFirstOrThrow()
+    expect(beforeCleanup.deletedAt).toBeInstanceOf(Date)
+    expect(beforeCleanup.email).toBe(user.email)
+    const failing = accountTeardown(() => Promise.reject(new Error("provider still running")))
+    await expect(
+      failing(
+        {
+          id: queued.id,
+          organizationId: null,
+          kind: JOB_KINDS.tearDownAccount,
+          payload,
+          attempt: 1,
+          maxAttempts: 10,
+        },
+        { db, keepAlive: () => Promise.resolve(true), signal: new AbortController().signal },
+      ),
+    ).rejects.toThrow("provider still running")
+    expect(
+      (
+        await db
+          .selectFrom("user")
+          .select("email")
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow()
+      ).email,
+    ).toBe(user.email)
+
+    // A group owns no provider resource, so it must not sit in `deleting` forever waiting for a
+    // job that cannot exist.
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("state")
+          .where("id", "=", groupId)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("deleted")
+
+    const tornDown: string[] = []
+    const finish = accountTeardown(async (job, context) => {
+      const id = (job.payload as { projectId: string }).projectId
+      tornDown.push(id)
+      await context.db
+        .updateTable("project")
+        .set({ state: "deleted", updatedAt: new Date() })
+        .where("id", "=", id)
+        .execute()
+    })
+    await finish(
+      {
+        id: queued.id,
+        organizationId: null,
+        kind: JOB_KINDS.tearDownAccount,
+        payload,
+        attempt: 1,
+        maxAttempts: 10,
+      },
+      { db, keepAlive: () => Promise.resolve(true), signal: new AbortController().signal },
+    )
+    expect(tornDown).toEqual([projectId])
+
+    const repository = await db
+      .selectFrom("repository")
+      .select(["githubRepoId", "ownerLogin", "name"])
+      .where("id", "=", repositoryId)
+      .executeTakeFirstOrThrow()
+    expect(repository).toMatchObject({ ownerLogin: "customer", name: "keep-me" })
+    expect(repository.githubRepoId).toBe(String(githubRepoId))
+    expect(
+      (
+        await db
+          .selectFrom("githubInstallation")
+          .select("deletedAt")
+          .where("id", "=", githubInstallationId)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).toBeInstanceOf(Date)
+    expect(
+      (
+        await db
+          .selectFrom("user")
+          .select("deletedAt")
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).toBeInstanceOf(Date)
+  })
+
+  it("requires ownership transfer for an organization with another member", async ({ skip }) => {
+    if (!up) skip()
+    const owner = await person("close-shared-owner")
+    const member = await person("close-shared-member")
+    const created = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: authHeaders(owner),
+      body: JSON.stringify({ name: `Shared ${v7()}` }),
+    })
+    const organization = (await created.json()) as Json
+    trackOrganization(organization.id as string)
+    const role = await db
+      .selectFrom("role")
+      .select("id")
+      .where("organizationId", "=", organization.id as string)
+      .where("name", "=", "member")
+      .executeTakeFirstOrThrow()
+    const invite = await call("POST", `/v1/orgs/${organization.slug as string}/invites`, owner, {
+      email: member.email,
+      roleId: role.id,
+    })
+    await call("POST", "/v1/invites/accept", member, { token: invite.json.token })
+
+    const response = await call("DELETE", "/v1/user/me/delete", owner)
+    expect(response.status).toBe(409)
+    expect(JSON.stringify(response.json)).toContain(organization.slug as string)
+
+    const row = await db
+      .selectFrom("user")
+      .select("deletedAt")
+      .where("id", "=", owner.id)
+      .executeTakeFirstOrThrow()
     expect(row.deletedAt).toBeNull()
-    expect(row.email).toBe(user.email)
   })
 
   it("closes an account that owns nothing", async ({ skip }) => {
