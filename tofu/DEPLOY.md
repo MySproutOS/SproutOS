@@ -239,6 +239,52 @@ checks only the copy, and records its SHA-256 digest. It rechecks the digest imm
 `tofu apply` and applies only the protected copy. Any byte change after plan inspection fails before
 OpenTofu is invoked.
 
+An interrupted `NONE -> A` apply has one separate recovery path. Use it only when OpenTofu already
+reports A but `${name_prefix}-acme-worker` is absent; do not add A -> A to the ordinary adjacent
+transition guard. Save a fresh plan with all three phase flags explicit and the same immutable image
+that is serving:
+
+```bash
+IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>"
+tofu -chdir=tofu plan \
+  -var="web_image=$IMAGE" \
+  -var='acme_worker_enabled=false' \
+  -var='acme_handler_ownership_enabled=false' \
+  -var='acme_fallback_iam_enabled=true' \
+  -out=partial-a-repair.tfplan
+
+NAME_PREFIX=sproutos IMAGE="$IMAGE" \
+  bin/check-acme-worker-partial-a-repair-plan.sh tofu/partial-a-repair.tfplan
+```
+
+The checker requires unchanged A outputs and exactly four actions: create the missing ACME service,
+replace the ACME and web task definitions, and update `aws_launch_template.ecs`. It also proves the
+replacement tasks use that image; the web task writes both phase-A flags explicitly as `0`; the
+isolated service remains at desired count zero with its reviewed capacity provider, placement, and
+deployment safety settings; the isolated task uses its dedicated task and execution roles plus the
+existing account-key secret; and the launch-template payload is valid gzip no larger than EC2's
+16,384 decoded-byte limit.
+
+Apply only the protected copy through the repair wrapper:
+
+```bash
+NAME_PREFIX=sproutos IMAGE="$IMAGE" \
+  bin/apply-acme-worker-partial-a-repair.sh tofu/partial-a-repair.tfplan
+```
+
+Before applying, it compares the live web revision with the reviewed OpenTofu task contract after
+rewriting only its images to the chosen immutable image. The one compatibility normalization adds
+`ACME_HANDLER_OWNERSHIP_ENABLED=0` only when that entry is absent, matching `parseWorkerFlag()`'s
+false default; every other task field, container, environment value, secret, role, and resource must
+be identical. It still requires `ACME_JOBS_ENABLED=0`, a stable two-task web service on the chosen
+image, fallback ACME IAM attached, the live application policy semantically identical to its
+reviewed OpenTofu document, no isolated service or tasks, the live ECS launch-template
+ID/latest/default versions equal to the plan's `before` state, and all four PPv2 tenant-edge target
+groups empty and unassociated.
+After applying it hands off both exact task revisions and runs the full phase-A verifier, which
+requires both flags to be explicitly `0`. Any different partial state needs a new diagnosis; it is
+not permission to widen this repair gate.
+
 At every phase it requires the web service at desired/running `2`, pending `0`, one completed
 PRIMARY deployment, and exactly two running tasks on the service's exact revision. Phase A requires
 the isolated service at `0/0/0`; phases B-D require `2/2/0` and two exact-revision running tasks.
