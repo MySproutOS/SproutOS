@@ -9,6 +9,7 @@ repository.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 hex.workspace = true
+libc.workspace = true
 oci-client.workspace = true
 reqwest.workspace = true
 serde.workspace = true

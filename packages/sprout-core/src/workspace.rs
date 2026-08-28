@@ -173,6 +173,26 @@ impl WorkspaceSnapshot {
         Ok(Self { entries })
     }
 
+    /// Rejects files whose inode is also reachable outside the workspace before plugin execution.
+    /// Post-execution diff validation is too late: mutating a pre-existing hardlink has already
+    /// changed its external peer. `.git` is excluded because the isolation provider mounts it
+    /// read-only and local clones may legitimately hardlink object storage.
+    pub(crate) fn reject_preexisting_hard_links(&self) -> Result<()> {
+        if let Some((path, _)) = self.entries.iter().find(|(path, entry)| {
+            entry.kind == EntryKind::File
+                && entry.hard_link_count > 1
+                && path.as_str() != ".git"
+                && !path.starts_with(".git/")
+        }) {
+            return Err(SproutError::WorkspaceRejected {
+                path: PathBuf::from(path),
+                reason: "pre-existing hard-linked files cannot be exposed to a template plugin"
+                    .into(),
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_diff(
         &self,
         after: &Self,
