@@ -153,6 +153,7 @@ impl<I: IsolationProvider> PluginRunner<I> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        configure_process(&mut command)?;
         let mut child = command
             .spawn()
             .map_err(|error| SproutError::PluginSpawn(error.to_string()))?;
@@ -197,8 +198,7 @@ impl<I: IsolationProvider> PluginRunner<I> {
         let status = match completed {
             Ok(Ok(status)) => status,
             Ok(Err(stream)) => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
+                terminate_process_tree(&mut child).await;
                 let limit = if stream == "stdout" {
                     self.limits.max_stdout_bytes
                 } else {
@@ -207,8 +207,7 @@ impl<I: IsolationProvider> PluginRunner<I> {
                 return Err(SproutError::PluginOutputLimit { stream, limit });
             }
             Err(_) => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
+                terminate_process_tree(&mut child).await;
                 return Err(SproutError::PluginTimeout {
                     timeout_ms: self
                         .limits
@@ -239,6 +238,86 @@ impl<I: IsolationProvider> PluginRunner<I> {
         let changes = before.validate_diff(&after, &protocol.declared_changes, self.limits.diff)?;
         Ok(ApplyResult { protocol, changes })
     }
+}
+
+#[cfg(unix)]
+fn configure_process(command: &mut Command) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    command.as_std_mut().process_group(0);
+    // Mark every non-stdio descriptor close-on-exec. This includes descriptors a caller may have
+    // deliberately made inheritable while preserving Rust's private exec-error pipe until exec.
+    unsafe {
+        command.pre_exec(|| {
+            #[cfg(target_os = "linux")]
+            {
+                let result = libc::syscall(
+                    libc::SYS_close_range,
+                    3_u32,
+                    u32::MAX,
+                    libc::CLOSE_RANGE_CLOEXEC,
+                );
+                if result == 0 {
+                    return Ok(());
+                }
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ENOSYS) {
+                    return Err(error);
+                }
+            }
+
+            let maximum = libc::sysconf(libc::_SC_OPEN_MAX);
+            let maximum = if maximum < 0 {
+                65_536
+            } else {
+                maximum.min(1_048_576)
+            };
+            for descriptor in 3..maximum {
+                let flags = libc::fcntl(descriptor as libc::c_int, libc::F_GETFD);
+                if flags >= 0
+                    && libc::fcntl(
+                        descriptor as libc::c_int,
+                        libc::F_SETFD,
+                        flags | libc::FD_CLOEXEC,
+                    ) < 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn configure_process(_command: &mut Command) -> Result<()> {
+    // NativeIsolationProvider rejects Windows before this point. A future Windows provider must
+    // attach the process to a kill-on-close Job Object before this function can return success.
+    Err(SproutError::IsolationUnavailable(
+        "process-tree containment is unavailable on this platform".into(),
+    ))
+}
+
+#[cfg(unix)]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    if let Some(identifier) = child.id()
+        && let Ok(group) = i32::try_from(identifier)
+    {
+        // The child was placed in a fresh process group before exec. A negative PID addresses the
+        // complete group; Bubblewrap's PID namespace then tears down even daemonized descendants.
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+}
+
+#[cfg(not(unix))]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+    let _ = child.wait().await;
 }
 
 struct BoundedOutput {
@@ -409,6 +488,28 @@ printf '{"changes":[]}'"#,
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn plugin_environment_contains_only_the_locale_allowlist() {
+        let workspace = tempdir().unwrap();
+        let (_plugin_dir, plugin) = executable(
+            r#"cat >/dev/null
+test -z "${HOME+x}${AWS_ACCESS_KEY_ID+x}${GITHUB_TOKEN+x}"
+test "$LANG" = C
+test "$LC_ALL" = C
+printf '{"changes":[]}'"#,
+        );
+        PluginRunner::new(TestIsolation, ApplyLimits::default())
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn deadline_kills_slow_plugin() {
         let workspace = tempdir().unwrap();
         let (_plugin_dir, plugin) = executable("cat >/dev/null\nsleep 5");
@@ -426,6 +527,41 @@ printf '{"changes":[]}'"#,
             .await
             .unwrap_err();
         assert_eq!(error.code(), ErrorCode::PluginTimeout);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deadline_kills_the_plugin_process_group() {
+        let workspace = tempdir().unwrap();
+        let (_plugin_dir, plugin) = executable("sleep 30 &\necho $! > child.pid\nwait");
+        let limits = ApplyLimits {
+            timeout: Duration::from_secs(2),
+            ..ApplyLimits::default()
+        };
+        let error = PluginRunner::new(TestIsolation, limits)
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::PluginTimeout);
+        let process: i32 = fs::read_to_string(workspace.path().join("child.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        for _ in 0..50 {
+            if unsafe { libc::kill(process, 0) } < 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("plugin descendant {process} survived the deadline");
     }
 
     #[cfg(unix)]

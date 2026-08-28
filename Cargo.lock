@@ -3533,6 +3533,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "hex",
+ "libc",
  "oci-client",
  "reqwest 0.12.28",
  "serde",
