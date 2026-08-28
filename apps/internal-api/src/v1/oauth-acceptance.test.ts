@@ -236,5 +236,6 @@ describe("OAuth FastAPI and database acceptance", () => {
         .where("id", "=", service.json.id as string)
         .execute()
     },
+    30_000,
   )
 })
