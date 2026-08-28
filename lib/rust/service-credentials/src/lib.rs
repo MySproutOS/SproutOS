@@ -244,7 +244,17 @@ impl CredentialStore {
 
         match matched {
             Some((credential_id, database_branch_id)) => {
-                self.stamp_used(credential_id).await;
+                /*
+                  Reuse the lookup connection while it is still checked out.
+
+                  Acquiring a second pool connection here self-deadlocks when the configured pool
+                  size is one: this function still owns `client`, while `stamp_used` waits forever
+                  for that same slot. With any finite pool, each successful authentication pins one
+                  slot until the pool is exhausted and every later tenant sees a
+                  temporary-unavailable error. The stamp is best effort, but it must not require a
+                  second connection to record the lookup that already owns one.
+                */
+                Self::stamp_used_with(&client, credential_id).await;
                 Ok(Authentication::Ok(Box::new(AuthenticatedTenant {
                     identity,
                     database_branch_id,
@@ -263,6 +273,10 @@ impl CredentialStore {
         let Ok(client) = self.pool.get().await else {
             return;
         };
+        Self::stamp_used_with(&client, credential_id).await;
+    }
+
+    async fn stamp_used_with(client: &tokio_postgres::Client, credential_id: uuid::Uuid) {
         if let Err(cause) = client
             .execute(
                 "update service_credential set last_used_at = now() where id = $1",
@@ -487,7 +501,13 @@ pub fn report(cause: &StoreError) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CA_FILE_VARIABLE, normalise_url, tls_connector};
+    use std::time::Duration;
+
+    use super::{Authentication, CA_FILE_VARIABLE, CredentialStore, normalise_url, tls_connector};
+    use sproutos_tenant_auth::{
+        ResourceKind, TenantIdentity, generate_secret, hash_generated_secret,
+    };
+    use uuid::Uuid;
 
     /*
       One test, and it is about the failure rather than the success.
@@ -554,5 +574,115 @@ mod tests {
         let url = "postgresql://u:p@localhost/main";
 
         assert_eq!(normalise_url(url), url);
+    }
+
+    #[tokio::test]
+    async fn one_connection_pool_authenticates_and_stamps_without_self_deadlocking() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "DATABASE_URL is required for the credential-pool regression in CI"
+            );
+            return;
+        };
+        let Ok((client, connection)) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await
+        else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "Postgres is required for the credential-pool regression in CI"
+            );
+            return;
+        };
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        let user_id = Uuid::now_v7();
+        let organization_id = Uuid::now_v7();
+        let service_id = Uuid::now_v7();
+        let credential_id = Uuid::now_v7();
+        let region: Uuid = client
+            .query_one("select id from region limit 1", &[])
+            .await
+            .expect("a seeded region")
+            .get(0);
+        let identity = TenantIdentity::new(organization_id, ResourceKind::Queue, service_id);
+        let username = identity.username();
+        let secret = generate_secret();
+
+        client
+            .execute(
+                "insert into \"user\" (id, email, name) values ($1, $2, 'Pool Test')",
+                &[&user_id, &format!("credential-pool-{user_id}@test.invalid")],
+            )
+            .await
+            .expect("insert user");
+        client
+            .execute(
+                "insert into organization (id, name, slug, kind, owner_user_id)
+                 values ($1, 'Pool Test', $2, 'personal', $3)",
+                &[
+                    &organization_id,
+                    &format!("credential-pool-{organization_id}"),
+                    &user_id,
+                ],
+            )
+            .await
+            .expect("insert organization");
+        client
+            .execute(
+                "insert into backend_service (id, organization_id, region_id, name, kind, status)
+                 values ($1, $2, $3, 'Pool Queue', 'valkey', 'active')",
+                &[&service_id, &organization_id, &region],
+            )
+            .await
+            .expect("insert service");
+        client
+            .execute(
+                "insert into service_credential
+                    (id, backend_service_id, username, secret_hash, last_four)
+                 values ($1, $2, $3, $4, $5)",
+                &[
+                    &credential_id,
+                    &service_id,
+                    &username,
+                    &hash_generated_secret(&secret),
+                    &&secret[secret.len() - 4..],
+                ],
+            )
+            .await
+            .expect("insert credential");
+
+        let store = CredentialStore::connect(&url, 1).expect("one-connection pool");
+        let authenticated = tokio::time::timeout(
+            Duration::from_secs(2),
+            store.authenticate(&username, secret.as_bytes()),
+        )
+        .await
+        .expect("authentication must not wait for a second pool connection")
+        .expect("credential lookup");
+        assert!(matches!(authenticated, Authentication::Ok(_)));
+
+        let stamped: bool = client
+            .query_one(
+                "select last_used_at is not null from service_credential where id = $1",
+                &[&credential_id],
+            )
+            .await
+            .expect("read last-used stamp")
+            .get(0);
+        assert!(stamped, "successful authentication was not stamped");
+
+        client
+            .execute(
+                "delete from organization where id = $1",
+                &[&organization_id],
+            )
+            .await
+            .expect("clean fixture organization");
+        client
+            .execute("delete from \"user\" where id = $1", &[&user_id])
+            .await
+            .expect("clean fixture user");
     }
 }
