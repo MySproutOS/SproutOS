@@ -928,6 +928,7 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
     data: Array<{
       id: string
       name: string
+      description: string | null
       slug: string
       kind: string
       state: string
@@ -956,6 +957,9 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
         clientId: string
         name: string
       } | null
+      primaryChildProjectId: string | null
+      primaryUrl: string | null
+      primaryHostname: string | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
@@ -970,6 +974,8 @@ export type GetV1OrgsByOrgSlugProjectsResponse =
 export type PostV1OrgsByOrgSlugProjectsData = {
   body?: {
     name: string
+    description?: string | null
+    region?: string | null
     slug?: string
     kind?: "site" | "workflow"
     rootDir?: string
@@ -1041,6 +1047,7 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
     project: {
       id: string
       name: string
+      description: string | null
       slug: string
       kind: string
       state: string
@@ -1069,12 +1076,16 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
         clientId: string
         name: string
       } | null
+      primaryChildProjectId: string | null
+      primaryUrl: string | null
+      primaryHostname: string | null
       url: string | null
       hostname: string | null
       liveDeploymentId: string | null
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1133,6 +1144,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     }
     job: {
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1148,6 +1160,24 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       finishedAt: Date | null
       createdAt: Date
     }
+    jobs: Array<{
+      id: string
+      projectId: string
+      kind: string
+      state: string
+      progress: number
+      attempt: number
+      errorCode: string | null
+      errorMessage: string | null
+      steps: Array<{
+        key: string
+        label: string
+        state: string
+      }>
+      startedAt: Date | null
+      finishedAt: Date | null
+      createdAt: Date
+    }>
     destroyed: Array<string>
     scheduledForTeardown: Array<string>
     retained: Array<string>
@@ -1191,6 +1221,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
   200: {
     id: string
     name: string
+    description: string | null
     slug: string
     kind: string
     state: string
@@ -1219,6 +1250,9 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       clientId: string
       name: string
     } | null
+    primaryChildProjectId: string | null
+    primaryUrl: string | null
+    primaryHostname: string | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1247,6 +1281,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponse =
 export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
   body?: {
     name?: string
+    description?: string | null
+    region?: string | null
     slug?: string
     rootDir?: string
     dockerfilePath?: string
@@ -1257,6 +1293,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
     isGroup?: boolean
+    primaryChildProjectId?: string | null
   }
   path: {
     orgSlug: string
@@ -1295,6 +1332,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
   200: {
     id: string
     name: string
+    description: string | null
     slug: string
     kind: string
     state: string
@@ -1323,6 +1361,9 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       clientId: string
       name: string
     } | null
+    primaryChildProjectId: string | null
+    primaryUrl: string | null
+    primaryHostname: string | null
     url: string | null
     hostname: string | null
     liveDeploymentId: string | null
@@ -1363,6 +1404,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsResponses = {
   200: {
     data: Array<{
       id: string
+      projectId: string
       kind: string
       state: string
       progress: number
@@ -1415,6 +1457,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
    */
   200: {
     id: string
+    projectId: string
     kind: string
     state: string
     progress: number
@@ -2907,6 +2950,66 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses = {
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponses]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    sessionId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/sessions/{sessionId}"
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors = {
+  /**
+   * Caller lacks project:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such session
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdError =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdErrors]
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses = {
+  /**
+   * Transcript
+   */
+  200: {
+    session: {
+      id: string
+      title: string | null
+      status: string
+      createdAt: Date
+      updatedAt: Date
+    }
+    turns: Array<{
+      id: string
+      role: string
+      inputText: string | null
+      error: string | null
+      seq: number
+      createdAt: Date
+    }>
+    events: Array<{
+      seq: string
+      type: string
+      payload: {
+        [key: string]: unknown
+      }
+      agentTurnId: string | null
+      createdAt: Date
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse =
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponses]
 
 export type GetV1OrgsByOrgSlugServicesData = {
   body?: never

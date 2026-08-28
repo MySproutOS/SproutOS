@@ -13,6 +13,7 @@ import type {
   GetV1OrgsByOrgSlugDomainsResponse,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
@@ -168,6 +169,16 @@ export const deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer = async
     data.job.finishedAt = new Date(data.job.finishedAt)
   }
   data.job.createdAt = new Date(data.job.createdAt)
+  data.jobs = data.jobs.map((item: any) => {
+    if (item.startedAt) {
+      item.startedAt = new Date(item.startedAt)
+    }
+    if (item.finishedAt) {
+      item.finishedAt = new Date(item.finishedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
   return data
 }
 
@@ -410,6 +421,23 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponseTransfor
   data.updatedAt = new Date(data.updatedAt)
   return data
 }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponseTransformer =
+  async (
+    data: any,
+  ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse> => {
+    data.session.createdAt = new Date(data.session.createdAt)
+    data.session.updatedAt = new Date(data.session.updatedAt)
+    data.turns = data.turns.map((item: any) => {
+      item.createdAt = new Date(item.createdAt)
+      return item
+    })
+    data.events = data.events.map((item: any) => {
+      item.createdAt = new Date(item.createdAt)
+      return item
+    })
+    return data
+  }
 
 export const getV1OrgsByOrgSlugServicesResponseTransformer = async (
   data: any,

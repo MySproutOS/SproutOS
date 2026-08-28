@@ -776,6 +776,7 @@ export interface Project {
   createdAt: Generated<Timestamp>
   createdByOauthGrantId: string | null
   deletedAt: Timestamp | null
+  description: string | null
   dockerfilePath: Generated<string>
   id: string
   isGroup: Generated<boolean>
@@ -784,6 +785,7 @@ export interface Project {
   name: string
   organizationId: string
   parentProjectId: string | null
+  primaryChildProjectId: string | null
   productionBranch: Generated<string>
   regionId: string | null
   repositoryId: string

@@ -34,6 +34,10 @@ export type Project = {
   managedByOauthApp: { clientId: string; name: string } | null
   /** Where it is reachable. Null when it has never had a successful deployment. */
   url: string | null
+  hostname: string | null
+  primaryChildProjectId: string | null
+  primaryUrl: string | null
+  primaryHostname: string | null
   /** Which deployment is serving. Not the newest — a rollback makes those differ. */
   liveDeploymentId: string | null
 }
@@ -136,6 +140,10 @@ export function useProjects(orgSlug: string) {
       parentProjectId: project.parentProjectId ?? null,
       managedByOauthApp: project.managedByOauthApp ?? null,
       url: project.url ?? null,
+      hostname: project.hostname ?? null,
+      primaryChildProjectId: project.primaryChildProjectId ?? null,
+      primaryUrl: project.primaryUrl ?? null,
+      primaryHostname: project.primaryHostname ?? null,
       liveDeploymentId: project.liveDeploymentId ?? null,
     })),
   }
@@ -174,7 +182,7 @@ export function useProject(orgSlug: string, projectId: string) {
               step name, or nothing. It is the only description the database has; the store
               listing's blurb belongs to the listing, not to the fork.
             */
-            description: project.stateReason ?? "",
+            description: project.description ?? "",
             /*
               From the server now, not hardcoded null.
 
@@ -185,6 +193,9 @@ export function useProject(orgSlug: string, projectId: string) {
             */
             url: project.url ?? null,
             hostname: project.hostname ?? null,
+            primaryChildProjectId: project.primaryChildProjectId ?? null,
+            primaryUrl: project.primaryUrl ?? null,
+            primaryHostname: project.primaryHostname ?? null,
             isGroup: project.isGroup,
             servingMode: project.servingMode ?? null,
             parentProjectId: project.parentProjectId ?? null,

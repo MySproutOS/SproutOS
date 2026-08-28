@@ -56,6 +56,7 @@ import {
   getV1OrgsByOrgSlugProjects,
   getV1OrgsByOrgSlugProjectsByProjectId,
   getV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
+  getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   getV1OrgsByOrgSlugProjectsByProjectIdDeployWorkflow,
   getV1OrgsByOrgSlugProjectsByProjectIdDomains,
@@ -280,6 +281,9 @@ import type {
   GetV1OrgsByOrgSlugOauthClientsResponse,
   GetV1OrgsByOrgSlugOauthGrantsData,
   GetV1OrgsByOrgSlugOauthGrantsResponse,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdError,
+  GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -2642,6 +2646,34 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsMutation = (
   }
   return mutationOptions
 }
+
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData>,
+) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId", options)
+
+/**
+ * Reads an agent chat transcript and its persisted activity events
+ */
+export const getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdOptions = (
+  options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdError,
+    GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsBySessionIdQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugServicesQueryKey = (
   options: Options<GetV1OrgsByOrgSlugServicesData>,

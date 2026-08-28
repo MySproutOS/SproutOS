@@ -6,6 +6,7 @@ import { Card, CardContent } from "@ui/base/ui/card"
 import { Skeleton } from "@ui/base/ui/skeleton"
 import { DatabaseIcon } from "lucide-react"
 import { type Project, useProjects } from "@frontends/dashboard/data/projects"
+import { NewProjectDialog } from "./new-project-dialog"
 
 /**
  * What a group actually contains: its projects, and the databases those projects use.
@@ -37,7 +38,15 @@ export function GroupChildren({ orgSlug, group }: { orgSlug: string; group: Proj
 
   return (
     <section className="flex flex-col gap-2.5">
-      <h2 className="eyebrow">Projects in this group</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="eyebrow">Projects in this group</h2>
+        <NewProjectDialog
+          orgSlug={orgSlug}
+          kind="workflow"
+          parentProjectId={group.id}
+          triggerLabel="New workflow"
+        />
+      </div>
 
       {children.length === 0 ? (
         <p className="rule-soft rounded-lg border px-3 py-8 text-center text-sm text-muted-foreground">

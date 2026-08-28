@@ -17,6 +17,10 @@ function project(overrides: Partial<Project> & { id: string; name: string }): Pr
     parentProjectId: null,
     managedByOauthApp: null,
     url: null,
+    hostname: null,
+    primaryChildProjectId: null,
+    primaryUrl: null,
+    primaryHostname: null,
     liveDeploymentId: null,
     ...overrides,
   }
