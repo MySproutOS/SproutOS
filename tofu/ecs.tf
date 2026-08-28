@@ -116,7 +116,6 @@ locals {
     "VALKEY_PROXY_ACL_ROOT_KEY",
   ]
 
-  ecs_worker_parameter_names      = concat(local.ecs_android_worker_parameter_names, local.ecs_worker_base_parameter_names)
   ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names
 
   ecs_website_parameter_secrets = [for name in local.ecs_website_parameter_names : {
@@ -133,10 +132,16 @@ locals {
       valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}/${name}"
     }],
   )
-  ecs_worker_parameter_secrets = [for name in local.ecs_worker_parameter_names : {
-    name      = name
-    valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
-  }]
+  ecs_worker_parameter_secrets = concat(
+    [for name in local.ecs_worker_base_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+    }],
+    [for name in local.ecs_android_worker_parameter_names : {
+      name      = name
+      valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}/${name}"
+    }],
+  )
   ecs_acme_worker_parameter_secrets = [for name in local.ecs_acme_worker_parameter_names : {
     name      = name
     valueFrom = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
@@ -161,6 +166,7 @@ locals {
   ecs_task_parameter_store_deny_resources = concat(
     local.application_parameter_arns,
     local.android_custody_parameter_arns,
+    local.android_worker_parameter_arns,
   )
 }
 

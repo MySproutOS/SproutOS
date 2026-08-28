@@ -78,6 +78,7 @@ WORKER_PARAMETERS=$(sed -n '/ecs_worker_base_parameter_names = \[/,/^  ]/p' "$EC
 ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /p' "$ECS_TF")
 ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
+NORMAL_UPLOAD_KEYS=$(sed -n '/^KEYS=(/,/^)/p' "$ROOT/bin/put-app-secrets.sh")
 for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
   require "\"$token\"" <(printf '%s\n' "$ANDROID_API_PARAMETERS") \
     "$token must reach only the API verifier from Parameter Store"
@@ -89,6 +90,8 @@ for token in APK_SIGNER_TOKEN APK_SIGNER_OPERATOR_TOKEN; do
     "$token must not reach the ACME container"
   require "^[[:space:]]*$token$" "$ROOT/bin/put-app-secrets.sh" \
     "$token must use the out-of-state Parameter Store delivery path"
+  reject "^[[:space:]]*$token$" <(printf '%s\n' "$NORMAL_UPLOAD_KEYS") \
+    "$token must not be copied to /application by an ordinary secret refresh"
 done
 require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_PARAMETERS") \
   'the Android Developer Console credential must reach only the worker'
@@ -163,6 +166,10 @@ require 'ANDROID_CUSTODY_PARAMETER_PATH' "$ROOT/bin/put-app-secrets.sh" \
   'signer credentials must use their isolated Parameter Store path'
 require '/sproutos/android-custody' "$ROOT/bin/put-app-secrets.sh" \
   'the custody-only upload must default to the isolated production path'
+require '/sproutos/android-worker' "$ROOT/bin/put-app-secrets.sh" \
+  'the Google worker credential must default to its isolated production path'
+require 'local.android_worker_parameter_path' "$ECS_TF" \
+  'the worker task must inject the Google key from its isolated path'
 if git -C "$ROOT" grep -E 'APK_SIGNER_MASTER_IDENTITY|master\.pem|PKCS.?8' -- \
   'tofu/*.tf' 'tofu/*.tftpl' '.github/workflows/*.yml' >/dev/null; then
   echo 'android signing infrastructure invariant failed: the offline master identity must not enter AWS or CI configuration' >&2

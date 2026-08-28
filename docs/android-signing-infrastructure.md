@@ -52,7 +52,8 @@ not. The website still inherits the grant because website, API, and worker share
 
 The legacy application policy also grants its boot script broad reads below
 `/sproutos/application`. Signer credentials therefore live under the separate
-`/sproutos/android-custody` path. Neither the legacy host, router, nor ACME role can read that path.
+`/sproutos/android-custody` path, and the Google worker credential lives under
+`/sproutos/android-worker`. Neither the legacy host, router, nor ACME role can read those paths.
 The ordinary web task and isolated ACME task also have distinct ECS execution roles. The former may
 resolve only exact secrets rendered into its task definition; the latter's exact allowlist excludes
 both signer tokens and the independently gated Google credential. An explicit deny on the ordinary
@@ -85,7 +86,8 @@ load neither. Install only `APK_SIGNER_TOKEN` in the signer service environment.
 unit, shell history, CI, or the signer's runtime environment.
 
 `ANDROID_DEVELOPER_ID_STATUS_API_KEY` is independent. It is uploaded through the normal out-of-state
-secret script only when that Google integration is ready, and reaches only the worker when
+secret script to `/sproutos/android-worker` only when that Google integration is ready, and reaches
+only the worker when
 `android_developer_registration_delivery_enabled=true` is explicitly planned. Its default is
 `false`; neither its absence nor its rollout can block delivery of the two credentials #192 needs.
 
@@ -247,7 +249,7 @@ failure. A normal `tofu plan` keeps both delivery switches disabled, so it canno
 a missing SSM reference.
 
 The independent Google credential may be staged later: first use a metadata-only SSM check to prove
-its exact name is a `SecureString`, then save a plan with
+its exact `/sproutos/android-worker` name is a `SecureString`, then save a plan with
 `android_developer_registration_delivery_enabled=true`, verify it appears once in only the worker
 and as one exact execution-role ARN, and apply that reviewed plan. Do not combine this optional step
 with the signer-token prerequisite for #192.

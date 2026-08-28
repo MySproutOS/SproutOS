@@ -76,18 +76,18 @@ done
 
 expected_signer_secrets='"[{\"name\":\"APK_SIGNER_OPERATOR_TOKEN\",\"valueFrom\":\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN\"},{\"name\":\"APK_SIGNER_TOKEN\",\"valueFrom\":\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_TOKEN\"}]"'
 assert_equal "$signer_web_android" "$expected_signer_secrets" 'rendered signer API secrets were wrong'
-expected_developer_secrets='"[{\"name\":\"ANDROID_DEVELOPER_ID_STATUS_API_KEY\",\"valueFrom\":\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/ANDROID_DEVELOPER_ID_STATUS_API_KEY\"}]"'
+expected_developer_secrets='"[{\"name\":\"ANDROID_DEVELOPER_ID_STATUS_API_KEY\",\"valueFrom\":\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API_KEY\"}]"'
 assert_equal "$developer_web_android" "$expected_developer_secrets" 'rendered ordinary-worker developer secret was wrong'
 
 expected_signer_arns='"[\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_TOKEN\"]"'
 assert_equal "$signer_web_arns" "$expected_signer_arns" 'web execution-role signer resources were wrong'
-expected_developer_arns='"[\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/ANDROID_DEVELOPER_ID_STATUS_API_KEY\"]"'
+expected_developer_arns='"[\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API_KEY\"]"'
 assert_equal "$developer_web_arns" "$expected_developer_arns" 'web execution-role developer resource was wrong'
 
 expected_deny_actions='"[\"ssm:GetParameter\",\"ssm:GetParameters\",\"ssm:GetParametersByPath\"]"'
 assert_equal "$task_deny_actions" "$expected_deny_actions" 'task-role deny actions were wrong'
-expected_deny_resources='"[\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/*\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/*\"]"'
-assert_equal "$task_deny_resources" "$expected_deny_resources" 'task-role deny does not cover both parameter paths'
+expected_deny_resources='"[\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/*\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/*\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker\",\"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker/*\"]"'
+assert_equal "$task_deny_resources" "$expected_deny_resources" 'task-role deny does not cover all three parameter paths'
 
 # Ensure the task definitions and the two distinct execution roles consume the evaluated values.
 grep -q 'local.ecs_api_parameter_secrets' "$ROOT/tofu/ecs.tf"

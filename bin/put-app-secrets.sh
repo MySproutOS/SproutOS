@@ -19,6 +19,7 @@ ENV_FILE="${1:-.env}"
 AWS_BIN=${AWS_BIN:-aws}
 PARAMETER_PATH="${APPLICATION_PARAMETER_PATH:-/sproutos/application}"
 ANDROID_CUSTODY_PARAMETER_PATH="${ANDROID_CUSTODY_PARAMETER_PATH:-/sproutos/android-custody}"
+ANDROID_WORKER_PARAMETER_PATH="${ANDROID_WORKER_PARAMETER_PATH:-/sproutos/android-worker}"
 KMS_KEY_ALIAS="${APPLICATION_KMS_KEY_ALIAS:-alias/sproutos-secrets}"
 
 [ -f "$ENV_FILE" ] || { echo "no such file: $ENV_FILE" >&2; exit 1; }
@@ -41,12 +42,8 @@ KEYS=(
   STRIPE_PUBLIC_KEY
   STRIPE_SECRET_KEY
   STRIPE_WEBHOOK_SECRET
-  # Runtime poll/claim/callback credential for the outbound-only signer. The signer receives only
-  # exact-object presigned S3 URLs and must never receive an AWS credential or the operator token.
-  APK_SIGNER_TOKEN
-  # Separate human-operated catalogue-client identity/release credential. Never install this in
-  # the signer service environment, and refuse rollout if it equals APK_SIGNER_TOKEN.
-  APK_SIGNER_OPERATOR_TOKEN
+  # Worker-only and deliberately stored outside /application, which legacy/router/ACME roles can
+  # read directly. The per-key path selection below keeps ordinary refreshes on that boundary.
   ANDROID_DEVELOPER_ID_STATUS_API_KEY
   DEPLOY_TOKEN_SECRET
   LOG_TOKEN_SECRET
@@ -171,7 +168,11 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 count=0
 while IFS= read -r key; do
-  ENV_PAYLOAD="$payload" PARAM_KEY="$key" PARAM_PATH="$PARAMETER_PATH" KEY_ID="$KMS_KEY_ALIAS" \
+  key_parameter_path=$PARAMETER_PATH
+  if [ "$key" = "ANDROID_DEVELOPER_ID_STATUS_API_KEY" ]; then
+    key_parameter_path=$ANDROID_WORKER_PARAMETER_PATH
+  fi
+  ENV_PAYLOAD="$payload" PARAM_KEY="$key" PARAM_PATH="$key_parameter_path" KEY_ID="$KMS_KEY_ALIAS" \
     OUT="$WORK_DIR/request.json" python3 <<'PYTHON'
 import json, os
 

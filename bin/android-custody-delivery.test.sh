@@ -170,6 +170,21 @@ expected_puts=$'/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN\tSecureStrin
   exit 1
 }
 
+# An ordinary broad refresh must ignore signer names entirely and keep the worker-only Google key
+# off the application path readable by legacy, router and ACME roles.
+: >"$AWS_PUT_CALLS"
+cat >"$WORK_DIR/ordinary.env" <<'ENV'
+APK_SIGNER_TOKEN=must-not-be-copied
+APK_SIGNER_OPERATOR_TOKEN=must-not-be-copied
+ANDROID_DEVELOPER_ID_STATUS_API_KEY=worker-only
+ENV
+"$ROOT/bin/put-app-secrets.sh" "$WORK_DIR/ordinary.env" >/dev/null 2>&1
+expected_ordinary_put=$'/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API_KEY\tSecureString'
+[ "$(sort "$AWS_PUT_CALLS")" = "$expected_ordinary_put" ] || {
+  echo "delivery test failed: ordinary refresh copied Android credentials onto a broad path" >&2
+  exit 1
+}
+
 missing="/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN"
 if MISSING_ANDROID_PARAMETER="$missing" \
   "$ROOT/bin/plan-android-custody-delivery.sh" "$WORK_DIR/missing.plan" >/dev/null 2>&1; then

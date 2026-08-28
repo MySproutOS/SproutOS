@@ -58,6 +58,15 @@ locals {
     "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}",
     "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_custody_parameter_path}/*",
   ]
+
+  # The Android registration credential is worker-only. ACME, router and legacy roles can read
+  # /application directly at runtime, so excluding a name from their task definition is not an IAM
+  # boundary. Keep it on a separate path and let only the web execution role inject its exact ARN.
+  android_worker_parameter_path = "/${var.name_prefix}/android-worker"
+  android_worker_parameter_arns = [
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}",
+    "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.android_worker_parameter_path}/*",
+  ]
 }
 
 output "application_parameter_path" {
