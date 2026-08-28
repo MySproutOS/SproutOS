@@ -55,6 +55,7 @@
     "@lib/services": "workspace:*",
     "@lib/srn": "workspace:*",
     "@lib/workflows": "workspace:*",
+    "@peculiar/x509": "catalog:",
     "@scalar/hono-api-reference": "^0.11.14",
     "@sproutos/db": "workspace:*",
     "@sproutos/sprout-node": "workspace:*",
