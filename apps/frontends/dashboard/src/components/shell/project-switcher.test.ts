@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { Project } from "@frontends/dashboard/data/projects"
-import { group } from "./project-switcher"
+import { groupProjects } from "@frontends/dashboard/components/projects/project-hierarchy"
 
 function project(overrides: Partial<Project> & { id: string; name: string }): Project {
   return {
@@ -29,9 +29,9 @@ const LOOSE = project({ id: "p4", name: "glance-fork-test" })
 
 const ALL = [REDDIT, WEB, API, OTHER, OTHER_API, LOOSE]
 
-describe("group", () => {
+describe("groupProjects", () => {
   it("nests children under their group and keeps ungrouped projects separate", () => {
-    const sections = group(ALL, "")
+    const sections = groupProjects(ALL, "")
 
     expect(sections.map((section) => section.header?.name ?? null)).toEqual([
       "reddit-clone",
@@ -42,6 +42,17 @@ describe("group", () => {
     expect(sections[2]?.children.map((child) => child.name)).toEqual(["glance-fork-test"])
   })
 
+  it("preserves the API order of group headers and children", () => {
+    const sections = groupProjects([API, OTHER, LOOSE, REDDIT, OTHER_API, WEB], "")
+
+    expect(sections.map((section) => section.header?.name ?? null)).toEqual([
+      "toyourcredit",
+      "reddit-clone",
+      null,
+    ])
+    expect(sections[1]?.children.map((child) => child.name)).toEqual(["internal-api", "web"])
+  })
+
   /*
     The failure a flat filter produces.
 
@@ -50,7 +61,7 @@ describe("group", () => {
     survive even though it does not match the query itself.
   */
   it("keeps the parent header when only a child matches", () => {
-    const sections = group(ALL, "internal-api")
+    const sections = groupProjects(ALL, "internal-api")
 
     expect(sections).toHaveLength(2)
     expect(sections[0]?.header?.name).toBe("reddit-clone")
@@ -61,7 +72,7 @@ describe("group", () => {
   })
 
   it("marks the header selectable when the group itself matched", () => {
-    const sections = group(ALL, "reddit")
+    const sections = groupProjects(ALL, "reddit")
 
     expect(sections).toHaveLength(1)
     expect(sections[0]?.header?.name).toBe("reddit-clone")
@@ -69,16 +80,30 @@ describe("group", () => {
   })
 
   it("drops a group entirely when neither it nor its children match", () => {
-    const sections = group(ALL, "glance")
+    const sections = groupProjects(ALL, "glance")
 
     expect(sections.map((section) => section.header?.name ?? null)).toEqual([null])
     expect(sections[0]?.children.map((child) => child.name)).toEqual(["glance-fork-test"])
   })
 
+  it("searches repository names as well as display names", () => {
+    const repositoryMatch = project({
+      id: "p8",
+      name: "worker",
+      repo: "acme/payments",
+      parentProjectId: "g1",
+    })
+    const sections = groupProjects([REDDIT, repositoryMatch], "payments")
+
+    expect(sections[0]?.header?.id).toBe("g1")
+    expect(sections[0]?.headerIsContext).toBe(true)
+    expect(sections[0]?.children.map((child) => child.id)).toEqual(["p8"])
+  })
+
   /** A child whose group is not in the list is shown loose rather than silently dropped. */
   it("does not lose a child whose group is missing", () => {
     const orphan = project({ id: "p9", name: "stray", parentProjectId: "missing" })
-    const sections = group([orphan], "")
+    const sections = groupProjects([orphan], "")
 
     expect(sections).toHaveLength(1)
     expect(sections[0]?.children.map((child) => child.name)).toEqual(["stray"])

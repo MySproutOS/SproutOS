@@ -12,6 +12,7 @@ import {
 import { cn } from "@ui/base/lib/utils"
 import { CheckIcon, ChevronsUpDownIcon, FolderIcon, PlusIcon, SearchIcon } from "lucide-react"
 import { type Project, useProjects } from "@frontends/dashboard/data/projects"
+import { groupProjects } from "@frontends/dashboard/components/projects/project-hierarchy"
 
 /**
  * Find-and-switch across an organization's projects, with groups as headers.
@@ -33,7 +34,7 @@ export function ProjectSwitcher({ orgSlug }: { orgSlug: string }) {
     `data ?? []` allocates a new array on every render, so a memo depending on it never hits — which
     would make the grouping run on every keystroke *and* every unrelated re-render.
   */
-  const sections = useMemo(() => group(data ?? [], query), [data, query])
+  const sections = useMemo(() => groupProjects(data ?? [], query), [data, query])
 
   return (
     <DropdownMenu>
@@ -170,76 +171,4 @@ function ProjectItem({
       {current ? <CheckIcon className="ml-auto size-3.5 shrink-0" aria-hidden="true" /> : null}
     </DropdownMenuItem>
   )
-}
-
-type Section = {
-  key: string
-  /** Null for projects that belong to no group. */
-  header: Project | null
-  headerIsContext: boolean
-  children: Project[]
-}
-
-/**
- * Arrange projects into groups, filtered.
- *
- * **The filter must not orphan a child.** A query matching only a child still renders its parent
- * header — greyed and unselectable — because the group is what makes the child's name legible: two
- * repositories can both have an `api`, and a flat list of matches cannot tell you which is which.
- * Filtering a nested list flat is the obvious implementation and it destroys the only context that
- * matters.
- */
-export function group(projects: readonly Project[], query: string): Section[] {
-  const needle = query.trim().toLowerCase()
-  const matches = (project: Project) =>
-    needle === "" ||
-    project.name.toLowerCase().includes(needle) ||
-    project.repo.toLowerCase().includes(needle)
-
-  const groups = projects.filter((project) => project.isGroup)
-  const byId = new Map(groups.map((project) => [project.id, project]))
-
-  const sections: Section[] = []
-
-  for (const header of groups) {
-    const children = projects.filter(
-      (project) => project.parentProjectId === header.id && matches(project),
-    )
-    const headerMatches = matches(header)
-
-    // A group with no children and no match is simply absent; one whose *children* matched keeps
-    // its header for context even though the header itself did not match the query.
-    if (children.length === 0 && !headerMatches) continue
-    if (children.length === 0 && headerMatches) {
-      sections.push({ key: header.id, header, headerIsContext: false, children: [] })
-      continue
-    }
-
-    sections.push({
-      key: header.id,
-      header,
-      headerIsContext: !headerMatches,
-      children,
-    })
-  }
-
-  /*
-    Projects belonging to no group, and projects whose group is missing.
-
-    The second case is defensive rather than theoretical: a child's parent can be filtered out of
-    the caller's page, and a child rendered under no header at all is better than a child silently
-    dropped.
-  */
-  const loose = projects.filter(
-    (project) =>
-      !project.isGroup &&
-      (project.parentProjectId === null || !byId.has(project.parentProjectId)) &&
-      matches(project),
-  )
-
-  if (loose.length > 0) {
-    sections.push({ key: "__loose", header: null, headerIsContext: false, children: loose })
-  }
-
-  return sections
 }
