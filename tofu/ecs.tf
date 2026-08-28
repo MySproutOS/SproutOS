@@ -191,7 +191,8 @@ resource "aws_launch_template" "ecs" {
   vpc_security_group_ids = [aws_security_group.service.id]
 
   metadata_options {
-    http_tokens = "required"
+    http_tokens        = "required"
+    http_protocol_ipv6 = "disabled"
     # Two hops, not one: the ECS agent runs in a container and its request to the metadata service
     # crosses a network namespace, which counts as a hop. At one, the agent cannot read the
     # instance's credentials and the instance never joins the cluster — with no error that mentions

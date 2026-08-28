@@ -47,11 +47,17 @@ make_mock dockerd \
 make_mock docker \
   'printf "docker %s\\n" "$*" >>"$SPROUT_TEST_CALL_LOG"' \
   'printf '"'"'["name=seccomp,profile=/etc/docker/sproutos-seccomp.json","name=cgroupns"]\\n'"'"''
+make_mock iptables \
+  'printf "iptables %s\\n" "$*" >>"$SPROUT_TEST_CALL_LOG"' \
+  'if [[ " $* " == *" -C "* ]] && [[ ! -e "$SPROUT_TEST_IMDS_RULE" ]]; then exit 1; fi' \
+  'if [[ " $* " == *" -I "* ]]; then : >"$SPROUT_TEST_IMDS_RULE"; fi'
 
 profile="$REPO_ROOT/tofu/ecs-seccomp-profile.json"
 PATH="$mock_bin:$PATH" \
 SPROUT_TEST_CALL_LOG="$call_log" \
+SPROUT_TEST_IMDS_RULE="$test_root/imds-rule" \
 SPROUT_HOST_ROOT="$test_root" \
+SPROUT_IPTABLES_BIN="$mock_bin/iptables" \
 SPROUT_ECS_CLUSTER=sproutos \
 SPROUT_SECCOMP_PROFILE_B64="$(base64 <"$profile" | tr -d '\n')" \
 SPROUT_SECCOMP_PROFILE_SHA256="$(sha256sum "$profile" | cut -d' ' -f1)" \
@@ -65,8 +71,15 @@ if [[ -z "$(find "$test_root/etc/docker/sproutos-seccomp.json" -prune -perm 0444
 fi
 grep -Fxq 'ECS_CLUSTER=sproutos' "$test_root/etc/ecs/ecs.config"
 grep -Fxq 'ECS_DISABLE_PRIVILEGED=true' "$test_root/etc/ecs/ecs.config"
+grep -Fq 'ExecStartPost=/usr/local/sbin/sproutos-block-container-imds' \
+  "$test_root/etc/systemd/system/docker.service.d/20-sproutos-block-container-imds.conf"
+grep -Fq '169.254.169.254/32' "$test_root/usr/local/sbin/sproutos-block-container-imds"
 assert_equal "$(sed -n '1p' "$call_log")" 'systemctl stop ecs' 'bootstrap did not stop ECS first'
+grep -Fxq 'systemctl daemon-reload' "$call_log"
 grep -Fxq 'systemctl restart docker' "$call_log"
+if ! grep -Fq 'iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP' "$call_log"; then
+  fail "bootstrap did not install the container IMDS block: $(tr '\n' ';' <"$call_log")"
+fi
 assert_equal "$(tail -1 "$call_log")" 'systemctl restart ecs' 'bootstrap did not restart ECS last'
 
 # Version drift fails before service mutation.
@@ -75,7 +88,9 @@ make_mock rpm \
   'case "$*" in "-q docker") echo docker-26.0.0-1.amzn2023.aarch64 ;; "-q runc") echo runc-1.3.5-1.amzn2023.0.2.aarch64 ;; *) exit 2 ;; esac'
 if PATH="$mock_bin:$PATH" \
   SPROUT_TEST_CALL_LOG="$call_log" \
+  SPROUT_TEST_IMDS_RULE="$test_root/imds-rule" \
   SPROUT_HOST_ROOT="$test_root" \
+  SPROUT_IPTABLES_BIN="$mock_bin/iptables" \
   SPROUT_ECS_CLUSTER=sproutos \
   SPROUT_SECCOMP_PROFILE_B64="$(base64 <"$profile" | tr -d '\n')" \
   SPROUT_SECCOMP_PROFILE_SHA256="$(sha256sum "$profile" | cut -d' ' -f1)" \
@@ -97,7 +112,9 @@ printf '{"log-driver":"journald"}\n' >"$test_root/etc/docker/daemon.json"
 : >"$call_log"
 if PATH="$mock_bin:$PATH" \
   SPROUT_TEST_CALL_LOG="$call_log" \
+  SPROUT_TEST_IMDS_RULE="$test_root/imds-rule" \
   SPROUT_HOST_ROOT="$test_root" \
+  SPROUT_IPTABLES_BIN="$mock_bin/iptables" \
   SPROUT_ECS_CLUSTER=sproutos \
   SPROUT_SECCOMP_PROFILE_B64="$(base64 <"$profile" | tr -d '\n')" \
   SPROUT_SECCOMP_PROFILE_SHA256="$(sha256sum "$profile" | cut -d' ' -f1)" \

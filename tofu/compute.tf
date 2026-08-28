@@ -692,11 +692,11 @@ data "aws_ssm_parameter" "al2023_arm64" {
 }
 
 /*
-  Four roles, because the machine, ordinary application, certificate worker, and ECS launcher need
-  different powers.
+  Five roles, because the ECS machine, legacy website, router, ordinary application, certificate
+  worker, and ECS launcher do not all need the same powers.
 
-  - **`instance`** — the EC2 machine. It runs the ECS agent, which registers the instance with the
-    cluster and polls for work.
+  - **`instance`** — the ECS machine and the legacy website instance while that path remains.
+  - **`router_instance`** — only the Rust router instances, which must read TLS private keys.
   - **`task`** — the application inside the containers. The website, the API and the worker.
   - **`acme_task`** — only the isolated certificate worker.
   - **`ecs_execution`** (in `ecs.tf`) — ECS itself, starting a task: pull the image, fetch the
@@ -713,6 +713,19 @@ data "aws_ssm_parameter" "al2023_arm64" {
 */
 resource "aws_iam_role" "instance" {
   name = "${var.name_prefix}-instance"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role" "router_instance" {
+  name = "${var.name_prefix}-router-instance"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -769,7 +782,7 @@ resource "aws_iam_role" "acme_task" {
 */
 resource "aws_iam_policy" "application" {
   name        = "${var.name_prefix}-application"
-  description = "What the website, API and ordinary worker may do. Attached to the instance role and ordinary task role."
+  description = "Shared application permissions for legacy services and ordinary ECS tasks."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -1046,7 +1059,7 @@ resource "aws_iam_policy" "application" {
 }
 
 /*
-  Attached to both, for as long as both exist.
+  Attached to every application principal for as long as the legacy EC2 paths exist.
 
   The EC2 Auto Scaling groups still run the tarball release while ECS is brought up beside them, so
   the same permissions are needed in two places. When the old groups are retired this attachment
@@ -1054,6 +1067,11 @@ resource "aws_iam_policy" "application" {
 */
 resource "aws_iam_role_policy_attachment" "instance_application" {
   role       = aws_iam_role.instance.name
+  policy_arn = aws_iam_policy.application.arn
+}
+
+resource "aws_iam_role_policy_attachment" "router_instance_application" {
+  role       = aws_iam_role.router_instance.name
   policy_arn = aws_iam_policy.application.arn
 }
 
@@ -1080,8 +1098,8 @@ resource "aws_iam_policy" "router_certificate_read" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "instance_router_certificate_read" {
-  role       = aws_iam_role.instance.name
+resource "aws_iam_role_policy_attachment" "router_instance_certificate_read" {
+  role       = aws_iam_role.router_instance.name
   policy_arn = aws_iam_policy.router_certificate_read.arn
 }
 
@@ -1265,9 +1283,20 @@ resource "aws_iam_role_policy_attachment" "instance_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+
+resource "aws_iam_role_policy_attachment" "router_instance_ssm" {
+  role       = aws_iam_role.router_instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "instance" {
   name = "${var.name_prefix}-instance"
   role = aws_iam_role.instance.name
+}
+
+resource "aws_iam_instance_profile" "router" {
+  name = "${var.name_prefix}-router-instance"
+  role = aws_iam_role.router_instance.name
 }
 
 resource "aws_launch_template" "service" {
@@ -1278,7 +1307,7 @@ resource "aws_launch_template" "service" {
   instance_type = var.service_instance_type
 
   iam_instance_profile {
-    arn = aws_iam_instance_profile.instance.arn
+    arn = each.key == "router" ? aws_iam_instance_profile.router.arn : aws_iam_instance_profile.instance.arn
   }
 
   vpc_security_group_ids = [aws_security_group.service.id]
@@ -1316,7 +1345,7 @@ resource "aws_launch_template" "service" {
     node_version = var.node_version
 
     # Read at boot by both services now, to compose `DATABASE_URL`. The ARN is not a secret; what
-    # it names is, and reading it needs the instance role — which is the same role for both.
+    # it names is, and reading it needs each service's instance role.
     database_secret_arn        = aws_db_instance.control_plane.master_user_secret[0].secret_arn
     application_parameter_path = local.application_parameter_path
     envelope_kms_key_arn       = aws_kms_key.envelope.arn

@@ -12,11 +12,17 @@ docker_dir="${host_root}/etc/docker"
 profile_path="${docker_dir}/sproutos-seccomp.json"
 daemon_path="${docker_dir}/daemon.json"
 ecs_config="${host_root}/etc/ecs/ecs.config"
+imds_script="${host_root}/usr/local/sbin/sproutos-block-container-imds"
+docker_dropin_dir="${host_root}/etc/systemd/system/docker.service.d"
+docker_dropin="${docker_dropin_dir}/20-sproutos-block-container-imds.conf"
+iptables_bin="${SPROUT_IPTABLES_BIN:-/usr/sbin/iptables}"
 profile_tmp="$(mktemp)"
 daemon_tmp="$(mktemp)"
 ecs_tmp="$(mktemp)"
+imds_tmp="$(mktemp)"
+dropin_tmp="$(mktemp)"
 cleanup() {
-  unlink "$profile_tmp" "$daemon_tmp" "$ecs_tmp" 2>/dev/null || true
+  unlink "$profile_tmp" "$daemon_tmp" "$ecs_tmp" "$imds_tmp" "$dropin_tmp" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -38,6 +44,17 @@ if [[ "$actual_profile_sha256" != "$SPROUT_SECCOMP_PROFILE_SHA256" ]]; then
   exit 1
 fi
 printf '{\n  "seccomp-profile": "/etc/docker/sproutos-seccomp.json"\n}\n' >"$daemon_tmp"
+cat >"$imds_tmp" <<'IMDS_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+if ! /usr/sbin/iptables -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP; then
+  /usr/sbin/iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP
+fi
+IMDS_SCRIPT
+cat >"$dropin_tmp" <<'IMDS_UNIT'
+[Service]
+ExecStartPost=/usr/local/sbin/sproutos-block-container-imds
+IMDS_UNIT
 
 if [[ -e "$daemon_path" ]] && ! cmp --silent "$daemon_tmp" "$daemon_path"; then
   echo "$daemon_path contains unmanaged Docker settings; refusing to overwrite it" >&2
@@ -46,11 +63,25 @@ fi
 
 # Stop scheduling before changing the daemon. Any later failure deliberately leaves ECS stopped.
 systemctl stop ecs
-install -d -m 0755 "$docker_dir" "$(dirname "$ecs_config")"
+install -d -m 0755 \
+  "$docker_dir" \
+  "$(dirname "$ecs_config")" \
+  "$(dirname "$imds_script")" \
+  "$docker_dropin_dir"
 install -m 0444 "$profile_tmp" "$profile_path"
 install -m 0444 "$daemon_tmp" "$daemon_path"
+install -m 0555 "$imds_tmp" "$imds_script"
+install -m 0444 "$dropin_tmp" "$docker_dropin"
 dockerd --validate --config-file "$daemon_path"
+systemctl daemon-reload
 systemctl restart docker
+
+# Bridge-networked tasks can otherwise reach the host instance role. The drop-in restores this
+# rule after every Docker restart; the direct assertion prevents ECS from starting if it is absent.
+if ! "$iptables_bin" -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP; then
+  "$iptables_bin" -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP
+fi
+"$iptables_bin" -w 10 -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP
 
 security_options="$(docker info --format '{{json .SecurityOptions}}')"
 if [[ "$security_options" != *'name=seccomp,profile=/etc/docker/sproutos-seccomp.json'* ]]; then
