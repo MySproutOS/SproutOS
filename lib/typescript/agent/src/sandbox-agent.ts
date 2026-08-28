@@ -100,11 +100,12 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
   }
 
   let cloned = false
+  const repositoryUrl = `https://github.com/${input.repository.fullName}.git`
   try {
     // Daytona carries credentials on its structured Git API request. They never appear in the
     // sandbox process list, shell history, command logs, or `.git/config` remote URL.
     await driver.cloneRepository(externalId, {
-      url: `https://github.com/${input.repository.fullName}.git`,
+      url: repositoryUrl,
       path: workspace,
       branch: input.repository.branch,
       username: "x-access-token",
@@ -113,20 +114,43 @@ export async function bootstrapSandbox(input: BootstrapInput): Promise<Bootstrap
     })
     cloned = true
   } catch (cause) {
-    problems.push(`cloning the repository: ${String(cause)}`)
+    /*
+      Daytona can finish the clone and then fail while serializing or returning the provider
+      response. Retrying the structured clone against the now-nonempty path cannot distinguish
+      that outcome from a partial checkout. Inspect the durable result instead, but expose only an
+      exit code: `remote.origin.url` could contain a credential if a provider ever regressed.
+
+      Every predicate is required. A directory with the intended remote but a detached or wrong
+      branch is not the checkout the customer asked the agent to change, and an unborn repository
+      is not a successful clone.
+    */
+    const recovered = await driver
+      .exec(
+        externalId,
+        [
+          "sh",
+          "-c",
+          "set -eu\n" +
+            'test "$(git -C "$1" rev-parse --is-inside-work-tree 2>/dev/null)" = true\n' +
+            'test "$(git -C "$1" remote get-url origin 2>/dev/null)" = "$2"\n' +
+            'test "$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$3"\n' +
+            'git -C "$1" rev-parse --verify --quiet "HEAD^{commit}" >/dev/null',
+          "sproutos-clone-recovery",
+          workspace,
+          repositoryUrl,
+          input.repository.branch,
+        ],
+        BOOTSTRAP_TIMEOUT_MS,
+      )
+      .then((result) => result.exitCode === 0)
+      .catch(() => false)
+    if (recovered) cloned = true
+    else problems.push(`cloning the repository: ${String(cause)}`)
   }
 
   if (cloned) {
     await run(
-      [
-        "git",
-        "-C",
-        workspace,
-        "remote",
-        "set-url",
-        "origin",
-        `https://github.com/${input.repository.fullName}.git`,
-      ],
+      ["git", "-C", workspace, "remote", "set-url", "origin", repositoryUrl],
       "removing the clone credential",
     )
     await run(
