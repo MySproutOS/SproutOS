@@ -205,14 +205,22 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    let edge_readiness = Arc::new(router::edge_readiness::EdgeReadiness::default());
     let splits = [
         router::listeners::valkey(&database_url).await?,
         router::listeners::search(&database_url).await?,
         router::listeners::postgres(&database_url).await?,
         router::listeners::llm(&database_url).await?,
         router::listeners::forward_proxy_listener(forward_proxy.clone()).await?,
-        router::acme_http::start_from_env(acme_manager).await?,
-        router::edge::start_from_env(forward_proxy, app.clone(), certificate_runtime).await?,
+        router::acme_http::start_from_env(acme_manager, Arc::clone(&edge_readiness)).await?,
+        router::edge::start_from_env(
+            forward_proxy,
+            app.clone(),
+            certificate_runtime,
+            Arc::clone(&edge_readiness),
+        )
+        .await?,
+        router::edge_readiness::start_from_env(edge_readiness).await?,
     ]
     .into_iter()
     .flatten()

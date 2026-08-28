@@ -40,6 +40,8 @@ describe.skipIf(!reachable)("store routes", () => {
 
   const draftId = v7()
   const publishedId = v7()
+  const secondPublishedId = v7()
+  const catalogueImportId = v7()
   const draftSlug = `store-test-draft-${draftId.slice(-8)}`
   const publishedSlug = `store-test-live-${publishedId.slice(-8)}`
 
@@ -53,6 +55,25 @@ describe.skipIf(!reachable)("store routes", () => {
     }
     organizationId = trackOrganization(created.json.id as string)
     slug = created.json.slug as string
+
+    await db
+      .insertInto("deploymentCatalogueImport")
+      .values({
+        id: catalogueImportId,
+        ociRepository: "ghcr.io/mysproutos/deployment-catalogue",
+        ociDigest: `sha256:${"1".repeat(64)}`,
+        catalogueDigest: `sha256:${"2".repeat(64)}`,
+        sourceRepository: "MySproutOS/Deployment-Templates",
+        workflowRef:
+          "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        sourceRef: "refs/heads/main",
+        sourceSha: "3".repeat(40),
+        signatureIdentity:
+          "https://github.com/MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
+        signatureIssuer: "https://token.actions.githubusercontent.com",
+        provenance: { fixture: true },
+      })
+      .execute()
 
     await db
       .insertInto("storeListing")
@@ -81,6 +102,36 @@ describe.skipIf(!reachable)("store routes", () => {
           upstreamRepoUrl: `https://github.com/example/live-${publishedId.slice(-8)}`,
           platform: "web",
           status: "published",
+          catalogueEntryId: `fixture-${publishedId}`,
+          catalogueImportId,
+          catalogueSchemaVersion: 1,
+          catalogueManifest: { fixture: true },
+          upstreamCommit: "4".repeat(40),
+          templatePluginRepository: "ghcr.io/mysproutos/fixture-plugin",
+          templatePluginDigest: `sha256:${"5".repeat(64)}`,
+          capabilityVerifiedAt: new Date(),
+          e2eVerifiedAt: new Date(),
+        },
+        {
+          id: secondPublishedId,
+          slug: `store-test-live-${secondPublishedId.slice(-8)}`,
+          name: "Second verified fixture",
+          tagline: "A second listing for deterministic pagination",
+          descriptionMd: "A deliberately plain verified catalogue entry.",
+          upstreamOwner: "example",
+          upstreamRepo: `live-${secondPublishedId.slice(-8)}`,
+          upstreamRepoUrl: `https://github.com/example/live-${secondPublishedId.slice(-8)}`,
+          platform: "web",
+          status: "published",
+          catalogueEntryId: `fixture-${secondPublishedId}`,
+          catalogueImportId,
+          catalogueSchemaVersion: 1,
+          catalogueManifest: { fixture: true },
+          upstreamCommit: "6".repeat(40),
+          templatePluginRepository: "ghcr.io/mysproutos/fixture-plugin-two",
+          templatePluginDigest: `sha256:${"7".repeat(64)}`,
+          capabilityVerifiedAt: new Date(),
+          e2eVerifiedAt: new Date(),
         },
       ])
       .execute()
@@ -106,7 +157,11 @@ describe.skipIf(!reachable)("store routes", () => {
   })
 
   afterAll(async () => {
-    await db.deleteFrom("storeListing").where("id", "in", [draftId, publishedId]).execute()
+    await db
+      .deleteFrom("storeListing")
+      .where("id", "in", [draftId, publishedId, secondPublishedId])
+      .execute()
+    await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
     await cleanupFixtures()
   })
 
@@ -121,7 +176,6 @@ describe.skipIf(!reachable)("store routes", () => {
 
       const data = response.json.data as { slug: string; tags: string[] }[]
       expect(data.map((row) => row.slug)).toContain(publishedSlug)
-      expect(data.map((row) => row.slug)).toContain("linkding")
     })
 
     it("reads one listing with its tags, screenshots, and README, anonymously", async () => {
@@ -133,15 +187,6 @@ describe.skipIf(!reachable)("store routes", () => {
       const screenshots = response.json.screenshots as { url: string }[]
       expect(screenshots).toHaveLength(1)
       expect(screenshots[0].url).toBe("https://cdn.example.com/shot.png")
-    })
-
-    it("serves Twenty's customer-facing pitch with its original application links", async () => {
-      const response = await call("GET", "/v1/store/listings/twenty", null)
-      expect(response.status).toBe(200)
-      expect(response.json.descriptionMd).toContain("Fork Twenty")
-      expect(response.json.descriptionMd).not.toMatch(/largest application|real database|instance/i)
-      expect(response.json.upstreamRepoUrl).toBe("https://github.com/twentyhq/twenty")
-      expect(response.json.homepageUrl).toBe("https://twenty.com")
     })
 
     it("serves the categories and tag facets anonymously", async () => {
@@ -206,6 +251,8 @@ describe.skipIf(!reachable)("store routes", () => {
 
       const ranks = data.map((row) => row.featuredRank)
       const ranked = ranks.filter((rank) => rank !== null)
+      // ES2022 is this package's test target, so the non-mutating ES2023 `toSorted` is unavailable.
+      // oxlint-disable-next-line unicorn/no-array-sort
       expect(ranked).toStrictEqual([...ranked].sort((a, b) => a - b))
       expect(ranks.indexOf(null)).toBe(ranked.length === ranks.length ? -1 : ranked.length)
     })
@@ -258,16 +305,16 @@ describe.skipIf(!reachable)("store routes", () => {
     })
 
     it("paginates and refuses a malformed cursor", async () => {
-      const first = await call("GET", "/v1/store/listings?limit=2", null)
+      const first = await call("GET", "/v1/store/listings?limit=1", null)
       expect(first.status).toBe(200)
-      expect((first.json.data as unknown[]).length).toBe(2)
+      expect((first.json.data as unknown[]).length).toBe(1)
 
       const cursor = first.json.nextCursor as string
       expect(cursor).not.toBeNull()
 
       const second = await call(
         "GET",
-        `/v1/store/listings?limit=2&cursor=${encodeURIComponent(cursor)}`,
+        `/v1/store/listings?limit=1&cursor=${encodeURIComponent(cursor)}`,
         null,
       )
       expect(second.status).toBe(200)
@@ -308,16 +355,13 @@ describe.skipIf(!reachable)("store routes", () => {
       expect(slugs).toContain(draftSlug)
     })
 
-    it("publishes a draft, records the reviewer, and audits it", async () => {
+    it("refuses to publish outside signed catalogue reconciliation", async () => {
       const response = await call(
         "POST",
         `/v1/orgs/${slug}/store/listings/${draftId}/publish`,
         moderator,
       )
-      expect(response.status).toBe(200)
-      expect(response.json.status).toBe("published")
-      expect(response.json.reviewedByUserId).toBe(moderator.id)
-      expect(response.json.reviewedAt).not.toBeNull()
+      expect(response.status).toBe(400)
 
       const audit = await db
         .selectFrom("auditLog")
@@ -326,10 +370,10 @@ describe.skipIf(!reachable)("store routes", () => {
         .where("action", "=", "store:listing:publish")
         .executeTakeFirst()
 
-      expect(audit?.resourceSrn).toContain(draftId)
+      expect(audit).toBeUndefined()
 
       const anonymous = await call("GET", `/v1/store/listings/${draftSlug}`, null)
-      expect(anonymous.status).toBe(200)
+      expect(anonymous.status).toBe(404)
     })
 
     it("unpublishes with a reason and removes it from the public catalogue again", async () => {

@@ -1,4 +1,4 @@
-# 0066: The deploy stopped the only healthy task
+# 0067: The deploy stopped the only healthy task
 
 The first production rollout after grouped-project metadata returned ALB 503 responses for roughly
 ninety seconds. The new image eventually became healthy and the deployment succeeded, so a green

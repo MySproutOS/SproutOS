@@ -1,8 +1,4 @@
-// Each listing's tags depend on the listing insert that precedes them, so the writes stay serial.
-/* oxlint-disable no-await-in-loop */
 import type { Kysely } from "kysely"
-import { type Row, asRow, asRows, text } from "../lib/rows"
-import { uuidV7 } from "../lib/uuid"
 
 type Listing = {
   slug: string
@@ -201,85 +197,16 @@ const WITHDRAWN = ["focalboard", "astro-blog-starter"] as const
 export const LISTING_ARCHIVED = "archived"
 
 export async function seed(db: Kysely<any>): Promise<void> {
-  const categories = asRows(await db.selectFrom("store_category").select(["id", "slug"]).execute())
-  const categoryIdBySlug = new Map<string, string>(
-    categories.map((row: Row) => [text(row, "slug"), text(row, "id")]),
-  )
-
+  // The signed Deployment-Templates catalogue is now the only publication source. Keep historical
+  // rows for projects that still reference them, but never recreate or republish an unsigned seed
+  // entry. A signed import may legitimately reuse one of these slugs, so only legacy rows without
+  // catalogue provenance are touched.
   await db
     .updateTable("store_listing")
-    // `archived`, checked against `store_listing_status_check` rather than chosen. The natural word
-    // for this is "withdrawn" and the constraint does not have it — draft, pending_review,
-    // published, rejected, archived.
-    .set({ status: LISTING_ARCHIVED })
-    .where("slug", "in", [...WITHDRAWN])
-    .where("status", "=", "published")
+    .set({ status: LISTING_ARCHIVED, updated_at: new Date() })
+    .where("slug", "in", [...new Set([...LISTINGS.map(({ slug }) => slug), ...WITHDRAWN])])
+    .where("catalogue_entry_id", "is", null)
+    .where("deleted_at", "is", null)
+    .where("status", "!=", LISTING_ARCHIVED)
     .execute()
-
-  for (const listing of LISTINGS) {
-    const existing = asRow(
-      await db
-        .selectFrom("store_listing")
-        .select(["id"])
-        .where("slug", "=", listing.slug)
-        .executeTakeFirst(),
-    )
-
-    /*
-      An existing listing is reconciled, not skipped.
-
-      The original wrote `continue` here, which makes the seed create-only: a corrected value never
-      reaches a deployment that already ran it. That is how four listings kept a `dockerfile_path`
-      of `Dockerfile` after the correct paths were known — the seed had them and had no way to say
-      so. Everything reconciled below is catalogue metadata that only this file owns; nothing a
-      customer or a moderator can edit is touched.
-    */
-    if (existing) {
-      await db
-        .updateTable("store_listing")
-        .set({
-          description_md: listing.descriptionMd,
-          root_dir: listing.rootDir,
-          dockerfile_path: listing.dockerfilePath,
-          default_branch: listing.defaultBranch,
-          upstream_owner: listing.upstreamOwner,
-          upstream_repo: listing.upstreamRepo,
-          upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
-        })
-        .where("id", "=", text(existing, "id"))
-        .execute()
-      continue
-    }
-
-    const id = uuidV7()
-
-    await db
-      .insertInto("store_listing")
-      .values({
-        id,
-        slug: listing.slug,
-        name: listing.name,
-        tagline: listing.tagline,
-        description_md: listing.descriptionMd,
-        upstream_host: "github.com",
-        upstream_owner: listing.upstreamOwner,
-        upstream_repo: listing.upstreamRepo,
-        upstream_repo_url: `https://github.com/${listing.upstreamOwner}/${listing.upstreamRepo}`,
-        homepage_url: listing.homepageUrl,
-        root_dir: listing.rootDir,
-        dockerfile_path: listing.dockerfilePath,
-        default_branch: listing.defaultBranch,
-        license_spdx: listing.licenseSpdx,
-        platform: "web",
-        category_id: categoryIdBySlug.get(listing.categorySlug) ?? null,
-        status: "published",
-      })
-      .execute()
-
-    await db
-      .insertInto("store_listing_tag")
-      .values(listing.tags.map((tag) => ({ id: uuidV7(), store_listing_id: id, tag })))
-      .onConflict((oc) => oc.columns(["store_listing_id", "tag"]).doNothing())
-      .execute()
-  }
 }

@@ -43,6 +43,8 @@ export type GitHubOidcClaims = {
   ref: string
   sha: string
   workflow: string
+  /** Exact repository workflow path and ref, from GitHub's signed `workflow_ref` claim. */
+  workflowRef: string
   runId: string
   actor: string
 }
@@ -169,6 +171,7 @@ export async function verifyGitHubOidcToken(
     ref: text(claims.ref),
     sha: text(claims.sha),
     workflow: text(claims.workflow),
+    workflowRef: text(claims.workflow_ref),
     runId: text(claims.run_id),
     actor: text(claims.actor),
   }

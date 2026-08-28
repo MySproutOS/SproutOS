@@ -46,6 +46,8 @@ import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-st
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   CUSTOM_DOMAIN_STATUS_LABELS,
+  customDomainMutationErrorMessage,
+  eligibleCustomDomainProjects,
   type CustomDomain,
   type CustomDomainStatus,
   useCheckCustomDomain,
@@ -134,9 +136,7 @@ function CustomDomains() {
 function CreateDomainDialog({ orgSlug }: { orgSlug: string }) {
   const projects = useProjects(orgSlug)
   const create = useCreateCustomDomain(orgSlug)
-  const eligibleProjects = (projects.data ?? []).filter(
-    (project) => !project.isGroup && project.liveDeploymentId !== null,
-  )
+  const eligibleProjects = eligibleCustomDomainProjects(projects.data ?? [])
   const [open, setOpen] = useState(false)
   const [projectId, setProjectId] = useState("")
   const [hostname, setHostname] = useState("")
@@ -166,8 +166,8 @@ function CreateDomainDialog({ orgSlug }: { orgSlug: string }) {
           setOpen(false)
           reset()
         },
-        onError: () => {
-          setError("Could not add that hostname. Check that the project is deployed and eligible.")
+        onError: (mutationError) => {
+          setError(customDomainMutationErrorMessage(mutationError))
         },
       },
     )
@@ -260,7 +260,9 @@ function CreateDomainDialog({ orgSlug }: { orgSlug: string }) {
 
 function DomainCard({ orgSlug, domain }: { orgSlug: string; domain: CustomDomain }) {
   const check = useCheckCustomDomain(orgSlug)
-  const [checkResult, setCheckResult] = useState<"queued" | "failed" | null>(null)
+  const [checkResult, setCheckResult] = useState<
+    { kind: "queued" } | { kind: "failed"; message: string } | null
+  >(null)
 
   return (
     <Card>
@@ -286,11 +288,13 @@ function DomainCard({ orgSlug, domain }: { orgSlug: string; domain: CustomDomain
         ) : null}
         {checkResult !== null ? (
           <output
-            className={checkResult === "failed" ? "text-xs text-destructive" : "text-xs text-leaf"}
+            className={
+              checkResult.kind === "failed" ? "text-xs text-destructive" : "text-xs text-leaf"
+            }
           >
-            {checkResult === "queued"
+            {checkResult.kind === "queued"
               ? "Re-check queued. DNS and certificate work continues in the background."
-              : "Could not queue a re-check."}
+              : checkResult.message}
           </output>
         ) : null}
 
@@ -354,10 +358,13 @@ function DomainCard({ orgSlug, domain }: { orgSlug: string; domain: CustomDomain
                     },
                     {
                       onSuccess: () => {
-                        setCheckResult("queued")
+                        setCheckResult({ kind: "queued" })
                       },
-                      onError: () => {
-                        setCheckResult("failed")
+                      onError: (mutationError) => {
+                        setCheckResult({
+                          kind: "failed",
+                          message: customDomainMutationErrorMessage(mutationError),
+                        })
                       },
                     },
                   )

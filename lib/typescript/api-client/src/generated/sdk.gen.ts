@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -56,6 +57,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenResponseTransformer,
@@ -71,7 +73,6 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
   postV1OrgsByOrgSlugProjectsResponseTransformer,
-  postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
@@ -125,6 +126,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AuthMeData,
@@ -336,6 +339,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningClaimData,
   PostV1ApkSigningClaimErrors,
   PostV1ApkSigningClaimResponses,
@@ -348,6 +354,9 @@ import type {
   PostV1AuthLogoutData,
   PostV1AuthLogoutErrors,
   PostV1AuthLogoutResponses,
+  PostV1DeployCatalogueImportData,
+  PostV1DeployCatalogueImportErrors,
+  PostV1DeployCatalogueImportResponses,
   PostV1DeployMigrateData,
   PostV1DeployMigrateErrors,
   PostV1DeployMigrateResponses,
@@ -471,7 +480,6 @@ import type {
   PostV1OrgsByOrgSlugServicesResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses,
@@ -2396,26 +2404,18 @@ export const getV1OrgsByOrgSlugStoreListings = <ThrowOnError extends boolean = f
   })
 
 /**
- * Publishes a listing, making it visible to unauthenticated visitors
+ * Checks whether a listing can be published by catalogue reconciliation
  */
 export const postV1OrgsByOrgSlugStoreListingsByListingIdPublish = <
   ThrowOnError extends boolean = false,
 >(
   options: Options<PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData, ThrowOnError>,
-): RequestResult<
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
-  PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
-  ThrowOnError
-> =>
+): RequestResult<unknown, PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors, ThrowOnError> =>
   (options.client ?? client).post<
-    PostV1OrgsByOrgSlugStoreListingsByListingIdPublishResponses,
+    unknown,
     PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
     ThrowOnError
-  >({
-    responseTransformer: postV1OrgsByOrgSlugStoreListingsByListingIdPublishResponseTransformer,
-    url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish",
-    ...options,
-  })
+  >({ url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/publish", ...options })
 
 /**
  * Takes a listing out of the public catalogue
@@ -3243,6 +3243,29 @@ export const postV1InternalPgResolve = <ThrowOnError extends boolean = false>(
   })
 
 /**
+ * Queues an immutable Deployment-Templates catalogue import after GitHub OIDC identity verification.
+ */
+export const postV1DeployCatalogueImport = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1DeployCatalogueImportData, ThrowOnError>,
+): RequestResult<
+  PostV1DeployCatalogueImportResponses,
+  PostV1DeployCatalogueImportErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostV1DeployCatalogueImportResponses,
+    PostV1DeployCatalogueImportErrors,
+    ThrowOnError
+  >({
+    url: "/v1/deploy/catalogue/import",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
  * Exchange a GitHub Actions OIDC token for a short-lived SproutOS deploy token. Called by the deploy action.
  */
 export const postV1DeployToken = <ThrowOnError extends boolean = false>(
@@ -3423,4 +3446,40 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

@@ -70,7 +70,10 @@ FROM node:24-alpine AS runtime
 #
 # `ca-certificates` alongside it: git over HTTPS to github.com needs a trust store, and the failure
 # without one is a TLS error that reads like a network problem.
-RUN apk add --no-cache tini git ca-certificates
+# `cosign` and `gh` independently verify the signed Deployment-Templates catalogue: cosign pins
+# the keyless workflow identity, while GitHub CLI validates the SLSA attestation (including source
+# commit/ref and hosted-runner policy) against GitHub's Sigstore trust root.
+RUN apk add --no-cache tini git ca-certificates cosign github-cli
 WORKDIR /app
 
 COPY --from=build /out/node_modules ./node_modules

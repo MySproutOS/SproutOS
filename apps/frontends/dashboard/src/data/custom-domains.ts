@@ -7,6 +7,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 import type { GetV1OrgsByOrgSlugDomainsResponse } from "@lib/api-client/generated/types.gen"
+import type { Project } from "./projects"
 
 export const CUSTOM_DOMAIN_POLL_INTERVAL_MS = 60_000
 
@@ -22,6 +23,38 @@ export const CUSTOM_DOMAIN_STATUS_LABELS = {
 
 export type CustomDomainStatus = keyof typeof CUSTOM_DOMAIN_STATUS_LABELS
 export type CustomDomain = GetV1OrgsByOrgSlugDomainsResponse["data"][number]
+
+const CUSTOM_DOMAIN_MUTATION_FALLBACK = "The custom-domain request failed. Try again."
+
+/** Preserve the rollout gate's actionable API reason instead of replacing every 503 with a toast. */
+export function customDomainMutationErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    if (
+      "error" in error &&
+      typeof error.error === "object" &&
+      error.error !== null &&
+      "message" in error.error &&
+      typeof error.error.message === "string" &&
+      error.error.message.trim() !== ""
+    ) {
+      return error.error.message
+    }
+    // The rollout-disabled response predates the shared OData-shaped error envelope. Keep this
+    // branch until the generated contract migrates it without hiding the operator's exact reason.
+    if ("message" in error && typeof error.message === "string" && error.message.trim() !== "") {
+      return error.message
+    }
+  }
+  if (typeof error === "string" && error.trim() !== "") return error
+  return CUSTOM_DOMAIN_MUTATION_FALLBACK
+}
+
+export function eligibleCustomDomainProjects(projects: readonly Project[]): Project[] {
+  return projects.filter(
+    (project) =>
+      !project.isGroup && project.servingMode === "serverless" && project.liveDeploymentId !== null,
+  )
+}
 
 const NONTERMINAL_STATUSES = new Set<CustomDomainStatus>([
   "pending_dns",

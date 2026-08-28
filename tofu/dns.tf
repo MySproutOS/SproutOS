@@ -431,25 +431,22 @@ resource "aws_route53_record" "tenant_alb_ipv4" {
   type    = "A"
 
   alias {
-    name                   = var.tenant_edge_enabled ? aws_lb.tenant.dns_name : aws_lb.main.dns_name
-    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant.zone_id : aws_lb.main.zone_id
+    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.main.dns_name
+    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.main.zone_id
     evaluate_target_health = false
   }
 }
 
 resource "aws_route53_record" "tenant_alb_ipv6" {
-  # The current tenant NLB is IPv4. Exact CloudFront static records remain dual-stack; generated
-  # dynamic hosts stop advertising IPv6 when they move so clients never select an address the Rust
-  # edge cannot receive.
-  for_each = var.tenant_edge_enabled ? toset([]) : local.tenant_alb_names
+  for_each = local.tenant_alb_names
 
   zone_id = aws_route53_zone.tenant.zone_id
   name    = each.value
   type    = "AAAA"
 
   alias {
-    name                   = aws_lb.main.dns_name
-    zone_id                = aws_lb.main.zone_id
+    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.main.dns_name
+    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.main.zone_id
     evaluate_target_health = false
   }
 }
