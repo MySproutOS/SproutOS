@@ -507,9 +507,10 @@ resource "aws_ecs_service" "web" {
 
   # Keep the old task healthy until its replacement is healthy. The capacity provider may grow the
   # ASG from one instance to its existing maximum of two while the fixed host ports are occupied,
-  # then scales the empty instance back in after ECS drains the old task. That brief overlap incurs
-  # a second instance's normal per-second cost; stopping the sole healthy task first incurred a
-  # customer-visible outage on every release and is not an acceptable saving.
+  # then scales the empty instance back in after ECS drains the old task and its managed scale-in
+  # alarm settles. That bounded overlap incurs a second instance's normal per-second cost; stopping
+  # the sole healthy task first incurred a customer-visible outage on every release and is not an
+  # acceptable saving.
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
 

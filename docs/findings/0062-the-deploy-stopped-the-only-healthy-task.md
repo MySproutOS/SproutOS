@@ -13,14 +13,19 @@ while the replacement started.
 The ASG already allowed one additional instance and the ECS capacity provider already managed its
 desired capacity. The service now uses maximum 200 and minimum healthy 100. ECS keeps the old task,
 scales the ASG from one instance to two, waits for the replacement to pass both target-group health
-checks, drains the old task, and then scales the empty instance back in.
+checks, drains the old task, and then scales the empty instance back in. ECS managed scale-in waits
+for its empty-capacity alarm data; [AWS documents fifteen one-minute data points][managed-scaling]
+before scale-in starts, so the second instance can remain for roughly another fifteen minutes after
+it becomes empty.
 
 The overlap is intentionally billable infrastructure: for each deployment, one extra instance runs
-for the replacement's placement, startup, health-check, and drain interval. Saving those few
-instance-minutes by deliberately removing all healthy capacity made every ordinary release an
-outage.
+for placement, startup, health checks, draining, and the managed scale-in delay. Saving those
+bounded instance-minutes by deliberately removing all healthy capacity made every ordinary release
+an outage.
 
 The release script repeats the deployment configuration on `update-service` because deployments do
 not apply OpenTofu. Its ECS waiter and rollback waiter are bounded. A timeout or failed target-health
 assertion explicitly restores the exact task revision observed before the release; a circuit-breaker
 rollback is detected rather than misreported as a successful new release.
+
+[managed-scaling]: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/managed-scaling-behavior.html
