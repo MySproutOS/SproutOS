@@ -1,5 +1,5 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import {
@@ -54,12 +54,14 @@ type Dependencies = {
   issue: typeof issueCertificate
   refreshRenewal: typeof refreshRenewalSchedule
   scheduleIssued: typeof scheduleIssuedCertificate
+  afterCertificateStored: () => Promise<void>
 }
 
 export type CustomDomainDeletionDependencies = {
-  bucket: string
+  bucket: string | (() => string)
   s3: Pick<S3Client, "send">
   valkey: Redis
+  withdrawRoute?: typeof withdrawLambdaRoute
 }
 
 function awsConfig() {
@@ -86,6 +88,7 @@ function defaults(): Dependencies {
     issue: issueCertificate,
     refreshRenewal: refreshRenewalSchedule,
     scheduleIssued: scheduleIssuedCertificate,
+    afterCertificateStored: () => Promise.resolve(),
   }
 }
 
@@ -255,11 +258,14 @@ async function deleteCustomDomainResources(
   dependencies: CustomDomainDeletionDependencies,
 ): Promise<void> {
   await deleteCustomDomain({
-    withdrawRoute: () => withdrawLambdaRoute(dependencies.valkey, domain.hostname),
+    withdrawRoute: () =>
+      (dependencies.withdrawRoute ?? withdrawLambdaRoute)(dependencies.valkey, domain.hostname),
     clearPending: async () => {
       await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
     },
     deleteObjects: async () => {
+      const bucket =
+        typeof dependencies.bucket === "string" ? dependencies.bucket : dependencies.bucket()
       const keys = new Set(
         [
           `custom-domains/${domain.id}/current.json`,
@@ -269,7 +275,7 @@ async function deleteCustomDomainResources(
       )
       for (const key of keys) {
         // eslint-disable-next-line no-await-in-loop -- each exact certificate key is independent.
-        await deleteCertificateObjectVersions(dependencies.s3, dependencies.bucket, key)
+        await deleteCertificateObjectVersions(dependencies.s3, bucket, key)
       }
     },
     invalidateCertificates: async () => {
@@ -357,9 +363,10 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
     try {
       if (domain.status === "deleting") {
         await deleteCustomDomainResources(db, domain, leaseToken, {
-          bucket: required("TENANT_CERTIFICATE_BUCKET"),
+          bucket: () => required("TENANT_CERTIFICATE_BUCKET"),
           s3: deps.s3,
           valkey: deps.valkey,
+          withdrawRoute: deps.withdrawRoute,
         })
         return
       }
@@ -586,31 +593,50 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         now: deps.now(),
       })
       const objectKey = `custom-domains/${domain.id}/current.json`
-      const stored = await deps.s3.send(
-        new PutObjectCommand({
-          Bucket: required("TENANT_CERTIFICATE_BUCKET"),
-          Key: objectKey,
-          Body: JSON.stringify({
-            version: 1,
-            hostname: domain.hostname,
-            certificatePem: certificate.certificatePem,
-            privateKeyPem: certificate.privateKeyPem,
-            issuedAt: certificate.issuedAt.toISOString(),
-            expiresAt: certificate.expiresAt.toISOString(),
-            issuer: renewal.issuer,
-            directoryUrl,
-          }),
-          ContentType: "application/json",
-          ServerSideEncryption: "aws:kms",
-          SSEKMSKeyId: required("TENANT_CERTIFICATE_KMS_KEY_ARN"),
-        }),
-      )
-      if (stored.VersionId === undefined) {
-        throw new Error("Certificate bucket versioning is not enabled; S3 returned no VersionId")
-      }
+      const storedVersion = await db.transaction().execute(async (trx) => {
+        const locked = await trx
+          .selectFrom("customDomain")
+          .select(["deletedAt", "reconcileLeaseToken", "status"])
+          .where("id", "=", domain.id)
+          .forUpdate()
+          .executeTakeFirst()
+        if (
+          locked === undefined ||
+          locked.deletedAt !== null ||
+          locked.status === "deleting" ||
+          locked.reconcileLeaseToken !== leaseToken
+        ) {
+          throw new ReconciliationCancelledError()
+        }
 
-      try {
-        await updateOwned({
+        // This is deliberately inside the short row-lock transaction. Deletion waits until the
+        // exact immutable VersionId is recorded; if the process dies after S3 accepts the object,
+        // the transaction releases the row and the waiting deleter lists that deterministic key.
+        const stored = await deps.s3.send(
+          new PutObjectCommand({
+            Bucket: required("TENANT_CERTIFICATE_BUCKET"),
+            Key: objectKey,
+            Body: JSON.stringify({
+              version: 1,
+              hostname: domain.hostname,
+              certificatePem: certificate.certificatePem,
+              privateKeyPem: certificate.privateKeyPem,
+              issuedAt: certificate.issuedAt.toISOString(),
+              expiresAt: certificate.expiresAt.toISOString(),
+              issuer: renewal.issuer,
+              directoryUrl,
+            }),
+            ContentType: "application/json",
+            ServerSideEncryption: "aws:kms",
+            SSEKMSKeyId: required("TENANT_CERTIFICATE_KMS_KEY_ARN"),
+          }),
+        )
+        if (stored.VersionId === undefined) {
+          throw new Error("Certificate bucket versioning is not enabled; S3 returned no VersionId")
+        }
+        await deps.afterCertificateStored()
+
+        const updated = await crudCustomDomain(trx).updateReconciliation(domain.id, leaseToken, {
           certificateObjectKey: objectKey,
           certificateObjectVersion: stored.VersionId,
           certificateIssuer: renewal.issuer,
@@ -627,25 +653,18 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             "Certificate issued; waiting for every active Rust edge replica to load it.",
           consecutiveFailures: 0,
         })
-      } catch (error) {
-        if (error instanceof ReconciliationCancelledError) {
-          await deps.s3.send(
-            new DeleteObjectCommand({
-              Bucket: required("TENANT_CERTIFICATE_BUCKET"),
-              Key: objectKey,
-              VersionId: stored.VersionId,
-            }),
-          )
+        if (updated === undefined) {
+          throw new ReconciliationCancelledError()
         }
-        throw error
-      }
+        return stored.VersionId
+      })
       await deleteCertificateObjectVersions(
         deps.s3,
         required("TENANT_CERTIFICATE_BUCKET"),
         objectKey,
         new Set(
           [
-            stored.VersionId,
+            storedVersion,
             domain.deployedCertificateObjectKey === objectKey
               ? domain.deployedCertificateObjectVersion
               : null,
@@ -657,7 +676,7 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         JSON.stringify({
           hostname: domain.hostname,
           objectKey,
-          objectVersion: stored.VersionId,
+          objectVersion: storedVersion,
         }),
       )
     } catch (error) {

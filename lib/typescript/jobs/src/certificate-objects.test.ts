@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, ListObjectVersionsCommand, type S3Client } from "@aws-sdk/client-s3"
+import { DeleteObjectsCommand, ListObjectVersionsCommand } from "@aws-sdk/client-s3"
 import { describe, expect, it, vi } from "vitest"
 import { deleteCertificateObjectVersions } from "./certificate-objects"
 
@@ -25,7 +25,7 @@ describe("certificate object version cleanup", () => {
     })
 
     await deleteCertificateObjectVersions(
-      { send } as unknown as S3Client,
+      { send },
       "certificates",
       "custom-domains/id/current.json",
       new Set(["current"]),
@@ -38,11 +38,34 @@ describe("certificate object version cleanup", () => {
       KeyMarker: "custom-domains/id/current.json",
       VersionIdMarker: "marker",
     })
-    expect(
-      send.mock.calls
-        .map(([command]) => command)
-        .filter((command): command is DeleteObjectCommand => command instanceof DeleteObjectCommand)
-        .map((command) => command.input.VersionId),
-    ).toEqual(["put-before-db-crash", "marker", "older"])
+    const deletion = send.mock.calls[2]?.[0]
+    expect(deletion).toBeInstanceOf(DeleteObjectsCommand)
+    expect((deletion as DeleteObjectsCommand).input.Delete?.Objects).toEqual([
+      { Key: "custom-domains/id/current.json", VersionId: "put-before-db-crash" },
+      { Key: "custom-domains/id/current.json", VersionId: "marker" },
+      { Key: "custom-domains/id/current.json", VersionId: "older" },
+    ])
+  })
+
+  it("fails cleanup when S3 retains any private-key version", async () => {
+    const send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
+      Promise.resolve(
+        command instanceof ListObjectVersionsCommand
+          ? { Versions: [{ Key: "custom-domains/id/current.json", VersionId: "private-key" }] }
+          : {
+              Errors: [
+                {
+                  Key: "custom-domains/id/current.json",
+                  VersionId: "private-key",
+                  Code: "AccessDenied",
+                },
+              ],
+            },
+      ),
+    )
+
+    await expect(
+      deleteCertificateObjectVersions({ send }, "certificates", "custom-domains/id/current.json"),
+    ).rejects.toThrow("custom-domains/id/current.json@private-key: AccessDenied")
   })
 })

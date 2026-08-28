@@ -9,7 +9,7 @@ import {
   ListResourceRecordSetsCommand,
   type Route53Client,
 } from "@aws-sdk/client-route-53"
-import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3"
+import { DeleteObjectsCommand, type S3Client } from "@aws-sdk/client-s3"
 import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { db } from "@sproutos/db"
 import type { Redis } from "ioredis"
@@ -521,7 +521,7 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
       .execute()
     const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
       Promise.resolve(
-        command instanceof DeleteObjectCommand
+        command instanceof DeleteObjectsCommand
           ? {}
           : {
               Versions: [
@@ -560,12 +560,13 @@ describe.runIf(databaseReachable)("platform certificate durable handoff", () => 
 
     expect(s3Send).toHaveBeenCalledTimes(2)
     const deletion = s3Send.mock.calls[1]?.[0]
-    expect(deletion).toBeInstanceOf(DeleteObjectCommand)
-    if (!(deletion instanceof DeleteObjectCommand)) throw new Error("missing version deletion")
+    expect(deletion).toBeInstanceOf(DeleteObjectsCommand)
+    if (!(deletion instanceof DeleteObjectsCommand)) throw new Error("missing version deletion")
     expect(deletion.input).toMatchObject({
       Bucket: "certificate-bucket",
-      Key: "platform-edge/current.json",
-      VersionId: "obsolete-version",
+      Delete: {
+        Objects: [{ Key: "platform-edge/current.json", VersionId: "obsolete-version" }],
+      },
     })
     expect(
       await db

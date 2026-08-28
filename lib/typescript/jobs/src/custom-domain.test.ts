@@ -1,4 +1,9 @@
-import { DeleteObjectCommand, ListObjectVersionsCommand, type S3Client } from "@aws-sdk/client-s3"
+import {
+  DeleteObjectsCommand,
+  ListObjectVersionsCommand,
+  PutObjectCommand,
+  type S3Client,
+} from "@aws-sdk/client-s3"
 import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { crudCustomDomain } from "@lib/dao"
 import { db } from "@sproutos/db"
@@ -231,6 +236,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
   const projectId = v7()
   const domainId = v7()
   const issuingDomainId = v7()
+  const crashingDomainId = v7()
 
   beforeAll(async () => {
     await db
@@ -276,6 +282,28 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
         projectId,
         hostname: `${domainId}.example.test`,
         verificationToken: "proof",
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: crashingDomainId,
+        organizationId,
+        projectId,
+        hostname: `${crashingDomainId}.example.test`,
+        verificationToken: "proof",
+        status: "active",
+        certificateObjectKey: `custom-domains/${crashingDomainId}/current.json`,
+        certificateObjectVersion: "old-version",
+        deployedCertificateObjectKey: `custom-domains/${crashingDomainId}/current.json`,
+        deployedCertificateObjectVersion: "old-version",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateIssuedAt: new Date("2026-01-01T00:00:00Z"),
+        certificateExpiresAt: new Date("2026-09-01T00:00:00Z"),
+        nextRenewalAt: new Date("2026-08-01T00:00:00Z"),
+        nextRetryAt: new Date("2026-08-01T00:00:00Z"),
       })
       .execute()
     await crudCustomDomain(db).beginDelete(organizationId, domainId)
@@ -371,8 +399,10 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
       expect(
         s3Send.mock.calls.some(
           ([command]) =>
-            command instanceof DeleteObjectCommand &&
-            command.input.VersionId === "untracked-first-issuance",
+            command instanceof DeleteObjectsCommand &&
+            command.input.Delete?.Objects?.some(
+              (object) => object.VersionId === "untracked-first-issuance",
+            ) === true,
         ),
       ).toBe(true)
       const deleted = await db
@@ -386,7 +416,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
     }
   })
 
-  it("fences an issuance paused across beginDelete and removes its untracked private key", async () => {
+  it("fences an issuance paused across beginDelete before it stores a private key", async () => {
     vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificates")
     vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
     vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
@@ -400,11 +430,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
     })
     const publishRoute = vi.fn<() => Promise<void>>(() => Promise.resolve())
     const valkeyPublish = vi.fn<() => Promise<number>>(() => Promise.resolve(1))
-    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) =>
-      Promise.resolve(
-        command instanceof DeleteObjectCommand ? {} : { VersionId: "orphan-version" },
-      ),
-    )
+    const s3Send = vi.fn<(command: unknown) => Promise<unknown>>(() => Promise.resolve({}))
     const handler = reconcileCustomDomain({
       now: () => new Date("2026-08-28T00:00:00Z"),
       issue: async () => {
@@ -451,7 +477,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
 
     expect(publishRoute).not.toHaveBeenCalled()
     expect(valkeyPublish).not.toHaveBeenCalled()
-    expect(s3Send.mock.calls.some(([command]) => command instanceof DeleteObjectCommand)).toBe(true)
+    expect(s3Send.mock.calls.some(([command]) => command instanceof PutObjectCommand)).toBe(false)
     expect(
       await db
         .selectFrom("customDomain")
@@ -464,5 +490,114 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
       reconcileLeaseToken: null,
     })
     vi.unstubAllEnvs()
+  })
+
+  it("makes deletion wait across the S3-to-database crash window, then removes the new version", async () => {
+    vi.stubEnv("TENANT_CERTIFICATE_BUCKET", "certificates")
+    vi.stubEnv("TENANT_CERTIFICATE_KMS_KEY_ARN", "kms-key")
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
+    try {
+      let releaseCrash!: () => void
+      let markStored!: () => void
+      const stored = new Promise<void>((resolve) => {
+        markStored = resolve
+      })
+      const crashGate = new Promise<void>((resolve) => {
+        releaseCrash = resolve
+      })
+      const versions = new Set(["old-version"])
+      const objectKey = `custom-domains/${crashingDomainId}/current.json`
+      const s3Send = vi.fn<(command: unknown) => Promise<unknown>>((command) => {
+        if (command instanceof PutObjectCommand) {
+          versions.add("crash-version")
+          return Promise.resolve({ VersionId: "crash-version" })
+        }
+        if (command instanceof ListObjectVersionsCommand) {
+          return Promise.resolve({
+            Versions: [...versions].map((VersionId) => ({ Key: objectKey, VersionId })),
+          })
+        }
+        if (command instanceof DeleteObjectsCommand) {
+          for (const object of command.input.Delete?.Objects ?? []) {
+            if (object.VersionId !== undefined) versions.delete(object.VersionId)
+          }
+          return Promise.resolve({})
+        }
+        return Promise.resolve({})
+      })
+      const valkey = {
+        set: vi.fn<() => Promise<"OK">>(() => Promise.resolve("OK")),
+        del: vi.fn<() => Promise<number>>(() => Promise.resolve(1)),
+        publish: vi.fn<() => Promise<number>>(() => Promise.resolve(1)),
+      } as unknown as Redis
+      const issuing = reconcileCustomDomain({
+        now: () => new Date("2026-08-28T00:00:00Z"),
+        issue: () =>
+          Promise.resolve({
+            certificatePem: "certificate",
+            privateKeyPem: "private-key",
+            issuedAt: new Date("2026-08-28T00:00:00Z"),
+            expiresAt: new Date("2026-11-28T00:00:00Z"),
+          }),
+        scheduleIssued: () =>
+          Promise.resolve({
+            certificateId: "aki.crash",
+            issuer: "CN=Staging Test CA",
+            nextRenewalAt: new Date("2026-10-28T00:00:00Z"),
+            renewalInfoRetryAt: null,
+            renewalInfoExplanationUrl: null,
+            source: "unsupported",
+          }),
+        afterCertificateStored: async () => {
+          markStored()
+          await crashGate
+          throw new Error("simulated process death after S3 PutObject")
+        },
+        s3: { send: s3Send } as unknown as S3Client,
+        valkey,
+      })({ payload: { domainId: crashingDomainId } } as never, {
+        db,
+        keepAlive: () => Promise.resolve(true),
+        signal: new AbortController().signal,
+      })
+
+      await stored
+      let deleteCompleted = false
+      const beginDelete = crudCustomDomain(db)
+        .beginDelete(organizationId, crashingDomainId)
+        .then((result) => {
+          deleteCompleted = true
+          return result
+        })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(deleteCompleted).toBe(false)
+
+      releaseCrash()
+      await Promise.allSettled([issuing, beginDelete])
+      expect(deleteCompleted).toBe(true)
+      expect(versions.has("crash-version")).toBe(true)
+
+      await expect(
+        reconcileCustomDomain({
+          withdrawRoute: () => Promise.resolve(),
+          s3: { send: s3Send } as unknown as S3Client,
+          valkey,
+        })({ payload: { domainId: crashingDomainId } } as never, {
+          db,
+          keepAlive: () => Promise.resolve(true),
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toBeUndefined()
+
+      expect(versions).toEqual(new Set())
+      const deleted = await db
+        .selectFrom("customDomain")
+        .select("deletedAt")
+        .where("id", "=", crashingDomainId)
+        .executeTakeFirstOrThrow()
+      expect(deleted.deletedAt).toBeInstanceOf(Date)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })

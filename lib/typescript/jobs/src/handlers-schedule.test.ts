@@ -21,6 +21,30 @@ afterAll(async () => {
 })
 
 describe.skipIf(!reachable)("metering schedules", () => {
+  it("does not enqueue certificate jobs while the isolated worker is disabled", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const now = new Date(`${TEST_YEAR}-12-30T23:58:45.000Z`)
+    const previousAcmeJobs = process.env.ACME_JOBS_ENABLED
+    delete process.env.ACME_JOBS_ENABLED
+    try {
+      await scheduleRecurring(db, now)
+    } finally {
+      if (previousAcmeJobs !== undefined) process.env.ACME_JOBS_ENABLED = previousAcmeJobs
+    }
+
+    const certificateJobs = await db
+      .selectFrom("backgroundJob")
+      .select("kind")
+      .where("idempotencyKey", "in", [
+        `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+        `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
+      ])
+      .execute()
+    expect(certificateJobs).toEqual([])
+  })
+
   it("schedules metering and credit projections once per window", async ({ skip }) => {
     if (!reachable) skip()
     const now = new Date(`${TEST_YEAR}-12-31T23:58:45.000Z`)
