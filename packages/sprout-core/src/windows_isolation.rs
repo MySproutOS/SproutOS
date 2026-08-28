@@ -1,5 +1,4 @@
 use std::{
-    error::Error as _,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
