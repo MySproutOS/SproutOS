@@ -132,6 +132,12 @@ COPY --from=build /src/apps/website/public ./apps/website/public
 COPY --from=build /src/apps/internal-api/build/ ./api/
 COPY --from=build /prod/api/node_modules ./api/node_modules
 COPY --from=build /prod/migrator/ ./api/
+# Rollout-only ECS isolation proof. Nothing imports this during normal startup; the security gate
+# invokes this exact root-owned path through audited SSM before catalogue execution is enabled.
+COPY --from=build --chown=0:0 --chmod=0555 /src/apps/internal-api/isolation-proof.mjs \
+  ./api/isolation-proof.mjs
+RUN node ./api/isolation-proof.mjs --self-test \
+    && test "$(stat -c '%u:%a' ./api/isolation-proof.mjs)" = "0:555"
 
 # Amazon's RDS certificate authority. Node does not ship it, so `sslmode=require` connects and then
 # fails verification with "self-signed certificate in certificate chain" — which reads as a broken
