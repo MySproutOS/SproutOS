@@ -134,6 +134,7 @@ import {
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
   postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke,
   postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   postV1OrgsByOrgSlugProjectsByProjectIdDomains,
@@ -492,6 +493,9 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -693,6 +697,33 @@ export const postV1InvitesAcceptMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1InvitesAccept({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Sets a direct child as its group's primary project from a scoped agent turn
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary({
         ...options,
         ...fnOptions,
         throwOnError: true,

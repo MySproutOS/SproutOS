@@ -130,6 +130,58 @@ export type PostV1InvitesAcceptResponses = {
 export type PostV1InvitesAcceptResponse =
   PostV1InvitesAcceptResponses[keyof PostV1InvitesAcceptResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData = {
+  body?: {
+    primaryProjectSlug: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/group-primary"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors = {
+  /**
+   * The scoped project or nominee is not a valid group child
+   */
+  400: ErrorResponseT
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The person who started the turn lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this organization and project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses = {
+  /**
+   * The group primary project and its currently active domain
+   */
+  200: {
+    action: "set_group_primary_project"
+    groupProjectId: string
+    groupName: string
+    primaryProjectId: string
+    primaryProjectName: string
+    primaryHostname: string | null
+    primaryUrl: string | null
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses]
+
 export type GetV1OrgsData = {
   body?: never
   path?: never

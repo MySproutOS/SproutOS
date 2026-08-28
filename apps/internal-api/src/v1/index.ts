@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { RegExpRouter } from "hono/router/reg-exp-router"
 import agent from "./agent"
 import agentChat from "./agent-chat"
+import agentActions from "./agent-actions"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import customDomains from "./custom-domains"
@@ -138,6 +139,8 @@ unauthenticated.route("/", android)
 const app: Hono = new Hono({ router: new RegExpRouter() }).basePath("/v1")
 app.route("/auth", auth)
 app.route("/invites", invites)
+/* Registered before `/orgs`: a chat-turn token authenticates it, not the general bearer parser. */
+app.route("/orgs", agentActions)
 app.route("/orgs", orgs)
 /*
   Not under `/orgs`. A region is a property of the platform, not of a tenant — every organization is

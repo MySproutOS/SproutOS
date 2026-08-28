@@ -88,6 +88,8 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
 
     const events: unknown[] = []
     const { exitCode } = await runSandboxTurn({
+      actionUrl: "https://api.sproutos.me/v1/agent/action",
+      groupPrimaryCandidates: [],
       driver: activeDriver,
       externalId,
       harness: "claude-code",
@@ -95,6 +97,7 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
       onEvent: (event) => events.push(event),
       prompt: "say hello",
       proxyBaseUrl: "https://llm.sproutos.me",
+      projectSlug: "product-web",
       refreshUrl: "https://api.sproutos.me/refresh",
       timeoutMs: 120_000,
       token: {

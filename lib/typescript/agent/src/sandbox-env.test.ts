@@ -11,7 +11,14 @@ const token = {
 }
 
 const base = {
+  actionUrl:
+    "https://api.sproutos.me/v1/orgs/acme/projects/01a03e5d-8cbf-7415-9ac6-82c3476aeb5c/agent/actions/group-primary",
   proxyBaseUrl: "https://llm.sproutos.me",
+  projectSlug: "product-suite",
+  groupPrimaryCandidates: [
+    { name: "Product Web", slug: "product-web", rootDir: "apps/web" },
+    { name: "Product API", slug: "product-api", rootDir: "apps/api" },
+  ],
   refreshUrl: "https://api.sproutos.me/v1/orgs/acme/agent/proxy-token/refresh",
   token,
 }
@@ -60,6 +67,16 @@ describe("sandboxAgentEnv", () => {
     // The agent needs to know when to bother: without the expiry it either refreshes on every call
     // or discovers the problem as a 401 halfway through a tool use.
     expect(env.SPROUTOS_AGENT_TOKEN_EXPIRES_AT).toBe("2026-01-01T00:15:00.000Z")
+  })
+
+  it("carries one exact agent-action endpoint under the same short-lived bearer", () => {
+    const env = sandboxAgentEnv({ ...base, harness: "codex" })
+    expect(env.SPROUTOS_AGENT_ACTION_TOKEN).toBe("spa_access")
+    expect(env.SPROUTOS_AGENT_GROUP_PRIMARY_URL).toBe(base.actionUrl)
+    expect(env.SPROUTOS_AGENT_PROJECT_SLUG).toBe("product-suite")
+    expect(JSON.parse(env.SPROUTOS_AGENT_GROUP_PROJECTS ?? "null")).toEqual(
+      base.groupPrimaryCandidates,
+    )
   })
 
   it("omits the model rather than setting it empty", () => {

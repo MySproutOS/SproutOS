@@ -250,6 +250,10 @@ export type TurnInput = {
   prompt: string
   proxyBaseUrl: string
   refreshUrl: string
+  /** Exact project-scoped endpoint; the sandbox never constructs another tenant's path. */
+  actionUrl: string
+  projectSlug: string
+  groupPrimaryCandidates: readonly { name: string; slug: string; rootDir: string | null }[]
   token: MintedProxyToken
   model: string | null
   timeoutMs: number
@@ -313,9 +317,12 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
     )
   }
   const env = sandboxAgentEnv({
+    actionUrl: input.actionUrl,
+    groupPrimaryCandidates: input.groupPrimaryCandidates,
     harness: input.harness,
     model: input.model,
     proxyBaseUrl: input.proxyBaseUrl,
+    projectSlug: input.projectSlug,
     refreshUrl: input.refreshUrl,
     token: input.token,
     workspace,
