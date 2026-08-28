@@ -104,6 +104,7 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
+  postV1AndroidClientRelease,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthCliRevoke,
@@ -429,6 +430,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
+  PostV1AndroidClientReleaseData,
+  PostV1AndroidClientReleaseError,
+  PostV1AndroidClientReleaseResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
   PostV1AuthCliRevokeData,
@@ -5478,3 +5482,30 @@ export const getV1AndroidClientReleaseOptions = (
     },
     queryKey: getV1AndroidClientReleaseQueryKey(options),
   })
+
+/**
+ * Publishes metadata for a signed and verified SproutOS Android client release.
+ */
+export const postV1AndroidClientReleaseMutation = (
+  options?: Partial<Options<PostV1AndroidClientReleaseData>>,
+): UseMutationOptions<
+  PostV1AndroidClientReleaseResponse,
+  PostV1AndroidClientReleaseError,
+  Options<PostV1AndroidClientReleaseData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1AndroidClientReleaseResponse,
+    PostV1AndroidClientReleaseError,
+    Options<PostV1AndroidClientReleaseData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1AndroidClientRelease({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}

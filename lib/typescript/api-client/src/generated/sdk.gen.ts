@@ -346,6 +346,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostV1AndroidClientReleaseData,
+  PostV1AndroidClientReleaseErrors,
+  PostV1AndroidClientReleaseResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -3597,3 +3600,26 @@ export const getV1AndroidClientRelease = <ThrowOnError extends boolean = false>(
     GetV1AndroidClientReleaseErrors,
     ThrowOnError
   >({ url: "/v1/android/client-release", ...options })
+
+/**
+ * Publishes metadata for a signed and verified SproutOS Android client release.
+ */
+export const postV1AndroidClientRelease = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1AndroidClientReleaseData, ThrowOnError>,
+): RequestResult<
+  PostV1AndroidClientReleaseResponses,
+  PostV1AndroidClientReleaseErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostV1AndroidClientReleaseResponses,
+    PostV1AndroidClientReleaseErrors,
+    ThrowOnError
+  >({
+    url: "/v1/android/client-release",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
