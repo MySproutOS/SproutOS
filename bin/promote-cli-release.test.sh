@@ -154,6 +154,46 @@ if grep -q 'ecs:UpdateService\|ecs:RegisterTaskDefinition\|iam:PassRole' <<<"$pr
   exit 1
 fi
 
+# Canonical SemVer accepts prerelease plus build metadata and rejects leading-zero core versions.
+if "$HERE/promote-cli-release.sh" 01.2.3 >"$TEST_DIR/invalid-semver.out" 2>&1; then
+  echo "invalid semantic version was accepted" >&2
+  exit 1
+fi
+grep -q '^usage:' "$TEST_DIR/invalid-semver.out"
+: >"$CALLS"
+if "$HERE/promote-cli-release.sh" 1.2.3-alpha.1+build.5 >"$TEST_DIR/valid-semver.out" 2>&1; then
+  echo "unexpected fixture release matched another version" >&2
+  exit 1
+fi
+grep -q '^release view cli-v1.2.3-alpha.1+build.5 ' "$CALLS"
+if grep -q '^usage:' "$TEST_DIR/valid-semver.out"; then
+  echo "valid semantic version was rejected by argument validation" >&2
+  exit 1
+fi
+
+# An attested manifest still has to map each native target to its canonical public os/arch label.
+manifest="$TEST_DIR/release/sprout-v${version}-manifest.json"
+cp "$manifest" "$TEST_DIR/capture/manifest.json"
+jq '(.assets[] | select(.target == "aarch64-apple-darwin") | .os) = "linux"' \
+  "$manifest" >"$TEST_DIR/capture/wrong-platform.json"
+cp "$TEST_DIR/capture/wrong-platform.json" "$manifest"
+if "$HERE/promote-cli-release.sh" "$version" >"$TEST_DIR/wrong-platform.out" 2>&1; then
+  echo "manifest with wrong platform mapping was accepted" >&2
+  exit 1
+fi
+grep -q 'wrong version, tag, schema, or platform set' "$TEST_DIR/wrong-platform.out"
+cp "$TEST_DIR/capture/manifest.json" "$manifest"
+
+# Evidence may be recorded independently, but a pointer cannot move until an exact task contract
+# with the SSM reference is already reviewed and available for deployment.
+if "$HERE/promote-cli-release.sh" "$version" --record-only >"$TEST_DIR/missing-contract.out" 2>&1; then
+  echo "pointer moved without a deployable task contract" >&2
+  exit 1
+fi
+grep -q 'task contract does not contain the exact' "$TEST_DIR/missing-contract.out"
+test ! -f "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION"
+
+: >"$CALLS"
 ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8 \
   "$HERE/promote-cli-release.sh" "$version" --record-only
 
