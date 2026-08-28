@@ -6,10 +6,12 @@ import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import {
   destroySandbox,
+  meterSandboxes,
   reconcileSandboxes,
   reapExpiredDatabaseBranches,
   repairDeletingSandboxes,
   SANDBOX_KINDS,
+  stopSandbox,
 } from "./sandbox"
 
 const reachable = await db
@@ -274,14 +276,15 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
 
     const sandbox = await db
       .selectFrom("sandbox")
-      .select(["state", "externalId", "databaseBranchId"])
+      .select(["state", "externalId", "databaseBranchId", "meteredThrough"])
       .where("id", "=", missingSandboxId)
       .executeTakeFirstOrThrow()
-    expect(sandbox).toEqual({
-      state: "running",
+    expect(sandbox).toMatchObject({
+      state: "failed",
       externalId,
       databaseBranchId: missingBranchId,
     })
+    expect(sandbox.meteredThrough).toBeInstanceOf(Date)
     const branch = await db
       .selectFrom("databaseBranch")
       .select(["expiresAt", "cleanupAttempts", "cleanupRetryAt"])
@@ -290,8 +293,78 @@ describe.skipIf(!reachable)("sandbox database branch lifecycle", () => {
     expect(branch.expiresAt).toBeInstanceOf(Date)
     expect(branch.cleanupAttempts).toBe(1)
     expect(branch.cleanupRetryAt).toBeInstanceOf(Date)
+
+    await meterSandboxes(
+      { id: v7(), kind: SANDBOX_KINDS.meter, payload: {} } as never,
+      { db } as never,
+    )
+    await expect(
+      db
+        .selectFrom("sandbox")
+        .select("meteredThrough")
+        .where("id", "=", missingSandboxId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ meteredThrough: sandbox.meteredThrough })
     await db.deleteFrom("sandbox").where("id", "=", missingSandboxId).execute()
     await db.deleteFrom("databaseBranch").where("id", "=", missingBranchId).execute()
+  })
+
+  it("routes stop NotFound through the same durable provider-loss cleanup", async () => {
+    const missingSandboxId = v7()
+    const missingBranchId = v7()
+    const externalId = `daytona-stop-missing-${missingSandboxId}`
+    await db
+      .insertInto("databaseBranch")
+      .values({
+        id: missingBranchId,
+        databaseInstanceId: instanceId,
+        name: `sandbox-stop-missing-${missingBranchId}`,
+        kind: "dev",
+      })
+      .execute()
+    await crudSandbox(db).create({
+      id: missingSandboxId,
+      projectId,
+      userId,
+      databaseBranchId: missingBranchId,
+      externalId,
+      purpose: "upstream_resolution",
+      state: "running",
+      meteredThrough: new Date(),
+    })
+    await crudSandboxDatabaseBranch(db).create({
+      sandboxId: missingSandboxId,
+      databaseBranchId: missingBranchId,
+    })
+
+    await stopSandbox(
+      () =>
+        ({
+          stop: () => Promise.reject(new SandboxNotFoundError(externalId)),
+        }) as never,
+      drop,
+      () => config,
+    )(
+      { id: v7(), kind: SANDBOX_KINDS.stop, payload: { sandboxId: missingSandboxId } } as never,
+      { db } as never,
+    )
+
+    await expect(
+      db
+        .selectFrom("sandbox")
+        .select(["state", "externalId", "databaseBranchId"])
+        .where("id", "=", missingSandboxId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ state: "stopped", externalId: null, databaseBranchId: null })
+    await expect(
+      db
+        .selectFrom("databaseBranch")
+        .select("id")
+        .where("id", "=", missingBranchId)
+        .executeTakeFirst(),
+    ).resolves.toBeUndefined()
+    await db.deleteFrom("sandbox").where("id", "=", missingSandboxId).execute()
+    dropped.splice(dropped.indexOf(missingBranchId), 1)
   })
 
   it("reaps expired alternatives and destruction removes every remaining owned branch", async () => {

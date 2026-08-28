@@ -378,7 +378,9 @@ export function reconcileSandboxes(
     const candidates = await context.db
       .selectFrom("sandbox")
       .select(["id", "externalId"])
-      .where("state", "in", ["starting", "running", "idle"])
+      // A stopped Daytona object still incurs reserved-disk cost until the provider archives or
+      // deletes it. Keep observing stopped joins so provider loss clears both billing and branches.
+      .where("state", "in", ["starting", "running", "idle", "stopped"])
       .where("externalId", "is not", null)
       .execute()
 
@@ -393,7 +395,11 @@ export function reconcileSandboxes(
       try {
         const providerState = await sandboxDriver.state(candidate.externalId!)
         if (["stopped", "archived", "paused"].includes(providerState)) {
-          await crudSandbox(context.db).update(candidate.id, { state: "stopped" })
+          await crudSandbox(context.db).updateIfState(
+            candidate.id,
+            ["starting", "running", "idle", "stopped"],
+            { state: "stopped" },
+          )
         } else if (providerState === "destroyed") {
           await cleanMissingProviderObject(
             context.db,
@@ -402,7 +408,11 @@ export function reconcileSandboxes(
             branchConfig,
           )
         } else if (["error", "build_failed"].includes(providerState)) {
-          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          await crudSandbox(context.db).updateIfState(
+            candidate.id,
+            ["starting", "running", "idle", "stopped"],
+            { state: "failed" },
+          )
         }
       } catch (error) {
         if (error instanceof SandboxNotFoundError) {
@@ -414,8 +424,8 @@ export function reconcileSandboxes(
               branchConfig,
             )
           } catch (cleanupError) {
-            // Keep the row in a reconcilable provider-backed state. Every failed branch is also
-            // made visible to the branch reaper, and the next minute retries this complete set.
+            // The shared cleanup marks the row failed before touching Neon. Failed is non-metered,
+            // and the sandbox reaper gives it fresh stop jobs until cleanup finishes.
             console.error(
               `[jobs] failed to clean missing sandbox ${candidate.id}: ${String(cleanupError)}`,
             )
@@ -621,6 +631,19 @@ async function cleanMissingProviderObject(
     return false
   }
 
+  // Provider absence is authoritative. Persist it before any Neon call so a crash or provider
+  // outage cannot leave phantom CPU/memory/disk billing. `failed` is picked up by reapSandboxes,
+  // whose fresh stop jobs retry this same cleanup, but is deliberately excluded from metering.
+  const missing = await db
+    .updateTable("sandbox")
+    .set({ state: "failed", updatedAt: new Date() })
+    .where("id", "=", input.sandboxId)
+    .where("externalId", "=", input.externalId)
+    .where("state", "in", ["starting", "running", "idle", "stopped", "failed"])
+    .returning(["databaseBranchId"])
+    .executeTakeFirst()
+  if (missing === undefined) return false
+
   /*
       The branch credential exists only inside the missing container. Its secret is intentionally
       stored as a one-way hash, so a replacement cannot reuse it. Drop the branch before severing
@@ -630,7 +653,7 @@ async function cleanMissingProviderObject(
     */
   const ownedBranches = await fetchSandboxDatabaseBranch(db).listForSandbox(input.sandboxId)
   const branchIds = new Set(ownedBranches.map((owned) => owned.databaseBranchId))
-  if (current.databaseBranchId !== null) branchIds.add(current.databaseBranchId)
+  if (missing.databaseBranchId !== null) branchIds.add(missing.databaseBranchId)
   const cleanupFailures: unknown[] = []
   for (const databaseBranchId of branchIds) {
     try {
@@ -997,7 +1020,11 @@ export function startSandbox(
 }
 
 /** Stop at the provider, settle the tail, leave the workspace. */
-export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function stopSandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -1024,9 +1051,14 @@ export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): J
       try {
         await makeDriver().stop(sandbox.externalId)
       } catch (error) {
-        // Already gone is stopped. Anything else has to fail the job, because the row would
-        // otherwise say stopped while the provider goes on billing.
         if (!(error instanceof SandboxNotFoundError)) throw error
+        await cleanMissingProviderObject(
+          db,
+          { sandboxId: sandbox.id, externalId: sandbox.externalId },
+          drop,
+          branchConfig,
+        )
+        return
       }
     }
 

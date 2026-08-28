@@ -42,7 +42,9 @@ old branch does not hide later rows. A minute repair job gives every `deleting` 
 destroy key even if its original job dead-lettered. Missing Daytona objects are cleaned and left
 stopped from provisioning, starting, and recurring reconciliation; a failed provider delete gives
 even a non-expiring default branch an expiry and retry time so the independent branch reaper can
-finish it after a crash. Only another user request may rent a replacement. Tests cover negative action scope,
+finish it after a crash. Provider absence is persisted as non-metered `failed` before cleanup, and
+both reconciliation and stop use the same recovery path; a Neon outage therefore cannot create
+phantom Daytona compute charges. Only another user request may rent a replacement. Tests cover negative action scope,
 concurrent quota reservations, ambiguous provider success, failed cleanup durability, parent
 selection, the canonical pg-proxy database name, refusal to delete the default, audit trail,
 per-branch expiry isolation, missing-object reconciliation, destroy repair, and complete
