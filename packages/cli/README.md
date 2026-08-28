@@ -91,5 +91,6 @@ in Parameter Store: ECS treats a missing referenced parameter as a task-start fa
 website intentionally treats an absent variable as “no release yet.” Every later release uses the
 same explicit, dedicated-environment-gated promotion; publishing a tag alone never selects
 production configuration. The promotion job uses the dedicated, reviewer-protected
-`cli-release-production` environment; the shared `production` environment also serves automatic
-main deployments and is intentionally not its approval boundary.
+`cli-release-production` environment, whose deployment branch policy allows only `main`; the shared
+`production` environment also serves automatic main deployments and is intentionally not its
+approval boundary.

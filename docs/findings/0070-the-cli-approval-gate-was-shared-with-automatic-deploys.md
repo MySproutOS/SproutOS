@@ -30,5 +30,6 @@ subjects for ordinary deployments.
 The promotion regression test binds the workflow and both roles to the dedicated name and rejects a
 promotion-role fallback to `production`. The deployment runbook makes the remaining external step
 explicit: create `cli-release-production` with required reviewers before applying the role trust or
-dispatching promotion. This repository change does not itself create that GitHub environment, apply
-OpenTofu, or prove a protected production promotion.
+dispatching promotion. Its custom deployment branch policy must allow only `main`, because the
+environment-scoped OIDC subject does not also carry a branch ref. This repository change does not
+itself create that GitHub environment, apply OpenTofu, or prove a protected production promotion.
