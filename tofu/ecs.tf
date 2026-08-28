@@ -186,11 +186,26 @@ resource "aws_launch_template" "ecs" {
     http_put_response_hop_limit = 2
   }
 
-  # The only thing an ECS instance needs at boot: which cluster to join.
+  # Plugin execution needs a reviewed Docker seccomp profile before this host may join ECS. The
+  # bootstrap pins the exact AL2023 Docker/runc builds used to materialize the profile and leaves
+  # ECS stopped on any drift or validation failure.
   user_data = base64encode(<<-EOT
     #!/usr/bin/env bash
-    echo "ECS_CLUSTER=${aws_ecs_cluster.main.name}" >> /etc/ecs/ecs.config
-    echo "ECS_ENABLE_CONTAINER_METADATA=true" >> /etc/ecs/ecs.config
+    set -euo pipefail
+    install -d -m 0755 /usr/local/sbin
+    printf '%s' '${base64encode(file("${path.module}/ecs-host-bootstrap.sh"))}' \
+      | base64 --decode >/usr/local/sbin/sproutos-ecs-bootstrap
+    printf '%s  %s\n' \
+      '${filesha256("${path.module}/ecs-host-bootstrap.sh")}' \
+      /usr/local/sbin/sproutos-ecs-bootstrap \
+      | sha256sum --check --status
+    chmod 0555 /usr/local/sbin/sproutos-ecs-bootstrap
+    SPROUT_ECS_CLUSTER='${aws_ecs_cluster.main.name}' \
+    SPROUT_SECCOMP_PROFILE_B64='${base64encode(file("${path.module}/ecs-seccomp-profile.json"))}' \
+    SPROUT_SECCOMP_PROFILE_SHA256='${filesha256("${path.module}/ecs-seccomp-profile.json")}' \
+    SPROUT_DOCKER_RPM='docker-25.0.16-1.amzn2023.0.4.aarch64' \
+    SPROUT_RUNC_RPM='runc-1.3.5-1.amzn2023.0.2.aarch64' \
+      /usr/local/sbin/sproutos-ecs-bootstrap
   EOT
   )
 
@@ -271,6 +286,9 @@ resource "aws_ecs_task_definition" "web" {
       image             = var.web_image
       essential         = true
       memoryReservation = 320
+      dockerSecurityOptions = [
+        "no-new-privileges",
+      ]
 
       portMappings = [{
         containerPort = 8080
@@ -316,6 +334,9 @@ resource "aws_ecs_task_definition" "web" {
       essential         = true
       memoryReservation = 320
       command           = ["node", "/opt/sproutos/api/server.js"]
+      dockerSecurityOptions = [
+        "no-new-privileges",
+      ]
 
       portMappings = [{
         containerPort = 3001
@@ -403,6 +424,9 @@ resource "aws_ecs_task_definition" "web" {
       essential         = true
       memoryReservation = 128
       command           = ["node", "/opt/sproutos/api/worker.js"]
+      dockerSecurityOptions = [
+        "no-new-privileges",
+      ]
 
       environment = [
         { name = "AWS_REGION", value = var.aws_region },

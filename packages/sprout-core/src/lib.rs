@@ -28,8 +28,8 @@ pub use oci::{
 };
 pub use package::{ArtifactPackager, PackageKind, PackagedArtifact, PackagingLimits, StaticPath};
 pub use plugin::{
-    ApplyLimits, ApplyResult, CanonicalProtocol, IsolationProvider, PluginRunner, ProtocolOutcome,
-    TemplateProtocol,
+    ApplyLimits, ApplyResult, CanonicalProtocol, IsolatedCommand, IsolationProvider, PluginRunner,
+    ProtocolOutcome, TemplateProtocol,
 };
 pub use provenance::CosignProvenanceVerifier;
 pub use resolve::{CatalogueResolver, ResolvedTemplate, TemplateSelector};

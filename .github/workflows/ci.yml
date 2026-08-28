@@ -520,7 +520,12 @@ jobs:
       # `bash -n` on everything, because a deploy script with a syntax error fails at the moment it
       # is least welcome — mid-release, with one colour half-filled.
       - name: Parse
-        run: for f in bin/*.sh; do bash -n "$f"; done
+        run: |
+          for f in bin/*.sh; do bash -n "$f"; done
+          bash -n \
+            tofu/ecs-host-bootstrap.sh \
+            tofu/ecs-host-bootstrap.test.sh \
+            tofu/ecs-seccomp-profile.test.sh
 
       # Fill proves every port on the idle release is healthy; cutover proves traffic moves only
       # after that and the drained colour reaches zero. They are separate state transitions and a
@@ -538,4 +543,6 @@ jobs:
           bash bin/tenant-edge-autoscaling.test.sh
           bash bin/bootstrap-localstack.test.sh
           bash bin/user-data.test.sh
+          bash tofu/ecs-host-bootstrap.test.sh
+          bash tofu/ecs-seccomp-profile.test.sh
           bash .claude/hooks/check-direction.test.sh

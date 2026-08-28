@@ -1,11 +1,15 @@
+#define _GNU_SOURCE
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sched.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int write_file(const char *path) {
@@ -38,6 +42,23 @@ int main(void) {
 
   errno = 0;
   assert(mount(NULL, "/workspace/.git", NULL, MS_REMOUNT, NULL) == -1);
+  assert(errno == EPERM);
+
+  /* Bubblewrap consumes the sealed filter FD during setup. The filter is then installed in both
+     its PID-namespace init and this plugin, so no descendant can open or join another namespace. */
+  errno = 0;
+  assert(syscall(SYS_clone, CLONE_NEWUSER | SIGCHLD, (void *)1, NULL, NULL, 0) == -1);
+  assert(errno == EPERM);
+  errno = 0;
+  assert(syscall(SYS_clone3, NULL, 0) == -1);
+  /* Docker's default filter deliberately reports clone3 as ENOSYS; the inner filter also denies
+     it, and stacked seccomp filters may retain the outer errno payload. */
+  assert(errno == EPERM || errno == ENOSYS);
+  errno = 0;
+  assert(unshare(CLONE_NEWUSER) == -1);
+  assert(errno == EPERM);
+  errno = 0;
+  assert(setns(-1, CLONE_NEWUSER) == -1);
   assert(errno == EPERM);
 
   /* A private network namespace is necessary but insufficient on its own. The socket may be
