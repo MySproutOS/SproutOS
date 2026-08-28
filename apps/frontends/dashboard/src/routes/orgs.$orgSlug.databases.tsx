@@ -180,24 +180,49 @@ function RotateButton({
   onRotated: (uri: string) => void
 }) {
   const { rotate, isPending } = useRotateConnection(orgSlug)
+  const canRotate = service.status === "active"
 
   return (
     <Dialog>
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <DialogTrigger
-              render={
-                <Button variant="ghost" size="sm" disabled={service.status !== "active"}>
+        {canRotate ? (
+          <TooltipTrigger
+            render={
+              <DialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Rotate the credential for ${service.name}`}
+                  >
+                    <RefreshCwIcon />
+                  </Button>
+                }
+              />
+            }
+          />
+        ) : (
+          <TooltipTrigger
+            render={
+              /* A disabled button cannot receive hover. Keeping the tooltip trigger on this
+                 wrapper means the status explanation remains available while it provisions. */
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled
+                  aria-label={`Rotate the credential for ${service.name}`}
+                >
                   <RefreshCwIcon />
-                  <span className="sr-only">Rotate the credential for {service.name}</span>
                 </Button>
-              }
-            />
-          }
-        />
-        <TooltipContent>
-          Issue a new connection URI for you. Your current URI stops working immediately.
+              </span>
+            }
+          />
+        )}
+        <TooltipContent className="max-w-72 leading-relaxed">
+          {canRotate
+            ? "Replace the current password and show a new connection URI once. The current URI stops working immediately."
+            : "Credentials can be rotated after this database becomes active."}
         </TooltipContent>
       </Tooltip>
       <DialogContent>
@@ -205,7 +230,8 @@ function RotateButton({
           <DialogTitle>Rotate the password for {service.name}?</DialogTitle>
           <DialogDescription>
             Your current connection URI stops working immediately. Anything still using it — a
-            deployed app, a local script — will fail until you give it the new one.
+            deployed app, a local script — will fail until you give it the new one. The replacement
+            is shown only once, so copy it before closing.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -220,7 +246,7 @@ function RotateButton({
                     .catch(() => undefined)
                 }}
               >
-                Rotate
+                Rotate and show URI
               </Button>
             }
           />
