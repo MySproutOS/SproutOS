@@ -10,6 +10,14 @@ function fakeDriver(
   options: {
     stdout?: string[]
     execExit?: number
+    cloneFailure?: Error
+    /** Durable checkout left behind when the structured clone reports an error. */
+    cloneCheckout?: {
+      workTree: boolean
+      remote: string
+      branch: string | null
+      hasHead: boolean
+    }
     /** Canned stdout, keyed by a substring of the command. */
     results?: Record<string, string>
     /** Commands that should come back non-zero, keyed the same way, with their stderr. */
@@ -26,12 +34,25 @@ function fakeDriver(
     workspaceDir: WORKSPACE,
     cloneRepository: (_id: string, input: { url: string; password: string }) => {
       clones.push({ url: input.url, password: input.password })
-      if (options.execExit) return Promise.reject(new Error("clone failed"))
+      if (options.cloneFailure ?? options.execExit) {
+        return Promise.reject(options.cloneFailure ?? new Error("clone failed"))
+      }
       return Promise.resolve()
     },
     exec: (_id: string, argv: string[]) => {
       commands.push(argv)
       const line = argv.join(" ")
+      if (argv.includes("sproutos-clone-recovery")) {
+        const checkout = options.cloneCheckout
+        const expectedRemote = argv.at(-2)
+        const expectedBranch = argv.at(-1)
+        const recovered =
+          checkout?.workTree === true &&
+          checkout.remote === expectedRemote &&
+          checkout.branch === expectedBranch &&
+          checkout.hasHead
+        return Promise.resolve({ stdout: "", stderr: "", exitCode: recovered ? 0 : 1 })
+      }
       for (const [needle, stderr] of Object.entries(options.failures ?? {})) {
         if (line.includes(needle)) return Promise.resolve({ stdout: "", stderr, exitCode: 1 })
       }
@@ -209,6 +230,53 @@ describe("bootstrapSandbox", () => {
     expect(result.problems.length).toBeGreaterThan(0)
     expect(result.problems[0]).toContain("cloning the repository")
   })
+
+  it("recovers when Daytona reports failure after completing the exact clone", async () => {
+    const { commands, driver } = fakeDriver({
+      cloneFailure: new Error("provider response failed"),
+      cloneCheckout: {
+        workTree: true,
+        remote: "https://github.com/acme/app.git",
+        branch: "main",
+        hasHead: true,
+      },
+    })
+
+    const result = await bootstrapSandbox({ ...base, driver, externalId: "sb" })
+
+    expect(result).toMatchObject({ cloned: true, problems: [] })
+    const recovery = commands.find((argv) => argv.includes("sproutos-clone-recovery"))
+    expect(recovery).toBeDefined()
+    expect(recovery?.join(" ")).toContain("rev-parse --is-inside-work-tree")
+    expect(recovery?.join(" ")).toContain("remote get-url origin")
+    expect(recovery?.join(" ")).toContain("symbolic-ref --quiet --short HEAD")
+    expect(recovery?.join(" ")).toContain('rev-parse --verify --quiet "HEAD^{commit}"')
+    expect(recovery?.join(" ")).toContain("https://github.com/acme/app.git main")
+    expect(recovery?.join(" ")).not.toContain("ghs_installation")
+    expect(commands.some((argv) => argv.includes("set-url"))).toBe(true)
+  })
+
+  it.each([
+    ["not a work tree", false, "https://github.com/acme/app.git", "main", true],
+    ["wrong remote", true, "https://github.com/acme/other.git", "main", true],
+    ["credential-bearing remote", true, "https://secret@github.com/acme/app.git", "main", true],
+    ["wrong branch", true, "https://github.com/acme/app.git", "develop", true],
+    ["detached branch", true, "https://github.com/acme/app.git", null, true],
+    ["missing HEAD commit", true, "https://github.com/acme/app.git", "main", false],
+  ] as const)(
+    "rejects clone recovery for %s",
+    async (_label, workTree, remote, branch, hasHead) => {
+      const { driver } = fakeDriver({
+        cloneFailure: new Error("provider response failed"),
+        cloneCheckout: { workTree, remote, branch, hasHead },
+      })
+
+      const result = await bootstrapSandbox({ ...base, driver, externalId: "sb" })
+
+      expect(result.cloned).toBe(false)
+      expect(result.problems[0]).toBe("cloning the repository: Error: provider response failed")
+    },
+  )
 })
 
 describe("runSandboxTurn", () => {
