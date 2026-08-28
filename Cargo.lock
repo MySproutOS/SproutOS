@@ -3163,7 +3163,7 @@ dependencies = [
 [[package]]
 name = "sprout-template-protocol"
 version = "0.1.0"
-source = "git+https://github.com/MySproutOS/Deployment-Templates?rev=4cc6f56695d1f2a7e5a643973566372a329429b5#4cc6f56695d1f2a7e5a643973566372a329429b5"
+source = "git+https://github.com/MySproutOS/Deployment-Templates?rev=fea608ab7c8da209354e89df5fa4a98ee2cfcf45#fea608ab7c8da209354e89df5fa4a98ee2cfcf45"
 dependencies = [
  "serde",
  "serde_json",
