@@ -15,5 +15,23 @@ export function crudMeteringOutbox(db: Kysely<DB>) {
     await db.deleteFrom("meteringOutbox").where("id", "in", ids).execute()
   }
 
-  return { create, remove }
+  /**
+   * Insert one provider batch without turning every raw usage row into a Postgres round trip.
+   *
+   * `event_id` is unique. Retrying an importer after it committed only part of an S3 object is
+   * therefore safe: rows already staged in the durable outbox are retained and the remainder is
+   * inserted.
+   */
+  async function createMany(
+    inputs: { id: string; eventId: string; payload: JsonValue }[],
+  ): Promise<void> {
+    if (inputs.length === 0) return
+    await db
+      .insertInto("meteringOutbox")
+      .values(inputs)
+      .onConflict((oc) => oc.doNothing())
+      .execute()
+  }
+
+  return { create, createMany, remove }
 }

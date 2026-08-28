@@ -17,6 +17,11 @@ async function handler(event) {
     return { statusCode: 404, statusDescription: "No static deployment for this hostname" }
   }
 
+  // Standard logging v2 carries this as viewer-request-log-data. The immutable project/digest
+  // pair identifies the deployment that actually served the request even if a custom hostname or
+  // the project's live pointer is changed before the delayed S3 log is imported.
+  cf.logCustomData(prefix)
+
   let uri = request.uri || "/"
   const leaf = uri.slice(uri.lastIndexOf("/") + 1)
   if (uri.endsWith("/") || !leaf.includes(".")) uri = "/index.html"

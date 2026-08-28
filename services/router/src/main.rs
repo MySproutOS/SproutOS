@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
 
     let valkey_url = std::env::var("VALKEY_URL").context("VALKEY_URL is not set")?;
     let client = redis::Client::open(valkey_url).context("VALKEY_URL is not a Valkey URL")?;
-    let manager = ConnectionManager::new(client)
+    let manager = ConnectionManager::new(client.clone())
         .await
         .context("could not reach the platform Valkey")?;
 
@@ -128,6 +128,8 @@ async fn main() -> anyhow::Result<()> {
         .context("the router cannot reach its durable route source")?;
 
     let dispatch_manager = manager.clone();
+    let acme_manager = manager.clone();
+    let certificate_pool = durable_routes.pool();
     let state = Arc::new(Router {
         resolver: Resolver::new(manager, durable_routes),
         lambda,
@@ -162,11 +164,6 @@ async fn main() -> anyhow::Result<()> {
         .fallback(any(serve::handle))
         .with_state(Arc::clone(&state));
 
-    let port = std::env::var("ROUTER_PORT").unwrap_or_else(|_| "8080".to_string());
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
-        .await
-        .with_context(|| format!("could not bind port {port}"))?;
-
     /*
       The tenant splits, in this process.
 
@@ -175,12 +172,47 @@ async fn main() -> anyhow::Result<()> {
       not there. A deployment with no tenant Valkey and no OpenSearch — a developer working on
       request routing — starts with neither and says so in the log.
     */
+    let forward_proxy = router::listeners::forward_proxy_service(&database_url).await?;
+    let certificate_runtime = if std::env::var("ROUTER_TLS_EDGE_LISTEN").is_ok() {
+        let poll_interval = std::time::Duration::from_secs(
+            std::env::var("ROUTER_CERTIFICATE_POLL_SECONDS")
+                .ok()
+                .map(|value| value.parse::<u64>())
+                .transpose()
+                .context("ROUTER_CERTIFICATE_POLL_SECONDS must be an integer")?
+                .unwrap_or(30),
+        );
+        let ack_ttl = std::time::Duration::from_secs(
+            std::env::var("ROUTER_CERTIFICATE_ACK_TTL_SECONDS")
+                .ok()
+                .map(|value| value.parse::<u64>())
+                .transpose()
+                .context("ROUTER_CERTIFICATE_ACK_TTL_SECONDS must be an integer")?
+                .unwrap_or(90),
+        );
+        Some(router::certificates::Runtime {
+            pool: certificate_pool,
+            s3: aws_sdk_s3::Client::new(&config),
+            bucket: std::env::var("ROUTER_CERTIFICATE_BUCKET")
+                .context("ROUTER_CERTIFICATE_BUCKET is required when the TLS edge is enabled")?,
+            valkey: dispatch_manager.clone(),
+            redis: client,
+            instance_id: std::env::var("ROUTER_INSTANCE_ID")
+                .context("ROUTER_INSTANCE_ID is required when the TLS edge is enabled")?,
+            poll_interval,
+            ack_ttl,
+        })
+    } else {
+        None
+    };
     let splits = [
         router::listeners::valkey(&database_url).await?,
         router::listeners::search(&database_url).await?,
         router::listeners::postgres(&database_url).await?,
         router::listeners::llm(&database_url).await?,
-        router::listeners::forward_proxy(&database_url).await?,
+        router::listeners::forward_proxy_listener(forward_proxy.clone()).await?,
+        router::acme_http::start_from_env(acme_manager).await?,
+        router::edge::start_from_env(forward_proxy, app.clone(), certificate_runtime).await?,
     ]
     .into_iter()
     .flatten()
@@ -203,6 +235,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("workflow dispatch running");
     }
 
+    // Bind the health/application socket only after the strict certificate inventory load above.
+    // A TCP health check otherwise succeeds against the kernel backlog while startup is still
+    // blocked fetching a certificate that this instance cannot serve.
+    let port = std::env::var("ROUTER_PORT").unwrap_or_else(|_| "8080".to_string());
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .with_context(|| format!("could not bind port {port}"))?;
     tracing::info!(port, "router listening");
     axum::serve(listener, app).await.context("serving failed")?;
     Ok(())

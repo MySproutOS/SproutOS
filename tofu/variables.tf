@@ -48,6 +48,17 @@ variable "tenant_domain" {
   default     = "sproutos.run"
 }
 
+variable "acme_directory_url" {
+  description = "ACME directory used by the Rust tenant edge. Keep staging until the complete edge smoke passes, then set the Let's Encrypt production directory explicitly."
+  type        = string
+  default     = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+  validation {
+    condition     = startswith(var.acme_directory_url, "https://")
+    error_message = "The ACME directory must be an HTTPS URL."
+  }
+}
+
 variable "aws_region" {
   description = "Region everything is deployed into"
   type        = string
@@ -135,6 +146,51 @@ variable "service_desired_count" {
   description = "Instances in the live colour of each service."
   type        = number
   default     = 2
+}
+
+variable "tenant_edge_new_flows_per_target" {
+  description = "One-minute NLB NewFlowCount target per serving router before scaling out."
+  type        = number
+  default     = 3000
+
+  validation {
+    condition     = var.tenant_edge_new_flows_per_target > 0
+    error_message = "The tenant edge flow target must be positive."
+  }
+}
+
+variable "tenant_edge_enabled" {
+  description = "Move public 80/443 and generated tenant DNS to the Rust edge after its production certificate and smoke checks pass."
+  type        = bool
+  default     = false
+}
+
+variable "tenant_edge_preview_enabled" {
+  description = "Attach the Rust edge target groups and expose temporary 10080/10443 smoke listeners without moving production 80/443."
+  type        = bool
+  default     = false
+}
+
+variable "tenant_edge_preview_colour" {
+  description = "Router colour explicitly filled with the edge-capable release for temporary high-port smoke traffic."
+  type        = string
+  default     = "blue"
+
+  validation {
+    condition     = contains(["blue", "green"], var.tenant_edge_preview_colour)
+    error_message = "The tenant edge preview colour must be blue or green."
+  }
+}
+
+variable "router_certificate_min_acks" {
+  description = "Minimum distinct router replicas that must acknowledge one certificate version before activation. Set to the live serving fleet size."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = floor(var.router_certificate_min_acks) == var.router_certificate_min_acks && var.router_certificate_min_acks > 0
+    error_message = "Router certificate acknowledgement quorum must be a positive integer."
+  }
 }
 
 variable "service_max_count" {

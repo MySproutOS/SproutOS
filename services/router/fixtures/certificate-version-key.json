@@ -1,0 +1,12 @@
+{
+  "vectors": [
+    {
+      "version": "version/with*glob?[opaque]",
+      "sha256": "e4880384e351adb4105da474e343b88ce8e54fadfb6c738bb36506970f404279"
+    },
+    {
+      "version": "s3-version-1",
+      "sha256": "0c5e5c943ae3e32007fbdd84b61f049ea16885c95d09b324efcf70af472f71f5"
+    }
+  ]
+}

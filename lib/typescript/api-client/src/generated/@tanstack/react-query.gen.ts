@@ -42,6 +42,7 @@ import {
   getV1OrgsByOrgSlugBillingTransactions,
   getV1OrgsByOrgSlugBillingUsage,
   getV1OrgsByOrgSlugDeploymentsByDeploymentId,
+  getV1OrgsByOrgSlugDomains,
   getV1OrgsByOrgSlugGithubOwners,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugGithubRepositoryName,
@@ -131,7 +132,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdDeployments,
   postV1OrgsByOrgSlugProjectsByProjectIdDomains,
-  postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerify,
+  postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck,
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
@@ -247,6 +248,8 @@ import type {
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdData,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdError,
   GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponse,
+  GetV1OrgsByOrgSlugDomainsData,
+  GetV1OrgsByOrgSlugDomainsResponse,
   GetV1OrgsByOrgSlugError,
   GetV1OrgsByOrgSlugGithubOwnersData,
   GetV1OrgsByOrgSlugGithubOwnersError,
@@ -478,9 +481,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponse,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
@@ -2935,12 +2938,38 @@ export const postV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackMutation = (
   return mutationOptions
 }
 
+export const getV1OrgsByOrgSlugDomainsQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugDomainsData>,
+) => createQueryKey("getV1OrgsByOrgSlugDomains", options)
+
+/**
+ * Custom domains across the organization
+ */
+export const getV1OrgsByOrgSlugDomainsOptions = (options: Options<GetV1OrgsByOrgSlugDomainsData>) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugDomainsResponse,
+    DefaultError,
+    GetV1OrgsByOrgSlugDomainsResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugDomainsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugDomains({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugDomainsQueryKey(options),
+  })
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsQueryKey = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData>,
 ) => createQueryKey("getV1OrgsByOrgSlugProjectsByProjectIdDomains", options)
 
 /**
- * The custom domains attached to a project, and what to publish for each
+ * Custom domains attached to a project
  */
 export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsOptions = (
   options: Options<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData>,
@@ -2964,7 +2993,7 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsOptions = (
   })
 
 /**
- * Attach a hostname to a project. Returns the records to publish.
+ * Claim a hostname and return the DNS records to publish
  */
 export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation = (
   options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData>>,
@@ -2991,22 +3020,22 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation = (
 }
 
 /**
- * Check the published records and, if they are right, start serving the domain
+ * Wake asynchronous DNS and certificate reconciliation
  */
-export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyMutation = (
-  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>>,
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData>>,
 ): UseMutationOptions<
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
-  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData>
 > => {
   const mutationOptions: UseMutationOptions<
-    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
-    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError,
-    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData>
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData>
   > = {
     mutationFn: async (fnOptions) => {
-      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerify({
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheck({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -3018,7 +3047,7 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyMutati
 }
 
 /**
- * Stop serving a domain and release its certificate
+ * Stop serving and asynchronously release a custom domain
  */
 export const deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdMutation = (
   options?: Partial<Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData>>,

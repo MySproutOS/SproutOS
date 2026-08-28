@@ -521,12 +521,16 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
 /// The listener is optional in development, but once named every dependency is checked at boot.
 /// A public endpoint that accepts credentials while its lifecycle database is unavailable would
 /// turn a control-plane outage into unrestricted internet access, so that configuration is fatal.
-pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+pub async fn forward_proxy_service(
+    database_url: &str,
+) -> anyhow::Result<Option<Arc<sproutos_sandbox_forward_proxy::SandboxForwardProxy>>> {
     use base64::Engine as _;
 
-    let Ok(listen) = std::env::var("FORWARD_PROXY_LISTEN") else {
+    if std::env::var("FORWARD_PROXY_LISTEN").is_err()
+        && std::env::var("ROUTER_TLS_EDGE_EGRESS_SNI").is_err()
+    {
         return Ok(None);
-    };
+    }
     let encoded_key = std::env::var("SANDBOX_FORWARD_PROXY_ROOT_KEY")
         .context("SANDBOX_FORWARD_PROXY_ROOT_KEY is required when the forward proxy is enabled")?;
     let key = base64::engine::general_purpose::STANDARD
@@ -617,6 +621,19 @@ pub async fn forward_proxy(database_url: &str) -> anyhow::Result<Option<JoinHand
         .with_meter(meter)
         .with_connect_override(postgres_host, postgres_public_port, postgres_loopback),
     );
+    Ok(Some(proxy))
+}
+
+/// Keep the existing cleartext instance listener while the opt-in TLS edge is exercised.
+pub async fn forward_proxy_listener(
+    proxy: Option<Arc<sproutos_sandbox_forward_proxy::SandboxForwardProxy>>,
+) -> anyhow::Result<Option<JoinHandle<()>>> {
+    let Some(proxy) = proxy else {
+        return Ok(None);
+    };
+    let Ok(listen) = std::env::var("FORWARD_PROXY_LISTEN") else {
+        return Ok(None);
+    };
     let listener = TcpListener::bind(&listen)
         .await
         .with_context(|| format!("the sandbox forward proxy could not bind {listen}"))?;

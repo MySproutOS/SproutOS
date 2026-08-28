@@ -32,11 +32,20 @@ describe.skipIf(!reachable)("metering schedules", () => {
     const valkeyMeteringKey = `${JOB_KINDS.meterValkeyQueues}:2099-12-31T23:55`
     const searchSecurityKey = `${JOB_KINDS.reconcileSearchSecurity}:2099-12-31T23`
     const valkeyAclKey = `${JOB_KINDS.reconcileValkeyAcl}:2099-12-31T23`
+    const staticLogKey = `${JOB_KINDS.scanStaticCloudFrontLogs}:2099-12-31T23:55`
+    const platformCertificateKey = `${JOB_KINDS.reconcilePlatformEdgeCertificate}:2099-12-31T23:58`
 
     // Calling the scheduler repeatedly is how every worker uses it. The idempotency key, not a
     // process-local timer, is what makes one job per window.
-    await scheduleRecurring(db, now)
-    await scheduleRecurring(db, now)
+    const previousRollout = process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
+    process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = "0"
+    try {
+      await scheduleRecurring(db, now)
+      await scheduleRecurring(db, now)
+    } finally {
+      if (previousRollout === undefined) delete process.env.PLATFORM_EDGE_ROLLOUT_ENABLED
+      else process.env.PLATFORM_EDGE_ROLLOUT_ENABLED = previousRollout
+    }
 
     const scheduled = await db
       .selectFrom("backgroundJob")
@@ -50,6 +59,8 @@ describe.skipIf(!reachable)("metering schedules", () => {
         valkeyMeteringKey,
         searchSecurityKey,
         valkeyAclKey,
+        staticLogKey,
+        platformCertificateKey,
       ])
       .orderBy("kind")
       .execute()
@@ -61,6 +72,11 @@ describe.skipIf(!reachable)("metering schedules", () => {
       { kind: JOB_KINDS.reconcileActiveUsage, idempotencyKey: reconcileUsageKey },
       { kind: JOB_KINDS.refreshCreditStates, idempotencyKey: creditKey },
       { kind: JOB_KINDS.relayMeteringOutbox, idempotencyKey: relayKey },
+      { kind: JOB_KINDS.scanStaticCloudFrontLogs, idempotencyKey: staticLogKey },
+      {
+        kind: JOB_KINDS.reconcilePlatformEdgeCertificate,
+        idempotencyKey: platformCertificateKey,
+      },
       { kind: JOB_KINDS.reconcileSearchSecurity, idempotencyKey: searchSecurityKey },
       { kind: JOB_KINDS.reconcileValkeyAcl, idempotencyKey: valkeyAclKey },
     ])

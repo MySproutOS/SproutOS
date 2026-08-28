@@ -151,6 +151,52 @@ Leaving the value out of `terraform.tfvars` after cutover is unsafe: its rollout
 so a later ordinary apply would detach both storage target groups while the listener rule could
 remain pointed at one of them.
 
+### Enabling the Rust tenant edge and custom domains
+
+The tenant edge also has a two-phase interlock. Its rollout defaults keep the existing NLB TLS
+listener and generated tenant DNS unchanged while OpenTofu creates the certificate bucket and the
+empty Secrets Manager container. Do not put an ACME private key in a variable or state file.
+
+1. Apply with both `tenant_edge_preview_enabled` and `tenant_edge_enabled` false, then seed the
+   account key once with `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an
+   existing secret version.
+2. Deploy the edge-capable release normally. While both flags are false the worker may issue and
+   store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
+   from refreshing either router Auto Scaling group.
+3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
+   contains the new release. Apply a reviewed plan. Temporary NLB listeners expose HTTP on 10080
+   and HTTPS on 10443 without moving production 80/443 or generated DNS.
+4. Wait for the platform certificate row to become active and for the configured
+   `router_certificate_min_acks` quorum. Smoke the generated wildcard, tenant apex, exact egress
+   hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
+   Postgres and Valkey listeners through the preview estate.
+5. Change `acme_directory_url` from Let's Encrypt staging to production and repeat issuance and the
+   preview checks. Never reuse a staging certificate for the public cutover.
+6. Save and review a plan with `tenant_edge_enabled = true`. This assigns stable NLB Elastic IPs,
+   changes public 443 from AWS TLS termination to TCP passthrough, creates public port 80, and moves
+   the generated tenant apex/wildcard records to the NLB. On an existing NLB the subnet-to-EIP
+   change can require replacement, so inspect the saved plan and schedule the brief tenant-protocol
+   interruption explicitly.
+7. Apply that exact plan, update repository variables from `tofu output` (including
+   `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
+   run the production browser and protocol smoke suite before enabling custom-domain creation.
+
+`tenant_edge_enabled` is also the application feature flag. The API must not accept a customer
+domain while only the preview listeners exist. Keep the setting in the persistent tfvars after
+cutover; reverting it in a later apply would attempt to move traffic back to the legacy listener.
+
+### Static-site metering
+
+Static projects deliberately remain Browser -> CloudFront -> S3, so their cache hits never pass
+through Rust. CloudFront standard logging v2 writes every available request record to the dedicated
+encrypted log bucket, and the background worker imports those records into the canonical metering
+pipeline with durable cursors and idempotent event IDs. Delivery can be delayed, so this is billing
+durability rather than a live usage display.
+
+If seconds-level visibility becomes a product requirement, the future path is 100% CloudFront
+real-time logs through Kinesis and a checkpointed consumer. That paid path is intentionally not
+enabled for launch.
+
 ## Two AWS constraints worth knowing
 
 **An ALB needs at least two subnets, in two availability zones.** That is not a choice this

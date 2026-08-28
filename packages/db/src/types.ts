@@ -370,16 +370,24 @@ export interface CreditTransaction {
 }
 
 export interface CustomDomain {
-  acmCertificateArn: string | null
-  acmValidationName: string | null
-  acmValidationValue: string | null
+  certificateExpiresAt: Timestamp | null
+  certificateIssuedAt: Timestamp | null
+  certificateObjectKey: string | null
+  certificateObjectVersion: string | null
+  claimExpiresAt: Generated<Timestamp>
+  consecutiveFailures: Generated<number>
   createdAt: Generated<Timestamp>
   deletedAt: Timestamp | null
   hostname: string
   id: string
   isApex: Generated<boolean>
+  lastCheckedAt: Timestamp | null
+  nextRenewalAt: Timestamp | null
+  nextRetryAt: Timestamp | null
   organizationId: string
   projectId: string
+  reconcileLeaseExpiresAt: Timestamp | null
+  reconcileLeaseToken: string | null
   status: Generated<string>
   statusReason: string | null
   updatedAt: Generated<Timestamp>
@@ -718,6 +726,25 @@ export interface PaymentMethod {
   last4: string | null
   organizationId: string
   stripePaymentMethodId: string
+  updatedAt: Generated<Timestamp>
+}
+
+export interface PlatformEdgeCertificate {
+  certificateExpiresAt: Timestamp | null
+  certificateIssuedAt: Timestamp | null
+  certificateObjectKey: string | null
+  certificateObjectVersion: string | null
+  consecutiveFailures: Generated<number>
+  createdAt: Generated<Timestamp>
+  deployedObjectVersion: string | null
+  id: string
+  nextRenewalAt: Timestamp | null
+  nextRetryAt: Generated<Timestamp>
+  reconcileLeaseExpiresAt: Timestamp | null
+  reconcileLeaseToken: string | null
+  restartRequestedObjectVersion: string | null
+  status: Generated<string>
+  statusReason: string | null
   updatedAt: Generated<Timestamp>
 }
 
@@ -1345,6 +1372,7 @@ export interface DB {
   organizationInvite: OrganizationInvite
   organizationMember: OrganizationMember
   paymentMethod: PaymentMethod
+  platformEdgeCertificate: PlatformEdgeCertificate
   priceBook: PriceBook
   priceBookItem: PriceBookItem
   project: Project

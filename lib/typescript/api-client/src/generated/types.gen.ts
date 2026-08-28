@@ -3469,6 +3469,63 @@ export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses = {
 export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponse =
   PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses[keyof PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses]
 
+export type GetV1OrgsByOrgSlugDomainsData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/domains"
+}
+
+export type GetV1OrgsByOrgSlugDomainsResponses = {
+  /**
+   * Domains
+   */
+  200: {
+    data: Array<{
+      id: string
+      project: {
+        id: string
+        name: string
+        slug: string
+      }
+      hostname: string
+      status:
+        | "pending_dns"
+        | "issuing"
+        | "propagating"
+        | "active"
+        | "renewal_warning"
+        | "failed"
+        | "deleting"
+      statusReason: string | null
+      isApex: boolean
+      verifiedAt: Date | null
+      certificateExpiresAt: Date | null
+      lastCheckedAt: Date | null
+      nextRetryAt: Date | null
+      createdAt: Date
+      instructions: {
+        verification: {
+          type: "TXT"
+          name: string
+          value: string
+        }
+        traffic: Array<{
+          type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
+          name: string
+          value: string
+          note: string
+        }>
+      }
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugDomainsResponse =
+  GetV1OrgsByOrgSlugDomainsResponses[keyof GetV1OrgsByOrgSlugDomainsResponses]
+
 export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsData = {
   body?: never
   path: {
@@ -3486,11 +3543,26 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
   200: {
     data: Array<{
       id: string
+      project: {
+        id: string
+        name: string
+        slug: string
+      }
       hostname: string
-      status: string
+      status:
+        | "pending_dns"
+        | "issuing"
+        | "propagating"
+        | "active"
+        | "renewal_warning"
+        | "failed"
+        | "deleting"
       statusReason: string | null
       isApex: boolean
       verifiedAt: Date | null
+      certificateExpiresAt: Date | null
+      lastCheckedAt: Date | null
+      nextRetryAt: Date | null
       createdAt: Date
       instructions: {
         verification: {
@@ -3498,17 +3570,12 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
           name: string
           value: string
         }
-        certificate: {
-          type: "CNAME"
-          name: string
-          value: string
-        } | null
-        traffic: {
-          type: "A" | "CNAME"
+        traffic: Array<{
+          type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
           name: string
           value: string
           note: string
-        }
+        }>
       }
     }>
   }
@@ -3531,7 +3598,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsData = {
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsErrors = {
   /**
-   * A group cannot serve a domain
+   * This project or hostname is not eligible
    */
   400: ErrorResponseT
   /**
@@ -3545,15 +3612,30 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsError =
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
   /**
-   * Added, pending verification
+   * Domain is waiting for DNS
    */
   201: {
     id: string
+    project: {
+      id: string
+      name: string
+      slug: string
+    }
     hostname: string
-    status: string
+    status:
+      | "pending_dns"
+      | "issuing"
+      | "propagating"
+      | "active"
+      | "renewal_warning"
+      | "failed"
+      | "deleting"
     statusReason: string | null
     isApex: boolean
     verifiedAt: Date | null
+    certificateExpiresAt: Date | null
+    lastCheckedAt: Date | null
+    nextRetryAt: Date | null
     createdAt: Date
     instructions: {
       verification: {
@@ -3561,17 +3643,12 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
         name: string
         value: string
       }
-      certificate: {
-        type: "CNAME"
-        name: string
-        value: string
-      } | null
-      traffic: {
-        type: "A" | "CNAME"
+      traffic: Array<{
+        type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
         name: string
         value: string
         note: string
-      }
+      }>
     }
   }
 }
@@ -3579,7 +3656,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
 export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses]
 
-export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData = {
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckData = {
   body?: never
   path: {
     orgSlug: string
@@ -3587,30 +3664,45 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyData = 
     domainId: string
   }
   query?: never
-  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}/verify"
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/domains/{domainId}/check"
 }
 
-export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors = {
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors = {
   /**
-   * No such domain on this project
+   * Domain not found
    */
   404: ErrorResponseT
 }
 
-export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyError =
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyErrors]
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckErrors]
 
-export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses = {
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses = {
   /**
-   * The domain's state after checking
+   * Current state
    */
   200: {
     id: string
+    project: {
+      id: string
+      name: string
+      slug: string
+    }
     hostname: string
-    status: string
+    status:
+      | "pending_dns"
+      | "issuing"
+      | "propagating"
+      | "active"
+      | "renewal_warning"
+      | "failed"
+      | "deleting"
     statusReason: string | null
     isApex: boolean
     verifiedAt: Date | null
+    certificateExpiresAt: Date | null
+    lastCheckedAt: Date | null
+    nextRetryAt: Date | null
     createdAt: Date
     instructions: {
       verification: {
@@ -3618,23 +3710,18 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyRespons
         name: string
         value: string
       }
-      certificate: {
-        type: "CNAME"
-        name: string
-        value: string
-      } | null
-      traffic: {
-        type: "A" | "CNAME"
+      traffic: Array<{
+        type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
         name: string
         value: string
         note: string
-      }
+      }>
     }
   }
 }
 
-export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse =
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponses]
+export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponses]
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData = {
   body?: never
@@ -3649,7 +3736,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData = {
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdErrors = {
   /**
-   * No such domain on this project
+   * Domain not found
    */
   404: ErrorResponseT
 }
@@ -3659,7 +3746,7 @@ export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError =
 
 export type DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdResponses = {
   /**
-   * Removed
+   * Deletion started
    */
   204: void
 }
@@ -4051,7 +4138,12 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsRespon
   GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponses]
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData = {
-  body?: never
+  body?: {
+    /**
+     * Arbitrary JSON delivered to every action
+     */
+    trigger?: unknown
+  }
   path: {
     orgSlug: string
     workflowId: string

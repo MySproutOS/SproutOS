@@ -14,10 +14,12 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-auto-scaling": "catalog:",
     "@aws-sdk/client-cloudfront-keyvaluestore": "catalog:",
     "@aws-sdk/client-lambda": "catalog:",
     "@aws-sdk/client-route-53": "catalog:",
     "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/client-secrets-manager": "catalog:",
     "@aws-sdk/signature-v4a": "catalog:",
     "@lib/agent": "workspace:*",
     "@lib/analyzer": "workspace:*",
@@ -33,6 +35,7 @@
     "@lib/services": "workspace:*",
     "@lib/workflows": "workspace:*",
     "@sproutos/db": "workspace:*",
+    "acme-client": "catalog:",
     "ioredis": "^6.0.0",
     "kysely": "catalog:",
     "mime-types": "^3.0.2",

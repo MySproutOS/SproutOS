@@ -50,6 +50,16 @@ import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/service
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
+import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
+import {
+  PLATFORM_EDGE_CERTIFICATE_KIND,
+  reconcilePlatformEdgeCertificate,
+} from "./platform-edge-certificate"
+import {
+  importStaticCloudFrontLog,
+  scanStaticCloudFrontLogs,
+  STATIC_CLOUDFRONT_METERING_KINDS,
+} from "./static-cloudfront-metering"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -104,6 +114,11 @@ export const JOB_KINDS = {
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
   meterNeonDatabases: METER_NEON_DATABASES_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
+  customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
+  customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
+  reconcilePlatformEdgeCertificate: PLATFORM_EDGE_CERTIFICATE_KIND,
+  scanStaticCloudFrontLogs: STATIC_CLOUDFRONT_METERING_KINDS.scan,
+  importStaticCloudFrontLog: STATIC_CLOUDFRONT_METERING_KINDS.importObject,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -398,6 +413,11 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
+  [JOB_KINDS.customDomainScan]: scanCustomDomains(),
+  [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
+  [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
+  [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
+  [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
 }
 
 /**
@@ -410,6 +430,25 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
 
+  if (process.env.PLATFORM_EDGE_ROLLOUT_ENABLED !== undefined) {
+    await enqueue(db, {
+      /*
+        Every minute. Most runs are a cheap durable-state check. During issuance this converges the
+        DNS-01 order; after issuance it keeps the restart handoff visible until live router replicas
+        acknowledge the exact immutable S3 version they loaded at boot. The explicit 0/1 rollout
+        variable is also the enablement signal, so an ordinary local worker with no platform AWS
+        resources does not create a permanently failing singleton job.
+      */
+      kind: JOB_KINDS.reconcilePlatformEdgeCertificate,
+      idempotencyKey: `${JOB_KINDS.reconcilePlatformEdgeCertificate}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
+  }
+  await enqueue(db, {
+    kind: JOB_KINDS.customDomainScan,
+    idempotencyKey: `${JOB_KINDS.customDomainScan}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
   await enqueue(db, {
     kind: JOB_KINDS.workflowScheduleScan,
     idempotencyKey: `${JOB_KINDS.workflowScheduleScan}:${now.toISOString().slice(0, 16)}`,
@@ -423,6 +462,17 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     kind: JOB_KINDS.relayMeteringOutbox,
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
     maxAttempts: 10,
+  })
+  await enqueue(db, {
+    /*
+      Every five minutes, with the actual importer fanned out by immutable S3 object. Standard
+      logs usually arrive within an hour but may be delayed for a day. A durable consumer cursor
+      recovers arbitrarily long worker outages; its two-day overlap lets the background-job
+      idempotency key absorb late objects and already-seen objects.
+    */
+    kind: JOB_KINDS.scanStaticCloudFrontLogs,
+    idempotencyKey: `${JOB_KINDS.scanStaticCloudFrontLogs}:${now.toISOString().slice(0, 14)}${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`,
+    maxAttempts: 5,
   })
   await enqueue(db, {
     /*

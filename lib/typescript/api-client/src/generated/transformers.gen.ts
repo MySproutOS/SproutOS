@@ -9,6 +9,7 @@ import type {
   GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
   GetV1OrgsByOrgSlugBillingUsageResponse,
+  GetV1OrgsByOrgSlugDomainsResponse,
   GetV1OrgsByOrgSlugInvitesResponse,
   GetV1OrgsByOrgSlugMembersResponse,
   GetV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -51,7 +52,7 @@ import type {
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
-  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
@@ -425,12 +426,43 @@ export const getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer = async (
   return data
 }
 
+export const getV1OrgsByOrgSlugDomainsResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugDomainsResponse> => {
+  data.data = data.data.map((item: any) => {
+    if (item.verifiedAt) {
+      item.verifiedAt = new Date(item.verifiedAt)
+    }
+    if (item.certificateExpiresAt) {
+      item.certificateExpiresAt = new Date(item.certificateExpiresAt)
+    }
+    if (item.lastCheckedAt) {
+      item.lastCheckedAt = new Date(item.lastCheckedAt)
+    }
+    if (item.nextRetryAt) {
+      item.nextRetryAt = new Date(item.nextRetryAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
 export const getV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse> => {
   data.data = data.data.map((item: any) => {
     if (item.verifiedAt) {
       item.verifiedAt = new Date(item.verifiedAt)
+    }
+    if (item.certificateExpiresAt) {
+      item.certificateExpiresAt = new Date(item.certificateExpiresAt)
+    }
+    if (item.lastCheckedAt) {
+      item.lastCheckedAt = new Date(item.lastCheckedAt)
+    }
+    if (item.nextRetryAt) {
+      item.nextRetryAt = new Date(item.nextRetryAt)
     }
     item.createdAt = new Date(item.createdAt)
     return item
@@ -444,16 +476,34 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer = 
   if (data.verifiedAt) {
     data.verifiedAt = new Date(data.verifiedAt)
   }
+  if (data.certificateExpiresAt) {
+    data.certificateExpiresAt = new Date(data.certificateExpiresAt)
+  }
+  if (data.lastCheckedAt) {
+    data.lastCheckedAt = new Date(data.lastCheckedAt)
+  }
+  if (data.nextRetryAt) {
+    data.nextRetryAt = new Date(data.nextRetryAt)
+  }
   data.createdAt = new Date(data.createdAt)
   return data
 }
 
-export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponseTransformer =
+export const postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer =
   async (
     data: any,
-  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdVerifyResponse> => {
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse> => {
     if (data.verifiedAt) {
       data.verifiedAt = new Date(data.verifiedAt)
+    }
+    if (data.certificateExpiresAt) {
+      data.certificateExpiresAt = new Date(data.certificateExpiresAt)
+    }
+    if (data.lastCheckedAt) {
+      data.lastCheckedAt = new Date(data.lastCheckedAt)
+    }
+    if (data.nextRetryAt) {
+      data.nextRetryAt = new Date(data.nextRetryAt)
     }
     data.createdAt = new Date(data.createdAt)
     return data

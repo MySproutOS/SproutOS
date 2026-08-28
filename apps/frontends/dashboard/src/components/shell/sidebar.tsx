@@ -3,6 +3,7 @@ import { Link, type LinkProps } from "@tanstack/react-router"
 import {
   ChevronsUpDownIcon,
   DatabaseIcon,
+  GlobeLockIcon,
   GlobeIcon,
   LayoutDashboardIcon,
   MergeIcon,
@@ -230,6 +231,12 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
           params={{ orgSlug }}
           icon={DatabaseIcon}
           label="Databases"
+        />
+        <NavLink
+          to="/orgs/$orgSlug/domains"
+          params={{ orgSlug }}
+          icon={GlobeLockIcon}
+          label="Custom domains"
         />
         <NavLink to="/store" icon={MergeIcon} label="Store" />
 
