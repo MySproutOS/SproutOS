@@ -530,6 +530,7 @@ jobs:
           bash bin/fill-idle.test.sh
           bash bin/cutover.test.sh
           bash bin/deploy-ecs-web.test.sh
+          bash bin/ecs-ha-contract.test.sh
           bash bin/deploy-workflow.test.sh
           bash bin/cli-release-workflow.test.sh
           bash bin/clickhouse-database.test.sh

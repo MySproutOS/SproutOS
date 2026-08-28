@@ -7,12 +7,12 @@
  * task. ECS on the EC2 launch type charges nothing for the control plane; the only cost is the
  * instances, which this account already runs and which the free tier covers.
  *
- * ## Why one instance
+ * ## Why two instances
  *
- * The free tier is **750 instance-hours a month in aggregate**, not per instance. One `t4g.micro`
- * running continuously is about 720 of them, so "free" means one instance, not one per service.
- * Three tasks on three instances would cost roughly $12 a month to run three processes that
- * together use a few hundred megabytes.
+ * One instance made the website and API unavailable whenever that host or availability zone was
+ * unhealthy. Two replicas run on distinct instances and are spread across the two serving zones.
+ * A third instance is reserved only for a sequential rolling replacement, so a release never has
+ * to stop either healthy replica before its replacement passes both load-balancer health checks.
  *
  * ## Why bridge networking
  *
@@ -110,8 +110,8 @@ resource "aws_ecs_cluster" "main" {
   name = var.name_prefix
 
   setting {
-    # Off. It is per-metric CloudWatch billing for numbers the ALB and the Auto Scaling group
-    # already report, on a platform whose observability story is ClickHouse.
+    # Off. RunningTaskCount requires paid Container Insights. The two ALB target groups are the
+    # customer-visible task count, and the ASG publishes its in-service host count without it.
     name  = "containerInsights"
     value = "disabled"
   }
@@ -122,9 +122,9 @@ resource "aws_ecs_cluster" "main" {
 /*
   Capacity, and what happens when there is not enough of it.
 
-  `managed_scaling` lets ECS grow the Auto Scaling group when a task cannot be placed. The maximum
-  is deliberately small: this is a free-tier deployment, and an autoscaler that can quietly reach
-  for a fourth instance is an autoscaler that can quietly leave the free tier.
+  `managed_scaling` lets ECS grow the Auto Scaling group when a replacement task cannot be placed.
+  The maximum is exactly one host above the two-host steady state. The ECS service also admits only
+  one extra task at a time, so that host is sufficient and capacity cannot grow without bound.
 
   `managed_termination_protection` is off because it requires scale-in protection on the group and
   the group here is small enough that ECS draining a task is the only ordering that matters.
@@ -203,6 +203,10 @@ resource "aws_autoscaling_group" "ecs" {
   min_size         = var.ecs_instance_count
   max_size         = var.ecs_instance_count + 1
   desired_capacity = var.ecs_instance_count
+
+  # Auto Scaling group metrics are opt-in. Publish only the count this availability alarm uses.
+  enabled_metrics     = ["GroupInServiceInstances"]
+  metrics_granularity = "1Minute"
 
   launch_template {
     id      = aws_launch_template.ecs.id
@@ -503,18 +507,33 @@ resource "aws_ecs_service" "web" {
   task_definition = aws_ecs_task_definition.web.arn
   desired_count   = var.ecs_instance_count
 
+  availability_zone_rebalancing = "ENABLED"
+
   capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.main.name
     weight            = 100
   }
 
-  # Keep the old task healthy until its replacement is healthy. The capacity provider may grow the
-  # ASG from one instance to its existing maximum of two while the fixed host ports are occupied,
-  # then scales the empty instance back in after ECS drains the old task and its managed scale-in
-  # alarm settles. That bounded overlap incurs a second instance's normal per-second cost; stopping
-  # the sole healthy task first incurred a customer-visible outage on every release and is not an
-  # acceptable saving.
-  deployment_maximum_percent         = 200
+  # Availability-zone spread must be first for ECS's AZ rebalancer. `distinctInstance` is the hard
+  # boundary; the second spread keeps placement deterministic within a zone if the cluster grows.
+  ordered_placement_strategy {
+    type  = "spread"
+    field = "attribute:ecs.availability-zone"
+  }
+
+  ordered_placement_strategy {
+    type  = "spread"
+    field = "instanceId"
+  }
+
+  placement_constraints {
+    type = "distinctInstance"
+  }
+
+  # Two healthy replicas remain serving while ECS starts one replacement on the one spare host.
+  # 150% caps the service at three tasks, so ECS replaces replicas sequentially; 100% prevents it
+  # from draining either old task until the new task is healthy in both target groups.
+  deployment_maximum_percent         = 150
   deployment_minimum_healthy_percent = 100
 
   # A waiter timing out is only CI noticing a broken deployment. The circuit breaker is ECS acting
@@ -550,9 +569,86 @@ resource "aws_ecs_service" "web" {
   }
 
   # The image tag moves on every release and the deploy updates the service directly; an apply that
-  # reset it would roll production back to whatever the state file remembered.
+  # reset it would roll production back to whatever the state file remembered. Desired count is
+  # deliberately not ignored: OpenTofu must detect and repair a manual scale-down below two.
   lifecycle {
-    ignore_changes = [task_definition, desired_count]
+    ignore_changes = [task_definition]
+  }
+
+  tags = local.tags
+}
+
+locals {
+  ecs_web_target_groups = {
+    website = aws_lb_target_group.website["green"]
+    api     = aws_lb_target_group.api["green"]
+  }
+}
+
+# These alarms intentionally use native ALB and Auto Scaling metrics. ECS RunningTaskCount exists
+# only with paid Container Insights; a task that cannot serve is already visible here as fewer than
+# two healthy targets, while GroupInServiceInstances catches loss of the host capacity beneath it.
+resource "aws_cloudwatch_metric_alarm" "ecs_healthy_targets" {
+  for_each = local.ecs_web_target_groups
+
+  alarm_name          = "${var.name_prefix}-ecs-${each.key}-healthy-targets"
+  alarm_description   = "Fewer than two healthy ${each.key} targets means the ECS control plane has lost redundancy."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HealthyHostCount"
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = var.ecs_instance_count
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+    TargetGroup  = each.value.arn_suffix
+  }
+
+  tags = local.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "ecs_unhealthy_targets" {
+  for_each = local.ecs_web_target_groups
+
+  alarm_name          = "${var.name_prefix}-ecs-${each.key}-unhealthy-targets"
+  alarm_description   = "At least one ${each.key} target is explicitly unhealthy."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "UnHealthyHostCount"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+    TargetGroup  = each.value.arn_suffix
+  }
+
+  tags = local.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "ecs_in_service_hosts" {
+  alarm_name          = "${var.name_prefix}-ecs-in-service-hosts"
+  alarm_description   = "Fewer than two in-service ECS hosts cannot sustain the two-replica service."
+  namespace           = "AWS/AutoScaling"
+  metric_name         = "GroupInServiceInstances"
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = var.ecs_instance_count
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.ecs.name
   }
 
   tags = local.tags
