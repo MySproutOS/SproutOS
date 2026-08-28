@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   CUSTOM_DOMAIN_POLL_INTERVAL_MS,
+  customDomainMutationErrorMessage,
   customDomainNeedsPolling,
   eligibleCustomDomainProjects,
   shouldPollCustomDomains,
@@ -64,5 +65,27 @@ describe("eligibleCustomDomainProjects", () => {
         project("serverless", false),
       ]),
     ).toEqual([serverless])
+  })
+})
+
+describe("customDomainMutationErrorMessage", () => {
+  it("surfaces the rollout-disabled reason from the current API response", () => {
+    expect(
+      customDomainMutationErrorMessage({
+        message:
+          "Custom domains remain disabled until the Rust tenant edge passes production smoke.",
+      }),
+    ).toBe("Custom domains remain disabled until the Rust tenant edge passes production smoke.")
+  })
+
+  it("supports the standard API error envelope and a deterministic fallback", () => {
+    expect(
+      customDomainMutationErrorMessage({
+        error: { code: "ServiceUnavailable", message: "Certificate worker is unavailable." },
+      }),
+    ).toBe("Certificate worker is unavailable.")
+    expect(customDomainMutationErrorMessage(undefined)).toBe(
+      "The custom-domain request failed. Try again.",
+    )
   })
 })

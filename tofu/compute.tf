@@ -1500,10 +1500,15 @@ resource "aws_autoscaling_policy" "router" {
 
 /*
   Tenant HTTPS no longer increments the ALB request metric once generated and custom hosts move to
-  the NLB. NewFlowCount is the closest load signal at that boundary: every browser connection and
-  CONNECT tunnel creates a flow, while idle keep-alives do not cause a CPU-only policy to guess.
+  the NLB. ActiveFlowCount is the concurrent work the TCP edge is actually holding. The raw NLB
+  metric is a target-group total, so tracking it directly would keep the same value after adding a
+  router and could scale to max without relieving the alarm. Divide by HealthyHostCount to produce
+  a per-serving-router signal that falls when capacity is added. IF also keeps metric math defined
+  while an idle colour has no healthy targets.
+
   Multiple target-tracking policies are intentional; Auto Scaling chooses enough capacity to
-  satisfy either the remaining ALB service traffic or the tenant edge.
+  satisfy either the remaining ALB service traffic or the tenant edge. Scale-in remains disabled
+  because blue/green deployment owns draining an idle colour.
 */
 resource "aws_autoscaling_policy" "router_tenant_edge" {
   for_each = local.tenant_edge_provisioned ? local.service_colours : toset([])
@@ -1514,22 +1519,63 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
   target_tracking_configuration {
     customized_metric_specification {
-      metric_name = "NewFlowCount"
-      namespace   = "AWS/NetworkELB"
-      statistic   = "Sum"
-      unit        = "Count"
+      metrics {
+        id          = "flows"
+        return_data = false
 
-      metric_dimension {
-        name  = "LoadBalancer"
-        value = aws_lb.tenant_edge[0].arn_suffix
+        metric_stat {
+          period = 60
+          stat   = "Average"
+
+          metric {
+            metric_name = "ActiveFlowCount"
+            namespace   = "AWS/NetworkELB"
+
+            dimensions {
+              name  = "LoadBalancer"
+              value = aws_lb.tenant_edge[0].arn_suffix
+            }
+            dimensions {
+              name  = "TargetGroup"
+              value = aws_lb_target_group.tenant_https[each.key].arn_suffix
+            }
+          }
+        }
       }
-      metric_dimension {
-        name  = "TargetGroup"
-        value = aws_lb_target_group.tenant_https[each.key].arn_suffix
+
+      metrics {
+        id          = "healthy"
+        return_data = false
+
+        metric_stat {
+          period = 60
+          stat   = "Average"
+
+          metric {
+            metric_name = "HealthyHostCount"
+            namespace   = "AWS/NetworkELB"
+
+            dimensions {
+              name  = "LoadBalancer"
+              value = aws_lb.tenant_edge[0].arn_suffix
+            }
+            dimensions {
+              name  = "TargetGroup"
+              value = aws_lb_target_group.tenant_https[each.key].arn_suffix
+            }
+          }
+        }
+      }
+
+      metrics {
+        id          = "flows_per_target"
+        expression  = "flows / IF(healthy > 0, healthy, 1)"
+        label       = "Tenant edge active TCP flows per healthy router"
+        return_data = true
       }
     }
 
-    target_value     = var.tenant_edge_new_flows_per_target
+    target_value     = var.tenant_edge_active_flows_per_target
     disable_scale_in = true
   }
 }

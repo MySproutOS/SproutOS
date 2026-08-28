@@ -148,13 +148,13 @@ variable "service_desired_count" {
   default     = 2
 }
 
-variable "tenant_edge_new_flows_per_target" {
-  description = "One-minute NLB NewFlowCount target per serving router before scaling out."
+variable "tenant_edge_active_flows_per_target" {
+  description = "Concurrent NLB TCP flows per healthy serving router before scaling out."
   type        = number
-  default     = 3000
+  default     = 100
 
   validation {
-    condition     = var.tenant_edge_new_flows_per_target > 0
+    condition     = var.tenant_edge_active_flows_per_target > 0
     error_message = "The tenant edge flow target must be positive."
   }
 }

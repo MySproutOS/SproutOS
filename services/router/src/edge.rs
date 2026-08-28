@@ -26,7 +26,7 @@ use hyper_util::service::TowerToHyperService;
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_rustls::LazyConfigAcceptor;
@@ -37,6 +37,11 @@ use sproutos_sandbox_forward_proxy::SandboxForwardProxy;
 
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const DEFAULT_MAX_CONNECTIONS: usize = 1_024;
+// A fatal TLS alert is still a plaintext record until the server has selected a certificate and
+// completed enough of the handshake to derive traffic keys. Writing the exact RFC 6066 alert here
+// avoids both unsafe default-certificate fallback and rustls' generic `access_denied` response when
+// its resolver returns no certificate.
+const UNRECOGNIZED_NAME_ALERT: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x70];
 
 /// Socket metadata established by the edge rather than supplied by the request.
 #[derive(Debug, Clone)]
@@ -373,10 +378,12 @@ impl Edge {
             .client_hello()
             .server_name()
             .ok_or(DispatchError::MissingSni)
-            .and_then(|name| normalize_dns_name(name).ok_or(DispatchError::UnknownSni))?;
-        if self.resolver.resolve_name(&sni).is_none() {
-            return Err(DispatchError::UnknownSni.into());
-        }
+            .and_then(|name| normalize_dns_name(name).ok_or(DispatchError::UnknownSni));
+        let sni = match sni {
+            Ok(sni) if self.resolver.resolve_name(&sni).is_some() => sni,
+            Ok(_) => return Err(reject_unrecognized_name(start, DispatchError::UnknownSni).await),
+            Err(error) => return Err(reject_unrecognized_name(start, error).await),
+        };
         let target = if self
             .egress_sni
             .as_deref()
@@ -426,6 +433,28 @@ impl Edge {
             Target::Http => serve_http(tls, self.http.clone(), sni, peer).await,
         }
     }
+}
+
+async fn reject_unrecognized_name<T>(
+    mut start: tokio_rustls::server::StartHandshake<T>,
+    error: DispatchError,
+) -> anyhow::Error
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    if let Err(cause) = start.io.write_all(&UNRECOGNIZED_NAME_ALERT).await {
+        return anyhow::Error::new(error).context(format!(
+            "could not send TLS unrecognized_name alert: {cause}"
+        ));
+    }
+    // Flush before returning and dropping the transport. A client must deterministically receive
+    // the alert rather than an EOF whose timing depends on the kernel's socket buffers.
+    if let Err(cause) = start.io.shutdown().await {
+        return anyhow::Error::new(error).context(format!(
+            "could not finish TLS unrecognized_name alert: {cause}"
+        ));
+    }
+    error.into()
 }
 
 /// Start the edge only when its listen address is set. Existing public paths remain authoritative
@@ -600,12 +629,15 @@ mod tests {
 
     struct RecordingEgress(AtomicBool);
 
+    const CONNECT_WITH_EAGER_BYTES: &[u8] =
+        b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\nEAGER";
+
     #[async_trait::async_trait]
     impl EgressHandoff for RecordingEgress {
         async fn serve(&self, mut connection: Box<dyn EdgeIo>) -> io::Result<()> {
-            let mut request = [0_u8; 4];
+            let mut request = vec![0_u8; CONNECT_WITH_EAGER_BYTES.len()];
             connection.read_exact(&mut request).await?;
-            if request == *b"PING" {
+            if request == CONNECT_WITH_EAGER_BYTES {
                 self.0.store(true, Ordering::SeqCst);
                 connection.write_all(b"PONG").await?;
             }
@@ -683,6 +715,42 @@ mod tests {
         // caller closes its half.
         drop(server);
         Ok(tls)
+    }
+
+    async fn connect_with_versions(
+        listener: TcpListener,
+        edge: Arc<Edge>,
+        roots: rustls::RootCertStore,
+        versions: &[&'static rustls::SupportedProtocolVersion],
+    ) -> anyhow::Result<tokio_rustls::client::TlsStream<TcpStream>> {
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            edge.serve_connection(stream).await
+        });
+        let client = ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(versions)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let stream = TcpStream::connect(address).await?;
+        let tls = TlsConnector::from(Arc::new(client))
+            .connect(ServerName::try_from("app.example.test".to_owned())?, stream)
+            .await?;
+        drop(server);
+        Ok(tls)
+    }
+
+    fn assert_unrecognized_name(error: io::Error) {
+        let rustls_error = error
+            .get_ref()
+            .and_then(|cause| cause.downcast_ref::<rustls::Error>())
+            .expect("TLS client error must retain the rustls alert");
+        assert_eq!(
+            rustls_error,
+            &rustls::Error::AlertReceived(rustls::AlertDescription::UnrecognisedName)
+        );
     }
 
     #[test]
@@ -791,7 +859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_sni_is_rejected_during_the_tls_handshake() {
+    async fn unknown_sni_receives_the_exact_unrecognized_name_alert() {
         let fixture = fixture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -804,18 +872,59 @@ mod tests {
             .with_root_certificates(fixture.roots)
             .with_no_client_auth();
         let stream = TcpStream::connect(address).await.unwrap();
-        let result = TlsConnector::from(Arc::new(client))
+        let error = TlsConnector::from(Arc::new(client))
             .connect(
                 ServerName::try_from("unknown.example.test".to_owned()).unwrap(),
                 stream,
             )
-            .await;
-        assert!(result.is_err());
-        assert!(server.await.unwrap().is_err());
+            .await
+            .unwrap_err();
+        assert_unrecognized_name(error);
+        assert_eq!(
+            server
+                .await
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<DispatchError>(),
+            Some(&DispatchError::UnknownSni)
+        );
     }
 
     #[tokio::test]
-    async fn exact_egress_sni_hands_the_decrypted_stream_to_the_proxy_seam() {
+    async fn missing_sni_receives_the_exact_unrecognized_name_alert() {
+        let fixture = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            edge.serve_connection(stream).await
+        });
+        let client = ClientConfig::builder()
+            .with_root_certificates(fixture.roots)
+            .with_no_client_auth();
+        let stream = TcpStream::connect(address).await.unwrap();
+        // rustls deliberately omits the SNI extension for an IP address ServerName.
+        let error = TlsConnector::from(Arc::new(client))
+            .connect(
+                ServerName::try_from("127.0.0.1".to_owned()).unwrap(),
+                stream,
+            )
+            .await
+            .unwrap_err();
+        assert_unrecognized_name(error);
+        assert_eq!(
+            server
+                .await
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<DispatchError>(),
+            Some(&DispatchError::MissingSni)
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_egress_sni_hands_connect_and_eager_bytes_to_the_proxy_seam() {
         let fixture = fixture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let handoff = Arc::new(RecordingEgress(AtomicBool::new(false)));
@@ -823,7 +932,7 @@ mod tests {
         let mut tls = connect(listener, edge, fixture.roots, "egress.example.test")
             .await
             .unwrap();
-        tls.write_all(b"PING").await.unwrap();
+        tls.write_all(CONNECT_WITH_EAGER_BYTES).await.unwrap();
         let mut response = [0_u8; 4];
         tls.read_exact(&mut response).await.unwrap();
         assert_eq!(&response, b"PONG");
@@ -864,6 +973,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tenant_http_negotiates_tls12_and_tls13() {
+        for (versions, expected) in [
+            (
+                &[&rustls::version::TLS12][..],
+                rustls::ProtocolVersion::TLSv1_2,
+            ),
+            (
+                &[&rustls::version::TLS13][..],
+                rustls::ProtocolVersion::TLSv1_3,
+            ),
+        ] {
+            let fixture = fixture();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+            let tls = connect_with_versions(listener, edge, fixture.roots, versions)
+                .await
+                .unwrap();
+            assert_eq!(tls.get_ref().1.protocol_version(), Some(expected));
+        }
+    }
+
+    #[tokio::test]
     async fn alpn_is_selected_by_sni_before_the_handshake_completes() {
         let fixture = fixture();
         let handoff = Arc::new(RecordingEgress(AtomicBool::new(false)));
@@ -897,6 +1028,42 @@ mod tests {
             egress_tls.get_ref().1.alpn_protocol(),
             Some(b"http/1.1".as_slice())
         );
+    }
+
+    #[tokio::test]
+    async fn negotiated_http2_serves_a_real_request_with_sni_authority() {
+        let fixture = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+        let tls = connect_with_alpn(
+            listener,
+            edge,
+            fixture.roots,
+            "app.example.test",
+            vec![b"h2".to_vec()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tls))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        let response = sender
+            .send_request(
+                Request::builder()
+                    .version(axum::http::Version::HTTP_2)
+                    .uri("https://app.example.test/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(sender);
+        connection.abort();
     }
 
     #[test]

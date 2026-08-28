@@ -120,10 +120,7 @@ const LOOKUP_SQL: &str = r#"
               and cd.organization_id = p.organization_id
               and cd.status = 'active'
               and cd.deleted_at is null
-              and (
-                cd.hostname = $1
-                or (cd.is_apex and ('www.' || cd.hostname) = $1)
-              )
+              and cd.hostname = $1
          )
        )
      limit 2
@@ -458,5 +455,9 @@ mod tests {
                 "missing isolation predicate: {predicate}"
             );
         }
+        assert!(
+            !LOOKUP_SQL.contains("'www.'"),
+            "an apex claim must not implicitly claim the separate www hostname"
+        );
     }
 }

@@ -18,7 +18,7 @@ arc-swap = "1"
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
-hyper = { version = "1", features = ["http1", "http2", "server"] }
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
 hyper-util = { version = "0.1", features = ["http1", "http2", "server", "service", "tokio"] }
 idna = "1"
 reqwest.workspace = true
