@@ -79,6 +79,14 @@ export type DeletedProject = {
   remainingProjectsOnRepository: number
 }
 
+export type RemoveProjectInput = {
+  organizationId: string
+  projectId: string
+  actorUserId: string
+  audit?: AuditContext
+  preserveEmptyGroups?: boolean
+}
+
 /**
  * Resolves the repository a new project will hang off.
  *
@@ -121,10 +129,11 @@ async function resolveRepository(
 /**
  * Project lifecycle operations that span `repository`, `project`, `project_job`, and `audit_log`.
  *
- * Each opens its own transaction and therefore takes the pool, not a transaction handle. The
- * whole reason these live together is that a project row without its job is a project stuck in
- * `creating` forever, and a job without its project is a worker dereferencing null — they have to
- * commit or fail as one.
+ * The public create/remove operations open their own transactions and therefore take the pool.
+ * `removeInTransaction` is the explicit composition seam for a caller that must commit several
+ * removals and their background-job queue rows together. The whole reason these live together is
+ * that a project row without its job is stuck forever, while a job without its project makes the
+ * worker dereference null — they have to commit or fail as one.
  */
 export function provisionProject(db: Kysely<DB>) {
   /**
@@ -205,18 +214,14 @@ export function provisionProject(db: Kysely<DB>) {
    * several projects to share one, and deleting the first would otherwise take the repository —
    * and therefore upkeep — away from the others.
    */
-  async function remove(input: {
-    organizationId: string
-    projectId: string
-    actorUserId: string
-    audit?: AuditContext
-    preserveEmptyGroups?: boolean
-  }): Promise<DeletedProject | null> {
-    return await db.transaction().execute(async (tx) => {
-      const project = await crudProject(tx).softDelete(input.organizationId, input.projectId)
-      if (project === undefined) return null
+  async function removeInTransaction(
+    tx: Transaction<DB>,
+    input: RemoveProjectInput,
+  ): Promise<DeletedProject | null> {
+    const project = await crudProject(tx).softDelete(input.organizationId, input.projectId)
+    if (project === undefined) return null
 
-      /*
+    /*
         Deployable siblings, not every row.
 
         A repository now starts as a group with its projects inside it, so counting groups here
@@ -224,12 +229,12 @@ export function provisionProject(db: Kysely<DB>) {
         repository could never be released. The group would outlive everything it contained and hold
         a repository nobody uses.
       */
-      let siblingsQuery = tx
-        .selectFrom("project")
-        .select((eb) => eb.fn.countAll<string>().as("count"))
-        .where("repositoryId", "=", project.repositoryId)
-        .where("deletedAt", "is", null)
-      /*
+    let siblingsQuery = tx
+      .selectFrom("project")
+      .select((eb) => eb.fn.countAll<string>().as("count"))
+      .where("repositoryId", "=", project.repositoryId)
+      .where("deletedAt", "is", null)
+    /*
         During a recursive group deletion, live groups are real siblings, not cleanup residue.
 
         Counting only deployables would release the repository as soon as the deepest leaf went
@@ -238,16 +243,16 @@ export function provisionProject(db: Kysely<DB>) {
         keeps the historical deployable-only count so its implicit empty repository group is still
         cleaned up automatically.
       */
-      if (input.preserveEmptyGroups !== true) {
-        siblingsQuery = siblingsQuery.where("isGroup", "=", false)
-      }
-      const siblings = await siblingsQuery.executeTakeFirst()
+    if (input.preserveEmptyGroups !== true) {
+      siblingsQuery = siblingsQuery.where("isGroup", "=", false)
+    }
+    const siblings = await siblingsQuery.executeTakeFirst()
 
-      const remaining = siblings ? Number(siblings.count) : 0
-      const repositoryReleased = remaining === 0
+    const remaining = siblings ? Number(siblings.count) : 0
+    const repositoryReleased = remaining === 0
 
-      if (repositoryReleased) {
-        /*
+    if (repositoryReleased) {
+      /*
           The empty groups go with it.
 
           A group with no projects is not something anyone asked for — it is the residue of the last
@@ -255,47 +260,50 @@ export function provisionProject(db: Kysely<DB>) {
           audit row that references it still resolves. `ON DELETE RESTRICT` on `parent_project_id`
           is untouched by this: a soft delete is an UPDATE.
         */
-        if (input.preserveEmptyGroups !== true) {
-          await tx
-            .updateTable("project")
-            .set({ deletedAt: new Date(), state: "deleting" })
-            .where("repositoryId", "=", project.repositoryId)
-            .where("isGroup", "=", true)
-            .where("deletedAt", "is", null)
-            .execute()
-        }
-
-        await crudRepository(tx).softDelete(project.repositoryId)
+      if (input.preserveEmptyGroups !== true) {
+        await tx
+          .updateTable("project")
+          .set({ deletedAt: new Date(), state: "deleting" })
+          .where("repositoryId", "=", project.repositoryId)
+          .where("isGroup", "=", true)
+          .where("deletedAt", "is", null)
+          .execute()
       }
 
-      const job = await crudProjectJob(tx).create({
-        organizationId: input.organizationId,
-        projectId: project.id,
-        repositoryId: project.repositoryId,
-        kind: "delete",
-        state: "queued",
-        steps: JSON.stringify(initialSteps("delete")),
-      })
+      await crudRepository(tx).softDelete(project.repositoryId)
+    }
 
-      await crudAuditLog(tx).record({
-        organizationId: input.organizationId,
-        actorUserId: input.actorUserId,
-        action: "project:delete",
-        resourceSrn: srnFor("project", input.organizationId, "project", project.id),
-        before: { slug: project.slug, state: "ready", deletedAt: null },
-        after: {
-          state: project.state,
-          deletedAt: project.deletedAt?.toISOString() ?? null,
-          repositoryReleased,
-          remainingProjectsOnRepository: remaining,
-          teardownJobId: job.id,
-        },
-        ...input.audit,
-      })
-
-      return { job, project, remainingProjectsOnRepository: remaining, repositoryReleased }
+    const job = await crudProjectJob(tx).create({
+      organizationId: input.organizationId,
+      projectId: project.id,
+      repositoryId: project.repositoryId,
+      kind: "delete",
+      state: "queued",
+      steps: JSON.stringify(initialSteps("delete")),
     })
+
+    await crudAuditLog(tx).record({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      action: "project:delete",
+      resourceSrn: srnFor("project", input.organizationId, "project", project.id),
+      before: { slug: project.slug, state: "ready", deletedAt: null },
+      after: {
+        state: project.state,
+        deletedAt: project.deletedAt?.toISOString() ?? null,
+        repositoryReleased,
+        remainingProjectsOnRepository: remaining,
+        teardownJobId: job.id,
+      },
+      ...input.audit,
+    })
+
+    return { job, project, remainingProjectsOnRepository: remaining, repositoryReleased }
   }
 
-  return { create, remove }
+  async function remove(input: RemoveProjectInput): Promise<DeletedProject | null> {
+    return await db.transaction().execute(async (tx) => await removeInTransaction(tx, input))
+  }
+
+  return { create, remove, removeInTransaction }
 }

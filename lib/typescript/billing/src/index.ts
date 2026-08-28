@@ -48,6 +48,7 @@ export {
 export {
   NoActivePriceBookError,
   rateProjectsForOrganization,
+  RETIRED_UNBILLABLE_DIMENSIONS,
   startOfMonth,
   type RatedUsage,
 } from "./usage"

@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
 import { type Kysely, sql, type Transaction } from "kysely"
-import { NoActivePriceBookError } from "./usage"
+import { NoActivePriceBookError, RETIRED_UNBILLABLE_DIMENSIONS } from "./usage"
 import { groupedOverhead, type MicroUsd, rateTimesQuantity } from "./money"
 
 /**
@@ -108,6 +108,7 @@ export async function estimateListingCosts(
     .where("project.storeListingId", "in", storeListingIds)
     .where("project.deletedAt", "is", null)
     .where("usageRollup.bucket", "=", "day")
+    .where("usageRollup.dimension", "not in", RETIRED_UNBILLABLE_DIMENSIONS)
     .where("usageRollup.bucketStart", ">=", since)
     .where("usageRollup.bucketStart", "<", until)
     .groupBy(["project.storeListingId", "usageRollup.projectId", "usageRollup.dimension"])

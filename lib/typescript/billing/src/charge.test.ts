@@ -338,7 +338,7 @@ describe("chargeUsage", () => {
     await event("123", { dimension: "ai_cache_read_token", chargedExternally: true })
     const byo = await db
       .selectFrom("usageRollup")
-      .select(["quantity", "chargedQuantity", "externallyChargedQuantity"])
+      .select(["bucketStart", "quantity", "chargedQuantity", "externallyChargedQuantity"])
       .where("organizationId", "=", organizationId)
       .where("dimension", "=", "ai_cache_read_token")
       .where("bucket", "=", CHARGED_BUCKET)
@@ -349,12 +349,55 @@ describe("chargeUsage", () => {
     expect(Number(byo.chargedQuantity)).toBe(123)
     expect(await chargedHere(() => chargeUsage(db))).toBe(0n)
 
-    await event("17", { dimension: "ai_output_token", chargedExternally: false })
+    // A corrected/deleted BYO event must release its external settlement. Otherwise later
+    // platform-funded tokens in the same hour inherit "already paid" from usage that no longer
+    // exists and become free.
+    await applyImportedUsageRollups(
+      db,
+      [
+        {
+          organizationId,
+          projectId,
+          dimension: "ai_cache_read_token",
+          bucket: CHARGED_BUCKET,
+          bucketStart: byo.bucketStart,
+          quantity: "0",
+          externallyChargedQuantity: "0",
+        },
+      ],
+      new Date(),
+    )
+
+    const corrected = await db
+      .selectFrom("usageRollup")
+      .select(["chargedQuantity", "externallyChargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "ai_cache_read_token")
+      .where("bucket", "=", CHARGED_BUCKET)
+      .executeTakeFirstOrThrow()
+    expect(Number(corrected.externallyChargedQuantity)).toBe(0)
+    expect(Number(corrected.chargedQuantity)).toBe(0)
+
+    await applyImportedUsageRollups(
+      db,
+      [
+        {
+          organizationId,
+          projectId,
+          dimension: "ai_cache_read_token",
+          bucket: CHARGED_BUCKET,
+          bucketStart: byo.bucketStart,
+          quantity: "17",
+          externallyChargedQuantity: "0",
+        },
+      ],
+      new Date(),
+    )
     const platform = await db
       .selectFrom("usageRollup")
       .select(["quantity", "chargedQuantity", "externallyChargedQuantity"])
       .where("organizationId", "=", organizationId)
-      .where("dimension", "=", "ai_output_token")
+      .where("dimension", "=", "ai_cache_read_token")
       .where("bucket", "=", CHARGED_BUCKET)
       .executeTakeFirstOrThrow()
 
@@ -362,6 +405,26 @@ describe("chargeUsage", () => {
     expect(Number(platform.externallyChargedQuantity)).toBe(0)
     expect(Number(platform.chargedQuantity)).toBe(0)
     expect(await chargedHere(() => chargeUsage(db))).toBeGreaterThan(0n)
+  })
+
+  it("retains retired Lambda measurements without charging or breaking the sweep", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+
+    await event("900", { dimension: "site_vcpu_second" })
+
+    expect(await chargedHere(() => chargeUsage(db))).toBe(0n)
+
+    const retained = await db
+      .selectFrom("usageRollup")
+      .select(["quantity", "chargedQuantity"])
+      .where("organizationId", "=", organizationId)
+      .where("dimension", "=", "site_vcpu_second")
+      .where("bucket", "=", CHARGED_BUCKET)
+      .executeTakeFirstOrThrow()
+    expect(Number(retained.quantity)).toBe(900)
+    expect(Number(retained.chargedQuantity)).toBe(0)
   })
 
   it("caps a delayed charge at prepaid credit and creates no debt for a later top-up", async ({

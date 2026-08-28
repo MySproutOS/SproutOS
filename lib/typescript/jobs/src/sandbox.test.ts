@@ -405,7 +405,7 @@ describe("meterSandboxes", () => {
     }
   })
 
-  it("does not meter a stopped sandbox", async ({ skip }) => {
+  it("does not meter a stopped row with no provider object", async ({ skip }) => {
     if (!reachable) skip()
 
     const sandbox = await crudSandbox(db).create({
@@ -417,6 +417,28 @@ describe("meterSandboxes", () => {
 
     await meterSandboxes(job, context)
     expect(await eventsFor(sandbox.id)).toHaveLength(0)
+  })
+
+  it("bills only reserved disk while a Daytona container is stopped", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-stopped-${v7()}`,
+      state: "stopped",
+      cpu: 2,
+      memoryGib: 4,
+      diskGib: 10,
+      meteredThrough: new Date(Date.now() - 60_000),
+    })
+
+    await meterSandboxes(job, context)
+
+    const events = await eventsFor(sandbox.id)
+    expect(events.map((event) => event.dimension)).toEqual(["sandbox_disk_gib_second"])
+    expect(Number(events[0]?.quantity)).toBeGreaterThan(500)
+    expect(Number(events[0]?.quantity)).toBeLessThan(700)
   })
 
   it("never bills an ordinary sandbox past its provider auto-stop deadline", async ({ skip }) => {

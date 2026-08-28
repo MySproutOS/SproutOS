@@ -1,6 +1,6 @@
 import type { DB } from "@sproutos/db"
 import type { Insertable } from "kysely"
-import { type Kysely, type Transaction } from "kysely"
+import type { Kysely } from "kysely"
 import type { PartialBy } from "../utils/types"
 import { v7 } from "uuid"
 
@@ -44,32 +44,73 @@ export function crudUser(db: Kysely<DB>) {
    */
   async function deleteUser(userId: string): Promise<DeleteUserOutcome> {
     return await db.transaction().execute(async (tx) => {
-      const user = await tx
-        .selectFrom("user")
-        .select(["id", "email"])
-        .where("id", "=", userId)
-        .where("deletedAt", "is", null)
-        .executeTakeFirst()
-
-      if (user === undefined) return { ok: false, reason: "not_found" } as const
-
-      const owned = await tx
-        .selectFrom("organization")
-        .select(["id", "slug"])
-        .where("ownerUserId", "=", userId)
-        .where("deletedAt", "is", null)
-        .execute()
-
-      if (owned.length > 0) {
-        return { ok: false, reason: "owns_organizations", organizations: owned } as const
-      }
-
-      await anonymise(tx, userId, user.email)
-      return { ok: true } as const
+      const begun = await beginDeletion(tx, userId)
+      if (!begun.ok) return begun
+      return completeDeletion(tx, userId)
     })
   }
 
-  return { createUser, deleteUser }
+  /** Disable every authentication path while durable provider cleanup is still running. */
+  async function beginUserDeletion(userId: string): Promise<DeleteUserOutcome> {
+    return beginDeletion(db, userId)
+  }
+
+  /** Strip the remaining identity only after every provider resource has been removed. */
+  async function completeUserDeletion(userId: string): Promise<DeleteUserOutcome> {
+    return db.transaction().execute((tx) => completeDeletion(tx, userId))
+  }
+
+  return { beginUserDeletion, completeUserDeletion, createUser, deleteUser }
+}
+
+async function activeOwnedOrganizations(db: Kysely<DB>, userId: string) {
+  return db
+    .selectFrom("organization")
+    .select(["id", "slug"])
+    .where("ownerUserId", "=", userId)
+    .where("deletedAt", "is", null)
+    .execute()
+}
+
+async function beginDeletion(db: Kysely<DB>, userId: string): Promise<DeleteUserOutcome> {
+  const user = await db
+    .selectFrom("user")
+    .select(["id", "email"])
+    .where("id", "=", userId)
+    .where("deletedAt", "is", null)
+    .executeTakeFirst()
+  if (user === undefined) return { ok: false, reason: "not_found" }
+
+  const owned = await activeOwnedOrganizations(db, userId)
+  if (owned.length > 0) {
+    return { ok: false, reason: "owns_organizations", organizations: owned }
+  }
+
+  const now = new Date()
+  await db
+    .updateTable("user")
+    .set({ deletedAt: now, updatedAt: now })
+    .where("id", "=", userId)
+    .execute()
+  await revokeAndDetach(db, userId, user.email, now)
+  return { ok: true }
+}
+
+async function completeDeletion(db: Kysely<DB>, userId: string): Promise<DeleteUserOutcome> {
+  const user = await db
+    .selectFrom("user")
+    .select(["id", "email"])
+    .where("id", "=", userId)
+    .executeTakeFirst()
+  if (user === undefined) return { ok: false, reason: "not_found" }
+
+  const owned = await activeOwnedOrganizations(db, userId)
+  if (owned.length > 0) {
+    return { ok: false, reason: "owns_organizations", organizations: owned }
+  }
+
+  await anonymise(db, userId, user.email)
+  return { ok: true }
 }
 
 /**
@@ -79,7 +120,7 @@ export function crudUser(db: Kysely<DB>) {
  * `.invalid` TLD is reserved by RFC 2606 precisely so it can never route — a tombstone that cannot
  * be mistaken for a live address and cannot collide with a real one.
  */
-async function anonymise(tx: Transaction<DB>, userId: string, email: string): Promise<void> {
+async function anonymise(tx: Kysely<DB>, userId: string, email: string): Promise<void> {
   const now = new Date()
 
   await tx
@@ -98,6 +139,15 @@ async function anonymise(tx: Transaction<DB>, userId: string, email: string): Pr
     .where("id", "=", userId)
     .execute()
 
+  await revokeAndDetach(tx, userId, email, now)
+}
+
+async function revokeAndDetach(
+  tx: Kysely<DB>,
+  userId: string,
+  email: string,
+  now: Date,
+): Promise<void> {
   /*
     Everything that could still authenticate, in the same transaction.
 
