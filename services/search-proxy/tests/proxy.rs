@@ -977,6 +977,9 @@ async fn the_version_banner_is_available_to_authenticated_clients() {
 
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("\"version\""), "{body}");
+
+    let (status, body) = as_tenant(address, &tenant, reqwest::Method::HEAD, "/", None).await;
+    assert_eq!(status, 403, "HEAD / returned {status}: {body}");
     cleanup(&url, &[&tenant]).await;
 }
 
