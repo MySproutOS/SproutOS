@@ -49,8 +49,8 @@ base64url and cannot close a quote, and it is escaped anyway.
 that mean something in a URI. `@` ends the userinfo:
 
 ```
-postgresql://user:p@ss@db.sprout.run:5432/x   →   host is "ss@db.sprout.run"
-postgresql://user:p%40ss@db.sprout.run:5432/x →   host is "db.sprout.run"
+postgresql://user:p@ss@db.sproutos.run:5432/x   →   host is "ss@db.sproutos.run"
+postgresql://user:p%40ss@db.sproutos.run:5432/x →   host is "db.sproutos.run"
 ```
 
 A URI that parses to the wrong host is worse than one that fails to parse: the client connects

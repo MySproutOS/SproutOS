@@ -42,7 +42,7 @@ rather than merely resolved.
 | [0015](0015-store-table-is-store-listing.md)             | The store table is `store_listing`                                         | Store table name    |
 | [0016](0016-one-rbac-action-catalogue.md)                | One RBAC action catalogue, colon separators only, SRN resources everywhere | RBAC grammar        |
 | [0017](0017-soft-delete-on-billing-referenced-tables.md) | Soft delete (`deleted_at`) on anything billing history references          | Delete semantics    |
-| [0018](0018-domains.md)                                  | `sproutos.dev` is the control plane; `sprout.run` is tenant traffic        | Domains             |
+| [0018](0018-domains.md)                                  | `sproutos.dev` is the control plane; `sproutos.run` is tenant traffic      | Domains             |
 
 ## Adding a record
 

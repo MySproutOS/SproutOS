@@ -21,8 +21,8 @@ variable "s3_bucket_name" {
   default     = "sproutos-spa-assets"
 }
 
-# ADR 0018: `sproutos.dev` is the control plane, `sprout.run` is tenant and preview traffic.
-# Preview hosts are single-label (`pr-42--myapp.sprout.run`) because an ACM wildcard covers
+# ADR 0018: `sproutos.dev` is the control plane, `sproutos.run` is tenant and preview traffic.
+# Preview hosts are single-label (`pr-42--myapp.sproutos.run`) because an ACM wildcard covers
 # exactly one label.
 variable "control_plane_domain" {
   description = "Domain the website and dashboard are served from"
@@ -39,8 +39,7 @@ variable "control_plane_domain" {
   boundary: cookies scoped to the control plane cannot be read from a tenant site, and a tenant
   certificate cannot vouch for `api.<control plane>`.
 
-  ADR 0018 writes this as `sprout.run`. The domain actually registered is **`sproutos.run`**, and
-  the ADR is amended rather than the code made to match a domain nobody owns.
+  ADR 0018 records this as `sproutos.run`, the tenant domain that is actually registered.
 */
 variable "tenant_domain" {
   description = "Domain tenant applications are served from"

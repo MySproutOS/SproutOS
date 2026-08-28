@@ -27,7 +27,7 @@ const reachable = await (async () => {
 
 const config: ValkeyServiceConfig = {
   adminUrl: process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41023",
-  publicHost: "kv.sprout.run",
+  publicHost: "kv.sproutos.run",
   publicPort: 6379,
   scheme: "rediss",
 }
@@ -152,7 +152,7 @@ describe.skipIf(!reachable)("valkey driver", () => {
 
     const uri = new URL(result.connectionUri)
     expect(uri.protocol).toBe("rediss:")
-    expect(uri.hostname).toBe("kv.sprout.run")
+    expect(uri.hostname).toBe("kv.sproutos.run")
     expect(uri.port).toBe("6379")
     expect(decodeURIComponent(uri.username)).toBe(result.username)
 
