@@ -283,9 +283,13 @@ production custom-domain activation, separate reviewed changes must prove all of
 2. Deploy the edge-capable release normally and prove the live web task uses the new 640 MiB task
    definition. Only then set `acme_worker_enabled = true`, save/review another plan, and apply it.
    The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
-   rollout if it instead pins the spare host. While the edge flags remain false the worker may issue
-   and store a Let's Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it
-   from refreshing either router Auto Scaling group.
+   rollout if it instead pins the spare host. Rebuild the exact production Linux/arm64 image from
+   the final deployment commit and measure both startup and a staging issuance/deployment job before
+   enabling it; refuse the rollout if either approaches the 256 MiB hard limit. A macOS startup
+   measurement is only a regression signal because native plugin isolation exits before the worker
+   reaches its poll loop. While the edge flags remain false the worker may issue and store a Let's
+   Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it from refreshing
+   either router Auto Scaling group.
 3. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
    contains the new release. Apply a reviewed plan. This creates a separate dual-stack, EIP-backed
    edge NLB. Its listeners use public 80/443 so HTTP-01 and ordinary TLS clients exercise the real
