@@ -84,9 +84,11 @@ resource "aws_iam_role_policy" "spa_deploy" {
   one can replace what production runs, so the two are not one role with a wider policy — the SPA
   deploy runs on every merge and this one does not.
 
-  Trusted for the `main` branch and the `production` environment. The environment condition is what
-  makes the protected-environment gate on the cutover job mean something: without it, any workflow
-  on `main` could assume this role and skip the approval by calling the API directly.
+  Trusted for the `main` branch, the ordinary `production` environment, and the reviewer-protected
+  `cli-release-production` environment. The last subject lets the CLI promotion reuse the normal
+  migration-first deploy path only after its separate approval gate. Without these environment
+  conditions, any workflow on `main` could assume this role and skip approval by calling the API
+  directly.
 */
 resource "aws_iam_role" "deploy" {
   name = "${var.name_prefix}-deploy"
@@ -107,8 +109,10 @@ resource "aws_iam_role" "deploy" {
           "token.actions.githubusercontent.com:sub" = compact([
             "repo:${var.github_repo}:ref:refs/heads/main",
             "repo:${var.github_repo}:environment:production",
+            "repo:${var.github_repo}:environment:cli-release-production",
             var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:ref:refs/heads/main",
             var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:production",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:cli-release-production",
           ])
         }
       }
@@ -395,8 +399,10 @@ resource "aws_iam_role_policy" "deploy" {
 
   The promotion workflow may name one immutable, attested GitHub release in Parameter Store as
   the current CLI pointer. It cannot publish a release, deploy or restart an image, run migrations,
-  or write any other application parameter. Every promotion uses the protected `production`
-  environment; the existing deploy role performs the ordinary migration-first ECS rollout.
+  or write any other application parameter. Every promotion uses the reviewer-protected
+  `cli-release-production` environment; the existing deploy role performs the ordinary
+  migration-first ECS rollout. The shared `production` environment remains unprotected so automatic
+  main deployments do not wait for an approval unrelated to CLI promotion.
 */
 resource "aws_iam_role" "github_actions_cli_release_promotion" {
   name = "${var.name_prefix}-cli-release-promotion"
@@ -413,8 +419,8 @@ resource "aws_iam_role" "github_actions_cli_release_promotion" {
         }
         StringLike = {
           "token.actions.githubusercontent.com:sub" = compact([
-            "repo:${var.github_repo}:environment:production",
-            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:production",
+            "repo:${var.github_repo}:environment:cli-release-production",
+            var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}:environment:cli-release-production",
           ])
         }
       }

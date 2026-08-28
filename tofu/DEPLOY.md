@@ -210,9 +210,16 @@ role—not the much smaller promotion role—then combines the reviewed task con
 already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
 rolling application code backward and stops a tag workflow gaining code-deployment authority.
 
-The GitHub `production` environment must have required reviewers before the promotion workflow is
-used. Promotion assumes its AWS role only through that environment; the promotion role does not
-trust an unprotected `cli-v*` ref directly, and the tag publication workflow has no AWS authority.
+The GitHub `cli-release-production` environment must exist with required reviewers and a custom
+deployment branch policy that allows only `main` before the promotion workflow is used. An
+environment-scoped OIDC subject contains no branch ref, so the environment policy is the control
+that prevents another branch from receiving the same AWS identity after approval. Do not add that
+reviewer rule to the shared `production` environment: automatic main deployments use it and must not
+acquire a manual gate. Promotion assumes both its narrow AWS role and the existing deploy role only
+through the dedicated environment; the promotion role does not trust the shared environment or an
+unprotected `cli-v*` ref directly, and the tag publication workflow has no AWS authority. After this
+trust change is applied, inspect both roles' subjects and verify that the repository-name and exact
+repository-ID forms name `cli-release-production`.
 
 After promotion, require all of these before calling it complete:
 
