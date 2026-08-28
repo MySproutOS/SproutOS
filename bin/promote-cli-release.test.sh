@@ -98,7 +98,22 @@ case "$1 $2" in
     ;;
   "ecs describe-services")
     if [ -f "$STATE/updated" ]; then task=8; else task=7; fi
-    printf '{"services":[{"taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","desiredCount":1,"runningCount":1,"deployments":[{"status":"PRIMARY","taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","rolloutState":"COMPLETED"}]}]}\n' "$task" "$task"
+    rollout_state=COMPLETED
+    if [ -n "${ROLLOUT_MODE:-}" ]; then
+      count_file="$STATE/rollout-describe-count"
+      count=0
+      [ ! -f "$count_file" ] || count=$(cat "$count_file")
+      count=$((count + 1))
+      printf '%s' "$count" >"$count_file"
+      if [ "$ROLLOUT_MODE" = delayed ] && [ "$count" -eq 2 ]; then
+        rollout_state=IN_PROGRESS
+      elif [ "$ROLLOUT_MODE" = never-completes ] && [ "$count" -gt 1 ]; then
+        rollout_state=IN_PROGRESS
+      elif [ "$ROLLOUT_MODE" = wrong-revision ] && [ "$count" -gt 1 ]; then
+        task=9
+      fi
+    fi
+    printf '{"services":[{"taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","desiredCount":1,"runningCount":1,"deployments":[{"status":"PRIMARY","taskDefinition":"arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:%s","rolloutState":"%s"}]}]}\n' "$task" "$task" "$rollout_state"
     ;;
   "ecs describe-task-definition")
     if [ -f "$STATE/updated" ] || [[ "$*" == *sproutos-web:8* ]]; then
@@ -116,10 +131,17 @@ AWS
 
 cat >"$TEST_DIR/bin/curl" <<'CURL'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CALLS"
 printf '<p>Version 0.1.1</p><a href="releases/download/cli-v0.1.1/sprout">download</a>\n'
 CURL
 
-chmod +x "$TEST_DIR/bin/gh" "$TEST_DIR/bin/git" "$TEST_DIR/bin/aws" "$TEST_DIR/bin/curl"
+cat >"$TEST_DIR/bin/sleep" <<'SLEEP'
+#!/usr/bin/env bash
+printf '%s\n' "sleep $*" >>"$CALLS"
+SLEEP
+
+chmod +x "$TEST_DIR/bin/gh" "$TEST_DIR/bin/git" "$TEST_DIR/bin/aws" "$TEST_DIR/bin/curl" \
+  "$TEST_DIR/bin/sleep"
 export PATH="$TEST_DIR/bin:$PATH"
 export RELEASE_DIR="$TEST_DIR/release" STATE="$TEST_DIR/state" CAPTURE="$TEST_DIR/capture"
 export CALLS="$TEST_DIR/calls" GITHUB_REPOSITORY=MySproutOS/SproutOS NAME_PREFIX=sproutos
@@ -247,6 +269,49 @@ printf 0.0.9 >"$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION"
 "$HERE/promote-cli-release.sh" "$version"
 if grep -q '^ecs update-service\|^ecs wait\|^ecs register-task-definition' "$CALLS"; then
   echo "CLI promotion mutated ECS" >&2
+  exit 1
+fi
+
+# services-stable can return before ECS's eventually consistent rolloutState changes to COMPLETED.
+# The verifier must retry that exact task revision rather than failing the completed deployment.
+unlink "$TEST_DIR/state/rollout-describe-count" 2>/dev/null || true
+: >"$CALLS"
+ROLLOUT_MODE=delayed "$HERE/promote-cli-release.sh" "$version"
+[ "$(cat "$TEST_DIR/state/rollout-describe-count")" -eq 3 ]
+[ "$(grep -c '^sleep 10$' "$CALLS")" -eq 1 ]
+[ "$(grep -c 'https://sproutos.me/download$' "$CALLS")" -eq 1 ]
+
+# A concurrent service move is not a successful promotion. Fail before checking the public page;
+# never let a later COMPLETED rollout satisfy the exact task revision captured for this run.
+unlink "$TEST_DIR/state/rollout-describe-count"
+: >"$CALLS"
+if ROLLOUT_MODE=wrong-revision "$HERE/promote-cli-release.sh" "$version" \
+  >"$TEST_DIR/wrong-revision.out" 2>&1; then
+  echo "a different completed task revision satisfied CLI promotion" >&2
+  exit 1
+fi
+grep -q 'ECS service moved from promoted task .*sproutos-web:8 to .*sproutos-web:9' \
+  "$TEST_DIR/wrong-revision.out"
+if grep -q 'https://sproutos.me/download$' "$CALLS"; then
+  echo "public page was checked after the service left the promoted task revision" >&2
+  exit 1
+fi
+
+# The eventual-consistency allowance is bounded. An exact revision that never completes must
+# still fail closed without reaching the public-page assertion.
+unlink "$TEST_DIR/state/rollout-describe-count"
+: >"$CALLS"
+if ROLLOUT_MODE=never-completes "$HERE/promote-cli-release.sh" "$version" \
+  >"$TEST_DIR/rollout-timeout.out" 2>&1; then
+  echo "an incomplete task revision satisfied CLI promotion" >&2
+  exit 1
+fi
+grep -q 'ECS did not complete promoted task .*sproutos-web:8 within five minutes' \
+  "$TEST_DIR/rollout-timeout.out"
+[ "$(cat "$TEST_DIR/state/rollout-describe-count")" -eq 32 ]
+[ "$(grep -c '^sleep 10$' "$CALLS")" -eq 30 ]
+if grep -q 'https://sproutos.me/download$' "$CALLS"; then
+  echo "public page was checked before the promoted task completed" >&2
   exit 1
 fi
 

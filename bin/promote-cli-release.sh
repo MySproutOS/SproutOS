@@ -262,18 +262,34 @@ if [ "$MODE" = --record-only ]; then
   exit 0
 fi
 
-settled=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
-jq -e --arg task "$task_arn" '
-  .services[0] as $service |
-  $service.taskDefinition == $task and
-  $service.runningCount == $service.desiredCount and
-  ([ $service.deployments[] | select(
-    .status == "PRIMARY" and .taskDefinition == $task and .rolloutState == "COMPLETED"
-  ) ] | length) == 1
-' <<<"$settled" >/dev/null || {
-  echo "ECS became stable without the promoted task completing" >&2
+# ECS's services-stable waiter can return before rolloutState catches up: it only requires one
+# deployment with runningCount == desiredCount. Re-read that eventually consistent field for a
+# bounded five minutes, while keeping the exact task revision captured above as the authority.
+rollout_completed=0
+for attempt in $(seq 1 31); do
+  settled=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+  observed_task=$(jq -r '.services[0].taskDefinition // empty' <<<"$settled")
+  if [ "$observed_task" != "$task_arn" ]; then
+    echo "ECS service moved from promoted task $task_arn to ${observed_task:-no task definition}" >&2
+    exit 1
+  fi
+  if jq -e --arg task "$task_arn" '
+    .services[0] as $service |
+    $service.taskDefinition == $task and
+    $service.runningCount == $service.desiredCount and
+    ([ $service.deployments[] | select(
+      .status == "PRIMARY" and .taskDefinition == $task and .rolloutState == "COMPLETED"
+    ) ] | length) == 1
+  ' <<<"$settled" >/dev/null; then
+    rollout_completed=1
+    break
+  fi
+  [ "$attempt" -eq 31 ] || sleep 10
+done
+if [ "$rollout_completed" != 1 ]; then
+  echo "ECS did not complete promoted task $task_arn within five minutes" >&2
   exit 1
-}
+fi
 
 if [ -n "${CLI_DOWNLOAD_URL:-}" ]; then
   for attempt in $(seq 1 12); do
