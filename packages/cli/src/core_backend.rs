@@ -282,6 +282,7 @@ fn environment_name(value: DeployEnvironment) -> &'static str {
     match value {
         DeployEnvironment::Production => "production",
         DeployEnvironment::Preview => "preview",
+        DeployEnvironment::Development => "preview",
     }
 }
 
@@ -331,5 +332,10 @@ mod tests {
         };
         assert_eq!(paths[0].source, PathBuf::from(r"C:\build\public"));
         assert_eq!(paths[0].prefix, "assets");
+    }
+
+    #[test]
+    fn legacy_development_environment_maps_to_preview() {
+        assert_eq!(environment_name(DeployEnvironment::Development), "preview");
     }
 }

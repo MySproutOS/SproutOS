@@ -313,6 +313,8 @@ pub enum DeployPreset {
 pub enum DeployEnvironment {
     Production,
     Preview,
+    /// Compatibility alias for preview deployments used by earlier Action releases.
+    Development,
 }
 
 #[derive(Debug, Args)]

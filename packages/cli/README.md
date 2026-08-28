@@ -62,3 +62,6 @@ creation, and polling to `sprout-core`. Site and migration sources become determ
 without mutating the source tree. Android accepts one raw unsigned APK (or a directory containing
 exactly one such APK for Marketplace Action compatibility) and uploads its original bytes as
 `application/vnd.android.package-archive`.
+
+The legacy deploy environment `development` remains accepted as an alias for `preview`; both use
+the backend's collision-safe pull-request preview identity rules.
