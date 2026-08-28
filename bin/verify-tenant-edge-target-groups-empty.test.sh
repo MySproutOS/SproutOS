@@ -19,6 +19,13 @@ cat >"$TMP/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
+  'autoscaling describe-auto-scaling-groups')
+    if [ "${ASG_ATTACHED:-}" = 1 ]; then target='["arn:http-blue"]'; else target='[]'; fi
+    jq -nc --argjson target "$target" '{AutoScalingGroups:[
+      {AutoScalingGroupName:"sproutos-router-blue",TargetGroupARNs:$target},
+      {AutoScalingGroupName:"sproutos-router-green",TargetGroupARNs:[]}
+    ]}'
+    ;;
   'elbv2 describe-target-groups')
     if [ "${ATTACHED:-}" = 1 ] && [[ "$*" == *http-blue* ]]; then lbs='["arn:lb"]'; else lbs='[]'; fi
     jq -nc --argjson lbs "$lbs" '{TargetGroups:[{LoadBalancerArns:$lbs}]}'
@@ -38,16 +45,22 @@ plan() {
     change:{actions:["update"],before:{arn:(["arn:http-blue","arn:http-green","arn:https-blue","arn:https-green"][$i]),proxy_protocol_v2:false},after:{proxy_protocol_v2:true}}
   }]}'
 }
+converged_plan() {
+  plan 4 | jq -c '.resource_changes |= map(.change.actions = ["no-op"] | .change.before.proxy_protocol_v2 = true)'
+}
 run_check() {
-  PLAN_JSON=$1 PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan
+  PLAN_JSON=$1 PATH="$TMP/bin:$PATH" NAME_PREFIX=sproutos \
+    "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan
 }
 
 run_check "$(plan 4)"
-for mode in short attached registered; do
+run_check "$(converged_plan)"
+for mode in short attached registered asg-attached; do
   case "$mode" in
     short) command=(run_check "$(plan 3)") ;;
-    attached) command=(env ATTACHED=1 PLAN_JSON="$(plan 4)" PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan) ;;
-    registered) command=(env REGISTERED=1 PLAN_JSON="$(plan 4)" PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan) ;;
+    attached) command=(env ATTACHED=1 NAME_PREFIX=sproutos PLAN_JSON="$(plan 4)" PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan) ;;
+    registered) command=(env REGISTERED=1 NAME_PREFIX=sproutos PLAN_JSON="$(plan 4)" PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan) ;;
+    asg-attached) command=(env ASG_ATTACHED=1 NAME_PREFIX=sproutos PLAN_JSON="$(plan 4)" PATH="$TMP/bin:$PATH" "$ROOT/bin/verify-tenant-edge-target-groups-empty.sh" ignored.tfplan) ;;
   esac
   if "${command[@]}" >"$TMP/$mode.out" 2>&1; then
     echo "target-group verifier accepted $mode state" >&2

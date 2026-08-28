@@ -212,14 +212,17 @@ bin/check-acme-worker-rollout-plan.sh tofu/<saved-plan>.tfplan
 
 It reads the saved plan's output `before` and `after`, accepts only
 `A -> B -> C -> D` or the exact reverse, and compares every non-no-op resource/action to the exact
-allowlist for that adjacent phase. Direct `A -> D` and `D -> A`, an unchanged phase, a target-group
+allowlist for that adjacent phase while requiring its transition-critical changes. Already-converged
+bootstrap entries may be absent; an unexpected address or action may not replace them. Direct
+`A -> D` and `D -> A`, an unchanged phase, a target-group
 change during an ACME gate transition, deletion of the fallback attachment before `C -> D`, and
 replacement of the shared application policy all fail.
 
 The one-time `NONE -> A` foundation allowlist contains all four existing tenant-edge target-group
 PPv2/readiness updates together. Immediately before applying, the wrapper reads their exact ARNs
-from the saved plan and refuses unless every group is both empty and unassociated with a load
-balancer; a mixed or live target-group mutation cannot proceed.
+from the saved plan and refuses unless every group is empty, unassociated with a load balancer, and
+absent from both router Auto Scaling groups' `TargetGroupARNs`; a mixed or live target-group mutation
+cannot proceed.
 
 Do not run `tofu apply` separately for an ACME phase. The rollout wrapper checks the saved plan,
 proves the current live ECS/IAM state implements the `before` phase, applies that exact plan, hands
@@ -231,13 +234,20 @@ IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
   bin/apply-acme-worker-rollout.sh tofu/<saved-plan>.tfplan
 ```
 
+The wrapper first copies the caller-owned plan into a private directory, makes that copy read-only,
+checks only the copy, and records its SHA-256 digest. It rechecks the digest immediately before
+`tofu apply` and applies only the protected copy. Any byte change after plan inspection fails before
+OpenTofu is invoked.
+
 At every phase it requires the web service at desired/running `2`, pending `0`, one completed
 PRIMARY deployment, and exactly two running tasks on the service's exact revision. Phase A requires
 the isolated service at `0/0/0`; phases B-D require `2/2/0` and two exact-revision running tasks.
 Both serving definitions must use the chosen immutable image and the exact roles from the reviewed
-OpenTofu definitions. The platform worker's two gate environment values, the isolated profile, the
-fallback policy attachment, and the live application-policy Route 53 statement must all match the
-phase.
+OpenTofu definitions. The platform worker's two gate environment values, the isolated profile, and
+the fallback policy attachment must all match the phase. The live application policy is normalized
+and compared statement-for-statement with the reviewed OpenTofu policy across `Effect`, `Action`,
+`Resource`, and `Condition`; a `Deny`, wildcard broadening, alternate grant form, or extra permission
+cannot pass as an equivalent Route 53 capability.
 
 ### Wiring the first Sprout CLI release
 

@@ -20,6 +20,7 @@ case "${*: -1}" in
   ecs_acme_worker_task_definition_arn) echo 'arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:base' ;;
   acme_worker_policy_arn) echo 'arn:aws:iam::a:policy/sproutos-acme-worker' ;;
   application_policy_arn) echo 'arn:aws:iam::a:policy/sproutos-application' ;;
+  application_policy_document) printf '%s\n' "$REVIEWED_POLICY" ;;
   *) exit 98 ;;
 esac
 STUB
@@ -87,10 +88,7 @@ case "$1 $2" in
     else echo '{"AttachedPolicies":[]}'; fi
     ;;
   'iam get-policy') echo '{"Policy":{"DefaultVersionId":"v3"}}' ;;
-  'iam get-policy-version')
-    if [ "$FALLBACK" = true ]; then action='["route53:ChangeResourceRecordSets"]'; else action='["s3:GetObject"]'; fi
-    jq -nc --argjson action "$action" '{PolicyVersion:{Document:{Statement:[{Action:$action}]}}}'
-    ;;
+  'iam get-policy-version') jq -nc --argjson document "${LIVE_POLICY:-$REVIEWED_POLICY}" '{PolicyVersion:{Document:$document}}' ;;
   *) echo "unexpected aws call: $*" >&2; exit 98 ;;
 esac
 STUB
@@ -103,7 +101,13 @@ run_phase() {
     C) state='{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":true}'; capacity=1; ownership=1; fallback=true; count=2 ;;
     D) state='{"capacity_enabled":true,"handler_ownership_enabled":true,"fallback_iam_enabled":false}'; capacity=1; ownership=1; fallback=false; count=2 ;;
   esac
+  if [ "$fallback" = true ]; then action=route53:ChangeResourceRecordSets; resource=arn:aws:route53:::hostedzone/Z1
+  else action=s3:GetObject; resource=arn:aws:s3:::bucket/key; fi
+  reviewed=$(jq -nc --arg action "$action" --arg resource "$resource" \
+    '{Version:"2012-10-17",Statement:[{Effect:"Allow",Action:[$action],Resource:$resource}]}')
+  reviewed=${REVIEWED_POLICY_OVERRIDE:-$reviewed}
   ROLLOUT_STATE=$state CAPACITY_ENV=$capacity OWNERSHIP_ENV=$ownership FALLBACK=$fallback ACME_COUNT=$count \
+    REVIEWED_POLICY=$reviewed \
     PATH="$TMP/bin:$PATH" NAME_PREFIX=sproutos IMAGE=ghcr.io/mysproutos/sproutos-web:0123456789ab \
     "$ROOT/bin/verify-acme-worker-rollout.sh" "$phase"
 }
@@ -112,6 +116,10 @@ run_phase A
 run_phase C
 run_phase D
 
+ordered='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["route53:ListResourceRecordSets","route53:ChangeResourceRecordSets"],"Resource":["arn:aws:route53:::hostedzone/Z2","arn:aws:route53:::hostedzone/Z1"],"Condition":{"StringEquals":{"aws:ResourceTag/Environment":["prod","shared"]}}}]}'
+reordered='{"Statement":[{"Resource":["arn:aws:route53:::hostedzone/Z1","arn:aws:route53:::hostedzone/Z2"],"Condition":{"StringEquals":{"aws:ResourceTag/Environment":["shared","prod"]}},"Action":["route53:ChangeResourceRecordSets","route53:ListResourceRecordSets"],"Effect":"Allow"}],"Version":"2012-10-17"}'
+REVIEWED_POLICY_OVERRIDE=$ordered LIVE_POLICY=$reordered run_phase C
+
 for failure in BAD_PENDING BAD_ROLLOUT BAD_IMAGE BAD_ROLE BAD_ENV BAD_TASK_REV; do
   export "$failure=1"
   if run_phase C >"$TMP/$failure.out" 2>&1; then
@@ -119,6 +127,18 @@ for failure in BAD_PENDING BAD_ROLLOUT BAD_IMAGE BAD_ROLE BAD_ENV BAD_TASK_REV; 
     exit 1
   fi
   unset "$failure"
+done
+
+deny='{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":["route53:ChangeResourceRecordSets"],"Resource":"arn:aws:route53:::hostedzone/Z1"}]}'
+wildcard='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["route53:*"],"Resource":"*"}]}'
+equivalent_overgrant='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["route53:ChangeResourceRecordSets","route53:ListHostedZones"],"Resource":"arn:aws:route53:::hostedzone/Z1"}]}'
+for policy in "$deny" "$wildcard" "$equivalent_overgrant"; do
+  export LIVE_POLICY=$policy
+  if run_phase C >"$TMP/policy.out" 2>&1; then
+    echo "live verifier accepted non-reviewed IAM semantics" >&2
+    exit 1
+  fi
+  unset LIVE_POLICY
 done
 
 echo "live ACME rollout verifier rejects unstable counts, deployments, contracts, and tasks"

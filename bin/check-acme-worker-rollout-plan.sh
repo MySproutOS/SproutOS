@@ -45,11 +45,11 @@ case "$transition" in
     ;;
 esac
 
-expected_changes() {
+allowed_changes() {
   case "$transition" in
     "NONE->A")
-      # One-time foundation/bootstrap from the pre-gate state. This is intentionally exact: any
-      # drift or newly coupled edge resource requires a new review instead of hitching a ride.
+      # One-time foundation/bootstrap from the pre-gate state. Permitted resources which already
+      # converged appear as no-op and are absent below; every non-no-op still needs this exact action.
       printf '%s\n' \
         'aws_autoscaling_policy.router_tenant_edge["blue"]|delete' \
         'aws_autoscaling_policy.router_tenant_edge["green"]|delete' \
@@ -109,15 +109,56 @@ expected_changes() {
   esac
 }
 
+critical_changes() {
+  case "$transition" in
+    "NONE->A")
+      printf '%s\n' \
+        'aws_ecs_service.acme_worker|create' \
+        'aws_ecs_task_definition.acme_worker|create' \
+        'aws_ecs_task_definition.web|delete,create'
+      ;;
+    "A->B"|"B->A")
+      printf '%s\n' \
+        'aws_ecs_service.acme_worker|update' \
+        'aws_ecs_task_definition.web|delete,create'
+      ;;
+    "B->C"|"C->B")
+      printf '%s\n' 'aws_ecs_task_definition.web|delete,create'
+      ;;
+    "C->D")
+      printf '%s\n' \
+        'aws_iam_policy.application|update' \
+        'aws_iam_role_policy_attachment.task_acme_worker[0]|delete'
+      ;;
+    "D->C")
+      printf '%s\n' \
+        'aws_iam_policy.application|update' \
+        'aws_iam_role_policy_attachment.task_acme_worker[0]|create'
+      ;;
+  esac
+}
+
 actual_changes=$(jq -r '
   .resource_changes[]
   | select(.change.actions != ["no-op"])
   | "\(.address)|\(.change.actions | join(","))"
 ' <<<"$plan_json" | LC_ALL=C sort)
-allowed_changes=$(expected_changes | LC_ALL=C sort)
-if [ "$actual_changes" != "$allowed_changes" ]; then
-  echo "saved plan contains resources outside the exact $transition allowlist" >&2
-  diff -u <(printf '%s\n' "$allowed_changes") <(printf '%s\n' "$actual_changes") >&2 || true
+permitted_changes=$(allowed_changes | LC_ALL=C sort)
+unexpected_changes=$(comm -13 \
+  <(printf '%s\n' "$permitted_changes") \
+  <(printf '%s\n' "$actual_changes"))
+if [ -n "$unexpected_changes" ]; then
+  echo "saved plan contains resources/actions outside the exact $transition allowlist" >&2
+  printf '%s\n' "$unexpected_changes" >&2
+  exit 1
+fi
+required_changes=$(critical_changes | LC_ALL=C sort)
+missing_changes=$(comm -23 \
+  <(printf '%s\n' "$required_changes") \
+  <(printf '%s\n' "$actual_changes"))
+if [ -n "$missing_changes" ]; then
+  echo "saved plan omits transition-critical $transition changes" >&2
+  printf '%s\n' "$missing_changes" >&2
   exit 1
 fi
 

@@ -41,7 +41,9 @@ capacity='[["aws_ecs_service.acme_worker",["update"]],["aws_ecs_task_definition.
 ownership='[["aws_ecs_task_definition.web",["delete","create"]]]'
 remove_iam='[["aws_iam_policy.application",["update"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["delete"]]]'
 restore_iam='[["aws_iam_policy.application",["update"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["create"]]]'
+bootstrap='[["aws_ecs_service.acme_worker",["create"]],["aws_ecs_task_definition.acme_worker",["create"]],["aws_ecs_task_definition.web",["delete","create"]]]'
 
+test "$(run_check "$(plan NONE A "$bootstrap")")" = 'NONE->A'
 test "$(run_check "$(plan A B "$capacity")")" = 'A->B'
 test "$(run_check "$(plan B C "$ownership")")" = 'B->C'
 test "$(run_check "$(plan C D "$remove_iam")")" = 'C->D'
@@ -64,6 +66,20 @@ if run_check "$(plan A B "$unexpected")" >"$TMP/resource.out" 2>&1; then
   exit 1
 fi
 grep -q 'outside the exact A->B allowlist' "$TMP/resource.out"
+
+wrong_action='[["aws_ecs_service.acme_worker",["create"]],["aws_ecs_task_definition.web",["delete","create"]]]'
+if run_check "$(plan A B "$wrong_action")" >"$TMP/action.out" 2>&1; then
+  echo "plan guard accepted an allowed address with an out-of-phase action" >&2
+  exit 1
+fi
+grep -q 'outside the exact A->B allowlist' "$TMP/action.out"
+
+missing='[["aws_ecs_service.acme_worker",["update"]]]'
+if run_check "$(plan A B "$missing")" >"$TMP/missing.out" 2>&1; then
+  echo "plan guard accepted A->B without the critical web task contract" >&2
+  exit 1
+fi
+grep -q 'omits transition-critical A->B changes' "$TMP/missing.out"
 
 replacement='[["aws_iam_policy.application",["delete","create"]],["aws_iam_role_policy_attachment.task_acme_worker[0]",["delete"]]]'
 if run_check "$(plan C D "$replacement")" >"$TMP/replacement.out" 2>&1; then

@@ -15,7 +15,20 @@ case "$1" in
   /*) PLAN=$1 ;;
   *) PLAN="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" ;;
 esac
-transition=$(TOFU_DIR="$TOFU_DIR" "$HERE/check-acme-worker-rollout-plan.sh" "$PLAN")
+umask 077
+VERIFIED_DIR=$(mktemp -d)
+VERIFIED_PLAN="$VERIFIED_DIR/verified.tfplan"
+cleanup() {
+  unlink "$VERIFIED_PLAN" 2>/dev/null || true
+  rmdir "$VERIFIED_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+cp "$PLAN" "$VERIFIED_PLAN"
+chmod 400 "$VERIFIED_PLAN"
+plan_digest() { shasum -a 256 "$VERIFIED_PLAN" | awk '{print $1}'; }
+verified_digest=$(plan_digest)
+
+transition=$(TOFU_DIR="$TOFU_DIR" "$HERE/check-acme-worker-rollout-plan.sh" "$VERIFIED_PLAN")
 before=${transition%%->*}
 after=${transition##*->}
 
@@ -24,10 +37,14 @@ after=${transition##*->}
 if [ "$before" != NONE ]; then
   TOFU_DIR="$TOFU_DIR" "$HERE/verify-acme-worker-rollout.sh" "$before"
 else
-  TOFU_DIR="$TOFU_DIR" "$HERE/verify-tenant-edge-target-groups-empty.sh" "$PLAN"
+  TOFU_DIR="$TOFU_DIR" "$HERE/verify-tenant-edge-target-groups-empty.sh" "$VERIFIED_PLAN"
 fi
 
-tofu -chdir="$TOFU_DIR" apply "$PLAN"
+if [ "$(plan_digest)" != "$verified_digest" ]; then
+  echo "verified saved-plan bytes changed after review; refusing apply" >&2
+  exit 1
+fi
+tofu -chdir="$TOFU_DIR" apply "$VERIFIED_PLAN"
 
 case "$transition" in
   "NONE->A"|"A->B"|"B->C"|"C->B"|"B->A")

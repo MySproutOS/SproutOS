@@ -39,6 +39,7 @@ web_base=$(tofu -chdir="$TOFU_DIR" output -raw ecs_web_task_definition_arn)
 acme_base=$(tofu -chdir="$TOFU_DIR" output -raw ecs_acme_worker_task_definition_arn)
 acme_policy=$(tofu -chdir="$TOFU_DIR" output -raw acme_worker_policy_arn)
 application_policy=$(tofu -chdir="$TOFU_DIR" output -raw application_policy_arn)
+reviewed_policy=$(tofu -chdir="$TOFU_DIR" output -raw application_policy_document)
 services=$(aws ecs describe-services \
   --cluster "$CLUSTER" --services "$WEB_SERVICE" "$ACME_SERVICE" --output json)
 if [ "$(jq -r '.failures | length' <<<"$services")" != 0 ]; then
@@ -160,13 +161,45 @@ policy_meta=$(aws iam get-policy --policy-arn "$application_policy" --output jso
 policy_version=$(jq -r '.Policy.DefaultVersionId' <<<"$policy_meta")
 policy_document=$(aws iam get-policy-version --policy-arn "$application_policy" \
   --version-id "$policy_version" --output json)
-has_route53=$(jq -e '
-  any(.PolicyVersion.Document.Statement[]?;
-    ((.Action | if type == "array" then . else [.] end) | index("route53:ChangeResourceRecordSets")) != null
-  )
-' <<<"$policy_document" >/dev/null && printf true || printf false)
-if [ "$has_route53" != "$fallback" ]; then
-  echo "live application policy fallback Route 53 permission does not implement phase $PHASE" >&2
+normalize_policy() {
+  jq -Sc '
+    def sorted_array:
+      (if type == "array" then . else [.] end) | sort;
+    def normalize_tree:
+      if type == "object" then
+        to_entries | sort_by(.key) | map(.value |= normalize_tree) | from_entries
+      elif type == "array" then map(normalize_tree) | sort_by(tojson)
+      else .
+      end;
+    if .Version != "2012-10-17" or (.Statement | type) != "array" then error("invalid policy")
+    else {
+      Version: .Version,
+      Statement: ([.Statement[] |
+        if
+          (.Effect == "Allow") and has("Action") and has("Resource") and
+          ((keys - ["Action", "Condition", "Effect", "Resource", "Sid"]) | length) == 0
+        then {
+          Effect: .Effect,
+          Action: (.Action | sorted_array),
+          Resource: (.Resource | sorted_array),
+          Condition: ((.Condition // {}) | normalize_tree)
+        }
+        else error("unsupported or overbroad statement")
+        end
+      ] | sort_by(tojson))
+    } end
+  '
+}
+if ! reviewed_normalized=$(normalize_policy <<<"$reviewed_policy"); then
+  echo "reviewed OpenTofu application policy cannot be normalized safely" >&2
+  exit 1
+fi
+if ! live_normalized=$(jq -c '.PolicyVersion.Document' <<<"$policy_document" | normalize_policy); then
+  echo "live application policy contains unsupported Deny, wildcard, or alternate grant semantics" >&2
+  exit 1
+fi
+if [ "$live_normalized" != "$reviewed_normalized" ]; then
+  echo "live application policy is not semantically identical to the reviewed OpenTofu policy" >&2
   exit 1
 fi
 

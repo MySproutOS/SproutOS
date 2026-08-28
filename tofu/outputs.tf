@@ -133,6 +133,11 @@ output "application_policy_arn" {
   value       = aws_iam_policy.application.arn
 }
 
+output "application_policy_document" {
+  description = "Reviewed application-policy semantics used for exact live IAM verification."
+  value       = aws_iam_policy.application.policy
+}
+
 # The search split's rule, so the cutover moves it with the router. Without it a release leaves
 # every customer's search service on the colour the router just drained, and the router looks fine.
 output "search_rule_arn" {
