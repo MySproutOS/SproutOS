@@ -39,6 +39,7 @@ pub(crate) struct WindowsAppContainerCommand {
     profile: Option<AppContainerProfile>,
     capabilities: SecurityCapabilities,
     staged_workspace: PathBuf,
+    runtime_temporary: PathBuf,
     executable: PathBuf,
     original_workspace: PathBuf,
 }
@@ -58,12 +59,17 @@ impl WindowsAppContainerCommand {
         })?;
         let staged_workspace = temporary.path().join("workspace");
         let plugin_directory = temporary.path().join("plugin");
+        let runtime_temporary = temporary.path().join("temp");
         fs::create_dir(&staged_workspace).map_err(|source| SproutError::Io {
             operation: "create staged Windows workspace",
             source,
         })?;
         fs::create_dir(&plugin_directory).map_err(|source| SproutError::Io {
             operation: "create staged Windows plugin directory",
+            source,
+        })?;
+        fs::create_dir(&runtime_temporary).map_err(|source| SproutError::Io {
+            operation: "create staged Windows runtime temporary directory",
             source,
         })?;
         let staged_executable = plugin_directory.join("plugin.exe");
@@ -96,6 +102,12 @@ impl WindowsAppContainerCommand {
                 rappct::acl::AccessMask(FILE_ALL_ACCESS),
             )
             .map_err(|error| SproutError::IsolationUnavailable(error.to_string()))?;
+            rappct::acl::grant_to_package(
+                rappct::acl::ResourcePath::Directory(runtime_temporary.clone()),
+                &profile.sid,
+                rappct::acl::AccessMask(FILE_ALL_ACCESS),
+            )
+            .map_err(|error| SproutError::IsolationUnavailable(error.to_string()))?;
             let capabilities = SecurityCapabilitiesBuilder::new(&profile.sid)
                 // No capabilities means AppContainer has no network authority.
                 .build()
@@ -119,6 +131,7 @@ impl WindowsAppContainerCommand {
             profile: Some(profile),
             capabilities,
             staged_workspace,
+            runtime_temporary,
             executable: staged_executable,
             original_workspace: workspace.to_owned(),
         })
@@ -136,11 +149,12 @@ impl WindowsAppContainerCommand {
         let capabilities = self.capabilities.clone();
         let executable = self.executable.clone();
         let workspace = self.staged_workspace.clone();
+        let runtime_temporary = self.runtime_temporary.clone();
         tokio::task::spawn_blocking(move || {
             let options = LaunchOptions {
                 exe: executable,
                 cwd: Some(workspace),
-                env: Some(allowlisted_environment()),
+                env: Some(allowlisted_environment(&runtime_temporary)),
                 stdio: StdioConfig::Pipe,
                 suspended: true,
                 join_job: Some(JobLimits {
@@ -198,13 +212,26 @@ impl WindowsAppContainerCommand {
     }
 }
 
-fn allowlisted_environment() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+fn allowlisted_environment(
+    runtime_temporary: &Path,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut environment = vec![("LANG".into(), "C".into()), ("LC_ALL".into(), "C".into())];
-    // Windows uses SystemRoot to locate core OS components. Preserve that single runtime value;
-    // user profile, credential, proxy, PATH, and temporary-directory variables are omitted.
-    if let Some(system_root) = std::env::var_os("SystemRoot") {
-        environment.push(("SystemRoot".into(), system_root));
+    // CreateProcess and the Windows runtime require this narrow system environment even when the
+    // child is launched by absolute path. TEMP/TMP point inside the AppContainer ACL tree below;
+    // no user profile, credential, proxy, or PATH value crosses the boundary.
+    for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT"] {
+        if let Some(value) = std::env::var_os(name) {
+            environment.push((name.into(), value));
+        }
     }
+    environment.push(("TEMP".into(), runtime_temporary.as_os_str().to_owned()));
+    environment.push(("TMP".into(), runtime_temporary.as_os_str().to_owned()));
+    environment.sort_by(|left, right| {
+        left.0
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .cmp(&right.0.to_string_lossy().to_ascii_lowercase())
+    });
     environment
 }
 

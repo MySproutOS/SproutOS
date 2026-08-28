@@ -608,6 +608,8 @@ mod tests {
         );
     }
 
+    // macOS rejects these byte sequences at file creation; Linux accepts them and exercises the
+    // fail-closed snapshot path without relying on lossy path conversion.
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn non_utf8_workspace_component_is_rejected_without_lossy_collisions() {

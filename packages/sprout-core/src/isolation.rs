@@ -184,6 +184,10 @@ fn linux_command(
         "--die-with-parent",
         "--new-session",
         "--unshare-all",
+        // Hosted kernels can permit an unprivileged user namespace while forbidding loopback
+        // configuration in a new network namespace. Share it here and deny both socket creation
+        // primitives in the sealed child seccomp policy; no network descriptor is inherited.
+        "--share-net",
         "--unshare-user",
         "--unshare-pid",
         "--cap-drop",
@@ -354,6 +358,8 @@ fn plugin_seccomp_program() -> Vec<u8> {
         libc::SYS_clone3,
         libc::SYS_unshare,
         libc::SYS_setns,
+        libc::SYS_socket,
+        libc::SYS_socketpair,
     ] {
         instructions.push(Instruction {
             code: BPF_JMP_JEQ_K,
@@ -540,6 +546,7 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(args.iter().any(|arg| arg == "--unshare-all"));
+        assert!(args.iter().any(|arg| arg == "--share-net"));
         assert!(args.iter().any(|arg| arg == "--unshare-user"));
         assert!(args.iter().any(|arg| arg == "--unshare-pid"));
         assert!(!args.iter().any(|arg| arg == "--disable-userns"));
@@ -565,7 +572,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn plugin_seccomp_filter_is_sealed_and_denies_namespace_syscalls() {
+    fn plugin_seccomp_filter_is_sealed_and_denies_namespace_and_network_syscalls() {
         let descriptor = plugin_seccomp_filter().unwrap();
         let seals = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GET_SEALS) };
         assert_eq!(
@@ -591,6 +598,8 @@ mod tests {
             libc::SYS_clone3,
             libc::SYS_unshare,
             libc::SYS_setns,
+            libc::SYS_socket,
+            libc::SYS_socketpair,
         ] {
             assert!(bytes.chunks_exact(8).any(|instruction| {
                 u16::from_ne_bytes([instruction[0], instruction[1]]) == 0x15

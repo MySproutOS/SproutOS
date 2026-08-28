@@ -123,10 +123,26 @@ impl ProvenanceVerifier for CosignProvenanceVerifier {
         &self,
         reference: &Reference,
         root_digest: &Sha256Digest,
-        _selected_manifest_digest: &Sha256Digest,
-        _manifest: &OciImageManifest,
+        selected_manifest_digest: &Sha256Digest,
+        manifest: &OciImageManifest,
         expected: &ArtifactProvenance,
     ) -> Result<()> {
+        // The root index is the signed and attested subject. Its platform descriptor pins this
+        // selected manifest, and oci-client has already checked the downloaded raw bytes against
+        // that descriptor digest. Require the publisher's canonical manifest encoding here too:
+        // this keeps the exact platform object in the provenance boundary instead of accepting a
+        // parsed structure while silently ignoring the digest passed to this verifier.
+        let encoded_manifest = encode_published_manifest(manifest).map_err(|error| {
+            SproutError::ProvenanceRejected(format!(
+                "could not encode selected platform manifest: {error}"
+            ))
+        })?;
+        let encoded_digest = Sha256Digest::from_bytes(&encoded_manifest);
+        if &encoded_digest != selected_manifest_digest {
+            return Err(SproutError::ProvenanceRejected(format!(
+                "selected platform manifest is not the canonical object at {selected_manifest_digest}"
+            )));
+        }
         let identity = format!(
             "https://github.com/{}/{}@{}",
             expected.repository, expected.workflow, expected.git_ref
@@ -181,6 +197,39 @@ impl ProvenanceVerifier for CosignProvenanceVerifier {
         .await?;
         Ok(())
     }
+}
+
+fn encode_published_manifest(manifest: &OciImageManifest) -> serde_json::Result<Vec<u8>> {
+    // Deployment-Templates deliberately emits this stable field order. oci-client verifies the
+    // raw response digest before parsing; reconstructing that one allowed encoding makes the
+    // verifier independently consume both the selected digest and its manifest structure.
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PublishedManifest<'a> {
+        schema_version: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        media_type: &'a Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        artifact_type: &'a Option<String>,
+        config: &'a oci_client::manifest::OciDescriptor,
+        layers: &'a [oci_client::manifest::OciDescriptor],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: &'a Option<std::collections::BTreeMap<String, String>>,
+    }
+
+    if manifest.subject.is_some() {
+        return Err(serde::ser::Error::custom(
+            "published platform manifests must not have a subject",
+        ));
+    }
+    serde_json::to_vec(&PublishedManifest {
+        schema_version: manifest.schema_version,
+        media_type: &manifest.media_type,
+        artifact_type: &manifest.artifact_type,
+        config: &manifest.config,
+        layers: &manifest.layers,
+        annotations: &manifest.annotations,
+    })
 }
 
 async fn run_verifier(
@@ -308,6 +357,10 @@ mod tests {
         .unwrap()
     }
 
+    fn manifest_digest() -> Sha256Digest {
+        Sha256Digest::from_bytes(&encode_published_manifest(&manifest()).unwrap())
+    }
+
     fn github_cli(directory: &std::path::Path) -> PathBuf {
         let executable = directory.join("gh");
         fs::write(&executable, "#!/bin/sh\nprintf '[{}]'").unwrap();
@@ -335,6 +388,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
             .unwrap();
@@ -342,7 +396,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("c".repeat(40)),
             )
@@ -378,6 +432,7 @@ mod tests {
             Duration::from_secs(2),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
             .unwrap();
@@ -386,7 +441,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates(signed_commit),
             )
@@ -397,7 +452,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("d".repeat(40)),
             )
@@ -426,6 +481,7 @@ mod tests {
         let verifier =
             CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
             .parse()
             .unwrap();
@@ -433,7 +489,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("c".repeat(40)),
             )
@@ -460,6 +516,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_a_selected_manifest_digest_that_does_not_match_its_bytes() {
+        let directory = tempdir().unwrap();
+        let cosign = directory.path().join("cosign");
+        let marker = directory.path().join("cosign-ran");
+        fs::write(
+            &cosign,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&cosign, fs::Permissions::from_mode(0o700)).unwrap();
+        let verifier = CosignProvenanceVerifier::for_test(
+            cosign,
+            github_cli(directory.path()),
+            Duration::from_secs(2),
+        );
+        let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let wrong_selected: Sha256Digest = format!("sha256:{}", "d".repeat(64)).parse().unwrap();
+        let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
+            .parse()
+            .unwrap();
+
+        let error = verifier
+            .verify(
+                &reference,
+                &digest,
+                &wrong_selected,
+                &manifest(),
+                &ArtifactProvenance::deployment_templates("c".repeat(40)),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("selected platform manifest"));
+        assert!(!marker.exists(), "Cosign ran before manifest validation");
+    }
+
+    #[tokio::test]
     async fn rejects_when_github_returns_no_verified_attestation() {
         let directory = tempdir().unwrap();
         let cosign = directory.path().join("cosign");
@@ -471,6 +563,7 @@ mod tests {
         let verifier =
             CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
             .parse()
             .unwrap();
@@ -478,7 +571,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("c".repeat(40)),
             )
@@ -505,6 +598,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
             .unwrap();
@@ -512,7 +606,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("c".repeat(40)),
             )
@@ -533,6 +627,7 @@ mod tests {
             Duration::from_millis(50),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
+        let selected_digest = manifest_digest();
         let reference: Reference = "ghcr.io/mysproutos/template-umami@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
             .parse()
             .unwrap();
@@ -540,7 +635,7 @@ mod tests {
             .verify(
                 &reference,
                 &digest,
-                &digest,
+                &selected_digest,
                 &manifest(),
                 &ArtifactProvenance::deployment_templates("c".repeat(40)),
             )
