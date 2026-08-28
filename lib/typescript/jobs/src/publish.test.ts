@@ -16,7 +16,8 @@ import {
 } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { ChangeResourceRecordSetsCommand, type Route53Client } from "@aws-sdk/client-route-53"
 import { createHash } from "node:crypto"
-import { readRoute } from "@lib/lambda"
+import { publishQueue, readQueue, readRoute } from "@lib/lambda"
+import { encodeShortId } from "@lib/services"
 import { db } from "@sproutos/db"
 import { Redis } from "ioredis"
 import { sql } from "kysely"
@@ -110,10 +111,11 @@ function zip(content: string, path = "index.mjs"): Buffer {
 const HANDLER = `export const handler = async () => ({ statusCode: 200, body: process.env.GREETING ?? "" })\n`
 
 const created: {
-  table: "deployment" | "project" | "repository" | "organization" | "user"
+  table: "backendService" | "deployment" | "project" | "repository" | "organization" | "user"
   id: string
 }[] = []
 const hostnames: string[] = []
+const queueResources: string[] = []
 
 async function seed(
   overrides: {
@@ -224,6 +226,7 @@ afterAll(async () => {
   if (!reachable) return
 
   for (const hostname of hostnames) await valkey.del(`route:${hostname}`)
+  for (const resource of queueResources) await valkey.del(`queue:${resource}`)
   for (const row of [...created].reverse()) {
     await db.deleteFrom(row.table).where("id", "=", row.id).execute()
   }
@@ -236,6 +239,33 @@ afterAll(async () => {
 describe.runIf(reachable)("publishing a release", () => {
   it("publishes the function, then the route, and records both", async () => {
     const { deploymentId, projectId, organizationId } = await seed()
+    const region = await db
+      .selectFrom("region")
+      .select("id")
+      .where("isActive", "=", true)
+      .executeTakeFirstOrThrow()
+    const backendServiceId = v7()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: backendServiceId,
+        organizationId,
+        projectId,
+        regionId: region.id,
+        kind: "valkey",
+        name: "Celery queue",
+        status: "active",
+      })
+      .execute()
+    created.push({ table: "backendService", id: backendServiceId })
+    const queueResource = encodeShortId(backendServiceId)
+    queueResources.push(queueResource)
+    await publishQueue(valkey, queueResource, {
+      uri: "rediss://tenant:one-time-secret@queue.example.test:6379/0",
+      backendServiceId,
+      projectId: null,
+      organizationId,
+    })
 
     await s3.send(
       new PutObjectCommand({
@@ -264,6 +294,16 @@ describe.runIf(reachable)("publishing a release", () => {
     // The alias, not a bare version: the router invokes whatever `live` points at, so a rollback
     // takes effect without touching Valkey at all.
     expect(route?.arn).toContain(":live")
+
+    // The real queue binding carries the same validated production alias as HTTP. The credential
+    // is preserved byte-for-byte; deployment publication cannot recover or replace it.
+    expect(await readQueue(valkey, queueResource)).toEqual({
+      uri: "rediss://tenant:one-time-secret@queue.example.test:6379/0",
+      backendServiceId,
+      projectId,
+      organizationId,
+      functionArn: route?.arn,
+    })
 
     expect(row.url).toBe(`https://${row.hostname}`)
 

@@ -10,7 +10,7 @@ import {
   valkeyKeyPrefix,
 } from "@lib/services"
 import { srnFor } from "@lib/srn"
-import { publishQueue } from "@lib/lambda"
+import { publishQueue, readRoute, withdrawQueue } from "@lib/lambda"
 import { encodeShortId } from "@lib/services"
 import { Redis } from "ioredis"
 import { db } from "@sproutos/db"
@@ -405,7 +405,12 @@ const app = new Hono()
           reports rather than pretending about. Rotating the credential writes it again.
         */
         if (body.kind === "valkey") {
-          await captureQueueSecret(organization.id, backendServiceId, result.connectionUri)
+          await captureQueueSecret(
+            organization.id,
+            backendServiceId,
+            body.projectId ?? null,
+            result.connectionUri,
+          )
         }
 
         // The URI exists exactly once, here. If it is not written into the project's environment
@@ -512,7 +517,12 @@ const app = new Hono()
           URI stops working".
         */
         if (service.kind === "valkey") {
-          await captureQueueSecret(c.var.organization.id, serviceId, connectionUri)
+          await captureQueueSecret(
+            c.var.organization.id,
+            serviceId,
+            service.projectId,
+            connectionUri,
+          )
         }
 
         await injectConnectionUri({
@@ -559,6 +569,16 @@ const app = new Hono()
       const { serviceId } = c.req.valid("param")
       const service = await owned(c.var.organization.id, serviceId)
       if (service === undefined) return throwNotFound(c, "Service not found")
+
+      /*
+        Revoke the router's copy before destroying the provider resource.
+
+        A queue binding contains the one-time tenant URI. Leaving it behind after deletion is both
+        a retained credential and a route a later wake can still ask the dispatcher to use. This is
+        deliberately fail-closed: if platform Valkey is unavailable, the delete is retried instead
+        of reporting success while that credential-bearing copy remains live.
+      */
+      if (service.kind === "valkey") await revokeQueueBinding(serviceId)
 
       await driverFor(service.kind).destroy(serviceId)
 
@@ -665,16 +685,19 @@ export default app
 async function captureQueueSecret(
   organizationId: string,
   backendServiceId: string,
+  projectId: string | null,
   connectionUri: string,
 ): Promise<void> {
   const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
   try {
+    const target = projectId === null ? undefined : await liveQueueTarget(projectId, valkey)
     // Keyed by the short id the proxy reports, which is what the tenant's key prefix carries.
     await publishQueue(valkey, encodeShortId(backendServiceId), {
       uri: connectionUri,
       backendServiceId,
-      projectId: null,
+      projectId: target === undefined ? null : projectId,
       organizationId,
+      ...(target === undefined ? {} : { functionArn: target }),
     })
 
     /*
@@ -697,6 +720,53 @@ async function captureQueueSecret(
         cause: cause instanceof Error ? cause.message : String(cause),
       }),
     )
+  } finally {
+    valkey.disconnect()
+  }
+}
+
+/**
+ * The live alias only when all three sources of truth agree.
+ *
+ * `project.live_deployment_id` is durable, `deployment.status` says publication completed, and the
+ * route is the exact alias ARN the Rust router already trusts. Reading only one of them binds a
+ * queue during a failed deployment or to a stale route left by an interrupted rollback.
+ */
+async function liveQueueTarget(projectId: string, valkey: Redis): Promise<string | undefined> {
+  const live = await db
+    .selectFrom("project")
+    .innerJoin("deployment", "deployment.id", "project.liveDeploymentId")
+    .select([
+      "deployment.id as deploymentId",
+      "deployment.hostname as hostname",
+      "deployment.kind as kind",
+      "deployment.preset as preset",
+      "deployment.status as status",
+    ])
+    .where("project.id", "=", projectId)
+    .where("project.deletedAt", "is", null)
+    .executeTakeFirst()
+
+  if (
+    live === undefined ||
+    live.kind !== "production" ||
+    live.preset === "static" ||
+    live.status !== "ready" ||
+    live.hostname === null
+  ) {
+    return undefined
+  }
+
+  const route = await readRoute(valkey, live.hostname)
+  return route?.projectId === projectId && route.deploymentId === live.deploymentId
+    ? route.arn
+    : undefined
+}
+
+async function revokeQueueBinding(backendServiceId: string): Promise<void> {
+  const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023")
+  try {
+    await withdrawQueue(valkey, encodeShortId(backendServiceId))
   } finally {
     valkey.disconnect()
   }

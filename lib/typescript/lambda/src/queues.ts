@@ -32,6 +32,11 @@ export type QueueBinding = {
   functionArn?: string
 }
 
+export type QueueTarget = {
+  projectId: string
+  functionArn: string
+}
+
 /**
  * Keyed by the resource's **short id**, not its UUID.
  *
@@ -71,6 +76,64 @@ export async function readQueue(
   } catch {
     return undefined
   }
+}
+
+/*
+ * Move only the executable half of an existing queue binding.
+ *
+ * The URI is a credential and exists nowhere else in recoverable form. A deployment must therefore
+ * update the binding in place rather than rebuilding it from Postgres. The compare-and-set is one
+ * Valkey script because a credential rotation may replace the binding between our read and write;
+ * a plain GET followed by SET would put the revoked URI back and silently undo the rotation.
+ *
+ * A missing binding stays missing. In particular, a deployment racing a service deletion must not
+ * resurrect the credential after teardown withdrew it.
+ */
+const MOVE_TARGET = `
+local current = redis.call('GET', KEYS[1])
+if not current then return 0 end
+if current ~= ARGV[1] then return -1 end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`
+
+export async function setQueueTarget(
+  valkey: Redis,
+  resourceShortId: string,
+  target: QueueTarget | null,
+): Promise<boolean> {
+  const bindingKey = key(resourceShortId)
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const raw = await valkey.get(bindingKey)
+    if (raw === null) return false
+
+    let current: QueueBinding
+    try {
+      current = JSON.parse(raw) as QueueBinding
+    } catch {
+      throw new Error(`Queue binding ${resourceShortId} is unreadable`)
+    }
+    if (
+      typeof current.uri !== "string" ||
+      typeof current.backendServiceId !== "string" ||
+      typeof current.organizationId !== "string"
+    ) {
+      throw new Error(`Queue binding ${resourceShortId} is incomplete`)
+    }
+
+    const next: QueueBinding =
+      target === null
+        ? { ...current, projectId: null, functionArn: undefined }
+        : { ...current, projectId: target.projectId, functionArn: target.functionArn }
+    // JSON.stringify omits the explicit `undefined`, which removes a stale function ARN while
+    // keeping the one-time URI and the resource identity intact.
+    const moved = Number(await valkey.eval(MOVE_TARGET, 1, bindingKey, raw, JSON.stringify(next)))
+    if (moved === 1) return true
+    if (moved === 0) return false
+  }
+
+  throw new Error(`Queue binding ${resourceShortId} kept changing while its target was updated`)
 }
 
 /** Stop the router watching a queue. Called when the service is destroyed. */

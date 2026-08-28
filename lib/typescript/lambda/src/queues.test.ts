@@ -1,0 +1,68 @@
+import { Redis } from "ioredis"
+import { afterAll, describe, expect, it } from "vitest"
+import { publishQueue, readQueue, setQueueTarget, withdrawQueue } from "./queues"
+
+const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023", {
+  lazyConnect: true,
+  maxRetriesPerRequest: 0,
+})
+const reachable = await (async () => {
+  try {
+    await valkey.connect()
+    return (await valkey.ping()) === "PONG"
+  } catch {
+    return false
+  }
+})()
+
+afterAll(() => {
+  valkey.disconnect()
+})
+
+describe.runIf(reachable)("queue binding lifecycle", () => {
+  it("moves the function target without changing the one-time credential", async () => {
+    const resource = `queue-test-${crypto.randomUUID()}`
+    const original = {
+      uri: "rediss://tenant:one-time-secret@queue.example.test:6379/0",
+      backendServiceId: crypto.randomUUID(),
+      projectId: null,
+      organizationId: crypto.randomUUID(),
+    }
+    await publishQueue(valkey, resource, original)
+
+    expect(
+      await setQueueTarget(valkey, resource, {
+        projectId: "project-one",
+        functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
+      }),
+    ).toBe(true)
+    expect(await readQueue(valkey, resource)).toEqual({
+      ...original,
+      projectId: "project-one",
+      functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
+    })
+
+    expect(await setQueueTarget(valkey, resource, null)).toBe(true)
+    expect(await readQueue(valkey, resource)).toEqual(original)
+    await withdrawQueue(valkey, resource)
+  })
+
+  it("never resurrects a binding teardown already withdrew", async () => {
+    const resource = `queue-test-${crypto.randomUUID()}`
+    await publishQueue(valkey, resource, {
+      uri: "rediss://tenant:secret@queue.example.test:6379/0",
+      backendServiceId: crypto.randomUUID(),
+      projectId: null,
+      organizationId: crypto.randomUUID(),
+    })
+    await withdrawQueue(valkey, resource)
+
+    expect(
+      await setQueueTarget(valkey, resource, {
+        projectId: "deleted-project",
+        functionArn: "arn:deleted",
+      }),
+    ).toBe(false)
+    expect(await readQueue(valkey, resource)).toBeUndefined()
+  })
+})

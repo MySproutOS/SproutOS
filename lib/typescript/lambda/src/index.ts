@@ -22,7 +22,14 @@ export {
   withdrawRoute,
 } from "./routes"
 export { deleteFunction, tearDownDeployment } from "./teardown"
-export { publishQueue, type QueueBinding, readQueue, withdrawQueue } from "./queues"
+export {
+  publishQueue,
+  type QueueBinding,
+  type QueueTarget,
+  readQueue,
+  setQueueTarget,
+  withdrawQueue,
+} from "./queues"
 export { type DeploymentSpec, hostLabel, type ProjectSpec } from "./hosts"
 
 export { mintProjectToken } from "./project-token"

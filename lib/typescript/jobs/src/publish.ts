@@ -17,9 +17,11 @@ import {
   runMigration,
   publishLiveDeployment,
   publishRoute,
+  setQueueTarget,
   withdrawRoute,
   type Route,
 } from "@lib/lambda"
+import { encodeShortId } from "@lib/services"
 import type { DB } from "@sproutos/db"
 import { Redis } from "ioredis"
 import type { Kysely } from "kysely"
@@ -172,6 +174,36 @@ export type PublishOptions = {
     tenantZoneId: string
     distributionDomain: string
     keyValueStoreArn: string
+  }
+}
+
+/**
+ * Point every live Valkey service attached to a project at its validated production alias.
+ *
+ * The binding holds a one-time credential, so this updates it in place. `setQueueTarget` is a
+ * compare-and-set and refuses to recreate a binding a concurrent service deletion withdrew.
+ */
+export async function syncProjectQueueTargets(
+  db: Kysely<DB>,
+  valkey: Redis,
+  projectId: string,
+  functionArn: string | null,
+): Promise<void> {
+  const queues = await db
+    .selectFrom("backendService")
+    .select("id")
+    .where("projectId", "=", projectId)
+    .where("kind", "=", "valkey")
+    .where("status", "=", "active")
+    .where("deletedAt", "is", null)
+    .execute()
+
+  for (const queue of queues) {
+    await setQueueTarget(
+      valkey,
+      encodeShortId(queue.id),
+      functionArn === null ? null : { projectId, functionArn },
+    )
   }
 }
 
@@ -430,6 +462,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
                 .set({ liveDeploymentId: previousLive.id, updatedAt: new Date() })
                 .where("id", "=", project.id)
                 .execute()
+              await syncProjectQueueTargets(db, clients.valkey, project.id, aliasArn)
               return
             }
 
@@ -449,6 +482,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
               .set({ liveDeploymentId: null, updatedAt: new Date() })
               .where("id", "=", project.id)
               .execute()
+            await syncProjectQueueTargets(db, clients.valkey, project.id, null)
           }
           compensate = restoreServerlessTraffic
 
@@ -839,6 +873,17 @@ export function publishRelease(options?: PublishOptions): JobHandler {
             hostname,
             lambdaVersion: published.version,
           })
+
+          /*
+            A queue becomes executable only after the production function and route are valid.
+
+            Preview aliases must never receive customer background work, and a failed publication
+            must leave the prior live alias in place. The queue binding uses that same alias ARN,
+            so a rollback and HTTP traffic cannot disagree about which code is live.
+          */
+          if (deployment.kind === "production") {
+            await syncProjectQueueTargets(db, clients.valkey, project.id, published.aliasArn)
+          }
 
           /*
       And durably, on the project.
