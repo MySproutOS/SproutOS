@@ -124,6 +124,18 @@ export RELEASE_DIR="$TEST_DIR/release" STATE="$TEST_DIR/state" CAPTURE="$TEST_DI
 export CALLS="$TEST_DIR/calls" GITHUB_REPOSITORY=MySproutOS/SproutOS NAME_PREFIX=sproutos
 export AWS_ACCOUNT_ID=123 AWS_REGION=us-east-1 CLI_DOWNLOAD_URL=https://sproutos.me/download
 
+# The shell refuses to select a task definition; IAM must enforce the same boundary if the workflow
+# is edited or compromised. Evidence records are append-only at IAM, not just by convention.
+promotion_policy=$(sed -n '/resource "aws_iam_role_policy" "github_actions_cli_release_promotion"/,$p' \
+  "$HERE/../tofu/oidc.tf")
+grep -q '"ssm:Overwrite" = "false"' <<<"$promotion_policy"
+grep -q '"ssm:Overwrite" = "true"' <<<"$promotion_policy"
+grep -q '"ecs:task-definition" = "true"' <<<"$promotion_policy"
+if grep -q 'ecs:RegisterTaskDefinition\|iam:PassRole' <<<"$promotion_policy"; then
+  echo "CLI promotion role can deploy a task definition" >&2
+  exit 1
+fi
+
 "$HERE/promote-cli-release.sh" "$version" --record-only
 
 [ "$(cat "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION")" = "$version" ]
