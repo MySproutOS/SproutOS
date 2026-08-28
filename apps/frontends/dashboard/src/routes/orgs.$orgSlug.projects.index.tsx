@@ -2,6 +2,7 @@ import { Link, createFileRoute } from "@tanstack/react-router"
 import { SearchIcon } from "lucide-react"
 import { useState } from "react"
 import { NewProjectDialog } from "@frontends/dashboard/components/projects/new-project-dialog"
+import { groupProjects } from "@frontends/dashboard/components/projects/project-hierarchy"
 import { Button } from "@ui/base/ui/button"
 import { Input } from "@ui/base/ui/input"
 import {
@@ -26,14 +27,7 @@ function ProjectsList() {
   const [filter, setFilter] = useState("")
 
   const needle = filter.trim().toLowerCase()
-  const projects =
-    needle === ""
-      ? data
-      : data?.filter(
-          (project) =>
-            project.name.toLowerCase().includes(needle) ||
-            project.repo.toLowerCase().includes(needle),
-        )
+  const sections = data === undefined ? undefined : groupProjects(data, filter)
 
   return (
     <>
@@ -66,7 +60,7 @@ function ProjectsList() {
           />
         )}
 
-        {projects !== undefined && projects.length === 0 && needle === "" && (
+        {sections !== undefined && sections.length === 0 && needle === "" && (
           <EmptyState className="my-6">
             <EmptyStateIcon />
             <EmptyStateTitle>Nothing here yet</EmptyStateTitle>
@@ -77,15 +71,46 @@ function ProjectsList() {
           </EmptyState>
         )}
 
-        {projects !== undefined && projects.length === 0 && needle !== "" && (
+        {sections !== undefined && sections.length === 0 && needle !== "" && (
           <p className="py-8 text-center text-[13px] text-muted-foreground">
             No project matches “{filter}”.
           </p>
         )}
 
-        {projects?.map((project) => (
-          <ProjectRow key={project.id} orgSlug={orgSlug} project={project} />
-        ))}
+        {sections?.map((section) =>
+          section.header === null ? (
+            <section
+              key={section.key}
+              aria-labelledby="ungrouped-projects"
+              className="flex flex-col gap-2"
+            >
+              <h2
+                id="ungrouped-projects"
+                className="px-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase"
+              >
+                Ungrouped projects
+              </h2>
+              {section.children.map((project) => (
+                <ProjectRow key={project.id} orgSlug={orgSlug} project={project} />
+              ))}
+            </section>
+          ) : (
+            <section
+              key={section.key}
+              aria-label={`${section.header.name} group`}
+              className="flex flex-col gap-2"
+            >
+              <ProjectRow orgSlug={orgSlug} project={section.header} />
+              {section.children.length === 0 ? null : (
+                <div className="ml-4 flex flex-col gap-2 border-l border-border pl-4">
+                  {section.children.map((project) => (
+                    <ProjectRow key={project.id} orgSlug={orgSlug} project={project} />
+                  ))}
+                </div>
+              )}
+            </section>
+          ),
+        )}
       </PageBody>
     </>
   )
