@@ -270,6 +270,7 @@ const PROJECT_FIELDS = [
   "storeListingId",
   "agentCredentialId",
   "isGroup",
+  "servingMode",
   "parentProjectId",
   "createdByOauthGrantId",
   "primaryChildProjectId",

@@ -145,6 +145,7 @@ fn normalize_dns_host(host: &str) -> Option<String> {
 /// validation can run before any certificate exists.
 pub async fn start_from_env(
     valkey: ConnectionManager,
+    readiness: Arc<crate::edge_readiness::EdgeReadiness>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     let listen = match std::env::var("ROUTER_HTTP_EDGE_LISTEN") {
         Ok(listen) => listen,
@@ -155,9 +156,17 @@ pub async fn start_from_env(
         .await
         .with_context(|| format!("could not bind {listen} for the HTTP edge"))?;
     let app = app(Arc::new(valkey));
+    let proxy_protocol = crate::proxy_protocol::required_from_env()?;
+    let ready = readiness.http_guard();
     tracing::info!(%listen, "opt-in HTTP edge listening");
     Ok(Some(tokio::spawn(async move {
-        if let Err(cause) = axum::serve(listener, app).await {
+        let _ready = ready;
+        if let Err(cause) = axum::serve(
+            crate::proxy_protocol::ProxyProtocolListener::new(listener, proxy_protocol),
+            app,
+        )
+        .await
+        {
             tracing::error!(%cause, "HTTP edge stopped serving");
         }
     })))
