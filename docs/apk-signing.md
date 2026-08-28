@@ -1,174 +1,114 @@
-# The on-premises APK signer
+# The on-premises Android signer
 
-SproutOS is developer of record for every Android app it publishes, so one signing key is the
-identity of all of them at once. That key is not on the platform. It is on a dedicated machine
-somebody else operates, and this document is the contract between the two.
+`services/android-signer` is the outbound-only signer for direct Android distribution. It polls the
+public API, downloads one raw unsigned APK, signs it with that app's own key, and returns only
+verified release metadata. It never accepts an inbound connection and it has no AWS credential.
 
-The machine is behind a firewall: it can reach out, nothing can reach in. So SproutOS cannot push
-work to it. It polls, which also means it can be offline for a day without anything being lost — a
-build queued while it was down is simply signed late.
+The old queue treated the upload as a ZIP and one signing identity as the identity of every app.
+Neither is true now. Android uploads use `application/vnd.android.package-archive`, and every
+`android_app` gets an independently generated signing key.
 
-## The three calls
+## Trust and storage
 
-All three are `POST`, all three carry `Authorization: Bearer $APK_SIGNER_TOKEN`, and all three are
-on the public API host (`api.sproutos.me`), not the `/internal` prefix — that prefix means "inside
-the VPC", and this caller is not.
+The machine has one RSA master identity in a durable local file. `init-master` creates it with mode
+`0600` and refuses to overwrite an existing file. Back it up offline: losing it makes every stored
+app key unusable, so no installed app can be upgraded.
 
-### `POST /v1/apk-signing/claim`
+For each app, the signer:
 
-```json
-{ "signer_id": "signer-01" }
-```
+1. generates a 3072-bit RSA signing key in a restricted temporary directory with `keytool`;
+2. creates a random per-app AES-256 data key;
+3. encrypts the PKCS#12 keystore and its independent password with AES-GCM;
+4. wraps the data key to the on-prem master identity with RSA-OAEP-SHA256; and
+5. uploads only that authenticated envelope through a versioned, SSE-KMS presigned S3 URL.
 
-`204` means nothing to sign — the common answer. `200` is a job:
+AWS receives neither the master identity nor a plaintext app key. The signer uses a durable local
+checkpoint before upload, so restarting a `provision_key` job reuses the same identity instead of
+silently changing an app's certificate.
 
-```json
-{
-  "job_id": "01a0…",
-  "project_id": "01a0…",
-  "deployment_id": "01a0…",
-  "download_url": "https://…",
-  "unsigned_digest": "<sha256 of the raw APK>",
-  "upload_url": "https://…",
-  "signed_key": "signed/<project>/<deployment>.apk"
-}
-```
+For stronger physical protection, mount `APK_SIGNER_MASTER_IDENTITY_PATH` from an offline-backed,
+encrypted volume. A PKCS#11/HSM adapter is not implemented; do not describe a normal file as HSM
+backed.
 
-Both URLs are pre-signed and valid for an hour. For the `android` preset, `download_url` is exactly
-one raw unsigned APK with `application/vnd.android.package-archive`; a ZIP, directory, or multiple
-APK output is rejected before a signing job exists. **Verify `unsigned_digest` against the raw APK
-before signing anything** — that digest is the only thing tying the bytes to the release they claim
-to be.
+## Runtime configuration
 
-### `POST /v1/apk-signing/complete`
+| Variable | Meaning |
+| --- | --- |
+| `APK_SIGNER_API_URL` | Public control-plane origin; HTTPS required except loopback |
+| `APK_SIGNER_TOKEN` | Bearer credential; required and never accepted on argv |
+| `APK_SIGNER_ID` | Stable machine label used for queue ownership |
+| `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity |
+| `APK_SIGNER_STATE_DIR` | Durable mode-`0700` crash-recovery journal |
+| `APK_SIGNER_ANDROID_SDK_ROOT` | SDK root containing `build-tools/<version>` |
+| `APK_SIGNER_KEYTOOL` | Optional explicit `keytool` path |
+| `APK_SIGNER_AAPT2` | Optional explicit `aapt2` path |
+| `APK_SIGNER_ZIPALIGN` | Optional explicit `zipalign` path |
+| `APK_SIGNER_APKSIGNER` | Optional explicit `apksigner` path |
+| `APK_SIGNER_POLL_SECONDS` | Idle poll interval, default 30 |
+| `APK_SIGNER_MAX_APK_BYTES` | Hard download ceiling, default 512 MiB |
 
-```json
-{
-  "job_id": "01a0…",
-  "signer_id": "signer-01",
-  "signed_key": "signed/…/….apk",
-  "signed_digest": "<sha256 of what you uploaded>"
-}
-```
-
-Send it after the upload succeeds, never before. A `409` means the claim expired and somebody else
-holds the job now: **discard your artifact and poll again**, do not retry. Retrying a completion
-that has been refused once will be refused forever.
-
-### `POST /v1/apk-signing/fail`
-
-```json
-{ "job_id": "01a0…", "signer_id": "signer-01", "error": "apksigner exited 1" }
-```
-
-The job goes back into the queue. After three failures it is marked `failed` and stops being
-offered — three signers in a row failing is a broken artifact, not bad luck.
-
-## The claim, and why it expires
-
-A claim, not a lock. Two signers must not both produce an artifact for one release: not because two
-signatures are dangerous, but because the second upload would race the first and the store could
-serve either.
-
-`claim` takes it with a conditional `UPDATE`, so two signers polling in the same instant cannot both
-win — Postgres decides. The claim goes stale after **ten minutes**, which is two orders of magnitude
-longer than signing an APK takes and short enough that a crashed signer costs one poll interval
-rather than an afternoon.
-
-If your claim goes stale while you are still working, you have lost the job. `complete` checks that
-the claim is still yours and refuses otherwise, which is the case that stops a slow signer from
-overwriting the artifact its successor already produced.
-
-## `signer_id`
-
-A label on a claim, not an authorization principal. One token covers the whole signing fleet, so any
-holder could assert any id — that is fine, because the token _is_ the trust boundary: a machine
-holding it is already permitted to sign. What the id buys is correctness among cooperating signers,
-not defence against a hostile one.
-
-Give each machine a stable id. A signer that restarts under a new id every boot cannot reclaim its
-own in-flight job and will wait out the ten-minute timeout instead.
-
-## Android developer verification is a separate durable wait
-
-Signing proves which key produced an APK. It does not prove that Google has registered the package
-name and that exact certificate to a verified developer. After key provisioning, the control plane
-keeps the canonical `android_app` row in `pending_registration` and checks the pair with Google's
-Android Developer ID Status API. Only the exact `REGISTERED` response advances the row to
-`registered`; `REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT` fails closed. A successful row is
-checked again after seven days so revocation or a certificate mismatch cannot remain trusted
-forever.
-
-The ten-minute signer claim is unrelated to review time. A status check holds a short claim, records
-`last_checked_at`, `next_check_at`, the provider state, and any bounded failure, then releases the
-claim. Google's review can therefore take hours or days without a worker holding a job lease. The
-singleton reconciler row records worker `last_seen_at`, last completion, and last failure even when
-the registration queue is empty. It also atomically reserves the Status API's project-wide 1,000
-checks per provider day before making a call. The provider day resets at midnight in
-`America/Los_Angeles`, matching Google Cloud quota accounting; this assumes the worker fleet uses
-one GCP project and one API key.
-
-HTTP 400, 401, and 403 responses indicate a request or credential problem and stop the current
-batch and open a durable terminal circuit. Later minute-scheduled jobs observe that circuit before
-reserving quota and make no provider calls. After correcting the credential, request, or provider
-contract, rotate the restricted API key or deliberately increment
-`ANDROID_REGISTRATION_CIRCUIT_VERSION` in the worker code and deploy the correction. Either changes
-the stored configuration fingerprint and reopens the circuit. HTTP 429 also stops the batch so the
-fleet does not continue sending after provider quota is exhausted, but remains retryable. HTTP 5xx
-and network failures are retried with bounded backoff. Untouched rows are unclaimed on a batch
-stop, while already reserved quota remains consumed conservatively.
-
-The project Android status API exposes provider state, last failure, and next-check timestamps for
-CLI and future dashboard consumers. This backend change does not add an Android setup/status screen
-to the dashboard; that management surface remains separately scoped.
-
-A signed deployment remains queued, and its APK remains absent from both public and personal
-catalogues, until both conditions are durable:
-
-- the status API returned `REGISTERED` for the package name and exact SHA-256 certificate;
-- the connected repository's setup commit was independently verified and recorded.
-
-Whichever condition arrives second promotes the signed deployment in the same database transaction
-that records it. This avoids a crash window where all prerequisites are true but the release stays
-queued forever.
-
-The status API uses an API key restricted to the Android Developer ID Status API. Registration and
-key management use the separate Android Developer Console API, which requires a user OAuth Web
-Server flow and does not support service accounts, workload identity, or API-key authentication.
-The signer integration must not guess unpublished mutation schemas; until its OAuth-backed provider
-adapter is contract-tested, registration is completed through the existing verified Play Console
-account and this reconciler supplies the authoritative readiness transition.
-
-Official references: [Android Developer Console API](https://developer.android.com/developer-verification/guides/developer-console-api),
-[Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
-and [Play Console package-name registration](https://support.google.com/googleplay/android-developer/answer/16761053).
-
-## The loop
+Initialize once, back up the result, then run under a service manager:
 
 ```bash
-while true; do
-  job=$(curl -sf -X POST "$API/v1/apk-signing/claim" \
-    -H "Authorization: Bearer $APK_SIGNER_TOKEN" \
-    -H 'content-type: application/json' \
-    -d "{\"signer_id\":\"$SIGNER_ID\"}")
+cargo run -p android-signer -- init-master \
+  --output /var/lib/sproutos-android-signer/master.pem
 
-  [ -z "$job" ] && { sleep 30; continue; }   # 204: nothing to do
-
-  # download the raw APK, verify unsigned_digest and structure, zipalign, apksigner sign,
-  # upload to upload_url, then complete with the digest of what you uploaded.
-  # On any failure: POST /fail with the error and go round again.
-done
+cargo run --release -p android-signer -- run \
+  --master-identity /var/lib/sproutos-android-signer/master.pem \
+  --state-dir /var/lib/sproutos-android-signer/jobs
 ```
 
-Poll every 30 seconds or so. Nothing here is latency-sensitive — a customer waiting an extra half
-minute for a signed build will not notice, and the queue costs one index lookup per poll.
+Use a dedicated unprivileged user, `Restart=on-failure`, `UMask=0077`, filesystem protection, and a
+writable allowlist containing only the state directory. Health is the process state plus its
+structured poll/completion logs. There is deliberately no inbound health port on this firewall
+boundary; the API should report the signer's last successful poll as fleet health.
 
-## Configuration
+## Normalized job protocol
 
-`APK_SIGNER_TOKEN` on the API side. **Unset means every signer is refused**, which is the correct
-default for a deployment that has no signer — the empty string is never compared as a value, so a
-forgotten environment variable fails closed rather than opening the queue to anyone who sends
-`Bearer `.
+All calls carry `Authorization: Bearer $APK_SIGNER_TOKEN`. Completion and failure requests also
+carry a stable `Idempotency-Key`. A `204` claim is an idle queue.
 
-`ANDROID_DEVELOPER_ID_STATUS_API_KEY` belongs only on the background worker. When it is absent, the
-recurring provider check is not scheduled and no registration can advance to `registered`.
+`POST /v1/apk-signing/claim` with `{ "signer_id": "signer-01" }` returns one of two discriminated
+jobs.
+
+`provision_key` supplies `job_id`, `android_app_id`, immutable `package_name`,
+`encrypted_key_upload_url`, and `encrypted_key_object_key`. The signer PUTs an octet-stream, requires
+the versioned bucket's `x-amz-version-id`, then completes with the object key/version and certificate
+SHA-256. A retry reuses its checkpoint.
+
+`sign_release` supplies the IDs, package name, version and previous version, expected certificate,
+raw-APK MIME and digest, a version-pinned encrypted-key download URL, and a signed-APK upload URL.
+The signed object key is immutable per job: `signed/<android_app_id>/<job_id>.apk`. Completion
+includes the actual package name, version code/name, certificate, SHA-256, byte size, and signed
+object key and object version. The catalogue pins that exact version, so a still-valid PUT URL
+cannot replace the bytes after completion. A retry reuploads the identical durable signed
+checkpoint.
+
+The signer checks all of the following before completion:
+
+- the HTTP response and claim both say raw APK MIME;
+- the streamed body stays under the limit and matches its SHA-256;
+- the APK ZIP has a manifest, no traversal/symlink/nested APK, and no JAR signing metadata;
+- `apksigner` agrees the input is unsigned;
+- `aapt2` reports the generated package name and exact declared, monotonic `versionCode`;
+- the protected keystore certificate equals the app record;
+- `zipalign` and `apksigner` succeed under bounded output and time limits; and
+- the output re-parses, verifies, and has the expected signing certificate.
+
+Temporary plaintext key material is mode `0600` inside a mode `0700` directory and is removed by
+RAII on every return path. A failed job reports a bounded, scrubbed error and never replaces the
+latest good release.
+
+## Android Developer Console dependency
+
+The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
+`https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,
+and API keys are unsupported. The signer intentionally reports `pending_registration` after key
+provisioning today. It must not report `registered` until the control plane and signer implement the
+official `CreateAndroidPackage`, registration-policy, key creation, ownership-proof, and state
+transitions and a human has granted the refresh token. This is the remaining external contract, not
+a reason to fabricate a successful registration.
+
+The merged control plane separately reconciles this certificate and package through Google's
+Android Developer ID Status API. Registration is completed through the verified Play Console
+operator flow; this signer has no Google credential and never fabricates `registered`.
