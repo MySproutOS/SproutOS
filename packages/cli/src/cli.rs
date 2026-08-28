@@ -266,7 +266,7 @@ pub enum ServiceKind {
 
 #[derive(Debug, Args)]
 pub struct DeployArgs {
-    /// Project id or slug. May be omitted only when repository/config resolution is unambiguous.
+    /// Project id or unique slug. May be omitted only with a repository-bound Action token.
     pub project: Option<String>,
     /// Built site directory, migration directory, or one raw unsigned APK.
     #[arg(long, default_value = ".")]

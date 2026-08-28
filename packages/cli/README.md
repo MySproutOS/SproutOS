@@ -16,6 +16,11 @@ For CI and headless machines, set `SPROUTOS_TOKEN`. It takes precedence over the
 is never copied into it, and `sprout auth logout` never edits the environment. There is no
 plaintext-file fallback.
 
+The GitHub Action uses `SPROUTOS_DEPLOY_TOKEN` for its short-lived, repository-bound deployment
+token. That variable is recognized only by `sprout deploy`; it is never treated as a general API
+key. Local deployment uses the ordinary organization API key to obtain a short-lived deploy token
+and therefore requires `--org` (or `sprout org use`) plus an explicit project id or unique slug.
+
 ## Output contract
 
 Every command supports human output and `--json`. Machine output is exactly one JSON document on

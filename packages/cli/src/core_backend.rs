@@ -149,9 +149,15 @@ impl Backend for CoreBackend {
             project: args.project.clone(),
             preset,
             environment: environment_name(args.environment).to_owned(),
-            commit: git_value(args.git_sha.as_deref(), &["rev-parse", "HEAD"], "--git-sha")?,
+            commit: git_value(
+                args.git_sha.as_deref(),
+                "GITHUB_SHA",
+                &["rev-parse", "HEAD"],
+                "--git-sha",
+            )?,
             git_ref: git_value(
                 args.git_ref.as_deref(),
+                "GITHUB_REF",
                 &["symbolic-ref", "--quiet", "--short", "HEAD"],
                 "--git-ref",
             )?,
@@ -227,9 +233,19 @@ fn parse_static_paths(values: &[String]) -> Result<Option<DeployArtifactInput>> 
     Ok(Some(DeployArtifactInput::StaticPaths { paths }))
 }
 
-fn git_value(explicit: Option<&str>, args: &[&str], flag: &str) -> Result<String> {
+fn git_value(
+    explicit: Option<&str>,
+    environment: &str,
+    args: &[&str],
+    flag: &str,
+) -> Result<String> {
     if let Some(value) = explicit.filter(|value| !value.trim().is_empty()) {
         return Ok(value.to_owned());
+    }
+    if let Ok(value) = std::env::var(environment)
+        && !value.trim().is_empty()
+    {
+        return Ok(value);
     }
     git_output(args).ok_or_else(|| {
         CliError::InvalidInput(format!(
