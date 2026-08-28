@@ -23,10 +23,10 @@ case "$1 $2" in
       if [ "${AUTO_ROLLBACK:-}" = 1 ] && [ "$task" = "arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8" ]; then
         task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7"
       fi
-      running=1
+      running=2
     else
       task="arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7"
-      running=1
+      running=2
     fi
     printf '{"services":[{"status":"ACTIVE","taskDefinition":"%s","runningCount":%s,"capacityProviderStrategy":[{"capacityProvider":"sproutos-ec2"}],"loadBalancers":[{"targetGroupArn":"arn:web-green"},{"targetGroupArn":"arn:api-green"}]}]}\n' "$task" "$running"
     ;;
@@ -85,7 +85,7 @@ JSON
     printf '%s' "$task_definition" > "$UPDATED"
     ;;
   "elbv2 describe-target-health")
-    printf '%s\n' "${TARGET_HEALTHY:-1}"
+    printf '%s\n' "${TARGET_HEALTHY:-2}"
     ;;
   "elbv2 describe-target-groups")
     name=""
@@ -134,8 +134,10 @@ jq -e '
   (.containerDefinitions[0].command[2] | contains("migrate.mjs") and contains("seed.mjs") and contains("clickhouse.mjs"))
 ' "$CAPTURE/task-2.json" >/dev/null
 grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
-grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 1' "$STUB_CALLS"
-grep -q 'ecs update-service .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 2' "$STUB_CALLS"
+grep -q 'ecs update-service .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}' "$STUB_CALLS"
+grep -q 'ecs update-service .*--availability-zone-rebalancing ENABLED' "$STUB_CALLS"
+grep -q 'ecs update-service .*--placement-strategy type=spread,field=attribute:ecs.availability-zone type=spread,field=instanceId .*--placement-constraints type=distinctInstance' "$STUB_CALLS"
 if grep -q 'elbv2 modify-rule' "$STUB_CALLS"; then
   echo "an already-green ECS cutover must not rewrite listener rules" >&2
   exit 1
@@ -159,7 +161,7 @@ jq -e '
 ' "$CAPTURE/task-1.json" >/dev/null
 grep -q 'ecs describe-task-definition --task-definition arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:42' "$STUB_CALLS"
 grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
-grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 1' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:8 .*--desired-count 2' "$STUB_CALLS"
 
 # A failed migration is a hard gate: it must not mutate the service.
 unlink "$UPDATED"
@@ -188,8 +190,10 @@ if FAIL_SERVICE_WAIT=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/wait-failure.out" 2
 fi
 grep -q 'release did not stabilize within the bounded ECS waiter' "$TEST_DIR/wait-failure.out"
 grep -q 'rollback restored arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7' "$TEST_DIR/wait-failure.out"
-grep -q 'ecs update-service .*sproutos-web:8 .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
-grep -q 'ecs update-service .*sproutos-web:7 .*--deployment-configuration maximumPercent=200,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:8 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
+grep -q 'ecs update-service .*sproutos-web:7 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
+[ "$(grep -c -- '--placement-constraints type=distinctInstance' "$STUB_CALLS")" = 2 ]
+[ "$(grep -c -- '--availability-zone-rebalancing ENABLED' "$STUB_CALLS")" = 2 ]
 
 # Target-group health is an effect assertion after the ECS waiter. A failed assertion also restores
 # the old revision instead of leaving a release the deploy script itself judged unsafe.
@@ -202,7 +206,7 @@ if TARGET_HEALTHY=0 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/target-failure.out" 2>
   echo "an unhealthy target group reported success" >&2
   exit 1
 fi
-grep -q 'target group arn:web-green has 0 healthy target(s), wanted 1' "$TEST_DIR/target-failure.out"
+grep -q 'target group arn:web-green has 0 healthy target(s), wanted 2' "$TEST_DIR/target-failure.out"
 grep -q 'rollback restored arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:7' "$TEST_DIR/target-failure.out"
 
 # The deployment circuit breaker may finish its own rollback before the waiter returns. That is a
@@ -218,5 +222,15 @@ if AUTO_ROLLBACK=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/auto-rollback.out" 2>&1
 fi
 grep -q 'ECS waiter returned but the requested release did not settle' "$TEST_DIR/auto-rollback.out"
 [ "$(grep -c 'ecs update-service' "$STUB_CALLS")" = 1 ]
+
+# Repository configuration cannot silently reduce the two-replica HA floor. Reject it before even
+# describing the service, because a later rollback must also restore two tasks.
+: > "$STUB_CALLS"
+if ECS_WEB_DESIRED_COUNT=1 "$HERE/deploy-ecs-web.sh" >"$TEST_DIR/count-failure.out" 2>&1; then
+  echo "a one-replica ECS deployment reported success" >&2
+  exit 1
+fi
+grep -q 'ECS_WEB_DESIRED_COUNT must be 2' "$TEST_DIR/count-failure.out"
+[ ! -s "$STUB_CALLS" ]
 
 echo "deploy-ecs-web tests passed"

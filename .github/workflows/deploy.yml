@@ -460,7 +460,10 @@ jobs:
         run: bin/deploy-ecs-web.sh --cutover
         env:
           IMAGE: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
-          ECS_WEB_DESIRED_COUNT: ${{ vars.ECS_WEB_DESIRED_COUNT || '1' }}
+          # Two is the HA floor and matches OpenTofu's service/ASG declaration. The deploy script
+          # rejects a different value rather than letting repository configuration silently remove
+          # a production replica.
+          ECS_WEB_DESIRED_COUNT: "2"
           LISTENER_ARN: ${{ vars.LISTENER_ARN }}
           WEBSITE_RULE_ARN: ${{ vars.WEBSITE_RULE_ARN }}
           API_RULE_ARN: ${{ vars.API_RULE_ARN }}

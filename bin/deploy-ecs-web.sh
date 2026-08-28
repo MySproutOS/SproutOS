@@ -38,17 +38,24 @@ fi
 
 CLUSTER="${ECS_CLUSTER:-$NAME_PREFIX}"
 SERVICE="${ECS_SERVICE:-$NAME_PREFIX-web}"
-DESIRED="${ECS_WEB_DESIRED_COUNT:-1}"
-case "$DESIRED" in
-  ''|*[!0-9]*) echo "ECS_WEB_DESIRED_COUNT must be a non-negative integer" >&2; exit 2 ;;
-esac
+DESIRED="${ECS_WEB_DESIRED_COUNT:-2}"
+if [ "$DESIRED" != "2" ]; then
+  echo "ECS_WEB_DESIRED_COUNT must be 2; the service and its one-host rolling reserve are designed for two steady replicas" >&2
+  exit 2
+fi
 
 # These values are repeated on update-service deliberately. OpenTofu is the durable declaration,
 # but deploys do not run `tofu apply`; carrying the strategy on the release command prevents an old
-# live service configuration from stopping its sole healthy task before a replacement is ready.
-# With fixed host ports, ECS asks the managed capacity provider for the ASG's one spare instance.
+# live service configuration from dropping below two healthy tasks before a replacement is ready.
+# With fixed host ports, ECS asks the managed capacity provider for the ASG's one spare instance;
+# 150% permits exactly one replacement task, so the two replicas roll sequentially.
 # The AWS services-stable waiter is bounded (40 attempts at 15 seconds), as is the rollback waiter.
-DEPLOYMENT_CONFIGURATION="maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+DEPLOYMENT_CONFIGURATION="maximumPercent=150,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+PLACEMENT_STRATEGY=(
+  "type=spread,field=attribute:ecs.availability-zone"
+  "type=spread,field=instanceId"
+)
+PLACEMENT_CONSTRAINT="type=distinctInstance"
 
 tmp_dir=$(mktemp -d)
 cleanup() {
@@ -195,6 +202,9 @@ rollback_service() {
     --task-definition "$current_task_arn" \
     --desired-count "$DESIRED" \
     --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
+    --availability-zone-rebalancing ENABLED \
+    --placement-strategy "${PLACEMENT_STRATEGY[@]}" \
+    --placement-constraints "$PLACEMENT_CONSTRAINT" \
     --force-new-deployment >/dev/null
 
   if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
@@ -219,6 +229,9 @@ aws ecs update-service \
   --task-definition "$service_task_arn" \
   --desired-count "$DESIRED" \
   --deployment-configuration "$DEPLOYMENT_CONFIGURATION" \
+  --availability-zone-rebalancing ENABLED \
+  --placement-strategy "${PLACEMENT_STRATEGY[@]}" \
+  --placement-constraints "$PLACEMENT_CONSTRAINT" \
   --force-new-deployment >/dev/null
 if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
   echo "release did not stabilize within the bounded ECS waiter" >&2

@@ -343,9 +343,14 @@ variable "web_image" {
 }
 
 variable "ecs_instance_count" {
-  description = "Steady-state instances backing ECS. Deployments may briefly add one instance so the old task stays healthy until its replacement is ready."
+  description = "The two steady ECS instances. A deployment may briefly add one more instance so replicas are replaced sequentially without dropping below two healthy tasks."
   type        = number
-  default     = 1
+  default     = 2
+
+  validation {
+    condition     = var.ecs_instance_count == 2
+    error_message = "ecs_instance_count is fixed at 2: one replica is not highly available, while the ECS rolling policy and ASG reserve exactly one additional replacement host."
+  }
 }
 
 variable "clickhouse_subdomain" {

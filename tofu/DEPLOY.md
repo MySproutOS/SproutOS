@@ -137,8 +137,12 @@ traffic is entirely on blue and that green has no legacy instance before enablin
 
 Set these repository variables:
 
-- `ECS_WEB_ENABLED=true` — the ownership switch;
-- `ECS_WEB_DESIRED_COUNT=1` — optional, and one by default.
+- `ECS_WEB_ENABLED=true` — the ownership switch.
+
+The service count is not a repository setting. OpenTofu and the release workflow both require two
+steady replicas. They run on distinct instances spread across the two serving availability zones;
+the ASG admits one temporary third host and the 150/100 rolling policy replaces replicas one at a
+time. A lower workflow value is rejected before any AWS call.
 
 The next push to `main` that includes `website` then performs this order behind the production
 environment gate:
