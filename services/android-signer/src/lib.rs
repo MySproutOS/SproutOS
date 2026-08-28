@@ -24,6 +24,7 @@ use tracing::{info, warn};
 use zeroize::Zeroize as _;
 
 pub const APK_MIME: &str = "application/vnd.android.package-archive";
+pub const CLIENT_PACKAGE_NAME: &str = "com.sproutos.store";
 
 #[derive(Clone)]
 pub struct SignerConfig {
@@ -80,6 +81,8 @@ where
         let result = match job {
             ClaimedJob::ProvisionKey(job) => self.provision_key(job).await,
             ClaimedJob::SignRelease(job) => self.sign_release(*job).await,
+            ClaimedJob::ProvisionClientKey(job) => self.provision_client_key(job).await,
+            ClaimedJob::SignClientRelease(job) => self.sign_client_release(*job).await,
         };
 
         match result {
@@ -109,8 +112,11 @@ where
 
     async fn provision_key(&self, job: api::ProvisionKeyJob) -> anyhow::Result<CompleteRequest> {
         let checkpoint = if let Some(saved) = self.state.load_provision(&job.job_id)? {
-            if saved.package_name != job.package_name {
-                bail!("the package name changed while a key-provision job was in flight")
+            if saved.android_app_id != job.android_app_id
+                || saved.package_name != job.package_name
+                || saved.encrypted_key_object_key != job.encrypted_key_object_key
+            {
+                bail!("the key-provision job changed while it was in flight")
             }
             saved
         } else {
@@ -123,7 +129,9 @@ where
             encoded.zeroize();
             let encrypted = encrypted.context("could not protect the app signing identity")?;
             let checkpoint = ProvisionCheckpoint {
+                android_app_id: job.android_app_id.clone(),
                 package_name: job.package_name.clone(),
+                encrypted_key_object_key: job.encrypted_key_object_key.clone(),
                 certificate_sha256: secret.certificate_sha256.clone(),
                 encrypted,
             };
@@ -156,6 +164,41 @@ where
             // Android Developer Console operation before this can become `registered`.
             developer_console_state: DeveloperConsoleState::PendingRegistration,
         })
+    }
+
+    async fn provision_client_key(
+        &self,
+        job: api::ProvisionClientKeyJob,
+    ) -> anyhow::Result<CompleteRequest> {
+        if job.package_name != CLIENT_PACKAGE_NAME {
+            bail!("catalogue-client key job has the wrong immutable package name")
+        }
+        let completion = self
+            .provision_key(api::ProvisionKeyJob {
+                job_id: job.job_id,
+                android_app_id: "platform-catalogue-client".to_owned(),
+                package_name: job.package_name,
+                encrypted_key_upload_url: job.encrypted_key_upload_url,
+                encrypted_key_object_key: job.encrypted_key_object_key,
+            })
+            .await?;
+        match completion {
+            CompleteRequest::ProvisionKey {
+                job_id,
+                signer_id,
+                encrypted_key_object_key,
+                encrypted_key_object_version,
+                certificate_sha256,
+                ..
+            } => Ok(CompleteRequest::ProvisionClientKey {
+                job_id,
+                signer_id,
+                encrypted_key_object_key,
+                encrypted_key_object_version,
+                certificate_sha256,
+            }),
+            _ => unreachable!("provision_key always returns its matching completion"),
+        }
     }
 
     async fn sign_release(&self, job: api::SignReleaseJob) -> anyhow::Result<CompleteRequest> {
@@ -242,10 +285,17 @@ where
             &job,
             &signed,
             SignCheckpoint {
+                android_app_id: job.android_app_id.clone(),
+                project_id: job.project_id.clone(),
+                deployment_id: job.deployment_id.clone(),
                 package_name: manifest.package_name,
                 version_code: manifest.version_code,
                 version_name: manifest.version_name,
                 certificate_sha256,
+                unsigned_digest: job.unsigned_digest.clone(),
+                encrypted_key_object_key: job.encrypted_key_object_key.clone(),
+                encrypted_key_object_version: job.encrypted_key_object_version.clone(),
+                signed_key: job.signed_key.clone(),
                 signed_digest,
                 size_bytes,
                 signed_apk: PathBuf::new(),
@@ -261,6 +311,66 @@ where
             "the signed APK bucket did not return x-amz-version-id; versioning is required",
         )?;
         Ok(checkpoint.completion(self.api.signer_id(), &job, version))
+    }
+
+    async fn sign_client_release(
+        &self,
+        job: api::SignClientReleaseJob,
+    ) -> anyhow::Result<CompleteRequest> {
+        if job.package_name != CLIENT_PACKAGE_NAME {
+            bail!("catalogue-client release has the wrong immutable package name")
+        }
+        let completion = self
+            .sign_release(api::SignReleaseJob {
+                job_id: job.job_id,
+                android_app_id: "platform-catalogue-client".to_owned(),
+                package_name: job.package_name,
+                project_id: "platform".to_owned(),
+                deployment_id: "platform".to_owned(),
+                download_url: job.download_url,
+                unsigned_digest: job.unsigned_digest,
+                input_mime: job.input_mime,
+                version_code: job.version_code,
+                previous_version_code: job.previous_version_code,
+                expected_certificate_sha256: job.expected_certificate_sha256,
+                key_download_url: job.key_download_url,
+                encrypted_key_object_key: job.encrypted_key_object_key,
+                encrypted_key_object_version: job.encrypted_key_object_version,
+                upload_url: job.upload_url,
+                signed_key: job.signed_key,
+            })
+            .await?;
+        match completion {
+            CompleteRequest::SignRelease {
+                job_id,
+                signer_id,
+                signed_key,
+                signed_object_version,
+                signed_digest,
+                size_bytes,
+                package_name,
+                version_code,
+                version_name,
+                certificate_sha256,
+            } => {
+                if version_name.len() > 100 {
+                    bail!("catalogue-client APK versionName exceeds 100 bytes")
+                }
+                Ok(CompleteRequest::SignClientRelease {
+                    job_id,
+                    signer_id,
+                    signed_key,
+                    signed_object_version,
+                    signed_digest,
+                    size_bytes,
+                    package_name,
+                    version_code,
+                    version_name,
+                    certificate_sha256,
+                })
+            }
+            _ => unreachable!("sign_release always returns its matching completion"),
+        }
     }
 }
 

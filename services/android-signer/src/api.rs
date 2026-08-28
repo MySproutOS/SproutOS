@@ -15,6 +15,8 @@ use crate::{APK_MIME, response_is_apk};
 pub enum ClaimedJob {
     ProvisionKey(ProvisionKeyJob),
     SignRelease(Box<SignReleaseJob>),
+    ProvisionClientKey(ProvisionClientKeyJob),
+    SignClientRelease(Box<SignClientReleaseJob>),
 }
 
 impl ClaimedJob {
@@ -22,6 +24,8 @@ impl ClaimedJob {
         match self {
             Self::ProvisionKey(job) => &job.job_id,
             Self::SignRelease(job) => &job.job_id,
+            Self::ProvisionClientKey(job) => &job.job_id,
+            Self::SignClientRelease(job) => &job.job_id,
         }
     }
 
@@ -29,8 +33,18 @@ impl ClaimedJob {
         match self {
             Self::ProvisionKey(_) => "provision_key",
             Self::SignRelease(_) => "sign_release",
+            Self::ProvisionClientKey(_) => "provision_client_key",
+            Self::SignClientRelease(_) => "sign_client_release",
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProvisionClientKeyJob {
+    pub job_id: String,
+    pub package_name: String,
+    pub encrypted_key_upload_url: String,
+    pub encrypted_key_object_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +63,23 @@ pub struct SignReleaseJob {
     pub package_name: String,
     pub project_id: String,
     pub deployment_id: String,
+    pub download_url: String,
+    pub unsigned_digest: String,
+    pub input_mime: String,
+    pub version_code: u64,
+    pub previous_version_code: u64,
+    pub expected_certificate_sha256: String,
+    pub key_download_url: String,
+    pub encrypted_key_object_key: String,
+    pub encrypted_key_object_version: String,
+    pub upload_url: String,
+    pub signed_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignClientReleaseJob {
+    pub job_id: String,
+    pub package_name: String,
     pub download_url: String,
     pub unsigned_digest: String,
     pub input_mime: String,
@@ -92,6 +123,59 @@ pub enum CompleteRequest {
         version_name: String,
         certificate_sha256: String,
     },
+    ProvisionClientKey {
+        job_id: String,
+        signer_id: String,
+        encrypted_key_object_key: String,
+        encrypted_key_object_version: String,
+        certificate_sha256: String,
+    },
+    SignClientRelease {
+        job_id: String,
+        signer_id: String,
+        signed_key: String,
+        signed_object_version: String,
+        signed_digest: String,
+        size_bytes: u64,
+        package_name: String,
+        version_code: u64,
+        version_name: String,
+        certificate_sha256: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct PrepareClientReleaseRequest<'a> {
+    signer_id: &'a str,
+    package_name: &'a str,
+    unsigned_digest: &'a str,
+    size_bytes: u64,
+    version_code: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PrepareClientReleaseResponse {
+    pub job_id: String,
+    pub unsigned_key: String,
+    pub state: String,
+    pub upload_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct FinalizeClientUploadRequest<'a> {
+    job_id: &'a str,
+    signer_id: &'a str,
+    unsigned_key: &'a str,
+    unsigned_object_version: &'a str,
+    unsigned_digest: &'a str,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientIdentityStatus {
+    pub package_name: String,
+    pub state: String,
+    pub certificate_sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -171,7 +255,7 @@ impl SignerApi {
         Ok(Self {
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(15 * 60))
+                .timeout(std::time::Duration::from_secs(5 * 60))
                 // Neither control-plane credentials nor an on-prem network client follow a URL
                 // chosen by an HTTP response. S3 presigned URLs are already region-specific.
                 .redirect(reqwest::redirect::Policy::none())
@@ -188,6 +272,87 @@ impl SignerApi {
 
     fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request.header(AUTHORIZATION, format!("Bearer {}", self.token))
+    }
+
+    pub async fn ensure_client_identity(&self) -> anyhow::Result<ClientIdentityStatus> {
+        let response = self
+            .authorized(self.client.post(self.endpoint("client-identity")))
+            .json(&ClaimRequest {
+                signer_id: &self.signer_id,
+            })
+            .send()
+            .await
+            .context("could not request the catalogue-client identity")?;
+        if !response.status().is_success() {
+            Self::require_success(response, "catalogue-client identity request").await?;
+            unreachable!();
+        }
+        response
+            .json()
+            .await
+            .context("catalogue-client identity response is malformed")
+    }
+
+    pub async fn prepare_client_release(
+        &self,
+        package_name: &str,
+        unsigned_digest: &str,
+        size_bytes: u64,
+        version_code: u64,
+    ) -> anyhow::Result<PrepareClientReleaseResponse> {
+        let response = self
+            .authorized(self.client.post(self.endpoint("client-release/prepare")))
+            .json(&PrepareClientReleaseRequest {
+                signer_id: &self.signer_id,
+                package_name,
+                unsigned_digest,
+                size_bytes,
+                version_code,
+            })
+            .send()
+            .await
+            .context("could not prepare the catalogue-client release")?;
+        if !response.status().is_success() {
+            Self::require_success(response, "catalogue-client release preparation").await?;
+            unreachable!();
+        }
+        response
+            .json()
+            .await
+            .context("catalogue-client release preparation response is malformed")
+    }
+
+    pub async fn finalize_client_upload(
+        &self,
+        prepared: &PrepareClientReleaseResponse,
+        unsigned_object_version: &str,
+        unsigned_digest: &str,
+        size_bytes: u64,
+    ) -> anyhow::Result<()> {
+        let request = FinalizeClientUploadRequest {
+            job_id: &prepared.job_id,
+            signer_id: &self.signer_id,
+            unsigned_key: &prepared.unsigned_key,
+            unsigned_object_version,
+            unsigned_digest,
+            size_bytes,
+        };
+        let callback = self
+            .authorized(
+                self.client
+                    .post(self.endpoint("client-release/finalize-upload")),
+            )
+            .header(
+                "Idempotency-Key",
+                hex::encode(Sha256::digest(serde_json::to_vec(&request)?)),
+            )
+            .json(&request);
+        self.callback(callback, "catalogue-client upload finalization")
+            .await
+    }
+
+    pub async fn upload_local_apk(&self, url: &str, path: &Path) -> anyhow::Result<UploadResult> {
+        <Self as ControlPlane>::put_file(self, url, APK_MIME, path).await
     }
 
     async fn require_success(response: reqwest::Response, operation: &str) -> anyhow::Result<()> {
@@ -439,8 +604,19 @@ fn validate_artifact_url(raw: &str) -> anyhow::Result<()> {
         bail!("local artifact URL must use HTTP")
     }
     let host = url.host_str().unwrap_or_default();
-    let aws_s3 = host.ends_with(".amazonaws.com") || host.ends_with(".amazonaws.com.cn");
-    if url.scheme() != "https" || !aws_s3 {
+    let aws_suffix = host
+        .strip_suffix(".amazonaws.com")
+        .or_else(|| host.strip_suffix(".amazonaws.com.cn"));
+    let aws_s3 = aws_suffix.is_some_and(|prefix| {
+        prefix == "s3"
+            || prefix.starts_with("s3.")
+            || prefix.ends_with(".s3")
+            || prefix.contains(".s3.")
+    });
+    let signed = url
+        .query_pairs()
+        .any(|(name, value)| name == "X-Amz-Signature" && !value.is_empty());
+    if url.scheme() != "https" || !aws_s3 || !signed {
         bail!("artifact URL must be an HTTPS AWS S3 presigned URL")
     }
     Ok(())
@@ -579,15 +755,112 @@ mod tests {
         }))
         .unwrap();
         assert!(matches!(sign, ClaimedJob::SignRelease(_)));
+
+        let client_provision: ClaimedJob = serde_json::from_value(serde_json::json!({
+            "kind": "provision_client_key",
+            "job_id": "019d0000-0000-7000-8000-000000000006",
+            "package_name": "com.sproutos.store",
+            "encrypted_key_upload_url": "https://bucket.s3.us-east-1.amazonaws.com/client-key",
+            "encrypted_key_object_key": "keys/client/signing.keystore.enc"
+        }))
+        .unwrap();
+        assert!(matches!(
+            client_provision,
+            ClaimedJob::ProvisionClientKey(_)
+        ));
+
+        let client_sign: ClaimedJob = serde_json::from_value(serde_json::json!({
+            "kind": "sign_client_release",
+            "job_id": "019d0000-0000-7000-8000-000000000007",
+            "package_name": "com.sproutos.store",
+            "download_url": "https://bucket.s3.us-east-1.amazonaws.com/client-unsigned?versionId=one",
+            "unsigned_digest": "aa",
+            "input_mime": "application/vnd.android.package-archive",
+            "version_code": 2,
+            "previous_version_code": 1,
+            "expected_certificate_sha256": "bb",
+            "key_download_url": "https://bucket.s3.us-east-1.amazonaws.com/client-key?versionId=one",
+            "encrypted_key_object_key": "keys/client/signing.keystore.enc",
+            "encrypted_key_object_version": "one",
+            "upload_url": "https://bucket.s3.us-east-1.amazonaws.com/client-signed",
+            "signed_key": "signed/client/job.apk"
+        }))
+        .unwrap();
+        assert!(matches!(client_sign, ClaimedJob::SignClientRelease(_)));
+    }
+
+    #[test]
+    fn callback_json_and_sha256_are_cross_language_contract_vectors() {
+        let job_id = "019d0000-0000-7000-8000-000000000007";
+        let prepared = PrepareClientReleaseResponse {
+            job_id: job_id.into(),
+            unsigned_key: format!("raw/client/{job_id}.apk"),
+            state: "awaiting_upload".into(),
+            upload_url: Some("https://bucket.s3.us-east-1.amazonaws.com/raw".into()),
+        };
+        let finalize = FinalizeClientUploadRequest {
+            job_id,
+            signer_id: "signer-01",
+            unsigned_key: &prepared.unsigned_key,
+            unsigned_object_version: "version-one",
+            unsigned_digest: &"a".repeat(64),
+            size_bytes: 42,
+        };
+        let complete = CompleteRequest::SignClientRelease {
+            job_id: job_id.into(),
+            signer_id: "signer-01".into(),
+            signed_key: format!("signed/client/{job_id}.apk"),
+            signed_object_version: "version-two".into(),
+            signed_digest: "b".repeat(64),
+            size_bytes: 84,
+            package_name: "com.sproutos.store".into(),
+            version_code: 2,
+            version_name: "0.2.0".into(),
+            certificate_sha256: "c".repeat(64),
+        };
+        let fail = FailRequest {
+            job_id,
+            signer_id: "signer-01",
+            error: "verification failed",
+        };
+
+        let vectors = [
+            (
+                serde_json::to_string(&finalize).unwrap(),
+                "a538ce266aa6b86af1e526112f3de0908d14a1c8ce807aa5ef589b5d5223bbf6",
+            ),
+            (
+                serde_json::to_string(&complete).unwrap(),
+                "af4e0342e2c355cd697dcaf6731c2aad56d92a88b2c48afcd3cb0c0309cad13e",
+            ),
+            (
+                serde_json::to_string(&fail).unwrap(),
+                "6eefaec98cefc61fa4ecf8df21d3d2837b2866ab4f4b9d534c53b8d600cb7a5c",
+            ),
+        ];
+        for (body, expected) in vectors {
+            assert_eq!(hex::encode(Sha256::digest(body.as_bytes())), expected);
+        }
     }
 
     #[test]
     fn artifact_urls_cannot_turn_the_signer_into_an_internal_network_client() {
         assert!(
-            validate_artifact_url("https://bucket.s3.us-east-1.amazonaws.com/key?sig=x").is_ok()
+            validate_artifact_url(
+                "https://bucket.s3.us-east-1.amazonaws.com/key?X-Amz-Signature=x"
+            )
+            .is_ok()
         );
         assert!(validate_artifact_url("http://127.0.0.1:4566/bucket/key").is_ok());
         assert!(validate_artifact_url("http://169.254.169.254/latest/meta-data").is_err());
         assert!(validate_artifact_url("https://example.com/file.apk").is_err());
+        assert!(validate_artifact_url("https://sts.amazonaws.com/?X-Amz-Signature=x").is_err());
+        assert!(
+            validate_artifact_url(
+                "https://example.execute-api.us-east-1.amazonaws.com/?X-Amz-Signature=x"
+            )
+            .is_err()
+        );
+        assert!(validate_artifact_url("https://bucket.s3.us-east-1.amazonaws.com/key").is_err());
     }
 }
