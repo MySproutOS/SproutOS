@@ -90,6 +90,14 @@ locals {
     "SERVICE_VALKEY_ADMIN_URL",
     "VALKEY_PROXY_ACL_ROOT_KEY",
   ]
+
+  ecs_application_parameter_arns = [
+    for name in toset(concat(
+      local.ecs_website_parameter_names,
+      local.ecs_api_parameter_names,
+      local.ecs_worker_parameter_names,
+    )) : "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter${local.application_parameter_path}/${name}"
+  ]
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -574,7 +582,7 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         # calls itself or the task fails as `ResourceInitializationError`.
         Effect   = "Allow"
         Action   = ["ssm:GetParameters"]
-        Resource = local.application_parameter_arns
+        Resource = local.ecs_application_parameter_arns
       },
       {
         # The same pairing the instance role needed: a secret encrypted with a customer-managed key
