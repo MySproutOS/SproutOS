@@ -215,7 +215,8 @@ impl WindowsAppContainerCommand {
 fn allowlisted_environment(
     runtime_temporary: &Path,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let mut environment = vec![("LANG".into(), "C".into()), ("LC_ALL".into(), "C".into())];
+    let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+        vec![("LANG".into(), "C".into()), ("LC_ALL".into(), "C".into())];
     // CreateProcess and the Windows runtime require this narrow system environment even when the
     // child is launched by absolute path. TEMP/TMP point inside the AppContainer ACL tree below;
     // no user profile, credential, proxy, or PATH value crosses the boundary.
