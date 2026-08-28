@@ -357,6 +357,48 @@ export interface ClientRelease {
   versionName: string
 }
 
+export interface ClientSignerJob {
+  attempts: Generated<number>
+  callbackIdempotencyKey: string | null
+  callbackKind: string | null
+  callbackSignerId: string | null
+  claimedAt: Timestamp | null
+  claimedBy: string | null
+  clientSigningIdentityId: string
+  createdAt: Generated<Timestamp>
+  error: string | null
+  id: string
+  inputMime: string | null
+  kind: string
+  operatorSignerId: string
+  signedAt: Timestamp | null
+  signedDigest: string | null
+  signedKey: string | null
+  signedObjectVersion: string | null
+  signedSizeBytes: Int8 | null
+  state: string
+  unsignedDigest: string | null
+  unsignedKey: string | null
+  unsignedObjectVersion: string | null
+  unsignedSizeBytes: Int8 | null
+  updatedAt: Generated<Timestamp>
+  uploadIdempotencyKey: string | null
+  versionCode: number | null
+  versionName: string | null
+}
+
+export interface ClientSigningIdentity {
+  certificateSha256: string | null
+  createdAt: Generated<Timestamp>
+  id: string
+  keyObjectKey: string | null
+  keyObjectVersion: string | null
+  lastError: string | null
+  packageName: string
+  state: Generated<string>
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Cluster {
   createdAt: Generated<Timestamp>
   endpoint: string
@@ -1507,6 +1549,8 @@ export interface DB {
   backgroundJob: BackgroundJob
   cacheNamespace: CacheNamespace
   clientRelease: ClientRelease
+  clientSignerJob: ClientSignerJob
+  clientSigningIdentity: ClientSigningIdentity
   cluster: Cluster
   computeInstance: ComputeInstance
   creditAccount: CreditAccount

@@ -236,6 +236,19 @@ export {
   type AndroidDeveloperStatusChecker,
 } from "./android-developer-registration"
 export {
+  CLIENT_KEY_OBJECT_KEY,
+  CLIENT_PACKAGE_NAME,
+  ClientSigningConflictError,
+  claimClientSigningJob,
+  completeClientKeyProvision,
+  completeClientSigning,
+  ensureClientSigningIdentity,
+  failClientSigning,
+  finalizeClientReleaseUpload,
+  prepareClientRelease,
+  type ClientSigningJob,
+} from "./client-apk-signing"
+export {
   cleanUpStaticPreview,
   environmentFor,
   hostnameFor,

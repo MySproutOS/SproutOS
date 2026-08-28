@@ -2,7 +2,9 @@ import type { DB } from "@sproutos/db"
 import { sql, type Kysely, type Transaction } from "kysely"
 import { v7 } from "uuid"
 
-export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000
+// A signer performs bounded downloads plus several bounded Android-tool invocations. Keep the
+// lease longer than their combined worst case so a valid slow job cannot be stolen mid-signing.
+export const CLAIM_TIMEOUT_MS = 30 * 60 * 1000
 export const APK_MIME = "application/vnd.android.package-archive"
 export const ANDROID_VERSION_CODE_MAX = 2_100_000_000
 

@@ -8,17 +8,26 @@ use crate::api::{CompleteRequest, SignReleaseJob};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvisionCheckpoint {
+    pub android_app_id: String,
     pub package_name: String,
+    pub encrypted_key_object_key: String,
     pub certificate_sha256: String,
     pub encrypted: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignCheckpoint {
+    pub android_app_id: String,
+    pub project_id: String,
+    pub deployment_id: String,
     pub package_name: String,
     pub version_code: u64,
     pub version_name: String,
     pub certificate_sha256: String,
+    pub unsigned_digest: String,
+    pub encrypted_key_object_key: String,
+    pub encrypted_key_object_version: String,
+    pub signed_key: String,
     pub signed_digest: String,
     pub size_bytes: u64,
     #[serde(skip)]
@@ -28,8 +37,15 @@ pub struct SignCheckpoint {
 impl SignCheckpoint {
     pub fn assert_matches(&self, job: &SignReleaseJob) -> anyhow::Result<()> {
         if self.package_name != job.package_name
+            || self.android_app_id != job.android_app_id
+            || self.project_id != job.project_id
+            || self.deployment_id != job.deployment_id
             || self.version_code != job.version_code
             || self.certificate_sha256 != job.expected_certificate_sha256
+            || self.unsigned_digest != job.unsigned_digest
+            || self.encrypted_key_object_key != job.encrypted_key_object_key
+            || self.encrypted_key_object_version != job.encrypted_key_object_version
+            || self.signed_key != job.signed_key
         {
             bail!("the release changed while a signing job was in flight")
         }
@@ -211,7 +227,10 @@ mod tests {
         let job = uuid::Uuid::now_v7().to_string();
         let store = StateStore::open(temp.path().join("state")).unwrap();
         let checkpoint = ProvisionCheckpoint {
+            android_app_id: "019d0000-0000-7000-8000-000000000001".into(),
             package_name: "me.sproutos.app.pabc".into(),
+            encrypted_key_object_key:
+                "keys/019d0000-0000-7000-8000-000000000001/signing.keystore.enc".into(),
             certificate_sha256: "a".repeat(64),
             encrypted: vec![1, 2, 3],
         };
@@ -222,5 +241,50 @@ mod tests {
         assert_eq!(loaded.encrypted, checkpoint.encrypted);
         reopened.mark_complete(&job).unwrap();
         assert!(reopened.load_provision(&job).unwrap().is_none());
+    }
+
+    #[test]
+    fn signed_checkpoint_is_bound_to_every_immutable_claim_field() {
+        let temp = tempfile::tempdir().unwrap();
+        let signed_apk = temp.path().join("signed.apk");
+        std::fs::write(&signed_apk, b"signed bytes").unwrap();
+        let mut job = SignReleaseJob {
+            job_id: uuid::Uuid::now_v7().to_string(),
+            android_app_id: uuid::Uuid::now_v7().to_string(),
+            package_name: "com.sproutos.store".into(),
+            project_id: "platform".into(),
+            deployment_id: "platform".into(),
+            download_url: "https://bucket.s3.us-east-1.amazonaws.com/raw?X-Amz-Signature=x".into(),
+            unsigned_digest: "a".repeat(64),
+            input_mime: crate::APK_MIME.into(),
+            version_code: 2,
+            previous_version_code: 1,
+            expected_certificate_sha256: "b".repeat(64),
+            key_download_url: "https://bucket.s3.us-east-1.amazonaws.com/key?X-Amz-Signature=x"
+                .into(),
+            encrypted_key_object_key: "keys/client/signing.keystore.enc".into(),
+            encrypted_key_object_version: "key-version".into(),
+            upload_url: "https://bucket.s3.us-east-1.amazonaws.com/signed?X-Amz-Signature=x".into(),
+            signed_key: "signed/client/job.apk".into(),
+        };
+        let checkpoint = SignCheckpoint {
+            android_app_id: job.android_app_id.clone(),
+            project_id: job.project_id.clone(),
+            deployment_id: job.deployment_id.clone(),
+            package_name: job.package_name.clone(),
+            version_code: job.version_code,
+            version_name: "1.0".into(),
+            certificate_sha256: job.expected_certificate_sha256.clone(),
+            unsigned_digest: job.unsigned_digest.clone(),
+            encrypted_key_object_key: job.encrypted_key_object_key.clone(),
+            encrypted_key_object_version: job.encrypted_key_object_version.clone(),
+            signed_key: job.signed_key.clone(),
+            signed_digest: crate::apk::sha256_file(&signed_apk).unwrap(),
+            size_bytes: 12,
+            signed_apk,
+        };
+        checkpoint.assert_matches(&job).unwrap();
+        job.encrypted_key_object_version = "different-version".into();
+        assert!(checkpoint.assert_matches(&job).is_err());
     }
 }
