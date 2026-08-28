@@ -12,9 +12,11 @@ ngrok_api=http://127.0.0.1:4040
 proxy_port=3128
 router_port=18080
 postgres_test_port=25432
+metering_test_port=25433
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sproutos-daytona-smoke.XXXXXX")
 router_pid=
 postgres_test_pid=
+metering_test_pid=
 ngrok_pid=
 tunnel_name=
 tunnel_created=0
@@ -34,6 +36,10 @@ cleanup() {
     kill "$postgres_test_pid" 2>/dev/null || true
     wait "$postgres_test_pid" 2>/dev/null || true
   fi
+  if [[ -n "$metering_test_pid" ]]; then
+    kill "$metering_test_pid" 2>/dev/null || true
+    wait "$metering_test_pid" 2>/dev/null || true
+  fi
   if [[ "$tunnel_created" == 1 && -n "$tunnel_name" ]]; then
     curl --silent --request DELETE "$ngrok_api/api/tunnels/$tunnel_name" >/dev/null || true
   fi
@@ -42,6 +48,7 @@ cleanup() {
     wait "$ngrok_pid" 2>/dev/null || true
   fi
   rm -f "$tmp_dir/router.log" "$tmp_dir/ngrok.log"
+  rmdir "$tmp_dir/metering-spool" 2>/dev/null || true
   rmdir "$tmp_dir" 2>/dev/null || true
   exit "$status"
 }
@@ -63,6 +70,10 @@ if lsof -nP -iTCP:"$proxy_port" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 if lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "local Postgres transport-test port $postgres_test_port is already in use" >&2
+  exit 1
+fi
+if lsof -nP -iTCP:"$metering_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "local metering-test port $metering_test_port is already in use" >&2
   exit 1
 fi
 
@@ -122,10 +133,22 @@ resolver_proxy_url="https://${public_url#tcp://}"
 # and startup behavior has separate integration coverage.
 node -e 'const net=require("node:net");const port=Number(process.argv[1]);net.createServer(s=>s.once("data",()=>s.end("S"))).listen(port,"127.0.0.1")' "$postgres_test_port" &
 postgres_test_pid=$!
+# The forward proxy deliberately refuses to boot without durable metering. This local receiver
+# exercises that fail-closed configuration without posting test usage into a real ingest service.
+node -e 'const http=require("node:http");const port=Number(process.argv[1]);http.createServer((req,res)=>{req.resume();req.on("end",()=>{res.writeHead(202);res.end()})}).listen(port,"127.0.0.1")' "$metering_test_port" &
+metering_test_pid=$!
 for _ in {1..30}; do
-  lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1 && break
+  if lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1 && \
+    lsof -nP -iTCP:"$metering_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    break
+  fi
   sleep 0.1
 done
+if ! lsof -nP -iTCP:"$postgres_test_port" -sTCP:LISTEN >/dev/null 2>&1 || \
+  ! lsof -nP -iTCP:"$metering_test_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "local transport fixtures did not start" >&2
+  exit 1
+fi
 
 env \
   DATABASE_URL="$database_url" \
@@ -138,9 +161,13 @@ env \
   PG_PROXY_LISTEN="127.0.0.1:$postgres_test_port" \
   ROUTER_PORT="$router_port" \
   AWS_REGION=us-east-1 \
+  AWS_ACCOUNT_ID=000000000000 \
   AWS_ACCESS_KEY_ID=test \
   AWS_SECRET_ACCESS_KEY=test \
   AWS_ENDPOINT_URL=http://127.0.0.1:4566 \
+  METERING_INGEST_URL="http://127.0.0.1:$metering_test_port/v1/metering/events" \
+  METERING_INGEST_HMAC_KEY=test-only-daytona-smoke \
+  FORWARD_PROXY_METERING_SPOOL_DIR="$tmp_dir/metering-spool" \
   cargo run -p router --bin router >"$tmp_dir/router.log" 2>&1 &
 router_pid=$!
 
