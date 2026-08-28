@@ -239,7 +239,14 @@ fn assert_apksigner_reports_unsigned(result: &ToolOutput) -> anyhow::Result<()> 
     let stderr = String::from_utf8_lossy(&result.stderr).to_ascii_lowercase();
     let diagnostic = format!("{stdout}\n{stderr}");
     if diagnostic.contains("does not verify")
-        && (diagnostic.contains("no signatures") || diagnostic.contains("no signer"))
+        && (diagnostic.contains("no signatures")
+            || diagnostic.contains("no signer")
+            // A normal unsigned APK produced by the Android Gradle Plugin has no JAR v1
+            // signature manifest. Current apksigner versions report that absence instead of the
+            // older "No signatures" wording. The caller has already rejected APK Signing Blocks
+            // and JAR signing metadata with validate_unsigned_zip_structure(), and still parses
+            // AndroidManifest.xml with aapt2 before accepting the job.
+            || diagnostic.contains("missing meta-inf/manifest.mf"))
     {
         return Ok(());
     }
@@ -498,6 +505,13 @@ mod tests {
             assert_apksigner_reports_unsigned(&output(
                 false,
                 "DOES NOT VERIFY\nERROR: No signatures",
+            ))
+            .is_ok()
+        );
+        assert!(
+            assert_apksigner_reports_unsigned(&output(
+                false,
+                "DOES NOT VERIFY\nERROR: Missing META-INF/MANIFEST.MF",
             ))
             .is_ok()
         );
