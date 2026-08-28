@@ -47,7 +47,8 @@ function route53(responses: unknown[]) {
 }
 
 describe("platform edge DNS-01", () => {
-  it("adds the digest without destroying an existing TXT value and waits for INSYNC", async () => {
+  it("writes acme-client's digest unchanged and waits for authoritative and public DNS", async () => {
+    const digest = "wv7eJTUZ5tMiXm-P0dhwZc_pwCFublVy_ZXIxPJtOXs"
     const { client, send } = route53([
       {
         ResourceRecordSets: [
@@ -64,8 +65,22 @@ describe("platform edge DNS-01", () => {
       { ChangeInfo: { Status: "INSYNC" } },
     ])
     const sleep = vi.fn<(milliseconds: number) => Promise<void>>(() => Promise.resolve())
+    const resolvePublicTxt = vi
+      .fn<(hostname: string) => Promise<string[][]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([[digest]])
+    const resolveAuthoritativeTxt = vi.fn<
+      (hostname: string, nameserver: string) => Promise<string[][]>
+    >(() => Promise.resolve([[digest]]))
 
-    await putDnsChallenge(client, "tenant-zone", "sproutos.run", "token.key-authorization", sleep)
+    await putDnsChallenge(client, "tenant-zone", "sproutos.run", digest, {
+      sleep,
+      dns: {
+        resolveNameservers: () => Promise.resolve(["ns-1.example.test"]),
+        resolvePublicTxt,
+        resolveAuthoritativeTxt,
+      },
+    })
 
     expect(send.mock.calls[0]?.[0]).toBeInstanceOf(ListResourceRecordSetsCommand)
     const change = send.mock.calls[1]?.[0]
@@ -80,10 +95,7 @@ describe("platform edge DNS-01", () => {
             ResourceRecordSet: {
               Name: "_acme-challenge.sproutos.run",
               Type: "TXT",
-              ResourceRecords: [
-                { Value: '"another-order"' },
-                { Value: '"wv7eJTUZ5tMiXm-P0dhwZc_pwCFublVy_ZXIxPJtOXs"' },
-              ],
+              ResourceRecords: [{ Value: '"another-order"' }, { Value: `"${digest}"` }],
             },
           },
         ],
@@ -91,7 +103,60 @@ describe("platform edge DNS-01", () => {
     })
     expect(send.mock.calls[2]?.[0]).toBeInstanceOf(GetChangeCommand)
     expect(send.mock.calls[3]?.[0]).toBeInstanceOf(GetChangeCommand)
-    expect(sleep).toHaveBeenCalledOnce()
+    expect(resolvePublicTxt).toHaveBeenCalledTimes(2)
+    expect(resolveAuthoritativeTxt).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it("replaces stale values on the first write for an order", async () => {
+    const digest = "wv7eJTUZ5tMiXm-P0dhwZc_pwCFublVy_ZXIxPJtOXs"
+    const { client, send } = route53([
+      { ChangeInfo: { Id: "change-stale" } },
+      { ChangeInfo: { Status: "INSYNC" } },
+    ])
+
+    await putDnsChallenge(client, "tenant-zone", "sproutos.run", digest, {
+      replaceExisting: true,
+      sleep: () => Promise.resolve(),
+      dns: {
+        resolveNameservers: () => Promise.resolve(["ns-1.example.test"]),
+        resolvePublicTxt: () => Promise.resolve([[digest]]),
+        resolveAuthoritativeTxt: () => Promise.resolve([[digest]]),
+      },
+    })
+
+    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(ChangeResourceRecordSetsCommand)
+    const change = send.mock.calls[0]?.[0]
+    if (!(change instanceof ChangeResourceRecordSetsCommand)) throw new Error("missing change")
+    expect(change.input.ChangeBatch?.Changes?.[0]?.ResourceRecordSet?.ResourceRecords).toEqual([
+      { Value: `"${digest}"` },
+    ])
+    expect(
+      send.mock.calls.some(([command]) => command instanceof ListResourceRecordSetsCommand),
+    ).toBe(false)
+  })
+
+  it("does not continue while an authoritative nameserver still serves stale data", async () => {
+    const digest = "wv7eJTUZ5tMiXm-P0dhwZc_pwCFublVy_ZXIxPJtOXs"
+    const { client } = route53([
+      { ResourceRecordSets: [] },
+      { ChangeInfo: { Id: "change-authority" } },
+      { ChangeInfo: { Status: "INSYNC" } },
+    ])
+    const sleep = vi.fn<(milliseconds: number) => Promise<void>>(() => Promise.resolve())
+
+    await expect(
+      putDnsChallenge(client, "tenant-zone", "sproutos.run", digest, {
+        sleep,
+        dns: {
+          resolveNameservers: () => Promise.resolve(["current.example.test", "stale.example.test"]),
+          resolvePublicTxt: () => Promise.resolve([[digest]]),
+          resolveAuthoritativeTxt: (_hostname, nameserver) =>
+            Promise.resolve(nameserver.startsWith("current") ? [[digest]] : [["old-value"]]),
+        },
+      }),
+    ).rejects.toThrow("stale.example.test")
+    expect(sleep).toHaveBeenCalledTimes(60)
   })
 
   it("removes only its own digest and preserves a concurrent TXT value", async () => {
@@ -115,7 +180,7 @@ describe("platform edge DNS-01", () => {
       client,
       "tenant-zone",
       "*.sproutos.run",
-      "token.key-authorization",
+      "wv7eJTUZ5tMiXm-P0dhwZc_pwCFublVy_ZXIxPJtOXs",
       () => Promise.resolve(),
     )
 
