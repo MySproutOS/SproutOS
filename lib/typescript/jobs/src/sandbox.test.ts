@@ -203,7 +203,6 @@ describe("the sandbox price book", () => {
     expect(rates.map((row) => row.dimension).sort()).toEqual([
       "sandbox_cpu_second",
       "sandbox_disk_gib_second",
-      "sandbox_egress_byte",
       "sandbox_gib_second",
     ])
   })
