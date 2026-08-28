@@ -193,9 +193,10 @@ Never print or persist
 ## What a deploy actually is
 
 The \`sprout\` CLI is the only deployment orchestrator. It packages output deterministically,
-negotiates the upload, creates the release, and waits for a terminal result. The GitHub Marketplace
-action is a thin compatibility wrapper around a pinned \`sprout\` release; it does not implement a
-second deployment protocol.
+negotiates the upload, creates the release, and waits for a terminal result. The reviewed GitHub
+Marketplace action at commit \`0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\` is a thin compatibility
+wrapper around the published \`sprout\` v0.1.0 release; it does not implement a second deployment
+protocol.
 
 The platform publishes a server build as a Lambda version and moves an alias, so a release is
 atomic and a rollback is one API call rather than a rebuild. Static builds are activated as an
@@ -221,7 +222,7 @@ jobs:
       # Build first. The action uploads finished output; it does not guess how this app builds.
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@v1
+      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
           preset: next            # next | hono | web | static | android
           directory: apps/website/.next/standalone
@@ -245,7 +246,8 @@ secret.
 
 ## Running the same deployment locally
 
-Install the checksummed \`sprout\` binary from the SproutOS download page, then:
+Install the checksummed \`sprout\` v0.1.0 binary from
+\`https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.0\`, then:
 
 \`\`\`shell
 sprout auth login
@@ -263,6 +265,10 @@ App Store eligibility and deployment behavior come only from the signed
 \`MySproutOS/Deployment-Templates\` catalogue. Resolve the exact upstream commit and immutable
 plugin digest recorded there. Never infer deployment behavior from an instruction file in an
 arbitrary upstream repository.
+
+The reviewed template source at commit \`c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1\` generates
+canonical Umami and Memos OIDC workflows that pin the deploy action to its full commit. Never replace
+that pin with a mutable action tag.
 
 A generated fork may contain \`.config/sproutos.toml\`. It is declarative and contains no secret
 values. It helps a human or coding agent understand services and bindings, but the imported signed
