@@ -8,8 +8,9 @@ summary: Use the same sprout deployment contract from GitHub Actions, a terminal
 
 Build the target, then call the Marketplace action. The reviewed action at commit
 `0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180` is a thin wrapper around the published `sprout` CLI
-v0.1.0. The local CLI is v0.1.1 because it corrects the production control-plane defaults; both use
-the same packaging and deployment protocol.
+v0.1.0. The local CLI is v0.1.2 because it corrects the production control-plane defaults and
+publishes direct static deploys through the same asset path as the action; both use the same
+packaging and deployment protocol.
 
 ```yaml
 name: Deploy to SproutOS
@@ -57,7 +58,7 @@ repository identity fails the GitHub job instead of reporting a successful uploa
 ## Run the same deployment locally
 
 Install `sprout` from the checksummed binaries in the
-[SproutOS CLI v0.1.1 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.1), then
+[SproutOS CLI v0.1.2 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.2), then
 sign in and deploy:
 
 ```shell
@@ -75,7 +76,7 @@ Every command also supports stable `--json` output for scripts and coding agents
 commands require confirmation or `--yes`.
 
 The release contains macOS arm64 and x86-64, Linux arm64 and x86-64, and Windows x86-64 binaries,
-plus `SHA256SUMS` and `sprout-v0.1.1-manifest.json`. Verify the selected archive against both files.
+plus `SHA256SUMS` and `sprout-v0.1.2-manifest.json`. Verify the selected archive against both files.
 The action also verifies GitHub's artifact attestation and the release's exact source revision
 before it executes the binary.
 
