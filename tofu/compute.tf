@@ -1000,6 +1000,14 @@ resource "aws_iam_policy" "application" {
         }
       },
       {
+        # Provider aggregate totals are reconciliation input only. CloudWatch does not support
+        # resource-level IAM for GetMetricStatistics; the job still requests the one configured
+        # tenant-static distribution and cannot mutate metrics or manufacture tenant usage.
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
+      },
+      {
         # The last write of a static release: one atomic hostname-to-digest pointer at the edge.
         Effect = "Allow"
         Action = [

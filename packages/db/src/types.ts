@@ -909,6 +909,23 @@ export interface ProjectUpdateSuggestion {
   upstreamSyncRunId: string
 }
 
+export interface ProviderUsageReconciliation {
+  createdAt: Generated<Timestamp>
+  id: string
+  importedEgressBytes: Numeric
+  importedRequests: Numeric
+  observedAt: Timestamp
+  periodStart: Timestamp
+  provider: string
+  providerEgressBytes: Numeric
+  providerRequests: Numeric
+  residualEgressBytes: Numeric
+  residualRequests: Numeric
+  resourceId: string
+  status: string
+  updatedAt: Generated<Timestamp>
+}
+
 export interface Refund {
   amountMicroUsd: Int8
   clawbackTransactionId: string | null
@@ -1461,6 +1478,7 @@ export interface DB {
   projectTemplateInstall: ProjectTemplateInstall
   projectTemplateService: ProjectTemplateService
   projectUpdateSuggestion: ProjectUpdateSuggestion
+  providerUsageReconciliation: ProviderUsageReconciliation
   refund: Refund
   region: Region
   repoAnalysis: RepoAnalysis

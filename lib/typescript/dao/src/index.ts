@@ -315,3 +315,7 @@ export { crudStatement } from "./statement/crud"
 export { fetchStatement, type StatementLineRow } from "./statement/fetch"
 export { crudStatementLineItem } from "./statementLineItem/crud"
 export { fetchStatementLineItem } from "./statementLineItem/fetch"
+export {
+  crudProviderUsageReconciliation,
+  type ProviderUsageReconciliationInput,
+} from "./providerUsageReconciliation/crud"
