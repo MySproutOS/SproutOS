@@ -97,7 +97,17 @@ const VISIBILITY: {
   },
 ]
 
-export function NewProjectDialog({ orgSlug }: { orgSlug: string }) {
+export function NewProjectDialog({
+  orgSlug,
+  kind = "site",
+  parentProjectId = null,
+  triggerLabel = "New project",
+}: {
+  orgSlug: string
+  kind?: "site" | "workflow"
+  parentProjectId?: string | null
+  triggerLabel?: string
+}) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -106,19 +116,21 @@ export function NewProjectDialog({ orgSlug }: { orgSlug: string }) {
         render={
           <Button>
             <PlusIcon />
-            New project
+            {triggerLabel}
           </Button>
         }
       />
       <DialogContent className="w-[34rem]">
         <DialogHeader>
-          <DialogTitle>New project</DialogTitle>
+          <DialogTitle>{kind === "workflow" ? "New workflow" : "New project"}</DialogTitle>
           <DialogDescription>
             Three ways to start. All of them end up as your code.
           </DialogDescription>
         </DialogHeader>
         <NewProjectForm
           orgSlug={orgSlug}
+          kind={kind}
+          parentProjectId={parentProjectId}
           onDone={() => {
             setOpen(false)
           }}
@@ -128,7 +140,17 @@ export function NewProjectDialog({ orgSlug }: { orgSlug: string }) {
   )
 }
 
-function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }) {
+function NewProjectForm({
+  orgSlug,
+  kind,
+  parentProjectId,
+  onDone,
+}: {
+  orgSlug: string
+  kind: "site" | "workflow"
+  parentProjectId: string | null
+  onDone: () => void
+}) {
   const [source, setSource] = useState<Source>("store")
   const [name, setName] = useState("")
   const [repositoryName, setRepositoryName] = useState("")
@@ -154,6 +176,7 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
     a repository they can show somebody — so the form makes the choice explicitly and sends it.
   */
   const [isPrivate, setIsPrivate] = useState(false)
+  const [workflowTrigger, setWorkflowTrigger] = useState<"interval" | "webhook">("interval")
 
   const navigate = useNavigate()
   const listings = useStoreListings()
@@ -245,6 +268,8 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
             path: { orgSlug },
             body: {
               name: name.trim(),
+              kind,
+              ...(parentProjectId === null ? {} : { parentProjectId }),
               source:
                 source === "store"
                   ? {
@@ -287,8 +312,18 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
               const id = (result as { project?: { id?: string } }).project?.id
               if (id !== undefined) {
                 void navigate({
-                  to: "/orgs/$orgSlug/projects/$projectId",
+                  to:
+                    kind === "workflow"
+                      ? "/orgs/$orgSlug/projects/$projectId/agent"
+                      : "/orgs/$orgSlug/projects/$projectId",
                   params: { orgSlug, projectId: id },
+                  ...(kind === "workflow"
+                    ? {
+                        search: {
+                          prompt: `Create a ${workflowTrigger} workflow in this repository. Include environment variable documentation, structured logs, and observable failure handling.`,
+                        },
+                      }
+                    : {}),
                 })
               }
             },
@@ -323,6 +358,26 @@ function NewProjectForm({ orgSlug, onDone }: { orgSlug: string; onDone: () => vo
           )
         })}
       </div>
+
+      {kind === "workflow" && (
+        <div className="flex flex-col gap-1.5">
+          <Label>Trigger</Label>
+          <Select
+            value={workflowTrigger}
+            onValueChange={(value: "interval" | "webhook" | null) => {
+              if (value !== null) setWorkflowTrigger(value)
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="interval">Interval schedule</SelectItem>
+              <SelectItem value="webhook">Webhook</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {source === "store" && (
         <div className="flex flex-col gap-1.5">
