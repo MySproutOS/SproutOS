@@ -211,6 +211,7 @@ mod tests {
 
     #[test]
     fn is_absent_unless_configured() {
+        let original = std::env::var_os("PG_PROXY_RESOLVE_URL");
         // The default has to be "do nothing": a proxy that refused to start without a resolver
         // would take every `sprout` tenant down the day it shipped.
         unsafe { std::env::remove_var("PG_PROXY_RESOLVE_URL") };
@@ -222,6 +223,11 @@ mod tests {
 
         unsafe { std::env::set_var("PG_PROXY_RESOLVE_URL", "http://api/v1/internal/pg/resolve") };
         assert!(resolve_config_from_env().is_some());
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("PG_PROXY_RESOLVE_URL", value) },
+            None => unsafe { std::env::remove_var("PG_PROXY_RESOLVE_URL") },
+        }
     }
 
     /// A branch credential must not be served the primary's cached backend.
@@ -252,7 +258,6 @@ mod tests {
     fn primary_key_is_the_bare_service_id() {
         let service = "6f1c3a2e-0000-7000-8000-000000000001";
         assert_eq!(cache_key(service, None), service);
-        unsafe { std::env::remove_var("PG_PROXY_RESOLVE_URL") };
     }
 
     #[test]

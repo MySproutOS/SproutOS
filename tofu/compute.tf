@@ -936,7 +936,7 @@ resource "aws_iam_policy" "application" {
         # Tenant object storage. Listing is limited to logical service prefixes in the one physical
         # bucket; no instance can list another platform bucket or the bucket root.
         Effect   = "Allow"
-        Action   = ["s3:ListBucket"]
+        Action   = ["s3:ListBucket", "s3:ListBucketVersions"]
         Resource = aws_s3_bucket.tenant_objects.arn
         Condition = {
           StringLike = {
@@ -948,7 +948,7 @@ resource "aws_iam_policy" "application" {
         # The proxy rewrites a customer's logical `v-<id>` bucket below this exact object prefix.
         # No bucket lifecycle or policy action is granted to the public-facing instances.
         Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
         Resource = [
           "${aws_s3_bucket.tenant_objects.arn}/v-*",
           "${aws_s3_bucket.tenant_objects.arn}/v-*/*",
@@ -1089,6 +1089,17 @@ resource "aws_iam_policy" "acme_worker" {
           "s3:DeleteObjectVersion",
         ]
         Resource = "${aws_s3_bucket.tenant_certificates.arn}/*"
+      },
+      {
+        # Account deletion purges every retained version of a tenant certificate's private key.
+        Effect   = "Allow"
+        Action   = ["s3:ListBucketVersions"]
+        Resource = aws_s3_bucket.tenant_certificates.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["custom-domains/*"]
+          }
+        }
       },
       {
         Effect = "Allow"
