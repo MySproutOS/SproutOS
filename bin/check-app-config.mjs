@@ -48,6 +48,9 @@ import { readFileSync } from "node:fs"
 
 const putSecrets = readFileSync("bin/put-app-secrets.sh", "utf8")
 const userData = readFileSync("tofu/user-data.sh.tftpl", "utf8")
+const templateEnv = readFileSync(".template.env", "utf8")
+const routerLogs = readFileSync("services/router/src/logs.rs", "utf8")
+const lambdaPublish = readFileSync("lib/typescript/lambda/src/publish.ts", "utf8")
 
 /**
  * Names that look like an environment variable, out of arbitrary text.
@@ -227,6 +230,39 @@ const direct = writtenDirectly()
 */
 const problems = []
 const warnings = []
+
+/*
+  The log endpoint is a route on the router, not an internal-API route and not configuration.
+
+  Production once held `https://api.sproutos.me/v1/internal/logs` in Parameter Store while the
+  router accepted only `POST /_sproutos/logs`. Both configurations looked complete to every list
+  check above; the extension simply received 404 and dropped every batch. A generated tenant
+  hostname is already guaranteed to reach the router, so publish derives the endpoint from that
+  hostname. Compare its path constant to Rust so changing either half cannot strand the other.
+*/
+const ingestPathMatch = /pub const INGEST_PATH: &str = "([^"]+)";/.exec(routerLogs)
+if (ingestPathMatch?.[1] === undefined) {
+  throw new Error("services/router/src/logs.rs no longer declares INGEST_PATH as a string constant")
+}
+const ingestPath = ingestPathMatch[1]
+const publishedPath = /export const LOG_INGEST_PATH = "([^"]+)"/.exec(lambdaPublish)?.[1]
+if (publishedPath !== ingestPath) {
+  problems.push(
+    `lib/typescript/lambda/src/publish.ts uses ${publishedPath ?? "no LOG_INGEST_PATH"}, but ` +
+      `services/router::logs::INGEST_PATH is ${ingestPath}. Every extension batch would miss.`,
+  )
+}
+if (
+  inParameterStore.has("SPROUTOS_LOG_ENDPOINT") ||
+  requested.has("SPROUTOS_LOG_ENDPOINT") ||
+  direct.has("SPROUTOS_LOG_ENDPOINT") ||
+  /^SPROUTOS_LOG_ENDPOINT=/m.test(templateEnv)
+) {
+  problems.push(
+    "SPROUTOS_LOG_ENDPOINT must be derived from each deployment's generated tenant hostname, not " +
+      "read from global configuration where a stale host can route every batch to another service.",
+  )
+}
 
 /*
   The silent one. `write_app_secrets` filters what SSM returned by this list, so a name that is not
