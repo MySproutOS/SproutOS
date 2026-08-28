@@ -1,6 +1,7 @@
 use std::{io::Read, path::Path, time::Duration};
 
 use serde_json::{Value, json};
+use zeroize::Zeroizing;
 
 use crate::{
     Backend, CliError, Result,
@@ -94,10 +95,13 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
             dependencies.confirmation,
             "Revoke the saved SproutOS credential?",
         )?;
-        let credential = credential::resolve(dependencies.credentials, &account);
-        dependencies.credentials.delete(&account)?;
-        match credential {
-            Ok(credential) if credential.source == CredentialSource::OsCredentialStore => {
+        let environment_token_present =
+            std::env::var("SPROUTOS_TOKEN").is_ok_and(|token| !token.is_empty());
+        match dependencies.credentials.get(&account)? {
+            Some(saved_token) if !saved_token.is_empty() => {
+                let saved_token = Zeroizing::new(saved_token);
+                // Revoke first. If the API is unavailable, retain the local credential so logout
+                // can be retried instead of orphaning a still-live key that the user cannot revoke.
                 dependencies
                     .backend
                     .request(
@@ -106,30 +110,40 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
                             path: "/v1/auth/cli/revoke".into(),
                             body: Some(json!({})),
                         },
-                        Some(credential.expose()),
+                        Some(saved_token.as_str()),
                     )
                     .await?;
+                dependencies.credentials.delete(&account)?;
                 return render(
                     cli,
                     request::command_name(&cli.command),
-                    json!({"loggedOut": true, "environmentTokenPresent": false}),
+                    json!({
+                        "loggedOut": true,
+                        "environmentTokenPresent": environment_token_present
+                    }),
                 );
             }
-            Ok(_) => {
+            Some(_) => {
+                dependencies.credentials.delete(&account)?;
                 return render(
                     cli,
                     request::command_name(&cli.command),
-                    json!({"loggedOut": false, "environmentTokenPresent": true}),
+                    json!({
+                        "loggedOut": true,
+                        "environmentTokenPresent": environment_token_present
+                    }),
                 );
             }
-            Err(CliError::AuthenticationRequired) => {
+            None => {
                 return render(
                     cli,
                     request::command_name(&cli.command),
-                    json!({"loggedOut": true, "environmentTokenPresent": false}),
+                    json!({
+                        "loggedOut": true,
+                        "environmentTokenPresent": environment_token_present
+                    }),
                 );
             }
-            Err(error) => return Err(error),
         }
     }
 
@@ -415,6 +429,18 @@ mod tests {
         }
     }
 
+    struct FailingBackend;
+    #[async_trait]
+    impl Backend for FailingBackend {
+        async fn request(
+            &self,
+            _request: request::ApiRequest,
+            _token: Option<&str>,
+        ) -> Result<Value> {
+            Err(CliError::Api("offline".into()))
+        }
+    }
+
     #[tokio::test]
     async fn json_mode_is_one_versioned_document_and_token_is_absent() {
         let directory = tempfile::tempdir().unwrap();
@@ -472,5 +498,33 @@ mod tests {
             Some("acme")
         );
         assert_eq!(backend.0.lock().unwrap()[0].path, "/v1/orgs/acme");
+    }
+
+    #[tokio::test]
+    async fn logout_keeps_saved_key_when_revocation_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FakeStore::default();
+        let account =
+            credential::account_for(&url::Url::parse("https://api.sproutos.com").unwrap());
+        store.set(&account, "canary-token").unwrap();
+        let cli = Cli::parse_from(["sprout", "--yes", "auth", "logout"]);
+        assert!(
+            run(
+                &cli,
+                &Dependencies {
+                    backend: &FailingBackend,
+                    credentials: &store,
+                    browser: &NeverBrowser,
+                    confirmation: &Yes,
+                    config_path: &directory.path().join("config.json"),
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            store.get(&account).unwrap().as_deref(),
+            Some("canary-token")
+        );
     }
 }
