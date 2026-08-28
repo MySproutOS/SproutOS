@@ -17,9 +17,11 @@ clap = { version = "4.5", features = ["derive", "env"] }
 directories = "6"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 rand.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sprout-core = { path = "../sprout-core" }
 thiserror.workspace = true
 tokio.workspace = true
 url = { version = "2.5", features = ["serde"] }
@@ -27,4 +29,5 @@ webbrowser = "1"
 zeroize = "1"
 
 [dev-dependencies]
+assert_cmd = "2"
 tempfile = "3"

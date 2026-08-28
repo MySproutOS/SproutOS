@@ -54,6 +54,7 @@ impl CredentialStore for OsCredentialStore {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialSource {
     Environment,
+    RepositoryDeployEnvironment,
     OsCredentialStore,
 }
 
@@ -116,6 +117,21 @@ pub fn resolve(store: &dyn CredentialStore, account: &str) -> Result<ResolvedCre
         token,
         source: CredentialSource::OsCredentialStore,
     })
+}
+
+/// Resolve deployment credentials without confusing an Action's repository-bound token with an
+/// ordinary organization API key. The dedicated variable is intentionally considered only for
+/// `sprout deploy`.
+pub fn resolve_deploy(store: &dyn CredentialStore, account: &str) -> Result<ResolvedCredential> {
+    if let Ok(token) = env::var("SPROUTOS_DEPLOY_TOKEN")
+        && !token.is_empty()
+    {
+        return Ok(ResolvedCredential {
+            token,
+            source: CredentialSource::RepositoryDeployEnvironment,
+        });
+    }
+    resolve(store, account)
 }
 
 #[cfg(test)]

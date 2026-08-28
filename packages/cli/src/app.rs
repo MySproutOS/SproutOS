@@ -133,7 +133,11 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         }
     }
 
-    let credential = credential::resolve(dependencies.credentials, &account)?;
+    let credential = if matches!(cli.command, Command::Deploy(_)) {
+        credential::resolve_deploy(dependencies.credentials, &account)?
+    } else {
+        credential::resolve(dependencies.credentials, &account)?
+    };
 
     if cli::destructive(&cli.command) {
         confirm::require(
@@ -149,7 +153,12 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         Command::Deploy(args) => {
             dependencies
                 .backend
-                .deploy(args, credential.expose())
+                .deploy(
+                    args,
+                    credential.expose(),
+                    organization,
+                    credential.source == CredentialSource::RepositoryDeployEnvironment,
+                )
                 .await?
         }
         Command::Template(TemplateArgs { command }) => {
@@ -204,6 +213,7 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
             "authenticated": true,
             "credentialSource": match credential.source {
                 CredentialSource::Environment => "environment",
+                CredentialSource::RepositoryDeployEnvironment => "repository_deploy_environment",
                 CredentialSource::OsCredentialStore => "os_credential_store",
             },
             "identity": data,
