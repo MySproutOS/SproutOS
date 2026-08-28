@@ -4,19 +4,11 @@ import { type Kysely, sql } from "kysely"
  * Move custom domains from synchronous ACM/ALB attachment to the asynchronous certificate
  * lifecycle owned by the Rust tenant edge.
  *
- * There are no launched customer domains to preserve. Refusing to migrate a live row is deliberate:
- * silently dropping an attached ACM certificate would turn a schema deployment into an outage.
+ * Existing claims are preserved, but an ACM-backed `active` row cannot remain active after its ACM
+ * fields disappear. Move every live claim back through DNS verification and ACME issuance. Deleted
+ * rows stay tombstoned and are marked for the normal asynchronous cleanup path.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
-  const existing = await sql<{ count: string }>`
-    select count(*)::text as count from custom_domain
-  `.execute(db)
-  if (existing.rows[0]?.count !== "0") {
-    throw new Error(
-      "custom_domain ACME cutover requires an empty table; migrate the existing certificates explicitly",
-    )
-  }
-
   await db.schema.alterTable("custom_domain").dropConstraint("custom_domain_status_check").execute()
   await db.schema
     .alterTable("custom_domain")
@@ -37,6 +29,19 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("reconcile_lease_token", "uuid")
     .addColumn("reconcile_lease_expires_at", "timestamptz")
     .execute()
+
+  await sql`
+    update custom_domain
+    set
+      status = case when deleted_at is null then 'pending_dns' else 'deleting' end,
+      status_reason = case
+        when deleted_at is null then 'Certificate must be issued by the Rust tenant edge.'
+        else status_reason
+      end,
+      next_retry_at = case when deleted_at is null then now() else null end,
+      consecutive_failures = 0,
+      updated_at = now()
+  `.execute(db)
 
   await db.schema
     .alterTable("custom_domain")
