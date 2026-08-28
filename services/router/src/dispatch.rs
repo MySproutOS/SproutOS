@@ -163,7 +163,9 @@ async fn preserve_delayed_wake(valkey: &ConnectionManager, pending: &Pending) {
     let mut connection = valkey.clone();
     let result: Result<(), redis::RedisError> = redis::cmd("ZADD")
         .arg(MASTER_WAKE_KEY)
-        .arg("GT")
+        // A proxy enqueue may have arrived after `drain_master`. Preserve that earlier immediate
+        // wake instead of raising it to the delayed job's timestamp.
+        .arg("LT")
         .arg(wake_ms)
         .arg(format!("{}/{}", pending.resource, pending.queue))
         .query_async(&mut connection)
@@ -248,6 +250,10 @@ pub fn binding_key(resource_short_id: &str) -> String {
     format!("queue:{resource_short_id}")
 }
 
+pub fn binding_deleted_key(resource_short_id: &str) -> String {
+    format!("queue:deleted:{resource_short_id}")
+}
+
 /// Run the dispatcher until the process ends.
 ///
 /// One loop, not a task per queue. The master queue is already coalesced by the proxy, so the work
@@ -256,6 +262,25 @@ pub fn binding_key(resource_short_id: &str) -> String {
 pub async fn dispatch_once<I: WorkerInvoker>(valkey: &ConnectionManager, invoker: &I) {
     for pending in drain_master(valkey).await {
         let mut connection = valkey.clone();
+        let deleted: Result<bool, redis::RedisError> =
+            redis::AsyncCommands::exists(&mut connection, binding_deleted_key(&pending.resource))
+                .await;
+        match deleted {
+            Ok(true) => {
+                // A pre-rollout API can still write the legacy binding key during a rolling deploy.
+                // It cannot overwrite the separate deletion fence; erase its targetless late value.
+                let _: Result<(), redis::RedisError> =
+                    redis::AsyncCommands::del(&mut connection, binding_key(&pending.resource))
+                        .await;
+                continue;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, resource = pending.resource, "could not read queue deletion fence");
+                rearm_wake(valkey, &pending).await;
+                continue;
+            }
+        }
         let raw: Result<Option<String>, redis::RedisError> =
             redis::AsyncCommands::get(&mut connection, binding_key(&pending.resource)).await;
 
@@ -333,6 +358,23 @@ mod tests {
     fn dispatcher_test_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    async fn real_dispatch_manager() -> Option<ConnectionManager> {
+        let url = std::env::var("ROUTER_DISPATCH_TEST_VALKEY_URL")
+            .unwrap_or_else(|_| "redis://localhost:41023/15".into());
+        let client = redis::Client::open(url).expect("ROUTER_DISPATCH_TEST_VALKEY_URL is invalid");
+        let manager =
+            tokio::time::timeout(Duration::from_secs(1), ConnectionManager::new(client)).await;
+        let Ok(Ok(manager)) = manager else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "the real Valkey dispatcher tests are required in CI"
+            );
+            eprintln!("skipping real dispatcher test: Valkey is unavailable");
+            return None;
+        };
+        Some(manager)
     }
 
     #[derive(Default)]
@@ -477,6 +519,11 @@ mod tests {
         let binding = binding_key(&resource);
         let member = format!("{resource}/{queue}");
         let mut connection = manager.clone();
+        let _: () = redis::cmd("DEL")
+            .arg(MASTER_WAKE_KEY)
+            .query_async(&mut connection)
+            .await
+            .expect("clear isolated dispatcher test queue");
         let _: () = redis::pipe()
             .atomic()
             .set(
@@ -496,16 +543,13 @@ mod tests {
             .expect("seed a real queue binding and wake");
 
         let invoker = RecordingInvoker::default();
-        let seeded: Vec<(String, f64)> = redis::cmd("ZRANGE")
+        let seeded: Option<f64> = redis::cmd("ZSCORE")
             .arg(MASTER_WAKE_KEY)
-            .arg(0)
-            .arg(-1)
-            .arg("WITHSCORES")
+            .arg(&member)
             .query_async(&mut connection)
             .await
             .expect("read seeded wake");
-        assert_eq!(seeded.len(), 1, "the real master wake was not seeded");
-        assert!(seeded[0].1 <= now_ms() as f64, "the wake is not due");
+        assert!(seeded.is_some_and(|score| score <= now_ms() as f64));
         dispatch_once(&manager, &invoker).await;
 
         assert_eq!(
@@ -519,14 +563,13 @@ mod tests {
             )]
         );
         let mut connection = manager.clone();
-        let remaining: Vec<String> = redis::cmd("ZRANGE")
+        let remaining: Option<f64> = redis::cmd("ZSCORE")
             .arg(MASTER_WAKE_KEY)
-            .arg(0)
-            .arg(-1)
+            .arg(&member)
             .query_async(&mut connection)
             .await
             .expect("read drained master queue");
-        assert!(remaining.is_empty());
+        assert!(remaining.is_none());
         let _: () = redis::cmd("DEL")
             .arg(binding)
             .query_async(&mut connection)
@@ -562,6 +605,11 @@ mod tests {
         let project_id = uuid::Uuid::now_v7().to_string();
         let organization_id = uuid::Uuid::now_v7().to_string();
         let mut connection = manager.clone();
+        let _: () = redis::cmd("DEL")
+            .arg(MASTER_WAKE_KEY)
+            .query_async(&mut connection)
+            .await
+            .expect("clear isolated dispatcher test queue");
         let seed = |function_arn: Option<&str>| {
             serde_json::json!({
                 "uri": "rediss://tenant:redacted@example.test:6379/0",
@@ -654,5 +702,106 @@ mod tests {
             .query_async(&mut connection)
             .await
             .expect("remove recovery fixture wake");
+    }
+
+    #[tokio::test]
+    async fn successful_dispatch_does_not_raise_a_concurrent_enqueue_to_the_delayed_alarm() {
+        let _guard = dispatcher_test_lock().lock().await;
+        let Some(manager) = real_dispatch_manager().await else {
+            return;
+        };
+        let pending = Pending {
+            resource: format!("success{}", uuid::Uuid::now_v7().simple()),
+            queue: format!("celery-{}", uuid::Uuid::now_v7().simple()),
+        };
+        let member = format!("{}/{}", pending.resource, pending.queue);
+        let immediate = now_ms();
+        let delayed = delayed_key(&pending);
+        let mut connection = manager.clone();
+        let _: () = redis::pipe()
+            .atomic()
+            // Exact dangerous interleaving: drain completed, then the proxy reported another
+            // immediate enqueue before delayed-alarm preservation ran.
+            .zadd(MASTER_WAKE_KEY, &member, immediate)
+            .zadd(&delayed, "delayed-job", (immediate + 86_400_000) * 4096)
+            .query_async(&mut connection)
+            .await
+            .expect("seed concurrent immediate and delayed wakes");
+
+        preserve_delayed_wake(&manager, &pending).await;
+        let invoker = RecordingInvoker::default();
+        invoker
+            .invoke("arn:aws:lambda:us-east-1:123:function:app:live", &pending)
+            .await
+            .expect("successful invocation");
+
+        let preserved: Option<u64> = redis::cmd("ZSCORE")
+            .arg(MASTER_WAKE_KEY)
+            .arg(&member)
+            .query_async(&mut connection)
+            .await
+            .expect("read preserved immediate wake");
+        assert_eq!(preserved, Some(immediate));
+        let _: () = redis::cmd("DEL")
+            .arg(delayed)
+            .query_async(&mut connection)
+            .await
+            .expect("remove delayed fixture");
+        let _: () = redis::cmd("ZREM")
+            .arg(MASTER_WAKE_KEY)
+            .arg(member)
+            .query_async(&mut connection)
+            .await
+            .expect("remove immediate fixture");
+    }
+
+    #[tokio::test]
+    async fn separate_deletion_fence_survives_an_old_replica_binding_write() {
+        let _guard = dispatcher_test_lock().lock().await;
+        let Some(manager) = real_dispatch_manager().await else {
+            return;
+        };
+        let resource = format!("deleted{}", uuid::Uuid::now_v7().simple());
+        let queue = format!("celery-{}", uuid::Uuid::now_v7().simple());
+        let member = format!("{resource}/{queue}");
+        let binding = binding_key(&resource);
+        let fence = binding_deleted_key(&resource);
+        let mut connection = manager.clone();
+        let _: () = redis::pipe()
+            .atomic()
+            .set(&fence, "1")
+            // This is the old API's unconditional SET arriving after new-code deletion.
+            .set(
+                &binding,
+                serde_json::json!({
+                    "uri": "rediss://tenant:late-old-replica@example.test:6379/0",
+                    "backendServiceId": uuid::Uuid::now_v7(),
+                    "projectId": null,
+                    "organizationId": uuid::Uuid::now_v7(),
+                })
+                .to_string(),
+            )
+            .zadd(MASTER_WAKE_KEY, &member, now_ms())
+            .query_async(&mut connection)
+            .await
+            .expect("seed deletion fence and late legacy write");
+
+        let invoker = RecordingInvoker::default();
+        dispatch_once(&manager, &invoker).await;
+        assert!(invoker.0.lock().expect("recorded invocation").is_empty());
+        let remaining: Option<String> = redis::AsyncCommands::get(&mut connection, &binding)
+            .await
+            .expect("read removed legacy binding");
+        assert!(remaining.is_none());
+        let fence_remains: bool = redis::AsyncCommands::exists(&mut connection, &fence)
+            .await
+            .expect("read deletion fence");
+        assert!(fence_remains);
+
+        let _: () = redis::cmd("DEL")
+            .arg(fence)
+            .query_async(&mut connection)
+            .await
+            .expect("remove deletion fence fixture");
     }
 }

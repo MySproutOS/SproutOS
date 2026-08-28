@@ -199,7 +199,7 @@ export async function syncProjectQueueTargets(
     .execute()
 
   for (const queue of queues) {
-    await setQueueTarget(valkey, encodeShortId(queue.id), functionArn)
+    await setQueueTarget(valkey, encodeShortId(queue.id), projectId, functionArn)
   }
 }
 

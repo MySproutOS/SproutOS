@@ -31,19 +31,25 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
     await publishQueue(valkey, resource, original)
 
     expect(
-      await setQueueTarget(valkey, resource, "arn:aws:lambda:us-east-1:123:function:app:live"),
+      await setQueueTarget(
+        valkey,
+        resource,
+        "project-one",
+        "arn:aws:lambda:us-east-1:123:function:app:live",
+      ),
     ).toBe(true)
     expect(await readQueue(valkey, resource)).toEqual({
       ...original,
       functionArn: "arn:aws:lambda:us-east-1:123:function:app:live",
     })
 
-    expect(await setQueueTarget(valkey, resource, null)).toBe(true)
+    expect(await setQueueTarget(valkey, resource, "project-one", null)).toBe(true)
     expect(await readQueue(valkey, resource)).toEqual({
       ...original,
       projectId: "project-one",
     })
     await withdrawQueue(valkey, resource)
+    await valkey.del(`queue:deleted:${resource}`)
   })
 
   it("never resurrects a binding teardown already withdrew", async () => {
@@ -56,7 +62,7 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
     })
     await withdrawQueue(valkey, resource)
 
-    expect(await setQueueTarget(valkey, resource, "arn:deleted")).toBe(false)
+    expect(await setQueueTarget(valkey, resource, "deleted-project", "arn:deleted")).toBe(false)
     expect(await readQueue(valkey, resource)).toBeUndefined()
 
     // Force the dangerous race ordering deterministically: deletion commits its withdrawal while
@@ -70,5 +76,21 @@ describe.runIf(reachable)("queue binding lifecycle", () => {
       }),
     ).toBe(false)
     expect(await readQueue(valkey, resource)).toBeUndefined()
+
+    // A pre-rollout API replica still uses unconditional SET. Its late write cannot overwrite the
+    // separate fence, cannot become executable, and is invisible to every new reader.
+    await valkey.set(
+      `queue:${resource}`,
+      JSON.stringify({
+        uri: "rediss://tenant:old-replica-secret@queue.example.test:6379/0",
+        backendServiceId: crypto.randomUUID(),
+        projectId: null,
+        organizationId: crypto.randomUUID(),
+      }),
+    )
+    expect(await readQueue(valkey, resource)).toBeUndefined()
+    expect(await setQueueTarget(valkey, resource, "deleted-project", "arn:deleted")).toBe(false)
+
+    await valkey.del(`queue:${resource}`, `queue:deleted:${resource}`)
   })
 })

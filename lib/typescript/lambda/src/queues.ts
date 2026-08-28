@@ -44,6 +44,10 @@ function key(resourceShortId: string): string {
   return `${PREFIX}${resourceShortId}`
 }
 
+function deletedKey(resourceShortId: string): string {
+  return `${PREFIX}deleted:${resourceShortId}`
+}
+
 /**
  * Publish a queue for the router to watch.
  *
@@ -52,12 +56,9 @@ function key(resourceShortId: string): string {
  * error anywhere — the failure mode of forgetting is much worse here than the failure mode of
  * remembering, and teardown withdraws it explicitly.
  */
-const DELETED = "deleted"
-
 const REPLACE_UNLESS_DELETED = `
-local current = redis.call('GET', KEYS[1])
-if current == ARGV[1] then return 0 end
-redis.call('SET', KEYS[1], ARGV[2])
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+redis.call('SET', KEYS[1], ARGV[1])
 return 1
 `
 
@@ -70,9 +71,9 @@ export async function publishQueue(
     Number(
       await valkey.eval(
         REPLACE_UNLESS_DELETED,
-        1,
+        2,
         key(resourceShortId),
-        DELETED,
+        deletedKey(resourceShortId),
         JSON.stringify(binding),
       ),
     ) === 1
@@ -83,7 +84,15 @@ export async function readQueue(
   valkey: Redis,
   resourceShortId: string,
 ): Promise<QueueBinding | undefined> {
-  const raw = await valkey.get(key(resourceShortId))
+  const raw = (await valkey.eval(
+    `
+if redis.call('EXISTS', KEYS[2]) == 1 then return nil end
+return redis.call('GET', KEYS[1])
+`,
+    2,
+    key(resourceShortId),
+    deletedKey(resourceShortId),
+  )) as string | null
   if (raw === null) return undefined
   try {
     return JSON.parse(raw) as QueueBinding
@@ -104,6 +113,7 @@ export async function readQueue(
  * resurrect the credential after teardown withdrew it.
  */
 const MOVE_TARGET = `
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 local current = redis.call('GET', KEYS[1])
 if not current then return 0 end
 if current ~= ARGV[1] then return -1 end
@@ -114,14 +124,16 @@ return 1
 export async function setQueueTarget(
   valkey: Redis,
   resourceShortId: string,
+  projectId: string,
   functionArn: string | null,
 ): Promise<boolean> {
   const bindingKey = key(resourceShortId)
+  const tombstoneKey = deletedKey(resourceShortId)
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
+    if ((await valkey.exists(tombstoneKey)) === 1) return false
     const raw = await valkey.get(bindingKey)
     if (raw === null) return false
-    if (raw === DELETED) return false
 
     let current: QueueBinding
     try {
@@ -136,11 +148,16 @@ export async function setQueueTarget(
     ) {
       throw new Error(`Queue binding ${resourceShortId} is incomplete`)
     }
+    if (current.projectId !== null && current.projectId !== projectId) {
+      throw new Error(`Queue binding ${resourceShortId} belongs to another project`)
+    }
 
-    const next: QueueBinding = { ...current, functionArn: functionArn ?? undefined }
+    const next: QueueBinding = { ...current, projectId, functionArn: functionArn ?? undefined }
     // JSON.stringify omits the explicit `undefined`, which removes a stale function ARN while
     // keeping the one-time URI and the resource identity intact.
-    const moved = Number(await valkey.eval(MOVE_TARGET, 1, bindingKey, raw, JSON.stringify(next)))
+    const moved = Number(
+      await valkey.eval(MOVE_TARGET, 2, bindingKey, tombstoneKey, raw, JSON.stringify(next)),
+    )
     if (moved === 1) return true
     if (moved === 0) return false
   }
@@ -156,5 +173,14 @@ export async function setQueueTarget(
  * never reused, so there is no valid operation that needs to recreate this exact key.
  */
 export async function withdrawQueue(valkey: Redis, resourceShortId: string): Promise<void> {
-  await valkey.set(key(resourceShortId), DELETED)
+  await valkey.eval(
+    `
+redis.call('SET', KEYS[2], '1')
+redis.call('DEL', KEYS[1])
+return 1
+`,
+    2,
+    key(resourceShortId),
+    deletedKey(resourceShortId),
+  )
 }
