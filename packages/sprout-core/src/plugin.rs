@@ -1,5 +1,10 @@
 use std::{path::Path, process::Stdio, time::Duration};
 
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, OwnedFd};
+#[cfg(not(unix))]
+type OwnedFd = ();
+
 use serde::Serialize;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -104,7 +109,53 @@ impl TemplateProtocol<sprout_template_protocol::ApplyRequest> for CanonicalProto
 /// prevent access to caller credentials, and contain descendants so killing the command kills the
 /// complete plugin process tree. Core clears the environment and controls all standard streams.
 pub trait IsolationProvider: Send + Sync {
-    fn command(&self, executable: &VerifiedExecutable, workspace: &Path) -> Result<Command>;
+    fn command(&self, executable: &VerifiedExecutable, workspace: &Path)
+    -> Result<IsolatedCommand>;
+}
+
+/// A sandbox command and the narrowly allowlisted descriptors its launcher consumes before the
+/// plugin starts. Every other non-stdio descriptor remains close-on-exec.
+pub struct IsolatedCommand {
+    command: Command,
+    inherited_fds: Vec<OwnedFd>,
+}
+
+impl IsolatedCommand {
+    pub fn new(command: Command) -> Self {
+        Self {
+            command,
+            inherited_fds: Vec::new(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn with_inherited_fd(mut self, descriptor: OwnedFd) -> Self {
+        self.inherited_fds.push(descriptor);
+        self
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn command(&self) -> &Command {
+        &self.command
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn command_mut(&mut self) -> &mut Command {
+        &mut self.command
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn inherited_raw_fds(&self) -> Vec<libc::c_int> {
+        self.inherited_fds.iter().map(AsRawFd::as_raw_fd).collect()
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn inherit_fds_for_test(&self) -> std::io::Result<()> {
+        for descriptor in &self.inherited_fds {
+            clear_close_on_exec(descriptor.as_raw_fd())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -144,7 +195,10 @@ impl<I: IsolationProvider> PluginRunner<I> {
         }
         let before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
         before.reject_preexisting_hard_links()?;
-        let mut command = self.isolation.command(executable, workspace)?;
+        let IsolatedCommand {
+            mut command,
+            inherited_fds,
+        } = self.isolation.command(executable, workspace)?;
         command
             .env_clear()
             .env("LANG", "C")
@@ -154,10 +208,11 @@ impl<I: IsolationProvider> PluginRunner<I> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        configure_process(&mut command)?;
+        configure_process(&mut command, &inherited_fds)?;
         let mut child = command
             .spawn()
             .map_err(|error| SproutError::PluginSpawn(error.to_string()))?;
+        drop(inherited_fds);
         let mut stdin = child.stdin.take().ok_or_else(|| {
             SproutError::PluginSpawn("sandbox did not provide plugin stdin".into())
         })?;
@@ -242,14 +297,18 @@ impl<I: IsolationProvider> PluginRunner<I> {
 }
 
 #[cfg(unix)]
-fn configure_process(command: &mut Command) -> Result<()> {
+fn configure_process(command: &mut Command, inherited_fds: &[OwnedFd]) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
     command.as_std_mut().process_group(0);
+    let inherited_fds = inherited_fds
+        .iter()
+        .map(AsRawFd::as_raw_fd)
+        .collect::<Vec<_>>();
     // Mark every non-stdio descriptor close-on-exec. This includes descriptors a caller may have
     // deliberately made inheritable while preserving Rust's private exec-error pipe until exec.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             #[cfg(target_os = "linux")]
             {
                 let result = libc::syscall(
@@ -259,6 +318,9 @@ fn configure_process(command: &mut Command) -> Result<()> {
                     libc::CLOSE_RANGE_CLOEXEC,
                 );
                 if result == 0 {
+                    for descriptor in &inherited_fds {
+                        clear_close_on_exec(*descriptor)?;
+                    }
                     return Ok(());
                 }
                 let error = std::io::Error::last_os_error();
@@ -267,13 +329,12 @@ fn configure_process(command: &mut Command) -> Result<()> {
                 }
             }
 
-            let maximum = libc::sysconf(libc::_SC_OPEN_MAX);
-            let maximum = if maximum < 0 {
-                65_536
-            } else {
-                maximum.min(1_048_576)
-            };
+            let maximum = fd_scan_maximum()?;
             for descriptor in 3..maximum {
+                if inherited_fds.contains(&(descriptor as libc::c_int)) {
+                    clear_close_on_exec(descriptor as libc::c_int)?;
+                    continue;
+                }
                 let flags = libc::fcntl(descriptor as libc::c_int, libc::F_GETFD);
                 if flags >= 0
                     && libc::fcntl(
@@ -291,8 +352,48 @@ fn configure_process(command: &mut Command) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn fd_scan_maximum() -> std::io::Result<libc::c_int> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    fd_scan_maximum_from_rlimit(limit.rlim_cur)
+}
+
+#[cfg(unix)]
+fn fd_scan_maximum_from_rlimit(limit: libc::rlim_t) -> std::io::Result<libc::c_int> {
+    if limit == libc::RLIM_INFINITY {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "RLIMIT_NOFILE is infinite; cannot prove descriptor closure",
+        ));
+    }
+    libc::c_int::try_from(limit).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "RLIMIT_NOFILE exceeds the descriptor number range",
+        )
+    })
+}
+
+#[cfg(unix)]
+fn clear_close_on_exec(descriptor: libc::c_int) -> std::io::Result<()> {
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(not(unix))]
-fn configure_process(_command: &mut Command) -> Result<()> {
+fn configure_process(_command: &mut Command, _inherited_fds: &[OwnedFd]) -> Result<()> {
     // NativeIsolationProvider rejects Windows before this point. A future Windows provider must
     // attach the process to a kill-on-close Job Object before this function can return success.
     Err(SproutError::IsolationUnavailable(
@@ -375,14 +476,31 @@ mod tests {
     use tempfile::tempdir;
     use tokio::process::Command;
 
-    use super::{ApplyLimits, IsolationProvider, PluginRunner, ProtocolOutcome, TemplateProtocol};
+    #[cfg(unix)]
+    use super::fd_scan_maximum_from_rlimit;
+    use super::{
+        ApplyLimits, IsolatedCommand, IsolationProvider, PluginRunner, ProtocolOutcome,
+        TemplateProtocol,
+    };
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_fallback_scans_the_complete_finite_rlimit() {
+        assert_eq!(fd_scan_maximum_from_rlimit(2_000_000).unwrap(), 2_000_000);
+        assert!(fd_scan_maximum_from_rlimit(libc::RLIM_INFINITY).is_err());
+    }
+
     use crate::{ChangeKind, DeclaredChange, ErrorCode, Result, VerifiedExecutable};
 
     struct TestIsolation;
 
     impl IsolationProvider for TestIsolation {
-        fn command(&self, executable: &VerifiedExecutable, _workspace: &Path) -> Result<Command> {
-            Ok(Command::new(executable.path()))
+        fn command(
+            &self,
+            executable: &VerifiedExecutable,
+            _workspace: &Path,
+        ) -> Result<IsolatedCommand> {
+            Ok(IsolatedCommand::new(Command::new(executable.path())))
         }
     }
 

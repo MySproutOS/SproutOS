@@ -6,11 +6,17 @@
 use std::path::Path;
 
 #[cfg(target_os = "linux")]
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    io::{Seek, SeekFrom, Write},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    path::PathBuf,
+};
 
+#[cfg(target_os = "linux")]
 use tokio::process::Command;
 
-use crate::{IsolationProvider, Result, SproutError, VerifiedExecutable};
+use crate::{IsolatedCommand, IsolationProvider, Result, SproutError, VerifiedExecutable};
 
 /// The production isolation provider for the current operating system.
 #[derive(Clone, Debug)]
@@ -49,7 +55,11 @@ impl NativeIsolationProvider {
 }
 
 impl IsolationProvider for NativeIsolationProvider {
-    fn command(&self, executable: &VerifiedExecutable, workspace: &Path) -> Result<Command> {
+    fn command(
+        &self,
+        executable: &VerifiedExecutable,
+        workspace: &Path,
+    ) -> Result<IsolatedCommand> {
         let executable = executable.path().canonicalize().map_err(|error| {
             SproutError::IsolationUnavailable(format!(
                 "verified plugin path could not be resolved: {error}"
@@ -102,8 +112,14 @@ fn find_trusted_tool(candidates: &[&Path], name: &str) -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_command(bubblewrap: &Path, executable: &Path, workspace: &Path) -> Result<Command> {
+fn linux_command(
+    bubblewrap: &Path,
+    executable: &Path,
+    workspace: &Path,
+) -> Result<IsolatedCommand> {
     ensure_static_elf(executable)?;
+    let seccomp = plugin_seccomp_filter()?;
+    let seccomp_fd = seccomp.as_raw_fd();
     let mut command = Command::new(bubblewrap);
     command.args([
         "--die-with-parent",
@@ -111,8 +127,6 @@ fn linux_command(bubblewrap: &Path, executable: &Path, workspace: &Path) -> Resu
         "--unshare-all",
         "--unshare-user",
         "--unshare-pid",
-        "--disable-userns",
-        "--assert-userns-disabled",
         "--cap-drop",
         "ALL",
         "--clearenv",
@@ -137,6 +151,7 @@ fn linux_command(bubblewrap: &Path, executable: &Path, workspace: &Path) -> Resu
     if git.exists() {
         command.arg("--ro-bind").arg(&git).arg("/workspace/.git");
     }
+    command.arg("--seccomp").arg(seccomp_fd.to_string());
     command.args([
         "--remount-ro",
         "/",
@@ -145,7 +160,170 @@ fn linux_command(bubblewrap: &Path, executable: &Path, workspace: &Path) -> Resu
         "--",
         "/plugin",
     ]);
-    Ok(command)
+    Ok(IsolatedCommand::new(command).with_inherited_fd(seccomp))
+}
+
+#[cfg(target_os = "linux")]
+fn plugin_seccomp_filter() -> Result<OwnedFd> {
+    let name = std::ffi::CString::new("sprout-plugin-seccomp").expect("static memfd name");
+    let descriptor =
+        unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
+    if descriptor < 0 {
+        return Err(SproutError::IsolationUnavailable(format!(
+            "could not create plugin seccomp filter: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    let descriptor = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    let mut file = fs::File::from(descriptor);
+    file.write_all(&plugin_seccomp_program()).map_err(|error| {
+        SproutError::IsolationUnavailable(format!("could not write plugin seccomp filter: {error}"))
+    })?;
+    file.flush().map_err(|error| {
+        SproutError::IsolationUnavailable(format!("could not flush plugin seccomp filter: {error}"))
+    })?;
+    let seals = libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) } < 0 {
+        return Err(SproutError::IsolationUnavailable(format!(
+            "could not seal plugin seccomp filter: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    let read_only_path = format!("/proc/self/fd/{}", file.as_raw_fd());
+    let mut read_only = fs::File::open(read_only_path).map_err(|error| {
+        SproutError::IsolationUnavailable(format!(
+            "could not reopen plugin seccomp filter read-only: {error}"
+        ))
+    })?;
+    read_only.seek(SeekFrom::Start(0)).map_err(|error| {
+        SproutError::IsolationUnavailable(format!(
+            "could not rewind plugin seccomp filter: {error}"
+        ))
+    })?;
+    drop(file);
+    let descriptor: OwnedFd = read_only.into();
+    if descriptor.as_raw_fd() >= 3 {
+        return Ok(descriptor);
+    }
+    let duplicate = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if duplicate < 0 {
+        return Err(SproutError::IsolationUnavailable(format!(
+            "could not reserve plugin seccomp descriptor: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
+}
+
+#[cfg(target_os = "linux")]
+fn plugin_seccomp_program() -> Vec<u8> {
+    const BPF_LD_W_ABS: u16 = 0x20;
+    const BPF_JMP_JEQ_K: u16 = 0x15;
+    #[cfg(target_arch = "x86_64")]
+    const BPF_JMP_JGE_K: u16 = 0x35;
+    const BPF_RET_K: u16 = 0x06;
+    const SECCOMP_DATA_NR_OFFSET: u32 = 0;
+    const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
+    const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+    const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
+    const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+
+    #[cfg(target_arch = "aarch64")]
+    const AUDIT_ARCH_NATIVE: u32 = 0xc000_00b7;
+    #[cfg(target_arch = "x86_64")]
+    const AUDIT_ARCH_NATIVE: u32 = 0xc000_003e;
+    // x86-64 and x32 intentionally share AUDIT_ARCH_X86_64. A deny-list that compares only the
+    // native syscall numbers is bypassable by setting bit 30, so reject the complete x32 ABI before
+    // evaluating any syscall-specific rule.
+    #[cfg(target_arch = "x86_64")]
+    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    compile_error!("native plugin seccomp is implemented only for Linux arm64 and amd64");
+
+    #[repr(C)]
+    struct Instruction {
+        code: u16,
+        jt: u8,
+        jf: u8,
+        value: u32,
+    }
+
+    let mut instructions = vec![
+        Instruction {
+            code: BPF_LD_W_ABS,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_DATA_ARCH_OFFSET,
+        },
+        Instruction {
+            code: BPF_JMP_JEQ_K,
+            jt: 1,
+            jf: 0,
+            value: AUDIT_ARCH_NATIVE,
+        },
+        Instruction {
+            code: BPF_RET_K,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_RET_KILL_PROCESS,
+        },
+        Instruction {
+            code: BPF_LD_W_ABS,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_DATA_NR_OFFSET,
+        },
+    ];
+    #[cfg(target_arch = "x86_64")]
+    instructions.extend([
+        Instruction {
+            code: BPF_JMP_JGE_K,
+            jt: 0,
+            jf: 1,
+            value: X32_SYSCALL_BIT,
+        },
+        Instruction {
+            code: BPF_RET_K,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_RET_ERRNO | libc::EPERM as u32,
+        },
+    ]);
+    for syscall in [
+        libc::SYS_clone,
+        libc::SYS_clone3,
+        libc::SYS_unshare,
+        libc::SYS_setns,
+    ] {
+        instructions.push(Instruction {
+            code: BPF_JMP_JEQ_K,
+            jt: 0,
+            jf: 1,
+            value: syscall as u32,
+        });
+        instructions.push(Instruction {
+            code: BPF_RET_K,
+            jt: 0,
+            jf: 0,
+            value: SECCOMP_RET_ERRNO | libc::EPERM as u32,
+        });
+    }
+    instructions.push(Instruction {
+        code: BPF_RET_K,
+        jt: 0,
+        jf: 0,
+        value: SECCOMP_RET_ALLOW,
+    });
+
+    let mut bytes = Vec::with_capacity(instructions.len() * 8);
+    for instruction in instructions {
+        bytes.extend_from_slice(&instruction.code.to_ne_bytes());
+        bytes.push(instruction.jt);
+        bytes.push(instruction.jf);
+        bytes.extend_from_slice(&instruction.value.to_ne_bytes());
+    }
+    bytes
 }
 
 #[cfg(target_os = "linux")]
@@ -306,6 +484,7 @@ mod tests {
         };
         let command = provider.command(&executable, &workspace).unwrap();
         let args = command
+            .command()
             .as_std()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -313,8 +492,15 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--unshare-all"));
         assert!(args.iter().any(|arg| arg == "--unshare-user"));
         assert!(args.iter().any(|arg| arg == "--unshare-pid"));
-        assert!(args.iter().any(|arg| arg == "--disable-userns"));
-        assert!(args.iter().any(|arg| arg == "--assert-userns-disabled"));
+        assert!(!args.iter().any(|arg| arg == "--disable-userns"));
+        assert!(!args.iter().any(|arg| arg == "--assert-userns-disabled"));
+        assert!(args.iter().any(|arg| arg == "--seccomp"));
+        let inherited = command.inherited_raw_fds();
+        assert_eq!(inherited.len(), 1);
+        assert!(
+            args.windows(2)
+                .any(|args| { args[0] == "--seccomp" && args[1] == inherited[0].to_string() })
+        );
         assert!(args.windows(2).any(|args| args == ["--cap-drop", "ALL"]));
         assert!(args.iter().any(|arg| arg == "--remount-ro"));
         assert!(args.iter().any(|arg| arg == "/dev/null"));
@@ -325,6 +511,128 @@ mod tests {
                 .iter()
                 .any(|arg| arg == "/usr" || arg == "/etc" || arg == "/home")
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn plugin_seccomp_filter_is_sealed_and_denies_namespace_syscalls() {
+        let descriptor = plugin_seccomp_filter().unwrap();
+        let seals = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GET_SEALS) };
+        assert_eq!(
+            seals,
+            libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE
+        );
+        let flags = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFL) };
+        assert_eq!(flags & libc::O_ACCMODE, libc::O_RDONLY);
+        let byte = [0_u8];
+        assert_eq!(
+            unsafe { libc::write(descriptor.as_raw_fd(), byte.as_ptr().cast(), byte.len()) },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF)
+        );
+
+        let bytes = plugin_seccomp_program();
+        assert_eq!(bytes.len() % 8, 0);
+        for syscall in [
+            libc::SYS_clone,
+            libc::SYS_clone3,
+            libc::SYS_unshare,
+            libc::SYS_setns,
+        ] {
+            assert!(bytes.chunks_exact(8).any(|instruction| {
+                u16::from_ne_bytes([instruction[0], instruction[1]]) == 0x15
+                    && u32::from_ne_bytes([
+                        instruction[4],
+                        instruction[5],
+                        instruction[6],
+                        instruction[7],
+                    ]) == syscall as u32
+            }));
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn plugin_seccomp_filter_rejects_x32_namespace_syscall_aliases() {
+        const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
+        const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+        const SECCOMP_RET_ERRNO_EPERM: u32 = 0x0005_0000 | libc::EPERM as u32;
+        const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+
+        let program = plugin_seccomp_program();
+        for syscall in [
+            libc::SYS_clone,
+            libc::SYS_clone3,
+            libc::SYS_unshare,
+            libc::SYS_setns,
+        ] {
+            assert_eq!(
+                evaluate_classic_bpf(&program, AUDIT_ARCH_X86_64, syscall as u32),
+                SECCOMP_RET_ERRNO_EPERM,
+            );
+            assert_eq!(
+                evaluate_classic_bpf(
+                    &program,
+                    AUDIT_ARCH_X86_64,
+                    syscall as u32 | X32_SYSCALL_BIT,
+                ),
+                SECCOMP_RET_ERRNO_EPERM,
+                "x32 alias bypassed syscall {syscall}",
+            );
+        }
+        assert_eq!(
+            evaluate_classic_bpf(&program, AUDIT_ARCH_X86_64, libc::SYS_getpid as u32),
+            SECCOMP_RET_ALLOW,
+        );
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn evaluate_classic_bpf(program: &[u8], architecture: u32, syscall: u32) -> u32 {
+        let instructions = program.chunks_exact(8).collect::<Vec<_>>();
+        assert_eq!(instructions.len() * 8, program.len());
+        let mut accumulator = 0_u32;
+        let mut index = 0_usize;
+        loop {
+            let instruction = instructions[index];
+            let code = u16::from_ne_bytes([instruction[0], instruction[1]]);
+            let jump_true = instruction[2] as usize;
+            let jump_false = instruction[3] as usize;
+            let value = u32::from_ne_bytes([
+                instruction[4],
+                instruction[5],
+                instruction[6],
+                instruction[7],
+            ]);
+            match code {
+                0x20 => {
+                    accumulator = match value {
+                        0 => syscall,
+                        4 => architecture,
+                        _ => panic!("unexpected seccomp data offset {value}"),
+                    };
+                    index += 1;
+                }
+                0x15 => {
+                    index += 1 + if accumulator == value {
+                        jump_true
+                    } else {
+                        jump_false
+                    };
+                }
+                0x35 => {
+                    index += 1 + if accumulator >= value {
+                        jump_true
+                    } else {
+                        jump_false
+                    };
+                }
+                0x06 => return value,
+                _ => panic!("unexpected classic-BPF opcode {code:#x}"),
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -341,6 +649,7 @@ mod tests {
         fs::set_permissions(&plugin, fs::Permissions::from_mode(0o700)).unwrap();
         let command = linux_command(Path::new("/usr/bin/bwrap"), &plugin, &workspace).unwrap();
         let args = command
+            .command()
             .as_std()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -357,6 +666,22 @@ mod tests {
     #[ignore = "requires root, trusted bwrap, and a precompiled static probe"]
     async fn privileged_linux_provider_drops_root_capabilities() {
         assert_eq!(unsafe { libc::geteuid() }, 0, "probe must start as UID 0");
+        run_linux_isolation_probe().await;
+    }
+
+    /// This is the production ECS shape: a non-root process with no capabilities, under Docker's
+    /// argument-scoped outer seccomp profile. The static probe also asserts that the inner filter
+    /// denies clone/clone3/unshare/setns and that Bubblewrap consumed its only inherited FD.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires trusted bwrap and a precompiled static probe"]
+    async fn nonroot_linux_provider_enforces_the_complete_boundary() {
+        assert_ne!(unsafe { libc::geteuid() }, 0, "probe must start non-root");
+        run_linux_isolation_probe().await;
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn run_linux_isolation_probe() {
         let probe = std::env::var_os("SPROUT_CORE_LINUX_ISOLATION_PROBE")
             .map(PathBuf::from)
             .expect("SPROUT_CORE_LINUX_ISOLATION_PROBE is required");
@@ -365,12 +690,14 @@ mod tests {
         let executable = VerifiedExecutable::for_test(probe);
         let provider = NativeIsolationProvider::detect().unwrap();
         let mut command = provider.command(&executable, workspace.path()).unwrap();
+        command.inherit_fds_for_test().unwrap();
         command
+            .command_mut()
             .env_clear()
             .env("LANG", "C")
             .env("LC_ALL", "C")
             .current_dir(workspace.path());
-        let output = command.output().await.unwrap();
+        let output = command.command_mut().output().await.unwrap();
         assert!(
             output.status.success(),
             "probe failed: {}",

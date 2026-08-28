@@ -25,7 +25,10 @@ or launch the executable directly.
 `/usr/bin/bwrap` or `/bin/bwrap` and accepts only statically linked ELF plugins; Bubblewrap exposes
 only the plugin, its workspace, and `/dev/null`, with all namespaces unshared, the private root
 remounted read-only, `.git` separately remounted read-only, every capability dropped, and nested
-user namespaces disabled after setup. macOS and Windows return `IsolationUnavailable`: the
+namespace syscalls denied after setup by a sealed classic-BPF filter consumed from one explicitly
+inherited descriptor. Docker's outer profile permits only Bubblewrap's argument-scoped setup
+calls; the inner filter is installed in both Bubblewrap's PID-namespace init and the plugin before
+plugin execution. macOS and Windows return `IsolationUnavailable`: the
 available macOS Seatbelt interface cannot both default-deny arbitrary credential mounts and launch
 a general native executable without a broader file-read exception, and Windows has no implemented
 provider. Hosts missing the Linux primitive are likewise unsupported; the plugin is never run

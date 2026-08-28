@@ -93,6 +93,10 @@ RUN mkdir -p /prod/migrator/migrations /prod/migrator/seeds \
 # ---------------------------------------------------------------------------
 FROM node:24.14.0-slim AS runtime
 
+# The host seccomp exception is traced against this exact Bubblewrap release. A repository update
+# must fail the image build until the new binary's setup calls have been captured and reviewed.
+ARG BUBBLEWRAP_DEBIAN_VERSION=0.8.0-2+deb12u1
+
 # Template-generated repositories are not GitHub forks, so the background worker cannot use
 # GitHub's merge-upstream endpoint. It performs a trusted, non-checkout three-way tree merge with
 # `git merge-tree --write-tree` instead. Debian's Git is new enough for that interface;
@@ -120,8 +124,12 @@ WORKDIR /opt/sproutos
 # only executable the Rust core launches. No package-manager Cosign/GitHub CLI versions are used:
 # both verified binaries come from the immutable stages above.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends bubblewrap ca-certificates git \
+    && apt-get install --yes --no-install-recommends \
+      "bubblewrap=${BUBBLEWRAP_DEBIAN_VERSION}" ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query --showformat='${Version}' --show bubblewrap)" = \
+      "$BUBBLEWRAP_DEBIAN_VERSION" \
+    && test "$(bwrap --version)" = "bubblewrap 0.8.0" \
     && test "$(stat -c '%u:%a' /usr/bin/bwrap)" = "0:755"
 COPY --from=cosign --chown=0:0 --chmod=0755 /ko-app/cosign /usr/local/bin/cosign
 COPY --from=worker-tools --chown=0:0 --chmod=0755 /usr/local/bin/gh /usr/local/bin/gh
