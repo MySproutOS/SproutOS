@@ -2,7 +2,13 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { v7 } from "uuid"
-import { GitHubTransportError, GitHubValidationError } from "./errors"
+import {
+  GitHubAuthError,
+  GitHubNotFoundError,
+  GitHubTransportError,
+  GitHubValidationError,
+  MissingGitHubAppConfigError,
+} from "./errors"
 
 /*
   Provisioning resolved only the signed-in user's OAuth token and, finding no `repo` scope, raised
@@ -21,10 +27,26 @@ const minted =
       request: { purpose: "repository-provision" },
     ) => Promise<{ token: string; installationId: number; expiresAt: Date }>
   >()
+type MintedToken = { token: string; installationId: number; expiresAt: Date }
+const tokenCache = new Map<number, MintedToken>()
+const storeGet = vi.fn<
+  (id: number, request: { purpose: "repository-provision" }) => Promise<MintedToken>
+>(async (id, request) => {
+  const hit = tokenCache.get(id)
+  if (hit !== undefined) return hit
+  const result = await minted(id, request)
+  tokenCache.set(id, result)
+  return result
+})
+const cleared = vi.fn<(installationId?: number) => void>((installationId) => {
+  if (installationId === undefined) tokenCache.clear()
+  else tokenCache.delete(installationId)
+})
+const signed = vi.fn<() => string>(() => "signed.app.jwt")
 
 vi.mock("./app-auth", () => ({
-  createInstallationTokenStore: () => ({ get: minted, clear: () => {} }),
-  envAppJwtSigner: () => () => "signed.app.jwt",
+  createInstallationTokenStore: () => ({ get: storeGet, clear: cleared }),
+  envAppJwtSigner: () => signed,
 }))
 
 const { organizationGitHubCredential } = await import("./installation-credential")
@@ -93,7 +115,12 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  tokenCache.clear()
   minted.mockClear()
+  storeGet.mockClear()
+  cleared.mockClear()
+  signed.mockReset()
+  signed.mockReturnValue("signed.app.jwt")
 })
 
 afterAll(async () => {
@@ -167,8 +194,74 @@ describe("organizationGitHubCredential", () => {
     expect(minted).toHaveBeenCalledTimes(2)
   })
 
+  it("recognizes GitHub's alternate selected-repository refusal", async ({ skip }) => {
+    if (!reachable) return skip()
+
+    minted.mockImplementationOnce((_id, _request) =>
+      Promise.reject(
+        new GitHubValidationError(
+          422,
+          "/app/installations/stale/access_tokens",
+          "The repository does not exist or is inaccessible to the parent installation.",
+        ),
+      ),
+    )
+
+    await expect(
+      organizationGitHubCredential(db, organizationId, PROVISION),
+    ).resolves.toMatchObject({ kind: "installation" })
+    expect(minted).toHaveBeenCalledTimes(2)
+  })
+
+  it("tries the next installation when the old App no longer owns a row", async ({ skip }) => {
+    if (!reachable) return skip()
+
+    minted.mockRejectedValueOnce(
+      new GitHubNotFoundError(404, "/app/installations/stale/access_tokens", "Not Found"),
+    )
+
+    await expect(
+      organizationGitHubCredential(db, organizationId, PROVISION),
+    ).resolves.toMatchObject({ kind: "installation" })
+    expect(minted).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not mask an App-wide authentication failure", async ({ skip }) => {
+    if (!reachable) return skip()
+
+    minted.mockRejectedValueOnce(
+      new GitHubAuthError(401, "/app/installations/stale/access_tokens", "Bad credentials"),
+    )
+
+    await expect(
+      organizationGitHubCredential(db, organizationId, PROVISION),
+    ).rejects.toBeInstanceOf(GitHubAuthError)
+    expect(minted).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not mask an unrelated validation failure", async ({ skip }) => {
+    if (!reachable) return skip()
+
+    minted.mockRejectedValueOnce(
+      new GitHubValidationError(
+        422,
+        "/app/installations/stale/access_tokens",
+        "Permissions are not granted to this installation",
+      ),
+    )
+
+    await expect(
+      organizationGitHubCredential(db, organizationId, PROVISION),
+    ).rejects.toBeInstanceOf(GitHubValidationError)
+    expect(minted).toHaveBeenCalledTimes(1)
+  })
+
   it("still tries a row whose cached suspension is stale", async ({ skip }) => {
     if (!reachable) return skip()
+
+    // Prime the process cache while the database still says active.
+    await organizationGitHubCredential(db, organizationId, PROVISION, "Andrew-Chen-Wang")
+    expect(minted).toHaveBeenCalledTimes(1)
 
     await db
       .updateTable("githubInstallation")
@@ -184,6 +277,9 @@ describe("organizationGitHubCredential", () => {
     )
 
     expect(credential).toMatchObject({ token: `ghs_${PERSONAL}` })
+    expect(minted).toHaveBeenCalledTimes(2)
+    expect(cleared).toHaveBeenCalledWith(PERSONAL)
+    expect(cleared.mock.invocationCallOrder[0]).toBeLessThan(minted.mock.invocationCallOrder[1])
 
     await db
       .updateTable("githubInstallation")
@@ -203,6 +299,19 @@ describe("organizationGitHubCredential", () => {
       organizationGitHubCredential(db, organizationId, PROVISION),
     ).rejects.toBeInstanceOf(GitHubTransportError)
     expect(minted).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back when the lazy App signer has no configuration", async ({ skip }) => {
+    if (!reachable) return skip()
+
+    signed.mockImplementationOnce(() => {
+      throw new MissingGitHubAppConfigError("GITHUB_APP_PRIVATE_KEY")
+    })
+
+    await expect(
+      organizationGitHubCredential(db, organizationId, PROVISION),
+    ).resolves.toBeUndefined()
+    expect(minted).not.toHaveBeenCalled()
   })
 
   /*

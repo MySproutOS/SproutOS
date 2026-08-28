@@ -6,12 +6,7 @@ import {
   type InstallationTokenRequest,
 } from "./app-auth"
 import { createGitHubClient } from "./client"
-import {
-  GitHubAuthError,
-  GitHubNotFoundError,
-  GitHubValidationError,
-  MissingGitHubAppConfigError,
-} from "./errors"
+import { GitHubNotFoundError, GitHubValidationError, MissingGitHubAppConfigError } from "./errors"
 import { installationToken } from "./types"
 import type { GitHubCredential } from "./types"
 
@@ -40,7 +35,7 @@ export async function organizationGitHubCredential(
 ): Promise<GitHubCredential | undefined> {
   let query = db
     .selectFrom("githubInstallation")
-    .select(["installationId", "accountLogin"])
+    .select(["installationId", "accountLogin", "suspendedAt"])
     .where("organizationId", "=", organizationId)
     .where("deletedAt", "is", null)
 
@@ -75,6 +70,9 @@ export async function organizationGitHubCredential(
   let signJwt: () => string
   try {
     signJwt = envAppJwtSigner()
+    // The factory is deliberately lazy so a rotated key is read for every mint. Invoke it once
+    // here: catching around construction alone can never observe missing configuration.
+    signJwt()
   } catch (error) {
     // A deployment without the App key configured. Not fatal: the user's own token still works.
     if (error instanceof MissingGitHubAppConfigError) return undefined
@@ -84,34 +82,51 @@ export async function organizationGitHubCredential(
   store ??= createInstallationTokenStore({ client: createGitHubClient(), signJwt })
   for (const installation of installations) {
     try {
+      const installationId = Number(installation.installationId)
+
+      /*
+        A suspended row is being tried precisely because the database cache may be stale. A token
+        cached before the suspension proves only that minting worked in the past; returning it
+        would bypass the authoritative check this path exists to make. Evict this installation's
+        scopes first so `get` must ask GitHub now.
+      */
+      if (installation.suspendedAt !== null) store.clear(installationId)
+
       // Deliberately sequential: the first usable credential wins, and parallel mints would issue
       // live tokens for every stale candidate before we know whether the first one was sufficient.
       // eslint-disable-next-line no-await-in-loop
-      const minted = await store.get(Number(installation.installationId), request)
+      const minted = await store.get(installationId, request)
       return installationToken(minted.token, minted.installationId, minted.expiresAt)
     } catch (error) {
       /*
         These are permanent for this candidate, not for the operation.
 
-        - auth/not-found: the row belongs to an old App, or the installation was removed;
-        - validation: an exact repository is outside this installation's selected repositories, or
-          the installation does not grant the requested permission.
+        - not-found: the row belongs to an old App, or the installation was removed;
+        - the one recognized validation refusal: an exact repository is outside this installation's
+          selected repositories.
 
-        Transport and rate-limit failures still escape. Trying another credential when GitHub is
-        down or has told us to wait would hide the outage and spend a second rate-limit budget.
+        Authentication failures and every other validation failure are App-wide until proven
+        otherwise: a bad JWT, rotated key, or missing App permission will fail every candidate.
+        They must escape instead of being disguised as "no installation".
       */
-      if (
-        error instanceof GitHubAuthError ||
-        error instanceof GitHubNotFoundError ||
-        error instanceof GitHubValidationError
-      ) {
+      if (error instanceof GitHubNotFoundError || repositoryOutsideInstallation(error)) {
         continue
       }
+      if (error instanceof MissingGitHubAppConfigError) return undefined
       throw error
     }
   }
 
   return undefined
+}
+
+function repositoryOutsideInstallation(error: unknown): boolean {
+  if (!(error instanceof GitHubValidationError)) return false
+  const message = error.message.trim().toLowerCase().replace(/\.$/, "")
+  return (
+    message === "the repository is not accessible to the parent installation" ||
+    message === "the repository does not exist or is inaccessible to the parent installation"
+  )
 }
 
 /**

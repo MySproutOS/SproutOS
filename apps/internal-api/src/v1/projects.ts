@@ -1207,9 +1207,9 @@ const app = new Hono()
         arrives to reconsider it — installing the App before creating the first project left it
         permanently invisible, and this route is the moment that stops being true.
 
-        Keyed on the App identity and login, so several projects under one account queue one
-        discovery while an App rollover gets a fresh authoritative pass. Without the App id, the
-        terminal job created by the old App absorbed every attempt to discover the replacement.
+        Keyed on this project operation as well as the App identity and login. A retry of this
+        create deduplicates, while a later project creation rechecks a newly installed App or a
+        webhook that never arrived.
       */
       if (plan.mode === "create") {
         await enqueue(db, {
@@ -1217,6 +1217,7 @@ const app = new Hono()
           idempotencyKey: installationDiscoveryIdempotencyKey({
             appId: process.env.GITHUB_APP_ID,
             login: plan.ownerLogin,
+            operationId: provisioned.project.id,
             organizationId: organization.id,
           }),
           payload: { login: plan.ownerLogin, organizationId: organization.id },
