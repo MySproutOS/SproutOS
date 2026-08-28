@@ -86,13 +86,29 @@ web_task=$(jq -r '.taskDefinition' <<<"$web")
 definition=$(aws ecs describe-task-definition --task-definition "$web_task" --output json)
 web_base=$(tofu -chdir="$TOFU_DIR" output -raw ecs_web_task_definition_arn)
 base_definition=$(aws ecs describe-task-definition --task-definition "$web_base" --output json)
-expected_worker_environment=$(jq -c '
-  [.taskDefinition.containerDefinitions[] | select(.name == "worker")][0].environment
-' <<<"$base_definition")
+expected_containers=$(jq -c '.taskDefinition.containerDefinitions' <<<"$base_definition")
 if ! jq -e '
-  ([.[] | select(.name == "ACME_HANDLER_OWNERSHIP_ENABLED" and .value == "0")] | length) == 1
-' <<<"$expected_worker_environment" >/dev/null; then
-  echo "reviewed OpenTofu web task does not have one explicit false ownership gate" >&2
+  ([.[] | select(.name == "worker")] | length) == 1 and
+  ([.[] | select(.name == "api")] | length) == 1 and
+  ([.[] | select(.name == "worker").environment[]
+    | select(.name == "ACME_HANDLER_OWNERSHIP_ENABLED" and .value == "0")] | length) == 1 and
+  ([.[] | select(.name == "worker").environment[]
+    | select(.name == "ANDROID_ARTIFACT_BUCKET" and (.value | type) == "string" and (.value | length) > 0)] | length) == 1 and
+  ([.[] | select(.name == "api").environment[]
+    | select(.name == "ANDROID_ARTIFACT_BUCKET" and (.value | type) == "string" and (.value | length) > 0)] | length) == 1 and
+  ([.[] | select(.name == "api" or .name == "worker").environment[]
+    | select(.name == "ANDROID_ARTIFACT_BUCKET").value] | unique | length) == 1
+' <<<"$expected_containers" >/dev/null; then
+  echo "reviewed OpenTofu web task lacks the exact ownership or Android bucket recovery entries" >&2
+  exit 1
+fi
+if ! jq -e '
+  ([.taskDefinition.containerDefinitions[] | select(.name == "api").environment[]
+    | select(.name == "ANDROID_ARTIFACT_BUCKET")] | length) == 0 and
+  ([.taskDefinition.containerDefinitions[] | select(.name == "worker").environment[]
+    | select(.name == "ANDROID_ARTIFACT_BUCKET")] | length) == 0
+' <<<"$definition" >/dev/null; then
+  echo "partial-A repair only accepts the diagnosed missing Android bucket entries" >&2
   exit 1
 fi
 expected_contract=$(jq -Sc --arg image "$IMAGE" '
@@ -106,22 +122,27 @@ expected_contract=$(jq -Sc --arg image "$IMAGE" '
     }
   | with_entries(select(.value != null and .value != []))
 ' <<<"$base_definition")
-# The only compatibility normalization: the serving pre-gate task predates the explicit ownership
-# entry, and that exact runtime parses absence as false. Materialize only that missing entry as 0,
-# then compare every reviewed task field, container, environment, secret, role and resource.
-live_contract=$(jq -Sc --argjson expected_environment "$expected_worker_environment" '
-  .taskDefinition
-  | .containerDefinitions |= map(
-      if .name == "worker" and
-        ([.environment[] | select(.name == "ACME_HANDLER_OWNERSHIP_ENABLED")] | length) == 0
-      then ($expected_environment | map(.name) | index("ACME_HANDLER_OWNERSHIP_ENABLED")) as $index
+# The only compatibility normalizations insert the three diagnosed missing entries at their exact
+# reviewed indices. Every other task field, container, environment, secret, role and resource must
+# already compare byte-for-byte after canonical JSON object ordering.
+live_contract=$(jq -Sc --argjson expected_containers "$expected_containers" '
+  def insert_reviewed($container; $entry):
+    .containerDefinitions |= map(
+      if .name == $container and
+        ([.environment[] | select(.name == $entry)] | length) == 0
+      then ([$expected_containers[] | select(.name == $container)][0].environment) as $expected_environment
+        | ($expected_environment | map(.name) | index($entry)) as $index
         | .environment = (
             .environment[0:$index] +
             [$expected_environment[$index]] +
             .environment[$index:]
           )
       else . end
-    )
+    );
+  .taskDefinition
+  | insert_reviewed("worker"; "ACME_HANDLER_OWNERSHIP_ENABLED")
+  | insert_reviewed("api"; "ANDROID_ARTIFACT_BUCKET")
+  | insert_reviewed("worker"; "ANDROID_ARTIFACT_BUCKET")
   | {
       family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
       volumes, placementConstraints, requiresCompatibilities, cpu, memory,
@@ -140,7 +161,7 @@ if [ "$live_contract" != "$expected_contract" ] ||
         ([.environment[] | select(.name == "ACME_HANDLER_OWNERSHIP_ENABLED" and .value == "0")] | length) == 1
     )
   ' <<<"$live_contract" >/dev/null; then
-  echo "live web task differs from the reviewed phase-A contract beyond the one missing ownership flag" >&2
+  echo "live web task differs beyond the three exact partial-A compatibility entries" >&2
   exit 1
 fi
 
@@ -163,11 +184,31 @@ if ! jq -e --arg task "$web_task" '
   exit 1
 fi
 
-isolated=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$ACME_SERVICE" \
-  --desired-status RUNNING --output json)
-if [ "$(jq -r '.taskArns | length' <<<"$isolated")" != 0 ]; then
-  echo "missing isolated service still has running tasks" >&2
-  exit 1
+# ECS rejects a service filter for a missing service. Enumerate both live scheduler states at the
+# cluster boundary, then reject either the service group or a detached task in the isolated family.
+cluster_task_arns=()
+for desired_status in RUNNING PENDING; do
+  cluster_tasks=$(aws ecs list-tasks --cluster "$CLUSTER" --desired-status "$desired_status" --output json)
+  if ! jq -e '(.nextToken // null) == null' <<<"$cluster_tasks" >/dev/null; then
+    echo "could not exhaustively enumerate cluster $desired_status tasks" >&2
+    exit 1
+  fi
+  while IFS= read -r task_arn; do
+    cluster_task_arns+=("$task_arn")
+  done < <(jq -r '.taskArns[]' <<<"$cluster_tasks")
+done
+if [ "${#cluster_task_arns[@]}" -gt 0 ]; then
+  cluster_tasks=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "${cluster_task_arns[@]}" --output json)
+  if ! jq -e --arg service "service:$ACME_SERVICE" --arg family "$NAME_PREFIX-acme-worker" '
+    (.failures | length) == 0 and
+    all(.tasks[];
+      .group != $service and
+      (.taskDefinitionArn | contains(":task-definition/" + $family + ":") | not)
+    )
+  ' <<<"$cluster_tasks" >/dev/null; then
+    echo "missing isolated service still has running, pending, or detached ACME tasks" >&2
+    exit 1
+  fi
 fi
 
 task_role=$(jq -r '.taskDefinition.taskRoleArn' <<<"$definition")

@@ -68,36 +68,63 @@ case "$1 $2" in
       if [ "$1" = --task-definition ]; then task=$2; shift 2; else shift; fi
     done
     image=$IMAGE; ownership=0; role=arn:aws:iam::a:role/sproutos-task; secret=shared-secret
+    api_android='[]'; worker_android='[]'; website_android='[]'
     if [[ "$task" == *:base ]]; then
       image=tofu:image
+      api_android='[{"name":"ANDROID_ARTIFACT_BUCKET","value":"reviewed-bucket"}]'
+      worker_android=$api_android
     else
       [ "${BAD_IMAGE:-}" != 1 ] || image=wrong:image
       [ "${BAD_ENV:-}" != 1 ] || ownership=1
       [ "${NO_ROLE:-}" != 1 ] || role=null
       [ "${BAD_SECRET:-}" != 1 ] || secret=wrong-secret
+      if [ "${ANDROID_WRONG_VALUE:-}" = 1 ]; then
+        api_android='[{"name":"ANDROID_ARTIFACT_BUCKET","value":"wrong-bucket"}]'
+      fi
+      if [ "${ANDROID_ONE_PRESENT:-}" = 1 ]; then
+        api_android='[{"name":"ANDROID_ARTIFACT_BUCKET","value":"reviewed-bucket"}]'
+      fi
+      if [ "${ANDROID_WRONG_CONTAINER:-}" = 1 ]; then
+        website_android='[{"name":"ANDROID_ARTIFACT_BUCKET","value":"reviewed-bucket"}]'
+      fi
     fi
     if [[ "$task" == *:base ]] || [ "${OMIT_OWNERSHIP:-}" != 1 ]; then
       ownership_entry=$(jq -nc --arg ownership "$ownership" '[{name:"ACME_HANDLER_OWNERSHIP_ENABLED",value:$ownership}]')
     else ownership_entry='[]'
     fi
-    jq -nc --arg image "$image" --arg secret "$secret" --argjson ownership "$ownership_entry" --argjson role "$(jq -nc --arg role "$role" 'if $role == "null" then null else $role end')" '{taskDefinition:{
+    jq -nc --arg image "$image" --arg secret "$secret" --argjson ownership "$ownership_entry" \
+      --argjson apiAndroid "$api_android" --argjson workerAndroid "$worker_android" \
+      --argjson websiteAndroid "$website_android" \
+      --argjson role "$(jq -nc --arg role "$role" 'if $role == "null" then null else $role end')" '{taskDefinition:{
       family:"sproutos-web",taskRoleArn:$role,containerDefinitions:[
-        {name:"website",image:$image,environment:[]},
-        {name:"api",image:$image,environment:[]},
-        {name:"worker",image:$image,environment:([{name:"ACME_JOBS_ENABLED",value:"0"}] + $ownership),secrets:[{name:"SHARED",valueFrom:$secret}]}
+        {name:"website",image:$image,environment:$websiteAndroid},
+        {name:"api",image:$image,environment:$apiAndroid},
+        {name:"worker",image:$image,environment:([{name:"ACME_JOBS_ENABLED",value:"0"}] + $ownership + $workerAndroid),secrets:[{name:"SHARED",valueFrom:$secret}]}
       ]}}'
     ;;
   'ecs list-tasks')
     if [[ " $* " == *" --service-name sproutos-acme-worker "* ]]; then
-      if [ "${ACME_TASK:-}" = 1 ]; then echo '{"taskArns":["arn:task/acme"]}'; else echo '{"taskArns":[]}'; fi
-    else
+      echo 'ServiceNotFoundException' >&2
+      exit 88
+    elif [[ " $* " == *" --service-name sproutos-web "* ]]; then
       echo '{"taskArns":["arn:task/web0","arn:task/web1"]}'
+    elif { [ "${ACME_TASK:-}" = 1 ] && [[ " $* " == *" --desired-status RUNNING "* ]]; } ||
+      { [ "${ACME_PENDING:-}" = 1 ] && [[ " $* " == *" --desired-status PENDING "* ]]; }; then
+      echo '{"taskArns":["arn:task/acme"]}'
+    elif [ "${TASK_NEXT_TOKEN:-}" = 1 ] && [[ " $* " == *" --desired-status RUNNING "* ]]; then
+      echo '{"taskArns":[],"nextToken":"more"}'
+    else
+      echo '{"taskArns":[]}'
     fi
     ;;
   'ecs describe-tasks')
-    task=arn:aws:ecs:r:a:task-definition/sproutos-web:51
-    [ "${BAD_TASK_REV:-}" != 1 ] || task=arn:wrong
-    jq -nc --arg task "$task" '{failures:[],tasks:[range(0;2)|{taskDefinitionArn:$task,lastStatus:"RUNNING",desiredStatus:"RUNNING"}]}'
+    if [[ " $* " == *"arn:task/acme"* ]]; then
+      echo '{"failures":[],"tasks":[{"taskDefinitionArn":"arn:aws:ecs:r:a:task-definition/sproutos-acme-worker:9","group":"service:sproutos-acme-worker","lastStatus":"RUNNING","desiredStatus":"RUNNING"}]}'
+    else
+      task=arn:aws:ecs:r:a:task-definition/sproutos-web:51
+      [ "${BAD_TASK_REV:-}" != 1 ] || task=arn:wrong
+      jq -nc --arg task "$task" '{failures:[],tasks:[range(0;2)|{taskDefinitionArn:$task,lastStatus:"RUNNING",desiredStatus:"RUNNING"}]}'
+    fi
     ;;
   'iam list-attached-role-policies')
     if [ "${NO_FALLBACK:-}" = 1 ]; then echo '{"AttachedPolicies":[]}'
@@ -128,8 +155,8 @@ run_check() {
 
 run_check
 OMIT_OWNERSHIP=1 run_check
-OMIT_OWNERSHIP=1 TEST_IMAGE=ghcr.io/mysproutos/sproutos-web:new-merge-image run_check
-for failure in ACME_PRESENT EXTRA_FAILURE BAD_PENDING BAD_IMAGE BAD_ENV BAD_SECRET BAD_TASK_REV ACME_TASK NO_FALLBACK NO_ROLE POLICY_DRIFT LT_DRIFT; do
+OMIT_OWNERSHIP=1 TEST_IMAGE=ghcr.io/mysproutos/sproutos-web:abcdef123456 run_check
+for failure in ACME_PRESENT EXTRA_FAILURE BAD_PENDING BAD_IMAGE BAD_ENV BAD_SECRET BAD_TASK_REV ACME_TASK ACME_PENDING TASK_NEXT_TOKEN NO_FALLBACK NO_ROLE POLICY_DRIFT LT_DRIFT ANDROID_WRONG_VALUE ANDROID_ONE_PRESENT ANDROID_WRONG_CONTAINER; do
   export "$failure=1"
   if run_check >"$TMP/$failure.out" 2>&1; then
     echo "partial-A verifier accepted $failure" >&2

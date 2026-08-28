@@ -544,6 +544,7 @@ jobs:
           bash bin/handoff-ecs-task-definitions.test.sh
           bash bin/check-acme-worker-rollout-plan.test.sh
           bash bin/check-acme-worker-partial-a-repair-plan.test.sh
+          bash bin/render-ecs-launch-template-user-data.test.sh
           bash bin/verify-acme-worker-rollout.test.sh
           bash bin/verify-acme-worker-partial-a.test.sh
           bash bin/verify-tenant-edge-target-groups-empty.test.sh

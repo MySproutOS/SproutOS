@@ -8,6 +8,10 @@ if [ "$#" -ne 1 ]; then
 fi
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${IMAGE:?IMAGE is not set}"
+if [[ ! "$IMAGE" =~ :[0-9a-f]{12}$ ]]; then
+  echo "IMAGE must end in an immutable 12-character lowercase Git SHA tag" >&2
+  exit 1
+fi
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOFU_DIR="${TOFU_DIR:-$HERE/../tofu}"

@@ -55,6 +55,17 @@ if grep -q "apply $TMP/saved.tfplan" "$TMP/calls"; then
   exit 1
 fi
 
+: >"$TMP/calls"
+if CALLS="$TMP/calls" PATH="$TMP/bin:$PATH" NAME_PREFIX=sproutos \
+  IMAGE=ghcr.io/mysproutos/sproutos-web:latest \
+  "$TMP/bin/apply-acme-worker-partial-a-repair.sh" "$TMP/saved.tfplan" \
+  >"$TMP/mutable-image.out" 2>&1; then
+  echo "repair wrapper accepted a mutable image tag" >&2
+  exit 1
+fi
+grep -q 'immutable 12-character lowercase Git SHA tag' "$TMP/mutable-image.out"
+test ! -s "$TMP/calls"
+
 for scenario in partial targets; do
   : >"$TMP/calls"
   case "$scenario" in

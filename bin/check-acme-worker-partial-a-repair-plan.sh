@@ -8,6 +8,10 @@ if [ "$#" -ne 1 ]; then
 fi
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${IMAGE:?IMAGE is not set}"
+if [[ ! "$IMAGE" =~ :[0-9a-f]{12}$ ]]; then
+  echo "IMAGE must end in an immutable 12-character lowercase Git SHA tag" >&2
+  exit 1
+fi
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOFU_DIR="${TOFU_DIR:-$HERE/../tofu}"
@@ -53,34 +57,65 @@ fi
 if ! jq -e --arg image "$IMAGE" --arg name "$NAME_PREFIX" '
   def resource($address):
     [.resource_changes[] | select(.address == $address)][0].change.after;
+  def task_contract($image):
+    del(.arn, .arn_without_revision, .id, .revision)
+    | .ipc_mode = (if (.ipc_mode // "") == "" then null else .ipc_mode end)
+    | .pid_mode = (if (.pid_mode // "") == "" then null else .pid_mode end)
+    | .requires_compatibilities = (
+        if ((.requires_compatibilities // []) | length) == 0 then null
+        else .requires_compatibilities end
+      )
+    | .container_definitions = (
+        .container_definitions | fromjson
+        | if $image == null then . else map(.image = $image) end
+      );
   (resource("aws_ecs_task_definition.web")) as $web
   | (resource("aws_ecs_task_definition.acme_worker")) as $acme
   | (resource("aws_ecs_service.acme_worker")) as $service
+  | (resource("aws_ecs_cluster.main").id) as $cluster
+  | (resource("aws_ecs_capacity_provider.main").name) as $capacity_provider
   | (resource("aws_secretsmanager_secret.acme_account_key").id) as $account_key
   | ($web.container_definitions | fromjson) as $web_containers
   | ($acme.container_definitions | fromjson) as $acme_containers
-  | $service.name == ($name + "-acme-worker") and
-    ($service.cluster | endswith(":cluster/" + $name)) and
-    $service.desired_count == 0 and
-    $service.capacity_provider_strategy == [{base:null,capacity_provider:($name + "-ec2"),weight:100}] and
-    $service.deployment_circuit_breaker == [{enable:true,rollback:true}] and
-    $service.deployment_maximum_percent == 150 and
-    $service.deployment_minimum_healthy_percent == 100 and
-    $service.availability_zone_rebalancing == "ENABLED" and
-    $service.scheduling_strategy == "REPLICA" and
-    $service.enable_execute_command == false and
-    $service.enable_ecs_managed_tags == false and
-    ($service.deployment_controller | length) == 0 and
-    ($service.network_configuration | length) == 0 and
-    ($service.service_registries | length) == 0 and
-    $service.ordered_placement_strategy == [
-      {field:"attribute:ecs.availability-zone",type:"spread"},
-      {field:"memory",type:"binpack"}
-    ] and
-    ($service.placement_constraints == [{expression:null,type:"distinctInstance"}] or
-      $service.placement_constraints == [{expression:"",type:"distinctInstance"}]) and
-    ($service.load_balancer | length) == 0 and
+  | $service == {
+      alarms:[],
+      availability_zone_rebalancing:"ENABLED",
+      capacity_provider_strategy:[{base:null,capacity_provider:$capacity_provider,weight:100}],
+      cluster:$cluster,
+      deployment_circuit_breaker:[{enable:true,rollback:true}],
+      deployment_controller:[],
+      deployment_maximum_percent:150,
+      deployment_minimum_healthy_percent:100,
+      desired_count:0,
+      enable_ecs_managed_tags:false,
+      enable_execute_command:false,
+      force_delete:null,
+      force_new_deployment:null,
+      health_check_grace_period_seconds:null,
+      load_balancer:[],
+      name:($name + "-acme-worker"),
+      network_configuration:[],
+      ordered_placement_strategy:[
+        {field:"attribute:ecs.availability-zone",type:"spread"},
+        {field:"memory",type:"binpack"}
+      ],
+      placement_constraints:[{expression:"",type:"distinctInstance"}],
+      propagate_tags:null,
+      scheduling_strategy:"REPLICA",
+      service_connect_configuration:[],
+      service_registries:[],
+      tags:{ManagedBy:"OpenTofu",Project:"SproutOS"},
+      tags_all:{ManagedBy:"OpenTofu",Project:"SproutOS"},
+      timeouts:null,
+      volume_configuration:[],
+      vpc_lattice_configurations:[],
+      wait_for_steady_state:false
+    } and
     ([.resource_changes[] | select(.address == "aws_ecs_service.acme_worker")][0].change.after_unknown.task_definition == true) and
+    (([.resource_changes[] | select(.address == "aws_ecs_task_definition.web")][0].change.before | task_contract($image)) ==
+      ($web | task_contract(null))) and
+    (([.resource_changes[] | select(.address == "aws_ecs_task_definition.acme_worker")][0].change.before | task_contract($image)) ==
+      ($acme | task_contract(null))) and
     $web.family == ($name + "-web") and $web.network_mode == "bridge" and
     ($web.cpu | tonumber) == 896 and ($web.memory | tonumber) == 640 and
     ($web.task_role_arn | endswith(":role/" + $name + "-task")) and
@@ -112,7 +147,10 @@ fi
 
 if ! jq -e --arg name "$NAME_PREFIX" '
   [.resource_changes[] | select(.address == "aws_launch_template.ecs")][0].change as $change
-  | ($change.before | {id,name,default_version}) == ($change.after | {id,name,default_version}) and
+  | ($change.before
+      | .metadata_options[0].http_protocol_ipv6 = "disabled"
+      | del(.latest_version, .user_data)) ==
+    ($change.after | del(.latest_version, .user_data)) and
     ($change.before.id | type) == "string" and
     ($change.before.name | startswith($name + "-ecs-")) and
     ($change.before.latest_version | type) == "number" and
@@ -132,7 +170,8 @@ launch_user_data=$(jq -er '
 }
 umask 077
 gzip_file=$(mktemp)
-cleanup() { unlink "$gzip_file" 2>/dev/null || true; }
+reviewed_user_data="$gzip_file.reviewed"
+cleanup() { unlink "$gzip_file" "$reviewed_user_data" 2>/dev/null || true; }
 trap cleanup EXIT
 if ! printf '%s' "$launch_user_data" | base64 -d >"$gzip_file" 2>/dev/null ||
   ! gzip -t "$gzip_file" 2>/dev/null; then
@@ -142,6 +181,14 @@ fi
 gzip_bytes=$(wc -c <"$gzip_file" | tr -d ' ')
 if [ "$gzip_bytes" -gt 16384 ]; then
   echo "partial-A repair launch-template user data exceeds EC2's 16384-byte decoded limit ($gzip_bytes)" >&2
+  exit 1
+fi
+cluster_name=$(jq -r '
+  [.resource_changes[] | select(.address == "aws_ecs_cluster.main")][0].change.after.name
+' <<<"$plan_json")
+"$HERE/render-ecs-launch-template-user-data.sh" "$cluster_name" >"$reviewed_user_data"
+if ! gzip -dc "$gzip_file" | cmp -s - "$reviewed_user_data"; then
+  echo "partial-A repair launch-template user data is not the reviewed compressed ECS bootstrap" >&2
   exit 1
 fi
 

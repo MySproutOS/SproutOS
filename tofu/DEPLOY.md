@@ -259,11 +259,15 @@ NAME_PREFIX=sproutos IMAGE="$IMAGE" \
 
 The checker requires unchanged A outputs and exactly four actions: create the missing ACME service,
 replace the ACME and web task definitions, and update `aws_launch_template.ecs`. It also proves the
-replacement tasks use that image; the web task writes both phase-A flags explicitly as `0`; the
-isolated service remains at desired count zero with its reviewed capacity provider, placement, and
-deployment safety settings; the isolated task uses its dedicated task and execution roles plus the
-existing account-key secret; and the launch-template payload is valid gzip no larger than EC2's
-16,384 decoded-byte limit.
+image ends in an immutable 12-character lowercase Git SHA tag. Both replacement task definitions
+must equal their complete prior reviewed contracts after changing only their image; this includes
+every container field, environment entry, secret, role, resource limit, and task setting. The web
+task therefore writes both phase-A flags explicitly as `0` and restores the reviewed Android bucket
+entry. The new service must equal its complete reviewed zero-capacity provider object, including
+placement, deployment safety, tags, and defaults. The launch template must equal its complete prior
+object after only the reviewed IPv6-metadata normalization and compressed user-data change, and the
+decoded gzip must exactly match the bootstrap rendered from the checked-in source while remaining
+within EC2's 16,384-byte limit.
 
 Apply only the protected copy through the repair wrapper:
 
@@ -273,14 +277,17 @@ NAME_PREFIX=sproutos IMAGE="$IMAGE" \
 ```
 
 Before applying, it compares the live web revision with the reviewed OpenTofu task contract after
-rewriting only its images to the chosen immutable image. The one compatibility normalization adds
-`ACME_HANDLER_OWNERSHIP_ENABLED=0` only when that entry is absent, matching `parseWorkerFlag()`'s
-false default; every other task field, container, environment value, secret, role, and resource must
-be identical. It still requires `ACME_JOBS_ENABLED=0`, a stable two-task web service on the chosen
-image, fallback ACME IAM attached, the live application policy semantically identical to its
-reviewed OpenTofu document, no isolated service or tasks, the live ECS launch-template
-ID/latest/default versions equal to the plan's `before` state, and all four PPv2 tenant-edge target
-groups empty and unassociated.
+rewriting only its images to the chosen immutable image. The compatibility normalization inserts
+only the three diagnosed missing entries at their exact reviewed indices:
+`ACME_HANDLER_OWNERSHIP_ENABLED=0` in the worker and the exact reviewed
+`ANDROID_ARTIFACT_BUCKET` in the API and worker. The reviewed base must contain exactly those values,
+the two Android entries must be absent live, and every other task field, container, environment
+value, secret, role, and resource must be identical. It still requires `ACME_JOBS_ENABLED=0`, a
+stable two-task web service on the chosen image, fallback ACME IAM attached, the live application
+policy semantically identical to its reviewed OpenTofu document, no running, pending, service-owned,
+or detached task from the isolated family, the live ECS launch-template ID/latest/default versions
+equal to the plan's `before` state, and all four PPv2 tenant-edge target groups empty and
+unassociated.
 After applying it hands off both exact task revisions and runs the full phase-A verifier, which
 requires both flags to be explicitly `0`. Any different partial state needs a new diagnosis; it is
 not permission to widen this repair gate.

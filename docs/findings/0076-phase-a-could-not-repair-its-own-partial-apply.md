@@ -26,17 +26,22 @@ not.
 
 `bin/apply-acme-worker-partial-a-repair.sh` is a separate, one-purpose transition. Its plan checker
 requires unchanged phase-A outputs and the exact four observed actions: create the missing service,
-replace both task definitions, and update the ECS launch template. It pins the chosen image,
-explicit post-repair `0/0/true` gates, zero isolated desired capacity, the service's placement and
-deployment safety contract, dedicated isolated roles and account-key reference, and valid gzip user
-data within EC2's 16 KiB decoded limit.
+replace both task definitions, and update the ECS launch template. It pins an immutable Git-SHA
+image and compares the complete task, service, and launch-template provider objects, allowing only
+the reviewed image, metadata-IPv6, and exact source-rendered compressed user-data deltas. This
+preserves explicit post-repair `0/0/true` gates, zero isolated desired capacity, all container
+secrets and privilege fields, the service's placement/deployment/tagging contract, dedicated
+isolated roles and account-key reference, IMDS enforcement, and EC2's 16 KiB user-data limit.
 
 Before apply, the repair verifier proves the only permitted partial live shape, including the
 fallback attachment and absent isolated tasks. It normalizes only a missing ownership environment
-entry to the runtime's false default, then compares the entire live web task contract with the
-reviewed OpenTofu base; an automatic deploy changing only the immutable image remains valid, while
-any other contract difference fails. The existing target-group verifier proves all four edge groups
-remain offline. It also compares the live application-policy semantics with the
+entry to the runtime's false default and the two diagnosed missing Android bucket entries to their
+exact reviewed values and indices, then compares the entire live web task contract with the reviewed
+OpenTofu base. An automatic deploy changing only the immutable image remains valid, while any other
+contract difference fails. Cluster-wide RUNNING and PENDING enumeration rejects service-owned or
+detached ACME-family tasks without querying the deliberately missing service. The existing
+target-group verifier proves all four edge groups remain offline. It also compares the live
+application-policy semantics with the
 reviewed policy and the live launch-template identity/latest/default versions with the plan's
 `before` state. The wrapper protects the reviewed plan bytes, applies that copy, then uses the
 ordinary task handoff and full phase-A verifier. The normal adjacent transition guard still rejects
