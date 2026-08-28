@@ -278,6 +278,8 @@ const TORN_DOWN_BY_JOB = [
   "tenant_queue",
   "observability_stream",
   "project_env_var",
+  "custom_domain",
+  "database_branch",
 ] as const
 
 type JobRow = Pick<Selectable<DB["projectJob"]>, (typeof JOB_FIELDS)[number]>

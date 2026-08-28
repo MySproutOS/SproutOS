@@ -1,5 +1,6 @@
 /* oxlint-disable no-await-in-loop */
 import { db } from "@sproutos/db"
+import { accountTeardown, JOB_KINDS } from "@lib/jobs"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import app from "../index"
@@ -93,6 +94,185 @@ describe.skipIf(!up)("closing an account", () => {
           .executeTakeFirstOrThrow()
       ).deletedAt,
     ).not.toBeNull()
+  })
+
+  it("clears every project before anonymising the owner and never deletes their GitHub repository", async ({
+    skip,
+  }) => {
+    if (!up) skip()
+    const user = await person("close-resources")
+    const created = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: authHeaders(user),
+      body: JSON.stringify({ name: `Resources ${v7()}` }),
+    })
+    const organization = (await created.json()) as Json
+    const organizationId = organization.id as string
+    trackOrganization(organizationId)
+
+    const repositoryId = v7()
+    const githubRepoId = BigInt(`0x${repositoryId.replaceAll("-", "").slice(-15)}`)
+    const githubInstallationId = v7()
+    await db
+      .insertInto("githubInstallation")
+      .values({
+        id: githubInstallationId,
+        organizationId,
+        installationId: githubRepoId + 1n,
+        accountLogin: "customer",
+        accountType: "User",
+        repositorySelection: "selected",
+        installedByUserId: user.id,
+      })
+      .execute()
+    await db
+      .insertInto("repository")
+      .values({
+        id: repositoryId,
+        organizationId,
+        githubRepoId,
+        ownerLogin: "customer",
+        name: "keep-me",
+        provenance: "new",
+        githubInstallationId,
+      })
+      .execute()
+    const groupId = v7()
+    const projectId = v7()
+    await db
+      .insertInto("project")
+      .values({
+        id: groupId,
+        organizationId,
+        repositoryId,
+        name: "Repository group",
+        slug: `group-${groupId.slice(-12)}`,
+        isGroup: true,
+      })
+      .execute()
+    await db
+      .insertInto("project")
+      .values({
+        id: projectId,
+        organizationId,
+        repositoryId,
+        parentProjectId: groupId,
+        name: "Web",
+        slug: `web-${projectId.slice(-12)}`,
+      })
+      .execute()
+
+    // A person can delete the organization and immediately delete their account before its first
+    // project job runs. Account deletion must adopt that in-flight teardown instead of seeing no
+    // active organization and anonymising the owner while resources remain.
+    expect((await call("DELETE", `/v1/orgs/${organization.slug as string}`, user)).status).toBe(200)
+    expect((await call("DELETE", "/v1/user/me/delete", user)).status).toBe(200)
+
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select(["id", "payload"])
+      .where("idempotencyKey", "=", `${JOB_KINDS.tearDownAccount}:${user.id}`)
+      .executeTakeFirstOrThrow()
+    const payload =
+      typeof queued.payload === "string"
+        ? (JSON.parse(queued.payload) as { projects: Array<{ projectId: string }> })
+        : (queued.payload as { projects: Array<{ projectId: string }> })
+    expect(payload.projects.map((project) => project.projectId)).toEqual([projectId])
+
+    // The account is disabled immediately, but its identity is not anonymised until provider
+    // cleanup succeeds. A failed provider call must therefore be retryable and must not turn a
+    // still-running resource into an ownerless one.
+    const beforeCleanup = await db
+      .selectFrom("user")
+      .select(["deletedAt", "email"])
+      .where("id", "=", user.id)
+      .executeTakeFirstOrThrow()
+    expect(beforeCleanup.deletedAt).toBeInstanceOf(Date)
+    expect(beforeCleanup.email).toBe(user.email)
+    const failing = accountTeardown(() => Promise.reject(new Error("provider still running")))
+    await expect(
+      failing(
+        {
+          id: queued.id,
+          organizationId: null,
+          kind: JOB_KINDS.tearDownAccount,
+          payload,
+          attempt: 1,
+          maxAttempts: 10,
+        },
+        { db, keepAlive: () => Promise.resolve(true), signal: new AbortController().signal },
+      ),
+    ).rejects.toThrow("provider still running")
+    expect(
+      (
+        await db
+          .selectFrom("user")
+          .select("email")
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow()
+      ).email,
+    ).toBe(user.email)
+
+    // A group owns no provider resource, so it must not sit in `deleting` forever waiting for a
+    // job that cannot exist.
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("state")
+          .where("id", "=", groupId)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("deleted")
+
+    const tornDown: string[] = []
+    const finish = accountTeardown(async (job, context) => {
+      const id = (job.payload as { projectId: string }).projectId
+      tornDown.push(id)
+      await context.db
+        .updateTable("project")
+        .set({ state: "deleted", updatedAt: new Date() })
+        .where("id", "=", id)
+        .execute()
+    })
+    await finish(
+      {
+        id: queued.id,
+        organizationId: null,
+        kind: JOB_KINDS.tearDownAccount,
+        payload,
+        attempt: 1,
+        maxAttempts: 10,
+      },
+      { db, keepAlive: () => Promise.resolve(true), signal: new AbortController().signal },
+    )
+    expect(tornDown).toEqual([projectId])
+
+    const repository = await db
+      .selectFrom("repository")
+      .select(["githubRepoId", "ownerLogin", "name"])
+      .where("id", "=", repositoryId)
+      .executeTakeFirstOrThrow()
+    expect(repository).toMatchObject({ ownerLogin: "customer", name: "keep-me" })
+    expect(repository.githubRepoId).toBe(String(githubRepoId))
+    expect(
+      (
+        await db
+          .selectFrom("githubInstallation")
+          .select("deletedAt")
+          .where("id", "=", githubInstallationId)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).toBeInstanceOf(Date)
+    expect(
+      (
+        await db
+          .selectFrom("user")
+          .select("deletedAt")
+          .where("id", "=", user.id)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).toBeInstanceOf(Date)
   })
 
   it("requires ownership transfer for an organization with another member", async ({ skip }) => {

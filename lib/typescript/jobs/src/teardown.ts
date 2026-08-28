@@ -1,5 +1,4 @@
-import { crudAuditLog, crudDeployment, crudProjectJob, crudSandbox } from "@lib/dao"
-import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
+import { crudAuditLog, crudDeployment, crudProjectJob } from "@lib/dao"
 import { LambdaClient } from "@aws-sdk/client-lambda"
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { Route53Client } from "@aws-sdk/client-route-53"
@@ -16,16 +15,13 @@ import {
   valkeyDriver,
   valkeyServiceConfigFromEnv,
 } from "@lib/services"
-import {
-  customDomainTeardownClientsFromEnv,
-  tearDownCustomDomain,
-  type CustomDomainTeardownClients,
-} from "./custom-domain-teardown"
+import { tearDownCustomDomain, type CustomDomainDeletionDependencies } from "./custom-domain"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
 import type { JobHandler } from "./worker"
 import { removeStaticSite, type StaticPublisherClients } from "./static-publish"
 import { withProjectLock } from "./project-lock"
+import { destroySandbox, SANDBOX_KINDS } from "./sandbox"
 
 /**
  * Destroy what a deleted project left running.
@@ -81,7 +77,13 @@ export type TeardownResult = {
 export type TeardownClients = {
   lambda: LambdaClient
   valkey: Redis
-  customDomains?: Omit<CustomDomainTeardownClients, "valkey">
+  customDomains?: Omit<CustomDomainDeletionDependencies, "valkey">
+  sandbox?: JobHandler
+  serviceDriver?: (
+    db: Kysely<DB>,
+    kind: string,
+    backendServiceId: string,
+  ) => Promise<{ destroy(id: string): Promise<unknown> }>
   static?: StaticPublisherClients & {
     bucket: string
     tenantZoneId: string
@@ -91,7 +93,8 @@ export type TeardownClients = {
 
 export function tearDownProject(clients?: TeardownClients): JobHandler {
   let resolvedClients = clients
-  return async (job, { db, keepAlive, signal }) => {
+  return async (job, context) => {
+    const { db, keepAlive, signal } = context
     const { projectId, projectJobId } = job.payload as {
       projectId?: string
       projectJobId?: string
@@ -160,7 +163,41 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         }
 
         /*
-      Deployments first. This is the one that costs money every minute it is skipped, and the one a
+      Custom hostnames first, before the Lambda they route to.
+
+      The generated hostname is withdrawn by `tearDownDeployment`, but custom hostnames are
+      independent route keys. Deleting the function first leaves those keys resolving to a missing
+      alias and turns deletion into a stream of 502s. A busy certificate reconciliation fails the
+      job here, while the project is still fully routable, and the retry removes route, certificate,
+      and row through the ACME lifecycle before compute goes away.
+    */
+        const customDomains = await db
+          .selectFrom("customDomain")
+          .select(["id", "organizationId"])
+          .where("projectId", "=", projectId)
+          .where("deletedAt", "is", null)
+          .execute()
+        if (customDomains.length > 0) {
+          const customDomainClients: CustomDomainDeletionDependencies = {
+            bucket: aws.customDomains?.bucket ?? requiredEnvironment("TENANT_CERTIFICATE_BUCKET"),
+            valkey: aws.valkey,
+            s3:
+              aws.customDomains?.s3 ??
+              new S3Client({
+                ...awsConfig,
+                forcePathStyle: process.env.AWS_ENDPOINT_URL !== undefined,
+              }),
+          }
+          for (const domain of customDomains) {
+            await ownLease()
+            if (await tearDownCustomDomain(db, domain, customDomainClients)) {
+              result.customDomains += 1
+            }
+          }
+        }
+
+        /*
+      Deployments next. This is the one that costs money every minute it is skipped, and the one a
       customer would notice: a deleted project whose site still answers.
     */
         const deployments = await db
@@ -231,21 +268,6 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
           result.deployments += 1
         }
 
-        const customDomains = await db
-          .selectFrom("customDomain")
-          .select(["id", "hostname", "isApex", "acmCertificateArn"])
-          .where("projectId", "=", projectId)
-          .where("deletedAt", "is", null)
-          .execute()
-        const customDomainClients = aws.customDomains
-          ? { valkey: aws.valkey, ...aws.customDomains }
-          : customDomainTeardownClientsFromEnv(aws.valkey)
-        for (const domain of customDomains) {
-          await ownLease()
-          await tearDownCustomDomain(db, domain, customDomainClients)
-          result.customDomains += 1
-        }
-
         /*
       Backend services, through their own drivers.
 
@@ -276,7 +298,10 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         — see `sandbox_state_check`, `sandbox_runtime_class_check` and `workflow_run_step_status_check`.
         `services.test.ts` now reads this one out of `pg_constraint`.
       */
-          await (await driverFor(db, service.kind, service.id)).destroy(service.id)
+          const driver = aws.serviceDriver
+            ? await aws.serviceDriver(db, service.kind, service.id)
+            : await driverFor(db, service.kind, service.id)
+          await driver.destroy(service.id)
           result.services += 1
 
           // Queue workers were Kubernetes Deployments the dispatcher scaled. The router owns queue
@@ -298,24 +323,18 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
     */
         const sandboxes = await db
           .selectFrom("sandbox")
-          .select(["id", "externalId"])
+          .select(["id"])
           .where("projectId", "=", projectId)
           .execute()
 
         if (sandboxes.length > 0) {
-          const driver = daytonaClientFromEnv()
+          const sandboxTeardown = aws.sandbox ?? destroySandbox()
           for (const sandbox of sandboxes) {
             await ownLease()
-            if (sandbox.externalId !== null) {
-              try {
-                await driver.destroy(sandbox.externalId)
-              } catch (error) {
-                // Already gone is done. Anything else has to stop the job, because the alternative is
-                // deleting our only record of a sandbox that is still running and still billing.
-                if (!(error instanceof SandboxNotFoundError)) throw error
-              }
-            }
-            await crudSandbox(db).remove(sandbox.id)
+            await sandboxTeardown(
+              { ...job, kind: SANDBOX_KINDS.destroy, payload: { sandboxId: sandbox.id } },
+              context,
+            )
             result.sandboxes += 1
           }
         }
@@ -365,7 +384,8 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
         }
 
         console.info(
-          `[jobs] tore down project ${project.slug}: ${result.deployments} deployment(s), ` +
+          `[jobs] tore down project ${project.slug}: ${result.customDomains} custom domain(s), ` +
+            `${result.deployments} deployment(s), ` +
             `${result.services} service(s), ${result.sandboxes} sandbox(es), ${result.workers} worker(s), ` +
             `${result.envVars} env var(s)`,
         )
@@ -373,6 +393,12 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       { keepAlive },
     )
   }
+}
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name]
+  if (value === undefined || value === "") throw new Error(`${name} is required`)
+  return value
 }
 
 async function driverFor(db: Kysely<DB>, kind: string, backendServiceId: string) {

@@ -7,7 +7,7 @@ import {
   fetchOrganizationMember,
   isValidOrganizationSlug,
   provisionOrganization,
-  prepareOrganizationTeardown,
+  prepareOrganizationTeardownInTransaction,
 } from "@lib/dao"
 import { enqueue, JOB_KINDS } from "@lib/jobs"
 import { srnFor } from "@lib/srn"
@@ -301,32 +301,36 @@ const app = new Hono()
       const user = c.var.user
       const organization = c.var.organization
 
-      const prepared = await prepareOrganizationTeardown(db, {
-        organizationId: organization.id,
+      const prepared = await db.transaction().execute(async (transaction) => {
+        const result = await prepareOrganizationTeardownInTransaction(transaction, {
+          organizationId: organization.id,
+        })
+        if (!result.ok) return result
+
+        for (const project of result.projects) {
+          await enqueue(transaction, {
+            kind: JOB_KINDS.tearDownProject,
+            idempotencyKey: `${JOB_KINDS.tearDownProject}:${project.projectId}`,
+            payload: project,
+            maxAttempts: 5,
+          })
+        }
+
+        await crudAuditLog(transaction).record({
+          organizationId: organization.id,
+          actorUserId: user.id,
+          action: "org:delete",
+          resourceSrn: srnFor("org", organization.id, "organization", organization.id),
+          before: { slug: organization.slug, name: organization.name, deletedAt: null },
+          after: {
+            deletedAt: new Date().toISOString(),
+            projectsScheduledForTeardown: result.projects.length,
+          },
+          ...auditContext(c),
+        })
+        return result
       })
       if (!prepared.ok) return throwNotFound(c, "Organization not found")
-
-      for (const project of prepared.projects) {
-        await enqueue(db, {
-          kind: JOB_KINDS.tearDownProject,
-          idempotencyKey: `${JOB_KINDS.tearDownProject}:${project.projectId}`,
-          payload: project,
-          maxAttempts: 5,
-        })
-      }
-
-      await crudAuditLog(db).record({
-        organizationId: organization.id,
-        actorUserId: user.id,
-        action: "org:delete",
-        resourceSrn: srnFor("org", organization.id, "organization", organization.id),
-        before: { slug: organization.slug, name: organization.name, deletedAt: null },
-        after: {
-          deletedAt: new Date().toISOString(),
-          projectsScheduledForTeardown: prepared.projects.length,
-        },
-        ...auditContext(c),
-      })
 
       await crudUserPreference(db).setLastOrganization(user.id, null)
 

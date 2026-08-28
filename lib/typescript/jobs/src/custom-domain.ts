@@ -1,10 +1,12 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
-import { publishRoute as publishLambdaRoute, type Route } from "@lib/lambda"
+import { publishRoute as publishLambdaRoute, type Route, withdrawRoute } from "@lib/lambda"
+import type { DB } from "@sproutos/db"
 import * as acme from "acme-client"
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises"
 import { Redis } from "ioredis"
+import type { Kysely } from "kysely"
 import { v7 } from "uuid"
 import { enqueue } from "./queue"
 import type { JobHandler } from "./worker"
@@ -34,6 +36,12 @@ type Dependencies = {
   secrets: SecretsManagerClient
   valkey: Redis
   publishRoute: typeof publishLambdaRoute
+}
+
+export type CustomDomainDeletionDependencies = {
+  bucket: string
+  s3: Pick<S3Client, "send">
+  valkey: Redis
 }
 
 function awsConfig() {
@@ -201,6 +209,68 @@ export function customDomainRetryAfter(now: Date, consecutiveFailures: number): 
   return new Date(now.getTime() + Math.min(MAX_RETRY_MS, RETRY_AFTER_MS * 2 ** exponent))
 }
 
+/**
+ * Remove one ACME-backed hostname through the same state machine used by the domain API.
+ *
+ * The route disappears before the certificate. A retry therefore sees either an intact route and
+ * certificate or a harmlessly repeated delete; it never leaves a hostname routing to a project
+ * after its certificate has been removed. A busy reconciliation is an error, not success: account
+ * deletion must not finish while an issuer still owns the domain lease.
+ */
+export async function tearDownCustomDomain(
+  db: Kysely<DB>,
+  input: { id: string; organizationId: string },
+  dependencies: CustomDomainDeletionDependencies,
+): Promise<boolean> {
+  const deleting = await crudCustomDomain(db).beginDelete(input.organizationId, input.id)
+  if (deleting === undefined) return false
+
+  const leaseToken = v7()
+  const domain = await crudCustomDomain(db).claimReconciliation(input.id, leaseToken)
+  if (domain === undefined) {
+    throw new Error(`Custom domain ${input.id} is being reconciled; retry teardown`)
+  }
+
+  try {
+    await deleteCustomDomainResources(db, domain, leaseToken, dependencies)
+    return true
+  } finally {
+    await crudCustomDomain(db).releaseReconciliation(input.id, leaseToken)
+  }
+}
+
+async function deleteCustomDomainResources(
+  db: Kysely<DB>,
+  domain: {
+    id: string
+    hostname: string
+    certificateObjectKey: string | null
+    certificateObjectVersion: string | null
+  },
+  leaseToken: string,
+  dependencies: CustomDomainDeletionDependencies,
+): Promise<void> {
+  await withdrawRoute(dependencies.valkey, domain.hostname)
+  await dependencies.valkey.del(`custom-domain:pending:${domain.hostname}`)
+
+  if (domain.certificateObjectKey !== null) {
+    await dependencies.s3.send(
+      new DeleteObjectCommand({
+        Bucket: dependencies.bucket,
+        Key: domain.certificateObjectKey,
+        VersionId: domain.certificateObjectVersion ?? undefined,
+      }),
+    )
+  }
+  await dependencies.valkey.publish(
+    "certificates:invalidate",
+    JSON.stringify({ hostname: domain.hostname, deleted: true }),
+  )
+  if (!(await crudCustomDomain(db).finishDelete(domain.id, leaseToken))) {
+    throw new Error(`Custom domain ${domain.id} lost its deletion lease`)
+  }
+}
+
 export async function activateCustomDomain(callbacks: {
   publishRoute: () => Promise<void>
   clearPending: () => Promise<void>
@@ -243,20 +313,11 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
 
     try {
       if (domain.status === "deleting") {
-        if (domain.certificateObjectKey !== null) {
-          await deps.s3.send(
-            new DeleteObjectCommand({
-              Bucket: required("TENANT_CERTIFICATE_BUCKET"),
-              Key: domain.certificateObjectKey,
-              VersionId: domain.certificateObjectVersion ?? undefined,
-            }),
-          )
-        }
-        await deps.valkey.publish(
-          "certificates:invalidate",
-          JSON.stringify({ hostname: domain.hostname, deleted: true }),
-        )
-        await crudCustomDomain(db).finishDelete(domain.id, leaseToken)
+        await deleteCustomDomainResources(db, domain, leaseToken, {
+          bucket: required("TENANT_CERTIFICATE_BUCKET"),
+          s3: deps.s3,
+          valkey: deps.valkey,
+        })
         return
       }
 

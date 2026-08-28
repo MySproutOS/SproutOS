@@ -37,6 +37,9 @@ const deletedFunctions: string[] = []
 const withdrawn: string[] = []
 const staticCleanup: string[] = []
 const certificateCleanup: string[] = []
+const certificateInvalidations: string[] = []
+const destroyedServices: string[] = []
+const destroyedSandboxes: string[] = []
 
 const lambdaClients = {
   lambda: {
@@ -50,21 +53,35 @@ const lambdaClients = {
       withdrawn.push(key)
       return Promise.resolve(1)
     },
+    publish: (channel: string, payload: string) => {
+      certificateInvalidations.push(`${channel}:${payload}`)
+      return Promise.resolve(1)
+    },
   },
   customDomains: {
-    listenerArn: "arn:listener:test",
-    acm: {
+    bucket: "tenant-certificates",
+    s3: {
       send: (command: unknown) => {
         certificateCleanup.push(command?.constructor.name ?? "unknown")
         return Promise.resolve({})
       },
     },
-    elb: {
-      send: (command: unknown) => {
-        certificateCleanup.push(command?.constructor.name ?? "unknown")
-        return Promise.resolve({})
+  },
+  serviceDriver: (database: typeof db, kind: string, backendServiceId: string) =>
+    Promise.resolve({
+      destroy: async () => {
+        destroyedServices.push(`${kind}:${backendServiceId}`)
+        await database
+          .updateTable("backendService")
+          .set({ deletedAt: new Date(), status: "deleting" })
+          .where("id", "=", backendServiceId)
+          .execute()
       },
-    },
+    }),
+  sandbox: async (job: { payload: unknown }, context: { db: typeof db }) => {
+    const sandboxId = (job.payload as { sandboxId: string }).sandboxId
+    destroyedSandboxes.push(sandboxId)
+    await context.db.deleteFrom("sandbox").where("id", "=", sandboxId).execute()
   },
   static: {
     bucket: "tenant-static",
@@ -160,6 +177,9 @@ afterAll(async () => {
   if (!reachable || !organizationId) return
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
+    await tx.deleteFrom("customDomain").where("projectId", "=", projectId).execute()
+    await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
+    await tx.deleteFrom("backendService").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("projectEnvVar").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("usageRollup").where("projectId", "=", projectId).execute()
     await tx.deleteFrom("deployment").where("projectId", "=", projectId).execute()
@@ -248,8 +268,39 @@ describe("tearing down a deleted project", () => {
         hostname: "deleted.example.test",
         isApex: true,
         verificationToken: "test-token",
-        acmCertificateArn: "arn:certificate:test",
+        certificateObjectKey: `custom-domains/${customDomainId}/certificate.json`,
+        certificateObjectVersion: "version-1",
         status: "active",
+      })
+      .execute()
+
+    const region = await db
+      .selectFrom("region")
+      .select("id")
+      .where("isActive", "=", true)
+      .executeTakeFirstOrThrow()
+    const backendServiceId = v7()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: backendServiceId,
+        organizationId,
+        projectId,
+        regionId: region.id,
+        kind: "object_storage",
+        name: "Teardown storage",
+        status: "active",
+      })
+      .execute()
+    const sandboxId = v7()
+    await db
+      .insertInto("sandbox")
+      .values({
+        id: sandboxId,
+        projectId,
+        userId: ownerUserId,
+        externalId: "daytona-teardown-test",
+        state: "running",
       })
       .execute()
 
@@ -274,6 +325,32 @@ describe("tearing down a deleted project", () => {
       .where("id", "=", projectId)
       .execute()
 
+    await db
+      .updateTable("customDomain")
+      .set({
+        reconcileLeaseToken: v7(),
+        reconcileLeaseExpiresAt: new Date(Date.now() + 60_000),
+      })
+      .where("id", "=", customDomainId)
+      .execute()
+    await expect(handler()(job({ projectId }), context())).rejects.toThrow(/retry teardown/)
+    expect(
+      (
+        await db
+          .selectFrom("project")
+          .select("state")
+          .where("id", "=", projectId)
+          .executeTakeFirstOrThrow()
+      ).state,
+    ).toBe("deleting")
+    expect(certificateCleanup).not.toContain("DeleteObjectCommand")
+    expect(deletedFunctions).toHaveLength(0)
+    await db
+      .updateTable("customDomain")
+      .set({ reconcileLeaseToken: null, reconcileLeaseExpiresAt: null })
+      .where("id", "=", customDomainId)
+      .execute()
+
     await handler()(job({ projectId }), context())
 
     const deployments = await db
@@ -294,20 +371,39 @@ describe("tearing down a deleted project", () => {
     expect(deletedFunctions.every((name) => name.startsWith("sproutos-app-"))).toBe(true)
     // Withdrawn by the hostname stored on the deployment, so a project renamed since it deployed
     // does not leave its old host resolving.
-    expect(withdrawn.every((key) => key.startsWith("route:"))).toBe(true)
+    expect(
+      withdrawn.every(
+        (key) => key.startsWith("route:") || key.startsWith("custom-domain:pending:"),
+      ),
+    ).toBe(true)
     expect(staticCleanup).toContain("edge:old-static.example.test")
     expect(staticCleanup).toContain(`list:sites/${projectId}/`)
     expect(staticCleanup).toContain(`list:static/${projectId}/`)
     expect(withdrawn).toContain("route:deleted.example.test")
-    expect(withdrawn).toContain("route:www.deleted.example.test")
-    expect(certificateCleanup).toContain("RemoveListenerCertificatesCommand")
-    expect(certificateCleanup).toContain("DeleteCertificateCommand")
+    expect(certificateCleanup).toContain("DeleteObjectCommand")
+    expect(certificateInvalidations.some((entry) => entry.includes("deleted.example.test"))).toBe(
+      true,
+    )
     const deletedDomain = await db
       .selectFrom("customDomain")
       .select("deletedAt")
       .where("id", "=", customDomainId)
       .executeTakeFirstOrThrow()
     expect(deletedDomain.deletedAt).toBeInstanceOf(Date)
+    expect(destroyedServices).toContain(`object_storage:${backendServiceId}`)
+    expect(destroyedSandboxes).toContain(sandboxId)
+    expect(
+      await db.selectFrom("sandbox").select("id").where("id", "=", sandboxId).executeTakeFirst(),
+    ).toBeUndefined()
+    expect(
+      (
+        await db
+          .selectFrom("backendService")
+          .select("deletedAt")
+          .where("id", "=", backendServiceId)
+          .executeTakeFirstOrThrow()
+      ).deletedAt,
+    ).toBeInstanceOf(Date)
 
     // The customer's secrets are gone. Nothing references them and the request was to stop holding
     // the project's data.
@@ -338,6 +434,15 @@ describe("tearing down a deleted project", () => {
       .where("id", "=", projectId)
       .executeTakeFirst()
     expect(project?.state).toBe("deleted")
+
+    // A repository is source owned by the customer, not a provisioned SproutOS resource.
+    const repository = await db
+      .selectFrom("repository")
+      .select(["githubRepoId", "ownerLogin", "name"])
+      .where("id", "=", repositoryId)
+      .executeTakeFirstOrThrow()
+    expect(repository.ownerLogin).toBe("teardown")
+    expect(repository.name).toBe(`repo-${repositoryId.slice(-12)}`)
   })
 
   /*

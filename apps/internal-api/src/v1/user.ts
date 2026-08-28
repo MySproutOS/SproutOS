@@ -5,7 +5,7 @@ import {
   fetchOrganization,
   fetchUserPreference,
   impersonation,
-  prepareAccountOrganizationsForTeardown,
+  prepareAccountOrganizationsForTeardownInTransaction,
 } from "@lib/dao"
 import { crudUser } from "@lib/dao/user/crud"
 import { enqueue, JOB_KINDS } from "@lib/jobs"
@@ -438,7 +438,27 @@ const app = new Hono()
     async (c) => {
       const user = c.var.user
 
-      const prepared = await prepareAccountOrganizationsForTeardown(db, user.id)
+      const prepared = await db.transaction().execute(async (transaction) => {
+        const result = await prepareAccountOrganizationsForTeardownInTransaction(
+          transaction,
+          user.id,
+        )
+        if (!result.ok) return result
+
+        const disabled = await crudUser(transaction).beginUserDeletion(user.id)
+        if (!disabled.ok) {
+          throw new Error(`Account ${user.id} changed while deletion was being prepared`)
+        }
+        if (result.projects.length === 0) return result
+
+        await enqueue(transaction, {
+          kind: JOB_KINDS.tearDownAccount,
+          idempotencyKey: `${JOB_KINDS.tearDownAccount}:${user.id}`,
+          payload: { userId: user.id, projects: result.projects },
+          maxAttempts: 10,
+        })
+        return result
+      })
       if (!prepared.ok) {
         return throwConflict(
           c,
@@ -449,14 +469,10 @@ const app = new Hono()
       if (prepared.projects.length === 0) {
         // Nothing external can fail, so there is no reason to leave a tombstone job between the
         // request and anonymisation.
-        await crudUser(db).deleteUser(user.id)
-      } else {
-        await enqueue(db, {
-          kind: JOB_KINDS.tearDownAccount,
-          idempotencyKey: `${JOB_KINDS.tearDownAccount}:${user.id}`,
-          payload: { userId: user.id, projects: prepared.projects },
-          maxAttempts: 10,
-        })
+        const completed = await crudUser(db).completeUserDeletion(user.id)
+        if (!completed.ok) {
+          throw new Error(`Account ${user.id} could not be anonymised after teardown preparation`)
+        }
       }
 
       // Sign out immediately. The durable job anonymises the row only after every provider
