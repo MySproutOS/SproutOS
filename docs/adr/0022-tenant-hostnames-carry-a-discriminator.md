@@ -6,7 +6,7 @@
 
 ## Context
 
-[ADR 0018](0018-domains.md) fixed the preview host format as `pr-42--myapp.sprout.run`, with the
+[ADR 0018](0018-domains.md) fixed the preview host format as `pr-42--myapp.sproutos.run`, with the
 double-dash separator chosen because **an ACM wildcard covers exactly one label**.
 
 That constraint has a consequence 0018 did not follow through. Because the host may contain only one
@@ -26,8 +26,8 @@ collision.
 
 The host label is the project slug plus six characters of the project's id:
 
-- production: `myapp-abdf5a.sprout.run`
-- preview: `pr-42--myapp-abdf5a.sprout.run`
+- production: `myapp-abdf5a.sproutos.run`
+- preview: `pr-42--myapp-abdf5a.sproutos.run`
 
 The discriminator is the **tail** of the UUIDv7, which is its random part; the head is a millisecond
 timestamp and two projects created in the same tick would share it.
@@ -40,7 +40,7 @@ The `--` separator is kept exactly as 0018 specifies.
 
 ## Consequences
 
-Tenant URLs are slightly uglier than `myapp.sprout.run`. This is the cost of per-organization slug
+Tenant URLs are slightly uglier than `myapp.sproutos.run`. This is the cost of per-organization slug
 uniqueness, and it is paid in a string most customers will replace with a custom domain.
 
 `hostLabel` is a pure function with tests, including one asserting that two projects sharing a slug
@@ -53,7 +53,7 @@ product change, not a technical one: it means telling a customer their project n
 because someone they have never heard of used it first. **This remains open for the product owner to
 overrule** — the change is confined to `hostLabel` and the slug allocator.
 
-**Put the organization in the label** — `myapp--acme.sprout.run`. Reads better than a hex fragment
+**Put the organization in the label** — `myapp--acme.sproutos.run`. Reads better than a hex fragment
 and collides again the moment an organization is renamed, since the hostname would have to change
 with it.
 

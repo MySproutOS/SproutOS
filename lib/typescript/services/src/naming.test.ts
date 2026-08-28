@@ -52,15 +52,15 @@ describe("postgresUri", () => {
     // `@` ends the userinfo. Unencoded, this URI points at "evil.example" and a client would
     // happily connect there with the customer's credentials.
     const uri = postgresUri({
-      host: "db.sprout.run",
+      host: "db.sproutos.run",
       port: 5432,
       database: "sprout_db_x",
       username: "sprout_r_x",
       password: "p@ss/word#1",
     })
 
-    expect(uri).toBe("postgresql://sprout_r_x:p%40ss%2Fword%231@db.sprout.run:5432/sprout_db_x")
-    expect(new URL(uri).hostname).toBe("db.sprout.run")
+    expect(uri).toBe("postgresql://sprout_r_x:p%40ss%2Fword%231@db.sproutos.run:5432/sprout_db_x")
+    expect(new URL(uri).hostname).toBe("db.sproutos.run")
   })
 
   it("carries sslmode when asked", () => {

@@ -44,8 +44,9 @@ export type DeploymentSpec = {
  * otherwise be issued the same hostname, and the second one to deploy would take over the first
  * one's traffic.
  *
- * ADR 0018 writes the preview form as `pr-42--myapp.sprout.run`, with no discriminator, and has the
- * same collision. **This is a deviation from a literal reading of that ADR and is worth a decision**
+ * ADR 0018 writes the preview form as `pr-42--myapp.sproutos.run`, with no discriminator, and has
+ * the same collision. **This is a deviation from a literal reading of that ADR and is worth a
+ * decision**
  * — the alternative is making project slugs globally unique, which is a product change (it means
  * telling a customer their project name is taken by a stranger).
  *

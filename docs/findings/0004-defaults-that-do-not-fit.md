@@ -24,7 +24,8 @@ which they can already see.
 
 ## Knative's domain template produces hosts that cannot be certificated
 
-The default is `{{.Name}}.{{.Namespace}}.{{.Domain}}`, which yields `myapp.tenant-abc123.sprout.run`
+The default is `{{.Name}}.{{.Namespace}}.{{.Domain}}`, which yields
+`myapp.tenant-abc123.sproutos.run`
 — **two labels** in front of the apex. [ADR 0018](../adr/0018-domains.md) is explicit that an ACM
 wildcard covers exactly one; that constraint is the entire reason preview hosts are `pr-42--myapp`
 rather than `pr-42.myapp`.

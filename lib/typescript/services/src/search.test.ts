@@ -25,7 +25,7 @@ const reachable = await (async () => {
 })()
 
 const config: SearchServiceConfig = {
-  publicHost: "search.sprout.run",
+  publicHost: "search.sproutos.run",
   publicPort: 9200,
   scheme: "https",
 }
@@ -160,7 +160,7 @@ describe.skipIf(!reachable)("search driver", () => {
 
     const uri = new URL(result.connectionUri)
     expect(uri.protocol).toBe("https:")
-    expect(uri.hostname).toBe("search.sprout.run")
+    expect(uri.hostname).toBe("search.sproutos.run")
     expect(decodeURIComponent(uri.username)).toBe(result.username)
 
     const stored = await db
@@ -304,11 +304,11 @@ describe("searchUri", () => {
     // `new Client({ node: uri })` in the JS client, `hosts=[uri]` in Python — both parse userinfo.
     const uri = searchUri({
       scheme: "https",
-      host: "search.sprout.run",
+      host: "search.sproutos.run",
       port: 9200,
       username: "ix_abc.def",
       secret: "s3cret",
     })
-    expect(uri).toBe("https://ix_abc.def:s3cret@search.sprout.run:9200")
+    expect(uri).toBe("https://ix_abc.def:s3cret@search.sproutos.run:9200")
   })
 })
