@@ -411,6 +411,7 @@ function serializeProject(
     storeListingId: project.storeListingId,
     agentCredentialId: project.agentCredentialId,
     isGroup: project.isGroup,
+    servingMode: project.servingMode,
     parentProjectId: project.parentProjectId,
     managedByOauthApp,
     primaryChildProjectId: project.primaryChildProjectId,
