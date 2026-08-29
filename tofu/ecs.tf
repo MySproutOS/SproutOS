@@ -1,7 +1,8 @@
 /**
- * The website, the API and the ordinary background worker share one image and task. The ACME
- * worker uses the same immutable image in a separate task because an ECS task role is shared by
- * every container; task separation is the only real IAM boundary from the public processes.
+ * The website, the API and the background worker share one image and task. The existing background
+ * worker owns ACME scheduling and handlers; its database leases keep work single-owner across
+ * replicas. The dormant acme-worker task definition and zero-scaled service remain only so an
+ * ordinary apply converges the resources created by the abandoned isolated-worker rollout.
  *
  * ## Why ECS on EC2 and not Fargate
  *
@@ -585,12 +586,21 @@ resource "aws_ecs_task_definition" "web" {
         { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
         { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
         { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
-        # Scheduling is not an ACME capability. This ordinary worker inserts durable rows; only the
-        # dedicated ACME task role can claim and execute their privileged handlers.
-        { name = "ACME_JOBS_ENABLED", value = var.acme_worker_enabled ? "1" : "0" },
-        # Ownership moves only after isolated capacity is healthy. Keeping this separate from the
-        # scheduler/capacity gate makes both the forward and reverse rollout overlap safely.
-        { name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = var.acme_handler_ownership_enabled ? "1" : "0" },
+        # Certificate work belongs to the existing platform worker. It schedules and executes the
+        # durable jobs with the same task role as the rest of the control-plane background work.
+        { name = "ACME_JOBS_ENABLED", value = "1" },
+        { name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = "0" },
+        { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
+        { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
+        { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
+        { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
+        { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
+        { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
+        { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
+        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
+        { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
+        { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
+        { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
       ]
 
       secrets = concat([
@@ -626,13 +636,9 @@ check "ecs_control_plane_container_isolation" {
 }
 
 /*
-  The certificate worker is deliberately a separate ECS task, not merely a fourth container.
-
-  Container environment filtering does not isolate IAM credentials: every container in one task
-  receives credentials for the same task role. This task can claim only certificate reconciliation
-  and the deployment/teardown jobs that mutate tenant DNS. Its dedicated role is the only
-  application principal that can read the account key, write certificate objects, mutate DNS, or
-  restart router ASGs.
+  Dormant compatibility definition for the abandoned isolated-worker rollout. Keeping it in state
+  avoids mixing destructive cleanup into the tenant-edge cutover. The corresponding service is
+  pinned at zero; certificate jobs run in the ordinary platform worker above.
 */
 resource "aws_ecs_task_definition" "acme_worker" {
   family       = "${var.name_prefix}-acme-worker"
@@ -920,18 +926,17 @@ resource "aws_ecs_service" "acme_worker" {
   name            = "${var.name_prefix}-acme-worker"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.acme_worker.arn
-  # First apply with this disabled. The live web revision still reserves 768 MiB, so starting this
-  # 256 MiB task first would occupy the only spare host and make the 640 MiB web rollout impossible.
-  # After that web rollout drains the old revision, enable this worker and it binpacks beside web.
-  desired_count = var.acme_worker_enabled ? var.ecs_instance_count : 0
+  # Retained only so existing state can converge without deleting the service during the edge
+  # rollout. Certificate work runs in the ordinary platform worker; this service stays empty.
+  desired_count = 0
 
   capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.main.name
     weight            = 100
   }
 
-  # Keep one privileged worker in each serving zone and never place both replicas on one host.
-  # Within that availability constraint, binpack prefers the two web hosts over the rolling spare.
+  # These constraints are inert while desired_count is zero, but keep existing state stable until
+  # the dormant service is removed in a separate cleanup.
   ordered_placement_strategy {
     type  = "spread"
     field = "attribute:ecs.availability-zone"

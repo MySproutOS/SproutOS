@@ -83,7 +83,8 @@ grep -Fxq 'systemctl restart docker' "$call_log"
 if ! grep -Fq 'iptables -w 10 -I DOCKER-USER 1 -i docker+ -d 169.254.169.254/32 -j DROP' "$call_log"; then
   fail "bootstrap did not install the container IMDS block: $(tr '\n' ';' <"$call_log")"
 fi
-assert_equal "$(tail -1 "$call_log")" 'systemctl restart ecs' 'bootstrap did not restart ECS last'
+assert_equal "$(tail -1 "$call_log")" 'systemctl --no-block restart ecs' \
+  'bootstrap did not queue the ECS restart last without deadlocking cloud-final'
 
 # Version drift fails before service mutation.
 : >"$call_log"

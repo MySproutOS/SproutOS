@@ -62,7 +62,7 @@ describe("tenant-edge IAM boundary", () => {
     )
   })
 
-  it("gives the dedicated certificate task permanent ACME authority", () => {
+  it("keeps certificate work on the ordinary platform worker", () => {
     expect(resource("aws_iam_policy", "control_plane_dns")).toContain(
       "route53:ChangeResourceRecordSets",
     )
@@ -92,10 +92,12 @@ describe("tenant-edge IAM boundary", () => {
     )
     expect(ecs).toContain("task_role_arn      = aws_iam_role.acme_task.arn")
     expect(ecs).toContain('{ name = "WORKER_PROFILE", value = "acme" }')
-    expect(ecs).toContain("var.acme_worker_enabled ? var.ecs_instance_count : 0")
-    expect(ecs).toContain(
-      '{ name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = var.acme_handler_ownership_enabled ? "1" : "0" }',
-    )
+    expect(ecs).toContain("desired_count = 0")
+    expect(ecs).toContain('{ name = "ACME_JOBS_ENABLED", value = "1" }')
+    expect(ecs).toContain('{ name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = "0" }')
+    expect(ecs).toContain('{ name = "ACME_ACCOUNT_KEY_SECRET_ID"')
+    expect(ecs).toContain('{ name = "TENANT_CERTIFICATE_BUCKET"')
+    expect(ecs).toContain('{ name = "PLATFORM_EDGE_ROLLOUT_ENABLED"')
     const acmeTask = resourceFrom(ecs, "aws_ecs_task_definition", "acme_worker")
     expect(ecs).toContain("ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names")
     expect(acmeTask).toContain("local.ecs_acme_worker_parameter_secrets")
@@ -179,32 +181,30 @@ describe("tenant-edge IAM boundary", () => {
     expect(acmeTask).toContain("volumesFrom       = []")
   })
 
-  it("hands both exact applied task contracts to the release before rollout continues", () => {
+  it("hands the exact platform task contract to the release before rollout continues", () => {
     expect(outputs).toContain('output "ecs_web_task_definition_arn"')
     expect(outputs).toContain('output "ecs_acme_worker_task_definition_arn"')
     expect(outputs).toContain('output "acme_worker_rollout_state"')
     expect(handoff).toContain('ECS_BASE_TASK_DEFINITION="$web_task_arn"')
     expect(handoff).toContain('ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn"')
     expect(handoff).toContain('"$DEPLOY_SCRIPT"')
-    expect(deploy).toContain("bin/handoff-ecs-task-definitions.sh")
+    expect(deploy).toContain('ECS_BASE_TASK_DEFINITION="$corrected_task_arn"')
     expect(deploy).toContain("ACME_JOBS_ENABLED")
     expect(deploy).toContain("ACME_HANDLER_OWNERSHIP_ENABLED")
-    expect(deploy).toContain("success until two healthy isolated tasks are live")
     expect(deploy).toContain("`ACME_JOBS_ENABLED=1`")
+    expect(deploy).toContain("desired/running/pending `0/0/0`")
     expect(deploy).toContain("ACME_DIRECTORY_URL")
     expect(deploy).toContain("PLATFORM_EDGE_ROLLOUT_ENABLED")
     expect(deploy).toContain("CUSTOM_DOMAINS_ENABLED")
   })
 
-  it("enforces adjacent phases, exact plan resources, and live ECS/IAM proof", () => {
+  it("keeps the retired isolated-worker gates pinned to the platform-worker state", () => {
     const ownership = variables.slice(
       variables.indexOf('variable "acme_handler_ownership_enabled"'),
       variables.indexOf('variable "custom_domain_issuance_enabled"'),
     )
-    expect(ownership).toContain("!var.acme_handler_ownership_enabled || var.acme_worker_enabled")
-    expect(ownership).toContain(
-      "var.acme_fallback_iam_enabled || var.acme_handler_ownership_enabled",
-    )
+    expect(ownership).toContain("condition     = !var.acme_handler_ownership_enabled")
+    expect(ownership).toContain("condition     = var.acme_fallback_iam_enabled")
     expect(handoff).toContain("refusing zero-owner handoff")
     expect(handoff).toContain("refusing no-IAM handoff")
     expect(planGuard).toContain('"NONE->A"|"A->B"|"B->C"|"C->D"|"D->C"|"C->B"|"B->A"')
