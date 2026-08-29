@@ -35,7 +35,7 @@ const FILE_GENERIC_READ_EXECUTE: u32 = 0x0012_00A9;
 const FILE_ALL_ACCESS: u32 = 0x001f_01ff;
 
 pub(crate) struct WindowsAppContainerCommand {
-    temporary: TempDir,
+    temporary: Option<TempDir>,
     profile: Option<AppContainerProfile>,
     capabilities: SecurityCapabilities,
     staged_workspace: PathBuf,
@@ -54,10 +54,34 @@ pub(crate) struct WindowsOutput {
 
 impl WindowsAppContainerCommand {
     pub(crate) fn stage(executable: &Path, workspace: &Path) -> Result<Self> {
-        let temporary = tempfile::tempdir().map_err(|source| SproutError::Io {
-            operation: "create Windows AppContainer staging directory",
-            source,
-        })?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let identity = format!("sprout.template.{}.{}", std::process::id(), nonce);
+        let profile = AppContainerProfile::ensure(&identity, &identity, Some("Sprout template"))
+            .map_err(|error| SproutError::IsolationUnavailable(error.to_string()))?;
+        let profile_folder = match profile.folder_path() {
+            Ok(folder) => folder,
+            Err(error) => {
+                let message = error.to_string();
+                let _ = profile.delete();
+                return Err(SproutError::IsolationUnavailable(message));
+            }
+        };
+        let temporary = match tempfile::Builder::new()
+            .prefix("sprout-stage-")
+            .tempdir_in(profile_folder)
+        {
+            Ok(temporary) => temporary,
+            Err(source) => {
+                let _ = profile.delete();
+                return Err(SproutError::Io {
+                    operation: "create Windows AppContainer staging directory",
+                    source,
+                });
+            }
+        };
         let staged_workspace = temporary.path().join("workspace");
         let plugin_directory = temporary.path().join("plugin");
         let runtime_temporary = temporary.path().join("temp");
@@ -75,13 +99,6 @@ impl WindowsAppContainerCommand {
         })?;
         let staged_executable = plugin_directory.join("plugin.exe");
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let identity = format!("sprout.template.{}.{}", std::process::id(), nonce);
-        let profile = AppContainerProfile::ensure(&identity, &identity, Some("Sprout template"))
-            .map_err(|error| SproutError::IsolationUnavailable(error.to_string()))?;
         let setup = (|| {
             // Add inheritable ACEs before creating staged descendants. Setting an inheritable
             // ACE after files already exist does not retroactively grant the package access.
@@ -128,7 +145,7 @@ impl WindowsAppContainerCommand {
             }
         };
         Ok(Self {
-            temporary,
+            temporary: Some(temporary),
             profile: Some(profile),
             capabilities,
             staged_workspace,
@@ -281,11 +298,11 @@ fn resume_suspended(child: &rappct::LaunchedIo) -> Result<()> {
 impl Drop for WindowsAppContainerCommand {
     fn drop(&mut self) {
         // The only ACLs were placed below `temporary`; TempDir removes that entire tree after the
-        // profile is deleted, so no orphan package SID or ACE survives the run.
+        // run. Remove it before deleting its parent AppContainer profile.
+        let _ = self.temporary.take();
         if let Some(profile) = self.profile.take() {
             let _ = profile.delete();
         }
-        let _ = self.temporary.path();
     }
 }
 
@@ -439,7 +456,7 @@ fn main() {{
             String::from_utf8_lossy(&compilation.stderr)
         );
         let command = WindowsAppContainerCommand::stage(&executable, &workspace).unwrap();
-        let staging_root = command.temporary.path().to_owned();
+        let staging_root = command.temporary.as_ref().unwrap().path().to_owned();
         let profile_folder = command.profile.as_ref().unwrap().folder_path().unwrap();
         let output = command
             .run(
