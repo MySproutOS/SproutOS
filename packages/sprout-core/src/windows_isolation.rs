@@ -151,7 +151,7 @@ impl WindowsAppContainerCommand {
         let workspace = self.staged_workspace.clone();
         let runtime_temporary = self.runtime_temporary.clone();
         tokio::task::spawn_blocking(move || {
-            let environment = allowlisted_environment(&workspace, &runtime_temporary);
+            let environment = allowlisted_environment(&runtime_temporary);
             let options = LaunchOptions {
                 exe: executable,
                 cwd: Some(workspace),
@@ -225,7 +225,6 @@ fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 fn allowlisted_environment(
-    workspace: &Path,
     runtime_temporary: &Path,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
@@ -233,9 +232,10 @@ fn allowlisted_environment(
     // CreateProcess and the Windows runtime require this narrow system environment even when the
     // child is launched by absolute path. CreateProcess still requires PATH when its environment is
     // fully replaced, so synthesize a system-only value instead of inheriting the user's PATH.
-    // TEMP/TMP point inside the AppContainer ACL tree below; no user profile, credential, or proxy
-    // value crosses the boundary.
-    for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT"] {
+    // AppContainer profile resolution requires LOCALAPPDATA even though the child cannot read it
+    // without an ACL. TEMP/TMP point inside the AppContainer ACL tree below; no user profile,
+    // credential, or proxy value crosses the boundary.
+    for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT", "LOCALAPPDATA"] {
         if let Some(value) = std::env::var_os(name) {
             environment.push((name.into(), value));
         }
@@ -245,20 +245,6 @@ fn allowlisted_environment(
         let path = std::env::join_paths([system_root.join("System32"), system_root])
             .expect("Windows system paths do not contain the PATH separator");
         environment.push(("PATH".into(), path));
-    }
-    // CreateProcess does not synthesize the special per-drive current-directory entry for an
-    // explicit environment block. Include only the drive containing the sandbox cwd.
-    if let Some(std::path::Component::Prefix(prefix)) = workspace.components().next() {
-        let drive = match prefix.kind() {
-            std::path::Prefix::Disk(drive) | std::path::Prefix::VerbatimDisk(drive) => Some(drive),
-            _ => None,
-        };
-        if let Some(drive) = drive {
-            environment.push((
-                format!("={}:", char::from(drive)).into(),
-                workspace.as_os_str().to_owned(),
-            ));
-        }
     }
     environment.push(("TEMP".into(), runtime_temporary.as_os_str().to_owned()));
     environment.push(("TMP".into(), runtime_temporary.as_os_str().to_owned()));
