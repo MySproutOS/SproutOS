@@ -8,6 +8,7 @@ import {
   withdrawRoute as withdrawLambdaRoute,
 } from "@lib/lambda"
 import * as acme from "acme-client"
+import { createHash } from "node:crypto"
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises"
 import { Redis } from "ioredis"
 import type { Kysely, Updateable } from "kysely"
@@ -30,6 +31,8 @@ export const CUSTOM_DOMAIN_KINDS = {
 } as const
 
 const CHALLENGE_TTL_SECONDS = 15 * 60
+const OWNERSHIP_PRESENT_TTL_SECONDS = 15 * 60
+const OWNERSHIP_ABSENT_TTL_SECONDS = 60
 const RETRY_AFTER_MS = 60_000
 const RENEWAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_RETRY_MS = 24 * 60 * 60 * 1000
@@ -41,6 +44,15 @@ type Resolver = {
   resolve6(hostname: string): Promise<string[]>
   resolveCname(hostname: string): Promise<string[]>
   resolveTxt(hostname: string): Promise<string[][]>
+}
+
+type OwnershipCache = {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string, mode: "EX", ttlSeconds: number): Promise<unknown>
+}
+
+type OwnershipCacheInvalidator = {
+  del(key: string): Promise<unknown>
 }
 
 type Dependencies = {
@@ -117,6 +129,40 @@ export async function hasOwnershipTxt(
   } catch {
     return false
   }
+}
+
+function ownershipCacheKey(hostname: string, expected: string): string {
+  const proof = createHash("sha256").update(expected).digest("hex")
+  return `custom-domain:ownership:v1:${hostname}:${proof}`
+}
+
+export async function clearOwnershipTxtCache(
+  valkey: OwnershipCacheInvalidator,
+  hostname: string,
+  expected: string,
+): Promise<void> {
+  await valkey.del(ownershipCacheKey(hostname, expected))
+}
+
+export async function hasOwnershipTxtCached(
+  resolver: Resolver,
+  valkey: OwnershipCache,
+  hostname: string,
+  expected: string,
+): Promise<boolean> {
+  const key = ownershipCacheKey(hostname, expected)
+  const cached = await valkey.get(key)
+  if (cached === "1") return true
+  if (cached === "0") return false
+
+  const present = await hasOwnershipTxt(resolver, hostname, expected)
+  await valkey.set(
+    key,
+    present ? "1" : "0",
+    "EX",
+    present ? OWNERSHIP_PRESENT_TTL_SECONDS : OWNERSHIP_ABSENT_TTL_SECONDS,
+  )
+  return present
 }
 
 async function addresses(resolver: Resolver, hostname: string): Promise<Set<string>> {
@@ -531,7 +577,12 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       }
       if (!renewing) {
         const [ownsHostname, pointsToIngress] = await Promise.all([
-          hasOwnershipTxt(deps.resolver, domain.hostname, domain.verificationToken),
+          hasOwnershipTxtCached(
+            deps.resolver,
+            deps.valkey,
+            domain.hostname,
+            domain.verificationToken,
+          ),
           trafficPointsToIngress(
             deps.resolver,
             domain.hostname,

@@ -13,9 +13,11 @@ import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import {
   activateCustomDomain,
+  clearOwnershipTxtCache,
   customDomainRetryAfter,
   deleteCustomDomain,
   hasOwnershipTxt,
+  hasOwnershipTxtCached,
   nextRenewal,
   reconcileCustomDomain,
   trafficPointsToIngress,
@@ -42,6 +44,64 @@ describe("custom-domain DNS checks", () => {
     expect(await hasOwnershipTxt(resolver, "example.com", "sproutos-domain-verification=abc")).toBe(
       true,
     )
+  })
+
+  it("caches ownership results in Valkey with shorter negative TTLs", async () => {
+    const values = new Map<string, string>()
+    const writes: Array<[string, string, string, number]> = []
+    const valkey = {
+      get: (key: string) => Promise.resolve(values.get(key) ?? null),
+      set: (key: string, value: string, mode: string, ttl: number) => {
+        values.set(key, value)
+        writes.push([key, value, mode, ttl])
+        return Promise.resolve("OK")
+      },
+    }
+    let lookups = 0
+    const resolver = {
+      resolveTxt: () => {
+        lookups += 1
+        return Promise.resolve([["sproutos-domain-verification=abc"]])
+      },
+      resolve4: absent,
+      resolve6: absent,
+      resolveCname: absent,
+    }
+
+    await expect(
+      hasOwnershipTxtCached(resolver, valkey, "example.com", "sproutos-domain-verification=abc"),
+    ).resolves.toBe(true)
+    await expect(
+      hasOwnershipTxtCached(resolver, valkey, "example.com", "sproutos-domain-verification=abc"),
+    ).resolves.toBe(true)
+    expect(lookups).toBe(1)
+    expect(writes[0]?.slice(1)).toEqual(["1", "EX", 15 * 60])
+
+    resolver.resolveTxt = () => {
+      lookups += 1
+      return Promise.reject(new Error("not found"))
+    }
+    await expect(hasOwnershipTxtCached(resolver, valkey, "missing.example", "proof")).resolves.toBe(
+      false,
+    )
+    expect(writes[1]?.slice(1)).toEqual(["0", "EX", 60])
+  })
+
+  it("invalidates the exact cached proof for a manual re-check", async () => {
+    const deleted: string[] = []
+    await clearOwnershipTxtCache(
+      {
+        del: (key: string) => {
+          deleted.push(key)
+          return Promise.resolve(1)
+        },
+      },
+      "example.com",
+      "sproutos-domain-verification=abc",
+    )
+    expect(deleted).toHaveLength(1)
+    expect(deleted[0]).toMatch(/^custom-domain:ownership:v1:example\.com:[a-f0-9]{64}$/)
+    expect(deleted[0]).not.toContain("sproutos-domain-verification")
   })
 
   it("accepts the exact ingress CNAME and rejects a lookalike suffix", async () => {

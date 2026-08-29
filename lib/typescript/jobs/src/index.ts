@@ -158,7 +158,12 @@ export {
   GITHUB_EVENT_KINDS,
   installationDiscoveryIdempotencyKey,
 } from "./github-events"
-export { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
+export {
+  clearOwnershipTxtCache,
+  CUSTOM_DOMAIN_KINDS,
+  reconcileCustomDomain,
+  scanCustomDomains,
+} from "./custom-domain"
 export {
   nextPlatformRenewal,
   PLATFORM_EDGE_CERTIFICATE_KIND,
