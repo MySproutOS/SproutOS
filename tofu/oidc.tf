@@ -311,7 +311,7 @@ resource "aws_iam_role_policy" "deploy" {
           Registering an immutable ECS revision has no resource ARN yet, so AWS only supports `*`
           here. This is registration, not execution: the two capabilities below remain scoped to
           the platform's web and ACME-worker services and migration family, and PassRole names the
-          only three roles a registered task may receive from this workflow.
+          only four roles a registered task may receive from this workflow.
         */
         Sid      = "RegisterWebTaskDefinitions"
         Effect   = "Allow"
@@ -353,6 +353,7 @@ resource "aws_iam_role_policy" "deploy" {
           aws_iam_role.task.arn,
           aws_iam_role.acme_task.arn,
           aws_iam_role.ecs_execution.arn,
+          aws_iam_role.acme_execution.arn,
         ]
         Condition = {
           StringEquals = {

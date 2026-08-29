@@ -54,12 +54,12 @@ if grep -Fq 'Resource = "*"' <<<"$update"; then
 fi
 
 # RegisterTaskDefinition performs PassRole validation for both taskRoleArn and executionRoleArn.
-# These are the public task role, the isolated ACME task role, and their shared execution role—no
-# unrelated IAM role and no wildcard.
+# These are the public and isolated ACME task roles plus each task definition's exact execution
+# role—no unrelated IAM role and no wildcard.
 pass_roles=$(statement PassOnlyDeployedTaskRolesToECS)
 grep -Fq '"iam:PassRole"' <<<"$pass_roles"
 expect_line "deploy role must pass exactly the deployed task roles" \
-  'aws_iam_role.acme_task.arn,aws_iam_role.ecs_execution.arn,aws_iam_role.task.arn' \
+  'aws_iam_role.acme_execution.arn,aws_iam_role.acme_task.arn,aws_iam_role.ecs_execution.arn,aws_iam_role.task.arn' \
   "$(grep -oE 'aws_iam_role\.[a-z_]+\.arn' <<<"$pass_roles" | sort -u | paste -sd, -)"
 grep -Fq '"iam:PassedToService" = "ecs-tasks.amazonaws.com"' <<<"$pass_roles"
 if grep -Fq 'Resource = "*"' <<<"$pass_roles"; then

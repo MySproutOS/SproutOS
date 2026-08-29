@@ -25,10 +25,10 @@ that the production role authorized the calls the script had gained.
 ## What stops this instance recurring
 
 The deploy role's mutable ECS access now names exactly the public web service and isolated ACME
-service. Its PassRole grant names exactly the public task role, isolated ACME task role, and their
-shared execution role, still conditioned on `ecs-tasks.amazonaws.com`. Describe and task-definition
-registration retain the resource scope AWS supports; migration execution remains limited to the
-web-migration family and platform cluster.
+service. Its PassRole grant names exactly the public and isolated ACME task roles plus each task
+definition's execution role, still conditioned on `ecs-tasks.amazonaws.com`. Describe and
+task-definition registration retain the resource scope AWS supports; migration execution remains
+limited to the web-migration family and platform cluster.
 
 `bin/deploy-role-policy.test.sh` inventories every ECS command used by the isolated-worker release,
 then asserts the complete policy surface. It also rejects a wildcard or any unrelated service or
