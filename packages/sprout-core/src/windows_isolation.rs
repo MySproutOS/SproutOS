@@ -229,12 +229,20 @@ fn allowlisted_environment(
     let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
         vec![("LANG".into(), "C".into()), ("LC_ALL".into(), "C".into())];
     // CreateProcess and the Windows runtime require this narrow system environment even when the
-    // child is launched by absolute path. TEMP/TMP point inside the AppContainer ACL tree below;
-    // no user profile, credential, proxy, or PATH value crosses the boundary.
+    // child is launched by absolute path. CreateProcess still requires PATH when its environment is
+    // fully replaced, so synthesize a system-only value instead of inheriting the user's PATH.
+    // TEMP/TMP point inside the AppContainer ACL tree below; no user profile, credential, or proxy
+    // value crosses the boundary.
     for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT"] {
         if let Some(value) = std::env::var_os(name) {
             environment.push((name.into(), value));
         }
+    }
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        let system_root = PathBuf::from(system_root);
+        let path = std::env::join_paths([system_root.join("System32"), system_root])
+            .expect("Windows system paths do not contain the PATH separator");
+        environment.push(("PATH".into(), path));
     }
     environment.push(("TEMP".into(), runtime_temporary.as_os_str().to_owned()));
     environment.push(("TMP".into(), runtime_temporary.as_os_str().to_owned()));

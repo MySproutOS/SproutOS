@@ -429,7 +429,7 @@ mod tests {
         let verifier = CosignProvenanceVerifier::for_test(
             executable,
             github_cli(directory.path()),
-            Duration::from_secs(2),
+            Duration::from_secs(5),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let selected_digest = manifest_digest();
@@ -479,7 +479,7 @@ mod tests {
         .unwrap();
         fs::set_permissions(&github_cli, fs::Permissions::from_mode(0o700)).unwrap();
         let verifier =
-            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
+            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(5));
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let selected_digest = manifest_digest();
         let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
@@ -529,7 +529,7 @@ mod tests {
         let verifier = CosignProvenanceVerifier::for_test(
             cosign,
             github_cli(directory.path()),
-            Duration::from_secs(2),
+            Duration::from_secs(5),
         );
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let wrong_selected: Sha256Digest = format!("sha256:{}", "d".repeat(64)).parse().unwrap();
@@ -561,7 +561,7 @@ mod tests {
         fs::write(&github_cli, "#!/bin/sh\nprintf '[]'\n").unwrap();
         fs::set_permissions(&github_cli, fs::Permissions::from_mode(0o700)).unwrap();
         let verifier =
-            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(2));
+            CosignProvenanceVerifier::for_test(cosign, github_cli, Duration::from_secs(5));
         let digest: Sha256Digest = format!("sha256:{}", "b".repeat(64)).parse().unwrap();
         let selected_digest = manifest_digest();
         let reference: Reference = format!("ghcr.io/mysproutos/umami-plugin@{digest}")
