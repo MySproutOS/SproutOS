@@ -327,6 +327,14 @@ impl<I: IsolationProvider> PluginRunner<I> {
         let stdout = join_output(stdout, "stdout", self.limits.max_stdout_bytes)?;
         let stderr = join_output(stderr, "stderr", self.limits.max_stderr_bytes)?;
         let status = status.map_err(|error| SproutError::PluginSpawn(error.to_string()))?;
+        if status.code() == Some(1) {
+            return match protocol.decode_response(&stdout.bytes) {
+                Err(error) => Err(error),
+                Ok(_) => Err(SproutError::ProtocolViolation(
+                    "plugin exited 1 with a successful response".into(),
+                )),
+            };
+        }
         if !status.success() {
             return Err(SproutError::PluginFailed {
                 status: status.to_string(),
@@ -363,6 +371,14 @@ impl<I: IsolationProvider> PluginRunner<I> {
         let staged_before = WorkspaceSnapshot::capture(appcontainer.workspace(), self.limits.diff)?;
         let original_before = WorkspaceSnapshot::capture(workspace, self.limits.diff)?;
         let output = appcontainer.run(request, self.limits).await?;
+        if output.exit_code == 1 {
+            return match protocol.decode_response(&output.stdout) {
+                Err(error) => Err(error),
+                Ok(_) => Err(SproutError::ProtocolViolation(
+                    "plugin exited 1 with a successful response".into(),
+                )),
+            };
+        }
         if !output.success {
             return Err(SproutError::PluginFailed {
                 status: output.status,

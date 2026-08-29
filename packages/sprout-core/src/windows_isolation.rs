@@ -46,6 +46,7 @@ pub(crate) struct WindowsAppContainerCommand {
 
 pub(crate) struct WindowsOutput {
     pub(crate) success: bool,
+    pub(crate) exit_code: u32,
     pub(crate) status: String,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
@@ -203,6 +204,7 @@ impl WindowsAppContainerCommand {
             let stderr = join_reader(stderr_reader, "stderr", stderr_limit)?;
             Ok(WindowsOutput {
                 success: code == 0,
+                exit_code: code,
                 status: format!("exit code {code}"),
                 stdout,
                 stderr,
