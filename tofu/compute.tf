@@ -1731,7 +1731,7 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
             dimensions {
               name  = "LoadBalancer"
-              value = aws_lb.tenant_edge[0].arn_suffix
+              value = aws_lb.tenant.arn_suffix
             }
             dimensions {
               name  = "TargetGroup"
@@ -1755,7 +1755,7 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
             dimensions {
               name  = "LoadBalancer"
-              value = aws_lb.tenant_edge[0].arn_suffix
+              value = aws_lb.tenant.arn_suffix
             }
             dimensions {
               name  = "TargetGroup"

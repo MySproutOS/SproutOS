@@ -659,6 +659,12 @@ resource "aws_ecs_task_definition" "acme_worker" {
   execution_role_arn = aws_iam_role.acme_execution.arn
   task_role_arn      = aws_iam_role.acme_task.arn
 
+  # This zero-scaled compatibility resource is intentionally inert. Application releases and edge
+  # flags must not register new revisions for a worker that no longer runs.
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
+
   container_definitions = jsonencode([{
     name              = "acme-worker"
     image             = var.web_image

@@ -294,8 +294,9 @@ count zero and is not part of the rollout.
    `ACME_HANDLER_OWNERSHIP_ENABLED=0`, and the certificate/deployment environment contract.
 2. Set `tenant_edge_preview_enabled = true` and choose the preview colour containing the new router
    release. Apply a reviewed plan and deploy the resulting platform task contract so the worker
-   receives `PLATFORM_EDGE_ROLLOUT_ENABLED=1`. This creates the dual-stack EIP-backed preview NLB on
-   public ports 80/443 without moving production tenant DNS.
+   receives `PLATFORM_EDGE_ROLLOUT_ENABLED=1`. This makes the existing tenant NLB dual-stack and
+   EIP-backed, adds public HTTP 80, and exposes the Rust TLS preview on 8444 without moving
+   production tenant DNS or replacing the legacy egress listener on 443.
 3. Wait for the platform certificate row to become active after every live router in the Valkey
    membership set acknowledges its exact version. Smoke wildcard, tenant apex, egress, HTTP
    challenge/redirect behavior, unknown SNI, Host/SNI mismatch, IPv4/IPv6, and trusted client IP.
@@ -306,10 +307,10 @@ count zero and is not part of the rollout.
 5. Change `acme_directory_url` from staging to production, apply, deploy the platform task contract,
    and verify the live workers expose the production directory before reconciling. Never activate or
    renew staging material for public traffic.
-6. Save and review a plan with `tenant_edge_enabled = true`. The preview NLB, EIPs, and public TCP
-   80/443 listeners must remain in place. Refuse replacement of `aws_lb.tenant`,
-   `aws_lb.tenant_edge[0]`, or either `aws_lb_listener.tenant_*[0]`; the existing data-plane NLB must
-   continue serving Postgres, Valkey, and the legacy egress rollback listener during cutover.
+6. Save and review a plan with `tenant_edge_enabled = true`. The shared NLB, EIPs, public TCP 80,
+   and preview 8444 listener must remain in place. Refuse replacement of `aws_lb.tenant`; cutover
+   changes that NLB's existing 443 listener from NLB-terminated TLS to TCP passthrough only after
+   the Rust preview passes. Postgres and Valkey remain listeners on the same NLB throughout.
 7. Apply that exact plan, deploy both router colours and the platform task contract, update repository
    variables from `tofu output`, and run the production browser and protocol smoke suite. Enable
    production custom-domain issuance only after production-directory provenance and the certificate
@@ -321,13 +322,11 @@ in persistent tfvars. Reverting the edge flag in a later apply would attempt to 
 egress traffic back to the legacy listeners; reverting only issuance stops new/check-now API work
 without withdrawing routes or destroying certificate material.
 
-To abandon preview, leave `tenant_edge_preview_enabled = true`, keep
-`tenant_edge_enabled = false`, and apply once so edge deletion protection is off; only then set the
-preview flag false and review the destroy plan. To roll back after cutover, use the same two applies
-after DNS and protocol smoke prove the legacy paths healthy. The parallel edge cannot be removed
-while any active custom hostname still points at either ingress alias: withdraw/migrate every route
-and certificate first. Never turn the global `deletion_protection` variable off merely to remove
-the preview NLB.
+To abandon preview, keep `tenant_edge_enabled = false`, set `tenant_edge_preview_enabled = false`,
+and review removal of only the HTTP/preview listeners and their rules. The shared tenant NLB must
+remain because it also serves Postgres, Valkey, and egress. To roll back after cutover, restore its
+legacy TLS 443 action only after DNS and protocol smoke prove that path healthy. Never turn the
+global `deletion_protection` variable off to remove an edge preview.
 
 ### Static-site metering
 

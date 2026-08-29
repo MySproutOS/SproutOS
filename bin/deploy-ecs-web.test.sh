@@ -260,9 +260,8 @@ fi
 grep -q 'ECS_WEB_DESIRED_COUNT must be 2' "$TEST_DIR/count-failure.out"
 [ ! -s "$STUB_CALLS" ]
 
-# Once OpenTofu provisions the dedicated service, the same release updates its isolated task role
-# after the old, larger public revision has drained. This preserves the one spare host needed to
-# place the smaller public replacement during the first capacity-envelope rollout.
+# The retired helper still refuses unsafe legacy inputs, but the platform release must never call
+# it: certificate jobs now run in the ordinary worker container.
 : > "$STUB_CALLS"
 if ACME_PRESENT=1 ACME_DESIRED_COUNT=1 "$HERE/deploy-ecs-acme-worker.sh" \
   >"$TEST_DIR/acme-count-failure.out" 2>&1; then
@@ -281,21 +280,8 @@ unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
 find "$CAPTURE" -type f -exec unlink {} \;
 ACME_PRESENT=1 "$HERE/deploy-ecs-web.sh"
-jq -e '
-  .family == "sproutos-acme-worker" and
-  .taskRoleArn == "arn:acme-task-role" and
-  (.containerDefinitions | length) == 1 and
-  .containerDefinitions[0].name == "acme-worker" and
-  .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab"
-' "$CAPTURE/task-3.json" >/dev/null
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--desired-count 2 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--availability-zone-rebalancing ENABLED' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--placement-strategy type=spread,field=attribute:ecs.availability-zone type=binpack,field=memory .*--placement-constraints type=distinctInstance' "$STUB_CALLS"
-web_update_line=$(grep -n 'ecs update-service .*--service sproutos-web .*sproutos-web:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
-acme_update_line=$(grep -n 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
-if [ "$web_update_line" -ge "$acme_update_line" ]; then
-  echo "the isolated worker was updated before the public replacement drained" >&2
+if grep -q -- '--service sproutos-acme-worker' "$STUB_CALLS"; then
+  echo "the platform release attempted to deploy the retired isolated worker" >&2
   exit 1
 fi
 

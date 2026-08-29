@@ -431,8 +431,8 @@ resource "aws_route53_record" "tenant_alb_ipv4" {
   type    = "A"
 
   alias {
-    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.main.dns_name
-    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.main.zone_id
+    name                   = var.tenant_edge_enabled ? aws_lb.tenant.dns_name : aws_lb.main.dns_name
+    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant.zone_id : aws_lb.main.zone_id
     evaluate_target_health = false
   }
 }
@@ -445,8 +445,8 @@ resource "aws_route53_record" "tenant_alb_ipv6" {
   type    = "AAAA"
 
   alias {
-    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.main.dns_name
-    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.main.zone_id
+    name                   = var.tenant_edge_enabled ? aws_lb.tenant.dns_name : aws_lb.main.dns_name
+    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant.zone_id : aws_lb.main.zone_id
     evaluate_target_health = false
   }
 }

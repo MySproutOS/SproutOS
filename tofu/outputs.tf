@@ -169,11 +169,11 @@ output "valkey_listener_arn" {
 
 output "forward_proxy_listener_arn" {
   description = "Serving sandbox egress listener: legacy TLS before cutover, Rust tenant TLS edge afterward. Set as FORWARD_PROXY_LISTENER_ARN."
-  value       = var.tenant_edge_enabled ? aws_lb_listener.tenant_https[0].arn : aws_lb_listener.forward_proxy.arn
+  value       = aws_lb_listener.forward_proxy.arn
 }
 
 output "tenant_http_listener_arn" {
-  description = "Rust tenant HTTP/ACME listener on the parallel dual-stack edge NLB. Set as TENANT_HTTP_LISTENER_ARN."
+  description = "Rust tenant HTTP/ACME listener on the shared tenant NLB. Set as TENANT_HTTP_LISTENER_ARN."
   value       = one(aws_lb_listener.tenant_http[*].arn)
 }
 
@@ -184,16 +184,16 @@ output "tenant_ingress_ipv4_addresses" {
 
 output "tenant_ingress_ipv6_addresses" {
   description = "Stable NLB IPv6 fallback records for customer apex domains without DNS flattening."
-  value       = local.tenant_edge_provisioned ? local.tenant_edge_ipv6_addresses : []
+  value       = local.tenant_edge_ipv6_addresses
 }
 
 output "tenant_edge_dns_name" {
-  description = "Parallel dual-stack tenant edge NLB name for IPv4 and IPv6 preview smoke tests."
-  value       = local.tenant_edge_provisioned ? aws_lb.tenant_edge[0].dns_name : null
+  description = "Shared dual-stack tenant NLB name for IPv4 and IPv6 edge smoke tests."
+  value       = aws_lb.tenant.dns_name
 }
 
 output "tenant_edge_preview_ingress" {
-  description = "Stable dual-stack preview hostname that reaches edge ports 80 and 443 without moving production traffic."
+  description = "Stable dual-stack preview hostname that reaches HTTP 80 and TLS preview 8444 without moving production traffic."
   value       = local.tenant_edge_provisioned ? "preview-ingress.${var.tenant_domain}" : null
 }
 

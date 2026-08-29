@@ -165,7 +165,7 @@ variable "tenant_edge_enabled" {
 }
 
 variable "tenant_edge_preview_enabled" {
-  description = "Provision the parallel Rust edge NLB on public 80/443 and its preview ingress name without moving production tenant DNS."
+  description = "Add Rust HTTP 80 and TLS preview 8444 listeners to the shared tenant NLB without moving production tenant DNS."
   type        = bool
   default     = false
 }
