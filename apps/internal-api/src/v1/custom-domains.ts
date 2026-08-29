@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { isIP } from "node:net"
 import { domainToASCII } from "node:url"
 import { crudAuditLog, crudCustomDomain, fetchCustomDomain, fetchProject } from "@lib/dao"
-import { CUSTOM_DOMAIN_KINDS, enqueue } from "@lib/jobs"
+import { clearOwnershipTxtCache, CUSTOM_DOMAIN_KINDS, enqueue } from "@lib/jobs"
 import { withdrawRoute } from "@lib/lambda"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -351,6 +351,7 @@ const routes = app
         fetchProject(db).getInOrganization(c.var.organization.id, projectId, ["name", "slug"]),
       ])
       if (domain === undefined || project === undefined) return throwNotFound(c, "Domain not found")
+      await clearOwnershipTxtCache(platformValkey(), domain.hostname, domain.verificationToken)
       await Promise.all([
         crudCustomDomain(db).update(c.var.organization.id, domainId, { nextRetryAt: new Date() }),
         markPending(domain.hostname),
