@@ -151,10 +151,11 @@ impl WindowsAppContainerCommand {
         let workspace = self.staged_workspace.clone();
         let runtime_temporary = self.runtime_temporary.clone();
         tokio::task::spawn_blocking(move || {
+            let environment = allowlisted_environment(&workspace, &runtime_temporary);
             let options = LaunchOptions {
                 exe: executable,
                 cwd: Some(workspace),
-                env: Some(allowlisted_environment(&workspace, &runtime_temporary)),
+                env: Some(environment),
                 stdio: StdioConfig::Pipe,
                 suspended: true,
                 join_job: Some(JobLimits {
