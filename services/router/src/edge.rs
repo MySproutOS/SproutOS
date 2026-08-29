@@ -16,7 +16,8 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use axum::Router as AxumRouter;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::header::HOST;
+use axum::http::{HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::serve::Listener as _;
 use hyper::body::Incoming;
@@ -187,16 +188,17 @@ fn request_authority_matches_sni<B>(request: &Request<B>, sni: &str) -> bool {
         .uri()
         .authority()
         .map(|authority| authority.as_str());
-    let host = request
-        .headers()
-        .get("host")
-        .and_then(|value| value.to_str().ok());
-    let has_authority = uri_authority.is_some() || host.is_some();
+    let host_values = request.headers().get_all(HOST);
+    let has_authority = uri_authority.is_some() || host_values.iter().next().is_some();
     has_authority
         && uri_authority
             .into_iter()
-            .chain(host)
             .all(|authority| host_matches_sni(Some(authority), sni))
+        && host_values.iter().all(|host| {
+            host.to_str()
+                .ok()
+                .is_some_and(|authority| host_matches_sni(Some(authority), sni))
+        })
 }
 
 fn normalize_dns_name(value: &str) -> Option<String> {
@@ -581,6 +583,15 @@ impl Service<Request<Incoming>> for HostGuard {
                     .into_response())
             });
         }
+        // Downstream code must not get to choose between multiple equivalent spellings—or between
+        // repeated Host fields after this guard approved a different one. The SNI is the authority
+        // authenticated by TLS, so replace every client-supplied Host value with that canonical
+        // exact name before the Lambda router translates the request.
+        request.headers_mut().remove(HOST);
+        request.headers_mut().insert(
+            HOST,
+            HeaderValue::from_str(&self.sni).expect("normalized SNI is a valid Host header"),
+        );
         request.extensions_mut().insert(self.context.clone());
         let service = self.inner.clone();
         let request = request.map(Body::new);
@@ -842,6 +853,23 @@ mod tests {
         assert!(!request_authority_matches_sni(&request, "app.example.test"));
     }
 
+    #[test]
+    fn every_repeated_host_must_match_sni() {
+        let mut request = Request::builder()
+            .version(axum::http::Version::HTTP_2)
+            .uri("https://app.example.test/path")
+            .body(())
+            .unwrap();
+        request
+            .headers_mut()
+            .append(HOST, HeaderValue::from_static("app.example.test"));
+        request
+            .headers_mut()
+            .append(HOST, HeaderValue::from_static("other.example.test"));
+
+        assert!(!request_authority_matches_sni(&request, "app.example.test"));
+    }
+
     #[tokio::test]
     async fn mismatched_http_host_is_refused_before_the_lambda_router() {
         let fixture = fixture();
@@ -1062,6 +1090,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        drop(sender);
+        connection.abort();
+    }
+
+    #[tokio::test]
+    async fn negotiated_http2_rejects_one_mismatched_repeated_host() {
+        let fixture = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let edge = edge(&fixture, Arc::new(RecordingEgress(AtomicBool::new(false))));
+        let tls = connect_with_alpn(
+            listener,
+            edge,
+            fixture.roots,
+            "app.example.test",
+            vec![b"h2".to_vec()],
+        )
+        .await
+        .unwrap();
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tls))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        let mut request = Request::builder()
+            .version(axum::http::Version::HTTP_2)
+            .uri("https://app.example.test/")
+            .body(Body::empty())
+            .unwrap();
+        request
+            .headers_mut()
+            .append(HOST, HeaderValue::from_static("app.example.test"));
+        request
+            .headers_mut()
+            .append(HOST, HeaderValue::from_static("other.example.test"));
+
+        let response = sender.send_request(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::MISDIRECTED_REQUEST);
+        drop(sender);
+        connection.abort();
+    }
+
+    #[tokio::test]
+    async fn negotiated_http2_forwards_one_canonical_sni_host() {
+        let fixture = fixture();
+        let canonical = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&canonical);
+        let http = AxumRouter::new().fallback(get(move |headers: axum::http::HeaderMap| {
+            let observed = Arc::clone(&observed);
+            async move {
+                observed.store(
+                    headers.get_all(HOST).iter().count() == 1
+                        && headers.get(HOST).and_then(|value| value.to_str().ok())
+                            == Some("app.example.test"),
+                    Ordering::SeqCst,
+                );
+                "ok"
+            }
+        }));
+        let edge = Arc::new(
+            Edge::from_pem(
+                &fixture.certificate,
+                &fixture.key,
+                ["app.example.test".into()],
+                None,
+                None,
+                http,
+                DEFAULT_MAX_CONNECTIONS,
+            )
+            .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tls = connect_with_alpn(
+            listener,
+            edge,
+            fixture.roots,
+            "app.example.test",
+            vec![b"h2".to_vec()],
+        )
+        .await
+        .unwrap();
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tls))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        let mut request = Request::builder()
+            .version(axum::http::Version::HTTP_2)
+            .uri("https://APP.EXAMPLE.TEST:443/")
+            .body(Body::empty())
+            .unwrap();
+        request
+            .headers_mut()
+            .append(HOST, HeaderValue::from_static("APP.EXAMPLE.TEST.:443"));
+
+        let response = sender.send_request(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(canonical.load(Ordering::SeqCst));
         drop(sender);
         connection.abort();
     }
