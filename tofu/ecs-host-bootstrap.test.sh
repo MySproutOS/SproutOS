@@ -13,6 +13,9 @@ trap cleanup EXIT
 
 call_log="$test_root/calls"
 mkdir -p "$test_root/etc/ecs"
+# The ECS-optimized AMI creates this file empty. Filtering it must not abort the
+# fail-closed bootstrap under `set -e` before the managed settings are written.
+: >"$test_root/etc/ecs/ecs.config"
 
 fail() {
   echo "$1" >&2

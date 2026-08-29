@@ -90,7 +90,7 @@ if [[ "$security_options" != *'name=seccomp,profile=/etc/docker/sproutos-seccomp
 fi
 
 if [[ -e "$ecs_config" ]]; then
-  grep -Ev '^(ECS_CLUSTER|ECS_ENABLE_CONTAINER_METADATA|ECS_DISABLE_PRIVILEGED)=' \
+  awk '!/^(ECS_CLUSTER|ECS_ENABLE_CONTAINER_METADATA|ECS_DISABLE_PRIVILEGED)=/' \
     "$ecs_config" >"$ecs_tmp"
 fi
 printf 'ECS_CLUSTER=%s\n' "$SPROUT_ECS_CLUSTER" >>"$ecs_tmp"
