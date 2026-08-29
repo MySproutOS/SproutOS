@@ -83,7 +83,7 @@ pub async fn handle(
     body: Bytes,
 ) -> Response {
     let trusted = trusted.as_deref();
-    let host = headers.get("host").and_then(|value| value.to_str().ok());
+    let host = request_host(&uri, &headers);
 
     /*
       Health first, and only for a request that is not for a tenant.
@@ -151,7 +151,7 @@ pub async fn handle(
         method: method.as_str(),
         path: uri.path(),
         query: uri.query().unwrap_or(""),
-        headers: forwarded_headers(&headers, trusted),
+        headers: forwarded_headers(&headers, trusted, host),
         host,
         source_ip: &source_ip(&headers, trusted),
         request_id: &route.deployment_id,
@@ -345,9 +345,20 @@ mod response_tests {
     }
 }
 
+fn request_host<'a>(uri: &'a Uri, headers: &'a HeaderMap) -> Option<&'a str> {
+    headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        // HTTP/2 carries the authority in `:authority`, which Hyper exposes on the URI instead of
+        // synthesizing a Host header. The TLS edge has already required every supplied authority
+        // to agree with SNI, so this is the same authenticated hostname in either protocol.
+        .or_else(|| uri.authority().map(|authority| authority.as_str()))
+}
+
 fn forwarded_headers(
     headers: &HeaderMap,
     trusted: Option<&crate::edge::ConnectionContext>,
+    host: &str,
 ) -> HashMap<String, String> {
     let mut forwarded = headers
         .iter()
@@ -365,6 +376,11 @@ fn forwarded_headers(
                 .map(|text| (name.as_str().to_string(), text.to_string()))
         })
         .collect::<HashMap<_, _>>();
+    // API Gateway HTTP API v2 events always expose the request authority as `headers.host`.
+    // Preserve that contract when an HTTP/2 client supplied only `:authority`.
+    forwarded
+        .entry("host".into())
+        .or_insert_with(|| host.into());
     if let Some(context) = trusted {
         let peer = context.peer.ip();
         let forwarding_identifier = if peer.is_ipv6() {
@@ -546,7 +562,7 @@ mod tests {
             ("x-real-header", "kept"),
         ]);
 
-        let forwarded = forwarded_headers(&headers, None);
+        let forwarded = forwarded_headers(&headers, None, "myapp.sproutos.me");
 
         // Forwarding these makes a handler believe it owns a framing it does not.
         assert!(!forwarded.contains_key("connection"));
@@ -583,7 +599,7 @@ mod tests {
             scheme: "https",
         };
 
-        let forwarded = forwarded_headers(&headers, Some(&context));
+        let forwarded = forwarded_headers(&headers, Some(&context), "app.example.test");
 
         assert_eq!(source_ip(&headers, Some(&context)), "203.0.113.7");
         assert_eq!(forwarded["x-forwarded-for"], "203.0.113.7");
@@ -600,5 +616,15 @@ mod tests {
             "for=203.0.113.7;proto=https;host=\"app.example.test\""
         );
         assert_eq!(forwarded["x-real-header"], "kept");
+    }
+
+    #[test]
+    fn http2_authority_becomes_the_route_and_lambda_host() {
+        let uri: Uri = "https://app.example.test/path".parse().unwrap();
+        let headers = HeaderMap::new();
+        let host = request_host(&uri, &headers).expect("HTTP/2 authority is a host");
+
+        assert_eq!(host, "app.example.test");
+        assert_eq!(forwarded_headers(&headers, None, host)["host"], host);
     }
 }
