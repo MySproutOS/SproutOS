@@ -137,7 +137,7 @@ pub struct ProjectCreateArgs {
 }
 
 #[derive(Debug, Args)]
-#[group(required = true, multiple = false)]
+#[group(skip)]
 pub struct ProjectSourceArgs {
     /// Create from a signed App Store listing id.
     #[arg(long, group = "source")]
@@ -149,13 +149,29 @@ pub struct ProjectSourceArgs {
     #[arg(long, group = "source")]
     pub github_repo_id: Option<String>,
     /// Create a blank repository.
-    #[arg(long, group = "source")]
+    #[arg(
+        long,
+        group = "source",
+        required_unless_present_any = ["store", "repository_id", "github_repo_id"]
+    )]
     pub blank: bool,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub owner: Option<String>,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub repository_name: Option<String>,
-    #[arg(long, requires = "blank")]
+    #[arg(
+        long,
+        requires = "blank",
+        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
+    )]
     pub private: bool,
 }
 
@@ -697,6 +713,66 @@ mod tests {
             let parsed =
                 Cli::try_parse_from(*case).unwrap_or_else(|error| panic!("{case:?}: {error}"));
             validate(&parsed).unwrap_or_else(|error| panic!("{case:?}: {error}"));
+        }
+    }
+
+    #[test]
+    fn blank_project_source_accepts_repository_modifiers() {
+        let cli = Cli::try_parse_from([
+            "sprout",
+            "project",
+            "create",
+            "--name",
+            "n",
+            "--blank",
+            "--owner",
+            "MySproutOS",
+            "--repository-name",
+            "example",
+            "--private",
+        ])
+        .unwrap();
+
+        validate(&cli).unwrap();
+    }
+
+    #[test]
+    fn project_source_still_requires_exactly_one_source() {
+        assert!(Cli::try_parse_from(["sprout", "project", "create", "--name", "n"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "sprout", "project", "create", "--name", "n", "--blank", "--store", "listing",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn blank_repository_modifiers_conflict_with_every_nonblank_source() {
+        let sources: &[&[&str]] = &[
+            &["--store", "listing"],
+            &["--repository-id", "repository"],
+            &["--github-repo-id", "123"],
+        ];
+        let modifiers: &[&[&str]] = &[
+            &["--owner", "MySproutOS"],
+            &["--repository-name", "example"],
+            &["--private"],
+        ];
+
+        for source in sources {
+            for modifier in modifiers {
+                let args = [
+                    &["sprout", "project", "create", "--name", "n"][..],
+                    *source,
+                    *modifier,
+                ]
+                .concat();
+                assert!(
+                    Cli::try_parse_from(&args).is_err(),
+                    "accepted source {source:?} with blank modifier {modifier:?}",
+                );
+            }
         }
     }
 

@@ -64,3 +64,31 @@ fn json_clap_error_is_structured_too() {
         .stdout(predicate::str::contains(r#""code":"invalid_input""#))
         .stderr(predicate::str::is_empty());
 }
+
+#[test]
+fn blank_repository_modifiers_are_rejected_with_every_nonblank_source() {
+    let sources: &[&[&str]] = &[
+        &["--store", "listing"],
+        &["--repository-id", "repository"],
+        &["--github-repo-id", "123"],
+    ];
+    let modifiers: &[&[&str]] = &[
+        &["--owner", "MySproutOS"],
+        &["--repository-name", "example"],
+        &["--private"],
+    ];
+
+    for source in sources {
+        for modifier in modifiers {
+            let mut command = cargo_bin_cmd!("sprout");
+            command
+                .args(["--json", "project", "create", "--name", "n"])
+                .args(*source)
+                .args(*modifier)
+                .assert()
+                .code(2)
+                .stdout(predicate::str::contains(r#""code":"invalid_input""#))
+                .stderr(predicate::str::is_empty());
+        }
+    }
+}
