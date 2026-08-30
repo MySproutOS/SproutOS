@@ -456,6 +456,10 @@ jobs:
         run: bin/deploy-ecs-web.sh --cutover
         env:
           IMAGE: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+          # OpenTofu owns container environment and IAM contracts while releases own images. When
+          # an apply registers a corrected base revision, every automatic deploy must inherit it or
+          # the next code-only push silently restores the old contract.
+          ECS_BASE_TASK_DEFINITION: ${{ vars.ECS_BASE_TASK_DEFINITION }}
           # Two is the HA floor and matches OpenTofu's service/ASG declaration. The deploy script
           # rejects a different value rather than letting repository configuration silently remove
           # a production replica.
