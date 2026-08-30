@@ -178,20 +178,22 @@ else
     --description "Verified immutable Sprout CLI release evidence" >/dev/null
 fi
 
-# Validate the task contract before the pointer can move. The first promotion passes the exact
-# OpenTofu revision that the next deploy will use; later promotions validate the serving revision.
-service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
-serving_task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
-task_arn=${ECS_BASE_TASK_DEFINITION:-$serving_task_arn}
-if [ -z "$task_arn" ]; then
-  echo "ECS service $CLUSTER/$SERVICE has no task definition" >&2
-  exit 1
-fi
-task_json=$(aws ecs describe-task-definition --task-definition "$task_arn" --output json)
-resolved_task_arn=$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$task_json")
-if [ -n "${ECS_BASE_TASK_DEFINITION:-}" ] && [ "$resolved_task_arn" != "$ECS_BASE_TASK_DEFINITION" ]; then
-  echo "ECS_BASE_TASK_DEFINITION must resolve to its exact revision ARN" >&2
-  exit 1
+# Validate the versioned contract before the pointer can move. The record-only workflow supplies
+# the checked-in template that its next steps render and deploy; later verification reads the task
+# that is actually serving.
+if [ -n "${ECS_TASK_DEFINITION_FILE:-}" ]; then
+  task_json=$(jq -e '{taskDefinition:.}' "$ECS_TASK_DEFINITION_FILE") || {
+    echo "ECS_TASK_DEFINITION_FILE is not a valid task definition" >&2
+    exit 1
+  }
+else
+  service_json=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json)
+  task_arn=$(jq -r '.services[0].taskDefinition // empty' <<<"$service_json")
+  if [ -z "$task_arn" ]; then
+    echo "ECS service $CLUSTER/$SERVICE has no task definition" >&2
+    exit 1
+  fi
+  task_json=$(aws ecs describe-task-definition --task-definition "$task_arn" --output json)
 fi
 
 wrong_ref=$(jq -r --arg arn "$POINTER_ARN" '

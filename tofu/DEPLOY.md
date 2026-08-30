@@ -204,11 +204,11 @@ then save and review a plan. It should add the least-privilege
 whose website container references the exact SSM pointer ARN. It must not create either parameter,
 change the ECS service revision, or contain an invented version. Apply that exact saved plan, inspect
 the role trust/policy and registered task definition, and publish the immutable `cli-v0.1.1` release.
-Then run the protected **Promote an existing CLI release** workflow with `0.1.1` and that exact
-registered task-definition ARN. It first verifies and records the release. The existing deployment
-role—not the much smaller promotion role—then combines the reviewed task contract with the image
-already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
-rolling application code backward and stops a tag workflow gaining code-deployment authority.
+Then run the protected **Promote an existing CLI release** workflow with `0.1.1`. It first verifies
+and records the release. The existing deployment role—not the much smaller promotion role—then
+renders the versioned task templates with the image already serving and runs the ordinary
+migration-first deployment. This stops infrastructure state rolling application code backward and
+stops a tag workflow gaining code-deployment authority.
 
 The GitHub `cli-release-production` environment must exist with required reviewers and a custom
 deployment branch policy that allows only `main` before the promotion workflow is used. An
