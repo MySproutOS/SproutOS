@@ -317,317 +317,30 @@ resource "aws_autoscaling_group" "ecs" {
 }
 
 /*
-  One task, three containers.
-
-  The alternative was one container running a shell that started two processes and waited on
-  whichever exited first, which is what the EC2 release did. That gave one log stream for two
-  processes, one memory limit shared between them, and a supervision loop that had to be exactly
-  right or a dead process went unnoticed — which is precisely the class of bug that has cost the
-  most time on this deployment. Three containers hand that job to ECS: separate logs, separate
-  reservations, and a crash that shows up as a container exit rather than being inferred.
-
-  **All three are `essential`.** ECS does not restart an individual container within a task — if a
-  non-essential one exits it simply stays exited, silently, until the task is replaced for some
-  other reason. A worker that dies quietly and is never noticed is the worse failure, so the worker
-  is essential too: its crash cycles the task, which is loud and self-healing. The cost is a few
-  seconds of the site restarting with it, and that is the right trade at this size.
+  Application task definitions are release artifacts in deploy/ecs, rendered with an immutable
+  image by GitHub Actions. OpenTofu owns the service and reads the latest registered revision only
+  to bootstrap or repair the service pointer; it never registers application containers.
 */
-resource "aws_ecs_task_definition" "web" {
-  family       = "${var.name_prefix}-web"
-  network_mode = "bridge"
+removed {
+  from = aws_ecs_task_definition.web
 
-  # Match the explicit defaults returned by ECS so a refresh after registration does not propose
-  # an identical replacement revision forever.
-  requires_compatibilities = []
-  enable_fault_injection   = false
-
-  # Register no task revision that names the custody bucket until its versioning, SSE-KMS default,
-  # deny policy, and both IAM sides exist. The deploy workflow starts the registered revision only
-  # after OpenTofu finishes, so this closes the first-apply window where an upload could otherwise
-  # reach a newly created bucket before its controls or grants converged.
-  depends_on = [
-    aws_s3_bucket_versioning.android_artifacts,
-    aws_s3_bucket_server_side_encryption_configuration.android_artifacts,
-    aws_s3_bucket_policy.android_artifacts,
-    aws_iam_role_policy_attachment.task_application,
-    aws_iam_role_policy_attachment.task_android_custody_broker,
-    aws_iam_role_policy.ecs_execution_secrets,
-    aws_iam_role_policy.ecs_task_no_parameter_store,
-  ]
-
-  # Task-level, shared by the containers below. A `t4g.micro` has 1024 MiB and the ECS agent and
-  # the OS need some of it, so this leaves headroom rather than claiming the lot and having the
-  # kernel decide what to kill.
-  # Five hours of production service metrics observed a 389 MiB maximum before this split. A 640
-  # MiB ceiling retains 251 MiB (64%) headroom while leaving room for the isolated 256 MiB worker on
-  # the same 916 MiB registered t4g.micro instead of pinning a second instance at steady state.
-  memory = 640
-  # Leave 128 units for the dedicated ACME task on the same one-vCPU free-tier instance.
-  cpu = 896
-
-  execution_role_arn = aws_iam_role.ecs_execution.arn
-  task_role_arn      = aws_iam_role.task.arn
-
-  container_definitions = jsonencode([
-    {
-      name              = "website"
-      image             = var.web_image
-      essential         = true
-      memoryReservation = 256
-      dockerSecurityOptions = [
-        "no-new-privileges",
-      ]
-      linuxParameters = {
-        capabilities = {
-          add  = []
-          drop = ["ALL"]
-        }
-      }
-      mountPoints    = []
-      systemControls = []
-      volumesFrom    = []
-
-      portMappings = [{
-        containerPort = 8080
-        # The service security group intentionally exposes only this exact port from the ALB. An
-        # ephemeral host port registers successfully but every health check then times out. Fixed
-        # is safe because the service's 100/0 deployment policy replaces rather than overlaps tasks,
-        # and the task's memory reservation already limits this instance to one copy.
-        hostPort = 8080
-        protocol = "tcp"
-      }]
-
-      environment = [
-        { name = "PORT", value = "8080" },
-        { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
-        { name = "NEXT_PUBLIC_HOST_URL", value = "https://${var.control_plane_domain}" },
-        { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
-        { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
-        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
-        { name = "SESSION_COOKIE_DOMAIN", value = ".${var.control_plane_domain}" },
-        { name = "SPA_ASSET_ORIGIN", value = "https://${aws_cloudfront_distribution.spa.domain_name}" },
-      ]
-
-      secrets = concat(
-        [{ name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn }],
-        local.ecs_website_parameter_secrets,
-      )
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "website"
-        }
-      }
-    },
-    {
-      name              = "api"
-      image             = var.web_image
-      essential         = true
-      memoryReservation = 256
-      command           = ["node", "/opt/sproutos/api/server.js"]
-      dockerSecurityOptions = [
-        "no-new-privileges",
-      ]
-      linuxParameters = {
-        capabilities = {
-          add  = []
-          drop = ["ALL"]
-        }
-      }
-      mountPoints    = []
-      systemControls = []
-      volumesFrom    = []
-
-      portMappings = [{
-        containerPort = 3001
-        # Same fixed-port/security-group contract as the website listener above.
-        hostPort = 3001
-        protocol = "tcp"
-      }]
-
-      environment = [
-        { name = "API_PORT", value = "3001" },
-        { name = "AWS_REGION", value = var.aws_region },
-        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
-        { name = "TENANT_DOMAIN", value = var.tenant_domain },
-        # The API signs direct build uploads. Without this value it silently falls back to the
-        # nonexistent local-development bucket and every CLI/Action deploy fails at the first PUT.
-        { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
-        { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
-        { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
-        { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
-        { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
-        { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
-        { name = "TENANT_INGRESS_IPV4_ADDRESSES", value = join(",", aws_eip.tenant_edge[*].public_ip) },
-        { name = "TENANT_INGRESS_IPV6_ADDRESSES", value = local.tenant_edge_provisioned ? join(",", local.tenant_edge_ipv6_addresses) : "" },
-        { name = "CUSTOM_DOMAINS_ENABLED", value = var.custom_domain_issuance_enabled ? "1" : "0" },
-        # The entrypoint composes DATABASE_URL from these plus the injected secret. The host and
-        # database name are not secret; only the credentials are, and those arrive separately.
-        { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
-        { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
-        # Where the log viewer reads from. The OVH box behind its Traefik, restricted to this
-        # estate's egress address — see `ovh/docker-compose.yaml`. IPv4-only by design: the proxy
-        # cannot see a client's IPv6 source there, and an allowlist that cannot see the source is
-        # not an allowlist.
-        { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
-        { name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database },
-        { name = "CLICKHOUSE_USER", value = "sproutos" },
-        { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
-        { name = "NEXT_PUBLIC_HOST_URL", value = "https://${var.control_plane_domain}" },
-        { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
-        { name = "SESSION_COOKIE_DOMAIN", value = ".${var.control_plane_domain}" },
-        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
-        { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
-        { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
-        { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
-        { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
-        { name = "SERVICE_POSTGRES_PROVIDER", value = "neon" },
-        { name = "SERVICE_POSTGRES_PUBLIC_HOST", value = "${var.postgres_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_POSTGRES_PUBLIC_PORT", value = "5432" },
-        { name = "SERVICE_SEARCH_PUBLIC_HOST", value = "${var.search_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_SEARCH_PUBLIC_PORT", value = "443" },
-        { name = "SERVICE_VALKEY_PUBLIC_HOST", value = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_VALKEY_PUBLIC_PORT", value = "6379" },
-        { name = "SERVICE_OBJECT_STORAGE_ENABLED", value = tostring(var.storage_proxy_enabled) },
-        { name = "SERVICE_OBJECT_STORAGE_REGION", value = var.aws_region },
-        { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
-        { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
-      ]
-
-      secrets = concat([
-        # Assembled by the API from the secret RDS manages, rather than written into this file. A
-        # connection string in a task definition is a connection string in `describe-task-definition`
-        # output, which is readable by anything with ECS read access.
-        { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-      ], local.ecs_api_parameter_secrets)
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "api"
-        }
-      }
-    },
-    {
-      /*
-        The background worker, which until now shipped in the release and was never started.
-
-        `worker.ts` says it should be a separate process from the API — a long job holding an
-        event-loop turn delays every request behind it — and the tarball packaged it and then ran
-        only the two servers. Every job the platform queued sat there. A container makes the
-        omission impossible: it either has a command or the task definition does not apply.
-      */
-      name              = "worker"
-      image             = var.web_image
-      essential         = true
-      memoryReservation = 128
-      command           = ["node", "/opt/sproutos/api/worker.js"]
-      dockerSecurityOptions = [
-        "no-new-privileges",
-      ]
-      linuxParameters = {
-        capabilities = {
-          add  = []
-          drop = ["ALL"]
-        }
-      }
-
-      portMappings   = []
-      mountPoints    = []
-      systemControls = []
-      volumesFrom    = []
-
-      environment = [
-        { name = "AWS_REGION", value = var.aws_region },
-        { name = "AWS_ACCOUNT_ID", value = var.aws_account_id },
-        { name = "ANDROID_ARTIFACT_BUCKET", value = aws_s3_bucket.android_artifacts.id },
-        { name = "TENANT_DOMAIN", value = var.tenant_domain },
-        { name = "TENANT_STATIC_BUCKET", value = aws_s3_bucket.tenant_static.id },
-        { name = "TENANT_STATIC_LOG_BUCKET", value = aws_s3_bucket.tenant_static_logs.id },
-        { name = "TENANT_STATIC_LOG_PREFIX", value = "tenant-static/" },
-        { name = "TENANT_STATIC_DISTRIBUTION_ID", value = aws_cloudfront_distribution.tenant_static.id },
-        { name = "TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
-        { name = "TENANT_STATIC_DISTRIBUTION_DOMAIN", value = aws_cloudfront_distribution.tenant_static.domain_name },
-        { name = "TENANT_STATIC_KEY_VALUE_STORE_ARN", value = aws_cloudfront_key_value_store.tenant_static.arn },
-        { name = "TENANT_INGRESS_HOST", value = var.tenant_edge_enabled ? "ingress.${var.tenant_domain}" : "preview-ingress.${var.tenant_domain}" },
-        { name = "SERVICE_BUILD_BUCKET", value = aws_s3_bucket.tenant_builds.id },
-        { name = "LAMBDA_EXECUTION_ROLE_ARN", value = aws_iam_role.lambda_execution.arn },
-        { name = "VALKEY_URL", value = "rediss://${aws_elasticache_replication_group.platform.primary_endpoint_address}:6379" },
-        { name = "DATABASE_HOST", value = aws_db_instance.control_plane.endpoint },
-        { name = "DATABASE_NAME", value = aws_db_instance.control_plane.db_name },
-        { name = "CLICKHOUSE_URL", value = "https://${var.clickhouse_subdomain}.${var.control_plane_domain}" },
-        { name = "CLICKHOUSE_DATABASE", value = local.ecs_clickhouse_database },
-        { name = "CLICKHOUSE_USER", value = "sproutos" },
-        { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
-        { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
-        { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
-        { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
-        { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
-        { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
-        { name = "SEARCH_ADMIN_URL", value = "https://${var.opensearch_subdomain}.${var.control_plane_domain}" },
-        { name = "LAMBDA_WEB_ADAPTER_LAYER_VERSION", value = tostring(var.lambda_web_adapter_layer_version) },
-        # Safe only because project teardown resolves the recorded database_instance.provider.
-        # Never let the worker choose a destructive driver from DATABASE_URL alone.
-        { name = "SERVICE_POSTGRES_PROVIDER", value = "neon" },
-        { name = "SERVICE_POSTGRES_PUBLIC_HOST", value = "${var.postgres_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_POSTGRES_PUBLIC_PORT", value = "5432" },
-        { name = "SERVICE_SEARCH_PUBLIC_HOST", value = "${var.search_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_SEARCH_PUBLIC_PORT", value = "443" },
-        { name = "SERVICE_VALKEY_PUBLIC_HOST", value = "${var.tenant_valkey_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_VALKEY_PUBLIC_PORT", value = "6379" },
-        { name = "SERVICE_OBJECT_STORAGE_ENABLED", value = tostring(var.storage_proxy_enabled) },
-        { name = "SERVICE_OBJECT_STORAGE_REGION", value = var.aws_region },
-        { name = "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT", value = "https://${var.storage_subdomain}.${var.control_plane_domain}" },
-        { name = "SERVICE_OBJECT_STORAGE_SHARED_BUCKET", value = aws_s3_bucket.tenant_objects.id },
-        { name = "SERVICE_OBJECT_STORAGE_PATH_STYLE", value = "true" },
-        # Certificate work belongs to the existing platform worker. It schedules and executes the
-        # durable jobs with the same task role as the rest of the control-plane background work.
-        { name = "ACME_JOBS_ENABLED", value = "1" },
-        { name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = "0" },
-        { name = "TENANT_CERTIFICATE_BUCKET", value = aws_s3_bucket.tenant_certificates.id },
-        { name = "ACME_ACCOUNT_KEY_SECRET_ID", value = aws_secretsmanager_secret.acme_account_key.id },
-        { name = "ACME_CONTACT_EMAIL", value = "acme@${var.control_plane_domain}" },
-        { name = "ACME_DIRECTORY_URL", value = var.acme_directory_url },
-        { name = "PLATFORM_EDGE_EGRESS_HOSTNAME", value = "${var.egress_subdomain}.${var.control_plane_domain}" },
-        { name = "PLATFORM_ACME_TENANT_ZONE_ID", value = aws_route53_zone.tenant.zone_id },
-        { name = "PLATFORM_ACME_EGRESS_ZONE_ID", value = data.aws_route53_zone.main.zone_id },
-        { name = "PLATFORM_ROUTER_ASG_NAMES", value = join(",", [for colour in local.service_colours : "${var.name_prefix}-router-${colour}"]) },
-        { name = "TENANT_CERTIFICATE_KMS_KEY_ARN", value = aws_kms_key.secrets.arn },
-        { name = "PLATFORM_CERTIFICATE_OBJECT_KEY", value = "platform-edge/current.json" },
-        { name = "PLATFORM_EDGE_ROLLOUT_ENABLED", value = var.tenant_edge_enabled || var.tenant_edge_preview_enabled ? "1" : "0" },
-      ]
-
-      secrets = concat([
-        { name = "DATABASE_SECRET", valueFrom = aws_db_instance.control_plane.master_user_secret[0].secret_arn },
-      ], local.ecs_worker_parameter_secrets)
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "worker"
-        }
-      }
-    },
-  ])
-
-  tags = local.tags
+  lifecycle {
+    destroy = false
+  }
 }
 
-# The daemon-wide seccomp exception is acceptable only while every process on this dedicated task
-# host remains both capability-free and unable to gain privilege. This evaluates the serialized
-# task definition rather than trusting three visually similar source blocks to remain in sync.
+data "aws_ecs_task_definition" "web" {
+  task_definition = "${var.name_prefix}-web"
+}
+
+locals {
+  ecs_web_release_template = jsondecode(file("${path.module}/../deploy/ecs/web-task-definition.json"))
+}
+
 check "ecs_control_plane_container_isolation" {
   assert {
     condition = alltrue([
-      for container in jsondecode(aws_ecs_task_definition.web.container_definitions) :
+      for container in local.ecs_web_release_template.containerDefinitions :
       contains(container.dockerSecurityOptions, "no-new-privileges") &&
       contains(container.linuxParameters.capabilities.drop, "ALL")
     ])
@@ -778,7 +491,7 @@ resource "aws_cloudwatch_log_group" "ecs" {
 resource "aws_ecs_service" "web" {
   name            = "${var.name_prefix}-web"
   cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.web.arn
+  task_definition = data.aws_ecs_task_definition.web.arn
   desired_count   = var.ecs_instance_count
 
   availability_zone_rebalancing = "ENABLED"

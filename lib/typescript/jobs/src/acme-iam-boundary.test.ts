@@ -10,6 +10,23 @@ const ecsHostBootstrap = await readFile(
 const outputs = await readFile(new URL("../../../../tofu/outputs.tf", import.meta.url), "utf8")
 const variables = await readFile(new URL("../../../../tofu/variables.tf", import.meta.url), "utf8")
 const deploy = await readFile(new URL("../../../../tofu/DEPLOY.md", import.meta.url), "utf8")
+const deploymentWorkflow = await readFile(
+  new URL("../../../../.github/workflows/deploy.yml", import.meta.url),
+  "utf8",
+)
+const webTask = JSON.parse(
+  await readFile(
+    new URL("../../../../deploy/ecs/web-task-definition.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  cpu: string
+  memory: string
+  containerDefinitions: Array<{
+    name: string
+    environment?: Array<{ name: string; value: string }>
+  }>
+}
 const handoff = await readFile(
   new URL("../../../../bin/handoff-ecs-task-definitions.sh", import.meta.url),
   "utf8",
@@ -93,11 +110,17 @@ describe("tenant-edge IAM boundary", () => {
     expect(ecs).toContain("task_role_arn      = aws_iam_role.acme_task.arn")
     expect(ecs).toContain('{ name = "WORKER_PROFILE", value = "acme" }')
     expect(ecs).toContain("desired_count = 0")
-    expect(ecs).toContain('{ name = "ACME_JOBS_ENABLED", value = "1" }')
-    expect(ecs).toContain('{ name = "ACME_HANDLER_OWNERSHIP_ENABLED", value = "0" }')
-    expect(ecs).toContain('{ name = "ACME_ACCOUNT_KEY_SECRET_ID"')
-    expect(ecs).toContain('{ name = "TENANT_CERTIFICATE_BUCKET"')
-    expect(ecs).toContain('{ name = "PLATFORM_EDGE_ROLLOUT_ENABLED"')
+    const platformWorker = webTask.containerDefinitions.find(({ name }) => name === "worker")
+    expect(platformWorker).toBeDefined()
+    expect(platformWorker?.environment).toEqual(
+      expect.arrayContaining([
+        { name: "ACME_JOBS_ENABLED", value: "1" },
+        { name: "ACME_HANDLER_OWNERSHIP_ENABLED", value: "0" },
+        expect.objectContaining({ name: "ACME_ACCOUNT_KEY_SECRET_ID" }),
+        expect.objectContaining({ name: "TENANT_CERTIFICATE_BUCKET" }),
+        expect.objectContaining({ name: "PLATFORM_EDGE_ROLLOUT_ENABLED" }),
+      ]),
+    )
     const acmeTask = resourceFrom(ecs, "aws_ecs_task_definition", "acme_worker")
     expect(ecs).toContain("ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names")
     expect(acmeTask).toContain("local.ecs_acme_worker_parameter_secrets")
@@ -160,7 +183,8 @@ describe("tenant-edge IAM boundary", () => {
   })
 
   it("fits the measured worker beside the bounded web task on one registered host", () => {
-    expect(ecs).toContain("memory = 640")
+    expect(webTask.memory).toBe("640")
+    expect(webTask.cpu).toBe("896")
     expect(ecs).toContain("memory = 256")
     expect(ecs).toContain("memoryReservation = 192")
     expect(ecs).toContain('field = "attribute:ecs.availability-zone"')
@@ -181,14 +205,18 @@ describe("tenant-edge IAM boundary", () => {
     expect(acmeTask).toContain("volumesFrom       = []")
   })
 
-  it("hands the exact platform task contract to the release before rollout continues", () => {
+  it("renders the versioned platform task contract before rollout continues", () => {
     expect(outputs).toContain('output "ecs_web_task_definition_arn"')
+    expect(outputs).toContain("data.aws_ecs_task_definition.web.arn")
     expect(outputs).toContain('output "ecs_acme_worker_task_definition_arn"')
     expect(outputs).toContain('output "acme_worker_rollout_state"')
-    expect(handoff).toContain('ECS_BASE_TASK_DEFINITION="$web_task_arn"')
     expect(handoff).toContain('ECS_BASE_ACME_TASK_DEFINITION="$acme_task_arn"')
     expect(handoff).toContain('"$DEPLOY_SCRIPT"')
-    expect(deploy).toContain('ECS_BASE_TASK_DEFINITION="$corrected_task_arn"')
+    expect(deploymentWorkflow).toContain("deploy/ecs/web-task-definition.json")
+    expect(deploymentWorkflow).toContain("deploy/ecs/web-migrate-task-definition.json")
+    expect(deploymentWorkflow.match(/amazon-ecs-render-task-definition@v1/g)).toHaveLength(4)
+    expect(deploymentWorkflow).toContain("SERVICE_TASK_DEFINITION_FILE")
+    expect(deploymentWorkflow).toContain("MIGRATION_TASK_DEFINITION_FILE")
     expect(deploy).toContain("ACME_JOBS_ENABLED")
     expect(deploy).toContain("ACME_HANDLER_OWNERSHIP_ENABLED")
     expect(deploy).toContain("`ACME_JOBS_ENABLED=1`")

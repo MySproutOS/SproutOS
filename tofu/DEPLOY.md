@@ -159,35 +159,27 @@ With the gate enabled, legacy fill, SSM migration and website cutover are remove
 router blue/green is unchanged. A migration failure never updates the service. A failed service
 rollout is automatically restored by the ECS deployment circuit breaker.
 
-The service ignores `task_definition` changes in OpenTofu because application deploys own image
-revisions. When an apply registers an infrastructure-only container contract change, hand that
-exact revision to the migration-first deploy instead of updating the service directly:
+The service ignores `task_definition` changes in OpenTofu because application releases own the
+entire task contract. Edit the versioned service and migration templates together, then let the
+deployment workflow render the immutable image into each container:
 
 ```bash
-corrected_task_arn="$(tofu -chdir=tofu state show -no-color aws_ecs_task_definition.web \
-  | sed -n 's/^    arn *= *"\([^"]*\)"/\1/p')"
-test -n "$corrected_task_arn"
-
-aws ecs describe-task-definition --task-definition "$corrected_task_arn" \
-  --query 'taskDefinition.containerDefinitions[?name==`api`].environment[?name==`CLICKHOUSE_DATABASE`].value' \
-  --output text
-
-ECS_BASE_TASK_DEFINITION="$corrected_task_arn" \
-  IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
-  NAME_PREFIX=sproutos \
-  bin/deploy-ecs-web.sh --cutover
+jq -e . deploy/ecs/web-task-definition.json \
+  deploy/ecs/web-migrate-task-definition.json
+bash bin/deploy-ecs-web.test.sh
+bash bin/deploy-workflow.test.sh
 ```
 
-The inspection prints only the non-secret database name and must report `sproutos`. The deploy
-requires an exact active ARN in the service's task family, derives both new definitions from it,
-runs migrations first, and changes the service only after a zero exit.
+OpenTofu owns the cluster, service, roles, capacity and networking. It reads the latest registered
+`sproutos-web` revision only as the service's bootstrap/repair pointer and never registers an
+application task definition. The workflow renders website, API, worker and migration images from
+the checked-in templates, runs migrations first, and changes the service only after a zero exit.
 
-ACME configuration follows the same web-task handoff above. An OpenTofu apply registers a task
-definition but does not update the running service because application releases own that lifecycle.
-After changing `ACME_JOBS_ENABLED`, `CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`,
-`PLATFORM_EDGE_ROLLOUT_ENABLED`, or the worker's IAM/container contract, deploy from that exact base
-task definition with the already chosen immutable image. Verify both running tasks use the resulting
-revision and read the worker environment back before continuing. The dormant
+ACME configuration follows the same versioned-template release above. After changing
+`ACME_JOBS_ENABLED`, `CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`,
+`PLATFORM_EDGE_ROLLOUT_ENABLED`, or the worker's IAM/container contract, edit both templates where
+the API/migration and worker contracts overlap, deploy, then verify both running tasks use the
+resulting revision and read the worker environment back before continuing. The dormant
 `sproutos-acme-worker` service must remain at desired/running/pending `0/0/0`.
 
 ### Wiring the first Sprout CLI release
