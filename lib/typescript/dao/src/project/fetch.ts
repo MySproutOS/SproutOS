@@ -68,6 +68,7 @@ export function fetchProject(db: Kysely<DB>) {
           simply `undefined`, and every group came back looking like an ordinary project.
         */
         "project.isGroup as isGroup",
+        "project.servingMode as servingMode",
         "project.parentProjectId as parentProjectId",
         "project.primaryChildProjectId as primaryChildProjectId",
         "project.regionId as regionId",

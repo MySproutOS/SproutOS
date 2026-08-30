@@ -1388,6 +1388,23 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(created.status).toBe(201)
       return { id: (created.json.project as Json).id as string, repositoryId: repository }
     }
+
+    it("includes the serving mode in the list used by custom-domain selection", async () => {
+      const { id: projectId } = await ownProject("Domain Eligible")
+      await db
+        .updateTable("project")
+        .set({ servingMode: "serverless" })
+        .where("id", "=", projectId)
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+
+      expect(entry?.servingMode).toBe("serverless")
+    })
+
     it("reports zero cost for a project with no metered usage", async () => {
       const { id: projectId } = await ownProject("Unmetered")
 
