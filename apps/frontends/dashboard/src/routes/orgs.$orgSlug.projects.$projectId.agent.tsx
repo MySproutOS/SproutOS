@@ -53,8 +53,7 @@ export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/agent")
 })
 
 function AgentChatRoute() {
-  const search = Route.useSearch()
-  return <AgentChat key={search.session ?? "new"} />
+  return <AgentChat />
 }
 
 /** What the transcript is made of. Tool calls are collapsed into one line each. */
@@ -81,6 +80,7 @@ function AgentChat() {
   const [confirmingFinish, setConfirmingFinish] = useState(false)
   const [finishError, setFinishError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
+  const sessionIdRef = useRef<string | null>(search.session ?? null)
   const adoptedExistingSession = useRef(search.session !== undefined)
   const routeScope = useRef(`${orgSlug}/${projectId}`)
   const tail = useRef<HTMLDivElement>(null)
@@ -91,11 +91,28 @@ function AgentChat() {
 
   useEffect(() => () => abort.current?.abort(), [])
 
+  /*
+    A session belongs in the URL so reload, Back, and Forward restore the same conversation. Do
+    not key the component by that URL value: the first send creates the session and then updates
+    the URL, and remounting at that point aborts the stream that is still writing the first turn.
+
+    `selectSession` updates the ref before navigation, so its own URL update is a no-op here. A
+    browser-history change has a different value and restores the selected durable transcript.
+  */
+  useEffect(() => {
+    const nextSessionId = search.session ?? null
+    if (sessionIdRef.current === nextSessionId) return
+    sessionIdRef.current = nextSessionId
+    setSessionId(nextSessionId)
+    setBubbles([])
+  }, [search.session])
+
   useEffect(() => {
     const nextScope = `${orgSlug}/${projectId}`
     if (routeScope.current === nextScope) return
     routeScope.current = nextScope
     adoptedExistingSession.current = false
+    sessionIdRef.current = null
     setSessionId(null)
     setBubbles([])
   }, [orgSlug, projectId])
@@ -152,6 +169,7 @@ function AgentChat() {
   }, [orgSlug, projectId, sessionId])
 
   function selectSession(id: string | null) {
+    sessionIdRef.current = id
     setSessionId(id)
     setBubbles([])
     void navigate({
