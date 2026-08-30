@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   type AgentEvent,
+  agentSessionIsRunning,
   ensureSandboxRunning,
   latestRestorableAgentSession,
   streamAgentTurn,
@@ -122,6 +123,19 @@ describe("latestRestorableAgentSession", () => {
         { id: "done", title: null, status: "completed", createdLabel: "now" },
       ]),
     ).toBeUndefined()
+  })
+})
+
+describe("agentSessionIsRunning", () => {
+  it("keeps a live turn running across reload while Daytona starts or serves it", () => {
+    expect(agentSessionIsRunning("active", "starting")).toBe(true)
+    expect(agentSessionIsRunning("active", "running")).toBe(true)
+  })
+
+  it("does not let a stale active row disable chat after its sandbox was deleted", () => {
+    expect(agentSessionIsRunning("active", undefined)).toBe(false)
+    expect(agentSessionIsRunning("active", "deleting")).toBe(false)
+    expect(agentSessionIsRunning("idle", "running")).toBe(false)
   })
 })
 

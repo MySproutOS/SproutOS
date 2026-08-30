@@ -156,6 +156,11 @@ export function latestRestorableAgentSession(
   return sessions?.find((session) => session.status === "active" || session.status === "idle")
 }
 
+/** An `active` database row is not a running turn once its workspace no longer exists. */
+export function agentSessionIsRunning(status: string, sandboxState: string | undefined): boolean {
+  return status === "active" && (sandboxState === "starting" || sandboxState === "running")
+}
+
 /** The workspace is durable API state; transcript bubbles are not evidence that it exists. */
 export function useAgentSandbox(orgSlug: string, projectId: string) {
   return useQuery({

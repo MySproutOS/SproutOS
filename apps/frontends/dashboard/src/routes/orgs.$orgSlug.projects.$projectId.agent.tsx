@@ -34,6 +34,7 @@ import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page
 import { SandboxPreviewPanel } from "@frontends/dashboard/components/sandbox/preview-panel"
 import {
   type AgentEvent,
+  agentSessionIsRunning,
   ensureSandboxRunning,
   latestRestorableAgentSession,
   loadAgentTranscript,
@@ -154,7 +155,7 @@ function AgentChat() {
           if (turn.error !== null) restored.push({ kind: "failed", message: turn.error })
         }
         setBubbles(restored)
-        setRunning(transcript.session.status === "active")
+        setRunning(agentSessionIsRunning(transcript.session.status, sandbox.data?.state))
       } catch {
         if (!cancelled)
           setBubbles([{ kind: "failed", message: "The conversation could not be loaded" }])
@@ -166,7 +167,7 @@ function AgentChat() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [orgSlug, projectId, sessionId])
+  }, [orgSlug, projectId, sandbox.data?.state, sessionId])
 
   function selectSession(id: string | null, draft?: string, preserveBubbles = false) {
     const changed = sessionIdRef.current !== id
