@@ -423,35 +423,43 @@ resource "aws_lb_target_group" "tenant_https" {
   tags                 = { Name = "${var.name_prefix}-edge-${each.key}" }
 }
 
+# Changing the public :443 protocol is deliberately a listener replacement. Besides making the
+# TLS-to-TCP transition explicit in a saved plan, replacement causes AWS to install the configured
+# Rust-edge target groups instead of preserving the blue/green action that cutover scripts own.
+resource "terraform_data" "tenant_edge_mode" {
+  triggers_replace = var.tenant_edge_enabled
+}
+
 resource "aws_lb_listener" "forward_proxy" {
   load_balancer_arn = aws_lb.tenant.arn
   port              = 443
-  protocol          = "TLS"
-  certificate_arn   = aws_acm_certificate.tenant.arn
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  protocol          = var.tenant_edge_enabled ? "TCP" : "TLS"
+  certificate_arn   = var.tenant_edge_enabled ? null : aws_acm_certificate.tenant.arn
+  ssl_policy        = var.tenant_edge_enabled ? null : "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
     type = "forward"
 
     forward {
       target_group {
-        arn    = aws_lb_target_group.forward_proxy["blue"].arn
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["blue"].arn : aws_lb_target_group.forward_proxy["blue"].arn
         weight = 100
       }
       target_group {
-        arn    = aws_lb_target_group.forward_proxy["green"].arn
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["green"].arn : aws_lb_target_group.forward_proxy["green"].arn
         weight = 0
       }
     }
   }
 
   lifecycle {
-    ignore_changes = [default_action]
+    ignore_changes       = [default_action]
+    replace_triggered_by = [terraform_data.tenant_edge_mode]
   }
 }
 
 resource "aws_lb_listener" "tenant_https" {
-  count = local.tenant_edge_provisioned ? 1 : 0
+  count = var.tenant_edge_preview_enabled ? 1 : 0
 
   load_balancer_arn = aws_lb.tenant.arn
   port              = 8444

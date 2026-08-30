@@ -392,6 +392,7 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener_rule.llm.arn,
           ], local.tenant_edge_provisioned ? [
           aws_lb_listener.tenant_http[0].arn,
+          ] : [], var.tenant_edge_preview_enabled ? [
           aws_lb_listener.tenant_https[0].arn,
         ] : [])
       },
