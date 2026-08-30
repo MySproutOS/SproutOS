@@ -77,6 +77,11 @@ const INDEX_ENDPOINTS: &[&str] = &[
     "_validate",
     "_source",
     "_mget",
+    "_terms_enum",
+    "_rank_eval",
+    "_knn_search",
+    "_segments",
+    "_recovery",
 ];
 
 /// Endpoints whose body is NDJSON carrying `_index` per line.
@@ -377,7 +382,10 @@ fn valid_percent_encoding(value: &str) -> bool {
 fn allow_endpoint_method(method: &Method, endpoint: &str) -> Result<(), RouteError> {
     let allowed: &[Method] = match endpoint {
         "_search" | "_count" | "_explain" | "_termvectors" | "_analyze" | "_field_caps"
-        | "_search_shards" | "_validate" | "_mget" => &[Method::GET, Method::POST],
+        | "_search_shards" | "_validate" | "_mget" | "_rank_eval" | "_knn_search" => {
+            &[Method::GET, Method::POST]
+        }
+        "_terms_enum" => &[Method::POST],
         "_doc" => &[
             Method::GET,
             Method::HEAD,
@@ -389,7 +397,7 @@ fn allow_endpoint_method(method: &Method, endpoint: &str) -> Result<(), RouteErr
         "_update" | "_update_by_query" | "_delete_by_query" => &[Method::POST],
         "_mapping" | "_mappings" | "_settings" => &[Method::GET, Method::PUT],
         "_refresh" | "_flush" | "_forcemerge" => &[Method::GET, Method::POST],
-        "_stats" => &[Method::GET],
+        "_stats" | "_segments" | "_recovery" => &[Method::GET],
         "_source" => &[Method::GET, Method::HEAD],
         "_bulk" => &[Method::POST, Method::PUT],
         "_msearch" => &[Method::GET, Method::POST],
@@ -556,6 +564,38 @@ mod tests {
             path_of("/products/_settings").unwrap(),
             format!("/{PREFIX}products/_settings")
         );
+    }
+
+    #[test]
+    fn safe_index_local_analysis_and_diagnostic_apis_are_namespaced() {
+        for (method, endpoint) in [
+            (Method::POST, "_terms_enum"),
+            (Method::POST, "_rank_eval"),
+            (Method::POST, "_knn_search"),
+            (Method::GET, "_segments"),
+            (Method::GET, "_recovery"),
+        ] {
+            let path = format!("/products/{endpoint}");
+            assert_eq!(
+                plan(PREFIX, &method, &path).unwrap(),
+                Plan::Path(format!("/{PREFIX}products/{endpoint}"))
+            );
+        }
+
+        // None of these has a safe cluster-wide spelling: without an index there is nothing for
+        // the proxy to namespace, and diagnostics could describe another tenant's data.
+        for endpoint in [
+            "_terms_enum",
+            "_rank_eval",
+            "_knn_search",
+            "_segments",
+            "_recovery",
+        ] {
+            assert!(matches!(
+                plan(PREFIX, &Method::GET, &format!("/{endpoint}")),
+                Err(RouteError::Refused(_))
+            ));
+        }
     }
 
     #[test]

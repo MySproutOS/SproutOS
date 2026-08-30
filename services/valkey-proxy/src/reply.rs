@@ -58,7 +58,7 @@ pub fn is_pubsub_push(buffer: &[u8]) -> Result<bool, ReplyError> {
             array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]),
             elements.len()
         ),
-        (Some(b"message"), 3) | (Some(b"pmessage"), 4)
+        (Some(b"message" | b"smessage"), 3) | (Some(b"pmessage"), 4)
     ))
 }
 
@@ -74,7 +74,14 @@ pub fn pubsub_subscription_count(buffer: &[u8]) -> Result<Option<usize>, ReplyEr
     let kind = array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]);
     if !matches!(
         kind,
-        Some(b"subscribe" | b"unsubscribe" | b"psubscribe" | b"punsubscribe")
+        Some(
+            b"subscribe"
+                | b"unsubscribe"
+                | b"psubscribe"
+                | b"punsubscribe"
+                | b"ssubscribe"
+                | b"sunsubscribe"
+        )
     ) {
         return Ok(None);
     }
@@ -107,7 +114,10 @@ pub fn pubsub_subscription_count(buffer: &[u8]) -> Result<Option<usize>, ReplyEr
 pub fn rewrite_pubsub(buffer: &[u8], prefix: &[u8]) -> Result<Vec<u8>, ReplyError> {
     let kind = array_bulk(buffer, 0)?.map(|range| &buffer[range.0..range.1]);
     let indices: &[usize] = match kind {
-        Some(b"message" | b"subscribe" | b"unsubscribe" | b"psubscribe" | b"punsubscribe") => &[1],
+        Some(
+            b"message" | b"smessage" | b"subscribe" | b"unsubscribe" | b"psubscribe"
+            | b"punsubscribe" | b"ssubscribe" | b"sunsubscribe",
+        ) => &[1],
         Some(b"pmessage") => &[1, 2],
         _ => return Ok(buffer.to_vec()),
     };
@@ -491,6 +501,22 @@ mod tests {
         assert_eq!(
             rewrite_pubsub(pattern, prefix).unwrap(),
             b"*4\r\n$8\r\npmessage\r\n$5\r\nnews*\r\n$5\r\nnews1\r\n$2\r\nhi\r\n"
+        );
+    }
+
+    #[test]
+    fn sharded_pubsub_uses_the_same_tenant_safe_channel_rewrite() {
+        let prefix = b"{kv:01hb}:";
+        let message = b"*3\r\n$8\r\nsmessage\r\n$16\r\n{kv:01hb}:events\r\n$2\r\nhi\r\n";
+        assert!(is_pubsub_push(message).unwrap());
+        assert_eq!(
+            rewrite_pubsub(message, prefix).unwrap(),
+            b"*3\r\n$8\r\nsmessage\r\n$6\r\nevents\r\n$2\r\nhi\r\n"
+        );
+        assert_eq!(
+            pubsub_subscription_count(b"*3\r\n$10\r\nssubscribe\r\n$6\r\nevents\r\n:1\r\n")
+                .unwrap(),
+            Some(1)
         );
     }
 

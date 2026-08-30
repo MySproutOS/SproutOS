@@ -36,6 +36,7 @@ import { projectCreateErrorMessage } from "./project-create-error"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { isProjectRootDir } from "./project-root-dir"
 import { slugify } from "./slug"
+import { type WorkflowStack, WORKFLOW_STACKS, workflowAgentPrompt } from "./workflow-scaffold"
 
 /**
  * Starting a project, in the three ways the API has always supported.
@@ -178,6 +179,7 @@ function NewProjectForm({
   */
   const [isPrivate, setIsPrivate] = useState(false)
   const [workflowTrigger, setWorkflowTrigger] = useState<"interval" | "webhook">("interval")
+  const [workflowStack, setWorkflowStack] = useState<WorkflowStack>("bullmq-typescript")
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
 
   const navigate = useNavigate()
@@ -334,7 +336,7 @@ function NewProjectForm({
                   ...(kind === "workflow"
                     ? {
                         search: {
-                          prompt: `Create a ${workflowTrigger} workflow in this repository. Include environment variable documentation, structured logs, and observable failure handling.`,
+                          prompt: workflowAgentPrompt(workflowTrigger, workflowStack),
                         },
                       }
                     : {}),
@@ -374,22 +376,52 @@ function NewProjectForm({
       </div>
 
       {kind === "workflow" && (
-        <div className="flex flex-col gap-1.5">
-          <Label>Trigger</Label>
-          <Select
-            value={workflowTrigger}
-            onValueChange={(value: "interval" | "webhook" | null) => {
-              if (value !== null) setWorkflowTrigger(value)
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="interval">Interval schedule</SelectItem>
-              <SelectItem value="webhook">Webhook</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid gap-4 rounded-lg border border-border p-3">
+          <p className="text-xs text-muted-foreground">
+            {parentProjectId === null
+              ? "This is a standalone workflow and will appear in the organization Workflow tab."
+              : "This workflow belongs to this project group and will appear beneath it."}
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <Label>Queue stack</Label>
+            <Select
+              value={workflowStack}
+              onValueChange={(value: WorkflowStack | null) => {
+                if (value !== null) setWorkflowStack(value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WORKFLOW_STACKS.map((stack) => (
+                  <SelectItem key={stack.value} value={stack.value}>
+                    {stack.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {WORKFLOW_STACKS.find((stack) => stack.value === workflowStack)?.detail}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Trigger</Label>
+            <Select
+              value={workflowTrigger}
+              onValueChange={(value: "interval" | "webhook" | null) => {
+                if (value !== null) setWorkflowTrigger(value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="interval">Interval schedule</SelectItem>
+                <SelectItem value="webhook">Webhook</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )}
 

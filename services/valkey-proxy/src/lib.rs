@@ -213,6 +213,7 @@ pub async fn serve(
                                 && matches!(
                                     verb.as_str(),
                                     "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                        | "SSUBSCRIBE" | "SUNSUBSCRIBE"
                                 )
                             {
                                 pending.push_back(Pending::Local(error(
@@ -262,7 +263,7 @@ pub async fn serve(
                                         None
                                     };
                                     upstream_write.write_all(&command.encode()).await?;
-                                    let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE") {
+                                    let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE") {
                                         ReplyRewrite::Pubsub
                                     } else if matches!(verb.as_str(), "XREAD" | "XREADGROUP") {
                                         ReplyRewrite::Streams {
@@ -297,6 +298,7 @@ pub async fn serve(
                                     if matches!(
                                         verb.as_str(),
                                         "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                            | "SSUBSCRIBE" | "SUNSUBSCRIBE"
                                     ) {
                                         mode = if subscriptions.is_empty() && patterns.is_empty() {
                                             ConnectionMode::Normal
@@ -531,11 +533,11 @@ fn update_pubsub_state(
     patterns: &mut BTreeSet<Vec<u8>>,
 ) -> Result<usize, &'static str> {
     let target = match verb {
-        "SUBSCRIBE" | "UNSUBSCRIBE" => subscriptions,
+        "SUBSCRIBE" | "UNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE" => subscriptions,
         "PSUBSCRIBE" | "PUNSUBSCRIBE" => patterns,
         _ => return Ok(1),
     };
-    let subscribing = matches!(verb, "SUBSCRIBE" | "PSUBSCRIBE");
+    let subscribing = matches!(verb, "SUBSCRIBE" | "PSUBSCRIBE" | "SSUBSCRIBE");
     if subscribing && args.len() < 2 {
         return Err("subscribe requires at least one channel");
     }
