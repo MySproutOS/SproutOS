@@ -343,7 +343,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
-  count = local.tenant_edge_provisioned ? 1 : 0
+  count = var.tenant_edge_preview_enabled ? 1 : 0
 
   security_group_id = aws_security_group.tenant_nlb.id
   description       = "Temporary Rust TLS edge preview"
@@ -354,7 +354,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https_ipv6" {
-  count = local.tenant_edge_provisioned ? 1 : 0
+  count = var.tenant_edge_preview_enabled ? 1 : 0
 
   security_group_id = aws_security_group.tenant_nlb.id
   description       = "Temporary IPv6 Rust TLS edge preview"
