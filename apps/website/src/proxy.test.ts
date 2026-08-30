@@ -152,7 +152,14 @@ describe("default fallback (non-public, non-shared route)", () => {
   it("no session → redirect to /login", async () => {
     const res = await proxy(makeRequest("/settings"))
     expect(isRewrite(res)).toBe(false)
-    expect(res.headers.get("location")).toContain("/login")
+    expect(res.headers.get("location")).toBe("https://example.com/login?next=%2Fsettings")
+  })
+
+  it("preserves the protected path and query for post-login navigation", async () => {
+    const res = await proxy(makeRequest("/orgs/acme/projects?view=groups"))
+    expect(res.headers.get("location")).toBe(
+      "https://example.com/login?next=%2Forgs%2Facme%2Fprojects%3Fview%3Dgroups",
+    )
   })
 
   // Same mode sensitivity as the shared-route suite above.

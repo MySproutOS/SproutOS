@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server"
 import { NextResponse } from "next/server"
 import { cookieDomain, validateSessionToken } from "./lib/auth"
+import { loginPathForReturnTo } from "./lib/return-to"
 
 /** Public paths handled by Next.js — everything else goes to the dashboard SPA.
  *  Note there is no "/api" here: the Hono API is a separate deployment on its own host. */
@@ -102,6 +103,11 @@ function isAssetRequest(pathname: string): boolean {
   // Vite dev server internal paths
   if (/@vite|@react-refresh|@id|node_modules\/\.vite/.test(pathname)) return true
   return false
+}
+
+function loginRedirect(request: NextRequest): NextResponse {
+  const returnTo = `${request.nextUrl.pathname}${request.nextUrl.search}`
+  return NextResponse.redirect(new URL(loginPathForReturnTo(returnTo), request.url))
 }
 
 function handleCsrfAndCookies(request: NextRequest): NextResponse | null {
@@ -219,7 +225,7 @@ export async function proxy(request: NextRequest) {
         return rewriteToSpa(request, pathname, SPA_ADMIN.devPort, "/admin", "/admin")
       }
     }
-    return NextResponse.redirect(new URL("/login", request.url))
+    return loginRedirect(request)
   }
 
   // Everything else → Dashboard SPA if authenticated, otherwise redirect to login
@@ -230,7 +236,7 @@ export async function proxy(request: NextRequest) {
       return rewriteToSpa(request, pathname, DASHBOARD_DEV_PORT, "", "/dashboard")
     }
   }
-  return NextResponse.redirect(new URL("/login", request.url))
+  return loginRedirect(request)
 }
 
 export const config = {

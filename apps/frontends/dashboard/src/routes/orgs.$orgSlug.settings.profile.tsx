@@ -12,6 +12,7 @@ import { PageBody } from "@frontends/dashboard/components/shell/page-header"
 import {
   useCloseAccount,
   useExportMyData,
+  useLogout,
   useUpdateProfile,
   useUserProfile,
 } from "@frontends/dashboard/data/members"
@@ -49,10 +50,50 @@ function ProfileSettings() {
             timezone={data.timezone}
             productEmails={data.productEmails}
           />
+          <Session />
           <YourData />
         </>
       )}
     </PageBody>
+  )
+}
+
+function Session() {
+  const logout = useLogout()
+
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle>Session</CardTitle>
+      </CardHeader>
+      <CardContent className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm">Log out of SproutOS</span>
+          <span className="text-[11px] text-muted-foreground">
+            End this browser session. Your other signed-in devices stay connected.
+          </span>
+        </div>
+        <Button
+          variant="outline"
+          disabled={logout.isPending}
+          onClick={() => {
+            logout.mutate({})
+          }}
+        >
+          {logout.isPending ? "Logging out…" : "Log out"}
+        </Button>
+      </CardContent>
+      {logout.isError ? (
+        <CardFooter>
+          <Alert variant="destructive" className="w-full">
+            <AlertDescription>
+              {(logout.error as { error?: { message?: string } } | undefined)?.error?.message ??
+                "You could not be logged out"}
+            </AlertDescription>
+          </Alert>
+        </CardFooter>
+      ) : null}
+    </Card>
   )
 }
 

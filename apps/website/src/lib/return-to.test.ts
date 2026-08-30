@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { sanitizeReturnTo } from "./return-to"
+import { loginPathForReturnTo, providerLoginPath, sanitizeReturnTo } from "./return-to"
 
 /**
  * This function is the whole open-redirect defence: its output becomes a `Location` header on a
@@ -30,5 +30,21 @@ describe("sanitizeReturnTo", () => {
   it("treats nothing as nothing", () => {
     expect(sanitizeReturnTo(null)).toBeNull()
     expect(sanitizeReturnTo("")).toBeNull()
+  })
+})
+
+describe("login return paths", () => {
+  it("preserves a protected path and its query string", () => {
+    expect(loginPathForReturnTo("/orgs/acme/projects?view=groups")).toBe(
+      "/login?next=%2Forgs%2Facme%2Fprojects%3Fview%3Dgroups",
+    )
+    expect(providerLoginPath("google", "/orgs/acme/projects?view=groups")).toBe(
+      "/login/google?next=%2Forgs%2Facme%2Fprojects%3Fview%3Dgroups",
+    )
+  })
+
+  it("drops an unsafe return destination", () => {
+    expect(loginPathForReturnTo("https://evil.example/phish")).toBe("/login")
+    expect(providerLoginPath("github", "//evil.example/phish")).toBe("/login/github")
   })
 })
