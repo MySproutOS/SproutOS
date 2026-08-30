@@ -1,0 +1,289 @@
+{
+  "family": "sproutos-web-migrate",
+  "taskRoleArn": "arn:aws:iam::471112590391:role/sproutos-task",
+  "executionRoleArn": "arn:aws:iam::471112590391:role/sproutos-ecs-execution",
+  "networkMode": "bridge",
+  "containerDefinitions": [
+    {
+      "name": "migrate",
+      "image": "ghcr.io/mysproutos/sproutos-web:17f304ebbaf7",
+      "cpu": 128,
+      "memoryReservation": 128,
+      "essential": true,
+      "command": [
+        "sh",
+        "-c",
+        "node /opt/sproutos/api/migrate.mjs && node /opt/sproutos/api/seed.mjs && node /opt/sproutos/api/clickhouse.mjs"
+      ],
+      "environment": [
+        {
+          "name": "SERVICE_SEARCH_PUBLIC_HOST",
+          "value": "search.sproutos.me"
+        },
+        {
+          "name": "KAFKA_USAGE_EVENT_TOPIC",
+          "value": "usage-events"
+        },
+        {
+          "name": "SERVICE_POSTGRES_PROVIDER",
+          "value": "neon"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "DATABASE_HOST",
+          "value": "sproutos-control-plane.cnuo2ckgqadm.us-east-1.rds.amazonaws.com:5432"
+        },
+        {
+          "name": "VALKEY_URL",
+          "value": "rediss://master.sproutos-platform.7gteeb.use1.cache.amazonaws.com:6379"
+        },
+        {
+          "name": "TENANT_STATIC_DISTRIBUTION_DOMAIN",
+          "value": "d2apnxah7a0qtb.cloudfront.net"
+        },
+        {
+          "name": "TENANT_INGRESS_IPV4_ADDRESSES",
+          "value": "52.204.231.178,44.215.58.212"
+        },
+        {
+          "name": "SESSION_COOKIE_DOMAIN",
+          "value": ".sproutos.me"
+        },
+        {
+          "name": "KMS_KEY_ID",
+          "value": "arn:aws:kms:us-east-1:471112590391:key/e48da71f-4e11-4c93-b096-ef2ccaceb569"
+        },
+        {
+          "name": "SERVICE_VALKEY_PUBLIC_HOST",
+          "value": "valkey.sproutos.me"
+        },
+        {
+          "name": "LLM_PROXY_URL",
+          "value": "https://llm.sproutos.me"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "TENANT_INGRESS_IPV6_ADDRESSES",
+          "value": "2600:1f18:2936:ae00::64,2600:1f18:2936:ae01::64"
+        },
+        {
+          "name": "TENANT_DOMAIN",
+          "value": "sproutos.run"
+        },
+        {
+          "name": "TENANT_STATIC_BUCKET",
+          "value": "sproutos-tenant-static-471112590391"
+        },
+        {
+          "name": "SERVICE_POSTGRES_PUBLIC_HOST",
+          "value": "postgres.sproutos.me"
+        },
+        {
+          "name": "NEXT_PUBLIC_HOST_URL",
+          "value": "https://sproutos.me"
+        },
+        {
+          "name": "TENANT_ZONE_ID",
+          "value": "Z06802239VSDF95QAY2F"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "SERVICE_BUILD_BUCKET",
+          "value": "sproutos-tenant-builds-471112590391"
+        },
+        {
+          "name": "CLICKHOUSE_USER",
+          "value": "sproutos"
+        },
+        {
+          "name": "DATABASE_NAME",
+          "value": "main"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT",
+          "value": "https://storage.sproutos.me"
+        },
+        {
+          "name": "KAFKA_RUNTIME_LOG_TOPIC",
+          "value": "runtime-logs"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_SHARED_BUCKET",
+          "value": "sproutos-tenant-objects"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_PATH_STYLE",
+          "value": "true"
+        },
+        {
+          "name": "CLICKHOUSE_URL",
+          "value": "https://clickhouse.sproutos.me"
+        },
+        {
+          "name": "TENANT_STATIC_KEY_VALUE_STORE_ARN",
+          "value": "arn:aws:cloudfront::471112590391:key-value-store/41f84217-4641-470d-bca6-2c2329146b4e"
+        },
+        {
+          "name": "CUSTOM_DOMAINS_ENABLED",
+          "value": "1"
+        },
+        {
+          "name": "API_PORT",
+          "value": "3001"
+        },
+        {
+          "name": "SERVICE_VALKEY_PUBLIC_PORT",
+          "value": "6379"
+        },
+        {
+          "name": "SANDBOX_FORWARD_PROXY_URL",
+          "value": "https://egress.sproutos.me"
+        },
+        {
+          "name": "SERVICE_POSTGRES_PUBLIC_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "ANDROID_ARTIFACT_BUCKET",
+          "value": "sproutos-android-artifacts-471112590391"
+        },
+        {
+          "name": "TENANT_INGRESS_HOST",
+          "value": "ingress.sproutos.run"
+        },
+        {
+          "name": "SERVICE_SEARCH_PUBLIC_PORT",
+          "value": "443"
+        },
+        {
+          "name": "CLICKHOUSE_DATABASE",
+          "value": "sproutos"
+        },
+        {
+          "name": "NEXT_PUBLIC_API_URL",
+          "value": "https://api.sproutos.me"
+        }
+      ],
+      "mountPoints": [],
+      "linuxParameters": {
+        "capabilities": {
+          "add": [],
+          "drop": ["ALL"]
+        }
+      },
+      "secrets": [
+        {
+          "name": "DATABASE_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:471112590391:secret:rds!db-8b680b02-4cc5-49cb-8a82-9efb64f504c5-6CTcD8"
+        },
+        {
+          "name": "CLICKHOUSE_PASSWORD",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/CLICKHOUSE_PASSWORD"
+        },
+        {
+          "name": "DAYTONA_API_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/DAYTONA_API_KEY"
+        },
+        {
+          "name": "DAYTONA_ORGANIZATION_ID",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/DAYTONA_ORGANIZATION_ID"
+        },
+        {
+          "name": "DEPLOY_TOKEN_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/DEPLOY_TOKEN_SECRET"
+        },
+        {
+          "name": "GITHUB_APP_ID",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_APP_ID"
+        },
+        {
+          "name": "GITHUB_APP_PRIVATE_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_APP_PRIVATE_KEY"
+        },
+        {
+          "name": "GITHUB_WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_WEBHOOK_SECRET"
+        },
+        {
+          "name": "KAFKA_BROKERS",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/KAFKA_BROKERS"
+        },
+        {
+          "name": "KAFKA_USAGE_EVENT_SASL_PASSWORD",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/KAFKA_USAGE_EVENT_SASL_PASSWORD"
+        },
+        {
+          "name": "KAFKA_USAGE_EVENT_SASL_USERNAME",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/KAFKA_USAGE_EVENT_SASL_USERNAME"
+        },
+        {
+          "name": "LLM_PROXY_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/LLM_PROXY_SECRET"
+        },
+        {
+          "name": "LOG_TOKEN_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/LOG_TOKEN_SECRET"
+        },
+        {
+          "name": "METERING_INGEST_HMAC_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/METERING_INGEST_HMAC_KEY"
+        },
+        {
+          "name": "NEON_API_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/NEON_API_KEY"
+        },
+        {
+          "name": "NEON_ORG_ID",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/NEON_ORG_ID"
+        },
+        {
+          "name": "OPENAI_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/OPENAI_KEY"
+        },
+        {
+          "name": "SANDBOX_DAYTONA_SNAPSHOT",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/SANDBOX_DAYTONA_SNAPSHOT"
+        },
+        {
+          "name": "SANDBOX_FORWARD_PROXY_ROOT_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/SANDBOX_FORWARD_PROXY_ROOT_KEY"
+        },
+        {
+          "name": "SERVICE_OBJECT_STORAGE_ROOT_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/SERVICE_OBJECT_STORAGE_ROOT_KEY"
+        },
+        {
+          "name": "SERVICE_VALKEY_ADMIN_URL",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/SERVICE_VALKEY_ADMIN_URL"
+        },
+        {
+          "name": "STRIPE_SECRET_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/STRIPE_SECRET_KEY"
+        },
+        {
+          "name": "STRIPE_WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/STRIPE_WEBHOOK_SECRET"
+        }
+      ],
+      "dockerSecurityOptions": ["no-new-privileges"],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/sproutos/ecs",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "migrate"
+        }
+      },
+      "systemControls": []
+    }
+  ]
+}

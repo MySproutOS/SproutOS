@@ -173,6 +173,39 @@ if grep -q 'elbv2 modify-rule' "$STUB_CALLS"; then
   exit 1
 fi
 
+# The production workflow renders immutable images into checked-in task contracts. Exercise that
+# path directly so a syntactically valid template cannot silently fall back to cloning live AWS
+# state. The migration template must remain a one-container, signer-token-free contract.
+ROOT=$(cd "$HERE/.." && pwd)
+jq --arg image "$IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  "$ROOT/deploy/ecs/web-task-definition.json" > "$TEST_DIR/rendered-service.json"
+jq --arg image "$IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  "$ROOT/deploy/ecs/web-migrate-task-definition.json" > "$TEST_DIR/rendered-migration.json"
+unlink "$UPDATED"
+unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+SERVICE_TASK_DEFINITION_FILE="$TEST_DIR/rendered-service.json" \
+MIGRATION_TASK_DEFINITION_FILE="$TEST_DIR/rendered-migration.json" \
+  "$HERE/deploy-ecs-web.sh"
+if grep -q 'ecs describe-task-definition' "$STUB_CALLS"; then
+  echo "the versioned-template release read a live task definition" >&2
+  exit 1
+fi
+jq -e --arg image "$IMAGE" '
+  .family == "sproutos-web" and
+  ([.containerDefinitions[].name] | sort == ["api", "website", "worker"]) and
+  all(.containerDefinitions[]; .image == $image)
+' "$CAPTURE/task-1.json" >/dev/null
+jq -e --arg image "$IMAGE" '
+  .family == "sproutos-web-migrate" and
+  (.containerDefinitions | length) == 1 and
+  .containerDefinitions[0].name == "migrate" and
+  .containerDefinitions[0].image == $image and
+  all(.containerDefinitions[0].secrets[]?; .name != "APK_SIGNER_TOKEN" and .name != "APK_SIGNER_OPERATOR_TOKEN")
+' "$CAPTURE/task-2.json" >/dev/null
+
 # OpenTofu registers infrastructure-only task contract changes, but the service intentionally
 # ignores task-definition drift. An exact override must seed both the migration and service
 # revisions with that corrected contract before the service changes.

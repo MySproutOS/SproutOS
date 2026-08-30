@@ -11,10 +11,9 @@
 #   IMAGE=ghcr.io/mysproutos/sproutos-web:<git-sha> \
 #   NAME_PREFIX=sproutos bin/deploy-ecs-web.sh [--cutover]
 #
-# `ECS_BASE_TASK_DEFINITION` may be an exact task-definition ARN registered by OpenTofu. This is
-# the handoff for infrastructure-only container contract changes: the service intentionally ignores
-# task-definition drift, so the deploy must derive its migration and service revisions from the
-# newly registered revision rather than the revision that is still serving traffic.
+# `SERVICE_TASK_DEFINITION_FILE` and `MIGRATION_TASK_DEFINITION_FILE` are the rendered, versioned
+# task contracts produced by GitHub Actions. The legacy `ECS_BASE_TASK_DEFINITION` fallback remains
+# temporarily so an already-running workflow can finish while the repository variables converge.
 #
 # `--cutover` is for a push-to-main release (or an explicitly approved manual cutover). It pins the
 # website and API rules to ECS's permanent green target groups. Re-running it is idempotent; unlike
@@ -79,39 +78,50 @@ if [ -z "$current_task_arn" ] || [ -z "$capacity_provider" ]; then
   exit 1
 fi
 
-base_task_arn="${ECS_BASE_TASK_DEFINITION:-$current_task_arn}"
-base_json=$(aws ecs describe-task-definition --task-definition "$base_task_arn" --output json)
-base_family=$(jq -r '.taskDefinition.family // empty' <<<"$base_json")
-resolved_base_arn=$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$base_json")
-base_status=$(jq -r '.taskDefinition.status // empty' <<<"$base_json")
 current_family="${current_task_arn##*/}"
 current_family="${current_family%:*}"
-if [ -z "$base_family" ] || [ "$base_family" != "$current_family" ]; then
-  echo "base task definition does not belong to the service family $current_family" >&2
-  exit 1
-fi
-if [ -n "${ECS_BASE_TASK_DEFINITION:-}" ] && [ "$resolved_base_arn" != "$ECS_BASE_TASK_DEFINITION" ]; then
-  echo "ECS_BASE_TASK_DEFINITION must be an exact task-definition ARN including its revision" >&2
-  exit 1
-fi
-if [ "$base_status" != "ACTIVE" ]; then
-  echo "base task definition is not ACTIVE: $base_task_arn" >&2
-  exit 1
-fi
+if [ -n "${SERVICE_TASK_DEFINITION_FILE:-}" ]; then
+  jq -e --arg family "$current_family" --arg image "$IMAGE" '
+    .family == $family and
+    ([.containerDefinitions[].name] | sort == ["api", "website", "worker"]) and
+    all(.containerDefinitions[]; .image == $image)
+  ' "$SERVICE_TASK_DEFINITION_FILE" >/dev/null || {
+    echo "rendered service task definition has the wrong family, containers, or image" >&2
+    exit 1
+  }
+  jq '.' "$SERVICE_TASK_DEFINITION_FILE" > "$tmp_dir/service-task.json"
+  base_family=$current_family
+else
+  base_task_arn="${ECS_BASE_TASK_DEFINITION:-$current_task_arn}"
+  base_json=$(aws ecs describe-task-definition --task-definition "$base_task_arn" --output json)
+  base_family=$(jq -r '.taskDefinition.family // empty' <<<"$base_json")
+  resolved_base_arn=$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$base_json")
+  base_status=$(jq -r '.taskDefinition.status // empty' <<<"$base_json")
+  if [ -z "$base_family" ] || [ "$base_family" != "$current_family" ]; then
+    echo "base task definition does not belong to the service family $current_family" >&2
+    exit 1
+  fi
+  if [ -n "${ECS_BASE_TASK_DEFINITION:-}" ] && [ "$resolved_base_arn" != "$ECS_BASE_TASK_DEFINITION" ]; then
+    echo "ECS_BASE_TASK_DEFINITION must be an exact task-definition ARN including its revision" >&2
+    exit 1
+  fi
+  if [ "$base_status" != "ACTIVE" ]; then
+    echo "base task definition is not ACTIVE: $base_task_arn" >&2
+    exit 1
+  fi
 
-# Keep every field the current task definition is allowed to register, but none of AWS's output-
-# only revision/status/compatibility fields. Every service container gets the exact immutable tag.
-jq --arg image "$IMAGE" '
-  .taskDefinition
-  | {
-      family, taskRoleArn, executionRoleArn, networkMode,
-      containerDefinitions: [.containerDefinitions[] | .image = $image],
-      volumes, placementConstraints, requiresCompatibilities, cpu, memory,
-      ipcMode, pidMode, proxyConfiguration, inferenceAccelerators,
-      ephemeralStorage, runtimePlatform, enableFaultInjection
-    }
-  | with_entries(select(.value != null and .value != []))
-' <<<"$base_json" > "$tmp_dir/service-task.json"
+  jq --arg image "$IMAGE" '
+    .taskDefinition
+    | {
+        family, taskRoleArn, executionRoleArn, networkMode,
+        containerDefinitions: [.containerDefinitions[] | .image = $image],
+        volumes, placementConstraints, requiresCompatibilities, cpu, memory,
+        ipcMode, pidMode, proxyConfiguration, inferenceAccelerators,
+        ephemeralStorage, runtimePlatform, enableFaultInjection
+      }
+    | with_entries(select(.value != null and .value != []))
+  ' <<<"$base_json" > "$tmp_dir/service-task.json"
+fi
 
 service_task_arn=$(aws ecs register-task-definition \
   --cli-input-json "file://$tmp_dir/service-task.json" \
@@ -121,9 +131,21 @@ if [ -z "$service_task_arn" ] || [ "$service_task_arn" = "None" ]; then
   exit 1
 fi
 
-# Copy the API container because it owns the database and ClickHouse runtime contract. Remove its
-# listener port and health check, then replace its command with the ordered, fail-fast deploy path.
-jq --arg family "$base_family-migrate" --arg image "$IMAGE" '
+if [ -n "${MIGRATION_TASK_DEFINITION_FILE:-}" ]; then
+  jq -e --arg family "$base_family-migrate" --arg image "$IMAGE" '
+    .family == $family and
+    (.containerDefinitions | length) == 1 and
+    .containerDefinitions[0].name == "migrate" and
+    .containerDefinitions[0].image == $image and
+    all(.containerDefinitions[0].secrets[]?; .name != "APK_SIGNER_TOKEN" and .name != "APK_SIGNER_OPERATOR_TOKEN")
+  ' "$MIGRATION_TASK_DEFINITION_FILE" >/dev/null || {
+    echo "rendered migration task definition has the wrong contract or image" >&2
+    exit 1
+  }
+  jq '.' "$MIGRATION_TASK_DEFINITION_FILE" > "$tmp_dir/migration-task.json"
+else
+  # Legacy fallback: derive the one-off migration contract from the selected live task revision.
+  jq --arg family "$base_family-migrate" --arg image "$IMAGE" '
   .taskDefinition as $task
   | ($task.containerDefinitions[] | select(.name == "api")) as $api
   | {
@@ -162,7 +184,8 @@ jq --arg family "$base_family-migrate" --arg image "$IMAGE" '
       enableFaultInjection: $task.enableFaultInjection
     }
   | with_entries(select(.value != null and .value != []))
-' <<<"$base_json" > "$tmp_dir/migration-task.json"
+  ' <<<"$base_json" > "$tmp_dir/migration-task.json"
+fi
 
 migration_task_definition=$(aws ecs register-task-definition \
   --cli-input-json "file://$tmp_dir/migration-task.json" \

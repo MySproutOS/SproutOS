@@ -9,6 +9,11 @@ WORKFLOW="$ROOT/.github/workflows/deploy.yml"
 grep -q "vars.ECS_WEB_ENABLED == 'true'" "$WORKFLOW"
 grep -q 'bin/deploy-ecs-web.sh --cutover' "$WORKFLOW"
 grep -q 'IMAGE:.*needs.image.outputs.image.*needs.release.outputs.version' "$WORKFLOW"
+grep -q 'task-definition: deploy/ecs/web-task-definition.json' "$WORKFLOW"
+grep -q 'task-definition: deploy/ecs/web-migrate-task-definition.json' "$WORKFLOW"
+[ "$(grep -c 'aws-actions/amazon-ecs-render-task-definition@v1' "$WORKFLOW")" -eq 4 ]
+grep -q 'SERVICE_TASK_DEFINITION_FILE:.*render-worker.outputs.task-definition' "$WORKFLOW"
+grep -q 'MIGRATION_TASK_DEFINITION_FILE:.*render-migration.outputs.task-definition' "$WORKFLOW"
 
 # The gate must cover all three legacy phases. Merely adding the ECS job while leaving one of these
 # behind can revive EC2 workers or make an old image run the new migration.

@@ -452,14 +452,44 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Render website image into the versioned task definition
+        id: render-website
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/web-task-definition.json
+          container-name: website
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render API image into the versioned task definition
+        id: render-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-website.outputs.task-definition }}
+          container-name: api
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render worker image into the versioned task definition
+        id: render-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-api.outputs.task-definition }}
+          container-name: worker
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render migration image into the versioned task definition
+        id: render-migration
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/web-migrate-task-definition.json
+          container-name: migrate
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
       - name: Run the image's migrations, update ECS, and pin traffic to green
         run: bin/deploy-ecs-web.sh --cutover
         env:
           IMAGE: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
-          # OpenTofu owns container environment and IAM contracts while releases own images. When
-          # an apply registers a corrected base revision, every automatic deploy must inherit it or
-          # the next code-only push silently restores the old contract.
-          ECS_BASE_TASK_DEFINITION: ${{ vars.ECS_BASE_TASK_DEFINITION }}
+          SERVICE_TASK_DEFINITION_FILE: ${{ steps.render-worker.outputs.task-definition }}
+          MIGRATION_TASK_DEFINITION_FILE: ${{ steps.render-migration.outputs.task-definition }}
           # Two is the HA floor and matches OpenTofu's service/ASG declaration. The deploy script
           # rejects a different value rather than letting repository configuration silently remove
           # a production replica.
