@@ -12,6 +12,10 @@ node_modules
 /coverage
 apps/website/src/app/**/test-unregistered/
 
+# Python acceptance fixtures run through uv without leaving bytecode in the worktree.
+__pycache__/
+*.py[cod]
+
 # next.js
 .next/
 out/

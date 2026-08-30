@@ -1,4 +1,4 @@
-import { availableBalance } from "@lib/billing"
+import { lockAvailableBalance } from "@lib/billing"
 import { crudAuditLog, crudProjectEnvVar } from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
 import {
@@ -334,25 +334,16 @@ const app = new Hono()
       const body = c.req.valid("json")
       const organization = c.var.organization
 
-      if (!hasProvisioningCredit(await availableBalance(db, organization.id))) {
-        return throwError(
-          c,
-          402,
-          ErrorCode.InsufficientCredit,
-          "Add credit before creating a database. Granting database access does not itself charge anything.",
-        )
-      }
-
       if (body.projectId != null) {
         // The foreign key proves the project exists, not that it is this organization's.
-        const owned = await db
+        const ownedProject = await db
           .selectFrom("project")
           .select("id")
           .where("id", "=", body.projectId)
           .where("organizationId", "=", organization.id)
           .where("deletedAt", "is", null)
           .executeTakeFirst()
-        if (owned === undefined) {
+        if (ownedProject === undefined) {
           return throwBadRequest(c, "That project does not belong to this organization")
         }
       }
@@ -361,18 +352,44 @@ const app = new Hono()
       if (region === undefined) return throwBadRequest(c, "No region is configured")
 
       const backendServiceId = v7()
-      await db
-        .insertInto("backendService")
-        .values({
-          id: backendServiceId,
-          organizationId: organization.id,
-          projectId: body.projectId ?? null,
-          regionId: region.id,
-          name: body.name,
-          kind: body.kind,
-          status: "provisioning",
-        })
-        .execute()
+      const hasCredit = await db.transaction().execute(async (tx) => {
+        /*
+          The lock and the durable provisioning row are one decision.
+
+          Reading the balance before opening this transaction allowed a concurrent charge to take
+          the account to zero between the check and this insert. The resource would then be
+          provisioned even though the prepaid invariant had already stopped permitting new work.
+          Every ledger debit uses the same credit-account row lock, so holding it through this
+          insert gives the decision one serial order relative to charging.
+
+          Do not hold the lock during the provider call below. Provisioning can take seconds and a
+          network request must not freeze every ledger write for this organization.
+        */
+        if (!hasProvisioningCredit(await lockAvailableBalance(tx, organization.id))) return false
+
+        await tx
+          .insertInto("backendService")
+          .values({
+            id: backendServiceId,
+            organizationId: organization.id,
+            projectId: body.projectId ?? null,
+            regionId: region.id,
+            name: body.name,
+            kind: body.kind,
+            status: "provisioning",
+          })
+          .execute()
+        return true
+      })
+
+      if (!hasCredit) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before creating a database. Granting database access does not itself charge anything.",
+        )
+      }
 
       try {
         const result = await driverFor(body.kind).provision({

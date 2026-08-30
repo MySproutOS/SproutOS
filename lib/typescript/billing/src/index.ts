@@ -3,6 +3,7 @@ export {
   availableBalance,
   balances,
   InsufficientBalanceError,
+  lockAvailableBalance,
   post,
   type Posting,
   type PostTransaction,
