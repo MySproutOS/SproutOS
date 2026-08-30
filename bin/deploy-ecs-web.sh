@@ -139,6 +139,12 @@ jq --arg family "$base_family-migrate" --arg image "$IMAGE" '
         | .cpu = 128
         | .memoryReservation = 128
         | .command = ["sh", "-c", "node /opt/sproutos/api/migrate.mjs && node /opt/sproutos/api/seed.mjs && node /opt/sproutos/api/clickhouse.mjs"]
+        # The migration task needs the API database/provider contract, but it never serves the
+        # signer protocol. Do not widen either signer bearer token into this transient process.
+        | .secrets = [(.secrets // [])[] | select(
+            .name != "APK_SIGNER_TOKEN" and
+            .name != "APK_SIGNER_OPERATOR_TOKEN"
+          )]
         | del(.portMappings, .healthCheck, .dependsOn, .links, .volumesFrom)
         | if .logConfiguration then
             .logConfiguration.options["awslogs-stream-prefix"] = "migrate"
