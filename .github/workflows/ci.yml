@@ -248,6 +248,14 @@ jobs:
       - name: Check types
         run: pnpm run check-types
 
+      # The OAuth acceptance test launches the same uv-managed FastAPI fixture a customer would.
+      # A developer machine already has uv through the Brewfile; a clean runner does not, and an
+      # absent executable is not evidence about OAuth, Postgres, or FastAPI.
+      - name: Install uv for FastAPI acceptance
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.6"
+
       - name: Test
         run: pnpm exec vitest --run --config .config/vitest.config.mts --reporter=default --reporter=json --outputFile.json=vitest-report.json
 
