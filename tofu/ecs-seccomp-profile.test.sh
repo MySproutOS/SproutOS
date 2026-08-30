@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 profile="$SCRIPT_DIR/ecs-seccomp-profile.json"
 ecs="$SCRIPT_DIR/ecs.tf"
+web_task="$SCRIPT_DIR/../deploy/ecs/web-task-definition.json"
+migration_task="$SCRIPT_DIR/../deploy/ecs/web-migrate-task-definition.json"
 dockerfile="$SCRIPT_DIR/../apps/website/Dockerfile"
 expected_base_sha=25497e540002b93d4503da25ab60b7f292def23af8ae6f53da115ef6092e5f67
 
@@ -54,10 +56,10 @@ assert_equal "$(jq \
   "$profile")" 1 'argument-scoped Bubblewrap umount2 rule changed'
 
 assert_equal \
-  "$(grep -c 'drop = \["ALL"\]' "$ecs")" 3 \
+  "$(jq -s '[.[].containerDefinitions[] | select(.linuxParameters.capabilities.drop | index("ALL"))] | length' "$web_task" "$migration_task")" 4 \
   'not every control-plane container drops all capabilities'
 assert_equal \
-  "$(grep -c '"no-new-privileges"' "$ecs")" 4 \
+  "$(jq -s '[.[].containerDefinitions[] | select(.dockerSecurityOptions | index("no-new-privileges"))] | length' "$web_task" "$migration_task")" 4 \
   'no-new-privileges task definition contract changed'
 grep -Fq 'check "ecs_control_plane_container_isolation"' "$ecs" || \
   fail 'task-definition isolation check is missing'

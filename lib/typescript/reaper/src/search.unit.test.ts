@@ -46,6 +46,35 @@ describe("OpenSearch Security admin retries", () => {
     expect(fetch).toHaveBeenCalledOnce()
   })
 
+  it("retries a transient Security DELETE conflict", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response("version conflict", { status: 409 }))
+      .mockResolvedValueOnce(new Response('{"status":"OK"}', { status: 200 }))
+    vi.stubGlobal("fetch", fetch)
+
+    await expect(
+      searchAdminRequest(
+        { url: "http://search.invalid" },
+        "DELETE",
+        "/_plugins/_security/api/internalusers/tenant",
+      ),
+    ).resolves.toEqual({ status: "OK" })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not retry an index DELETE conflict", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response("index conflict", { status: 409 }))
+    vi.stubGlobal("fetch", fetch)
+
+    await expect(
+      searchAdminRequest({ url: "http://search.invalid" }, "DELETE", "/tenant_documents"),
+    ).rejects.toMatchObject({ status: 409 })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it("stops after three conflict retries", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

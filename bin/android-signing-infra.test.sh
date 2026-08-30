@@ -8,6 +8,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ANDROID_TF="$ROOT/tofu/android-signing.tf"
 COMPUTE_TF="$ROOT/tofu/compute.tf"
 ECS_TF="$ROOT/tofu/ecs.tf"
+WEB_TASK="$ROOT/deploy/ecs/web-task-definition.json"
 
 require() {
   local pattern=$1 file=$2 message=$3
@@ -122,19 +123,19 @@ require 'ANDROID_CUSTODY_ONLY' "$ROOT/bin/put-app-secrets.sh" \
   'custody parameters need an all-or-nothing out-of-state upload mode'
 require 'APK_SIGNER_TOKEN.*APK_SIGNER_OPERATOR_TOKEN must differ' "$ROOT/bin/put-app-secrets.sh" \
   'the out-of-state upload must reject equal runtime and operator credentials'
-require 'ANDROID_ARTIFACT_BUCKET.*android_artifacts' "$ECS_TF" \
-  'the API and worker need the dedicated bucket name rather than the general build bucket'
-for dependency in \
-  aws_s3_bucket_versioning.android_artifacts \
-  aws_s3_bucket_server_side_encryption_configuration.android_artifacts \
-  aws_s3_bucket_policy.android_artifacts \
-  aws_iam_role_policy_attachment.task_application \
-  aws_iam_role_policy_attachment.task_android_custody_broker \
-  aws_iam_role_policy.ecs_execution_secrets \
-  aws_iam_role_policy.ecs_task_no_parameter_store; do
-  require "$dependency" "$ECS_TF" \
-    "the ECS task definition must wait for $dependency before registration"
-done
+ANDROID_BUCKET_REFERENCES=$(jq \
+  '[.containerDefinitions[].environment[]? | select(.name == "ANDROID_ARTIFACT_BUCKET" and .value == "sproutos-android-artifacts-471112590391")] | length' \
+  "$WEB_TASK")
+if [ "$ANDROID_BUCKET_REFERENCES" -ne 2 ]; then
+  echo 'android signing infrastructure invariant failed: the API and worker need the dedicated bucket name rather than the general build bucket' >&2
+  exit 1
+fi
+require '"taskRoleArn": "arn:aws:iam::471112590391:role/sproutos-task"' "$WEB_TASK" \
+  'the versioned task template must keep the application task role'
+require '"executionRoleArn": "arn:aws:iam::471112590391:role/sproutos-ecs-execution"' "$WEB_TASK" \
+  'the versioned task template must keep the scoped secret-injection role'
+require 'deploy/ecs/web-task-definition\.json' "$ROOT/.github/workflows/deploy.yml" \
+  'production releases must register the reviewed versioned task template'
 TASK_PARAMETER_DENY=$(sed -n \
   '/resource "aws_iam_role_policy" "ecs_task_no_parameter_store"/,/^}/p' "$ECS_TF")
 require 'role[[:space:]]*=[[:space:]]*aws_iam_role.task.id' \

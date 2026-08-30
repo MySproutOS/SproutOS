@@ -140,11 +140,14 @@ export async function searchAdminRequest<T>(
     })
     // eslint-disable-next-line no-await-in-loop
     body = await response.text()
-    // Security config updates rewrite one shared config document. Concurrent idempotent PUTs can
-    // race on its optimistic version even when they address different tenants. Retry only that
-    // transient write conflict, with a small exponential delay and jitter; every other response
-    // keeps its original semantics and a fourth conflict remains visible.
-    if (!(method === "PUT" && response.status === 409 && attempt < 3)) break
+    // Security config updates rewrite one shared config document. Concurrent idempotent writes can
+    // race on its optimistic version even when they address different tenants. This includes a
+    // DELETE racing an unrelated PUT. Retry only writes to the Security API, with a small
+    // exponential delay and jitter; an index DELETE conflict keeps its original semantics and a
+    // fourth Security conflict remains visible.
+    const securityWrite =
+      (method === "PUT" || method === "DELETE") && path.startsWith("/_plugins/_security/api/")
+    if (!(securityWrite && response.status === 409 && attempt < 3)) break
     const delayMs = 25 * 2 ** attempt + Math.floor(Math.random() * 25)
     // eslint-disable-next-line no-await-in-loop
     await new Promise((resolve) => setTimeout(resolve, delayMs))
