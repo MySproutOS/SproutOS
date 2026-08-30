@@ -4,6 +4,7 @@ import {
   customDomainMutationErrorMessage,
   customDomainNeedsPolling,
   eligibleCustomDomainProjects,
+  servingCustomDomains,
   shouldPollCustomDomains,
 } from "./custom-domains"
 import type { Project } from "./projects"
@@ -65,6 +66,21 @@ describe("eligibleCustomDomainProjects", () => {
         project("serverless", false),
       ]),
     ).toEqual([serverless])
+  })
+})
+
+describe("servingCustomDomains", () => {
+  it("returns active and renewal-warning domains in API order", () => {
+    const domains = [
+      { hostname: "old.example", status: "active" },
+      { hostname: "pending.example", status: "pending_dns" },
+      { hostname: "primary.example", status: "renewal_warning" },
+    ] as const
+
+    expect(servingCustomDomains(domains).map((domain) => domain.hostname)).toEqual([
+      "old.example",
+      "primary.example",
+    ])
   })
 })
 

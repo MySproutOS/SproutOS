@@ -3,6 +3,7 @@ import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdMutation,
   getV1OrgsByOrgSlugDomainsOptions,
   getV1OrgsByOrgSlugDomainsQueryKey,
+  getV1OrgsByOrgSlugProjectsByProjectIdDomainsOptions,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckMutation,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -94,6 +95,20 @@ export function useCustomDomains(orgSlug: string) {
     },
     refetchIntervalInBackground: false,
   })
+}
+
+export function useProjectCustomDomains(orgSlug: string, projectId: string) {
+  return useQuery(
+    getV1OrgsByOrgSlugProjectsByProjectIdDomainsOptions({ path: { orgSlug, projectId } }),
+  )
+}
+
+export function servingCustomDomains(
+  domains: ReadonlyArray<Pick<CustomDomain, "hostname" | "status">> | undefined,
+): Array<Pick<CustomDomain, "hostname" | "status">> {
+  return (domains ?? []).filter(
+    (domain) => domain.status === "active" || domain.status === "renewal_warning",
+  )
 }
 
 function useInvalidateCustomDomains(orgSlug: string) {

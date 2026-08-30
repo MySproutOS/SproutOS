@@ -14,6 +14,10 @@ import {
   type Deployment,
   useDeployments,
 } from "@frontends/dashboard/data/deployments"
+import {
+  servingCustomDomains,
+  useProjectCustomDomains,
+} from "@frontends/dashboard/data/custom-domains"
 import type { ProjectDetail } from "@frontends/dashboard/data/projects"
 import { DeployCta } from "./deploy-cta"
 
@@ -38,11 +42,14 @@ export function ProductionDeployment({
   liveDeploymentId: string | null
 }) {
   const deployments = useDeployments(orgSlug, project.id)
+  const customDomains = useProjectCustomDomains(orgSlug, project.id)
 
   const rows = deployments.data ?? []
   const live =
     rows.find((row) => row.id === liveDeploymentId) ??
     rows.find((row) => row.kind === "production" && row.status === "ready")
+  const servingDomains = servingCustomDomains(customDomains.data?.data)
+  const primaryCustomDomain = servingDomains.at(-1)
 
   /*
     A group has no production deployment and never will.
@@ -76,6 +83,22 @@ export function ProductionDeployment({
     )
   }
 
+  const primaryUrl =
+    primaryCustomDomain === undefined ? live.url : `https://${primaryCustomDomain.hostname}`
+  const primaryHostname = primaryCustomDomain?.hostname ?? live.hostname
+  const domainLinks = [
+    ...servingDomains.toReversed().map((domain) => ({
+      hostname: domain.hostname,
+      url: `https://${domain.hostname}`,
+    })),
+    ...(live.url === null || live.hostname === null
+      ? []
+      : [{ hostname: live.hostname, url: live.url }]),
+  ].filter(
+    (domain, index, domains) =>
+      domains.findIndex((candidate) => candidate.hostname === domain.hostname) === index,
+  )
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-5 py-5">
@@ -83,12 +106,12 @@ export function ProductionDeployment({
           <h2 className="text-sm font-medium">Production Deployment</h2>
           <div className="flex shrink-0 items-center gap-2">
             <RollbackControl orgSlug={orgSlug} project={project} rows={rows} liveId={live.id} />
-            {live.url === null ? null : (
+            {primaryUrl === null ? null : (
               <Button
                 size="sm"
                 render={
                   <a
-                    href={live.url}
+                    href={primaryUrl}
                     target="_blank"
                     rel="noreferrer"
                     aria-label="Visit the production deployment"
@@ -104,26 +127,27 @@ export function ProductionDeployment({
 
         <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
           <Field label="Deployment">
-            <span className="tnum font-mono text-[13px] break-all">{live.hostname ?? "—"}</span>
+            <span className="tnum font-mono text-[13px] break-all">{primaryHostname ?? "—"}</span>
           </Field>
 
           <Field label="Domains">
-            {/*
-              The project's own hostname is not a "domain" in the sense this panel means. Custom
-              domains live on their own screen; this shows what is currently serving.
-            */}
-            {live.url === null ? (
+            {domainLinks.length === 0 ? (
               <span className="text-[13px] text-muted-foreground">—</span>
             ) : (
-              <a
-                href={live.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[13px] hover:text-leaf hover:underline"
-              >
-                {new URL(live.url).host}
-                <ExternalLinkIcon className="size-3" aria-hidden="true" />
-              </a>
+              <div className="flex flex-col items-start gap-1">
+                {domainLinks.map((domain) => (
+                  <a
+                    key={domain.hostname}
+                    href={domain.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[13px] hover:text-leaf hover:underline"
+                  >
+                    {domain.hostname}
+                    <ExternalLinkIcon className="size-3" aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
             )}
           </Field>
 
