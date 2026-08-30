@@ -361,6 +361,7 @@ describe("OAuth FastAPI and database acceptance", () => {
       const project = await oauthCall(accessToken, "POST", `/v1/orgs/${orgSlug}/projects`, {
         name: "FastAPI visits",
         kind: "site",
+        region: "us-east-1",
         rootDir: ".",
         dockerfilePath: "Dockerfile",
         source: { type: "repository", repositoryId },

@@ -192,6 +192,7 @@ describe.skipIf(!up)("what a key can do", () => {
 
     const response = await withKey("POST", `/v1/orgs/${orgSlug}/projects`, key, {
       name: "Should not exist",
+      region: "us-east-1",
       source: { type: "blank" },
     })
     expect(response.status).toBe(403)
