@@ -5,7 +5,7 @@ import {
   type S3Client,
 } from "@aws-sdk/client-s3"
 import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import { crudCustomDomain } from "@lib/dao"
+import { crudCustomDomain, fetchCustomDomain } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import type { Redis } from "ioredis"
@@ -297,6 +297,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
   const domainId = v7()
   const issuingDomainId = v7()
   const crashingDomainId = v7()
+  const staleDirectoryDomainId = v7()
 
   beforeAll(async () => {
     await db
@@ -342,6 +343,23 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
         projectId,
         hostname: `${domainId}.example.test`,
         verificationToken: "proof",
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: staleDirectoryDomainId,
+        organizationId,
+        projectId,
+        hostname: `${staleDirectoryDomainId}.example.test`,
+        verificationToken: "proof",
+        status: "active",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateExpiresAt: new Date("2027-11-28T00:00:00Z"),
+        nextRenewalAt: new Date("2027-10-28T00:00:00Z"),
+        nextRetryAt: new Date("2027-10-28T00:00:00Z"),
       })
       .execute()
     await db
@@ -395,6 +413,17 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
     await db.deleteFrom("organization").where("id", "=", organizationId).execute()
     await db.deleteFrom("user").where("id", "=", userId).execute()
     await db.destroy()
+  })
+
+  it("immediately scans active certificates issued by a different ACME directory", async () => {
+    const due = await fetchCustomDomain(db)
+      .listDueQuery(
+        new Date("2026-08-30T00:00:00Z"),
+        "https://acme-v02.api.letsencrypt.org/directory",
+      )
+      .execute()
+
+    expect(due.map(({ id }) => id)).toContain(staleDirectoryDomainId)
   })
 
   it("keeps deleting durable when route withdrawal crashes", async () => {

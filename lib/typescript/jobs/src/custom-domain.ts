@@ -374,7 +374,9 @@ export async function deleteCustomDomain(callbacks: {
 
 export function scanCustomDomains(): JobHandler {
   return async (_job, { db }) => {
-    const due = await fetchCustomDomain(db).listDueQuery(new Date()).execute()
+    const due = await fetchCustomDomain(db)
+      .listDueQuery(new Date(), configuredAcmeDirectoryUrl())
+      .execute()
     for (const domain of due) {
       // eslint-disable-next-line no-await-in-loop -- bounded scan; enqueue idempotency settles races.
       await enqueue(db, {

@@ -74,7 +74,7 @@ export function fetchCustomDomain(db: Kysely<DB>) {
       .orderBy("customDomain.createdAt", "asc")
   }
 
-  function listDueQuery(now: Date) {
+  function listDueQuery(now: Date, certificateDirectoryUrl: string) {
     return db
       .selectFrom("customDomain")
       .select(["id", "organizationId"])
@@ -89,6 +89,15 @@ export function fetchCustomDomain(db: Kysely<DB>) {
           eb.and([
             eb("status", "in", ["active", "renewal_warning"]),
             eb("renewalInfoRetryAt", "<=", now),
+          ]),
+          eb.and([
+            eb("status", "in", ["active", "renewal_warning"]),
+            eb.or([
+              eb("certificateDirectoryUrl", "is", null),
+              eb("certificateDirectoryUrl", "!=", certificateDirectoryUrl),
+              eb("certificateIssuer", "is", null),
+              eb("renewalInfoCertificateId", "is", null),
+            ]),
           ]),
         ]),
       )

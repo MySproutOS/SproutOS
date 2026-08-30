@@ -358,9 +358,13 @@ variable "forum_repo_ids" {
 }
 
 variable "web_image" {
-  description = "The image the website, API and worker all run. Published to GHCR by the deploy workflow."
+  description = "The immutable image the website, API and worker all run. Published to GHCR by the deploy workflow; production must pass an exact commit tag."
   type        = string
-  default     = "ghcr.io/mysproutos/sproutos-web:main"
+
+  validation {
+    condition     = !endswith(var.web_image, ":main") && length(regexall("@sha256:|:[0-9a-f]{12}$", var.web_image)) == 1
+    error_message = "web_image must use an immutable sha256 digest or 12-character hexadecimal commit tag, never :main."
+  }
 }
 
 variable "ecs_instance_count" {
