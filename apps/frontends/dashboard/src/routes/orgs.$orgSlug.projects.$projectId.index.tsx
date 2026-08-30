@@ -191,7 +191,7 @@ function ProjectDetail() {
               condition was hardcoded to null in the data layer — so it read "Not deployed yet" for
               every project forever, including ones that were serving.
             */}
-            {!data.isGroup && (
+            {!data.isGroup && data.runtime !== "workflow" && (
               <ProductionDeployment
                 orgSlug={orgSlug}
                 project={data}

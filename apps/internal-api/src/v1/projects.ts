@@ -112,6 +112,7 @@ const notFoundResponse = {
 type ProjectRow = {
   id: string
   repositoryId: string
+  kind: string
   regionId?: string | null
   primaryChildProjectId?: string | null
   createdAt: Date
@@ -122,15 +123,15 @@ type ProjectRow = {
  * Adds what the project list actually shows: what it has cost, where it runs, and whether its
  * upstream has moved.
  *
- * Five lookups for the whole page rather than five per project. A dashboard with thirty projects
- * would otherwise make 150 round trips to render one screen, and none of them needs to know about
- * any single project to answer for all of them.
+ * Batched lookups for the whole page rather than per-project lookups. A dashboard with thirty
+ * projects would otherwise make hundreds of round trips to render one screen, and none needs to
+ * know about any single project to answer for all of them.
  */
 async function enrich<T extends ProjectRow>(organizationId: string, rows: readonly T[]) {
   if (rows.length === 0) return []
   const projectIds = rows.map((row) => row.id)
 
-  const [rated, regions, behind, live, managers, primaryTargets] = await Promise.all([
+  const [rated, regions, behind, live, domains, managers, primary] = await Promise.all([
     /*
       Rated at read time against the price book in force, never stored. A stored cost is wrong the
       moment a rate changes, and wrong in a way nobody can reconstruct.
@@ -190,6 +191,21 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .where("project.id", "in", projectIds)
       .where("deployment.deletedAt", "is", null)
       .execute(),
+    /*
+      A serving custom hostname is the customer's primary address.
+
+      The group-primary query already knew this, but ordinary projects did not: the list therefore
+      showed the generated sproutos.run deployment while the project detail showed its custom
+      domain. A renewal warning still represents a serving certificate and must not cause fallback.
+    */
+    db
+      .selectFrom("customDomain")
+      .select(["projectId", "hostname", "createdAt"])
+      .where("projectId", "in", projectIds)
+      .where("status", "in", ["active", "renewal_warning"])
+      .where("deletedAt", "is", null)
+      .orderBy("createdAt", "asc")
+      .execute(),
     db
       .selectFrom("project")
       .innerJoin("oauthGrant", "oauthGrant.id", "project.createdByOauthGrantId")
@@ -204,11 +220,12 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .leftJoin("customDomain", (join) =>
         join
           .onRef("customDomain.projectId", "=", "childProject.id")
-          .on("customDomain.status", "=", "active")
+          .on("customDomain.status", "in", ["active", "renewal_warning"])
           .on("customDomain.deletedAt", "is", null),
       )
       .select([
         "groupProject.id as groupProjectId",
+        "childProject.kind as childKind",
         "deployment.url as url",
         "deployment.hostname as hostname",
         "customDomain.hostname as customHostname",
@@ -219,7 +236,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .execute(),
   ])
 
-  // The join is one-to-one today; keeping the map makes this enrichment match the other lookups.
+  // Keeping maps makes every enrichment a single lookup while serializing the project rows.
   const regionByProject = new Map<string, string>()
   for (const row of regions) {
     if (row.projectId !== null && !regionByProject.has(row.projectId)) {
@@ -228,6 +245,10 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   }
   const behindByRepository = new Map(behind.map((row) => [row.repositoryId, row.behindBy]))
   const liveByProject = new Map(live.map((row) => [row.projectId, row]))
+  // Rows are oldest-first and later assignments win, matching the detail screen's newest domain.
+  const customHostnameByProject = new Map(
+    domains.map((domain) => [domain.projectId, domain.hostname]),
+  )
   const managerByProject = new Map(
     managers.map((row) => [row.projectId, { clientId: row.clientId, name: row.name }]),
   )
@@ -235,8 +256,8 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     string,
     { primaryUrl: string | null; primaryHostname: string | null }
   >()
-  for (const target of primaryTargets) {
-    if (primaryByGroup.has(target.groupProjectId)) continue
+  for (const target of primary) {
+    if (target.childKind === "workflow") continue
     const hostname = target.customHostname ?? target.hostname ?? null
     primaryByGroup.set(target.groupProjectId, {
       primaryHostname: hostname,
@@ -254,8 +275,16 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     costMicroUsd: (rated.get(row.id)?.total ?? 0n).toString(),
     region: regionByProject.get(row.id) ?? null,
     hasUpstreamUpdate: (behindByRepository.get(row.repositoryId) ?? 0) > 0,
-    url: liveByProject.get(row.id)?.url ?? null,
-    hostname: liveByProject.get(row.id)?.hostname ?? null,
+    url:
+      row.kind === "workflow"
+        ? null
+        : customHostnameByProject.has(row.id)
+          ? `https://${customHostnameByProject.get(row.id)}`
+          : (liveByProject.get(row.id)?.url ?? null),
+    hostname:
+      row.kind === "workflow"
+        ? null
+        : (customHostnameByProject.get(row.id) ?? liveByProject.get(row.id)?.hostname ?? null),
     managedByOauthApp: managerByProject.get(row.id) ?? null,
     primaryUrl: primaryByGroup.get(row.id)?.primaryUrl ?? null,
     primaryHostname: primaryByGroup.get(row.id)?.primaryHostname ?? null,
@@ -668,6 +697,7 @@ async function ensureRepositoryGroup(
     productionBranch: string | null
     repositoryId: string
     createdByOauthGrantId: string | null
+    regionId: string
   },
 ): Promise<string | null> {
   try {
@@ -711,6 +741,7 @@ async function ensureRepositoryGroup(
         // unique index excludes groups from, so these are recorded rather than meaningful.
         productionBranch: input.productionBranch ?? "main",
         repositoryId: input.repositoryId,
+        regionId: input.regionId,
         rootDir: ".",
         slug,
         state: "ready",
@@ -814,16 +845,13 @@ const app = new Hono()
         )
       }
 
-      let selectedRegion =
-        json.region === undefined || json.region === null
-          ? undefined
-          : await db
-              .selectFrom("region")
-              .select("id")
-              .where("code", "=", json.region)
-              .where("isActive", "=", true)
-              .executeTakeFirst()
-      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+      const selectedRegion = await db
+        .selectFrom("region")
+        .select("id")
+        .where("code", "=", json.region)
+        .where("isActive", "=", true)
+        .executeTakeFirst()
+      if (selectedRegion === undefined) {
         return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
           target: "region",
         })
@@ -1064,6 +1092,7 @@ const app = new Hono()
           productionBranch,
           repositoryId: plan.id,
           createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
+          regionId: selectedRegion.id,
         })
       }
 
@@ -1086,9 +1115,6 @@ const app = new Hono()
             ErrorCode.ValidationFailed,
             { target: "parentProjectId" },
           )
-        }
-        if (json.region === undefined && parent.regionId !== null) {
-          selectedRegion = { id: parent.regionId }
         }
       }
 
@@ -1167,7 +1193,7 @@ const app = new Hono()
         ...(templateInstall === undefined ? {} : { templateInstall }),
         isGroup: json.isGroup ?? false,
         parentProjectId,
-        regionId: selectedRegion?.id ?? null,
+        regionId: selectedRegion.id,
       })
 
       /*
@@ -1413,7 +1439,7 @@ const app = new Hono()
       }
 
       const selectedRegion =
-        json.region === undefined || json.region === null
+        json.region === undefined
           ? undefined
           : await db
               .selectFrom("region")
@@ -1421,7 +1447,7 @@ const app = new Hono()
               .where("code", "=", json.region)
               .where("isActive", "=", true)
               .executeTakeFirst()
-      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+      if (json.region !== undefined && selectedRegion === undefined) {
         return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
           target: "region",
         })
@@ -1559,9 +1585,7 @@ const app = new Hono()
         const row = await crudProject(tx).update(organization.id, projectId, {
           ...(json.name === undefined ? {} : { name: json.name }),
           ...(json.description === undefined ? {} : { description: json.description }),
-          ...(json.region === undefined
-            ? {}
-            : { regionId: json.region === null ? null : selectedRegion?.id }),
+          ...(json.region === undefined ? {} : { regionId: selectedRegion?.id }),
           ...(json.slug === undefined ? {} : { slug: json.slug }),
           ...(json.rootDir === undefined ? {} : { rootDir: json.rootDir }),
           ...(json.dockerfilePath === undefined ? {} : { dockerfilePath: json.dockerfilePath }),

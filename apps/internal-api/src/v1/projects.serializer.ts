@@ -110,7 +110,7 @@ const ProjectSource = Type.Union([
 export const projectSchemaCreateRequest = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 120 }),
   description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
-  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+  region: Type.String({ minLength: 1, maxLength: 64 }),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   kind: Type.Optional(ProjectKind),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -151,7 +151,7 @@ export const projectSchemaCreateRequest = Type.Object({
 export const projectSchemaUpdateRequest = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
-  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+  region: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */

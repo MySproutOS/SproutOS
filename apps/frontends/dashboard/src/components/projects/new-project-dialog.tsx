@@ -31,6 +31,7 @@ import {
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
+import { useRegions } from "@frontends/dashboard/data/projects"
 import { projectCreateErrorMessage } from "./project-create-error"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { isProjectRootDir } from "./project-root-dir"
@@ -177,6 +178,7 @@ function NewProjectForm({
   */
   const [isPrivate, setIsPrivate] = useState(false)
   const [workflowTrigger, setWorkflowTrigger] = useState<"interval" | "webhook">("interval")
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
 
   const navigate = useNavigate()
   const listings = useStoreListings()
@@ -191,6 +193,16 @@ function NewProjectForm({
   const effectiveOwner =
     owner ?? ownerOptions.find((candidate) => candidate.isDefault)?.login ?? null
   const create = useCreateProject(orgSlug)
+  const regions = useRegions()
+  const availableRegions = regions.data?.data ?? []
+  const defaultRegion =
+    availableRegions.find((candidate) => candidate.code === "us-east-1")?.code ??
+    availableRegions[0]?.code ??
+    null
+  // us-east-1 is the product default. Keep it visible as a choice and select it when the server
+  // answers, falling back only if that region is unavailable rather than silently creating a
+  // project with no placement and displaying "—".
+  const region = selectedRegion ?? defaultRegion
 
   /*
     The repository name follows the project name until somebody edits it.
@@ -252,6 +264,7 @@ function NewProjectForm({
   const needsRepoName = source !== "repository"
   const ready =
     name.trim().length > 0 &&
+    region !== null &&
     (source !== "store" || listingId !== null) &&
     (source !== "template" || template !== null) &&
     (source !== "repository" || githubRepoId !== null) &&
@@ -269,6 +282,7 @@ function NewProjectForm({
             body: {
               name: name.trim(),
               kind,
+              region,
               ...(parentProjectId === null ? {} : { parentProjectId }),
               source:
                 source === "store"
@@ -378,6 +392,39 @@ function NewProjectForm({
           </Select>
         </div>
       )}
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="np-region">Region</Label>
+        <Select
+          items={availableRegions.map((candidate) => ({
+            label: candidate.code,
+            value: candidate.code,
+          }))}
+          value={region}
+          onValueChange={(value) => {
+            setSelectedRegion(value)
+          }}
+          disabled={regions.isPending || regions.isError || availableRegions.length === 0}
+        >
+          <SelectTrigger id="np-region">
+            <SelectValue
+              placeholder={regions.isPending ? "Loading regions…" : "Choose a region…"}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {availableRegions.map((candidate) => (
+              <SelectItem key={candidate.code} value={candidate.code}>
+                {candidate.code}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {regions.isError && (
+          <p className="text-[13px] text-destructive">
+            Regions could not be loaded. Try reopening this dialog.
+          </p>
+        )}
+      </div>
 
       {source === "store" && (
         <div className="flex flex-col gap-1.5">

@@ -11,6 +11,7 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import { useLastOrganizationSlug } from "@frontends/dashboard/data/organizations"
+import { useRegions } from "@frontends/dashboard/data/projects"
 import {
   useForkListing,
   useStoreListing,
@@ -29,6 +30,12 @@ function StoreListingDetail() {
   const navigate = useNavigate()
   const fork = useForkListing(orgSlug ?? "")
   const upstreamVisit = useVisitStoreUpstream()
+  const regions = useRegions()
+  const availableRegions = regions.data?.data ?? []
+  const region =
+    availableRegions.find((candidate) => candidate.code === "us-east-1")?.code ??
+    availableRegions[0]?.code ??
+    null
 
   /*
     Generated once per mounted page, not per click.
@@ -41,7 +48,7 @@ function StoreListingDetail() {
   */
   const [idempotencyKey] = useState(() => crypto.randomUUID())
 
-  const canFork = data !== undefined && orgSlug !== null && orgSlug !== undefined
+  const canFork = data !== undefined && orgSlug !== null && orgSlug !== undefined && region !== null
 
   function onFork() {
     if (!canFork) return
@@ -50,6 +57,7 @@ function StoreListingDetail() {
         path: { orgSlug },
         body: {
           name: data.name,
+          region,
           source: { type: "store", storeListingId: data.id },
           idempotencyKey,
         },

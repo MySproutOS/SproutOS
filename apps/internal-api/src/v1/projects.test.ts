@@ -44,11 +44,21 @@ async function call(
   path: string,
   user: TestUser | null,
   body?: unknown,
+  options: { supplyDefaultProjectRegion?: boolean } = {},
 ): Promise<{ status: number; json: Json }> {
+  const isProjectCreate = method === "POST" && /^\/v1\/orgs\/[^/]+\/projects$/.test(path)
+  const requestBody =
+    isProjectCreate &&
+    options.supplyDefaultProjectRegion !== false &&
+    typeof body === "object" &&
+    body !== null &&
+    !Object.hasOwn(body, "region")
+      ? { ...body, region: "us-east-1" }
+      : body
   const response = await app.request(path, {
     method,
     headers: user === null ? { "Content-Type": "application/json" } : authHeaders(user),
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
   })
 
   const text = await response.text()
@@ -224,6 +234,24 @@ describe.skipIf(!reachable)("project routes", () => {
   })
 
   describe("creating a project", () => {
+    it("requires a non-null region", async () => {
+      const missing = await call(
+        "POST",
+        `/v1/orgs/${orgA}/projects`,
+        alice,
+        { name: "Missing Region", source: { type: "blank" } },
+        { supplyDefaultProjectRegion: false },
+      )
+      const explicitNull = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Null Region",
+        region: null,
+        source: { type: "blank" },
+      })
+
+      expect(missing.status).toBe(400)
+      expect(explicitNull.status).toBe(400)
+    })
+
     it("forks a store listing through the one project entry point", async () => {
       const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
         name: "Forked Fixture",
@@ -1405,6 +1433,84 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(entry?.servingMode).toBe("serverless")
     })
 
+    it("prefers a serving custom domain over the generated deployment domain", async () => {
+      const { id: projectId } = await ownProject("Custom Domain Primary")
+      const customHostname = `${projectId}.customer.example.test`
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId,
+          kind: "production",
+          gitSha: "c".repeat(40),
+          status: "ready",
+          url: "https://generated.sproutos.run",
+          hostname: "generated.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deploymentId })
+        .where("id", "=", projectId)
+        .execute()
+      await db
+        .insertInto("customDomain")
+        .values({
+          id: v7(),
+          organizationId: orgAId,
+          projectId,
+          hostname: customHostname,
+          verificationToken: "custom-primary-token",
+          status: "active",
+        })
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      expect(entry?.hostname).toBe(customHostname)
+      expect(entry?.url).toBe(`https://${customHostname}`)
+
+      const detail = await call("GET", `/v1/orgs/${orgA}/projects/${projectId}`, alice)
+      expect(detail.json.hostname).toBe(customHostname)
+      expect(detail.json.url).toBe(`https://${customHostname}`)
+    })
+
+    it("does not expose a deployment domain for a workflow runtime", async () => {
+      const { id: projectId } = await ownProject("Domainless Workflow")
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId,
+          kind: "production",
+          gitSha: "d".repeat(40),
+          status: "ready",
+          url: "https://workflow.sproutos.run",
+          hostname: "workflow.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ kind: "workflow", liveDeploymentId: deploymentId })
+        .where("id", "=", projectId)
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      expect(entry?.hostname).toBeNull()
+      expect(entry?.url).toBeNull()
+
+      const detail = await call("GET", `/v1/orgs/${orgA}/projects/${projectId}`, alice)
+      expect(detail.json.hostname).toBeNull()
+      expect(detail.json.url).toBeNull()
+    })
+
     it("reports zero cost for a project with no metered usage", async () => {
       const { id: projectId } = await ownProject("Unmetered")
 
@@ -1521,7 +1627,12 @@ describe.skipIf(!reachable)("project routes", () => {
       const beforeEntry = (before.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
-      expect(beforeEntry?.region).toBeNull()
+      expect(beforeEntry?.region).toBe("us-east-1")
+
+      const cleared = await call("PATCH", `/v1/orgs/${orgA}/projects/${projectId}`, alice, {
+        region: null,
+      })
+      expect(cleared.status).toBe(400)
 
       const region = await db
         .selectFrom("region")

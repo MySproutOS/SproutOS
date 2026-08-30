@@ -1106,7 +1106,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
   body?: {
     name: string
     description?: string | null
-    region?: string | null
+    region: string
     slug?: string
     kind?: "site" | "workflow"
     rootDir?: string
@@ -1421,7 +1421,7 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
   body?: {
     name?: string
     description?: string | null
-    region?: string | null
+    region?: string
     slug?: string
     rootDir?: string
     dockerfilePath?: string
