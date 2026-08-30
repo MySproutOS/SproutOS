@@ -168,14 +168,15 @@ function AgentChat() {
     }
   }, [orgSlug, projectId, sessionId])
 
-  function selectSession(id: string | null) {
+  function selectSession(id: string | null, draft?: string, preserveBubbles = false) {
+    const changed = sessionIdRef.current !== id
     sessionIdRef.current = id
     setSessionId(id)
-    setBubbles([])
+    if (changed && !preserveBubbles) setBubbles([])
     void navigate({
       to: "/orgs/$orgSlug/projects/$projectId/agent",
       params: { orgSlug, projectId },
-      search: id === null ? {} : { session: id },
+      search: id === null ? {} : { session: id, ...(draft === undefined ? {} : { prompt: draft }) },
       replace: false,
     })
   }
@@ -192,9 +193,16 @@ function AgentChat() {
     abort.current = controller
 
     try {
+      // Give the conversation a durable identity before Daytona starts. Provisioning can take
+      // minutes; with the session and draft in the URL, Reload/Back/Forward never discard the
+      // message the user just sent while the workspace is still booting.
+      const id = sessionId ?? (await createSession(text))
+      if (sessionId === null) selectSession(id, text, true)
+
       await ensureSandboxRunning({ orgSlug, projectId }, controller.signal)
       await sandbox.refetch()
-      const id = sessionId ?? (await createSession())
+      // From this point the messages endpoint persists the user turn, so the URL no longer needs
+      // the draft fallback.
       selectSession(id)
 
       await streamAgentTurn(

@@ -170,8 +170,11 @@ export function useCreateAgentSession(orgSlug: string, projectId: string) {
 
   return {
     ...mutation,
-    createSession: async (): Promise<string> => {
-      const session = await mutation.mutateAsync({ path: { orgSlug, projectId }, body: {} })
+    createSession: async (title?: string): Promise<string> => {
+      const session = await mutation.mutateAsync({
+        path: { orgSlug, projectId },
+        body: title === undefined ? {} : { title },
+      })
       await client.invalidateQueries({
         queryKey: getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey({
           path: { orgSlug, projectId },
