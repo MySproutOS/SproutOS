@@ -1,4 +1,4 @@
-import { crudSandbox } from "@lib/dao"
+import { crudAgentSession, crudSandbox } from "@lib/dao"
 import { SandboxNotFoundError } from "@lib/sandbox"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
@@ -784,9 +784,21 @@ describe("sandbox lifecycle requests", () => {
   it("marks deletion and enqueues it atomically, then refuses a restart", async ({ skip }) => {
     if (!reachable) skip()
     const sandbox = await crudSandbox(db).create({ projectId, userId, state: "running" })
+    const session = await crudAgentSession(db).createSession({
+      projectId,
+      createdByUserId: userId,
+      title: "The workspace being deleted",
+    })
 
     const deleting = await requestSandboxDestroy(db, { organizationId, projectId, userId })
     expect(deleting?.state).toBe("deleting")
+    await expect(
+      db
+        .selectFrom("agentSession")
+        .select("status")
+        .where("id", "=", session.id)
+        .executeTakeFirst(),
+    ).resolves.toMatchObject({ status: "archived" })
     await expect(
       requestSandboxStart(db, { organizationId, projectId, userId, idleTimeoutS: 900 }),
     ).rejects.toBeInstanceOf(SandboxDeletingError)

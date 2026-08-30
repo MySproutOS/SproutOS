@@ -4,7 +4,13 @@ import {
   renderSproutosSkill,
   resolveAgentCredential,
 } from "@lib/agent"
-import { crudMeteringOutbox, crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
+import {
+  crudAgentSession,
+  crudMeteringOutbox,
+  crudSandbox,
+  fetchGithubInstallation,
+  fetchSandbox,
+} from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
 import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
@@ -158,6 +164,7 @@ export async function requestSandboxDestroy(
       idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}`,
       maxAttempts: 3,
     })
+    await crudAgentSession(tx).archiveRestorableForSandboxScope(input.projectId, input.userId)
     return deleting
   })
 }

@@ -391,6 +391,9 @@ function AgentChat() {
                 void finishSandbox
                   .finish()
                   .then(() => {
+                    abort.current?.abort()
+                    abort.current = null
+                    setRunning(false)
                     setConfirmingFinish(false)
                     selectSession(null)
                   })

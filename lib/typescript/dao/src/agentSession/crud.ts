@@ -170,6 +170,37 @@ export function crudAgentSession(db: Kysely<DB>) {
       .execute()
   }
 
+  /**
+   * Close every resumable conversation that shared a sandbox the user explicitly deleted.
+   *
+   * Sandboxes are scoped to a repository group, while agent sessions belong to the particular
+   * group or child project the user opened. Archiving only the route's project leaves another
+   * child's session marked active and causes the dashboard to restore a conversation whose
+   * workspace no longer exists.
+   */
+  async function archiveRestorableForSandboxScope(
+    projectId: string,
+    createdByUserId: string,
+  ): Promise<void> {
+    const projectsInScope = db
+      .selectFrom("project as scopedProject")
+      .select("scopedProject.id")
+      .where((eb) =>
+        eb.or([
+          eb("scopedProject.id", "=", projectId),
+          eb("scopedProject.parentProjectId", "=", projectId),
+        ]),
+      )
+
+    await db
+      .updateTable("agentSession")
+      .set({ status: "archived", updatedAt: new Date() })
+      .where("createdByUserId", "=", createdByUserId)
+      .where("projectId", "in", projectsInScope)
+      .where("status", "in", ["active", "idle"])
+      .execute()
+  }
+
   /** The first prompt becomes the title, so a session list is readable without opening each one. */
   async function titleIfUnset(id: string, prompt: string): Promise<void> {
     const title = prompt.trim().replace(/\s+/g, " ").slice(0, 80)
@@ -184,6 +215,7 @@ export function crudAgentSession(db: Kysely<DB>) {
   }
 
   return {
+    archiveRestorableForSandboxScope,
     appendEvents,
     closeTurn,
     createSession,
