@@ -298,6 +298,7 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
   const issuingDomainId = v7()
   const crashingDomainId = v7()
   const staleDirectoryDomainId = v7()
+  const recheckDomainId = v7()
 
   beforeAll(async () => {
     await db
@@ -343,6 +344,23 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
         projectId,
         hostname: `${domainId}.example.test`,
         verificationToken: "proof",
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: recheckDomainId,
+        organizationId,
+        projectId,
+        hostname: `${recheckDomainId}.example.test`,
+        verificationToken: "sproutos-domain-verification=proof",
+        status: "active",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.recheck",
+        certificateExpiresAt: new Date("2027-11-28T00:00:00Z"),
+        nextRenewalAt: new Date("2027-10-28T00:00:00Z"),
+        nextRetryAt: new Date("2026-08-30T00:00:00Z"),
       })
       .execute()
     await db
@@ -424,6 +442,49 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
       .execute()
 
     expect(due.map(({ id }) => id)).toContain(staleDirectoryDomainId)
+  })
+
+  it("performs a requested DNS re-check for an active certificate", async () => {
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
+    vi.stubEnv("TENANT_INGRESS_HOST", "ingress.sproutos.run")
+    try {
+      const now = new Date("2026-08-30T12:00:00Z")
+      const handler = reconcileCustomDomain({
+        now: () => now,
+        resolver: {
+          resolveTxt: () => Promise.resolve([["sproutos-domain-verification=proof"]]),
+          resolveCname: () => Promise.resolve(["ingress.sproutos.run."]),
+          resolve4: absent,
+          resolve6: absent,
+        },
+        valkey: {
+          get: vi.fn<() => Promise<null>>(() => Promise.resolve(null)),
+          set: vi.fn<() => Promise<"OK">>(() => Promise.resolve("OK")),
+        } as unknown as Redis,
+      })
+
+      await expect(
+        handler({ payload: { domainId: recheckDomainId } } as never, {
+          db,
+          keepAlive: () => Promise.resolve(true),
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toBeUndefined()
+
+      const checked = await db
+        .selectFrom("customDomain")
+        .select(["status", "statusReason", "lastCheckedAt", "nextRetryAt"])
+        .where("id", "=", recheckDomainId)
+        .executeTakeFirstOrThrow()
+      expect(checked).toEqual({
+        status: "active",
+        statusReason: null,
+        lastCheckedAt: now,
+        nextRetryAt: new Date("2027-10-28T00:00:00Z"),
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it("keeps deleting durable when route withdrawal crashes", async () => {

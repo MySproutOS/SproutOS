@@ -554,6 +554,15 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         domain.nextRenewalAt !== null &&
         domain.nextRenewalAt > deps.now()
       ) {
+        const manualDnsCheckRequested =
+          domain.nextRetryAt !== null && domain.nextRetryAt <= deps.now()
+        let renewalDueNow = false
+        let futureSchedule: RenewalSchedule = {
+          nextRenewalAt: domain.nextRenewalAt,
+          renewalInfoRetryAt: domain.renewalInfoRetryAt,
+          renewalInfoExplanationUrl: domain.renewalInfoExplanationUrl,
+          source: domain.renewalInfoRetryAt === null ? "unsupported" : "ari",
+        }
         if (
           domain.renewalInfoRetryAt !== null &&
           domain.renewalInfoRetryAt <= deps.now() &&
@@ -572,10 +581,46 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             renewalInfoExplanationUrl: schedule.renewalInfoExplanationUrl,
             nextRetryAt: nextCertificateWorkAt(schedule),
           })
-          if (schedule.nextRenewalAt > deps.now()) return
-        } else {
-          return
+          renewalDueNow = schedule.nextRenewalAt <= deps.now()
+          futureSchedule = schedule
         }
+
+        // The API clears the ownership cache and moves nextRetryAt to now for a manual re-check.
+        // Do not let the normal future-renewal fast path turn that control into a no-op: verify
+        // both records again while continuing to serve the already-issued certificate.
+        if (!renewalDueNow && manualDnsCheckRequested) {
+          const [ownsHostname, pointsToIngress] = await Promise.all([
+            hasOwnershipTxtCached(
+              deps.resolver,
+              deps.valkey,
+              domain.hostname,
+              domain.verificationToken,
+            ),
+            trafficPointsToIngress(
+              deps.resolver,
+              domain.hostname,
+              required("TENANT_INGRESS_HOST").toLowerCase(),
+            ),
+          ])
+          const missing = [
+            ...(ownsHostname ? [] : ["ownership TXT"]),
+            ...(pointsToIngress ? [] : ["traffic record"]),
+          ].join(" and ")
+          await updateOwned({
+            status: missing === "" ? "active" : "renewal_warning",
+            statusReason:
+              missing === ""
+                ? null
+                : `Certificate remains active, but waiting for the ${missing} to resolve publicly before renewal.`,
+            lastCheckedAt: deps.now(),
+            nextRetryAt:
+              missing === ""
+                ? nextCertificateWorkAt(futureSchedule)
+                : new Date(deps.now().getTime() + RETRY_AFTER_MS),
+            consecutiveFailures: 0,
+          })
+        }
+        if (!renewalDueNow) return
       }
       if (!renewing) {
         const [ownsHostname, pointsToIngress] = await Promise.all([
