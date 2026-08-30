@@ -15,6 +15,7 @@ grep -q 'SERVICE_OBJECT_STORAGE_ROOT_KEY' <<<"$website_secrets"
 
 router_secrets="$(sed -n '/if \[ "\$SERVICE" = "router" \]/,/^fi$/p' "$template")"
 grep -q 'SERVICE_OBJECT_STORAGE_ROOT_KEY' <<<"$router_secrets"
+grep -q '^VALKEY_PROXY_MASTER_QUEUE=1$' <<<"$env_block"
 
 # Extract the router release's literal start script from the workflow. YAML removes the common ten
 # spaces from the block before the shell sees it; do the same here, then ask bash to parse the exact

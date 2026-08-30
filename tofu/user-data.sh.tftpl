@@ -109,6 +109,10 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
+# Queue wakes are control-plane coordination. The router writes them to \`VALKEY_URL\` and its
+# dispatcher drains that same store; without this switch tenant enqueues succeed but no Lambda
+# worker is ever invoked.
+VALKEY_PROXY_MASTER_QUEUE=1
 # The LLM proxy's port, matching \`aws_lb_target_group.llm\`. Unset, \`listeners::llm\` returns without
 # binding — which is the right behaviour for a router that has no proxy secret, and the wrong one
 # here: it would start, pass its own health check on the other listeners, and answer nothing on this

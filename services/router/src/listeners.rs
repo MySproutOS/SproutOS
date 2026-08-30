@@ -26,7 +26,10 @@ use tokio::task::JoinHandle;
 ///
 /// Returns `None` when `VALKEY_PROXY_BACKEND` is unset — not an error. The router's own job is
 /// resolving hostnames to functions, and that works with no tenant Valkey anywhere.
-pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+pub async fn valkey(
+    database_url: &str,
+    master_queue_backend: Option<String>,
+) -> anyhow::Result<Option<JoinHandle<()>>> {
     let Ok(backend) = std::env::var("VALKEY_PROXY_BACKEND") else {
         return Ok(None);
     };
@@ -122,13 +125,19 @@ pub async fn valkey(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>
         );
     }
 
-    let master = if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
-        tracing::info!("master queue enabled; enqueues will be reported for dispatch");
-        Arc::new(valkey_proxy::master::MasterQueue::spawn(
-            backend.as_ref().clone(),
-        ))
-    } else {
-        Arc::new(valkey_proxy::master::MasterQueue::disabled())
+    let master = match master_queue_backend {
+        Some(master_queue_backend) => {
+            /*
+              Wakes are control-plane coordination, not tenant data. The dispatcher reads them
+              from `VALKEY_URL`; writing them back to `VALKEY_PROXY_BACKEND` makes every enqueue
+              succeed while no worker can ever see it when those are different production stores.
+            */
+            tracing::info!("master queue enabled; enqueues will be reported for dispatch");
+            Arc::new(valkey_proxy::master::MasterQueue::spawn(
+                master_queue_backend,
+            ))
+        }
+        None => Arc::new(valkey_proxy::master::MasterQueue::disabled()),
     };
 
     let listener = TcpListener::bind(&listen)
