@@ -1709,9 +1709,10 @@ async fn a_real_celery_repository_round_trips_a_task() {
         sproutos_tenant_auth::encode_short_id(service_id),
         queue
     );
-    assert!(
-        members.contains(&expected),
-        "missing Celery wake: {members}"
+    assert_eq!(
+        members,
+        format!("*1\r\n${}\r\n{expected}\r\n", expected.len()),
+        "Celery must wake only its published queue; binding and unacknowledged-delivery writes are not jobs: {members}"
     );
 
     raw.send(&["DEL", "sproutos:master:wake"]).await;

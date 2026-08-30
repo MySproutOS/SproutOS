@@ -816,24 +816,27 @@ mod tests {
 /// that finds nothing and scales back down. The opposite mistake — a queue with jobs and no worker
 /// — is a customer's job that never runs.
 ///
+/// Do not add bookkeeping writes merely because they mutate Valkey. Celery declares Kombu bindings
+/// with `SADD` and tracks unacknowledged deliveries with `ZADD`; treating those as publishes made
+/// every Lambda drain enqueue another drain, so one job fanned out into an invocation loop. Celery
+/// publishes with a list push. BullMQ's sorted-set and hash writes happen inside its Lua command,
+/// which is already covered here.
+///
 /// `EVAL_RO`, `EVALSHA_RO` and `FCALL_RO` are excluded: the server itself refuses writes from them,
 /// so they cannot enqueue anything.
-pub fn adds_work(verb: &str) -> bool {
-    matches!(
-        verb,
-        "LPUSH"
-            | "RPUSH"
-            | "LPUSHX"
-            | "RPUSHX"
-            | "LMOVE"
-            | "RPOPLPUSH"
-            | "ZADD"
-            | "XADD"
-            | "SADD"
-            | "EVAL"
-            | "EVALSHA"
-            | "FCALL"
-    )
+pub fn adds_work(verb: &str, first_key: &[u8], prefix: &[u8]) -> bool {
+    match verb {
+        // Celery and direct list/stream producers publish with these commands.
+        "LPUSH" | "RPUSH" | "LPUSHX" | "RPUSHX" | "XADD" => true,
+        // BullMQ scripts use the published `bull:<queue>:...` key family. Kombu also uses Lua for
+        // visibility-timeout bookkeeping (`unacked_mutex`); accepting every script made that lock
+        // look like a queue and recursively woke another Lambda drain.
+        "EVAL" | "EVALSHA" | "FCALL" => first_key
+            .strip_prefix(prefix)
+            .unwrap_or(first_key)
+            .starts_with(b"bull:"),
+        _ => false,
+    }
 }
 
 /// The queue a key belongs to, from the key as the *tenant* wrote it.
@@ -912,10 +915,23 @@ mod master_queue_tests {
 
     #[test]
     fn only_verbs_that_can_enqueue_wake_a_queue() {
-        for verb in ["LPUSH", "RPUSH", "ZADD", "XADD", "EVALSHA", "EVAL", "FCALL"] {
-            assert!(adds_work(verb), "{verb} should wake a queue");
+        for verb in ["LPUSH", "RPUSH", "XADD"] {
+            assert!(
+                adds_work(verb, b"celery", PREFIX),
+                "{verb} should wake a queue"
+            );
         }
-        // Reads, and the acknowledgement traffic a running worker produces.
+        for verb in ["EVALSHA", "EVAL", "FCALL"] {
+            assert!(
+                adds_work(verb, b"{kv:01hb}:bull:emails:wait", PREFIX),
+                "BullMQ {verb} should wake a queue"
+            );
+            assert!(
+                !adds_work(verb, b"{kv:01hb}:unacked_mutex", PREFIX),
+                "Kombu bookkeeping {verb} must not wake a queue"
+            );
+        }
+        // Reads, and the binding/unacknowledged/acknowledgement traffic a running worker produces.
         for verb in [
             "GET",
             "LRANGE",
@@ -925,12 +941,19 @@ mod master_queue_tests {
             "ZREM",
             "HGET",
             "XACK",
+            "SADD",
+            "ZADD",
+            "LMOVE",
+            "RPOPLPUSH",
             "DEL",
             "EVALSHA_RO",
             "EVAL_RO",
             "FCALL_RO",
         ] {
-            assert!(!adds_work(verb), "{verb} should not wake a queue");
+            assert!(
+                !adds_work(verb, b"celery", PREFIX),
+                "{verb} should not wake a queue"
+            );
         }
     }
 }

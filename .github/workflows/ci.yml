@@ -130,6 +130,7 @@ jobs:
       # difference between the two.
       SERVICE_VALKEY_PUBLIC_HOST: localhost
       SERVICE_POSTGRES_PUBLIC_HOST: localhost
+      SERVICE_POSTGRES_PUBLIC_PORT: "5433"
       SERVICE_SEARCH_PUBLIC_HOST: localhost
       SEARCH_ADMIN_URL: http://127.0.0.1:29200
       SEARCH_ADMIN_USER: admin
@@ -221,6 +222,28 @@ jobs:
       # a state no deployment ever has, and the route tests read against it.
       - name: Seed reference data
         run: pnpm --filter=dbmigrator run seed:run
+
+      # The OAuth acceptance fixture must use the exact tenant URI returned to a customer. Pointing
+      # that URI at Postgres directly only tests that Postgres rejects the proxy credential, so run
+      # the real wire proxy in front of the CI cluster before the fixture provisions its database.
+      - name: Start the Postgres tenant proxy
+        run: |
+          cargo build -p pg-proxy
+          PG_PROXY_LISTEN=127.0.0.1:5433 \
+            PG_PROXY_DATABASE_URL="$DATABASE_URL" \
+            PG_PROXY_BACKEND_HOST=127.0.0.1 \
+            PG_PROXY_BACKEND_PORT=5432 \
+            PG_PROXY_BACKEND_USER=postgres \
+            PG_PROXY_BACKEND_PASSWORD=postgres \
+            ./target/debug/pg-proxy >"$RUNNER_TEMP/pg-proxy.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if (echo >/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pg-proxy.log"
+          exit 1
 
       - name: Build
         run: pnpm run build

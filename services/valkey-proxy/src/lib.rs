@@ -255,13 +255,12 @@ pub async fn serve(
                                     // `args[1]`: for EVAL that argument is the script and the first
                                     // key follows `numkeys`. `queue_of` accepts both the published
                                     // BullMQ form and a Celery key the proxy just prefixed.
-                                    let queue = if adds_work(&verb) {
-                                        namespaced_keys.first().and_then(|key| {
-                                            queue_of(&command.args[key.index], &prefix)
-                                        })
-                                    } else {
-                                        None
-                                    };
+                                    let queue = namespaced_keys.first().and_then(|key| {
+                                        let first_key = &command.args[key.index];
+                                        adds_work(&verb, first_key, &prefix)
+                                            .then(|| queue_of(first_key, &prefix))
+                                            .flatten()
+                                    });
                                     upstream_write.write_all(&command.encode()).await?;
                                     let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE") {
                                         ReplyRewrite::Pubsub
