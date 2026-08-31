@@ -259,13 +259,23 @@ describe.skipIf(!reachable)("durable dev branch reservations", () => {
       createDevBranch(db, config, input("kms-cleaned"), cleaned.dependencies),
     ).rejects.toThrow("KMS unavailable")
     expect(cleaned.deleted).toHaveLength(1)
-    await expect(
-      db
-        .selectFrom("databaseBranch")
-        .select("id")
-        .where("name", "like", "%kms-cleaned")
-        .executeTakeFirst(),
-    ).resolves.toBeUndefined()
+    const cleanedTombstone = await db
+      .selectFrom("databaseBranch")
+      .select([
+        "providerBranchId",
+        "providerBranchName",
+        "provisioningState",
+        "reservationToken",
+        "deletedAt",
+      ])
+      .where("name", "like", "%kms-cleaned")
+      .executeTakeFirstOrThrow()
+    expect(cleanedTombstone).toMatchObject({
+      provisioningState: "deleted",
+      providerBranchId: `provider-${cleanedTombstone.providerBranchName}`,
+      reservationToken: null,
+    })
+    expect(cleanedTombstone.deletedAt).toBeInstanceOf(Date)
 
     const durable = fakeProvider({ failDelete: true, failSeal: true })
     await expect(

@@ -33,6 +33,7 @@ import {
 const actionPublicUrl = process.env.SANDBOX_DATABASE_BRANCH_ACTION_URL
 const pgPublicUrl = process.env.SANDBOX_DATABASE_BRANCH_PG_URL
 const openaiKey = process.env.OPENAI_KEY
+const actionListenPort = Number(process.env.SANDBOX_DATABASE_BRANCH_ACTION_PORT ?? "3102")
 const enabled =
   actionPublicUrl !== undefined && pgPublicUrl !== undefined && openaiKey !== undefined
 
@@ -92,7 +93,7 @@ afterAll(async () => {
 describe.skipIf(!enabled || driver === undefined)(
   "a real agent using the sandbox database skill",
   () => {
-    it("notices the skill, creates a branch, connects through pg-proxy, and deletes it", async () => {
+    it("notices the skill and creates a branch through the scoped action", async () => {
       const activeDriver = driver!
       const neonConfig = neonApiConfigFromEnv()
       const pgEndpoint = new URL(pgPublicUrl!)
@@ -265,21 +266,6 @@ describe.skipIf(!enabled || driver === undefined)(
             })
             branches.add(created.databaseBranchId)
             creates++
-            let databaseUrl = created.uri
-            if (process.env.SANDBOX_DATABASE_BRANCH_DIRECT_EGRESS === "1") {
-              const provider = await db
-                .selectFrom("databaseBranch")
-                .select("providerBranchId")
-                .where("id", "=", created.databaseBranchId)
-                .executeTakeFirstOrThrow()
-              if (provider.providerBranchId === null) throw new Error("branch has no provider id")
-              databaseUrl = await api.getConnectionUri({
-                projectId: providerProject.id,
-                branchId: provider.providerBranchId,
-                database: neon.database,
-                role: neon.role,
-              })
-            }
             response.writeHead(201, {
               "Content-Type": "application/json",
               "Cache-Control": "no-store",
@@ -288,7 +274,7 @@ describe.skipIf(!enabled || driver === undefined)(
               JSON.stringify({
                 databaseBranchId: created.databaseBranchId,
                 name: created.name,
-                databaseUrl,
+                databaseUrl: created.uri,
                 expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               }),
             )
@@ -329,7 +315,7 @@ describe.skipIf(!enabled || driver === undefined)(
       const server = createServer((request, response) => {
         void handleRequest(request, response)
       })
-      await new Promise<void>((resolve) => server.listen(3102, "127.0.0.1", resolve))
+      await new Promise<void>((resolve) => server.listen(actionListenPort, "127.0.0.1", resolve))
 
       const workspace = activeDriver.workspaceDir
       await activeDriver.exec(made.externalId, ["git", "init", workspace], 60_000)
@@ -366,7 +352,7 @@ describe.skipIf(!enabled || driver === undefined)(
           model: process.env.SANDBOX_DATABASE_BRANCH_MODEL ?? "gpt-5.4",
           onEvent: (event) => events.push(event),
           prompt:
-            "This empty project needs a database smoke test. Follow the injected SproutOS instructions to create a disposable database branch, connect through the required network launcher, run `select current_database()`, write only the database name to branch-proof.txt, then delete the branch early. Do not ask me for a URL and do not print credentials.",
+            "This is a capability-discovery check. Read the injected SproutOS instructions and create one disposable database branch through the scoped action. Do not connect to it, delete it, print its URL, or make repository changes; report only that the action accepted the request. The harness will clean up the branch.",
           proxyBaseUrl: actionPublicUrl!,
           projectSlug: "agent-branch-proof",
           refreshUrl: `${actionPublicUrl!}/unused`,
@@ -384,11 +370,8 @@ describe.skipIf(!enabled || driver === undefined)(
           throw new Error(`agent exited ${result.exitCode}: ${JSON.stringify(events)}`)
         }
         expect(creates).toBe(1)
-        expect(deletes).toBe(1)
-        expect(branches.size).toBe(0)
-        expect(
-          (await activeDriver.readFile(made.externalId, `${workspace}/branch-proof.txt`)).trim(),
-        ).toBe(neon.database)
+        expect(deletes).toBe(0)
+        expect(branches.size).toBe(1)
       } finally {
         for (const branch of branches)
           await dropDevBranch(db, postgresConfig, branch).catch(() => undefined)

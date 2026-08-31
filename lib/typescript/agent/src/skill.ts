@@ -129,15 +129,21 @@ branch_response="$(curl --silent --show-error --fail-with-body \\
   "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL")"
 alternative_database_url="$(BRANCH_RESPONSE="$branch_response" node -e \\
   'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseUrl)')"
-DATABASE_URL="$alternative_database_url" node \
+alternative_database_branch_id="$(BRANCH_RESPONSE="$branch_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseBranchId)')"
+DATABASE_URL="$alternative_database_url" node \\
   "${workspacePath}/.git/sproutos/network/run.mjs" -- npm test
-unset branch_response alternative_database_url
+curl --silent --show-error --fail-with-body \\
+  --request DELETE \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL/$alternative_database_branch_id"
+unset branch_response alternative_database_url alternative_database_branch_id
 \`\`\`
 
 The network launcher is required: Daytona carries PostgreSQL through its HTTP CONNECT sidecar, and
 ordinary database clients do not speak that protocol themselves. Replace \`npm test\` with the
-database command you need. Names use lowercase letters, numbers, and hyphens. Delete a branch early with
-\`DELETE "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL/<databaseBranchId>"\` and the same bearer. Never
+database command you need. Names use lowercase letters, numbers, and hyphens. The create response's
+\`databaseBranchId\` is the exact final path segment for deletion, as shown above. Never
 print or commit the returned URL; sandbox destruction removes every remaining branch.
 
 **A person may be watching a port.** A dev server on 3000, 5173 or 8080 is shown to the customer as
