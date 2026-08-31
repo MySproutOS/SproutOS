@@ -475,8 +475,13 @@ export interface CustomDomain {
 }
 
 export interface DatabaseBranch {
+  cleanupAttempts: Generated<number>
+  cleanupError: string | null
+  cleanupRetryAt: Timestamp | null
   createdAt: Generated<Timestamp>
+  createdByUserId: string | null
   databaseInstanceId: string
+  deletedAt: Timestamp | null
   expiresAt: Timestamp | null
   host: string | null
   id: string
@@ -486,7 +491,10 @@ export interface DatabaseBranch {
   parentBranchId: string | null
   pooledHost: string | null
   providerBranchId: string | null
+  providerBranchName: string | null
   providerEndpointId: string | null
+  provisioningState: Generated<string>
+  reservationToken: string | null
   updatedAt: Generated<Timestamp>
 }
 
@@ -646,6 +654,12 @@ export interface MeteringOutbox {
   eventId: string
   id: string
   payload: Json
+}
+
+export interface NeonBranchMeteringState {
+  databaseBranchId: string
+  meteredThrough: Timestamp
+  updatedAt: Generated<Timestamp>
 }
 
 export interface NeonMeteringState {
@@ -1131,6 +1145,12 @@ export interface Sandbox {
   userId: string
 }
 
+export interface SandboxDatabaseBranch {
+  createdAt: Generated<Timestamp>
+  databaseBranchId: string
+  sandboxId: string
+}
+
 export interface SearchCluster {
   acceptingNewTenants: Generated<boolean>
   createdAt: Generated<Timestamp>
@@ -1544,6 +1564,7 @@ export interface DB {
   memberRole: MemberRole
   meteringImportState: MeteringImportState
   meteringOutbox: MeteringOutbox
+  neonBranchMeteringState: NeonBranchMeteringState
   neonMeteringState: NeonMeteringState
   node: Node
   oauthAccessToken: OauthAccessToken
@@ -1579,6 +1600,7 @@ export interface DB {
   role: Role
   roleStatement: RoleStatement
   sandbox: Sandbox
+  sandboxDatabaseBranch: SandboxDatabaseBranch
   searchCluster: SearchCluster
   searchTenant: SearchTenant
   serviceCredential: ServiceCredential

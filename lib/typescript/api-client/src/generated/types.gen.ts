@@ -260,6 +260,109 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryRespon
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData = {
+  body?: {
+    name: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors = {
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The initiating user lacks database:branch:create
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this scope
+   */
+  404: ErrorResponseT
+  /**
+   * No running sandbox or active Postgres service is available
+   */
+  409: ErrorResponseT
+  /**
+   * The sandbox or Neon project branch quota is full
+   */
+  429: ErrorResponseT
+  /**
+   * Neon is unavailable or not configured
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses = {
+  /**
+   * A branch-scoped pg-proxy URL returned exactly once
+   */
+  201: {
+    databaseBranchId: string
+    name: string
+    databaseUrl: string
+    expiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData =
+  {
+    body?: never
+    path: {
+      orgSlug: string
+      projectId: string
+      databaseBranchId: string
+    }
+    query?: never
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches/{databaseBranchId}"
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors =
+  {
+    /**
+     * The short-lived agent token is absent or invalid
+     */
+    401: ErrorResponseT
+    /**
+     * The initiating user lacks database:branch:delete
+     */
+    403: ErrorResponseT
+    /**
+     * The branch is not an additional branch of this sandbox
+     */
+    404: ErrorResponseT
+    /**
+     * Neon is unavailable or not configured
+     */
+    503: ErrorResponseT
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses =
+  {
+    /**
+     * The additional branch was deleted
+     */
+    204: void
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses]
+
 export type GetV1OrgsData = {
   body?: never
   path?: never
@@ -3597,6 +3700,202 @@ export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponses = {
 
 export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponse =
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdResponses]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches"
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors = {
+  /**
+   * Caller lacks database:read
+   */
+  403: ErrorResponseT
+  /**
+   * No active managed Postgres service
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesError =
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors[keyof GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses = {
+  /**
+   * Database branches
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      kind: string
+      parentDatabaseBranchId: string | null
+      isProtected: boolean
+      status: string
+      createdAt: Date
+      expiresAt: Date | null
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse =
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses[keyof GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesData = {
+  body?: {
+    name: string
+    parentDatabaseBranchId: string
+  }
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors = {
+  /**
+   * Caller lacks database:branch:create
+   */
+  403: ErrorResponseT
+  /**
+   * Service or parent branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch name or parent state conflicts
+   */
+  409: ErrorResponseT
+  /**
+   * Neon project branch quota is full
+   */
+  429: ErrorResponseT
+  /**
+   * Neon is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesError =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses = {
+  /**
+   * Branch and its one-time connection URI
+   */
+  201: {
+    id: string
+    name: string
+    kind: string
+    parentDatabaseBranchId: string | null
+    isProtected: boolean
+    status: string
+    createdAt: Date
+    expiresAt: Date | null
+  } & {
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+    databaseBranchId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}/rotate"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors = {
+  /**
+   * Caller lacks database:connect
+   */
+  403: ErrorResponseT
+  /**
+   * Branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch is not active
+   */
+  409: ErrorResponseT
+  /**
+   * Credential service is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses = {
+  /**
+   * One-time replacement connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+    databaseBranchId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}"
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors = {
+  /**
+   * Caller lacks database:branch:delete
+   */
+  403: ErrorResponseT
+  /**
+   * Branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch is protected or still has children
+   */
+  409: ErrorResponseT
+  /**
+   * Neon is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses = {
+  /**
+   * Branch deleted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses]
 
 export type GetV1OrgsByOrgSlugAnalysesData = {
   body?: never
@@ -7373,3 +7672,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

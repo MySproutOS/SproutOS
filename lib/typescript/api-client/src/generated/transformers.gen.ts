@@ -2,6 +2,7 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetAdminUsersResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
@@ -33,6 +34,7 @@ import type {
   GetV1OrgsByOrgSlugRepositoriesResponse,
   GetV1OrgsByOrgSlugResponse,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   GetV1OrgsByOrgSlugServicesResponse,
   GetV1OrgsByOrgSlugStoreListingsResponse,
   GetV1OrgsByOrgSlugWorkflowRunsResponse,
@@ -49,6 +51,7 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateResponse,
   PostV1AuthCliTokenResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
@@ -56,6 +59,7 @@ import type {
   PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
@@ -68,6 +72,7 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
@@ -81,6 +86,14 @@ export const postV1AuthCliTokenResponseTransformer = async (
   }
   return data
 }
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse> => {
+    data.expiresAt = new Date(data.expiresAt)
+    return data
+  }
 
 export const getV1OrgsResponseTransformer = async (data: any): Promise<GetV1OrgsResponse> => {
   data.data = data.data.map((item: any) => {
@@ -516,6 +529,29 @@ export const getV1OrgsByOrgSlugServicesResponseTransformer = async (
   return data
 }
 
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    if (item.expiresAt) {
+      item.expiresAt = new Date(item.expiresAt)
+    }
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
+  return data
+}
+
 export const getV1OrgsByOrgSlugAnalysesResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugAnalysesResponse> => {
@@ -916,5 +952,25 @@ export const getV1UserMeImpersonationResponseTransformer = async (
   if (data.expiresAt) {
     data.expiresAt = new Date(data.expiresAt)
   }
+  return data
+}
+
+export const getAdminUsersResponseTransformer = async (
+  data: any,
+): Promise<GetAdminUsersResponse> => {
+  data.items = data.items.map((item: any) => {
+    if (item.deletedAt) {
+      item.deletedAt = new Date(item.deletedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postAdminUsersImpersonateResponseTransformer = async (
+  data: any,
+): Promise<PostAdminUsersImpersonateResponse> => {
+  data.expiresAt = new Date(data.expiresAt)
   return data
 }

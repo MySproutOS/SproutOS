@@ -4,6 +4,7 @@ import {
   CopyIcon,
   DatabaseIcon,
   EyeIcon,
+  GitBranchIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -44,9 +45,13 @@ import {
   type ServiceKind,
   useBackendServices,
   useCreateBackendService,
+  useCreateDatabaseBranch,
   useDeleteBackendService,
+  useDeleteDatabaseBranch,
+  useDatabaseBranches,
   parseObjectStorageConnection,
   useRotateConnection,
+  useRotateDatabaseBranch,
   useViewObjectStorageConnection,
 } from "@frontends/dashboard/data/databases"
 import { useProjects } from "@frontends/dashboard/data/projects"
@@ -160,6 +165,9 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
 
   return (
     <span className="flex items-center justify-end gap-1">
+      {service.kind === "postgres" && service.status === "active" && (
+        <BranchesButton orgSlug={orgSlug} service={service} />
+      )}
       <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
       {service.kind === "object_storage" && (
         <ViewObjectStorageButton orgSlug={orgSlug} service={service} onViewed={setUri} />
@@ -177,6 +185,202 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
         />
       )}
     </span>
+  )
+}
+
+function BranchesButton({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
+  const [parentId, setParentId] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [uri, setUri] = useState<string | null>(null)
+  const branches = useDatabaseBranches(orgSlug, service.id, open)
+  const { createBranch, isPending: isCreating } = useCreateDatabaseBranch(orgSlug, service.id)
+  const { rotateBranch, isPending: isRotating } = useRotateDatabaseBranch(orgSlug, service.id)
+  const { deleteBranch, isPending: isDeleting } = useDeleteDatabaseBranch(orgSlug, service.id)
+  const active = branches.data?.data ?? []
+  const selectedParentId = parentId || active[0]?.id || ""
+
+  const submit = () => {
+    if (name.trim() === "" || selectedParentId === "") return
+    setError(null)
+    createBranch(name.trim(), selectedParentId)
+      .then((created) => {
+        setName("")
+        setParentId(created.id)
+        setUri(created.connectionUri)
+      })
+      .catch(() => {
+        setError("Could not create that branch")
+      })
+  }
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) setError(null)
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Manage branches for ${service.name}`}
+                  >
+                    <GitBranchIcon />
+                  </Button>
+                }
+              />
+            }
+          />
+          <TooltipContent>Create, connect to, and delete Postgres branches.</TooltipContent>
+        </Tooltip>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Branches for {service.name}</DialogTitle>
+            <DialogDescription>
+              Branches are copy-on-write databases retained until you delete them. A connection URI
+              is shown only when a branch is created or its credential is rotated.
+            </DialogDescription>
+          </DialogHeader>
+
+          {branches.isPending && <ListSkeleton rows={2} />}
+          {branches.isError && (
+            <ListError
+              title="Could not load branches"
+              onRetry={() => {
+                void branches.refetch()
+              }}
+            />
+          )}
+          {branches.data !== undefined && (
+            <div className="flex flex-col gap-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead className="w-24" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {active.map((branch) => (
+                    <TableRow key={branch.id}>
+                      <TableCell>
+                        <span className="font-medium">{branch.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {branch.kind === "user" ? "Persistent" : branch.kind}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-[12px] text-muted-foreground">
+                        {active.find((candidate) => candidate.id === branch.parentDatabaseBranchId)
+                          ?.name ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isRotating}
+                            aria-label={`Rotate the credential for ${branch.name}`}
+                            onClick={() => {
+                              rotateBranch(branch.id)
+                                .then(setUri)
+                                .catch(() => undefined)
+                            }}
+                          >
+                            <RefreshCwIcon />
+                          </Button>
+                          {!branch.isProtected && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={isDeleting}
+                              aria-label={`Delete ${branch.name}`}
+                              onClick={() => {
+                                deleteBranch(branch.id).catch(() => {
+                                  setError("Delete its child branches first")
+                                })
+                              }}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          )}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`branch-name-${service.id}`}>New branch name</Label>
+                  <Input
+                    id={`branch-name-${service.id}`}
+                    placeholder="feature-checkout"
+                    value={name}
+                    onChange={(event) => {
+                      setName(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Branch from</Label>
+                  <Select
+                    items={active.map((branch) => ({ label: branch.name, value: branch.id }))}
+                    value={selectedParentId}
+                    onValueChange={(next) => {
+                      setParentId(next ?? "")
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {active.map((branch) => (
+                        <SelectItem key={branch.id} value={branch.id}>
+                          {branch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {error !== null && (
+                  <p className="text-xs text-destructive sm:col-span-2">{error}</p>
+                )}
+                <Button
+                  className="sm:col-span-2"
+                  disabled={isCreating || name.trim() === "" || selectedParentId === ""}
+                  onClick={submit}
+                >
+                  <PlusIcon />
+                  Create branch and show URI
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {uri !== null && (
+        <ConnectionDialog
+          uri={uri}
+          name={`${service.name} branch`}
+          kind="postgres"
+          onClose={() => {
+            setUri(null)
+          }}
+        />
+      )}
+    </>
   )
 }
 

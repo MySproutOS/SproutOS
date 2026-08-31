@@ -1,5 +1,5 @@
 import { usageEventId, type UsageEventRecord } from "@lib/metering"
-import type { NeonProjectConsumption } from "@lib/services"
+import type { NeonBranchConsumption } from "@lib/services"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -12,7 +12,7 @@ import {
 
 const reachable = await (async () => {
   try {
-    await sql`select 1 from neon_metering_state limit 1`.execute(db)
+    await sql`select 1 from neon_branch_metering_state limit 1`.execute(db)
     return true
   } catch {
     return false
@@ -23,7 +23,9 @@ const userId = v7()
 const organizationId = v7()
 const backendServiceId = v7()
 const databaseInstanceId = v7()
+const databaseBranchId = v7()
 const providerProjectId = "quiet-unit-test-123456"
+const providerBranchId = "br-quiet-unit-test-123456"
 const createdAt = new Date("2099-01-01T00:10:00.000Z")
 const config = {
   apiKey: "test-key",
@@ -73,13 +75,26 @@ beforeAll(async () => {
       createdAt,
     })
     .execute()
+  await db
+    .insertInto("databaseBranch")
+    .values({
+      id: databaseBranchId,
+      databaseInstanceId,
+      name: "main",
+      kind: "primary",
+      providerBranchId,
+      providerBranchName: "main",
+      provisioningState: "active",
+      createdAt,
+    })
+    .execute()
 })
 
 afterAll(async () => {
   if (!reachable) return
   await db
     .deleteFrom("meteringOutbox")
-    .where(sql<boolean>`payload ->> 'resource_id' = ${backendServiceId}`)
+    .where(sql<boolean>`payload ->> 'resource_id' = ${databaseBranchId}`)
     .execute()
   await db.deleteFrom("backendService").where("id", "=", backendServiceId).execute()
   await db.deleteFrom("organization").where("id", "=", organizationId).execute()
@@ -110,15 +125,22 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
       releaseBoth = resolve
     })
     const client = {
-      projectConsumption: async (input: { projectIds: string[]; from: Date; to: Date }) => {
+      branchConsumption: async (input: {
+        projectIds: string[]
+        branchIds?: string[]
+        from: Date
+        to: Date
+      }) => {
         calls++
         if (calls === 2) releaseBoth?.()
         await bothCalled
         expect(input.projectIds).toEqual([providerProjectId])
+        expect(input.branchIds).toEqual([providerBranchId])
         const start = new Date(input.to.getTime() - 3_600_000)
         return [
           {
             project_id: providerProjectId,
+            branch_id: providerBranchId,
             periods: [
               {
                 period_id: "79ec829f-1828-4006-ac82-9f1828a0067d",
@@ -138,7 +160,7 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
                 ],
               },
             ],
-          } satisfies NeonProjectConsumption,
+          } satisfies NeonBranchConsumption,
         ]
       },
     }
@@ -151,16 +173,16 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
     expect(calls).toBe(2)
 
     const state = await db
-      .selectFrom("neonMeteringState")
+      .selectFrom("neonBranchMeteringState")
       .select("meteredThrough")
-      .where("backendServiceId", "=", backendServiceId)
+      .where("databaseBranchId", "=", databaseBranchId)
       .executeTakeFirstOrThrow()
     expect(state.meteredThrough).toEqual(new Date("2099-01-02T01:00:00.000Z"))
 
     const rows = await sql<{ eventId: string; payload: string }>`
       select event_id as "eventId", payload::text as payload
       from metering_outbox
-      where payload ->> 'resource_id' = ${backendServiceId}
+      where payload ->> 'resource_id' = ${databaseBranchId}
       order by payload ->> 'dimension'
     `.execute(db)
     expect(rows.rows).toHaveLength(3)
@@ -185,8 +207,8 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
     })
     expect(compute?.eventId).toBe(
       usageEventId({
-        source: "neon-consumption",
-        externalId: `${backendServiceId}:db_compute_cu_second:2099-01-02T00:00:00.000Z`,
+        source: "neon-branch-consumption",
+        externalId: `${databaseBranchId}:db_compute_cu_second:2099-01-02T00:00:00.000Z`,
         occurredAt: new Date("2099-01-02T01:00:00.000Z"),
       }),
     )
@@ -208,16 +230,16 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
         now: failedAt,
         backendServiceIds: [backendServiceId],
         client: {
-          projectConsumption: () => Promise.reject(new Error("provider unavailable")),
+          branchConsumption: () => Promise.reject(new Error("provider unavailable")),
         },
       }),
     ).rejects.toThrow("provider unavailable")
     expect(
       (
         await db
-          .selectFrom("neonMeteringState")
+          .selectFrom("neonBranchMeteringState")
           .select("meteredThrough")
-          .where("backendServiceId", "=", backendServiceId)
+          .where("databaseBranchId", "=", databaseBranchId)
           .executeTakeFirstOrThrow()
       ).meteredThrough,
     ).toEqual(state.meteredThrough)
@@ -228,7 +250,7 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
         now: new Date(state.meteredThrough.getTime() + 170 * 3_600_000),
         backendServiceIds: [backendServiceId],
         client: {
-          projectConsumption: () => {
+          branchConsumption: () => {
             staleCalls++
             return Promise.resolve([])
           },
@@ -236,5 +258,50 @@ describe.skipIf(!reachable)("Neon consumption persistence", () => {
       }),
     ).rejects.toThrow(/older than hourly history/)
     expect(staleCalls).toBe(0)
+
+    // A deleted branch is retained long enough to close its final provider hour, then disappears
+    // from the candidate set instead of being polled forever merely to preserve its meter row.
+    await db
+      .updateTable("databaseBranch")
+      .set({
+        deletedAt: state.meteredThrough,
+        provisioningState: "deleted",
+        reservationToken: null,
+      })
+      .where("id", "=", databaseBranchId)
+      .execute()
+    let deletedCalls = 0
+    const deletedClient = {
+      branchConsumption: () => {
+        deletedCalls++
+        return Promise.resolve([])
+      },
+    }
+    const afterDeletion = new Date("2099-01-02T03:40:00.000Z")
+    expect(
+      await meterNeonDatabases(db, config, {
+        now: afterDeletion,
+        backendServiceIds: [backendServiceId],
+        client: deletedClient,
+      }),
+    ).toBe(0)
+    expect(deletedCalls).toBe(1)
+    expect(
+      (
+        await db
+          .selectFrom("neonBranchMeteringState")
+          .select("meteredThrough")
+          .where("databaseBranchId", "=", databaseBranchId)
+          .executeTakeFirstOrThrow()
+      ).meteredThrough,
+    ).toEqual(new Date("2099-01-02T02:00:00.000Z"))
+    expect(
+      await meterNeonDatabases(db, config, {
+        now: afterDeletion,
+        backendServiceIds: [backendServiceId],
+        client: deletedClient,
+      }),
+    ).toBe(0)
+    expect(deletedCalls).toBe(1)
   })
 })

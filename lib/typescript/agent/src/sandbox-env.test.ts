@@ -13,6 +13,8 @@ const token = {
 const base = {
   actionUrl:
     "https://api.sproutos.me/v1/orgs/acme/projects/01a03e5d-8cbf-7415-9ac6-82c3476aeb5c/agent/actions/group-primary",
+  databaseBranchesUrl:
+    "https://api.sproutos.me/v1/orgs/acme/projects/01a03e5d-8cbf-7415-9ac6-82c3476aeb5c/agent/actions/database-branches",
   proxyBaseUrl: "https://llm.sproutos.me",
   projectSlug: "product-suite",
   groupPrimaryCandidates: [
@@ -73,6 +75,7 @@ describe("sandboxAgentEnv", () => {
     const env = sandboxAgentEnv({ ...base, harness: "codex" })
     expect(env.SPROUTOS_AGENT_ACTION_TOKEN).toBe("spa_access")
     expect(env.SPROUTOS_AGENT_GROUP_PRIMARY_URL).toBe(base.actionUrl)
+    expect(env.SPROUTOS_AGENT_DATABASE_BRANCHES_URL).toBe(base.databaseBranchesUrl)
     expect(env.SPROUTOS_AGENT_PROJECT_SLUG).toBe("product-suite")
     expect(JSON.parse(env.SPROUTOS_AGENT_GROUP_PROJECTS ?? "null")).toEqual(
       base.groupPrimaryCandidates,

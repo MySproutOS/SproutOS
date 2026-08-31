@@ -89,6 +89,7 @@ describe.skipIf(driver === undefined)("a Daytona sandbox", () => {
     const events: unknown[] = []
     const { exitCode } = await runSandboxTurn({
       actionUrl: "https://api.sproutos.me/v1/agent/action",
+      databaseBranchesUrl: "https://api.sproutos.me/v1/agent/database-branches",
       groupPrimaryCandidates: [],
       driver: activeDriver,
       externalId,

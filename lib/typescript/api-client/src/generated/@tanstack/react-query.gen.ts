@@ -18,14 +18,17 @@ import {
   deleteV1OrgsByOrgSlugMembersByMemberId,
   deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId,
   deleteV1OrgsByOrgSlugProjectsByProjectId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   deleteV1OrgsByOrgSlugRolesByRoleId,
   deleteV1OrgsByOrgSlugServicesByServiceId,
+  deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
+  getAdminUsers,
   getV1AndroidCatalogue,
   getV1AndroidClientRelease,
   getV1AuthMe,
@@ -84,6 +87,7 @@ import {
   getV1OrgsByOrgSlugRoles,
   getV1OrgsByOrgSlugRolesActions,
   getV1OrgsByOrgSlugServices,
+  getV1OrgsByOrgSlugServicesByServiceIdBranches,
   getV1OrgsByOrgSlugServicesByServiceIdConnection,
   getV1OrgsByOrgSlugStoreListings,
   getV1OrgsByOrgSlugWorkflowRuns,
@@ -107,6 +111,7 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
+  postAdminUsersImpersonate,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthCliRevoke,
@@ -138,6 +143,7 @@ import {
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
   postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke,
   postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup,
@@ -159,6 +165,8 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
   postV1OrgsByOrgSlugRoles,
   postV1OrgsByOrgSlugServices,
+  postV1OrgsByOrgSlugServicesByServiceIdBranches,
+  postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate,
   postV1OrgsByOrgSlugServicesByServiceIdRotate,
   postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
@@ -195,6 +203,9 @@ import type {
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponse,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
@@ -213,6 +224,9 @@ import type {
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdError,
   DeleteV1OrgsByOrgSlugRolesByRoleIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
   DeleteV1OrgsByOrgSlugServicesByServiceIdData,
   DeleteV1OrgsByOrgSlugServicesByServiceIdError,
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponse,
@@ -222,6 +236,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
+  GetAdminUsersData,
+  GetAdminUsersResponse,
   GetV1AndroidCatalogueData,
   GetV1AndroidClientReleaseData,
   GetV1AndroidClientReleaseError,
@@ -381,6 +397,9 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesError,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionData,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionError,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
@@ -444,6 +463,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateError,
+  PostAdminUsersImpersonateResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
   PostV1AuthCliRevokeData,
@@ -515,6 +537,9 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
@@ -577,6 +602,12 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesError,
   PostV1OrgsByOrgSlugRolesResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
@@ -820,6 +851,68 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryMutat
   }
   return mutationOptions
 }
+
+/**
+ * Creates a short-lived Neon branch for the active sandbox turn
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Deletes an additional database branch owned by this sandbox
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdMutation =
+  (
+    options?: Partial<
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    >,
+  ): UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+  > => {
+    const mutationOptions: UseMutationOptions<
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    > = {
+      mutationFn: async (fnOptions) => {
+        const { data } =
+          await deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId(
+            {
+              ...options,
+              ...fnOptions,
+              throwOnError: true,
+            },
+          )
+        return data
+      },
+    }
+    return mutationOptions
+  }
 
 export const getV1OrgsQueryKey = (options?: Options<GetV1OrgsData>) =>
   createQueryKey("getV1Orgs", options)
@@ -3031,6 +3124,121 @@ export const deleteV1OrgsByOrgSlugServicesByServiceIdMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await deleteV1OrgsByOrgSlugServicesByServiceId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdBranchesData>,
+) => createQueryKey("getV1OrgsByOrgSlugServicesByServiceIdBranches", options)
+
+/**
+ * Lists every active branch of a managed Postgres service
+ */
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesOptions = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdBranchesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugServicesByServiceIdBranches({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey(options),
+  })
+
+/**
+ * Creates a persistent user-managed Neon branch
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdBranches({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Rotates one branch-scoped credential
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate(
+        {
+          ...options,
+          ...fnOptions,
+          throwOnError: true,
+        },
+      )
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Deletes an unprotected database branch
+ */
+export const deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdMutation = (
+  options?: Partial<
+    Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+  >,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+  Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+    Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId({
         ...options,
         ...fnOptions,
         throwOnError: true,
@@ -5665,3 +5873,100 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
+
+export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
+  createQueryKey("getAdminUsers", options)
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsersOptions = (options?: Options<GetAdminUsersData>) =>
+  queryOptions<
+    GetAdminUsersResponse,
+    DefaultError,
+    GetAdminUsersResponse,
+    ReturnType<typeof getAdminUsersQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getAdminUsers({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getAdminUsersQueryKey(options),
+  })
+
+export const getAdminUsersInfiniteQueryKey = (
+  options?: Options<GetAdminUsersData>,
+): QueryKey<Options<GetAdminUsersData>> => createQueryKey("getAdminUsers", options, true)
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsersInfiniteOptions = (options?: Options<GetAdminUsersData>) => {
+  const opts = infiniteQueryOptions<
+    GetAdminUsersResponse,
+    DefaultError,
+    InfiniteData<GetAdminUsersResponse>,
+    QueryKey<Options<GetAdminUsersData>>,
+    string | Pick<QueryKey<Options<GetAdminUsersData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<
+          QueryKey<Options<GetAdminUsersData>>[0],
+          "body" | "headers" | "path" | "query"
+        > =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              }
+        const params = createInfiniteParams(queryKey, page)
+        const { data } = await getAdminUsers({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        })
+        return data
+      },
+      queryKey: getAdminUsersInfiniteQueryKey(options),
+    },
+  )
+  return opts as Omit<typeof opts, "initialData">
+}
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonateMutation = (
+  options?: Partial<Options<PostAdminUsersImpersonateData>>,
+): UseMutationOptions<
+  PostAdminUsersImpersonateResponse,
+  PostAdminUsersImpersonateError,
+  Options<PostAdminUsersImpersonateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostAdminUsersImpersonateResponse,
+    PostAdminUsersImpersonateError,
+    Options<PostAdminUsersImpersonateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postAdminUsersImpersonate({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}

@@ -64,6 +64,10 @@ import {
 import { type AgentProxyTokenInsert, crudAgentProxyToken } from "./agentProxyToken/crud"
 import { fetchAgentProxyToken } from "./agentProxyToken/fetch"
 import { sandboxScopeFor } from "./sandbox/scope"
+import { crudDatabaseBranch } from "./databaseBranch/crud"
+import { fetchDatabaseBranch } from "./databaseBranch/fetch"
+import { crudSandboxDatabaseBranch } from "./sandboxDatabaseBranch/crud"
+import { fetchSandboxDatabaseBranch } from "./sandboxDatabaseBranch/fetch"
 import { fetchGithubInstallation } from "./githubInstallation/fetch"
 import { crudProject } from "./project/crud"
 import { fetchProject } from "./project/fetch"
@@ -172,6 +176,10 @@ export {
   crudAgentCredential,
   crudAgentProxyToken,
   sandboxScopeFor,
+  crudDatabaseBranch,
+  fetchDatabaseBranch,
+  crudSandboxDatabaseBranch,
+  fetchSandboxDatabaseBranch,
   fetchAgentProxyToken,
   crudAgentSession,
   crudAccount,

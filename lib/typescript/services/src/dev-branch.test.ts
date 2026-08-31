@@ -2,11 +2,20 @@ import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
+import { Client } from "pg"
 
-import { createDevBranch, DevBranchUnavailableError, dropDevBranch } from "./dev-branch"
+import {
+  assertDevBranchQuota,
+  createDevBranch,
+  DevBranchQuotaExceededError,
+  DevBranchUnavailableError,
+  dropDevBranch,
+  MAX_SANDBOX_DATABASE_BRANCHES,
+} from "./dev-branch"
 import { neonApi, neonApiConfigFromEnv } from "./neon-api"
 import { neonPostgresConfigFromEnv, parseNeonUri } from "./neon-postgres"
 import { rolePasswordContext } from "./postgres"
+import { databaseNameFor } from "./naming"
 
 /**
  * A sandbox's dev database, against real Neon and a real control plane.
@@ -50,6 +59,31 @@ const projectId = v7()
 const backendServiceId = v7()
 const instanceId = v7()
 const primaryBranchId = v7()
+const sandboxId = v7()
+
+describe("dev branch quotas", () => {
+  it("refuses at both the per-sandbox and provider-wide boundary", () => {
+    expect(() => {
+      assertDevBranchQuota({
+        ownedBranches: 5,
+        maxOwnedBranches: 5,
+        providerBranches: 5,
+        maxProjectBranches: 10,
+      })
+    }).toThrow(DevBranchQuotaExceededError)
+    expect(() => {
+      assertDevBranchQuota({ providerBranches: 10, maxProjectBranches: 10 })
+    }).toThrow(DevBranchQuotaExceededError)
+    expect(() => {
+      assertDevBranchQuota({
+        ownedBranches: 4,
+        maxOwnedBranches: 5,
+        providerBranches: 9,
+        maxProjectBranches: 10,
+      })
+    }).not.toThrow()
+  })
+})
 
 afterAll(async () => {
   if (!reachable) return
@@ -64,6 +98,7 @@ afterAll(async () => {
       .deleteFrom("serviceCredential")
       .where("backendServiceId", "=", backendServiceId)
       .execute()
+    await tx.deleteFrom("sandbox").where("id", "=", sandboxId).execute()
     await tx.deleteFrom("databaseRole").execute()
     await tx.deleteFrom("databaseBranch").where("databaseInstanceId", "=", instanceId).execute()
     await tx.deleteFrom("databaseInstance").where("id", "=", instanceId).execute()
@@ -178,11 +213,17 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
         passwordKmsKeyId: sealed.kmsKeyId,
       })
       .execute()
+    await db
+      .insertInto("sandbox")
+      .values({ id: sandboxId, projectId, userId, state: "starting" })
+      .execute()
 
     const dev = await createDevBranch(db, config!.postgres, {
       backendServiceId,
       organizationId,
       label: "sbx-test",
+      ownerSandboxId: sandboxId,
+      maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
     })
 
     // The URI a sandbox is given names pg-proxy. A Neon host here would be a credential that works
@@ -190,6 +231,18 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
     expect(dev.uri).toContain(config!.postgres.publicHost)
     expect(dev.uri).not.toContain(neon.host)
     expect(dev.uri).not.toContain(neon.password)
+    expect(new URL(dev.uri).pathname).toBe(`/${databaseNameFor(backendServiceId)}`)
+
+    const client = new Client({ connectionString: dev.uri, connectionTimeoutMillis: 15_000 })
+    await client.connect()
+    try {
+      const connected = await client.query<{ database: string }>(
+        "select current_database() as database",
+      )
+      expect(connected.rows[0]?.database).toBe(neon.database)
+    } finally {
+      await client.end()
+    }
 
     const row = await db
       .selectFrom("databaseBranch")
@@ -232,10 +285,11 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
     )
     const after = await db
       .selectFrom("serviceCredential")
-      .select(["id"])
+      .select(["revokedAt"])
       .where("databaseBranchId", "=", dev.databaseBranchId)
       .execute()
-    expect(after).toEqual([])
+    expect(after).toHaveLength(1)
+    expect(after[0]?.revokedAt).toBeInstanceOf(Date)
   }, 600_000)
 
   it("refuses to drop a protected branch", async () => {
@@ -248,4 +302,37 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
       DevBranchUnavailableError,
     )
   }, 60_000)
+
+  it("keeps a metering tombstone when credential setup fails after Neon creates the branch", async () => {
+    const api = neonApi(config!.neon)
+    await expect(
+      createDevBranch(
+        db,
+        config!.postgres,
+        {
+          backendServiceId,
+          organizationId,
+          label: "failed-finalize",
+          ownerSandboxId: sandboxId,
+          maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
+        },
+        {
+          seal: () => Promise.reject(new Error("injected credential sealing failure")),
+        },
+      ),
+    ).rejects.toThrow("injected credential sealing failure")
+
+    const tombstone = await db
+      .selectFrom("databaseBranch")
+      .select(["providerBranchId", "provisioningState", "deletedAt"])
+      .where("databaseInstanceId", "=", instanceId)
+      .where("name", "like", "%failed-finalize")
+      .executeTakeFirstOrThrow()
+    expect(tombstone.providerBranchId).not.toBeNull()
+    expect(tombstone.provisioningState).toBe("deleted")
+    expect(tombstone.deletedAt).toBeInstanceOf(Date)
+    expect((await api.listBranches(neonProjects[0])).map((branch) => branch.id)).not.toContain(
+      tombstone.providerBranchId,
+    )
+  }, 120_000)
 })

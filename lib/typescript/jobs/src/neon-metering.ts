@@ -1,11 +1,11 @@
-/* oxlint-disable no-await-in-loop -- provider batches and per-service transactions are bounded */
+/* oxlint-disable no-await-in-loop -- provider batches and per-branch transactions are bounded */
 import { crudMeteringOutbox } from "@lib/dao"
 import { encodeUsageEvent, usageEventRecord } from "@lib/metering"
 import {
   neonApi,
   neonApiConfigFromEnv,
+  type NeonBranchConsumption,
   type NeonConfig,
-  type NeonProjectConsumption,
 } from "@lib/services"
 import type { DB, JsonValue } from "@sproutos/db"
 import { sql, type Kysely } from "kysely"
@@ -16,27 +16,30 @@ export const METER_NEON_DATABASES_KIND = "billing.meter_neon_databases"
 export const NEON_CONSUMPTION_BATCH_SIZE = 100
 export const NEON_CONSUMPTION_MAX_BATCHES = 10
 export const NEON_CONSUMPTION_LAG_MS = 30 * 60 * 1000
-// Hourly history is available for 168 hours. Staying one hour inside the boundary avoids a range
-// becoming invalid between constructing it and Neon receiving it.
 export const NEON_CONSUMPTION_LOOKBACK_MS = 167 * 60 * 60 * 1000
 
 const GB = 1_000_000_000n
 const QUANTITY_SCALE = 1_000_000_000n
 
 type NeonConsumptionClient = {
-  projectConsumption: (input: {
+  branchConsumption: (input: {
     projectIds: string[]
+    branchIds?: string[]
     from: Date
     to: Date
-  }) => Promise<NeonProjectConsumption[]>
+  }) => Promise<NeonBranchConsumption[]>
 }
 
 type Candidate = {
   backendServiceId: string
+  databaseBranchId: string
   organizationId: string
   projectId: string | null
   providerProjectId: string
+  providerBranchId: string
+  kind: string
   createdAt: Date
+  deletedAt: Date | null
   meteredThrough: Date | null
 }
 
@@ -61,12 +64,7 @@ export function neonConsumptionCutoff(now: Date): Date {
   return new Date(Math.floor((timestamp - NEON_CONSUMPTION_LAG_MS) / 3_600_000) * 3_600_000)
 }
 
-/**
- * Convert Neon's exact byte-month integer into its invoice-aligned GB-month unit.
- *
- * Neon defines GB as 10^9 bytes. Its v2 values have already converted byte-hours using Neon's
- * fixed 744-hour billing month, so applying another time conversion would be wrong.
- */
+/** Convert Neon's exact byte-month integer into its invoice-aligned decimal GB-month unit. */
 export function neonByteMonthsToGbMonths(byteMonths: bigint): string {
   if (byteMonths < 0n) throw new RangeError("Neon byte-months cannot be negative")
   const scaled = (byteMonths * QUANTITY_SCALE) / GB
@@ -90,15 +88,15 @@ function date(value: string, field: string): Date {
   return parsed
 }
 
-function aggregateProject(
-  project: NeonProjectConsumption | undefined,
+function aggregateBranch(
+  branch: NeonBranchConsumption | undefined,
   from: Date,
   to: Date,
 ): AggregatedTimeframe[] {
-  if (project === undefined) return []
+  if (branch === undefined) return []
   const byWindow = new Map<string, AggregatedTimeframe>()
 
-  for (const period of project.periods) {
+  for (const period of branch.periods) {
     for (const timeframe of period.consumption) {
       const start = date(timeframe.timeframe_start, "timeframe_start")
       const end = date(timeframe.timeframe_end, "timeframe_end")
@@ -140,10 +138,8 @@ function initialFrom(candidate: Candidate, to: Date): Date {
 function requestFrom(candidate: Candidate, to: Date): Date {
   const earliest = new Date(to.getTime() - NEON_CONSUMPTION_LOOKBACK_MS)
   if (candidate.meteredThrough !== null && candidate.meteredThrough < earliest) {
-    // Once a service has a watermark, silently jumping it across an unavailable interval would
-    // turn an outage into invisible free usage. Stop and make the gap explicit instead.
     throw new Error(
-      `Neon consumption watermark for ${candidate.backendServiceId} is older than hourly history`,
+      `Neon consumption watermark for branch ${candidate.databaseBranchId} is older than hourly history`,
     )
   }
   return candidate.meteredThrough ?? initialFrom(candidate, to)
@@ -155,25 +151,46 @@ async function candidates(
   backendServiceIds?: string[],
 ): Promise<Candidate[]> {
   let query = db
-    .selectFrom("databaseInstance")
+    .selectFrom("databaseBranch")
+    .innerJoin("databaseInstance", "databaseInstance.id", "databaseBranch.databaseInstanceId")
     .innerJoin("backendService", "backendService.id", "databaseInstance.backendServiceId")
-    .leftJoin("neonMeteringState", "neonMeteringState.backendServiceId", "backendService.id")
+    .leftJoin(
+      "neonBranchMeteringState",
+      "neonBranchMeteringState.databaseBranchId",
+      "databaseBranch.id",
+    )
     .select([
       "backendService.id as backendServiceId",
+      "databaseBranch.id as databaseBranchId",
       "backendService.organizationId",
       "backendService.projectId",
       "databaseInstance.providerProjectId",
-      "databaseInstance.createdAt",
-      "neonMeteringState.meteredThrough",
+      "databaseBranch.providerBranchId",
+      "databaseBranch.kind",
+      "databaseBranch.createdAt",
+      "databaseBranch.deletedAt",
+      "neonBranchMeteringState.meteredThrough",
     ])
     .where("databaseInstance.provider", "=", "neon")
     .where("databaseInstance.deletedAt", "is", null)
     .where("backendService.deletedAt", "is", null)
     .where("databaseInstance.providerProjectId", "is not", null)
+    .where("databaseBranch.providerBranchId", "is not", null)
     .where((eb) =>
       eb.or([
-        eb("neonMeteringState.meteredThrough", "is", null),
-        eb("neonMeteringState.meteredThrough", "<", to),
+        eb("neonBranchMeteringState.meteredThrough", "is", null),
+        eb("neonBranchMeteringState.meteredThrough", "<", to),
+      ]),
+    )
+    .where((eb) =>
+      eb.or([
+        eb("databaseBranch.deletedAt", "is", null),
+        eb("neonBranchMeteringState.meteredThrough", "is", null),
+        eb(
+          "neonBranchMeteringState.meteredThrough",
+          "<",
+          sql<Date>`date_trunc('hour', database_branch.deleted_at) + interval '1 hour'`,
+        ),
       ]),
     )
 
@@ -183,56 +200,58 @@ async function candidates(
   }
 
   return (await query
-    .orderBy(sql`neon_metering_state.metered_through asc nulls first`)
-    .orderBy("backendService.id")
+    .orderBy(sql`neon_branch_metering_state.metered_through asc nulls first`)
+    .orderBy("databaseBranch.id")
     .limit(NEON_CONSUMPTION_BATCH_SIZE)
     .execute()) as Candidate[]
 }
 
-async function persistProject(
+async function persistBranch(
   db: Kysely<DB>,
   candidate: Candidate,
-  project: NeonProjectConsumption | undefined,
+  branch: NeonBranchConsumption | undefined,
   requestedFrom: Date,
   to: Date,
 ): Promise<number> {
   return await db.transaction().execute(async (trx) => {
-    // Lock the durable provider mapping, not merely the optional state row. Two first polls both
-    // see no state row; this existing row is the claim that makes one wait for the other's commit.
     const locked = await trx
-      .selectFrom("databaseInstance")
-      .select("backendServiceId")
-      .where("backendServiceId", "=", candidate.backendServiceId)
-      .where("provider", "=", "neon")
-      .where("deletedAt", "is", null)
+      .selectFrom("databaseBranch")
+      .select("id")
+      .where("id", "=", candidate.databaseBranchId)
       .forUpdate()
       .executeTakeFirst()
     if (locked === undefined) return 0
 
     const state = await trx
-      .selectFrom("neonMeteringState")
+      .selectFrom("neonBranchMeteringState")
       .select("meteredThrough")
-      .where("backendServiceId", "=", candidate.backendServiceId)
+      .where("databaseBranchId", "=", candidate.databaseBranchId)
       .executeTakeFirst()
-    // The provider call spans the earliest due service in a batch. A newer service must not inherit
-    // that earlier range merely because it shared the request; its own creation/lookback boundary
-    // remains the first billable instant.
     const from = state?.meteredThrough ?? initialFrom(candidate, to)
-    if (from >= to) return 0
+    const branchTo =
+      candidate.deletedAt === null
+        ? to
+        : new Date(
+            Math.min(
+              to.getTime(),
+              (Math.floor(candidate.deletedAt.getTime() / 3_600_000) + 1) * 3_600_000,
+            ),
+          )
+    if (from >= branchTo) return 0
 
-    const timeframes = aggregateProject(project, requestedFrom, to).filter(
-      (timeframe) => timeframe.start >= from,
+    const timeframes = aggregateBranch(branch, requestedFrom, to).filter(
+      (timeframe) => timeframe.start >= from && timeframe.end <= branchTo,
     )
     const outbox = crudMeteringOutbox(trx)
     let emitted = 0
 
     for (const timeframe of timeframes) {
       const common = {
-        source: "neon-consumption",
+        source: "neon-branch-consumption",
         organizationId: candidate.organizationId,
         projectId: candidate.projectId,
-        resourceType: "database",
-        resourceId: candidate.backendServiceId,
+        resourceType: "database_branch",
+        resourceId: candidate.databaseBranchId,
         occurredAt: timeframe.end,
         windowStart: timeframe.start,
         windowEnd: timeframe.end,
@@ -241,19 +260,21 @@ async function persistProject(
         chargedExternally: false,
       } as const
       const providerPeriods = [...timeframe.periodIds].toSorted().join(",")
+      const attributes = {
+        provider: "neon",
+        provider_project_id: candidate.providerProjectId,
+        provider_branch_id: candidate.providerBranchId,
+        branch_kind: candidate.kind,
+        provider_period_ids: providerPeriods,
+      }
       const compute = timeframe.metrics.get("compute_unit_seconds") ?? 0n
       if (compute > 0n) {
         const event = usageEventRecord({
           ...common,
-          externalId: `${candidate.backendServiceId}:db_compute_cu_second:${timeframe.start.toISOString()}`,
+          externalId: `${candidate.databaseBranchId}:db_compute_cu_second:${timeframe.start.toISOString()}`,
           dimension: "db_compute_cu_second",
           quantity: compute.toString(),
-          attributes: {
-            provider: "neon",
-            provider_project_id: candidate.providerProjectId,
-            provider_period_ids: providerPeriods,
-            compute_unit_seconds: compute.toString(),
-          },
+          attributes: { ...attributes, compute_unit_seconds: compute.toString() },
         })
         await outbox.create({
           id: v7(),
@@ -268,13 +289,11 @@ async function persistProject(
       if (root + child > 0n) {
         const event = usageEventRecord({
           ...common,
-          externalId: `${candidate.backendServiceId}:db_storage_gb_month:${timeframe.start.toISOString()}`,
+          externalId: `${candidate.databaseBranchId}:db_storage_gb_month:${timeframe.start.toISOString()}`,
           dimension: "db_storage_gb_month",
           quantity: neonByteMonthsToGbMonths(root + child),
           attributes: {
-            provider: "neon",
-            provider_project_id: candidate.providerProjectId,
-            provider_period_ids: providerPeriods,
+            ...attributes,
             root_branch_bytes_month: root.toString(),
             child_branch_bytes_month: child.toString(),
             conversion: "byte_month/1000000000",
@@ -292,13 +311,11 @@ async function persistProject(
       if (history > 0n) {
         const event = usageEventRecord({
           ...common,
-          externalId: `${candidate.backendServiceId}:db_history_storage_gb_month:${timeframe.start.toISOString()}`,
+          externalId: `${candidate.databaseBranchId}:db_history_storage_gb_month:${timeframe.start.toISOString()}`,
           dimension: "db_history_storage_gb_month",
           quantity: neonByteMonthsToGbMonths(history),
           attributes: {
-            provider: "neon",
-            provider_project_id: candidate.providerProjectId,
-            provider_period_ids: providerPeriods,
+            ...attributes,
             instant_restore_bytes_month: history.toString(),
             conversion: "byte_month/1000000000",
           },
@@ -313,13 +330,12 @@ async function persistProject(
     }
 
     await trx
-      .insertInto("neonMeteringState")
-      .values({ backendServiceId: candidate.backendServiceId, meteredThrough: to })
+      .insertInto("neonBranchMeteringState")
+      .values({ databaseBranchId: candidate.databaseBranchId, meteredThrough: branchTo })
       .onConflict((oc) =>
-        oc.column("backendServiceId").doUpdateSet({
-          meteredThrough: to,
-          updatedAt: new Date(),
-        }),
+        oc
+          .column("databaseBranchId")
+          .doUpdateSet({ meteredThrough: branchTo, updatedAt: new Date() }),
       )
       .execute()
     return emitted
@@ -342,29 +358,33 @@ export async function meterNeonDatabases(
     const from = new Date(Math.min(...due.map((candidate) => requestFrom(candidate, to).getTime())))
     if (from >= to) break
 
-    const response = await client.projectConsumption({
-      projectIds: due.map((candidate) => candidate.providerProjectId),
+    const response = await client.branchConsumption({
+      projectIds: [...new Set(due.map((candidate) => candidate.providerProjectId))],
+      branchIds: due.map((candidate) => candidate.providerBranchId),
       from,
       to,
     })
-    const requested = new Set(due.map((candidate) => candidate.providerProjectId))
-    const byProject = new Map<string, NeonProjectConsumption>()
-    for (const project of response) {
-      if (!requested.has(project.project_id)) {
-        throw new Error(`Neon returned unrequested project ${JSON.stringify(project.project_id)}`)
+    const requested = new Map(
+      due.map((candidate) => [candidate.providerBranchId, candidate.providerProjectId]),
+    )
+    const byBranch = new Map<string, NeonBranchConsumption>()
+    for (const branch of response) {
+      if (requested.get(branch.branch_id) !== branch.project_id) {
+        throw new Error(`Neon returned unrequested branch ${JSON.stringify(branch.branch_id)}`)
       }
-      const existing = byProject.get(project.project_id)
-      byProject.set(project.project_id, {
-        project_id: project.project_id,
-        periods: [...(existing?.periods ?? []), ...project.periods],
+      const existing = byBranch.get(branch.branch_id)
+      byBranch.set(branch.branch_id, {
+        project_id: branch.project_id,
+        branch_id: branch.branch_id,
+        periods: [...(existing?.periods ?? []), ...branch.periods],
       })
     }
 
     for (const candidate of due) {
-      emitted += await persistProject(
+      emitted += await persistBranch(
         db,
         candidate,
-        byProject.get(candidate.providerProjectId),
+        byBranch.get(candidate.providerBranchId),
         from,
         to,
       )
@@ -378,6 +398,6 @@ export async function meterNeonDatabases(
 export function meterNeonDatabasesJob(): JobHandler {
   return async (_job, { db }) => {
     const emitted = await meterNeonDatabases(db, neonApiConfigFromEnv())
-    if (emitted > 0) console.info(`[jobs] metered ${emitted} Neon database interval(s)`)
+    if (emitted > 0) console.info(`[jobs] metered ${emitted} Neon database branch interval(s)`)
   }
 }
