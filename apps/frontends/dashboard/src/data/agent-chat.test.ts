@@ -2,11 +2,22 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   type AgentEvent,
   agentSessionIsRunning,
+  agentSessionTitle,
   ensureSandboxRunning,
   latestRestorableAgentSession,
   streamAgentTurn,
   waitForSandboxDeletion,
 } from "./agent-chat"
+
+describe("agentSessionTitle", () => {
+  it("bounds a first prompt to the API's session-title limit", () => {
+    const prompt = "Create an interval workflow and verify the preview. ".repeat(10)
+
+    expect(prompt.length).toBeGreaterThan(200)
+    expect(agentSessionTitle(prompt)).toBe(prompt.slice(0, 200))
+    expect(agentSessionTitle(prompt)).toHaveLength(200)
+  })
+})
 
 /**
  * SSE framing is parsed here rather than by the browser, because EventSource only issues GET
