@@ -15,9 +15,20 @@ export {
 } from "./active-usage-reconciliation"
 export {
   REFRESH_CREDIT_STATES_KIND,
+  protectedObjectStorageReserve,
   refreshCreditStates,
   refreshOrganizationCreditState,
 } from "./credit-state"
+export {
+  METER_OBJECT_STORAGE_KIND,
+  meterObjectStorage,
+  meterObjectStorageJob,
+  objectStorageGbMonthSegments,
+  objectStorageReserveMicroUsd,
+  OBJECT_STORAGE_RETENTION_SECONDS,
+  retainedObjectBytes,
+  type ObjectStorageMeteringOptions,
+} from "./object-storage-metering"
 export {
   decideUpkeepAction,
   type UpkeepAction,

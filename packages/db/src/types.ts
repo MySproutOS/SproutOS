@@ -422,6 +422,14 @@ export interface CreditLedgerEntry {
   seq: Generated<Int8>
 }
 
+export interface CreditRetentionState {
+  deleteAfter: Timestamp | null
+  exhaustedAt: Timestamp | null
+  organizationId: string
+  reserveMicroUsd: Generated<Int8>
+  updatedAt: Generated<Timestamp>
+}
+
 export interface CreditTransaction {
   createdAt: Generated<Timestamp>
   description: string | null
@@ -756,6 +764,14 @@ export interface OauthSigningKey {
   publicJwk: Json
   rotatedAt: Timestamp | null
   status: Generated<string>
+}
+
+export interface ObjectStorageMeteringState {
+  backendServiceId: string
+  currentBytes: Generated<Int8>
+  measuredAt: Timestamp
+  meteredThrough: Timestamp | null
+  updatedAt: Generated<Timestamp>
 }
 
 export interface ObservabilityStream {
@@ -1513,6 +1529,7 @@ export interface DB {
   creditBalanceCache: CreditBalanceCache
   creditHold: CreditHold
   creditLedgerEntry: CreditLedgerEntry
+  creditRetentionState: CreditRetentionState
   creditTransaction: CreditTransaction
   customDomain: CustomDomain
   databaseBranch: DatabaseBranch
@@ -1537,6 +1554,7 @@ export interface DB {
   oauthGrant: OauthGrant
   oauthRefreshToken: OauthRefreshToken
   oauthSigningKey: OauthSigningKey
+  objectStorageMeteringState: ObjectStorageMeteringState
   observabilityStream: ObservabilityStream
   organization: Organization
   organizationInvite: OrganizationInvite

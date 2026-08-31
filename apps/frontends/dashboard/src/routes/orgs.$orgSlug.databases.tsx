@@ -3,6 +3,7 @@ import {
   CheckIcon,
   CopyIcon,
   DatabaseIcon,
+  EyeIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -44,7 +45,9 @@ import {
   useBackendServices,
   useCreateBackendService,
   useDeleteBackendService,
+  parseObjectStorageConnection,
   useRotateConnection,
+  useViewObjectStorageConnection,
 } from "@frontends/dashboard/data/databases"
 import { useProjects } from "@frontends/dashboard/data/projects"
 
@@ -72,10 +75,10 @@ function DatabasesList() {
 
       <PageBody>
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
-          A database can stand on its own or belong to a project. Connection details are shown here;
-          passwords are shown only once, when a database is created or its credential is rotated.
-          There is no later View action because SproutOS does not keep a recoverable copy. If you
-          lose the URI, rotate the credential to issue a replacement.
+          A data service can stand on its own or belong to a project. Most passwords are shown only
+          when created or rotated because SproutOS stores only their hash. Object-storage keys are
+          derived from a platform root key, so an interactive owner can safely view the current S3
+          connection again without rotating it.
         </p>
 
         {isPending && <ListSkeleton rows={3} />}
@@ -158,18 +161,67 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
   return (
     <span className="flex items-center justify-end gap-1">
       <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
+      {service.kind === "object_storage" && (
+        <ViewObjectStorageButton orgSlug={orgSlug} service={service} onViewed={setUri} />
+      )}
       <DeleteButton orgSlug={orgSlug} service={service} />
 
       {uri !== null && (
         <ConnectionDialog
           uri={uri}
           name={service.name}
+          kind={service.kind}
           onClose={() => {
             setUri(null)
           }}
         />
       )}
     </span>
+  )
+}
+
+function ViewObjectStorageButton({
+  orgSlug,
+  service,
+  onViewed,
+}: {
+  orgSlug: string
+  service: BackendService
+  onViewed: (uri: string) => void
+}) {
+  const { view, clear, isPending } = useViewObjectStorageConnection(orgSlug, service.id)
+  const enabled = service.status === "active"
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!enabled || isPending}
+              aria-label={`View the S3 connection for ${service.name}`}
+              onClick={() => {
+                view()
+                  .then((uri) => {
+                    onViewed(uri)
+                    clear()
+                  })
+                  .catch(() => undefined)
+              }}
+            >
+              <EyeIcon />
+            </Button>
+          </span>
+        }
+      />
+      <TooltipContent className="max-w-72 leading-relaxed">
+        {enabled
+          ? "View the current endpoint, bucket, access key, and secret without rotating them."
+          : "Connection details are available after this storage service becomes active."}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -236,7 +288,9 @@ function RotateButton({
           <DialogDescription>
             Your current connection URI stops working immediately. Anything still using it — a
             deployed app, a local script — will fail until you give it the new one. The replacement
-            is shown only once, so copy it before closing.
+            {service.kind === "object_storage"
+              ? "can be viewed again by an interactive owner."
+              : "is shown only once, so copy it before closing."}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -283,8 +337,8 @@ function DeleteButton({ orgSlug, service }: { orgSlug: string; service: BackendS
         <DialogHeader>
           <DialogTitle>Delete {service.name}?</DialogTitle>
           <DialogDescription>
-            The database and everything in it is destroyed. There is no undo and no backup to
-            restore from.
+            {service.kind === "object_storage" ? "The storage service" : "The database"} and
+            everything in it is destroyed. There is no undo and no backup to restore from.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-1.5">
@@ -326,13 +380,16 @@ function DeleteButton({ orgSlug, service }: { orgSlug: string; service: BackendS
 function ConnectionDialog({
   uri,
   name,
+  kind,
   onClose,
 }: {
   uri: string
   name: string
+  kind: ServiceKind
   onClose: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const storage = kind === "object_storage" ? parseObjectStorageConnection(uri) : null
 
   return (
     <Dialog
@@ -345,9 +402,29 @@ function ConnectionDialog({
         <DialogHeader>
           <DialogTitle>Connection URI for {name}</DialogTitle>
           <DialogDescription>
-            This contains the password and will not be shown again. Copy it before closing.
+            {storage === null
+              ? "This contains the password and will not be shown again. Copy it before closing."
+              : "Use these values with an ordinary AWS S3 SDK. Keep the access key and secret private; you can view this derived credential again later."}
           </DialogDescription>
         </DialogHeader>
+        {storage !== null && (
+          <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 rounded-lg border border-border bg-soil-800 p-3 text-[12px]">
+            {[
+              ["Endpoint", storage.endpoint],
+              ["Port", String(storage.port)],
+              ["Bucket", storage.bucket],
+              ["Region", storage.region],
+              ["Access key ID", storage.accessKeyId],
+              ["Secret access key", storage.secretAccessKey],
+              ["Path-style", storage.forcePathStyle ? "Required" : "Not required"],
+            ].map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="min-w-0 break-all font-mono">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         <code className="block max-h-32 overflow-y-auto rounded-lg border border-border bg-soil-800 p-3 font-mono text-[12px] break-all">
           {uri}
         </code>
@@ -541,6 +618,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
         <ConnectionDialog
           uri={uri}
           name={createdName}
+          kind={kind}
           onClose={() => {
             setUri(null)
           }}

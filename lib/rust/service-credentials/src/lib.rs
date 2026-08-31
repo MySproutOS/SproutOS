@@ -74,6 +74,7 @@ pub struct ResolvedService {
     pub credential_id: uuid::Uuid,
     pub backend_service_id: uuid::Uuid,
     pub organization_id: uuid::Uuid,
+    pub project_id: Option<uuid::Uuid>,
 }
 
 /// Reads credentials from the control plane's Postgres.
@@ -321,7 +322,7 @@ impl CredentialStore {
             .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
 
         let statement = "
-            select c.id, s.id, s.organization_id
+            select c.id, s.id, s.organization_id, s.project_id
               from service_credential c
               join backend_service s on s.id = c.backend_service_id
               join organization o on o.id = s.organization_id
@@ -346,6 +347,7 @@ impl CredentialStore {
             credential_id: row.get(0),
             backend_service_id: row.get(1),
             organization_id: row.get(2),
+            project_id: row.get(3),
         }))
     }
 

@@ -37,6 +37,7 @@ const CATEGORY_ORDER = [
   "Postgres",
   "Cache",
   "Queue",
+  "Object storage",
   "AI",
   "Sites",
   "Workflows",
@@ -47,6 +48,7 @@ const CATEGORY_ORDER = [
 export function usageCategory(dimension: string): string {
   if (dimension.startsWith("sandbox_")) return "Sandbox"
   if (dimension.startsWith("db_")) return "Postgres"
+  if (dimension.startsWith("object_storage_")) return "Object storage"
   if (dimension === "valkey_queue_byte_second" || dimension === "workflow_job_enqueued") {
     return "Queue"
   }

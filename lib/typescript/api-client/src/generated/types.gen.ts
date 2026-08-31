@@ -3482,6 +3482,48 @@ export type PostV1OrgsByOrgSlugServicesResponses = {
 export type PostV1OrgsByOrgSlugServicesResponse =
   PostV1OrgsByOrgSlugServicesResponses[keyof PostV1OrgsByOrgSlugServicesResponses]
 
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection"
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors = {
+  /**
+   * This service kind has no recoverable credential
+   */
+  400: ErrorResponseT
+  /**
+   * Caller is not an interactive user or lacks database:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionError =
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors[keyof GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
+  /**
+   * Current object-storage connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+    keyPrefix?: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse =
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses[keyof GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses]
+
 export type PostV1OrgsByOrgSlugServicesByServiceIdRotateData = {
   body?: never
   path: {
@@ -7331,73 +7373,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

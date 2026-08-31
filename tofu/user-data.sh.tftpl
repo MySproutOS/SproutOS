@@ -139,6 +139,10 @@ SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 # Search query observations and hourly primary-storage samples are isolated from the other
 # emitters, while remaining on the router's persistent state volume.
 SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
+# Mutable object requests and delivered bytes are financial events. The storage endpoint refuses
+# to start in production unless it can reserve a durable record before forwarding to S3.
+STORAGE_METERING_SPOOL_DIR=/var/lib/sproutos/storage-metering
+STORAGE_METERING_REQUIRED=1
 # Request and response bytes leaving AWS for Daytona use an isolated durable source. Keeping this
 # off tmpfs is what makes a router restart a retry rather than a free transfer.
 FORWARD_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/sandbox-egress-metering

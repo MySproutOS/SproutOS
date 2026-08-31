@@ -51,6 +51,7 @@ import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
+import { meterObjectStorageJob, METER_OBJECT_STORAGE_KIND } from "./object-storage-metering"
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
 import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 import {
@@ -131,6 +132,7 @@ export const JOB_KINDS = {
   meterSandboxes: SANDBOX_KINDS.meter,
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
   meterNeonDatabases: METER_NEON_DATABASES_KIND,
+  meterObjectStorage: METER_OBJECT_STORAGE_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
   customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
@@ -465,6 +467,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
+  [JOB_KINDS.meterObjectStorage]: meterObjectStorageJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
@@ -574,6 +577,18 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
     maxAttempts: 10,
   })
+  if (process.env.SERVICE_OBJECT_STORAGE_ENABLED === "true") {
+    await enqueue(db, {
+      /*
+        Hourly. A sample bills only the interval bracketed by the preceding successful S3 version
+        inventory, so a failed scan is visible and never replaced by an invented byte count. The
+        same durable sample feeds the protected forty-eight-hour retention floor.
+      */
+      kind: JOB_KINDS.meterObjectStorage,
+      idempotencyKey: `${JOB_KINDS.meterObjectStorage}:${hour}`,
+      maxAttempts: 10,
+    })
+  }
   await enqueue(db, {
     /*
       Every five minutes, with the actual importer fanned out by immutable S3 object. Standard

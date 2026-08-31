@@ -53,6 +53,25 @@ export const CHARGED_BUCKET = "hour"
 /** How many rollup rows one run claims. */
 export const CHARGE_BATCH_SIZE = 2000
 
+/** Cap one delayed charge without letting non-storage work consume the retention floor. */
+export function protectedUsageDebit(
+  available: MicroUsd,
+  total: MicroUsd,
+  storageUsage: MicroUsd,
+  protectedReserve: MicroUsd,
+): MicroUsd {
+  if (available <= 0n || total <= 0n) return 0n
+  const unreserved = available > protectedReserve ? available - protectedReserve : 0n
+  const payable = unreserved + storageUsage
+  return total < available
+    ? total < payable
+      ? total
+      : payable
+    : available < payable
+      ? available
+      : payable
+}
+
 /**
  * A short, stable key for one charge.
  *
@@ -263,7 +282,22 @@ export async function chargeUsage(
         a transaction: prepaid usage is not debt waiting to eat the next top-up.
       */
       const available = await lockAvailableBalance(trx, organizationId)
-      const debit = available <= 0n ? 0n : available < total ? available : total
+      const retained = await trx
+        .selectFrom("creditRetentionState")
+        .select("reserveMicroUsd")
+        .where("organizationId", "=", organizationId)
+        .executeTakeFirst()
+      const protectedReserve = BigInt(retained?.reserveMicroUsd ?? 0)
+      const storageUsage = entry.byDimension.get("object_storage_gb_month")?.usage ?? 0n
+      /*
+        Ordinary delayed usage may spend only the balance above the two-day storage floor.
+
+        Storage residency itself may consume the floor as those retained hours actually pass. The
+        sum below is therefore "unreserved balance plus storage due in this batch", capped by the
+        real balance and the amount owed. Without this, a late AI or compute grain could drain the
+        money set aside to keep data during the advertised reprieve.
+      */
+      const debit = protectedUsageDebit(available, total, storageUsage, protectedReserve)
       const paidUsage = debit < entry.usage ? debit : entry.usage
       const paidOverhead = debit - paidUsage
       const idempotencyKey = `usage:${organizationId}:${chargeKey(entry.watermark)}`
@@ -304,9 +338,15 @@ export async function chargeUsage(
         let usageRemaining = paidUsage
         const usageLines = [...entry.lines.values()]
           .toSorted((left, right) =>
-            `${left.projectId ?? ""}:${left.dimension}`.localeCompare(
-              `${right.projectId ?? ""}:${right.dimension}`,
-            ),
+            left.dimension === "object_storage_gb_month" &&
+            right.dimension !== "object_storage_gb_month"
+              ? -1
+              : right.dimension === "object_storage_gb_month" &&
+                  left.dimension !== "object_storage_gb_month"
+                ? 1
+                : `${left.projectId ?? ""}:${left.dimension}`.localeCompare(
+                    `${right.projectId ?? ""}:${right.dimension}`,
+                  ),
           )
           .flatMap((line) => {
             const allocated =

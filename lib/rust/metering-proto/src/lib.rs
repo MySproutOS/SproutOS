@@ -65,6 +65,14 @@ pub enum UsageDimension {
     SiteRequest,
     /// One byte of egress from a tenant site.
     SiteEgressByte,
+    /// One S3 PUT, POST, COPY, LIST, or multipart request in the provider's write tier.
+    ObjectStorageWriteRequest,
+    /// One S3 GET, HEAD, or other request in the provider's read tier.
+    ObjectStorageReadRequest,
+    /// One response byte delivered through the mutable object-storage proxy.
+    ObjectStorageEgressByte,
+    /// Mutable object storage, in decimal GB-months.
+    ObjectStorageGbMonth,
     /// Database storage, in GiB-hours.
     DbStorageGibHour,
     /// Current Neon database storage, in decimal GB-months.
@@ -119,6 +127,10 @@ impl UsageDimension {
         Self::SiteProvisionedGibSecond,
         Self::SiteRequest,
         Self::SiteEgressByte,
+        Self::ObjectStorageWriteRequest,
+        Self::ObjectStorageReadRequest,
+        Self::ObjectStorageEgressByte,
+        Self::ObjectStorageGbMonth,
         Self::DbStorageGibHour,
         Self::DbStorageGbMonth,
         Self::DbHistoryStorageGbMonth,
@@ -151,6 +163,10 @@ impl UsageDimension {
             Self::SiteProvisionedGibSecond => "site_provisioned_gib_second",
             Self::SiteRequest => "site_request",
             Self::SiteEgressByte => "site_egress_byte",
+            Self::ObjectStorageWriteRequest => "object_storage_write_request",
+            Self::ObjectStorageReadRequest => "object_storage_read_request",
+            Self::ObjectStorageEgressByte => "object_storage_egress_byte",
+            Self::ObjectStorageGbMonth => "object_storage_gb_month",
             Self::DbStorageGibHour => "db_storage_gib_hour",
             Self::DbStorageGbMonth => "db_storage_gb_month",
             Self::DbHistoryStorageGbMonth => "db_history_storage_gb_month",

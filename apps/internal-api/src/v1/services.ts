@@ -1,5 +1,5 @@
 import { lockAvailableBalance } from "@lib/billing"
-import { crudAuditLog, crudProjectEnvVar } from "@lib/dao"
+import { crudAuditLog, crudProjectEnvVar, fetchBackendService } from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
@@ -23,7 +23,7 @@ import { v7 } from "uuid"
 import { type AuthContext, authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwError, throwForbidden, throwNotFound } from "../utils/http-exception"
 import { ErrorCode } from "../utils/errors.enum"
 import { auditContext } from "../utils/request-context"
 import {
@@ -307,6 +307,61 @@ const app = new Hono()
           }
         }),
       })
+    },
+  )
+  .get(
+    "/:orgSlug/services/:serviceId/connection",
+    describeRoute({
+      description: "Reconstructs the active object-storage connection for an interactive user",
+      responses: {
+        200: {
+          description: "Current object-storage connection URI",
+          content: {
+            "application/json": { schema: resolver(servicesSchemaConnectionResponse) },
+          },
+        },
+        400: { description: "This service kind has no recoverable credential", ...errorResponse },
+        403: {
+          description: "Caller is not an interactive user or lacks database:read",
+          ...errorResponse,
+        },
+        404: { description: "No such service", ...errorResponse },
+      },
+    }),
+    requirePermission("database:read"),
+    validator("param", servicesSchemaIdParam),
+    async (c) => {
+      if (c.var.auth.kind !== "session") {
+        return throwForbidden(c, "Only an interactive user may reveal a storage credential")
+      }
+      const { serviceId } = c.req.valid("param")
+      const service = await fetchBackendService(db).getInOrganization(
+        c.var.organization.id,
+        serviceId,
+        ["id", "kind", "status"],
+      )
+      if (service === undefined) return throwNotFound(c, "Service not found")
+      if (service.kind !== "object_storage") {
+        return throwBadRequest(c, "Only object-storage credentials can be shown again")
+      }
+      if (service.status !== "active") {
+        return throwBadRequest(c, "That service has not finished provisioning")
+      }
+
+      const connectionUri = await driverFor(service.kind).connectionUri(service.id)
+      await crudAuditLog(db).record({
+        organizationId: c.var.organization.id,
+        actorUserId: c.var.user.id,
+        action: "database:read",
+        resourceSrn: srnFor("db", c.var.organization.id, "service", service.id),
+        after: { credentialViewed: true },
+        ...auditContext(c),
+      })
+      // A GET is convenient for the generated client, but this response is never cacheable: it
+      // contains a live SigV4 secret reconstructed specifically for this interactive request.
+      c.header("Cache-Control", "no-store")
+      c.header("Pragma", "no-cache")
+      return c.json(connectionResponse(service.id, { connectionUri }))
     },
   )
   .post(
@@ -639,13 +694,13 @@ const app = new Hono()
   )
 
 async function owned(organizationId: string, serviceId: string) {
-  return await db
-    .selectFrom("backendService")
-    .select(["id", "kind", "name", "projectId", "status"])
-    .where("id", "=", serviceId)
-    .where("organizationId", "=", organizationId)
-    .where("deletedAt", "is", null)
-    .executeTakeFirst()
+  return await fetchBackendService(db).getInOrganization(organizationId, serviceId, [
+    "id",
+    "kind",
+    "name",
+    "projectId",
+    "status",
+  ])
 }
 
 export async function withQueueLifecycleLock<T>(

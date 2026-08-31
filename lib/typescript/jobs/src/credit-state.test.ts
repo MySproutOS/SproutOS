@@ -5,7 +5,7 @@ import { Redis } from "ioredis"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { refreshCreditStates } from "./credit-state"
+import { refreshCreditStates, refreshOrganizationCreditState } from "./credit-state"
 import type { Job } from "./queue"
 
 const valkey = new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023", {
@@ -25,6 +25,9 @@ const reachable = await (async () => {
 const ownerUserId = v7()
 const fundedId = v7()
 const exhaustedId = v7()
+const reservedId = v7()
+const storageServiceId = v7()
+let regionId = ""
 
 beforeAll(async () => {
   if (!reachable) return
@@ -50,6 +53,13 @@ beforeAll(async () => {
         kind: "team",
         ownerUserId,
       },
+      {
+        id: reservedId,
+        name: "Storage-reserved credit state",
+        slug: `credit-reserved-${reservedId.slice(-12)}`,
+        kind: "team",
+        ownerUserId,
+      },
     ])
     .execute()
 
@@ -62,11 +72,48 @@ beforeAll(async () => {
       { account: "user_credit", amount: 1_000_000n },
     ],
   })
+  await post(db, {
+    organizationId: reservedId,
+    kind: "topup",
+    idempotencyKey: `credit-state:${reservedId}`,
+    postings: [
+      { account: "stripe_clearing", amount: -1_000n },
+      { account: "user_credit", amount: 1_000n },
+    ],
+  })
+  regionId = (
+    await db
+      .selectFrom("region")
+      .select("id")
+      .where("code", "=", "us-east-1")
+      .executeTakeFirstOrThrow()
+  ).id
+  await db
+    .insertInto("backendService")
+    .values({
+      id: storageServiceId,
+      organizationId: reservedId,
+      kind: "object_storage",
+      name: "Reserved bytes",
+      status: "active",
+      regionId,
+    })
+    .execute()
+  await db
+    .insertInto("objectStorageMeteringState")
+    .values({
+      backendServiceId: storageServiceId,
+      // One decimal TB needs about $1.48 for forty-eight August hours, above this fixture's $0.001.
+      currentBytes: 1_000_000_000_000n,
+      meteredThrough: new Date(),
+      measuredAt: new Date(),
+    })
+    .execute()
 })
 
 afterAll(async () => {
   if (!reachable) return
-  await valkey.del(`credit:${fundedId}`, `credit:${exhaustedId}`)
+  await valkey.del(`credit:${fundedId}`, `credit:${exhaustedId}`, `credit:${reservedId}`)
   await valkey.quit()
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = 'replica'`.execute(tx)
@@ -79,19 +126,31 @@ afterAll(async () => {
           eb
             .selectFrom("creditAccount")
             .select("id")
-            .where("organizationId", "in", [fundedId, exhaustedId]),
+            .where("organizationId", "in", [fundedId, exhaustedId, reservedId]),
         ),
       )
       .execute()
     await tx
       .deleteFrom("creditTransaction")
-      .where("organizationId", "in", [fundedId, exhaustedId])
+      .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
       .execute()
     await tx
       .deleteFrom("creditAccount")
-      .where("organizationId", "in", [fundedId, exhaustedId])
+      .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
       .execute()
-    await tx.deleteFrom("organization").where("id", "in", [fundedId, exhaustedId]).execute()
+    await tx
+      .deleteFrom("creditRetentionState")
+      .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
+      .execute()
+    await tx
+      .deleteFrom("objectStorageMeteringState")
+      .where("backendServiceId", "=", storageServiceId)
+      .execute()
+    await tx.deleteFrom("backendService").where("id", "=", storageServiceId).execute()
+    await tx
+      .deleteFrom("organization")
+      .where("id", "in", [fundedId, exhaustedId, reservedId])
+      .execute()
     await tx.deleteFrom("user").where("id", "=", ownerUserId).execute()
   })
 })
@@ -107,6 +166,45 @@ describe.skipIf(!reachable)("refreshCreditStates", () => {
 
     expect(await readCreditState(valkey, fundedId)).toBeUndefined()
     expect(await readCreditState(valkey, exhaustedId)).toBe("exhausted")
+    expect(await readCreditState(valkey, reservedId)).toBe("exhausted")
     expect(await valkey.ttl(`credit:${exhaustedId}`)).toBeGreaterThan(10 * 60)
+  })
+
+  it("records one fixed 48-hour deadline and clears it after enough credit is added", async () => {
+    const first = await db
+      .selectFrom("creditRetentionState")
+      .select(["reserveMicroUsd", "exhaustedAt", "deleteAfter"])
+      .where("organizationId", "=", reservedId)
+      .executeTakeFirstOrThrow()
+    expect(BigInt(first.reserveMicroUsd)).toBeGreaterThan(1_000n)
+    expect(first.exhaustedAt).not.toBeNull()
+    expect(first.deleteAfter!.getTime() - first.exhaustedAt!.getTime()).toBe(48 * 60 * 60 * 1000)
+
+    await refreshOrganizationCreditState(db, valkey, reservedId)
+    const unchanged = await db
+      .selectFrom("creditRetentionState")
+      .select("deleteAfter")
+      .where("organizationId", "=", reservedId)
+      .executeTakeFirstOrThrow()
+    expect(unchanged.deleteAfter).toEqual(first.deleteAfter)
+
+    await post(db, {
+      organizationId: reservedId,
+      kind: "topup",
+      idempotencyKey: `credit-state:restore:${reservedId}`,
+      postings: [
+        { account: "stripe_clearing", amount: -2_000_000n },
+        { account: "user_credit", amount: 2_000_000n },
+      ],
+    })
+    await refreshOrganizationCreditState(db, valkey, reservedId)
+    expect(await readCreditState(valkey, reservedId)).toBeUndefined()
+    await expect(
+      db
+        .selectFrom("creditRetentionState")
+        .select(["exhaustedAt", "deleteAfter"])
+        .where("organizationId", "=", reservedId)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toMatchObject({ exhaustedAt: null, deleteAfter: null })
   })
 })

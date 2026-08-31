@@ -28,6 +28,11 @@ const ITEMS: [dimension: string, unitMicroUsd: string][] = [
   // including headers and every HTTP method. This is the explicit customer price-book quantity,
   // not a claim that CloudWatch BytesDownloaded (GET/HEAD only) is provider-equivalent.
   ["site_egress_byte", "0.00014"],
+  // Mutable tenant storage uses the public S3 Standard us-east-1 rates, without platform markup.
+  ["object_storage_write_request", "5"], // $0.005 per 1,000 PUT/COPY/POST/LIST requests.
+  ["object_storage_read_request", "0.4"], // $0.0004 per 1,000 GET/HEAD requests.
+  ["object_storage_egress_byte", "0.00009"], // $0.09 per decimal GB.
+  ["object_storage_gb_month", "23000"], // $0.023 per decimal GB-month.
   // Neon Launch pass-through: $0.106/CU-hour and $0.35 per decimal GB-month.
   ["db_storage_gib_hour", "514.807723836"], // Legacy byte-month conversion compatibility.
   ["db_storage_gb_month", "350000"],
@@ -78,6 +83,10 @@ const ITEM_OVERHEAD_BPS = new Map<string, number>([
   ["db_storage_gib_hour", 0],
   ["db_storage_gb_month", 0],
   ["db_history_storage_gb_month", 0],
+  ["object_storage_write_request", 0],
+  ["object_storage_read_request", 0],
+  ["object_storage_egress_byte", 0],
+  ["object_storage_gb_month", 0],
   ["ai_input_token", 0],
   ["ai_output_token", 0],
   ["ai_cache_read_token", 0],

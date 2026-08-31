@@ -3,7 +3,13 @@ import { sql } from "kysely"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { acquirePlatformJobLock, releasePlatformJobLock } from "./test-lock"
-import { assertSingleGrain, CHARGED_BUCKET, chargeUsage, MultipleGrainsError } from "./charge"
+import {
+  assertSingleGrain,
+  CHARGED_BUCKET,
+  chargeUsage,
+  MultipleGrainsError,
+  protectedUsageDebit,
+} from "./charge"
 import { applyImportedUsageRollups, type ImportedUsageBucket } from "./import-rollups"
 import { availableBalance, post } from "./ledger"
 import { rateTimesQuantity } from "./money"
@@ -207,6 +213,22 @@ describe("charging exactly one grain", () => {
     expect(() => {
       assertSingleGrain(["minute"])
     }).toThrow(MultipleGrainsError)
+  })
+})
+
+describe("protected storage retention", () => {
+  it("keeps ordinary delayed usage out of the two-day floor", () => {
+    expect(protectedUsageDebit(10_000n, 20_000n, 0n, 3_000n)).toBe(7_000n)
+  })
+
+  it("lets storage residency consume the floor as retained time passes", () => {
+    expect(protectedUsageDebit(10_000n, 20_000n, 1_000n, 3_000n)).toBe(8_000n)
+    expect(protectedUsageDebit(2_000n, 5_000n, 500n, 3_000n)).toBe(500n)
+  })
+
+  it("never exceeds either the debt or the actual prepaid balance", () => {
+    expect(protectedUsageDebit(10_000n, 2_000n, 500n, 3_000n)).toBe(2_000n)
+    expect(protectedUsageDebit(0n, 2_000n, 500n, 3_000n)).toBe(0n)
   })
 })
 

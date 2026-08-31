@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugServicesByServiceIdMutation,
+  getV1OrgsByOrgSlugServicesByServiceIdConnectionOptions,
+  getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey,
   getV1OrgsByOrgSlugServicesOptions,
   getV1OrgsByOrgSlugServicesQueryKey,
   postV1OrgsByOrgSlugServicesByServiceIdRotateMutation,
@@ -152,6 +154,50 @@ export function useRotateConnection(orgSlug: string) {
       await invalidate()
       return result.connectionUri
     },
+  }
+}
+
+/** Reveal the one service credential whose secret is deterministically reconstructable. */
+export function useViewObjectStorageConnection(orgSlug: string, serviceId: string) {
+  const client = useQueryClient()
+  const options = getV1OrgsByOrgSlugServicesByServiceIdConnectionOptions({
+    path: { orgSlug, serviceId },
+  })
+  const query = useQuery({ ...options, enabled: false, gcTime: 0 })
+  return {
+    isPending: query.isFetching,
+    view: async (): Promise<string> => {
+      const result = await query.refetch()
+      if (result.data === undefined) {
+        throw result.error instanceof Error
+          ? result.error
+          : new Error("Connection was not returned")
+      }
+      return result.data.connectionUri
+    },
+    clear: () => {
+      client.removeQueries({
+        queryKey: getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey({
+          path: { orgSlug, serviceId },
+        }),
+        exact: true,
+      })
+    },
+  }
+}
+
+export function parseObjectStorageConnection(uri: string) {
+  const parsed = new URL(uri.replace(/^sls\+s3:/, "https:"))
+  const endpoint = parsed.searchParams.get("endpoint") ?? `https://${parsed.host}`
+  const endpointUrl = new URL(endpoint)
+  return {
+    endpoint,
+    port: Number(endpointUrl.port || (endpointUrl.protocol === "https:" ? "443" : "80")),
+    bucket: parsed.searchParams.get("bucket") ?? "",
+    region: parsed.searchParams.get("region") ?? "auto",
+    accessKeyId: decodeURIComponent(parsed.username),
+    secretAccessKey: decodeURIComponent(parsed.password),
+    forcePathStyle: parsed.searchParams.get("pathStyle") !== "false",
   }
 }
 

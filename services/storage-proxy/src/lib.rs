@@ -518,6 +518,29 @@ pub fn check_signature(
     secret: &str,
 ) -> Result<(), Denied> {
     let hash = payload_hash(request)?;
+    check_signature_with_payload_hash(request, auth, secret, &hash)
+}
+
+/// Check a request using the digest produced while its body was written to a bounded disk spool.
+pub fn check_signature_with_payload_hash(
+    request: &IncomingRequest<'_>,
+    auth: &AuthorizationHeader,
+    secret: &str,
+    actual_payload_hash: &str,
+) -> Result<(), Denied> {
+    let hash = match request
+        .headers
+        .get("x-amz-content-sha256")
+        .map(String::as_str)
+    {
+        Some(UNSIGNED_PAYLOAD) => UNSIGNED_PAYLOAD,
+        Some(STREAMING_PAYLOAD) => {
+            return Err(Denied::Malformed("streaming uploads are not supported"));
+        }
+        Some(claimed) if claimed.eq_ignore_ascii_case(actual_payload_hash) => actual_payload_hash,
+        Some(_) => return Err(Denied::BadSignature),
+        None => actual_payload_hash,
+    };
     let headers = canonical_headers(&auth.signed_headers, &request.headers)?;
     let signed = auth.signed_headers.join(";");
 
@@ -527,7 +550,7 @@ pub fn check_signature(
         query: &canonical_query(request.query),
         canonical_headers: &headers,
         signed_headers: &signed,
-        payload_hash: &hash,
+        payload_hash: hash,
     };
 
     // `x-amz-date` is always signed — it is what binds a signature to a moment — so it is present
@@ -554,7 +577,8 @@ pub struct OutgoingRequest<'a> {
     pub query: &'a str,
     /// The *upstream's* host, not the one the client signed. It is part of the new signature.
     pub host: &'a str,
-    pub body: &'a [u8],
+    /// SHA-256 already verified while the body was written to the bounded disk spool.
+    pub payload_hash: &'a str,
     pub amz_date: &'a str,
     pub content_type: Option<&'a str>,
 }
@@ -578,16 +602,14 @@ pub fn upstream_headers(
         path,
         query,
         host,
-        body,
+        payload_hash,
         amz_date,
         content_type,
     } = *outgoing;
 
-    let hash = sha256_hex(body);
-
     let mut headers = BTreeMap::new();
     headers.insert("host".to_owned(), host.to_owned());
-    headers.insert("x-amz-content-sha256".to_owned(), hash.clone());
+    headers.insert("x-amz-content-sha256".to_owned(), payload_hash.to_owned());
     headers.insert("x-amz-date".to_owned(), amz_date.to_owned());
     if let Some(token) = &credential.session_token {
         headers.insert("x-amz-security-token".to_owned(), token.clone());
@@ -615,7 +637,7 @@ pub fn upstream_headers(
         query: &canonical_query(query),
         canonical_headers: &canonical_header_block,
         signed_headers: &signed,
-        payload_hash: &hash,
+        payload_hash,
     };
 
     let signature = sign(
@@ -692,8 +714,24 @@ pub async fn finish_authorization(
     request: &IncomingRequest<'_>,
     prepared: PreparedAuthorization,
 ) -> Result<ResolvedService, Denied> {
+    let actual_payload_hash = sha256_hex(request.body);
+    finish_authorization_with_payload_hash(proxy, request, prepared, &actual_payload_hash).await
+}
+
+/// Complete authorization without copying a disk-spooled request body back into memory.
+pub async fn finish_authorization_with_payload_hash(
+    proxy: &Proxy,
+    request: &IncomingRequest<'_>,
+    prepared: PreparedAuthorization,
+    actual_payload_hash: &str,
+) -> Result<ResolvedService, Denied> {
     if !prepared.signature_checked {
-        check_signature(request, &prepared.auth, &prepared.secret)?;
+        check_signature_with_payload_hash(
+            request,
+            &prepared.auth,
+            &prepared.secret,
+            actual_payload_hash,
+        )?;
     }
 
     let bucket = bucket_from_path(request.path).ok_or(Denied::NoBucket)?;
@@ -1122,7 +1160,7 @@ mod tests {
             path: "/bucket/key",
             query: "",
             host: "s3.us-east-1.amazonaws.com",
-            body: b"",
+            payload_hash: &sha256_hex(b""),
             amz_date: "20260827T120000Z",
             content_type: None,
         };

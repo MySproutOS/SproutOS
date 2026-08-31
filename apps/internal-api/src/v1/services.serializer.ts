@@ -14,8 +14,9 @@ export const SERVICE_KINDS = ["postgres", "valkey", "elasticsearch", "object_sto
  * Never carries a connection URI.
  *
  * The URI holds a password, and a list endpoint is the wrong place for one: it is cached by
- * clients, logged by proxies, and rendered on a page nobody meant to expose. The credential is
- * shown once by the create or rotate response and is not recoverable afterwards.
+ * clients, logged by proxies, and rendered on a page nobody meant to expose. Hashed database
+ * credentials are shown only by create/rotate; an interactive user may explicitly reconstruct an
+ * object-storage credential because its SigV4 secret is derived rather than stored.
  */
 export const servicesSchemaService = Type.Object({
   id: UUID7String,
@@ -50,7 +51,7 @@ export const servicesSchemaCreateRequest = Type.Object({
   projectId: Type.Optional(Nullable(UUID7String)),
 })
 
-/** The one response that carries a credential, returned once at creation or rotation. */
+/** A deliberately explicit response carrying a credential: create, rotate, or S3-only reveal. */
 export const servicesSchemaConnectionResponse = Type.Object({
   id: UUID7String,
   connectionUri: Type.String(),
