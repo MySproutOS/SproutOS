@@ -4,6 +4,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -58,6 +60,31 @@ const reachable = await (async () => {
  * first still answers, and the second suite asserts against a process it did not configure.
  */
 const PROXY_PORT = 9002
+const execFileAsync = promisify(execFile)
+
+const BOTO3_SMOKE = String.raw`
+import json
+import os
+
+import boto3
+from botocore.config import Config
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["S3_ENDPOINT"],
+    region_name=os.environ["S3_REGION"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    config=Config(s3={"addressing_style": "path"}),
+)
+bucket = os.environ["S3_BUCKET"]
+key = "python/boto3.txt"
+s3.put_object(Bucket=bucket, Key=key, Body=b"boto3")
+body = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode()
+listed = any(item["Key"] == key for item in s3.list_objects_v2(Bucket=bucket, Prefix="python/").get("Contents", []))
+s3.delete_object(Bucket=bucket, Key=key)
+print(json.dumps({"body": body, "listed": listed}))
+`
 
 let proxy: RunningProxy | undefined
 /** The config with `publicEndpoint` pointing at *this* suite's proxy. */
@@ -203,6 +230,28 @@ describe.runIf(reachable)("through the storage proxy", () => {
     const read = await client.send(new GetObjectCommand({ Bucket: bucket, Key: "notes/one.md" }))
 
     expect(await read.Body?.transformToString()).toBe("# hi")
+  }, 60_000)
+
+  it("accepts the ordinary boto3 request shape used by Python applications", async () => {
+    const mine = await vault("Python")
+    const parsed = parseObjectStorageUri(mine.uri)
+    const { stdout } = await execFileAsync(
+      "uv",
+      ["run", "--with", "boto3", "python", "-c", BOTO3_SMOKE],
+      {
+        env: {
+          ...process.env,
+          AWS_EC2_METADATA_DISABLED: "true",
+          S3_ENDPOINT: parsed.endpoint,
+          S3_REGION: parsed.region,
+          S3_BUCKET: parsed.bucket,
+          S3_ACCESS_KEY_ID: parsed.accessKeyId,
+          S3_SECRET_ACCESS_KEY: parsed.secretAccessKey,
+        },
+      },
+    )
+
+    expect(JSON.parse(stdout)).toEqual({ body: "boto3", listed: true })
   }, 60_000)
 
   it("refuses one customer's credential against another customer's bucket", async () => {

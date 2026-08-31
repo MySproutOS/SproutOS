@@ -224,9 +224,13 @@ pub fn verify(
 /// library that emits `+` produces a canonical request that differs from the client's by one byte
 /// and a signature mismatch with nothing to point at.
 pub fn uri_encode(value: &str, encode_slash: bool) -> String {
+    uri_encode_bytes(value.as_bytes(), encode_slash)
+}
+
+fn uri_encode_bytes(value: &[u8], encode_slash: bool) -> String {
     let mut out = String::with_capacity(value.len());
 
-    for byte in value.bytes() {
+    for &byte in value {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
                 out.push(byte as char)
@@ -239,6 +243,35 @@ pub fn uri_encode(value: &str, encode_slash: bool) -> String {
     out
 }
 
+/// Decode the URI escapes already present in an HTTP query component.
+///
+/// The request URI handed to the server is still percent-encoded. SigV4 canonicalization encodes
+/// the *component value*, not the textual percent signs in that wire representation. Treating
+/// `prefix=photos%2F` as the literal characters `%2F` produces `photos%252F`, which is exactly how
+/// boto3's otherwise ordinary `ListObjectsV2` request used to fail authentication here. A `+`
+/// remains a plus byte; query strings signed by SigV4 are not HTML form encoding.
+fn decoded_query_component(value: &str) -> Vec<u8> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3])
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    decoded
+}
+
 /// Canonicalise a query string: each key and value encoded, sorted by key then value, joined.
 pub fn canonical_query(raw: &str) -> String {
     if raw.is_empty() {
@@ -249,9 +282,15 @@ pub fn canonical_query(raw: &str) -> String {
         .split('&')
         .filter(|part| !part.is_empty())
         .map(|part| match part.split_once('=') {
-            Some((key, value)) => (uri_encode(key, true), uri_encode(value, true)),
+            Some((key, value)) => (
+                uri_encode_bytes(&decoded_query_component(key), true),
+                uri_encode_bytes(&decoded_query_component(value), true),
+            ),
             // A bare key signs as `key=`, not as `key`.
-            None => (uri_encode(part, true), String::new()),
+            None => (
+                uri_encode_bytes(&decoded_query_component(part), true),
+                String::new(),
+            ),
         })
         .collect();
 
@@ -404,5 +443,11 @@ mod tests {
             "max-keys=2&prefix=notes%2F"
         );
         assert_eq!(canonical_query(""), "");
+        assert_eq!(
+            canonical_query("list-type=2&prefix=python%2F&encoding-type=url"),
+            "encoding-type=url&list-type=2&prefix=python%2F"
+        );
+        assert_eq!(canonical_query("literal=a+b"), "literal=a%2Bb");
+        assert_eq!(canonical_query("percent=%25"), "percent=%25");
     }
 }
