@@ -17,6 +17,7 @@ members = [
   "services/valkey-proxy",
   "services/search-proxy",
   "services/storage-proxy",
+  "services/daytona-proxy",
 ]
 
 [workspace.package]

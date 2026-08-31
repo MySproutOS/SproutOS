@@ -7,6 +7,12 @@ queues, and the log pipeline. Postgres is Neon's, in AWS.
 ssh -i ~/.ssh/id_ovhcloud_ns1009531.ip-135-148-122.us ubuntu@135.148.122.203
 ```
 
+The Daytona egress proxy is a standalone Rust service, not part of the AWS router. Its binary and
+systemd unit live under `/opt/sproutos/daytona-proxy`; its root-only environment file is
+`/etc/sproutos/daytona-proxy.env`, and its durable metering spool is
+`/var/lib/sproutos-daytona-proxy`. Install a built binary with
+`sudo ovh/install-daytona-proxy.sh PATH_TO_BINARY`.
+
 ## What runs here, and on which disk
 
 The machine has two NVMe drives on separate mounts, and the split is deliberate: Kafka's own

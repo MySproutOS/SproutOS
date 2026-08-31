@@ -31,6 +31,7 @@ export const DAYTONA_READ_MAX_ATTEMPTS = 3
 export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
 export const FORWARD_PROXY_CREDENTIAL_DOMAIN = "sproutos:sandbox-forward-proxy:v1"
+export const FORWARD_PROXY_AUTHORIZATION_DOMAIN = "sproutos:daytona-proxy-authorize:v1"
 
 /*
   A fixed command is the security boundary here.
@@ -208,6 +209,15 @@ function decodeForwardProxyRootKey(value: string): Buffer {
 export function sandboxForwardProxyPassword(rootKeyBase64: string, sandboxId: string): string {
   return createHmac("sha256", decodeForwardProxyRootKey(rootKeyBase64))
     .update(`${FORWARD_PROXY_CREDENTIAL_DOMAIN}\0${sandboxId.toLowerCase()}`, "utf8")
+    .digest("base64url")
+}
+
+export function sandboxForwardProxyAuthorizationSignature(
+  rootKeyBase64: string,
+  sandboxId: string,
+): string {
+  return createHmac("sha256", decodeForwardProxyRootKey(rootKeyBase64))
+    .update(`${FORWARD_PROXY_AUTHORIZATION_DOMAIN}\0${sandboxId.toLowerCase()}`, "utf8")
     .digest("base64url")
 }
 

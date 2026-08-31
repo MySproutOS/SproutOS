@@ -11,6 +11,7 @@ import {
   executeDaytonaSensitiveStream,
   retryIdempotentDaytonaRead,
   sandboxForwardProxyPassword,
+  sandboxForwardProxyAuthorizationSignature,
   startDaytonaSandbox,
   type DaytonaConfig,
 } from "./daytona"
@@ -511,10 +512,19 @@ describe("sandbox forward proxy credential contract", () => {
     ),
   ) as {
     rootKeyBase64: string
-    vectors: { sandboxId: string; password: string }[]
+    vectors: { sandboxId: string; password: string; authorizationSignature: string }[]
   }
 
   it.each(fixture.vectors)("matches the Rust vector for $sandboxId", ({ sandboxId, password }) => {
     expect(sandboxForwardProxyPassword(fixture.rootKeyBase64, sandboxId)).toBe(password)
   })
+
+  it.each(fixture.vectors)(
+    "signs authorization for $sandboxId",
+    ({ sandboxId, authorizationSignature }) => {
+      expect(sandboxForwardProxyAuthorizationSignature(fixture.rootKeyBase64, sandboxId)).toBe(
+        authorizationSignature,
+      )
+    },
+  )
 })
