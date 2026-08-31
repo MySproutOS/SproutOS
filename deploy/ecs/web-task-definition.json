@@ -265,7 +265,7 @@
         },
         {
           "name": "SANDBOX_FORWARD_PROXY_URL",
-          "value": "http://egress.sproutos.me:3128"
+          "value": "http://135.148.122.203:3128"
         },
         {
           "name": "SERVICE_POSTGRES_PUBLIC_PORT",
@@ -600,7 +600,7 @@
         },
         {
           "name": "SANDBOX_FORWARD_PROXY_URL",
-          "value": "http://egress.sproutos.me:3128"
+          "value": "http://135.148.122.203:3128"
         },
         {
           "name": "TENANT_CERTIFICATE_KMS_KEY_ARN",

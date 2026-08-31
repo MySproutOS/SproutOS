@@ -43,7 +43,7 @@ for task in \
       | select(.name == "SANDBOX_FORWARD_PROXY_URL")
       | .value] as $values
     | ($values | length) > 0
-      and all($values[]; . == "http://egress.sproutos.me:3128")
+      and all($values[]; . == "http://135.148.122.203:3128")
   ' "$task" >/dev/null
   jq -e '
     all(.containerDefinitions[];

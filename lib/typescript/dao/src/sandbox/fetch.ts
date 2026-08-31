@@ -9,24 +9,6 @@ import { sql, type Kysely, type Selectable } from "kysely"
  * the organization rather than trusting it.
  */
 export function fetchSandbox(db: Kysely<DB>) {
-  async function forForwardProxyAuthorization(id: string): Promise<
-    | {
-        id: string
-        projectId: string
-        organizationId: string
-        state: string
-      }
-    | undefined
-  > {
-    return await db
-      .selectFrom("sandbox")
-      .innerJoin("project", "project.id", "sandbox.projectId")
-      .select(["sandbox.id", "sandbox.projectId", "project.organizationId", "sandbox.state"])
-      .where("sandbox.id", "=", id)
-      .where("project.deletedAt", "is", null)
-      .executeTakeFirst()
-  }
-
   /** One user's sandbox for one project. The pair is the identity; there is at most one. */
   async function forUser(
     organizationId: string,
@@ -105,5 +87,5 @@ export function fetchSandbox(db: Kysely<DB>) {
       .execute()
   }
 
-  return { forForwardProxyAuthorization, forUser, forUserForUpdate, getInOrganization, idle }
+  return { forUser, forUserForUpdate, getInOrganization, idle }
 }

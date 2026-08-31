@@ -8,13 +8,12 @@ use anyhow::{Context as _, bail};
 use async_trait::async_trait;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::Sha256;
 use sproutos_llm_proxy::spool::{DeliveryConfig, MeteringSpool, SpoolLimits, SpoolReservation};
 use sproutos_metering_proto::{UsageBatch, UsageDimension, UsageEvent};
 use sproutos_sandbox_forward_proxy::{
-    Authorizer, AuthzError, EgressMeter, EgressObservation, EgressReservation,
+    Authorizer, AuthzError, CredentialVerifier, EgressMeter, EgressObservation, EgressReservation,
     MeteringCapacityError, Resolver, SandboxAuthorization, SandboxForwardProxy, SandboxState,
     TokioDialer,
 };
@@ -23,73 +22,108 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
-const AUTHORIZE_DOMAIN: &str = "sproutos:daytona-proxy-authorize:v1";
 const METER_SOURCE: &str = "sandbox-forward-proxy";
+const CREDENTIAL_ISSUER: &str = "sproutos-control-plane";
+const CREDENTIAL_AUDIENCE: &str = "sproutos-daytona-proxy";
+const CREDENTIAL_TTL_SECONDS: i64 = 24 * 60 * 60;
+const MAX_CLOCK_SKEW_SECONDS: i64 = 60;
 
-#[derive(Clone)]
-struct ApiAuthorizer {
-    client: reqwest::Client,
-    base_url: String,
-    root_key: Arc<[u8]>,
+struct UnusedAuthorizer;
+
+#[async_trait]
+impl Authorizer for UnusedAuthorizer {
+    async fn lookup(&self, _: Uuid) -> Result<Option<SandboxAuthorization>, AuthzError> {
+        Err(AuthzError)
+    }
+}
+
+#[derive(Deserialize)]
+struct CredentialHeader {
+    alg: String,
+    typ: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AuthorizationResponse {
-    sandbox_id: Uuid,
-    project_id: Uuid,
+struct CredentialClaims {
+    iss: String,
+    aud: String,
+    sub: Uuid,
     organization_id: Uuid,
-    state: String,
+    project_id: Uuid,
+    iat: i64,
+    exp: i64,
 }
 
-#[async_trait]
-impl Authorizer for ApiAuthorizer {
-    async fn lookup(&self, sandbox_id: Uuid) -> Result<Option<SandboxAuthorization>, AuthzError> {
-        let signature =
-            authorization_signature(&self.root_key, sandbox_id).map_err(|_| AuthzError)?;
-        let response = self
-            .client
-            .get(format!(
-                "{}/{}",
-                self.base_url.trim_end_matches('/'),
-                sandbox_id
-            ))
-            .header("x-daytona-proxy-signature", signature)
-            .send()
-            .await
-            .map_err(|_| AuthzError)?;
-        if response.status() == StatusCode::UNAUTHORIZED
-            || response.status() == StatusCode::NOT_FOUND
-        {
-            return Ok(None);
+struct JwtCredentialVerifier {
+    root_key: Arc<[u8]>,
+}
+
+impl JwtCredentialVerifier {
+    fn verify_at(
+        &self,
+        sandbox_id: Uuid,
+        supplied_password: &str,
+        now: i64,
+    ) -> Option<SandboxAuthorization> {
+        let mut segments = supplied_password.split('.');
+        let header_segment = segments.next()?;
+        let payload_segment = segments.next()?;
+        let signature_segment = segments.next()?;
+        if segments.next().is_some() {
+            return None;
         }
-        let response = response
-            .error_for_status()
-            .map_err(|_| AuthzError)?
-            .json::<AuthorizationResponse>()
-            .await
-            .map_err(|_| AuthzError)?;
-        let state = match response.state.as_str() {
-            "starting" => SandboxState::Starting,
-            "running" => SandboxState::Running,
-            "idle" => SandboxState::Idle,
-            _ => return Ok(None),
-        };
-        Ok(Some(SandboxAuthorization {
-            sandbox_id: response.sandbox_id,
-            project_id: response.project_id,
-            organization_id: response.organization_id,
-            state,
-        }))
+
+        let header: CredentialHeader = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(header_segment)
+                .ok()?,
+        )
+        .ok()?;
+        if header.alg != "HS256" || header.typ != "JWT" {
+            return None;
+        }
+        let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(signature_segment)
+            .ok()?;
+        let mut mac = HmacSha256::new_from_slice(&self.root_key).ok()?;
+        mac.update(format!("{header_segment}.{payload_segment}").as_bytes());
+        mac.verify_slice(&signature).ok()?;
+
+        let claims: CredentialClaims = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload_segment)
+                .ok()?,
+        )
+        .ok()?;
+        if claims.iss != CREDENTIAL_ISSUER
+            || claims.aud != CREDENTIAL_AUDIENCE
+            || claims.sub != sandbox_id
+            || claims.exp.checked_sub(claims.iat) != Some(CREDENTIAL_TTL_SECONDS)
+            || claims.iat > now.saturating_add(MAX_CLOCK_SKEW_SECONDS)
+            || claims.exp <= now
+        {
+            return None;
+        }
+        Some(SandboxAuthorization {
+            sandbox_id,
+            project_id: claims.project_id,
+            organization_id: claims.organization_id,
+            state: SandboxState::Running,
+        })
     }
 }
 
-fn authorization_signature(root_key: &[u8], sandbox_id: Uuid) -> anyhow::Result<String> {
-    let mut mac = HmacSha256::new_from_slice(root_key)?;
-    mac.update(AUTHORIZE_DOMAIN.as_bytes());
-    mac.update(&[0]);
-    mac.update(sandbox_id.to_string().as_bytes());
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+impl CredentialVerifier for JwtCredentialVerifier {
+    fn verify(&self, sandbox_id: Uuid, supplied_password: &str) -> Option<SandboxAuthorization> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs()
+            .try_into()
+            .ok()?;
+        self.verify_at(sandbox_id, supplied_password, now)
+    }
 }
 
 struct SelfRejectingResolver {
@@ -208,9 +242,7 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(4))
         .build()?;
-    let authorizer = Arc::new(ApiAuthorizer {
-        client: client.clone(),
-        base_url: required("DAYTONA_PROXY_AUTHORIZE_URL")?,
+    let credential_verifier = Arc::new(JwtCredentialVerifier {
         root_key: Arc::from(key.clone()),
     });
     let spool = MeteringSpool::open(
@@ -225,13 +257,14 @@ async fn main() -> anyhow::Result<()> {
     let proxy = Arc::new(
         SandboxForwardProxy::new(
             key,
-            authorizer,
+            Arc::new(UnusedAuthorizer),
             Arc::new(SelfRejectingResolver {
                 self_addresses: self_addresses().await?,
             }),
             Arc::new(TokioDialer),
             sproutos_sandbox_forward_proxy::Limits::default(),
         )?
+        .with_credential_verifier(credential_verifier)
         .with_meter(Arc::new(EgressUsageMeter { spool })),
     );
     let listen = required("DAYTONA_PROXY_LISTEN")?;
@@ -247,34 +280,103 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Fixture {
-        root_key_base64: String,
-        vectors: Vec<Vector>,
+    const ROOT_KEY_BASE64: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+    const SANDBOX_ID: &str = "01930000-0000-7000-8000-000000000001";
+    const ORGANIZATION_ID: &str = "01930000-0000-7000-8000-000000000002";
+    const PROJECT_ID: &str = "01930000-0000-7000-8000-000000000003";
+    const ISSUED_AT: i64 = 1_800_000_000;
+    const TYPESCRIPT_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzcHJvdXRvcy1jb250cm9sLXBsYW5lIiwiYXVkIjoic3Byb3V0b3MtZGF5dG9uYS1wcm94eSIsInN1YiI6IjAxOTMwMDAwLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsIm9yZ2FuaXphdGlvbklkIjoiMDE5MzAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAyIiwicHJvamVjdElkIjoiMDE5MzAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAzIiwiaWF0IjoxODAwMDAwMDAwLCJleHAiOjE4MDAwODY0MDB9.koRIqFKmPJ8Ghp8iKunuurZQmaRISE67KW1gGoRuYWA";
+
+    fn token(exp: i64, key: &[u8]) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let claims = serde_json::json!({
+            "iss": CREDENTIAL_ISSUER,
+            "aud": CREDENTIAL_AUDIENCE,
+            "sub": SANDBOX_ID,
+            "organizationId": ORGANIZATION_ID,
+            "projectId": PROJECT_ID,
+            "iat": ISSUED_AT,
+            "exp": exp,
+        });
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header}.{payload}");
+        let mut mac = HmacSha256::new_from_slice(key).unwrap();
+        mac.update(signing_input.as_bytes());
+        let signature =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{signing_input}.{signature}")
     }
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Vector {
-        sandbox_id: Uuid,
-        authorization_signature: String,
+    fn verifier() -> JwtCredentialVerifier {
+        JwtCredentialVerifier {
+            root_key: Arc::from(
+                base64::engine::general_purpose::STANDARD
+                    .decode(ROOT_KEY_BASE64)
+                    .unwrap(),
+            ),
+        }
     }
 
     #[test]
-    fn authorization_signature_matches_typescript_vectors() {
-        let fixture: Fixture = serde_json::from_str(include_str!(
-            "../../../lib/rust/sandbox-forward-proxy/fixtures/credentials.json"
-        ))
-        .unwrap();
-        let key = base64::engine::general_purpose::STANDARD
-            .decode(fixture.root_key_base64)
+    fn accepts_a_valid_24_hour_credential() {
+        let authorization = verifier()
+            .verify_at(
+                SANDBOX_ID.parse().unwrap(),
+                &token(ISSUED_AT + CREDENTIAL_TTL_SECONDS, &root_key_for_test()),
+                ISSUED_AT + 1,
+            )
             .unwrap();
-        for vector in fixture.vectors {
-            assert_eq!(
-                authorization_signature(&key, vector.sandbox_id).unwrap(),
-                vector.authorization_signature
-            );
-        }
+        assert_eq!(authorization.organization_id.to_string(), ORGANIZATION_ID);
+        assert_eq!(authorization.project_id.to_string(), PROJECT_ID);
+    }
+
+    #[test]
+    fn accepts_the_exact_typescript_credential_vector() {
+        assert!(
+            verifier()
+                .verify_at(SANDBOX_ID.parse().unwrap(), TYPESCRIPT_TOKEN, ISSUED_AT + 1,)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rejects_expired_tampered_and_wrong_lifetime_credentials() {
+        let key = root_key_for_test();
+        let valid = token(ISSUED_AT + CREDENTIAL_TTL_SECONDS, &key);
+        assert!(
+            verifier()
+                .verify_at(
+                    SANDBOX_ID.parse().unwrap(),
+                    &valid,
+                    ISSUED_AT + CREDENTIAL_TTL_SECONDS
+                )
+                .is_none()
+        );
+        assert!(
+            verifier()
+                .verify_at(
+                    SANDBOX_ID.parse().unwrap(),
+                    &format!("{valid}x"),
+                    ISSUED_AT + 1,
+                )
+                .is_none()
+        );
+        assert!(
+            verifier()
+                .verify_at(
+                    SANDBOX_ID.parse().unwrap(),
+                    &token(ISSUED_AT + CREDENTIAL_TTL_SECONDS + 1, &key),
+                    ISSUED_AT + 1,
+                )
+                .is_none()
+        );
+    }
+
+    fn root_key_for_test() -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(ROOT_KEY_BASE64)
+            .unwrap()
     }
 }

@@ -8,7 +8,7 @@ import {
   type DaytonaConfig,
   type DaytonaSandboxClient,
 } from "@lib/sandbox"
-import { buildCreateParams, sandboxForwardProxyPassword } from "@lib/sandbox/daytona"
+import { buildCreateParams, daytonaProxyCredential } from "@lib/sandbox/daytona"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { v7 } from "uuid"
@@ -44,7 +44,7 @@ async function createSandbox(input: CreateSandboxInput): Promise<{ externalId: s
     throw new Error("the local live-test proxy must be an unauthenticated HTTP origin")
   }
   proxy.username = input.sandboxId.toLowerCase()
-  proxy.password = sandboxForwardProxyPassword(daytonaConfig.forwardProxyRootKey, input.sandboxId)
+  proxy.password = daytonaProxyCredential(daytonaConfig.forwardProxyRootKey, input)
 
   const sdk = new Daytona({
     apiKey: daytonaConfig.apiKey,

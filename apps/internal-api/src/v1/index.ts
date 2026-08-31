@@ -6,7 +6,6 @@ import agentActions from "./agent-actions"
 import analysis from "./analysis"
 import deployments from "./deployments"
 import customDomains from "./custom-domains"
-import daytonaProxy from "./daytona-proxy"
 import deployWorkflow from "./deploy-workflow"
 import regions from "./regions"
 import metering from "./metering"
@@ -109,7 +108,6 @@ unauthenticated.route("/otlp", otlp)
   reader does not have to infer it from the absence of `authMiddleware`.
 */
 unauthenticated.route("/internal", metering)
-unauthenticated.route("/internal/daytona-proxy", daytonaProxy)
 /*
   Where `pg-proxy` asks which database to connect onward to for a tenant. Same `/internal` prefix
   and same reason as metering: the caller is a platform component, not a customer.

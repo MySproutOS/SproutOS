@@ -13,6 +13,11 @@ systemd unit live under `/opt/sproutos/daytona-proxy`; its root-only environment
 `/var/lib/sproutos-daytona-proxy`. Install a built binary with
 `sudo ovh/install-daytona-proxy.sh PATH_TO_BINARY`.
 
+The control plane signs a credential containing sandbox, project, and organization attribution
+when it asks Daytona to create a sandbox. The credential is valid for exactly 24 hours. The proxy
+checks its HMAC and expiry locally, so this host needs neither Postgres nor a callback into the API;
+an agent that somehow remains alive past the deadline loses internet access and is not renewed.
+
 ## What runs here, and on which disk
 
 The machine has two NVMe drives on separate mounts, and the split is deliberate: Kafka's own
