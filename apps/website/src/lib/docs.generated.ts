@@ -41,25 +41,30 @@ export const GENERATED_DOCS = [
         title: "Queue residency",
       },
       {
+        id: "object-storage",
+        level: 2,
+        title: "Object storage",
+      },
+      {
         id: "platform-fees",
         level: 2,
         title: "Platform fees",
       },
     ],
-    text: "Usage and credit Usage is recorded in an append-only ledger and grouped by service. Line items retain sub-cent precision; spendable credit is displayed in cents. SproutOS is prepaid: new work is refused once spendable credit is exhausted, delayed usage is capped at the available credit when posted, and provider-backed work cannot settle past the credit available after its reservation is released. Queue residency Queue residency is queued payload bytes multiplied by how long they remain queued. It is storage over time, not a count of jobs and not ordinary cache usage. Platform fees Dimensions without an item-specific override use the standard 12% platform fee. Postgres compute has a 2% fee. Postgres storage, sandbox resources and egress, platform-funded AI, and operational agent duration use 0%; user-funded AI is recorded as externally charged rather than billed again. Payment processing is passed through separately.",
+    text: "Usage and credit Usage is recorded in an append-only ledger and grouped by service. Line items retain sub-cent precision; spendable credit is displayed in cents. SproutOS is prepaid: new work is refused once spendable credit is exhausted, delayed usage is capped at the available credit when posted, and provider-backed work cannot settle past the credit available after its reservation is released. Queue residency Queue residency is queued payload bytes multiplied by how long they remain queued. It is storage over time, not a count of jobs and not ordinary cache usage. Object storage Mutable object storage records write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are free. These dimensions have no SproutOS markup. Spendable credit includes a protected reserve for 48 hours of the latest measured object-storage bytes. When credit reaches that floor, new service requests stop while the funded retention window preserves the stored data. Adding credit clears the cutoff. Platform fees Dimensions without an item-specific override use the standard 12% platform fee. Postgres compute has a 2% fee. Postgres storage, sandbox resources and egress, platform-funded AI, and operational agent duration use 0%; user-funded AI is recorded as externally charged rather than billed again. Payment processing is passed through separately.",
   },
   {
     slug: "connecting",
     title: "Connect to services",
-    summary: "Use one-time, tenant-scoped credentials for Postgres, Valkey, search, and storage.",
+    summary: "Use tenant-scoped credentials for Postgres, Valkey, search, and object storage.",
     audience: "developer",
     category: "Deploying",
     order: 1,
     headings: [
       {
-        id: "one-time-credentials",
+        id: "tenant-scoped-credentials",
         level: 2,
-        title: "One-time credentials",
+        title: "Tenant-scoped credentials",
       },
       {
         id: "service-variables",
@@ -67,7 +72,7 @@ export const GENERATED_DOCS = [
         title: "Service variables",
       },
     ],
-    text: "One-time credentials Provisioning or rotating a service returns its connection URI once. Put it in the project's encrypted environment variables. SproutOS stores a verifier, not a recoverable copy, so the URI cannot be revealed later. Service variables Postgres uses DATABASE_URL . Valkey uses VALKEY_URL or REDIS_URL ; BullMQ also uses the injected BULLMQ_PREFIX . OpenSearch uses ELASTICSEARCH_URL and automatically scopes index names. Object storage uses the injected S3_* values and path-style addressing. All endpoints pass through tenant-enforcing SproutOS proxies. Close connections before a function returns.",
+    text: "Tenant-scoped credentials Provisioning or rotating Postgres, Valkey, or OpenSearch returns its connection URI once. Put it in the project's encrypted environment variables. SproutOS stores a verifier, not a recoverable copy, so those URIs cannot be revealed later. Object storage is the exception. Its secret is derived rather than stored, so an authorized organization member can use View credentials again. Rotation still revokes the old access immediately at the storage proxy. See /docs/object-storage Use object storage for SDK configuration and supported operations. Service variables Postgres uses DATABASE_URL . Valkey uses VALKEY_URL or REDIS_URL ; BullMQ also uses the injected BULLMQ_PREFIX . OpenSearch uses ELASTICSEARCH_URL and automatically scopes index names. Object storage uses S3_ENDPOINT , S3_REGION , S3_BUCKET_NAME , S3_ACCESS_KEY_ID , S3_SECRET_ACCESS_KEY , and path-style addressing. All endpoints pass through tenant-enforcing SproutOS proxies. Close connections before a function returns.",
   },
   {
     slug: "github-action",
@@ -161,7 +166,7 @@ export const GENERATED_DOCS = [
         title: "Billing and deletion",
       },
     ],
-    text: "Organizations and groups An organization owns billing and access. A group is one GitHub repository. Its child projects are the deployable targets inside that repository, such as a web app and an API. Open Projects to see groups and their children. Group settings hold repository-wide choices such as upstream updates and the primary deployed project. Projects and domains A project is one deployable directory and branch. Its overview shows the live SproutOS hostname; Domains adds a custom hostname. Environment stores encrypted variables and Observability shows requests, logs, and failures. Databases and other services Use Databases for Postgres and the project service screens for Valkey, search, and object storage. A connection credential is shown once when it is created or rotated. Store it in a project environment variable; it cannot be revealed later. Workflows and agents Workflows attached to a repository appear inside its group. The global Workflows page is for standalone automation repositories. Agent conversations and previews stay with the project they modify. Billing and deletion Billing groups measured usage by service and keeps an append-only credit ledger. Deleting a project tears down its resources but retains billing and audit history. GitHub repositories are retained unless you explicitly select them for deletion.",
+    text: "Organizations and groups An organization owns billing and access. A group is one GitHub repository. Its child projects are the deployable targets inside that repository, such as a web app and an API. Open Projects to see groups and their children. Group settings hold repository-wide choices such as upstream updates and the primary deployed project. Projects and domains A project is one deployable directory and branch. Its overview shows the live SproutOS hostname; Domains adds a custom hostname. Environment stores encrypted variables and Observability shows requests, logs, and failures. Databases and other services Use Databases for Postgres and the project service screens for Valkey, search, and object storage. Postgres, Valkey, and search credentials are shown once when created or rotated. Object-storage credentials can be viewed again because their secret is derived; rotation still revokes the previous credential. Workflows and agents Workflows attached to a repository appear inside its group. The global Workflows page is for standalone automation repositories. Agent conversations and previews stay with the project they modify. Billing and deletion Billing groups measured usage by service and keeps an append-only credit ledger. Deleting a project tears down its resources but retains billing and audit history. GitHub repositories are retained unless you explicitly select them for deletion.",
   },
   {
     slug: "oauth-applications",
@@ -193,5 +198,47 @@ export const GENERATED_DOCS = [
       },
     ],
     text: "Register and redirect Register an OAuth client in SproutOS and add exact HTTPS redirect URIs. Public clients must use Authorization Code with PKCE ( S256 ) and must never ship a client secret. Send users to the authorization endpoint with client_id , redirect_uri , response_type=code , code_challenge , code_challenge_method=S256 , state , and the scopes you need. Validate state before exchanging the returned code. Ask only for needed access Database creation uses database:create and spends the user's SproutOS credit. When the authorization request includes intent=create_personal_database , consent explains the expected billing. The user may omit that optional permission and still sign in to your application. Pressing Cancel stops authorization. A grant may include database creation even when the account has no credit. The creation request itself returns HTTP 402 until credit is available. Tokens and credentials Exchange the code with its original code_verifier . Send access tokens as Authorization: Bearer … . Refresh tokens are rotated; replace the stored refresh token after every successful refresh. Database credentials belong to the OAuth grant that created them. Rotating an application credential does not rotate the user's credential or another application's credential. Connection URIs are returned once and cannot be revealed later. Revocation Users can revoke your grant from settings. Revocation stops new API calls and revokes credentials owned by that grant. Resources the user chooses to keep remain theirs.",
+  },
+  {
+    slug: "object-storage",
+    title: "Use object storage",
+    summary:
+      "Connect ordinary S3 SDKs to mutable application storage through the SproutOS storage proxy.",
+    audience: "developer",
+    category: "Building on SproutOS",
+    order: 2,
+    headings: [
+      {
+        id: "mutable-storage-and-static-deployments",
+        level: 2,
+        title: "Mutable storage and static deployments",
+      },
+      {
+        id: "get-the-connection-values",
+        level: 2,
+        title: "Get the connection values",
+      },
+      {
+        id: "python-with-boto3",
+        level: 2,
+        title: "Python with boto3",
+      },
+      {
+        id: "typescript-with-the-aws-sdk",
+        level: 2,
+        title: "TypeScript with the AWS SDK",
+      },
+      {
+        id: "supported-operations-and-limits",
+        level: 2,
+        title: "Supported operations and limits",
+      },
+      {
+        id: "metering-and-credit-cutoff",
+        level: 2,
+        title: "Metering and credit cutoff",
+      },
+    ],
+    text: 'Mutable storage and static deployments Object storage is mutable application data: uploads, photos, attachments, exports, and other files your application reads and changes while it runs. An ordinary S3 SDK talks to the SproutOS storage endpoint, which authenticates the project, confines every request to its bucket, and forwards it to S3. A static deployment is different. SproutOS expands an immutable build artifact and serves it through CloudFront. Customers do not receive credentials to edit that release in place; publish another deployment to change it. Get the connection values Open Databases , find the object-storage service, and select View credentials . The panel provides: S3_ENDPOINT S3_REGION S3_BUCKET_NAME S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE=true The project receives the same values as encrypted environment variables when the service is attached. Object storage is the exception to the usual one-time credential rule: View credentials can reconstruct its derived secret later. Keep it private. Rotating or deleting the credential revokes the old access at the SproutOS proxy; it is not an AWS credential and cannot be used against AWS directly. Python with boto3 import os import boto3 from botocore.config import Config s3 = boto3.client( "s3", endpoint_url=os.environ["S3_ENDPOINT"], region_name=os.environ["S3_REGION"], aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"], aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"], config=Config(s3={"addressing_style": "path"}), ) bucket = os.environ["S3_BUCKET_NAME"] s3.put_object(Bucket=bucket, Key="photos/cat.jpg", Body=image_bytes) photo = s3.get_object(Bucket=bucket, Key="photos/cat.jpg")["Body"].read() Do not set an AWS session token. Always pass the displayed endpoint and use path-style addressing; the bucket must remain in the URL path rather than the hostname. TypeScript with the AWS SDK import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3" const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: process.env.S3_REGION, credentials: { accessKeyId: process.env.S3_ACCESS_KEY_ID!, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!, }, forcePathStyle: true, }) const Bucket = process.env.S3_BUCKET_NAME! await s3.send(new PutObjectCommand({ Bucket, Key: "exports/report.json", Body: report })) const stored = await s3.send(new GetObjectCommand({ Bucket, Key: "exports/report.json" })) Supported operations and limits Object reads, writes, heads, deletes, listings, and ordinary SDK multipart uploads are supported. Multipart upload is the right choice when one upload request would exceed the service\'s per-request body limit. Presigned URLs, virtual-host bucket addressing, SigV4 streaming-chunked uploads, server-side CopyObject , and conditional or range reads are not supported. Download the source and upload a new object instead of using CopyObject ; download a whole object rather than depending on a byte range. A presigned URL would let a request outlive the live credential check, virtual-host addressing would move the tenant decision into customer-controlled DNS, and streaming-chunked SigV4 requires verification of every signed frame. The proxy spools an upload to bounded disk while verifying its payload signature, then streams it to S3. Downloads stream with backpressure rather than being loaded into application memory. Metering and credit cutoff Object storage meters write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are not charged. SproutOS adds no platform markup to these dimensions. The billing system protects enough spendable credit for 48 hours of the latest measured stored bytes. When the remaining credit reaches that reserve, new storage requests are refused while the already-funded retention window keeps the data. Add credit before retrying a refused request.',
   },
 ] as const

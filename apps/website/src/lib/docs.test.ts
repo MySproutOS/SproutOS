@@ -48,6 +48,7 @@ describe("the documentation", () => {
     expect(slugs).toContain("navigation")
     expect(slugs).toContain("oauth-applications")
     expect(slugs).toContain("github-action")
+    expect(slugs).toContain("object-storage")
   })
 
   it("says the thing the docs exist to say", () => {
@@ -80,6 +81,18 @@ describe("the documentation", () => {
     expect(text).toContain("sandbox time or model usage")
     expect(text).not.toContain("sprout_os_deploy")
     expect(text).not.toContain("sproutos-apps")
+  })
+
+  it("documents the object-storage SDK and billing boundary", () => {
+    const storage = docBySlug("object-storage")
+    const text = searchableText(storage!)
+
+    expect(text).toContain("s3_endpoint")
+    expect(text).toContain("forcepathstyle")
+    expect(text).toContain("path-style")
+    expect(text).toContain("presigned urls")
+    expect(text).toContain("48 hours")
+    expect(text).toContain("static deployment")
   })
 
   it("has a unique slug per page", () => {

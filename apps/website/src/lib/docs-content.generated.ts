@@ -94,6 +94,31 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "Heading",
       attributes: {
         level: 2,
+        id: "object-storage",
+      },
+      children: ["Object storage"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Mutable object storage records write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are free. These dimensions have no SproutOS markup.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Spendable credit includes a protected reserve for 48 hours of the latest measured object-storage bytes. When credit reaches that floor, new service requests stop while the funded retention window preserves the stored data. Adding credit clears the cutoff.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
         id: "platform-fees",
       },
       children: ["Platform fees"],
@@ -113,16 +138,40 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "Heading",
       attributes: {
         level: 2,
-        id: "one-time-credentials",
+        id: "tenant-scoped-credentials",
       },
-      children: ["One-time credentials"],
+      children: ["Tenant-scoped credentials"],
     },
     {
       $$mdtype: "Tag",
       name: "p",
       attributes: {},
       children: [
-        "Provisioning or rotating a service returns its connection URI once. Put it in the project's encrypted environment variables. SproutOS stores a verifier, not a recoverable copy, so the URI cannot be revealed later.",
+        "Provisioning or rotating Postgres, Valkey, or OpenSearch returns its connection URI once. Put it in the project's encrypted environment variables. SproutOS stores a verifier, not a recoverable copy, so those URIs cannot be revealed later.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Object storage is the exception. Its secret is derived rather than stored, so an authorized organization member can use ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["View credentials"],
+        },
+        " again. Rotation still revokes the old access immediately at the storage proxy. See ",
+        {
+          $$mdtype: "Tag",
+          name: "DocLink",
+          attributes: {
+            href: "/docs/object-storage",
+          },
+          children: ["Use object storage"],
+        },
+        " for SDK configuration and supported operations.",
       ],
     },
     {
@@ -203,14 +252,42 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           name: "li",
           attributes: {},
           children: [
-            "Object storage uses the injected ",
+            "Object storage uses ",
             {
               $$mdtype: "Tag",
               name: "code",
               attributes: {},
-              children: ["S3_*"],
+              children: ["S3_ENDPOINT"],
             },
-            " values and path-style addressing.",
+            ", ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_REGION"],
+            },
+            ", ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_BUCKET_NAME"],
+            },
+            ", ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_ACCESS_KEY_ID"],
+            },
+            ", ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_SECRET_ACCESS_KEY"],
+            },
+            ", and path-style addressing.",
           ],
         },
       ],
@@ -846,7 +923,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           attributes: {},
           children: ["Databases"],
         },
-        " for Postgres and the project service screens for Valkey, search, and object storage. A connection credential is shown once when it is created or rotated. Store it in a project environment variable; it cannot be revealed later.",
+        " for Postgres and the project service screens for Valkey, search, and object storage. Postgres, Valkey, and search credentials are shown once when created or rotated. Object-storage credentials can be viewed again because their secret is derived; rotation still revokes the previous credential.",
       ],
     },
     {
@@ -1066,6 +1143,282 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       attributes: {},
       children: [
         "Users can revoke your grant from settings. Revocation stops new API calls and revokes credentials owned by that grant. Resources the user chooses to keep remain theirs.",
+      ],
+    },
+  ],
+  "object-storage": [
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "mutable-storage-and-static-deployments",
+      },
+      children: ["Mutable storage and static deployments"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Object storage is mutable application data: uploads, photos, attachments, exports, and other files your application reads and changes while it runs. An ordinary S3 SDK talks to the SproutOS storage endpoint, which authenticates the project, confines every request to its bucket, and forwards it to S3.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "A static deployment is different. SproutOS expands an immutable build artifact and serves it through CloudFront. Customers do not receive credentials to edit that release in place; publish another deployment to change it.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "get-the-connection-values",
+      },
+      children: ["Get the connection values"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Open ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["Databases"],
+        },
+        ", find the object-storage service, and select ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["View credentials"],
+        },
+        ". The panel provides:",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "ul",
+      attributes: {},
+      children: [
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_ENDPOINT"],
+            },
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_REGION"],
+            },
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_BUCKET_NAME"],
+            },
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_ACCESS_KEY_ID"],
+            },
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_SECRET_ACCESS_KEY"],
+            },
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["S3_FORCE_PATH_STYLE=true"],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The project receives the same values as encrypted environment variables when the service is attached. Object storage is the exception to the usual one-time credential rule: ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["View credentials"],
+        },
+        " can reconstruct its derived secret later. Keep it private. Rotating or deleting the credential revokes the old access at the SproutOS proxy; it is not an AWS credential and cannot be used against AWS directly.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "python-with-boto3",
+      },
+      children: ["Python with boto3"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "CodeBlock",
+      attributes: {
+        language: "python",
+      },
+      children: [
+        'import os\n\nimport boto3\nfrom botocore.config import Config\n\ns3 = boto3.client(\n    "s3",\n    endpoint_url=os.environ["S3_ENDPOINT"],\n    region_name=os.environ["S3_REGION"],\n    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],\n    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],\n    config=Config(s3={"addressing_style": "path"}),\n)\n\nbucket = os.environ["S3_BUCKET_NAME"]\ns3.put_object(Bucket=bucket, Key="photos/cat.jpg", Body=image_bytes)\nphoto = s3.get_object(Bucket=bucket, Key="photos/cat.jpg")["Body"].read()\n',
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Do not set an AWS session token. Always pass the displayed endpoint and use path-style addressing; the bucket must remain in the URL path rather than the hostname.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "typescript-with-the-aws-sdk",
+      },
+      children: ["TypeScript with the AWS SDK"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "CodeBlock",
+      attributes: {
+        language: "typescript",
+      },
+      children: [
+        'import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"\n\nconst s3 = new S3Client({\n  endpoint: process.env.S3_ENDPOINT,\n  region: process.env.S3_REGION,\n  credentials: {\n    accessKeyId: process.env.S3_ACCESS_KEY_ID!,\n    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,\n  },\n  forcePathStyle: true,\n})\n\nconst Bucket = process.env.S3_BUCKET_NAME!\nawait s3.send(new PutObjectCommand({ Bucket, Key: "exports/report.json", Body: report }))\nconst stored = await s3.send(new GetObjectCommand({ Bucket, Key: "exports/report.json" }))\n',
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "supported-operations-and-limits",
+      },
+      children: ["Supported operations and limits"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Object reads, writes, heads, deletes, listings, and ordinary SDK multipart uploads are supported. Multipart upload is the right choice when one upload request would exceed the service's per-request body limit.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Presigned URLs, virtual-host bucket addressing, SigV4 streaming-chunked uploads, server-side ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["CopyObject"],
+        },
+        ", and conditional or range reads are not supported. Download the source and upload a new object instead of using ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["CopyObject"],
+        },
+        "; download a whole object rather than depending on a byte range. A presigned URL would let a request outlive the live credential check, virtual-host addressing would move the tenant decision into customer-controlled DNS, and streaming-chunked SigV4 requires verification of every signed frame.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The proxy spools an upload to bounded disk while verifying its payload signature, then streams it to S3. Downloads stream with backpressure rather than being loaded into application memory.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "metering-and-credit-cutoff",
+      },
+      children: ["Metering and credit cutoff"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Object storage meters write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are not charged. SproutOS adds no platform markup to these dimensions.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The billing system protects enough spendable credit for 48 hours of the latest measured stored bytes. When the remaining credit reaches that reserve, new storage requests are refused while the already-funded retention window keeps the data. Add credit before retrying a refused request.",
       ],
     },
   ],
