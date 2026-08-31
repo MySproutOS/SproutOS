@@ -328,8 +328,24 @@ was published with** — including a secret rotated since. Worth knowing before 
 
 ## Migrations
 
-Migrations run as a separate step *before* the new version starts serving. A failing migration fails
-the deploy and leaves the previous release up.
+Production migrations are owned and ordered by the customer's GitHub Actions workflow. SproutOS
+does not scan the repository or discover a migration command automatically.
+
+Prefer one dedicated SproutOS migrator project per database. Build its migrator, pass it to the
+deploy action with \`migration-directory\` and, when needed, \`migration-handler\`, and make every
+application job that uses that database declare \`needs: migrate\`. The action waits for SproutOS to
+finish the uploaded migrator. A failure fails that GitHub job, leaves dependent deploy jobs
+unstarted, and is not retried automatically.
+
+Running the repository's migration command directly in CI is also supported. That requires a
+production database credential stored as a GitHub Actions secret; the deploy action's OIDC token is
+not a database credential. In either pattern, one job owns each database migration so application
+projects cannot race it.
+
+A SproutOS sandbox starts without \`DATABASE_URL\`. Create an isolated, on-demand database branch
+through the sandbox's scoped action before validation, and migrate only that branch. Do not report
+production migration as complete until the customer-owned GitHub Actions path exists and gates
+every affected deploy job.
 
 Do not run migrations from application startup. Several Lambda instances start concurrently, and a
 migration racing itself is how a schema ends up half-applied.

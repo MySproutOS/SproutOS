@@ -45,6 +45,7 @@ describe("the documentation", () => {
     expect(slugs).toContain("limits")
     expect(slugs).toContain("billing")
     expect(slugs).toContain("connecting")
+    expect(slugs).toContain("database-migrations")
     expect(slugs).toContain("navigation")
     expect(slugs).toContain("oauth-applications")
     expect(slugs).toContain("github-action")
@@ -81,6 +82,19 @@ describe("the documentation", () => {
     expect(text).toContain("sandbox time or model usage")
     expect(text).not.toContain("sprout_os_deploy")
     expect(text).not.toContain("sproutos-apps")
+  })
+
+  it("makes production migrations a customer-owned GitHub Actions dependency", () => {
+    const migrations = docBySlug("database-migrations")
+    const text = searchableText(migrations!)
+
+    expect(text).toContain("dedicated sproutos migrator project")
+    expect(text).toContain("migration-directory")
+    expect(text).toContain("needs: migrate")
+    expect(text).toContain("directly in ci")
+    expect(text).toContain("does not scan a repository")
+    expect(text).toContain("does not retry")
+    expect(text).toContain("does not replace the github actions migration job")
   })
 
   it("documents the object-storage SDK and billing boundary", () => {

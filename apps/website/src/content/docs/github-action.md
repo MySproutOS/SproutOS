@@ -4,7 +4,7 @@ title: Deploy from GitHub or your local agent
 summary: Use the same sprout deployment contract from GitHub Actions, a terminal, or a coding-agent harness.
 audience: developer
 category: Deploying
-order: 2
+order: 3
 ---
 
 ## GitHub Actions
@@ -55,8 +55,13 @@ Internally, the wrapper exchanges GitHub's OIDC assertion for a short-lived depl
 passes it to the pinned CLI through the environment, never a command-line argument. That token is
 not a secret developers create or store.
 
-The action waits for a terminal deployment state. A failed migration, missing artifact, or rejected
-repository identity fails the GitHub job instead of reporting a successful upload.
+The action waits for a terminal deployment state. A missing artifact or rejected repository
+identity fails the GitHub job instead of reporting a successful upload.
+
+Production migrations remain part of the customer's GitHub Actions workflow. Use a dedicated
+migrator project and make application deploy jobs wait for it, or run the migration command directly
+in CI. See [Run database migrations](/docs/database-migrations) for both patterns and their failure
+boundaries.
 
 ## Run the same deployment locally
 

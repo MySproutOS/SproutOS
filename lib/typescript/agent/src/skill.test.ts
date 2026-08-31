@@ -119,6 +119,8 @@ describe("the sandbox's own section", () => {
     expect(body).toContain("`small` role")
     expect(body).toContain("`large` role")
     expect(body).toContain("The parent agent owns the final answer")
+    expect(body).toContain("isolated, on-demand database branch")
+    expect(body).toMatch(/do not report\s+production migration as complete/i)
   })
 
   it("says none of it in the control-plane checkout, where none of it is true", async () => {
@@ -154,6 +156,10 @@ describe("the public skill", () => {
     expect(body).not.toContain("sproutos-deploy-action@v1")
     expect(body).toContain("AGENTS.md-only harness")
     expect(body).toContain("~/.codex/skills/sproutos/SKILL.md")
+    expect(body).toContain("dedicated SproutOS migrator project")
+    expect(body).toContain("needs: migrate")
+    expect(body).toContain("does not scan the repository")
+    expect(body).toContain("directly in CI")
     expect(body).not.toContain("Where you are right now")
   })
 })
