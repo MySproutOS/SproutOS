@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { mergeInstallationRepositoryPages, repositoryNameProblem } from "./github-repos"
+import { GitHubNotFoundError } from "@lib/github"
+import {
+  availableInstallationResults,
+  mergeInstallationRepositoryPages,
+  repositoryNameProblem,
+} from "./github-repos"
 
 describe("mergeInstallationRepositoryPages", () => {
   it("includes repositories from every connected installation and de-duplicates by GitHub id", () => {
@@ -37,6 +42,25 @@ describe("mergeInstallationRepositoryPages", () => {
 
     expect(result.repositories.map((repository) => repository.id)).toEqual([42, 99])
     expect(result.totalCount).toBe(3)
+  })
+})
+
+describe("availableInstallationResults", () => {
+  it("ignores a removed installation without hiding healthy installations", () => {
+    const healthy = { accountLogin: "person", page: { repositories: [], totalCount: 0 } }
+    expect(
+      availableInstallationResults([
+        {
+          status: "rejected",
+          reason: new GitHubNotFoundError(
+            404,
+            "/app/installations/stale/access_tokens",
+            "Not Found",
+          ),
+        },
+        { status: "fulfilled", value: healthy },
+      ]),
+    ).toEqual([healthy])
   })
 })
 

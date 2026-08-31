@@ -73,6 +73,7 @@ export function repositoryNameProblem(name: string): string | null {
 }
 
 type InstallationRepositoryPage = Awaited<ReturnType<typeof listInstallationRepositories>>
+type ListedInstallation = { accountLogin: string; page: InstallationRepositoryPage }
 
 /**
  * One organization can connect several GitHub App installations.
@@ -92,6 +93,20 @@ export function mergeInstallationRepositoryPages(pages: InstallationRepositoryPa
     repositories: [...repositories.values()],
     totalCount: pages.reduce((total, page) => total + page.totalCount, 0),
   }
+}
+
+export function availableInstallationResults(
+  results: PromiseSettledResult<ListedInstallation>[],
+): ListedInstallation[] {
+  return results.flatMap((result) => {
+    if (result.status === "fulfilled") return [result.value]
+    /*
+      GitHub returns 404 when an installation was removed but its webhook has not reached us yet.
+      One stale installation must not hide every healthy account in the picker.
+    */
+    if (result.reason instanceof GitHubNotFoundError) return []
+    throw result.reason
+  })
 }
 
 /**
@@ -157,18 +172,30 @@ const app = new Hono()
           installation made every later account visible in Settings but unusable here — most
           notably a personal fork when the team's installation happened to be older.
         */
-        const pages = await Promise.all(
+        const results = await Promise.allSettled(
           installations.map(async (installation) => {
             const credential = await tokens.get(Number(installation.installationId), {
               purpose: "repository-picker",
             })
-            return await listInstallationRepositories(createGitHubClient(), credential, {
-              page: query.page ?? 1,
-              perPage: query.perPage ?? 100,
-            })
+            return {
+              accountLogin: installation.accountLogin,
+              page: await listInstallationRepositories(createGitHubClient(), credential, {
+                page: query.page ?? 1,
+                perPage: query.perPage ?? 100,
+              }),
+            }
           }),
         )
-        const page = mergeInstallationRepositoryPages(pages)
+        const available = availableInstallationResults(results)
+        if (available.length === 0) {
+          return throwNotFound(
+            c,
+            "This organization has no active GitHub App installation. Install the SproutOS app on the account that owns the repositories.",
+          )
+        }
+        const page = mergeInstallationRepositoryPages(
+          available.map(({ page: resultPage }) => resultPage),
+        )
 
         return c.json({
           data: page.repositories.map((repository) => ({
@@ -181,7 +208,7 @@ const app = new Hono()
             private: repository.private,
           })),
           // Retained for older clients; the repository rows themselves carry their owner.
-          installationAccountLogin: installations[0].accountLogin,
+          installationAccountLogin: available[0].accountLogin,
           totalCount: page.totalCount,
         })
       } catch (error) {
