@@ -32,6 +32,14 @@ const NEXTJS_PUBLIC_PREFIXES = [
   "/skills",
   "/oauth",
   "/github",
+  // Marketing pages. A prefix covers its children, so /platform reaches /platform/databases too.
+  // Anything not listed here falls through to the dashboard branch and redirects a signed-out
+  // visitor to /login, so a new marketing page that is missing from this list does not 404 — it
+  // silently becomes unreachable, which is why `proxy.test.ts` asserts each of these by name.
+  "/personalize",
+  "/data-ownership",
+  "/platform",
+  "/business",
 ]
 
 /** The load balancer's health check, which has no session and must never be redirected to get one. */

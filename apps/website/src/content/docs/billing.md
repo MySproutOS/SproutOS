@@ -2,6 +2,9 @@
 slug: billing
 title: Understand billing
 summary: Read service usage, credit, overhead, and queue residency without hidden rounding.
+audience: user
+category: Billing & limits
+order: 2
 ---
 
 ## Usage and credit
