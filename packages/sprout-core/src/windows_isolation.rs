@@ -69,6 +69,17 @@ impl WindowsAppContainerCommand {
                 return Err(SproutError::IsolationUnavailable(message));
             }
         };
+        // AppContainerProfile::ensure registers the profile identity, but Windows does not
+        // materialize its LocalAppData package directory until an app is launched. Hosted
+        // runners therefore return a valid folder path whose final component does not exist yet.
+        // Create that package-owned staging root before asking tempfile to create a child in it.
+        if let Err(source) = fs::create_dir_all(&profile_folder) {
+            let _ = profile.delete();
+            return Err(SproutError::Io {
+                operation: "create Windows AppContainer profile directory",
+                source,
+            });
+        }
         let temporary = match tempfile::Builder::new()
             .prefix("sprout-stage-")
             .tempdir_in(profile_folder)
