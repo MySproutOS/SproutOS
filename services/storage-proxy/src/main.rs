@@ -19,17 +19,19 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use base64::Engine;
 use futures_util::StreamExt;
 use redis::AsyncCommands;
 use sha2::{Digest, Sha256};
 use sproutos_metering_proto::UsageDimension;
+use sproutos_s3_sigv4::STREAMING_UNSIGNED_PAYLOAD_TRAILER;
 use sproutos_service_credentials::CredentialStore;
 use storage_proxy::{
     Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredentialProvider, bucket_from_path,
     finish_authorization_with_payload_hash, is_list, is_listing_response, prepare_authorization,
     strip_prefix_from_listing, upstream_headers, upstream_path, upstream_query,
 };
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, info, warn};
 
@@ -53,7 +55,8 @@ const VAULT_ORIGINS: [&str; 3] = [
 /// `Authorization` is credentialed, and the wildcard is ignored for credentialed requests.
 const ALLOWED_HEADERS: &str = "authorization,content-type,content-length,content-md5,\
 x-amz-content-sha256,x-amz-date,x-amz-security-token,x-amz-acl,x-amz-meta-*,range,if-match,\
-if-none-match";
+if-none-match,content-encoding,x-amz-trailer,x-amz-decoded-content-length,\
+x-amz-sdk-checksum-algorithm";
 
 /// Headers the plugin needs to be able to read off the response.
 ///
@@ -288,6 +291,7 @@ fn body_error(
 enum BodyReadFailure {
     TooLarge,
     Rejected,
+    InvalidAwsChunked,
     TimedOut,
     Spool,
 }
@@ -389,9 +393,133 @@ async fn spool_body(
         .map_err(|_| BodyReadFailure::TimedOut)?
 }
 
+/// Decode the `aws-chunked` envelope emitted by current AWS SDKs for checksum trailers.
+///
+/// Hyper has already removed HTTP transfer chunking. This is the inner S3 framing, so forwarding
+/// it as the object body would store chunk sizes and the checksum trailer as customer data. Decode
+/// into a second unlinked file, validate the declared length and CRC32, and hash the real object for
+/// the fresh upstream signature.
+async fn decode_aws_chunked(
+    body: SpooledBody,
+    headers: &BTreeMap<String, String>,
+    max_body_bytes: usize,
+) -> Result<SpooledBody, BodyReadFailure> {
+    if headers.get("content-encoding").map(String::as_str) != Some("aws-chunked")
+        || headers.get("x-amz-trailer").map(String::as_str) != Some("x-amz-checksum-crc32")
+    {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    let output = tempfile::tempfile().map_err(|_| BodyReadFailure::Spool)?;
+    let mut output = tokio::fs::File::from_std(output);
+    let mut reader = BufReader::new(body.file);
+    let mut sha256 = Sha256::new();
+    let mut crc32 = crc32fast::Hasher::new();
+    let mut decoded_len = 0_u64;
+    let mut trailer_crc32 = None;
+    let mut buffer = vec![0_u8; 64 * 1024];
+
+    loop {
+        let mut line = String::new();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+        if read == 0 || read > 8 * 1024 || !line.ends_with("\r\n") {
+            return Err(BodyReadFailure::InvalidAwsChunked);
+        }
+        let size = line
+            .trim_end_matches("\r\n")
+            .split(';')
+            .next()
+            .and_then(|value| u64::from_str_radix(value, 16).ok())
+            .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+
+        if size == 0 {
+            loop {
+                line.clear();
+                let read = reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+                if read == 0 || read > 8 * 1024 || !line.ends_with("\r\n") {
+                    return Err(BodyReadFailure::InvalidAwsChunked);
+                }
+                let line = line.trim_end_matches("\r\n");
+                if line.is_empty() {
+                    break;
+                }
+                let (name, value) = line
+                    .split_once(':')
+                    .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+                if name.eq_ignore_ascii_case("x-amz-checksum-crc32") {
+                    trailer_crc32 = Some(value.trim().to_owned());
+                }
+            }
+            break;
+        }
+
+        decoded_len = decoded_len
+            .checked_add(size)
+            .ok_or(BodyReadFailure::TooLarge)?;
+        if decoded_len > max_body_bytes as u64 {
+            return Err(BodyReadFailure::TooLarge);
+        }
+
+        let mut remaining = size;
+        while remaining > 0 {
+            let take = usize::try_from(remaining.min(buffer.len() as u64))
+                .map_err(|_| BodyReadFailure::TooLarge)?;
+            reader
+                .read_exact(&mut buffer[..take])
+                .await
+                .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+            output
+                .write_all(&buffer[..take])
+                .await
+                .map_err(|_| BodyReadFailure::Spool)?;
+            sha256.update(&buffer[..take]);
+            crc32.update(&buffer[..take]);
+            remaining -= take as u64;
+        }
+
+        let mut delimiter = [0_u8; 2];
+        reader
+            .read_exact(&mut delimiter)
+            .await
+            .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+        if delimiter != *b"\r\n" {
+            return Err(BodyReadFailure::InvalidAwsChunked);
+        }
+    }
+
+    let declared_len = headers
+        .get("x-amz-decoded-content-length")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+    if declared_len != decoded_len {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    let expected_crc32 =
+        base64::engine::general_purpose::STANDARD.encode(crc32.finalize().to_be_bytes());
+    if trailer_crc32.as_deref() != Some(expected_crc32.as_str()) {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    output.flush().await.map_err(|_| BodyReadFailure::Spool)?;
+    output.rewind().await.map_err(|_| BodyReadFailure::Spool)?;
+    Ok(SpooledBody {
+        file: output,
+        len: decoded_len,
+        payload_hash: hex::encode(sha256.finalize()),
+    })
+}
+
 fn declared_body_too_large(headers: &BTreeMap<String, String>, max_body_bytes: usize) -> bool {
     headers
-        .get("content-length")
+        .get("x-amz-decoded-content-length")
+        .or_else(|| headers.get("content-length"))
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > max_body_bytes as u64)
 }
@@ -554,9 +682,23 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     // SigV4 commits to the payload digest before S3 sees the request. Write into an unlinked
     // temporary file while hashing, then verify that digest before forwarding. This preserves body
     // integrity without turning four multipart uploads into four large resident allocations.
+    let aws_chunked = headers
+        .get("x-amz-content-sha256")
+        .is_some_and(|value| value == STREAMING_UNSIGNED_PAYLOAD_TRAILER);
+    // The wire envelope adds one small header per SDK chunk plus the checksum trailer. The decoded
+    // limit remains authoritative; this allowance only keeps an exactly-64-MiB object from being
+    // rejected because its framing is a few KiB larger.
+    let wire_body_limit = if aws_chunked {
+        state
+            .max_body_bytes
+            .saturating_add(state.max_body_bytes / (64 * 1024) * 32)
+            .saturating_add(16 * 1024)
+    } else {
+        state.max_body_bytes
+    };
     let body = match spool_body(
         request.into_body(),
-        state.max_body_bytes,
+        wire_body_limit,
         state.body_read_timeout,
     )
     .await
@@ -578,6 +720,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 origin.as_deref(),
             );
         }
+        Err(BodyReadFailure::InvalidAwsChunked) => unreachable!("spooling does not decode"),
         Err(BodyReadFailure::TimedOut) => {
             return body_error(
                 StatusCode::REQUEST_TIMEOUT,
@@ -594,6 +737,38 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 origin.as_deref(),
             );
         }
+    };
+    let body = if aws_chunked {
+        match decode_aws_chunked(body, &headers, state.max_body_bytes).await {
+            Ok(body) => body,
+            Err(BodyReadFailure::TooLarge) => {
+                return body_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "EntityTooLarge",
+                    "The request body is too large.",
+                    origin.as_deref(),
+                );
+            }
+            Err(BodyReadFailure::InvalidAwsChunked | BodyReadFailure::Rejected) => {
+                return body_error(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidRequest",
+                    "The aws-chunked request body or checksum is invalid.",
+                    origin.as_deref(),
+                );
+            }
+            Err(BodyReadFailure::TimedOut) => unreachable!("decoding does not wait on a socket"),
+            Err(BodyReadFailure::Spool) => {
+                return body_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SlowDown",
+                    "Temporary upload capacity is unavailable.",
+                    origin.as_deref(),
+                );
+            }
+        }
+    } else {
+        body
     };
 
     let incoming = IncomingRequest {
@@ -897,6 +1072,64 @@ mod tests {
 
         headers.insert("content-length".to_owned(), "16".to_owned());
         assert!(!declared_body_too_large(&headers, 16));
+
+        // aws-chunked framing may be larger than the object. The decoded declaration is the limit.
+        headers.insert("content-length".to_owned(), "100".to_owned());
+        headers.insert("x-amz-decoded-content-length".to_owned(), "16".to_owned());
+        assert!(!declared_body_too_large(&headers, 16));
+    }
+
+    #[tokio::test]
+    async fn decodes_and_checks_the_body_current_boto3_emits() {
+        // Captured from boto3 1.43.84's before-send hook. This is the inner aws-chunked envelope;
+        // Hyper has already removed the outer HTTP Transfer-Encoding framing.
+        let wire = b"c\r\ncapture-four\r\n0\r\nx-amz-checksum-crc32:oe+05Q==\r\n\r\n";
+        let body = spool_body(
+            Body::from(wire.as_slice()),
+            wire.len(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let mut headers = BTreeMap::new();
+        headers.insert("content-encoding".to_owned(), "aws-chunked".to_owned());
+        headers.insert(
+            "x-amz-trailer".to_owned(),
+            "x-amz-checksum-crc32".to_owned(),
+        );
+        headers.insert("x-amz-decoded-content-length".to_owned(), "12".to_owned());
+
+        let mut decoded = decode_aws_chunked(body, &headers, 64).await.unwrap();
+        let mut bytes = Vec::new();
+        decoded.file.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(bytes, b"capture-four");
+        assert_eq!(decoded.len, 12);
+        assert_eq!(decoded.payload_hash, hex::encode(Sha256::digest(bytes)));
+    }
+
+    #[tokio::test]
+    async fn refuses_an_aws_chunked_body_with_a_false_checksum() {
+        let wire = b"c\r\ncapture-four\r\n0\r\nx-amz-checksum-crc32:AAAAAAAA\r\n\r\n";
+        let body = spool_body(
+            Body::from(wire.as_slice()),
+            wire.len(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let headers = BTreeMap::from([
+            ("content-encoding".to_owned(), "aws-chunked".to_owned()),
+            (
+                "x-amz-trailer".to_owned(),
+                "x-amz-checksum-crc32".to_owned(),
+            ),
+            ("x-amz-decoded-content-length".to_owned(), "12".to_owned()),
+        ]);
+
+        assert!(matches!(
+            decode_aws_chunked(body, &headers, 64).await,
+            Err(BodyReadFailure::InvalidAwsChunked)
+        ));
     }
 
     #[tokio::test]

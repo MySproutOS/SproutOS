@@ -169,7 +169,12 @@ resource "aws_lb" "main" {
   # A tenant application can legitimately hold a connection open — a server-sent event stream, a
   # long poll. The default 60s would cut those at exactly one minute, which reads to the customer
   # as their own bug.
-  idle_timeout = 300
+  idle_timeout         = 300
+  preserve_host_header = true
+
+  # The storage endpoint verifies the customer's S3 SigV4 signature. `host` is one of boto3's
+  # signed headers, so the ALB must forward it byte-for-byte instead of normalizing it before the
+  # request reaches storage-proxy. This is also the least surprising behaviour for tenant hosts.
 
   enable_deletion_protection = var.deletion_protection
   tags                       = { Name = "${var.name_prefix}-alb" }

@@ -34,6 +34,13 @@ pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 /// proxy must consume rather than forward.
 pub const STREAMING_PAYLOAD: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
 
+/// The payload marker emitted by current AWS SDKs when request checksums are carried in a trailer.
+///
+/// Unlike [`STREAMING_PAYLOAD`], the body chunks are not individually signed. The seed signature
+/// authenticates this marker and the trailer declaration; the transport is HTTPS, and the proxy
+/// separately validates the advertised checksum while decoding the aws-chunked body.
+pub const STREAMING_UNSIGNED_PAYLOAD_TRAILER: &str = "STREAMING-UNSIGNED-PAYLOAD-TRAILER";
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SignatureError {
     #[error("the Authorization header is not AWS4-HMAC-SHA256")]

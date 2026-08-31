@@ -729,6 +729,24 @@ export function servicePublicEndpoint(
 ): { host: string | null; port: number | null } {
   if (status !== "active") return { host: null, port: null }
 
+  if (kind === "object_storage") {
+    const raw = env.SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT
+    if (raw === undefined || raw.trim() === "") return { host: null, port: null }
+    try {
+      const endpoint = new URL(raw)
+      if (endpoint.protocol !== "https:" && endpoint.protocol !== "http:") {
+        return { host: null, port: null }
+      }
+      const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80))
+      if (endpoint.hostname === "" || !Number.isInteger(port) || port < 1 || port > 65_535) {
+        return { host: null, port: null }
+      }
+      return { host: endpoint.hostname, port }
+    } catch {
+      return { host: null, port: null }
+    }
+  }
+
   const config =
     kind === "postgres"
       ? {

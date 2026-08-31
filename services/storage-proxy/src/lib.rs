@@ -39,8 +39,9 @@ use std::time::{Duration, SystemTime};
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use sproutos_s3_sigv4::{
-    AuthorizationHeader, CanonicalRequest, STREAMING_PAYLOAD, UNSIGNED_PAYLOAD, canonical_query,
-    parse_authorization, sha256_hex, sign, string_to_sign, verify,
+    AuthorizationHeader, CanonicalRequest, STREAMING_PAYLOAD, STREAMING_UNSIGNED_PAYLOAD_TRAILER,
+    UNSIGNED_PAYLOAD, canonical_query, parse_authorization, sha256_hex, sign, string_to_sign,
+    verify,
 };
 use sproutos_service_credentials::{CredentialStore, ResolvedService};
 use sproutos_tenant_auth::encode_short_id;
@@ -480,6 +481,9 @@ pub fn payload_hash(request: &IncomingRequest<'_>) -> Result<String, Denied> {
 
     match claimed {
         Some(UNSIGNED_PAYLOAD) => Ok(UNSIGNED_PAYLOAD.to_owned()),
+        Some(STREAMING_UNSIGNED_PAYLOAD_TRAILER) => {
+            Ok(STREAMING_UNSIGNED_PAYLOAD_TRAILER.to_owned())
+        }
         // Chunked uploads carry their own per-chunk signatures. This proxy buffers whole requests,
         // so it cannot verify them, and accepting the literal would be verifying nothing.
         Some(STREAMING_PAYLOAD) => Err(Denied::Malformed("streaming uploads are not supported")),
@@ -534,6 +538,7 @@ pub fn check_signature_with_payload_hash(
         .map(String::as_str)
     {
         Some(UNSIGNED_PAYLOAD) => UNSIGNED_PAYLOAD,
+        Some(STREAMING_UNSIGNED_PAYLOAD_TRAILER) => STREAMING_UNSIGNED_PAYLOAD_TRAILER,
         Some(STREAMING_PAYLOAD) => {
             return Err(Denied::Malformed("streaming uploads are not supported"));
         }
@@ -695,7 +700,12 @@ pub async fn prepare_authorization(
     let signature_checked = request
         .headers
         .get("x-amz-content-sha256")
-        .is_some_and(|hash| hash == UNSIGNED_PAYLOAD);
+        .is_some_and(|hash| {
+            matches!(
+                hash.as_str(),
+                UNSIGNED_PAYLOAD | STREAMING_UNSIGNED_PAYLOAD_TRAILER
+            )
+        });
     if signature_checked {
         check_signature(request, &auth, &secret)?;
     }
@@ -985,6 +995,22 @@ mod tests {
         };
 
         assert_eq!(payload_hash(&request).unwrap(), UNSIGNED_PAYLOAD);
+    }
+
+    #[test]
+    fn accepts_the_checksum_trailer_marker_current_aws_sdks_sign() {
+        let request = IncomingRequest {
+            method: "PUT",
+            path: "/v-abc/one.md",
+            query: "",
+            headers: headers(&[("x-amz-content-sha256", STREAMING_UNSIGNED_PAYLOAD_TRAILER)]),
+            body: b"the aws-chunked envelope is decoded by the HTTP service",
+        };
+
+        assert_eq!(
+            payload_hash(&request).unwrap(),
+            STREAMING_UNSIGNED_PAYLOAD_TRAILER
+        );
     }
 
     #[test]

@@ -74,6 +74,7 @@ describe("service connection contracts", () => {
       SERVICE_VALKEY_PUBLIC_PORT: "6379",
       SERVICE_SEARCH_PUBLIC_HOST: "search.sproutos.test",
       SERVICE_SEARCH_PUBLIC_PORT: "443",
+      SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.sproutos.test",
     }
 
     expect(servicePublicEndpoint("postgres", "active", env)).toEqual({
@@ -86,6 +87,10 @@ describe("service connection contracts", () => {
     })
     expect(servicePublicEndpoint("elasticsearch", "active", env)).toEqual({
       host: "search.sproutos.test",
+      port: 443,
+    })
+    expect(servicePublicEndpoint("object_storage", "active", env)).toEqual({
+      host: "storage.sproutos.test",
       port: 443,
     })
   })
