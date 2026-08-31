@@ -48,6 +48,20 @@ export function fetchGithubInstallation(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
+  async function getByInstallationId<T extends (keyof DB["githubInstallation"])[]>(
+    organizationId: string,
+    installationId: string,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["githubInstallation"]>, T[number]> | undefined> {
+    return await db
+      .selectFrom("githubInstallation")
+      .select(fields)
+      .where("organizationId", "=", organizationId)
+      .where("installationId", "=", installationId)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+  }
+
   async function listUsable<T extends (keyof DB["githubInstallation"])[]>(
     organizationId: string,
     fields: T,
@@ -77,5 +91,11 @@ export function fetchGithubInstallation(db: Kysely<DB>) {
       .executeTakeFirst()
   }
 
-  return { getByAccountLogin, getForRepository, getInOrganization, listUsable }
+  return {
+    getByAccountLogin,
+    getByInstallationId,
+    getForRepository,
+    getInOrganization,
+    listUsable,
+  }
 }

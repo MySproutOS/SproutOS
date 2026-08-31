@@ -662,7 +662,19 @@ async function resolveOwnRepository(
     purpose: "project-repository-read",
     repositoryId,
   })
-  if (credential === undefined) return undefined
+  if (credential === undefined || credential.kind !== "installation") return undefined
+
+  /*
+    The installation is provenance too. Without this foreign key the import succeeds and the
+    project points at the right fork, but every later headless operation fails because it cannot
+    mint the repository-scoped credential that authorized this read.
+  */
+  const installation = await fetchGithubInstallation(db).getByInstallationId(
+    organizationId,
+    String(credential.installationId),
+    ["id"],
+  )
+  if (installation === undefined) return undefined
 
   const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)
 
@@ -672,6 +684,7 @@ async function resolveOwnRepository(
   */
   return await crudRepository(db).create({
     organizationId,
+    githubInstallationId: installation.id,
     githubRepoId: String(upstream.id),
     ownerLogin: upstream.ownerLogin,
     name: upstream.name,
