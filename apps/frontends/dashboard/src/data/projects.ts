@@ -21,6 +21,8 @@ export type Project = {
   /** `owner/name` on GitHub, so the card can link to it rather than just print it. */
   repoUrl: string
   status: ProjectStatus
+  /** Workflows have their own organization index; sites remain on the Projects index. */
+  kind: "site" | "workflow"
   /** Micro-USD. Never a float: see `@lib/billing`. */
   costMicros: bigint
   updatedLabel: string
@@ -134,6 +136,7 @@ export function useProjects(orgSlug: string) {
       repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
       repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
       status: STATE_TO_STATUS[project.state] ?? "building",
+      kind: project.kind === "workflow" ? "workflow" : "site",
       costMicros: BigInt(project.costMicroUsd),
       updatedLabel: relativeLabel(project.updatedAt),
       region: project.region ?? "—",
@@ -176,6 +179,7 @@ export function useProject(orgSlug: string, projectId: string) {
             repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
             repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
             status: STATE_TO_STATUS[project.state] ?? "building",
+            kind: project.kind === "workflow" ? "workflow" : "site",
             costMicros: BigInt(project.costMicroUsd),
             updatedLabel: relativeLabel(project.updatedAt),
             region: project.region ?? "\u2014",
@@ -211,6 +215,11 @@ export function useProject(orgSlug: string, projectId: string) {
             createdLabel: relativeLabel(project.createdAt),
           } satisfies ProjectDetail),
   }
+}
+
+/** A repository-backed workflow that is not nested beneath a project group. */
+export function isStandaloneWorkflowProject(project: Project): boolean {
+  return project.kind === "workflow" && project.parentProjectId === null
 }
 
 /**

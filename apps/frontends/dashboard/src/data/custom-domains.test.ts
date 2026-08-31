@@ -40,6 +40,7 @@ describe("eligibleCustomDomainProjects", () => {
     repo: "acme/project",
     repoUrl: "https://github.com/acme/project",
     status: "ready",
+    kind: "site",
     costMicros: 0n,
     updatedLabel: "now",
     region: "us-east-1",
