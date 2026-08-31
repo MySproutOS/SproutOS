@@ -2,6 +2,9 @@
 slug: navigation
 title: Navigate SproutOS
 summary: Where repositories, deployable projects, workflows, services, and usage live.
+audience: user
+category: Getting started
+order: 1
 ---
 
 ## Organizations and groups

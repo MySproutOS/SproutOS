@@ -2,6 +2,9 @@
 slug: github-action
 title: Deploy from GitHub or your local agent
 summary: Use the same sprout deployment contract from GitHub Actions, a terminal, or a coding-agent harness.
+audience: developer
+category: Deploying
+order: 2
 ---
 
 ## GitHub Actions

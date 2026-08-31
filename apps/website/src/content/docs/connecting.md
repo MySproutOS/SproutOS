@@ -2,6 +2,9 @@
 slug: connecting
 title: Connect to services
 summary: Use one-time, tenant-scoped credentials for Postgres, Valkey, search, and storage.
+audience: developer
+category: Deploying
+order: 1
 ---
 
 ## One-time credentials

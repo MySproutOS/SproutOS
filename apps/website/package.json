@@ -23,6 +23,7 @@
     "@lib/github": "workspace:*",
     "@lib/oauth": "workspace:*",
     "@lib/oauth-provider": "workspace:*",
+    "@markdoc/markdoc": "^0.5.9",
     "@sproutos/db": "workspace:*",
     "@tailwindcss/postcss": "catalog:",
     "@tailwindcss/typography": "^0.5.20",
@@ -42,6 +43,7 @@
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
+    "server-only": "^0.0.1",
     "tailwind-merge": "catalog:",
     "tailwindcss-animate": "catalog:"
   },
