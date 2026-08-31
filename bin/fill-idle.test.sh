@@ -56,6 +56,8 @@ case "$1 $2" in
   "autoscaling describe-auto-scaling-groups")
     if [[ "$*" == *TargetGroupARNs* ]]; then
       echo "${STUB_STORAGE_ATTACHED:-True}"
+    elif [[ "$*" == *"length(AutoScalingGroups[0].Instances)"* ]]; then
+      echo 0
     elif [[ "$*" == *DesiredCapacity* ]]; then
       echo 1
     fi

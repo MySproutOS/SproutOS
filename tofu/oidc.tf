@@ -246,6 +246,15 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "*"
       },
       {
+        # CloudWatch metric reads cannot be resource-scoped. The deploy uses this only to ensure
+        # the control-plane database has connection headroom before and after a rollout; without
+        # it, healthy HTTP listeners can hide a database that is already refusing dashboard work.
+        Sid      = "ReadDeploymentHealthMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
+      },
+      {
         /*
           The describes are unscoped and the modifies are not.
 

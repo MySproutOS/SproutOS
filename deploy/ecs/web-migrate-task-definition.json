@@ -17,6 +17,10 @@
       ],
       "environment": [
         {
+          "name": "DATABASE_POOL_MAX",
+          "value": "4"
+        },
+        {
           "name": "SERVICE_SEARCH_PUBLIC_HOST",
           "value": "search.sproutos.me"
         },
@@ -146,7 +150,7 @@
         },
         {
           "name": "SANDBOX_FORWARD_PROXY_URL",
-          "value": "https://egress.sproutos.me"
+          "value": "http://egress.sproutos.me:3128"
         },
         {
           "name": "SERVICE_POSTGRES_PUBLIC_PORT",

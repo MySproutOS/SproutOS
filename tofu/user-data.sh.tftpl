@@ -109,6 +109,17 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
+%{ if service == "router" ~}
+# Bound every control-plane pool. One connection per Rust listener is enough because credentials
+# are checked once per accepted tenant connection; six independently autoscaled routers must not
+# each grow six default-sized pools beyond the control-plane RDS ceiling.
+ROUTER_ROUTE_DB_POOL=1
+VALKEY_PROXY_DB_POOL=1
+SEARCH_PROXY_DB_POOL=1
+PG_PROXY_DB_POOL=1
+LLM_PROXY_DB_POOL=1
+FORWARD_PROXY_DB_POOL=1
+%{ endif ~}
 # Queue wakes are control-plane coordination. The router writes them to \`VALKEY_URL\` and its
 # dispatcher drains that same store; without this switch tenant enqueues succeed but no Lambda
 # worker is ever invoked.

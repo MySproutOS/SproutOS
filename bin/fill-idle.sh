@@ -15,6 +15,9 @@ DESIRED="${DESIRED:-2}"
 # Two minutes of boot plus the health check's own thresholds. An instance that has not answered by
 # then is not slow, it is broken.
 TIMEOUT_S="${TIMEOUT_S:-300}"
+# Long-lived model and edge connections have a five-minute target deregistration delay. Give the
+# idle fleet time to pass that AWS state before declaring its replacement stuck.
+DRAIN_TIMEOUT_S="${DRAIN_TIMEOUT_S:-600}"
 
 group_arn() {
   aws elbv2 describe-target-groups --names "$1" \
@@ -54,78 +57,59 @@ for service in $SERVICES; do
   group="$NAME_PREFIX-$short-$idle"
   echo "$service: filling $idle ($DESIRED instance(s))"
 
-  # Replace whatever is already there, then scale.
-  #
-  # Instances read the release pointer *at boot*, so an instance that is already running is running
-  # whatever the pointer said when it started. `set-desired-capacity` alone is therefore a no-op
-  # when the idle group is already at the requested size — and a silent one: the group reports the
-  # right count, the targets report healthy, the deploy reports success, and the release that was
-  # just built is nowhere.
-  #
-  # That is not hypothetical. Both colours were found serving releases two and three deploys behind
-  # the pointer, which is why a favicon committed hours earlier never appeared on the site while
-  # every deploy since had gone green.
-  #
-  # Terminating without decrementing makes the group launch replacements, which read the pointer the
-  # release job has just written. This is the idle colour, so nothing it does is visible to anyone.
+  set_capacity() {
+    capacity=$1
+    for attempt in $(seq 1 60); do
+      if error=$(aws autoscaling set-desired-capacity \
+        --auto-scaling-group-name "$group" --desired-capacity "$capacity" --honor-cooldown 2>&1); then
+        return 0
+      fi
+      if ! grep -q 'ScalingActivityInProgress' <<<"$error"; then
+        echo "$service: $error" >&2
+        return 1
+      fi
+      if [ "$attempt" -eq 60 ]; then
+        echo "$service: $group was still busy after 10 minutes" >&2
+        return 1
+      fi
+      sleep 10
+    done
+  }
+
+  # Instances read the release pointer at boot, so anything already idle is stale. Drain it to zero
+  # before starting the new release. The former terminate-without-decrement sequence first replaced
+  # every stale instance: a six-instance idle group opened enough control-plane pools to exhaust
+  # Postgres and make authenticated dashboard requests fail. Zero-first never overlaps idle fleets.
   existing=$(aws autoscaling describe-auto-scaling-groups \
     --auto-scaling-group-names "$group" \
-    --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
-    --output text)
-
-  for instance in $existing; do
-    echo "$service: replacing $instance so it boots the new release"
-    aws autoscaling terminate-instance-in-auto-scaling-group \
-      --instance-id "$instance" --no-should-decrement-desired-capacity >/dev/null
-  done
-
-  # Let the terminations register before asking for a capacity change, or the request collides with
-  # the scaling activity they start — the `ScalingActivityInProgress` the retry below handles.
-  [ -z "$existing" ] || sleep 15
-
-  # Skipped entirely when the group is already the size we want.
-  #
-  # This is the common case — `DESIRED` is 1 and the idle group holds 1 — and the call is a no-op
-  # that can only fail: the terminations above leave the group replacing an instance, and
-  # `SetDesiredCapacity` is rejected with `ScalingActivityInProgress` for as long as that takes. The
-  # retry loop below then burns five minutes and fails the deploy, having asked for a change that
-  # was never needed.
-  #
-  # That is not hypothetical either: the router's replacement outlasted the window and failed a
-  # release whose website half had already gone healthy. The termination is what boots the new
-  # release; the capacity call only matters when the size is actually changing.
-  current=$(aws autoscaling describe-auto-scaling-groups \
-    --auto-scaling-group-names "$group" \
-    --query 'AutoScalingGroups[0].DesiredCapacity' --output text)
-
-  if [ "$current" = "$DESIRED" ]; then
-    echo "$service: $group is already at $DESIRED; the replacement above is the whole change"
-  else
-
-  #
-  # Retried, because `ScalingActivityInProgress` is a state and not an error. An Auto Scaling group
-  # replacing an instance — including one this deploy's previous attempt left behind — rejects
-  # `SetDesiredCapacity` outright, and treating that as fatal fails a release for a reason that
-  # resolves itself in under a minute. Any other error still fails immediately.
-  for attempt in $(seq 1 30); do
-    if error=$(aws autoscaling set-desired-capacity \
-      --auto-scaling-group-name "$group" --desired-capacity "$DESIRED" --honor-cooldown 2>&1); then
-      break
-    fi
-
-    if ! grep -q 'ScalingActivityInProgress' <<<"$error"; then
-      echo "$service: $error" >&2
-      exit 1
-    fi
-
-    if [ "$attempt" -eq 30 ]; then
-      echo "$service: $group was still busy after 5 minutes" >&2
-      exit 1
-    fi
-
-    sleep 10
-  done
+    --query 'length(AutoScalingGroups[0].Instances)' --output text)
+  if ! [[ "$existing" =~ ^[0-9]+$ ]]; then
+    echo "$service: could not read instance count for $group (got: '$existing')" >&2
+    exit 1
   fi
+
+  if [ "$existing" -gt 0 ]; then
+    echo "$service: draining $existing stale idle instance(s) before booting the release"
+    set_capacity 0
+    drain_deadline=$(( $(date +%s) + DRAIN_TIMEOUT_S ))
+    while :; do
+      remaining=$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "$group" \
+        --query 'length(AutoScalingGroups[0].Instances)' --output text)
+      if [ "$remaining" = 0 ]; then break; fi
+      if ! [[ "$remaining" =~ ^[0-9]+$ ]]; then
+        echo "$service: could not read draining instance count (got: '$remaining')" >&2
+        exit 1
+      fi
+      if [ "$(date +%s)" -ge "$drain_deadline" ]; then
+        echo "$service: $remaining idle instance(s) still draining after ${DRAIN_TIMEOUT_S}s" >&2
+        exit 1
+      fi
+      sleep 10
+    done
+  fi
+
+  set_capacity "$DESIRED"
 
   # Every target group the instances serve, not just the one the rule names.
   #

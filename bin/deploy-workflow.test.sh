@@ -23,6 +23,34 @@ grep -q 'MIGRATION_TASK_DEFINITION_FILE:.*render-migration.outputs.task-definiti
 [ "$(grep -c 'services="${services//website/}"' "$WORKFLOW")" -eq 2 ]
 grep -q 'website migrations run from the immutable ECS image' "$WORKFLOW"
 
+# One deployment owns production through its delayed acceptance checks. A later push queues, and
+# the router fill waits for ECS so the two releases cannot simultaneously consume DB headroom.
+grep -q '^  group: deploy$' "$WORKFLOW"
+grep -q '^  cancel-in-progress: false$' "$WORKFLOW"
+grep -q 'needs: \[release, image, preflight\]' "$WORKFLOW"
+grep -q 'needs: \[release, preflight, ecs_web\]' "$WORKFLOW"
+grep -q 'https://api.${CONTROL_PLANE_DOMAIN}/ready' "$WORKFLOW"
+grep -q 'name: Verify the deployed production system' "$WORKFLOW"
+
+# These checked-in task templates are the deployed website/API/worker contract. Updating only the
+# EC2/OpenTofu environment would leave sandbox creation on the previous proxy URL after every ECS
+# release, which is the mismatch this assertion is meant to make loud.
+for task in \
+  "$ROOT/deploy/ecs/web-task-definition.json" \
+  "$ROOT/deploy/ecs/web-migrate-task-definition.json"; do
+  jq -e '
+    [.containerDefinitions[].environment[]?
+      | select(.name == "SANDBOX_FORWARD_PROXY_URL")
+      | .value] as $values
+    | ($values | length) > 0
+      and all($values[]; . == "http://egress.sproutos.me:3128")
+  ' "$task" >/dev/null
+  jq -e '
+    all(.containerDefinitions[];
+      any(.environment[]?; .name == "DATABASE_POOL_MAX" and .value == "4"))
+  ' "$task" >/dev/null
+done
+
 # The ECS deploy is part of cutover's dependency graph, so router traffic cannot move after a
 # failed website deployment in a combined release.
 grep -q 'needs: \[fill, migrate, image, ecs_web\]' "$WORKFLOW"

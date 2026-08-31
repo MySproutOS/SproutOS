@@ -19,6 +19,10 @@
       "essential": true,
       "environment": [
         {
+          "name": "DATABASE_POOL_MAX",
+          "value": "4"
+        },
+        {
           "name": "DATABASE_NAME",
           "value": "main"
         },
@@ -127,6 +131,10 @@
       "essential": true,
       "command": ["node", "/opt/sproutos/api/server.js"],
       "environment": [
+        {
+          "name": "DATABASE_POOL_MAX",
+          "value": "4"
+        },
         {
           "name": "SERVICE_SEARCH_PUBLIC_HOST",
           "value": "search.sproutos.me"
@@ -257,7 +265,7 @@
         },
         {
           "name": "SANDBOX_FORWARD_PROXY_URL",
-          "value": "https://egress.sproutos.me"
+          "value": "http://egress.sproutos.me:3128"
         },
         {
           "name": "SERVICE_POSTGRES_PUBLIC_PORT",
@@ -406,6 +414,10 @@
       "essential": true,
       "command": ["node", "/opt/sproutos/api/worker.js"],
       "environment": [
+        {
+          "name": "DATABASE_POOL_MAX",
+          "value": "4"
+        },
         {
           "name": "SERVICE_SEARCH_PUBLIC_HOST",
           "value": "search.sproutos.me"
@@ -588,7 +600,7 @@
         },
         {
           "name": "SANDBOX_FORWARD_PROXY_URL",
-          "value": "https://egress.sproutos.me"
+          "value": "http://egress.sproutos.me:3128"
         },
         {
           "name": "TENANT_CERTIFICATE_KMS_KEY_ARN",
