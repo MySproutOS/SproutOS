@@ -72,6 +72,28 @@ export function repositoryNameProblem(name: string): string | null {
   return null
 }
 
+type InstallationRepositoryPage = Awaited<ReturnType<typeof listInstallationRepositories>>
+
+/**
+ * One organization can connect several GitHub App installations.
+ *
+ * Repository ids are global, so de-duplicating by id also handles the brief overlap that can
+ * occur while a repository transfer and installation sync race each other.
+ */
+export function mergeInstallationRepositoryPages(pages: InstallationRepositoryPage[]) {
+  const repositories = new Map<string, InstallationRepositoryPage["repositories"][number]>()
+  for (const page of pages) {
+    for (const repository of page.repositories) {
+      repositories.set(String(repository.id), repository)
+    }
+  }
+
+  return {
+    repositories: [...repositories.values()],
+    totalCount: pages.reduce((total, page) => total + page.totalCount, 0),
+  }
+}
+
 /**
  * Where GitHub keeps this installation's settings.
  *
@@ -122,8 +144,7 @@ const app = new Hono()
         "accountLogin",
       ])
 
-      const installation = installations[0]
-      if (installation === undefined) {
+      if (installations.length === 0) {
         return throwNotFound(
           c,
           "This organization has no active GitHub App installation. Install the SproutOS app on the account that owns the repositories.",
@@ -131,13 +152,23 @@ const app = new Hono()
       }
 
       try {
-        const credential = await tokens.get(Number(installation.installationId), {
-          purpose: "repository-picker",
-        })
-        const page = await listInstallationRepositories(createGitHubClient(), credential, {
-          page: query.page ?? 1,
-          perPage: query.perPage ?? 100,
-        })
+        /*
+          The picker is organization-scoped, not installation-scoped. Reading only the first
+          installation made every later account visible in Settings but unusable here — most
+          notably a personal fork when the team's installation happened to be older.
+        */
+        const pages = await Promise.all(
+          installations.map(async (installation) => {
+            const credential = await tokens.get(Number(installation.installationId), {
+              purpose: "repository-picker",
+            })
+            return await listInstallationRepositories(createGitHubClient(), credential, {
+              page: query.page ?? 1,
+              perPage: query.perPage ?? 100,
+            })
+          }),
+        )
+        const page = mergeInstallationRepositoryPages(pages)
 
         return c.json({
           data: page.repositories.map((repository) => ({
@@ -149,7 +180,8 @@ const app = new Hono()
             ownerLogin: repository.ownerLogin,
             private: repository.private,
           })),
-          installationAccountLogin: installation.accountLogin,
+          // Retained for older clients; the repository rows themselves carry their owner.
+          installationAccountLogin: installations[0].accountLogin,
           totalCount: page.totalCount,
         })
       } catch (error) {

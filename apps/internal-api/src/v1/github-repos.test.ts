@@ -1,5 +1,44 @@
 import { describe, expect, it } from "vitest"
-import { repositoryNameProblem } from "./github-repos"
+import { mergeInstallationRepositoryPages, repositoryNameProblem } from "./github-repos"
+
+describe("mergeInstallationRepositoryPages", () => {
+  it("includes repositories from every connected installation and de-duplicates by GitHub id", () => {
+    const shared = {
+      id: 42,
+      nodeId: "R_42",
+      name: "shared",
+      fullName: "account/shared",
+      ownerLogin: "account",
+      ownerType: "Organization" as const,
+      private: false,
+      fork: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/account/shared",
+      cloneUrl: "https://github.com/account/shared.git",
+      parent: null,
+    }
+    const result = mergeInstallationRepositoryPages([
+      { repositories: [shared], totalCount: 1 },
+      {
+        repositories: [
+          shared,
+          {
+            ...shared,
+            id: 99,
+            name: "personal-fork",
+            fullName: "person/personal-fork",
+            ownerLogin: "person",
+            fork: true,
+          },
+        ],
+        totalCount: 2,
+      },
+    ])
+
+    expect(result.repositories.map((repository) => repository.id)).toEqual([42, 99])
+    expect(result.totalCount).toBe(3)
+  })
+})
 
 /**
  * The rules GitHub enforces, checked before the round trip rather than after the create.
