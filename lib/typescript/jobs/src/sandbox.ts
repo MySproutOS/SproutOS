@@ -16,12 +16,7 @@ import {
 } from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
-import {
-  createDevBranch,
-  dropDevBranch,
-  MAX_SANDBOX_DATABASE_BRANCHES,
-  neonPostgresConfigFromEnv,
-} from "@lib/services"
+import { dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
 import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { DaytonaSandboxClient } from "@lib/sandbox"
 import type { DB, JsonValue } from "@sproutos/db"
@@ -547,50 +542,6 @@ async function bootstrap(
 }
 
 /**
- * The dev database a sandbox works against, and the environment variable that names it.
- *
- * A coding agent with a checkout and no database can read code and cannot run it: no dev server, no
- * migration, no test that touches a row. This branches the project's Postgres — copy-on-write, so a
- * copy of a hundred gigabytes is instant and costs only what the agent changes — and hands back a
- * `DATABASE_URL` pointing at `pg-proxy` with a credential that can reach the branch and nothing
- * else. Production is one connection away and unreachable, which is the point.
- *
- * Returns nothing rather than throwing when the project has no database. Most projects do not, and
- * a sandbox without one is the normal case, not a failure.
- *
- * The service is looked up for the *group* as well as the project: a group holds the databases its
- * children share, and a sandbox is scoped to the group — see `sandboxScopeFor`.
- */
-async function devDatabase(
-  db: Kysely<DB>,
-  input: { projectId: string; organizationId: string; sandboxId: string },
-): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
-  const serviceId = await fetchSandbox(db).postgresServiceIdForScope(input.projectId)
-
-  if (serviceId === undefined) return undefined
-
-  try {
-    const branch = await createDevBranch(db, neonPostgresConfigFromEnv(), {
-      backendServiceId: serviceId,
-      organizationId: input.organizationId,
-      label: "default",
-      maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
-      ownerSandboxId: input.sandboxId,
-    })
-    return { databaseBranchId: branch.databaseBranchId, env: { DATABASE_URL: branch.uri } }
-  } catch (cause) {
-    /*
-      A sandbox with no dev database is worth having; a provision that failed because Neon was busy
-      is not. Logged rather than raised, and the sandbox comes up without `DATABASE_URL` — which the
-      agent discovers immediately and can say, instead of the customer waiting for a container that
-      never arrives.
-    */
-    console.warn(`[jobs] sandbox ${input.sandboxId} has no dev database: ${String(cause)}`)
-    return undefined
-  }
-}
-
-/**
  * Resolve the Postgres service visible to a sandbox's project scope.
  *
  * A sandbox belongs to the top-level group (`sandboxScopeFor`), while services remain attached to
@@ -755,7 +706,6 @@ export function provisionSandbox(
 
     let sandboxDriver: DaytonaSandboxClient | undefined
     let providerExternalId = sandbox.externalId
-    let unrecordedDatabaseBranchId: string | undefined
     try {
       sandboxDriver = makeDriver()
 
@@ -795,21 +745,6 @@ export function provisionSandbox(
         return
       }
 
-      /*
-        The branch is created before the container, because it is the part that can fail.
-
-        A container that comes up and then finds it has no database has already cost the customer
-        the wait; a branch that fails while nothing has been created costs a log line. The reverse
-        order also leaks: a create that succeeds and a branch that throws leaves a running sandbox
-        nobody recorded.
-      */
-      const database = await devDatabase(db, {
-        organizationId: sandbox.organizationId,
-        projectId: sandbox.projectId,
-        sandboxId: sandbox.id,
-      })
-      unrecordedDatabaseBranchId = database?.databaseBranchId
-
       const created = await sandboxDriver.create({
         sandboxId: sandbox.id,
         organizationId: sandbox.organizationId,
@@ -823,13 +758,11 @@ export function provisionSandbox(
         },
         idleTimeoutS: sandbox.idleTimeoutS,
         alwaysOn: sandbox.alwaysOn,
-        ...(database === undefined ? {} : { env: database.env }),
       })
       providerExternalId = created.externalId
 
       const recorded = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
         externalId: created.externalId,
-        ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
@@ -837,12 +770,8 @@ export function provisionSandbox(
       })
       if (recorded === undefined) {
         await sandboxDriver.destroy(created.externalId)
-        if (database !== undefined) {
-          await dropDevBranch(db, neonPostgresConfigFromEnv(), database.databaseBranchId)
-        }
         return
       }
-      unrecordedDatabaseBranchId = undefined
 
       /*
         A sandbox with nothing in it is a sandbox nobody can work in.
@@ -890,19 +819,6 @@ export function provisionSandbox(
           await sandboxDriver.stop(providerExternalId)
         } catch (cause) {
           if (!(cause instanceof SandboxNotFoundError)) cleanupError = cause
-        }
-      }
-      if (unrecordedDatabaseBranchId !== undefined) {
-        try {
-          await dropDevBranch(db, neonPostgresConfigFromEnv(), unrecordedDatabaseBranchId)
-        } catch (cause) {
-          cleanupError =
-            cleanupError === undefined
-              ? cause
-              : new AggregateError(
-                  [cleanupError, cause],
-                  `sandbox ${sandbox.id} provider and database cleanup both failed`,
-                )
         }
       }
       await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], { state: "failed" })

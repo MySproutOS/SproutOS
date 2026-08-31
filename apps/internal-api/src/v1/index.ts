@@ -28,6 +28,7 @@ import projects from "./projects"
 import sandboxes from "./sandboxes"
 import roles from "./roles"
 import services from "./services"
+import serviceDatabaseBranches from "./service-database-branches"
 import store, { storeModeration } from "./store"
 import apiKeys from "./api-keys"
 import observability from "./observability"
@@ -67,6 +68,7 @@ orgs.route("/", githubRepos)
 orgs.route("/", agent)
 orgs.route("/", agentChat)
 orgs.route("/", services)
+orgs.route("/", serviceDatabaseBranches)
 orgs.route("/", analysis)
 orgs.route("/", deployments)
 orgs.route("/", customDomains)

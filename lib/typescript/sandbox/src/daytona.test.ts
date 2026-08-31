@@ -510,9 +510,10 @@ describe("daytonaConfigFromEnv", () => {
       SANDBOX_DAYTONA_SNAPSHOT: "s",
     }
     expect(() => daytonaConfigFromEnv(base)).toThrow(/SANDBOX_FORWARD_PROXY_URL/)
-    expect(() =>
-      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "https://proxy" }),
-    ).toThrow(/HTTP origin/)
+    expect(
+      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "https://proxy" })
+        .forwardProxyUrl,
+    ).toBe("https://proxy")
     expect(() =>
       daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_ROOT_KEY: "bad" }),
     ).toThrow(/32 bytes/)

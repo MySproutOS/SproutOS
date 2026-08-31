@@ -24,8 +24,8 @@ export type DevBranch = {
 
 /** Conservative floor shared by every Neon tier the platform supports. */
 export const DEFAULT_NEON_PROJECT_BRANCH_LIMIT = 10
-/** One default branch plus four disposable alternatives per sandbox. */
-export const MAX_SANDBOX_DATABASE_BRANCHES = 5
+/** Four disposable branches per sandbox; sandboxes no longer receive an automatic default. */
+export const MAX_SANDBOX_DATABASE_BRANCHES = 4
 
 const RESERVATION_TTL_MS = 10 * 60_000
 const KMS_REQUEST_TIMEOUT_MS = 30_000
@@ -57,7 +57,7 @@ const defaultDependencies: DevBranchDependencies = {
     await seal(plaintext, context, { abortSignal: AbortSignal.timeout(KMS_REQUEST_TIMEOUT_MS) }),
 }
 
-type CreateDevBranchInput = {
+export type CreateDevBranchInput = {
   backendServiceId: string
   organizationId: string
   /** Human-readable suffix stored in SproutOS, never used as the provider identity. */
@@ -66,10 +66,14 @@ type CreateDevBranchInput = {
   expiresAt?: Date
   /** Branch from the sandbox's current copy rather than from production. */
   parentDatabaseBranchId?: string
-  /** Every dev branch has a durable sandbox owner before Neon is called. */
-  ownerSandboxId: string
-  /** Includes the sandbox's default branch. */
-  maxOwnedBranches: number
+  /** Agent branches have a durable sandbox owner before Neon is called. */
+  ownerSandboxId?: string
+  /** Persistent branches record the interactive user who created them. */
+  createdByUserId?: string
+  /** Persistent user branch or expiring agent branch. */
+  kind?: "dev" | "user"
+  /** Applies only to sandbox-owned branches. */
+  maxOwnedBranches?: number
   /** Provider-wide safety cap, including resources not represented in this database. */
   maxProjectBranches?: number
 }
@@ -171,41 +175,46 @@ async function reserveDevBranch(
   const reservationToken = dependencies.id()
   const now = dependencies.now()
   const reservationExpiresAt = new Date(now.getTime() + RESERVATION_TTL_MS)
-  const providerBranchName = devBranchProviderName(input.ownerSandboxId, branchId)
-  const displayName = `sandbox-${encodeShortId(input.ownerSandboxId)}-${input.label}`
+  const ownerId = input.ownerSandboxId ?? input.createdByUserId ?? input.organizationId
+  const providerBranchName = devBranchProviderName(ownerId, branchId)
+  const displayName =
+    input.kind === "user"
+      ? input.label
+      : `sandbox-${encodeShortId(input.ownerSandboxId ?? ownerId)}-${input.label}`
   const projectLimit = input.maxProjectBranches ?? DEFAULT_NEON_PROJECT_BRANCH_LIMIT
 
   return await db.transaction().execute(async (tx) => {
-    const sandbox = await tx
-      .selectFrom("sandbox")
-      .select(["id", "state", "databaseBranchId"])
-      .where("id", "=", input.ownerSandboxId)
-      .where("state", "!=", "deleting")
-      .forUpdate()
-      .executeTakeFirst()
-    if (sandbox === undefined) {
-      throw new DevBranchUnavailableError(
-        `sandbox ${input.ownerSandboxId} is unavailable for a database branch`,
-      )
+    if (input.ownerSandboxId !== undefined) {
+      const sandbox = await tx
+        .selectFrom("sandbox")
+        .select(["id", "state", "databaseBranchId"])
+        .where("id", "=", input.ownerSandboxId)
+        .where("state", "!=", "deleting")
+        .forUpdate()
+        .executeTakeFirst()
+      if (sandbox === undefined) {
+        throw new DevBranchUnavailableError(
+          `sandbox ${input.ownerSandboxId} is unavailable for a database branch`,
+        )
+      }
+      if (input.maxOwnedBranches === undefined || input.maxOwnedBranches < 1) {
+        throw new TypeError("an owned dev branch requires a positive maxOwnedBranches")
+      }
+      await selfHealDefaultOwnership(tx, sandbox)
+      const owned = await tx
+        .selectFrom("sandboxDatabaseBranch")
+        .innerJoin("databaseBranch", "databaseBranch.id", "sandboxDatabaseBranch.databaseBranchId")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("sandboxDatabaseBranch.sandboxId", "=", sandbox.id)
+        .where("databaseBranch.deletedAt", "is", null)
+        .executeTakeFirstOrThrow()
+      assertDevBranchQuota({
+        ownedBranches: Number(owned.count),
+        maxOwnedBranches: input.maxOwnedBranches,
+        providerBranches: 0,
+        maxProjectBranches: Number.POSITIVE_INFINITY,
+      })
     }
-    if (input.maxOwnedBranches < 1) {
-      throw new TypeError("an owned dev branch requires a positive maxOwnedBranches")
-    }
-
-    // An older rolling-deploy worker may have created the default after this migration backfilled.
-    // Heal it while the sandbox row is locked so quota counting cannot omit that branch.
-    await selfHealDefaultOwnership(tx, sandbox)
-    const owned = await tx
-      .selectFrom("sandboxDatabaseBranch")
-      .select(({ fn }) => fn.countAll<number>().as("count"))
-      .where("sandboxId", "=", sandbox.id)
-      .executeTakeFirstOrThrow()
-    assertDevBranchQuota({
-      ownedBranches: Number(owned.count),
-      maxOwnedBranches: input.maxOwnedBranches,
-      providerBranches: 0,
-      maxProjectBranches: Number.POSITIVE_INFINITY,
-    })
 
     let parentQuery = tx
       .selectFrom("databaseInstance")
@@ -220,6 +229,7 @@ async function reserveDevBranch(
       .where("databaseInstance.provider", "=", "neon")
       .where("databaseInstance.status", "=", "active")
       .where("databaseBranch.provisioningState", "=", "active")
+      .where("databaseBranch.deletedAt", "is", null)
       .forUpdate("databaseInstance")
     parentQuery =
       input.parentDatabaseBranchId === undefined
@@ -240,6 +250,7 @@ async function reserveDevBranch(
       .selectFrom("databaseBranch")
       .select(({ fn }) => fn.countAll<number>().as("count"))
       .where("databaseInstanceId", "=", parent.instanceId)
+      .where("deletedAt", "is", null)
       .executeTakeFirstOrThrow()
     assertDevBranchQuota({
       providerBranches: Number(branchCount.count),
@@ -251,6 +262,7 @@ async function reserveDevBranch(
       .select("id")
       .where("databaseInstanceId", "=", parent.instanceId)
       .where("name", "=", displayName)
+      .where("deletedAt", "is", null)
       .executeTakeFirst()
     if (duplicate !== undefined) {
       throw new DevBranchNameConflictError(`database branch ${displayName} already exists`)
@@ -263,7 +275,8 @@ async function reserveDevBranch(
         databaseInstanceId: parent.instanceId,
         name: displayName,
         providerBranchName,
-        kind: "dev",
+        kind: input.kind ?? "dev",
+        createdByUserId: input.createdByUserId,
         parentBranchId: parent.branchId,
         isProtected: false,
         expiresAt: reservationExpiresAt,
@@ -271,10 +284,12 @@ async function reserveDevBranch(
         reservationToken,
       })
       .execute()
-    await tx
-      .insertInto("sandboxDatabaseBranch")
-      .values({ sandboxId: input.ownerSandboxId, databaseBranchId: branchId })
-      .execute()
+    if (input.ownerSandboxId !== undefined) {
+      await tx
+        .insertInto("sandboxDatabaseBranch")
+        .values({ sandboxId: input.ownerSandboxId, databaseBranchId: branchId })
+        .execute()
+    }
 
     return {
       backendServiceId: input.backendServiceId,
@@ -441,12 +456,36 @@ async function cleanFailedReservation(
       reservation.providerBranchName,
       reservation.parentProviderBranchId,
     )
-    await db
-      .deleteFrom("databaseBranch")
-      .where("id", "=", reservation.branchId)
-      .where("reservationToken", "=", reservation.reservationToken)
-      .where("provisioningState", "=", "cleanup")
-      .execute()
+    const now = dependencies.now()
+    await db.transaction().execute(async (tx) => {
+      const tracked = await tx
+        .selectFrom("databaseBranch")
+        .select("providerBranchId")
+        .where("id", "=", reservation.branchId)
+        .where("reservationToken", "=", reservation.reservationToken)
+        .where("provisioningState", "=", "cleanup")
+        .forUpdate()
+        .executeTakeFirst()
+      if (tracked?.providerBranchId === null) {
+        await tx.deleteFrom("databaseBranch").where("id", "=", reservation.branchId).execute()
+      } else if (tracked !== undefined) {
+        // A provider branch existed, even if credential setup failed. Preserve its identity and
+        // lifetime so the per-branch consumption job can close its final metering window.
+        await tx
+          .updateTable("databaseBranch")
+          .set({
+            provisioningState: "deleted",
+            reservationToken: null,
+            expiresAt: null,
+            deletedAt: now,
+            cleanupRetryAt: null,
+            cleanupError: null,
+            updatedAt: now,
+          })
+          .where("id", "=", reservation.branchId)
+          .execute()
+      }
+    })
   } catch (cleanupError) {
     throw new AggregateError(
       [error, cleanupError],
@@ -626,11 +665,13 @@ export async function dropDevBranch(
       "databaseBranch.provisioningState as provisioningState",
       "databaseBranch.expiresAt as expiresAt",
       "databaseBranch.isProtected as isProtected",
+      "databaseBranch.deletedAt as deletedAt",
       "databaseInstance.providerProjectId as providerProjectId",
     ])
     .where("databaseBranch.id", "=", databaseBranchId)
     .executeTakeFirst()
   if (branch === undefined) return
+  if (branch.deletedAt !== null) return
   if (branch.isProtected) {
     throw new DevBranchUnavailableError(
       `branch ${databaseBranchId} is protected; only ephemeral branches are dropped here`,
@@ -642,6 +683,16 @@ export async function dropDevBranch(
     branch.expiresAt > deps.now()
   ) {
     throw new DevBranchUnavailableError(`branch ${databaseBranchId} is still being provisioned`)
+  }
+
+  const child = await db
+    .selectFrom("databaseBranch")
+    .select("id")
+    .where("parentBranchId", "=", branch.id)
+    .where("deletedAt", "is", null)
+    .executeTakeFirst()
+  if (child !== undefined) {
+    throw new DevBranchHasChildrenError(`branch ${databaseBranchId} still has active children`)
   }
 
   if (branch.providerProjectId !== null) {
@@ -656,7 +707,81 @@ export async function dropDevBranch(
     )
   }
 
-  await db.deleteFrom("databaseBranch").where("id", "=", branch.id).execute()
+  await db.transaction().execute(async (tx) => {
+    await tx.deleteFrom("databaseRole").where("databaseBranchId", "=", branch.id).execute()
+    await tx
+      .updateTable("serviceCredential")
+      .set({ revokedAt: deps.now() })
+      .where("databaseBranchId", "=", branch.id)
+      .where("revokedAt", "is", null)
+      .execute()
+    await tx
+      .updateTable("databaseBranch")
+      .set({
+        deletedAt: deps.now(),
+        expiresAt: null,
+        provisioningState: "deleted",
+        cleanupRetryAt: null,
+        cleanupError: null,
+        reservationToken: null,
+        updatedAt: deps.now(),
+      })
+      .where("id", "=", branch.id)
+      .execute()
+  })
+}
+
+export async function rotateDevBranchCredential(
+  db: Kysely<DB>,
+  config: NeonPostgresConfig,
+  input: { databaseBranchId: string; organizationId: string },
+): Promise<string> {
+  const branch = await db
+    .selectFrom("databaseBranch")
+    .innerJoin("databaseInstance", "databaseInstance.id", "databaseBranch.databaseInstanceId")
+    .select(["databaseInstance.backendServiceId", "databaseBranch.provisioningState"])
+    .where("databaseBranch.id", "=", input.databaseBranchId)
+    .where("databaseBranch.deletedAt", "is", null)
+    .executeTakeFirst()
+  if (branch === undefined || branch.provisioningState !== "active") {
+    throw new DevBranchUnavailableError(`branch ${input.databaseBranchId} is not active`)
+  }
+
+  const secret = generateSecret()
+  const username = tenantUsername({
+    organizationId: input.organizationId,
+    kind: "database",
+    resourceId: branch.backendServiceId,
+  })
+  const secretHash = await hashGeneratedSecret(secret)
+  await db.transaction().execute(async (tx) => {
+    await tx
+      .updateTable("serviceCredential")
+      .set({ revokedAt: new Date() })
+      .where("databaseBranchId", "=", input.databaseBranchId)
+      .where("revokedAt", "is", null)
+      .execute()
+    await tx
+      .insertInto("serviceCredential")
+      .values({
+        id: v7(),
+        backendServiceId: branch.backendServiceId,
+        databaseBranchId: input.databaseBranchId,
+        username,
+        secretHash,
+        lastFour: lastFour(secret),
+      })
+      .execute()
+  })
+
+  return postgresUri({
+    host: config.publicHost,
+    port: config.publicPort,
+    database: databaseNameFor(branch.backendServiceId),
+    username,
+    password: secret,
+    ...(config.sslmode === undefined ? {} : { sslmode: config.sslmode }),
+  })
 }
 
 export class DevBranchUnavailableError extends Error {
@@ -669,6 +794,10 @@ export class DevBranchQuotaExceededError extends Error {
 
 export class DevBranchNameConflictError extends Error {
   override readonly name = "DevBranchNameConflictError"
+}
+
+export class DevBranchHasChildrenError extends Error {
+  override readonly name = "DevBranchHasChildrenError"
 }
 
 export class DevBranchReservationLostError extends Error {

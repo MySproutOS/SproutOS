@@ -479,7 +479,9 @@ export interface DatabaseBranch {
   cleanupError: string | null
   cleanupRetryAt: Timestamp | null
   createdAt: Generated<Timestamp>
+  createdByUserId: string | null
   databaseInstanceId: string
+  deletedAt: Timestamp | null
   expiresAt: Timestamp | null
   host: string | null
   id: string
@@ -652,6 +654,12 @@ export interface MeteringOutbox {
   eventId: string
   id: string
   payload: Json
+}
+
+export interface NeonBranchMeteringState {
+  databaseBranchId: string
+  meteredThrough: Timestamp
+  updatedAt: Generated<Timestamp>
 }
 
 export interface NeonMeteringState {
@@ -1556,6 +1564,7 @@ export interface DB {
   memberRole: MemberRole
   meteringImportState: MeteringImportState
   meteringOutbox: MeteringOutbox
+  neonBranchMeteringState: NeonBranchMeteringState
   neonMeteringState: NeonMeteringState
   node: Node
   oauthAccessToken: OauthAccessToken

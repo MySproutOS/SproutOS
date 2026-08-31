@@ -114,15 +114,11 @@ You are in a SproutOS sandbox: a container of your own, with this repository che
 \`${workspacePath}\`. A shell here is a real shell — install things, run the test suite, start a dev
 server. Nothing you run reaches the platform's own infrastructure.
 
-**There is a database.** \`DATABASE_URL\` points at a *branch* of this project's Postgres, made for
-this sandbox. It is a copy: migrate it, seed it, drop a table. Production is not on the other end of
-that credential, and cannot be reached from here.
-
-**You can branch that development database again.** When two alternatives must be tested without
-changing each other's data, request a named, 24-hour branch through the scoped action below. It is
-created from this sandbox's current database, not from production. The response contains a new
-\`databaseUrl\` exactly once; capture it without printing it, and pass it only to the command that
-needs the alternative database. A sandbox may own its default branch plus four alternatives.
+**Databases are created on demand.** This sandbox intentionally starts without \`DATABASE_URL\`.
+When database-backed code needs to be run, request a named, disposable 24-hour branch through the
+scoped action below. It is copied from the project's primary Postgres branch, while the credential
+can reach only the copy. Capture the returned \`databaseUrl\` without printing it. A sandbox may own
+four active branches.
 
 \`\`\`bash
 branch_response="$(curl --silent --show-error --fail-with-body \\
@@ -133,13 +129,16 @@ branch_response="$(curl --silent --show-error --fail-with-body \\
   "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL")"
 alternative_database_url="$(BRANCH_RESPONSE="$branch_response" node -e \\
   'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseUrl)')"
-DATABASE_URL="$alternative_database_url" npm test
+DATABASE_URL="$alternative_database_url" node \
+  "${workspacePath}/.git/sproutos/network/run.mjs" -- npm test
 unset branch_response alternative_database_url
 \`\`\`
 
-Names use lowercase letters, numbers, and hyphens. Delete an alternative early with
+The network launcher is required: Daytona carries PostgreSQL through its HTTP CONNECT sidecar, and
+ordinary database clients do not speak that protocol themselves. Replace \`npm test\` with the
+database command you need. Names use lowercase letters, numbers, and hyphens. Delete a branch early with
 \`DELETE "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL/<databaseBranchId>"\` and the same bearer. Never
-delete or replace the default \`DATABASE_URL\`; sandbox destruction removes every remaining branch.
+print or commit the returned URL; sandbox destruction removes every remaining branch.
 
 **A person may be watching a port.** A dev server on 3000, 5173 or 8080 is shown to the customer as
 a live preview. Bind to \`0.0.0.0\`, not \`127.0.0.1\` — a server listening on loopback inside a

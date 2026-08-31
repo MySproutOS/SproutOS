@@ -1,10 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdMutation,
   deleteV1OrgsByOrgSlugServicesByServiceIdMutation,
+  getV1OrgsByOrgSlugServicesByServiceIdBranchesOptions,
+  getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey,
   getV1OrgsByOrgSlugServicesByServiceIdConnectionOptions,
   getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey,
   getV1OrgsByOrgSlugServicesOptions,
   getV1OrgsByOrgSlugServicesQueryKey,
+  postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateMutation,
+  postV1OrgsByOrgSlugServicesByServiceIdBranchesMutation,
   postV1OrgsByOrgSlugServicesByServiceIdRotateMutation,
   postV1OrgsByOrgSlugServicesMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -208,6 +213,70 @@ export function useDeleteBackendService(orgSlug: string) {
     ...mutation,
     deleteService: async (serviceId: string) => {
       await mutation.mutateAsync({ path: { orgSlug, serviceId } })
+      await invalidate()
+    },
+  }
+}
+
+function useBranchInvalidation(orgSlug: string, serviceId: string) {
+  const client = useQueryClient()
+  return () =>
+    client.invalidateQueries({
+      queryKey: getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey({
+        path: { orgSlug, serviceId },
+      }),
+    })
+}
+
+export function useDatabaseBranches(orgSlug: string, serviceId: string, enabled = true) {
+  return useQuery({
+    ...getV1OrgsByOrgSlugServicesByServiceIdBranchesOptions({
+      path: { orgSlug, serviceId },
+    }),
+    enabled,
+  })
+}
+
+export function useCreateDatabaseBranch(orgSlug: string, serviceId: string) {
+  const invalidate = useBranchInvalidation(orgSlug, serviceId)
+  const mutation = useMutation(postV1OrgsByOrgSlugServicesByServiceIdBranchesMutation())
+  return {
+    ...mutation,
+    createBranch: async (name: string, parentDatabaseBranchId: string) => {
+      const result = await mutation.mutateAsync({
+        path: { orgSlug, serviceId },
+        body: { name, parentDatabaseBranchId },
+      })
+      await invalidate()
+      return result
+    },
+  }
+}
+
+export function useRotateDatabaseBranch(orgSlug: string, serviceId: string) {
+  const mutation = useMutation(
+    postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateMutation(),
+  )
+  return {
+    ...mutation,
+    rotateBranch: async (databaseBranchId: string) =>
+      (
+        await mutation.mutateAsync({
+          path: { orgSlug, serviceId, databaseBranchId },
+        })
+      ).connectionUri,
+  }
+}
+
+export function useDeleteDatabaseBranch(orgSlug: string, serviceId: string) {
+  const invalidate = useBranchInvalidation(orgSlug, serviceId)
+  const mutation = useMutation(
+    deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdMutation(),
+  )
+  return {
+    ...mutation,
+    deleteBranch: async (databaseBranchId: string) => {
+      await mutation.mutateAsync({ path: { orgSlug, serviceId, databaseBranchId } })
       await invalidate()
     },
   }

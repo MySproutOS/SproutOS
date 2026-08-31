@@ -21,11 +21,14 @@ export {
   MAX_SANDBOX_DATABASE_BRANCHES,
   DevBranchQuotaExceededError,
   DevBranchNameConflictError,
+  DevBranchHasChildrenError,
   DevBranchReservationLostError,
   DevBranchUnavailableError,
   dropDevBranch,
+  rotateDevBranchCredential,
   type DevBranch,
   type DevBranchDependencies,
+  type CreateDevBranchInput,
 } from "./dev-branch"
 export {
   rolePasswordContext,
@@ -107,6 +110,7 @@ export {
   type NeonConsumptionTimeframe,
   type NeonProject,
   type NeonProjectConsumption,
+  type NeonBranchConsumption,
 } from "./neon-api"
 export { serviceDriverFromEnv } from "./from-env"
 export {

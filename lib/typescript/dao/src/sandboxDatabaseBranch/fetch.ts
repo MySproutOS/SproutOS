@@ -20,10 +20,17 @@ export function fetchSandboxDatabaseBranch(db: Kysely<DB>) {
     return await db
       .selectFrom("sandboxDatabaseBranch")
       .innerJoin("sandbox", "sandbox.id", "sandboxDatabaseBranch.sandboxId")
+      .innerJoin("databaseBranch", "databaseBranch.id", "sandboxDatabaseBranch.databaseBranchId")
       .selectAll("sandboxDatabaseBranch")
       .where("sandboxDatabaseBranch.sandboxId", "=", sandboxId)
       .where("sandboxDatabaseBranch.databaseBranchId", "=", databaseBranchId)
-      .whereRef("sandboxDatabaseBranch.databaseBranchId", "!=", "sandbox.databaseBranchId")
+      .where("databaseBranch.deletedAt", "is", null)
+      .where((eb) =>
+        eb.or([
+          eb("sandbox.databaseBranchId", "is", null),
+          eb("sandbox.databaseBranchId", "!=", databaseBranchId),
+        ]),
+      )
       .executeTakeFirst()
   }
 

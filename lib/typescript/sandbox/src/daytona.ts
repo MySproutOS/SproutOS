@@ -185,7 +185,7 @@ export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Dayt
 function validateForwardProxyUrl(value: string): URL {
   const url = new URL(value)
   if (
-    url.protocol !== "http:" ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
     url.username !== "" ||
     url.password !== "" ||
     url.pathname !== "/" ||
@@ -193,7 +193,7 @@ function validateForwardProxyUrl(value: string): URL {
     url.hash !== ""
   ) {
     throw new Error(
-      "SANDBOX_FORWARD_PROXY_URL must be an HTTP origin with no credentials, path, query, or fragment",
+      "SANDBOX_FORWARD_PROXY_URL must be an HTTP(S) origin with no credentials, path, query, or fragment",
     )
   }
   return url

@@ -11,6 +11,7 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
+  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -42,6 +43,7 @@ import {
   getV1OrgsByOrgSlugRepositoriesResponseTransformer,
   getV1OrgsByOrgSlugResponseTransformer,
   getV1OrgsByOrgSlugRolesResponseTransformer,
+  getV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer,
   getV1OrgsByOrgSlugServicesResponseTransformer,
   getV1OrgsByOrgSlugStoreListingsResponseTransformer,
   getV1OrgsByOrgSlugWorkflowRunsResponseTransformer,
@@ -58,6 +60,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
+  postAdminUsersImpersonateResponseTransformer,
   postV1AuthCliTokenResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
@@ -78,6 +81,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponseTransformer,
   postV1OrgsByOrgSlugProjectsResponseTransformer,
+  postV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdEnvResponseTransformer,
   putV1OrgsByOrgSlugProjectsByProjectIdFilesResponseTransformer,
@@ -125,6 +129,9 @@ import type {
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdErrors,
   DeleteV1OrgsByOrgSlugRolesByRoleIdResponses,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses,
   DeleteV1OrgsByOrgSlugServicesByServiceIdData,
   DeleteV1OrgsByOrgSlugServicesByServiceIdErrors,
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponses,
@@ -134,6 +141,8 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
+  GetAdminUsersData,
+  GetAdminUsersResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AndroidClientReleaseData,
@@ -296,6 +305,9 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesErrors,
   GetV1OrgsByOrgSlugRolesResponses,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionData,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses,
@@ -360,6 +372,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminUsersImpersonateData,
+  PostAdminUsersImpersonateErrors,
+  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -511,6 +526,12 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesErrors,
   PostV1OrgsByOrgSlugRolesResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateErrors,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateResponses,
@@ -699,7 +720,7 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary = <
   })
 
 /**
- * Creates a short-lived Neon branch from the sandbox's development database
+ * Creates a short-lived Neon branch for the active sandbox turn
  */
 export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches = <
   ThrowOnError extends boolean = false,
@@ -2140,6 +2161,97 @@ export const deleteV1OrgsByOrgSlugServicesByServiceId = <ThrowOnError extends bo
     DeleteV1OrgsByOrgSlugServicesByServiceIdErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}", ...options })
+
+/**
+ * Lists every active branch of a managed Postgres service
+ */
+export const getV1OrgsByOrgSlugServicesByServiceIdBranches = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdBranchesData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches",
+    ...options,
+  })
+
+/**
+ * Creates a persistent user-managed Neon branch
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranches = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Rotates one branch-scoped credential
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData,
+    ThrowOnError
+  >,
+): RequestResult<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}/rotate",
+    ...options,
+  })
+
+/**
+ * Deletes an unprotected database branch
+ */
+export const deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData,
+    ThrowOnError
+  >,
+): RequestResult<
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses,
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}", ...options })
 
 /**
  * Lists the organization's repository analyses
@@ -3797,4 +3909,40 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Find a user across every organization
+ */
+export const getAdminUsers = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminUsersData, ThrowOnError>,
+): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminUsersResponseTransformer,
+    url: "/admin/users",
+    ...options,
+  })
+
+/**
+ * Sign in as a user, for support. Recorded against both people.
+ */
+export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
+): RequestResult<
+  PostAdminUsersImpersonateResponses,
+  PostAdminUsersImpersonateErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminUsersImpersonateResponses,
+    PostAdminUsersImpersonateErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminUsersImpersonateResponseTransformer,
+    url: "/admin/users/impersonate",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
   })

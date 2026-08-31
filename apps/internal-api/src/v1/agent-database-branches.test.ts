@@ -71,7 +71,7 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
           })
           .execute()
         await crudSandboxDatabaseBranch(database).create({
-          sandboxId: input.ownerSandboxId,
+          sandboxId: input.ownerSandboxId!,
           databaseBranchId,
         })
         return { databaseBranchId, name, uri: "postgres://branch-secret@pg.test/db" }
@@ -210,7 +210,7 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
     if (regionId !== "") await db.deleteFrom("region").where("id", "=", regionId).execute()
   })
 
-  it("creates from the sandbox copy, returns a no-store URL, and deletes only an alternative", async () => {
+  it("creates an owned branch, returns a no-store URL, and deletes only an alternative", async () => {
     const path = `/v1/orgs/${organizationSlug}/projects/${projectId}/agent/actions/database-branches`
     const invalid = await app.request(path, {
       method: "POST",
@@ -248,9 +248,9 @@ describe.skipIf(!reachable)("agent database branch actions", () => {
       expiresAt: "2026-08-29T12:00:00.000Z",
     })
     expect(createdInputs.at(-1)).toMatchObject({
-      parentDatabaseBranchId: defaultBranchId,
       ownerSandboxId: sandboxId,
     })
+    expect(createdInputs.at(-1)).not.toHaveProperty("parentDatabaseBranchId")
 
     const refusedDefault = await app.request(`${path}/${defaultBranchId}`, {
       method: "DELETE",

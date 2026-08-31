@@ -285,10 +285,11 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
     )
     const after = await db
       .selectFrom("serviceCredential")
-      .select(["id"])
+      .select(["revokedAt"])
       .where("databaseBranchId", "=", dev.databaseBranchId)
       .execute()
-    expect(after).toEqual([])
+    expect(after).toHaveLength(1)
+    expect(after[0]?.revokedAt).toBeInstanceOf(Date)
   }, 600_000)
 
   it("refuses to drop a protected branch", async () => {
@@ -301,4 +302,37 @@ describe.runIf(reachable)("a sandbox's dev database", () => {
       DevBranchUnavailableError,
     )
   }, 60_000)
+
+  it("keeps a metering tombstone when credential setup fails after Neon creates the branch", async () => {
+    const api = neonApi(config!.neon)
+    await expect(
+      createDevBranch(
+        db,
+        config!.postgres,
+        {
+          backendServiceId,
+          organizationId,
+          label: "failed-finalize",
+          ownerSandboxId: sandboxId,
+          maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
+        },
+        {
+          seal: () => Promise.reject(new Error("injected credential sealing failure")),
+        },
+      ),
+    ).rejects.toThrow("injected credential sealing failure")
+
+    const tombstone = await db
+      .selectFrom("databaseBranch")
+      .select(["providerBranchId", "provisioningState", "deletedAt"])
+      .where("databaseInstanceId", "=", instanceId)
+      .where("name", "like", "%failed-finalize")
+      .executeTakeFirstOrThrow()
+    expect(tombstone.providerBranchId).not.toBeNull()
+    expect(tombstone.provisioningState).toBe("deleted")
+    expect(tombstone.deletedAt).toBeInstanceOf(Date)
+    expect((await api.listBranches(neonProjects[0])).map((branch) => branch.id)).not.toContain(
+      tombstone.providerBranchId,
+    )
+  }, 120_000)
 })

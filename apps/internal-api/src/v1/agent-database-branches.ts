@@ -126,10 +126,8 @@ async function scopeForAction(
     sandboxProjectId,
     token.actorUserId,
   )
-  if (sandbox === undefined || sandbox.state !== "running" || sandbox.databaseBranchId === null) {
-    return {
-      response: throwConflict(c, "The running sandbox has no development database"),
-    } as const
+  if (sandbox === undefined || sandbox.state !== "running") {
+    return { response: throwConflict(c, "No running sandbox is available") } as const
   }
   const backendServiceId = await fetchSandbox(db).postgresServiceIdForScope(sandboxProjectId)
   if (backendServiceId === undefined) {
@@ -153,7 +151,7 @@ export function createAgentDatabaseBranchesApp(dependencies: Partial<Dependencie
     .post(
       "/:orgSlug/projects/:projectId/agent/actions/database-branches",
       describeRoute({
-        description: "Creates a short-lived Neon branch from the sandbox's development database",
+        description: "Creates a short-lived Neon branch for the active sandbox turn",
         responses: {
           201: {
             description: "A branch-scoped pg-proxy URL returned exactly once",
@@ -171,7 +169,7 @@ export function createAgentDatabaseBranchesApp(dependencies: Partial<Dependencie
           },
           404: { description: "The token does not belong to this scope", ...errorResponse },
           409: {
-            description: "No running sandbox development database is available",
+            description: "No running sandbox or active Postgres service is available",
             ...errorResponse,
           },
           429: {
@@ -205,9 +203,9 @@ export function createAgentDatabaseBranchesApp(dependencies: Partial<Dependencie
             organizationId: scoped.organization.id,
             label: requestedName,
             expiresAt,
-            parentDatabaseBranchId: scoped.sandbox.databaseBranchId!,
             ownerSandboxId: scoped.sandbox.id,
             maxOwnedBranches: MAX_SANDBOX_DATABASE_BRANCHES,
+            kind: "dev",
           })
         } catch (error) {
           if (error instanceof DevBranchQuotaExceededError) {

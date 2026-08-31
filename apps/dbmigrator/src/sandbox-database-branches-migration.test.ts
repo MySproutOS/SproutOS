@@ -1,7 +1,7 @@
 import { db } from "@sproutos/db"
 import { type Kysely, sql } from "kysely"
 import { afterAll, describe, expect, it } from "vitest"
-import { up } from "./migrations/2026_11_08_00_00_00_sandbox_database_branches"
+import { up } from "./migrations/2026_11_10_00_00_00_sandbox_database_branches"
 
 const databaseReachable = await (async () => {
   try {
@@ -25,14 +25,18 @@ describe.skipIf(!databaseReachable)("sandbox database branch ownership migration
       await expect(
         db.transaction().execute(async (trx) => {
           await sql.raw(`set local search_path = ${schema}, pg_catalog`).execute(trx)
+          await sql`create table "user" (id uuid primary key)`.execute(trx)
           await sql`create table database_instance (id uuid primary key)`.execute(trx)
           await sql`
             create table database_branch (
               id uuid primary key,
               database_instance_id uuid not null references database_instance(id),
               name text not null,
+              kind text not null default 'primary',
               is_protected boolean not null default false,
-              expires_at timestamptz
+              expires_at timestamptz,
+              constraint database_branch_kind_check
+                check (kind in ('primary', 'dev', 'upkeep', 'preview'))
             )
           `.execute(trx)
           await sql`
