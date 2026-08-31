@@ -883,11 +883,6 @@ async fn safe_index_local_diagnostics_and_lifecycle_reach_opensearch_security() 
 
     for (method, tail, request_body) in [
         (reqwest::Method::POST, "_refresh", None),
-        (
-            reqwest::Method::POST,
-            "_terms_enum",
-            Some(serde_json::json!({"field": "title", "string": "spr"})),
-        ),
         (reqwest::Method::GET, "_segments", None),
         (
             reqwest::Method::POST,

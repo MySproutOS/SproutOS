@@ -77,7 +77,6 @@ const INDEX_ENDPOINTS: &[&str] = &[
     "_validate",
     "_source",
     "_mget",
-    "_terms_enum",
     "_rank_eval",
     "_knn_search",
     "_segments",
@@ -385,7 +384,6 @@ fn allow_endpoint_method(method: &Method, endpoint: &str) -> Result<(), RouteErr
         | "_search_shards" | "_validate" | "_mget" | "_rank_eval" | "_knn_search" => {
             &[Method::GET, Method::POST]
         }
-        "_terms_enum" => &[Method::POST],
         "_doc" => &[
             Method::GET,
             Method::HEAD,
@@ -569,7 +567,6 @@ mod tests {
     #[test]
     fn safe_index_local_analysis_and_diagnostic_apis_are_namespaced() {
         for (method, endpoint) in [
-            (Method::POST, "_terms_enum"),
             (Method::POST, "_rank_eval"),
             (Method::POST, "_knn_search"),
             (Method::GET, "_segments"),
@@ -584,13 +581,7 @@ mod tests {
 
         // None of these has a safe cluster-wide spelling: without an index there is nothing for
         // the proxy to namespace, and diagnostics could describe another tenant's data.
-        for endpoint in [
-            "_terms_enum",
-            "_rank_eval",
-            "_knn_search",
-            "_segments",
-            "_recovery",
-        ] {
+        for endpoint in ["_rank_eval", "_knn_search", "_segments", "_recovery"] {
             assert!(matches!(
                 plan(PREFIX, &Method::GET, &format!("/{endpoint}")),
                 Err(RouteError::Refused(_))
