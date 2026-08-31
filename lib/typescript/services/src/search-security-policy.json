@@ -1,0 +1,17 @@
+{
+  "version": "search-security-v2",
+  "clusterPermissions": ["cluster_composite_ops", "cluster:monitor/main"],
+  "indexActions": [
+    "read",
+    "write",
+    "create_index",
+    "indices_monitor",
+    "indices:admin/refresh",
+    "indices:admin/refresh*",
+    "indices:admin/flush",
+    "indices:admin/forcemerge",
+    "indices:admin/analyze",
+    "indices:admin/delete",
+    "indices:data/read/point_in_time/*"
+  ]
+}

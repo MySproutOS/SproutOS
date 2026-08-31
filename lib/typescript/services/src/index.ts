@@ -42,6 +42,7 @@ export {
   searchUri,
   type SearchServiceConfig,
 } from "./search"
+export { SEARCH_SECURITY_POLICY } from "./search-security-policy"
 export {
   SecretNotRecoverableError,
   valkeyDriver,

@@ -857,6 +857,71 @@ async fn a_search_response_does_not_leak_the_namespace() {
 }
 
 #[tokio::test]
+async fn safe_index_local_diagnostics_and_lifecycle_reach_opensearch_security() {
+    let _serial = INTEGRATION.lock().await;
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let tenant = provision(&url).await;
+    let index = unique_index("safe-surface");
+
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::PUT,
+        &format!("/{index}/_doc/1?refresh=true"),
+        Some((
+            "application/json",
+            r#"{"title":"sprout workflow","score":7}"#.into(),
+        )),
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {body}");
+
+    for (method, tail, request_body) in [
+        (reqwest::Method::POST, "_refresh", None),
+        (
+            reqwest::Method::POST,
+            "_terms_enum",
+            Some(serde_json::json!({"field": "title", "string": "spr"})),
+        ),
+        (reqwest::Method::GET, "_segments", None),
+        (
+            reqwest::Method::POST,
+            "_rank_eval",
+            Some(serde_json::json!({
+                "requests": [{
+                    "id": "smoke",
+                    "request": {"query": {"match_all": {}}},
+                    "ratings": [{"_index": index, "_id": "1", "rating": 1}]
+                }],
+                "metric": {"precision": {"k": 10, "relevant_rating_threshold": 1}}
+            })),
+        ),
+    ] {
+        let body = request_body.map(|value| ("application/json", value.to_string()));
+        let (status, response) =
+            as_tenant(address, &tenant, method, &format!("/{index}/{tail}"), body).await;
+        assert!((200..300).contains(&status), "{tail}: {status} {response}");
+    }
+
+    let (status, body) = as_tenant(
+        address,
+        &tenant,
+        reqwest::Method::DELETE,
+        &format!("/{index}"),
+        None,
+    )
+    .await;
+    assert!((200..300).contains(&status), "{status} {body}");
+
+    cleanup(&url, &[&tenant]).await;
+}
+
+#[tokio::test]
 async fn a_cluster_wide_search_returns_only_this_tenants_documents() {
     let _serial = INTEGRATION.lock().await;
     let Some(url) = database_url() else { return };
