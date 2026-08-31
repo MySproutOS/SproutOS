@@ -130,6 +130,13 @@ export {
   UPKEEP_RESOLUTION_KIND,
 } from "./upkeep-resolution"
 export {
+  enqueueUpkeepPrFinalizer,
+  finalizeUpkeepPullRequest,
+  type UpkeepPrDeps,
+  type UpkeepPrPayload,
+  UPKEEP_PR_KIND,
+} from "./upkeep-pr"
+export {
   assertSupportedTemplateGit,
   reconcileTemplateUpstream,
   type TemplateUpstreamInput,

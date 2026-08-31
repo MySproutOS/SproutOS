@@ -677,8 +677,11 @@ async function resolveOwnRepository(
     name: upstream.name,
     defaultBranch: upstream.defaultBranch,
     private: upstream.private,
-    isFork: upstream.fork,
-    provenance: "imported",
+    isFork: upstream.parent !== null,
+    provenance: upstream.parent === null ? "imported" : "fork",
+    upstreamGithubRepoId: upstream.parent?.id ?? null,
+    upstreamFullName: upstream.parent?.fullName ?? null,
+    upstreamDefaultBranch: upstream.parent?.defaultBranch ?? null,
   })
 }
 
@@ -1172,7 +1175,7 @@ const app = new Hono()
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),
-        autoUpdateCadence: json.autoUpdateCadence ?? "daily",
+        autoUpdateCadence: json.autoUpdateCadence ?? "one_day",
         autoUpdateMode: json.autoUpdateMode ?? "suggest",
         idempotencyKey:
           json.idempotencyKey === undefined

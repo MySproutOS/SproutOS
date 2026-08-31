@@ -16,10 +16,10 @@ export const UPKEEP_KINDS = {
  * reconciles two hundred forks is two hundred failures riding on one lease. Per-repository jobs
  * retry, back off, and dead-letter independently.
  *
- * The idempotency key is the repository and the day, so a scan that runs twice — a retry, an
+ * The idempotency key is the repository and the hour, so a scan that runs twice — a retry, an
  * overlapping worker, a redeployed pod — enqueues each repository once.
  */
-export function scanForUpkeep(day: string): JobHandler {
+export function scanForUpkeep(window: string): JobHandler {
   return async (_job, { db }) => {
     const due = await fetchUpkeepStatus(db).dueForUpkeep()
 
@@ -27,8 +27,8 @@ export function scanForUpkeep(day: string): JobHandler {
       await enqueue(db, {
         kind: UPKEEP_KINDS.repository,
         organizationId: repository.organizationId,
-        payload: { repositoryId: repository.id, trigger: repository.trigger },
-        idempotencyKey: `${UPKEEP_KINDS.repository}:${repository.id}:${day}`,
+        payload: { repositoryId: repository.id },
+        idempotencyKey: `${UPKEEP_KINDS.repository}:${repository.id}:${window}`,
         // Two attempts, not five. A reconciliation that fails is usually going to keep failing,
         // and each attempt costs the customer tokens; the consecutive-failure rule is the real
         // circuit breaker and it counts *runs*, not attempts.
@@ -41,16 +41,16 @@ export function scanForUpkeep(day: string): JobHandler {
 }
 
 /**
- * Enqueue the daily scan.
+ * Enqueue the hourly scan.
  *
- * Called from the worker's recurring scheduler. The day is the key, so every worker can call it
+ * Called from the worker's recurring scheduler. The hour is the key, so every worker can call it
  * and exactly one row exists.
  */
 export async function scheduleUpkeepScan(db: Kysely<DB>, now: Date = new Date()): Promise<string> {
-  const day = now.toISOString().slice(0, 10)
+  const hour = now.toISOString().slice(0, 13)
   return await enqueue(db, {
     kind: UPKEEP_KINDS.scan,
-    idempotencyKey: `${UPKEEP_KINDS.scan}:${day}`,
+    idempotencyKey: `${UPKEEP_KINDS.scan}:${hour}`,
     maxAttempts: 3,
   })
 }

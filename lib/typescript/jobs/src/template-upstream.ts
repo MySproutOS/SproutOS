@@ -12,8 +12,12 @@ export type TemplateUpstreamInput = {
   owner: string
   repo: string
   branch: string
+  /** Destination branch for the proposed update. The source `branch` remains untouched. */
+  updateBranch?: string
   upstreamFullName: string
   upstreamBranch: string
+  /** Refuse to propose a different upstream commit than the one the scheduler inspected. */
+  expectedUpstreamSha?: string
   token: string
   /** The upstream commit recorded by the last successful reconciliation, when one exists. */
   baseUpstreamSha?: string | null
@@ -187,6 +191,11 @@ async function reconcileInDirectory(
     const upstreamRef = `refs/remotes/upstream/${input.upstreamBranch}`
     const targetSha = (await git(["rev-parse", targetRef])).stdout.trim()
     const upstreamSha = (await git(["rev-parse", upstreamRef])).stdout.trim()
+    if (input.expectedUpstreamSha !== undefined && upstreamSha !== input.expectedUpstreamSha) {
+      throw new Error(
+        "upstream changed during template reconciliation; the next run will compare again",
+      )
+    }
     const roots = lines((await git(["rev-list", "--max-parents=0", targetSha])).stdout)
     if (roots.length !== 1) {
       throw new Error(
@@ -306,16 +315,29 @@ async function reconcileInDirectory(
       )
     ).stdout.trim()
 
+    const destination = input.updateBranch ?? input.branch
     await input.beforePush?.()
-    await git(
-      [
-        "push",
-        targetUrl,
-        `${mergeSha}:refs/heads/${input.branch}`,
-        `--force-with-lease=refs/heads/${input.branch}:${targetSha}`,
-      ],
-      { env: targetEnv },
-    )
+    const destinationSha = lines(
+      (await git(["ls-remote", "target", `refs/heads/${destination}`], { env: targetEnv })).stdout,
+    )[0]?.split("\t")[0]
+    if (destinationSha !== mergeSha) {
+      if (destination !== input.branch && destinationSha !== undefined) {
+        throw new Error(
+          `upkeep branch ${destination} changed after it was created; refusing to overwrite it`,
+        )
+      }
+      await git(
+        [
+          "push",
+          targetUrl,
+          `${mergeSha}:refs/heads/${destination}`,
+          ...(destination === input.branch
+            ? [`--force-with-lease=refs/heads/${destination}:${targetSha}`]
+            : [`--force-with-lease=refs/heads/${destination}:`]),
+        ],
+        { env: targetEnv },
+      )
+    }
 
     return {
       outcome: "merged",

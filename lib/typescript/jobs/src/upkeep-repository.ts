@@ -1,28 +1,43 @@
-import { fetchUpkeepStatus, recordUpkeepRun } from "@lib/dao"
+import {
+  crudAgentSession,
+  crudProjectJob,
+  fetchUpkeepStatus,
+  initialSteps,
+  recordUpkeepRun,
+} from "@lib/dao"
 import {
   compareWithUpstream,
   createGitHubClient,
   createInstallationTokenStore,
+  deleteBranch,
+  ensureBranch,
+  ensurePullRequest,
   envAppJwtSigner,
+  getBranchHeadSha,
   GitHubApiError,
-  repositoryTagState,
   type GitHubClient,
   type GitHubCredential,
   type InstallationTokenRequest,
   syncWithUpstream,
 } from "@lib/github"
 import type { DB } from "@sproutos/db"
-import type { Kysely } from "kysely"
-import { decideUpkeepAction } from "./upkeep-decision"
+import { sql, type Kysely } from "kysely"
+import { decideUpkeepAction, upkeepBranchName } from "./upkeep-decision"
+import { enqueueUpkeepPrFinalizer } from "./upkeep-pr"
+import { enqueue } from "./queue"
+import { UPKEEP_RESOLUTION_KIND } from "./upkeep-resolution"
 import type { JobHandler } from "./worker"
-import type { UpkeepTrigger } from "@lib/dao"
 import {
   reconcileTemplateUpstream,
   type TemplateUpstreamInput,
   type TemplateUpstreamResult,
 } from "./template-upstream"
 
-type UpkeepPayload = { repositoryId: string; trigger?: UpkeepTrigger }
+export type UpkeepPayload = {
+  repositoryId: string
+  requestedProjectId?: string
+  requestedByUserId?: string
+}
 
 /**
  * What the handler needs from GitHub, as an argument rather than a global.
@@ -71,6 +86,72 @@ async function subscribedProjects(db: Kysely<DB>, repositoryId: string): Promise
   return rows.map((row) => row.id)
 }
 
+async function startConflictResolution(
+  db: Kysely<DB>,
+  input: {
+    runId: string
+    repositoryId: string
+    upstreamSha: string
+    forkSha: string
+    requestedProjectId?: string
+    requestedByUserId?: string
+  },
+) {
+  const project = await db
+    .selectFrom("project")
+    .innerJoin("organization", "organization.id", "project.organizationId")
+    .select(["project.id", "project.organizationId", "organization.ownerUserId"])
+    .where("project.repositoryId", "=", input.repositoryId)
+    .where("project.deletedAt", "is", null)
+    .$if(input.requestedProjectId !== undefined, (query) =>
+      query.where("project.id", "=", input.requestedProjectId!),
+    )
+    .orderBy("project.autoUpdateEnabled", "desc")
+    .orderBy("project.id", "asc")
+    .executeTakeFirst()
+  if (project === undefined) return
+  const userId = input.requestedByUserId ?? project.ownerUserId
+  const key = `upkeep.resolve:${input.runId}`
+  await db.transaction().execute(async (trx) => {
+    await sql`select pg_advisory_xact_lock(hashtext(${key}))`.execute(trx)
+    const existing = await trx
+      .selectFrom("projectJob")
+      .select("id")
+      .where("idempotencyKey", "=", key)
+      .executeTakeFirst()
+    if (existing !== undefined) return
+    const session = await crudAgentSession(trx).createSession({
+      projectId: project.id,
+      createdByUserId: userId,
+      title: `Resolve upstream conflict ${input.upstreamSha.slice(0, 12)}`,
+    })
+    const job = await crudProjectJob(trx).enqueueOnce({
+      kind: "sync_upstream",
+      organizationId: project.organizationId,
+      projectId: project.id,
+      repositoryId: input.repositoryId,
+      state: "queued",
+      steps: JSON.stringify(initialSteps("sync_upstream")),
+      idempotencyKey: key,
+      details: {
+        upstreamSyncRunId: input.runId,
+        expectedUpstreamSha: input.upstreamSha,
+        expectedTargetSha: input.forkSha,
+        agentSessionId: session.id,
+        userId,
+      },
+    })
+    if (job === undefined) throw new Error("upkeep conflict resolution was not serialized")
+    await enqueue(trx, {
+      kind: UPKEEP_RESOLUTION_KIND,
+      organizationId: project.organizationId,
+      payload: { projectJobId: job.id },
+      idempotencyKey: `${UPKEEP_RESOLUTION_KIND}:${input.runId}`,
+      maxAttempts: 3,
+    })
+  })
+}
+
 /**
  * Reconcile one fork with the repository it came from (TASK 27).
  *
@@ -83,23 +164,16 @@ async function subscribedProjects(db: Kysely<DB>, repositoryId: string): Promise
  *  - **Nothing to do.** Recorded anyway. `fetchUpkeepStatus` reads this history to decide whether
  *    upkeep is paused, and skipping the boring rows would make a repository that failed once and
  *    then had four quiet nights look like it had failed five times running.
- *  - **A fast-forward.** Done server-side through GitHub's `merge-upstream`, so there is no
- *    runner, no checkout and nothing to charge for. This is the common case for a fork whose owner
- *    only changed configuration, and paying a model to perform a fast-forward would be absurd.
+ *  - **A fast-forward.** Done server-side through GitHub's `merge-upstream` on a proposal branch,
+ *    then merged only after the repository's CI and branch protection accept the pull request.
  *  - **A real reconciliation.** Attempted as a server-side merge first, since GitHub resolves
  *    everything that is not a genuine textual conflict for free. What comes back as a conflict is
- *    raised to each subscribed project as a suggestion for a person to act on.
- *
- * **What this deliberately does not do yet:** drive an agent to resolve a genuine conflict. That
- * path needs the merge resolved in a workspace and then pushed, and the push cannot come from the
- * runner — the agent sandbox is never given a push credential, so the trusted job would have to
- * push on its behalf. Until that exists, a conflicted fork produces a suggestion rather than a
- * pull request, which is visible and honest rather than silent.
+ *    raised to each subscribed project and automatically handed to the bounded conflict agent.
  */
 export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
   return async (job, context) => {
     const { db } = context
-    const { repositoryId, trigger = "interval" } = job.payload as UpkeepPayload
+    const { repositoryId, requestedProjectId, requestedByUserId } = job.payload as UpkeepPayload
 
     const repository = await db
       .selectFrom("repository")
@@ -111,7 +185,6 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         "provenance",
         "upstreamFullName",
         "upstreamDefaultBranch",
-        "upstreamTagFingerprint",
         "githubInstallationId",
         "githubRepoId",
       ])
@@ -160,41 +233,6 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
       repositoryId: githubRepoId,
     })
 
-    let observedTagFingerprint: string | undefined
-    if (trigger === "tag") {
-      const tags = await repositoryTagState(
-        client,
-        inspectionCredential,
-        repository.upstreamFullName,
-      )
-
-      if (tags.fingerprint === repository.upstreamTagFingerprint) {
-        await db
-          .updateTable("repository")
-          .set({ upstreamTagCheckedAt: new Date(), updatedAt: new Date() })
-          .where("id", "=", repositoryId)
-          .execute()
-        return
-      }
-
-      // Establishing an empty baseline is not an update. Once a baseline exists, however, removing
-      // the last tag is still a tag-set change and follows the same safe sync path as an addition
-      // or moved tag.
-      if (!tags.hasTags && repository.upstreamTagFingerprint === null) {
-        await db
-          .updateTable("repository")
-          .set({
-            upstreamTagCheckedAt: new Date(),
-            upstreamTagFingerprint: tags.fingerprint,
-            updatedAt: new Date(),
-          })
-          .where("id", "=", repositoryId)
-          .execute()
-        return
-      }
-      observedTagFingerprint = tags.fingerprint
-    }
-
     if (repository.provenance === "template") {
       const writeCredential = await credentialFor(installationId, {
         purpose: "upkeep-sync",
@@ -204,20 +242,38 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         .selectFrom("upstreamSyncRun")
         .select("upstreamSha")
         .where("repositoryId", "=", repositoryId)
-        .where("branch", "=", repository.defaultBranch)
-        .where("outcome", "=", "up_to_date")
+        .where((eb) =>
+          eb.or([
+            eb.and([eb("branch", "=", repository.defaultBranch), eb("outcome", "=", "up_to_date")]),
+            eb("outcome", "=", "merged"),
+          ]),
+        )
         .where("upstreamSha", "is not", null)
         .orderBy("id", "desc")
         .executeTakeFirst()
 
       let result: TemplateUpstreamResult
+      const [upstreamOwner, upstreamRepo] = repository.upstreamFullName.split("/")
+      if (upstreamOwner === undefined || upstreamRepo === undefined) {
+        throw new Error(`invalid upstream repository ${repository.upstreamFullName}`)
+      }
+      const expectedUpstreamSha = await getBranchHeadSha(
+        client,
+        inspectionCredential,
+        upstreamOwner,
+        upstreamRepo,
+        repository.upstreamDefaultBranch ?? repository.defaultBranch,
+      )
+      const updateBranch = upkeepBranchName(expectedUpstreamSha)
       try {
         result = await (deps?.reconcileTemplate ?? reconcileTemplateUpstream)({
           owner: repository.ownerLogin,
           repo: repository.name,
           branch: repository.defaultBranch,
+          updateBranch,
           upstreamFullName: repository.upstreamFullName,
           upstreamBranch: repository.upstreamDefaultBranch ?? repository.defaultBranch,
+          expectedUpstreamSha,
           token: writeCredential.token,
           baseUpstreamSha: base?.upstreamSha,
           signal: context.signal,
@@ -242,42 +298,59 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
           aheadBy: result.aheadBy,
           mergeType: null,
         })
-        if (observedTagFingerprint !== undefined) {
-          await recordObservedTag(db, repositoryId, observedTagFingerprint)
-        }
         await recordUpkeepRun(db).suggestToProjects(
           run.id,
           await subscribedProjects(db, repositoryId),
           `${repository.upstreamFullName} conflicts with local changes in: ${result.conflicts.join(", ")}.`,
         )
+        await startConflictResolution(db, {
+          runId: run.id,
+          repositoryId,
+          upstreamSha: result.upstreamSha,
+          forkSha: result.targetSha,
+          requestedProjectId,
+          requestedByUserId,
+        })
         return
       }
 
-      await recordUpkeepRun(db).record({
-        repositoryId,
-        branch: repository.defaultBranch,
-        outcome: "up_to_date",
-        upstreamSha: result.upstreamSha,
-        forkSha: result.outcome === "merged" ? result.mergeSha : result.targetSha,
-        behindBy: result.behindBy,
-        aheadBy: result.aheadBy,
-        mergeType: result.outcome === "merged" ? "merge" : "none",
-      })
-
-      await db
-        .updateTable("repository")
-        .set({
-          lastSyncedAt: new Date(),
-          ...(observedTagFingerprint === undefined
-            ? {}
-            : {
-                upstreamTagCheckedAt: new Date(),
-                upstreamTagFingerprint: observedTagFingerprint,
-              }),
-          updatedAt: new Date(),
+      if (result.outcome === "up_to_date") {
+        await recordUpkeepRun(db).record({
+          repositoryId,
+          branch: repository.defaultBranch,
+          outcome: "up_to_date",
+          upstreamSha: result.upstreamSha,
+          forkSha: result.targetSha,
+          behindBy: result.behindBy,
+          aheadBy: result.aheadBy,
+          mergeType: "none",
         })
-        .where("id", "=", repositoryId)
-        .execute()
+      } else if (result.outcome === "merged") {
+        const branch = upkeepBranchName(result.upstreamSha)
+        if (branch !== updateBranch)
+          throw new Error("template upkeep branch was not derived from upstream SHA")
+        const pr = await ensurePullRequest(client, writeCredential, {
+          owner: repository.ownerLogin,
+          repo: repository.name,
+          head: branch,
+          base: repository.defaultBranch,
+          title: `Apply upstream update ${result.upstreamSha.slice(0, 12)}`,
+          body: `Automated update from ${repository.upstreamFullName}@${result.upstreamSha}.`,
+        })
+        const run = await recordUpkeepRun(db).record({
+          repositoryId,
+          branch,
+          outcome: "pr_opened",
+          upstreamSha: result.upstreamSha,
+          forkSha: result.mergeSha,
+          behindBy: result.behindBy,
+          aheadBy: result.aheadBy,
+          mergeType: "merge",
+          pullRequestNumber: pr.number,
+          pullRequestUrl: pr.url,
+        })
+        await enqueueUpkeepPrFinalizer(db, run.id)
+      }
       return
     }
 
@@ -302,9 +375,19 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         aheadBy: position.aheadBy,
         mergeType: "none",
       })
-      if (observedTagFingerprint !== undefined) {
-        await recordObservedTag(db, repositoryId, observedTagFingerprint)
-      }
+      return
+    }
+
+    const pending = await db
+      .selectFrom("upstreamSyncRun")
+      .select("id")
+      .where("repositoryId", "=", repositoryId)
+      .where("upstreamSha", "=", position.upstreamSha)
+      .where("outcome", "=", "pr_opened")
+      .orderBy("createdAt", "desc")
+      .executeTakeFirst()
+    if (pending !== undefined) {
+      await enqueueUpkeepPrFinalizer(db, pending.id)
       return
     }
 
@@ -313,40 +396,67 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         purpose: "upkeep-sync",
         repositoryId: githubRepoId,
       })
+      const branch = upkeepBranchName(position.upstreamSha)
+      await ensureBranch(client, writeCredential, {
+        owner: repository.ownerLogin,
+        repo: repository.name,
+        branch,
+        sha: position.forkSha,
+      })
       const sync = await syncWithUpstream(
         client,
         writeCredential,
         repository.ownerLogin,
         repository.name,
-        repository.defaultBranch,
+        branch,
       )
-
-      await recordUpkeepRun(db).record({
+      const [upstreamOwner, upstreamRepo] = repository.upstreamFullName.split("/")
+      if (upstreamOwner === undefined || upstreamRepo === undefined) {
+        throw new Error(`invalid upstream repository ${repository.upstreamFullName}`)
+      }
+      const observedUpstreamSha = await getBranchHeadSha(
+        client,
+        inspectionCredential,
+        upstreamOwner,
+        upstreamRepo,
+        repository.upstreamDefaultBranch ?? repository.defaultBranch,
+      )
+      if (observedUpstreamSha !== position.upstreamSha) {
+        await deleteBranch(client, writeCredential, {
+          owner: repository.ownerLogin,
+          repo: repository.name,
+          branch,
+        })
+        throw new Error("upstream changed during reconciliation; the next run will compare again")
+      }
+      const proposedSha = await getBranchHeadSha(
+        client,
+        writeCredential,
+        repository.ownerLogin,
+        repository.name,
+        branch,
+      )
+      const pr = await ensurePullRequest(client, writeCredential, {
+        owner: repository.ownerLogin,
+        repo: repository.name,
+        head: branch,
+        base: repository.defaultBranch,
+        title: `Apply upstream update ${position.upstreamSha.slice(0, 12)}`,
+        body: `Automated update from ${repository.upstreamFullName}@${position.upstreamSha}.`,
+      })
+      const run = await recordUpkeepRun(db).record({
         repositoryId,
-        branch: repository.defaultBranch,
-        outcome: "up_to_date",
+        branch,
+        outcome: "pr_opened",
         upstreamSha: position.upstreamSha,
-        forkSha: position.forkSha,
+        forkSha: proposedSha,
         behindBy: position.behindBy,
         aheadBy: position.aheadBy,
-        // GitHub says "fast-forward"; the column's vocabulary is "fast_forward".
         mergeType: sync.mergeType === "fast-forward" ? "fast_forward" : "merge",
+        pullRequestNumber: pr.number,
+        pullRequestUrl: pr.url,
       })
-
-      await db
-        .updateTable("repository")
-        .set({
-          lastSyncedAt: new Date(),
-          ...(observedTagFingerprint === undefined
-            ? {}
-            : {
-                upstreamTagCheckedAt: new Date(),
-                upstreamTagFingerprint: observedTagFingerprint,
-              }),
-          updatedAt: new Date(),
-        })
-        .where("id", "=", repositoryId)
-        .execute()
+      await enqueueUpkeepPrFinalizer(db, run.id)
     } catch (error) {
       // 409 is GitHub declining to merge, which is a conflict, not a fault. Anything else is.
       const conflicted = error instanceof GitHubApiError && error.status === 409
@@ -364,32 +474,30 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
 
       if (!conflicted) throw error
 
-      if (observedTagFingerprint !== undefined) {
-        await recordObservedTag(db, repositoryId, observedTagFingerprint)
-      }
+      const branch = upkeepBranchName(position.upstreamSha)
+      const writeCredential = await credentialFor(installationId, {
+        purpose: "upkeep-sync",
+        repositoryId: githubRepoId,
+      })
+      await deleteBranch(client, writeCredential, {
+        owner: repository.ownerLogin,
+        repo: repository.name,
+        branch,
+      })
 
       await recordUpkeepRun(db).suggestToProjects(
         run.id,
         await subscribedProjects(db, repositoryId),
         `${repository.upstreamFullName} is ${position.behindBy} commit(s) ahead and cannot be merged automatically.`,
       )
+      await startConflictResolution(db, {
+        runId: run.id,
+        repositoryId,
+        upstreamSha: position.upstreamSha,
+        forkSha: position.forkSha,
+        requestedProjectId,
+        requestedByUserId,
+      })
     }
   }
-}
-
-async function recordObservedTag(
-  db: Kysely<DB>,
-  repositoryId: string,
-  fingerprint: string,
-): Promise<void> {
-  const now = new Date()
-  await db
-    .updateTable("repository")
-    .set({
-      upstreamTagCheckedAt: now,
-      upstreamTagFingerprint: fingerprint,
-      updatedAt: now,
-    })
-    .where("id", "=", repositoryId)
-    .execute()
 }

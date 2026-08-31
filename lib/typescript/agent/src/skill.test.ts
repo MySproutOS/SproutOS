@@ -123,6 +123,22 @@ describe("the sandbox's own section", () => {
     expect(body).toMatch(/do not report\s+production migration as complete/i)
   })
 
+  it("names provenance and the trusted update action when the project has an upstream", () => {
+    const body = renderSproutosSkill({
+      ...input,
+      upstream: {
+        fullName: "TestSproutOS/upstream-app",
+        branch: "main",
+        cadence: "one_week",
+      },
+    })
+    expect(body).toContain("TestSproutOS/upstream-app")
+    expect(body).toContain("one_week")
+    expect(body).toContain("SPROUTOS_AGENT_UPSTREAM_UPDATE_URL")
+    expect(body).toContain("acknowledge that the upstream update was queued")
+    expect(body).toContain("waits for CI and branch protection")
+  })
+
   it("says none of it in the control-plane checkout, where none of it is true", async () => {
     /*
       That checkout has no database, no port anybody can reach, and `Bash` refused outright. Telling

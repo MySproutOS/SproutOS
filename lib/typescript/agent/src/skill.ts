@@ -41,6 +41,11 @@ export type SkillInput = {
   tenantDomain: string
   /** The project this session is for, so the workflow snippet is copy-pasteable rather than a form. */
   projectSlug?: string
+  upstream?: {
+    fullName: string
+    branch: string
+    cadence: string
+  }
 }
 
 /**
@@ -106,7 +111,32 @@ export function renderPublicSproutosSkill(input: { apiUrl: string; tenantDomain:
  * Kept out of the control-plane rendering because none of it is true there: that checkout has no
  * database, no port anybody can reach, and a `Bash` tool that is refused outright.
  */
-function sandboxSection(workspacePath: string): string {
+function sandboxSection(workspacePath: string, upstream: SkillInput["upstream"]): string {
+  const upstreamSection =
+    upstream === undefined
+      ? ""
+      : `
+**This project tracks an upstream repository.** Its source is \`${upstream.fullName}\` on
+\`${upstream.branch}\`; its configured cadence is \`${upstream.cadence}\`. When the user asks to
+update, sync, or refresh from upstream, do not merge or push the production branch yourself. Invoke
+the scoped trusted action below. SproutOS compares provenance, creates a proposal branch, opens a
+pull request, waits for CI and branch protection, then merges automatically. If there is a conflict,
+the platform gives a bounded patch task to its conflict resolver and applies the same PR gate.
+
+\`\`\`bash
+upstream_response="$(curl --silent --show-error --fail-with-body \\
+  --request POST \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  "$SPROUTOS_AGENT_UPSTREAM_UPDATE_URL")"
+upstream_job_id="$(UPSTREAM_RESPONSE="$upstream_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.UPSTREAM_RESPONSE).jobId)')"
+unset upstream_response
+\`\`\`
+
+After the request succeeds, acknowledge that the upstream update was queued and report
+\`$upstream_job_id\`. Do not claim it has merged until the platform reports that terminal state.
+Never print or persist the action token.
+`
   return `
 ## Where you are right now
 
@@ -170,6 +200,8 @@ leave scratch files in the tree, and do not ask whether you may edit files. You 
 turns, but it stops with the sandbox. Anything that must outlive the sandbox belongs in the
 repository, not only in a process or under \`/tmp\`.
 
+${upstreamSection}
+
 ${DELEGATION_POLICY}
 `
 }
@@ -183,7 +215,7 @@ description: How this repository is built, deployed and connected on SproutOS â€
 ---
 
 # Deploying this repository on SproutOS
-${input.sandbox === true ? sandboxSection(input.workspace.path) : ""}
+${input.sandbox === true ? sandboxSection(input.workspace.path, input.upstream) : ""}
 SproutOS runs each deployable target in this repository as its own **project**. A repository with a
 web app and a separate API is one repository and two projects, grouped under a parent that holds
 them and deploys nothing itself.

@@ -10,7 +10,16 @@ import {
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
-export type AutoUpdateCadence = "tag" | "daily" | "weekly" | "monthly"
+export type AutoUpdateCadence =
+  | "one_day"
+  | "two_days"
+  | "one_week"
+  | "one_month"
+  | "three_months"
+  | "six_months"
+  | "nine_months"
+  | "one_year"
+  | "two_years"
 
 export type Project = {
   id: string

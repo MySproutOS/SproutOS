@@ -47,6 +47,7 @@ import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
 import { resolveUpkeepConflict, UPKEEP_RESOLUTION_KIND } from "./upkeep-resolution"
+import { finalizeUpkeepPullRequest, UPKEEP_PR_KIND } from "./upkeep-pr"
 import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
@@ -116,6 +117,7 @@ export const JOB_KINDS = {
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   upkeepResolveConflict: UPKEEP_RESOLUTION_KIND,
+  upkeepFinalizePullRequest: UPKEEP_PR_KIND,
   publishRelease: PUBLISH_KINDS.release,
   tearDownPreview: PUBLISH_KINDS.tearDownPreview,
   cleanUpStaticPreview: PUBLISH_KINDS.cleanUpStaticPreview,
@@ -449,11 +451,12 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
   [JOB_KINDS.reconcileValkeyAcl]: reconcileValkeyAclJob,
   [JOB_KINDS.sweepExpired]: retentionSweep,
-  // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
+  // The hour is baked into the handler so a retry or operator-triggered scan remains idempotent.
   [JOB_KINDS.upkeepScan]: (job, context) =>
-    scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
+    scanForUpkeep(new Date().toISOString().slice(0, 13))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.upkeepResolveConflict]: resolveUpkeepConflict(),
+  [JOB_KINDS.upkeepFinalizePullRequest]: finalizeUpkeepPullRequest(),
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,

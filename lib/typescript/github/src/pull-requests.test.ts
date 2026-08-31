@@ -16,13 +16,20 @@ const input = {
 }
 
 describe("ensurePullRequest", () => {
-  it("recovers a closed PR instead of creating a duplicate", async () => {
+  it("recovers an already-merged PR instead of creating a duplicate", async () => {
     const requests: unknown[] = []
     const request = vi.fn(<T>(requestInput: unknown) => {
       requests.push(requestInput)
       return Promise.resolve({
         status: 200,
-        data: [{ number: 12, html_url: "https://github.test/pull/12" }] as T,
+        data: [
+          {
+            number: 12,
+            html_url: "https://github.test/pull/12",
+            state: "closed",
+            merged_at: "2029-01-01T00:00:00Z",
+          },
+        ] as T,
         rateLimit: { limit: null, remaining: null, resetAt: null },
       })
     })
@@ -46,7 +53,7 @@ describe("ensurePullRequest", () => {
         return Promise.reject(new GitHubValidationError(422, "/pulls", "already exists"))
       return Promise.resolve({
         status: 200,
-        data: [{ number: 13, html_url: "https://github.test/pull/13" }] as T,
+        data: [{ number: 13, html_url: "https://github.test/pull/13", state: "open" }] as T,
         rateLimit: { limit: null, remaining: null, resetAt: null },
       })
     })

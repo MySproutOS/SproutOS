@@ -125,7 +125,6 @@ import {
   type AutoUpdateCadence,
   type UpkeepOutcome,
   type UpkeepStatus,
-  type UpkeepTrigger,
 } from "./upstreamSyncRun/policy"
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
@@ -290,7 +289,6 @@ export {
   SystemRoleStatement,
   UpkeepOutcome,
   UpkeepStatus,
-  UpkeepTrigger,
   StartImpersonation,
   UserExport,
   CUSTOM_DOMAIN_FIELDS,

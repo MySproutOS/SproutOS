@@ -459,10 +459,13 @@ async function bootstrap(
       .select([
         "project.slug as slug",
         "project.productionBranch as branch",
+        "project.autoUpdateCadence as autoUpdateCadence",
         "repository.id as repositoryId",
         "repository.githubRepoId as githubRepoId",
         "repository.ownerLogin as owner",
         "repository.name as name",
+        "repository.upstreamFullName as upstreamFullName",
+        "repository.upstreamDefaultBranch as upstreamDefaultBranch",
       ])
       .where("project.id", "=", input.projectId)
       .executeTakeFirst()
@@ -532,6 +535,15 @@ async function bootstrap(
         projectSlug: project.slug,
         tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
         workspacePath: sandboxDriver.workspaceDir,
+        ...(project.upstreamFullName === null
+          ? {}
+          : {
+              upstream: {
+                fullName: project.upstreamFullName,
+                branch: project.upstreamDefaultBranch ?? project.branch,
+                cadence: project.autoUpdateCadence,
+              },
+            }),
       }),
     })
 

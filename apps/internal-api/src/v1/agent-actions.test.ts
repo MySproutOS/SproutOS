@@ -106,7 +106,10 @@ describe.skipIf(!reachable)("agent group-primary action", () => {
           githubRepoId: BigInt("771001"),
           ownerLogin: "sprout-test",
           name: "agent-primary-a",
-          provenance: "new",
+          provenance: "fork",
+          isFork: true,
+          upstreamFullName: "TestSproutOS/upstream-action-test",
+          upstreamDefaultBranch: "main",
         },
         {
           id: repositoryB,
@@ -280,6 +283,30 @@ describe.skipIf(!reachable)("agent group-primary action", () => {
     expect(platformEvent).toBeDefined()
     expect(platformEvent?.payload as { primaryHostname: string }).toMatchObject({
       primaryHostname: "product.example.test",
+    })
+  })
+
+  it("queues the trusted PR-gated upstream flow for the scoped project", async () => {
+    const token = await turnToken(webId)
+    const response = await jsonRequest(
+      `/v1/orgs/${orgASlug}/projects/${webId}/agent/actions/update-upstream`,
+      token.accessToken,
+      {},
+    )
+    expect(response.status).toBe(202)
+    expect(response.json).toMatchObject({
+      action: "update_from_upstream",
+      upstreamFullName: "TestSproutOS/upstream-action-test",
+    })
+    const queued = await db
+      .selectFrom("backgroundJob")
+      .select(["kind", "payload"])
+      .where("id", "=", response.json.jobId as string)
+      .executeTakeFirstOrThrow()
+    expect(queued.kind).toBe("upkeep.repository")
+    expect(queued.payload).toMatchObject({
+      requestedProjectId: webId,
+      requestedByUserId: owner.id,
     })
   })
 

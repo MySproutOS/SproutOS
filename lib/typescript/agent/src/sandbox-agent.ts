@@ -253,6 +253,7 @@ export type TurnInput = {
   /** Exact project-scoped endpoint; the sandbox never constructs another tenant's path. */
   actionUrl: string
   databaseBranchesUrl: string
+  upstreamUpdateUrl?: string
   projectSlug: string
   groupPrimaryCandidates: readonly { name: string; slug: string; rootDir: string | null }[]
   token: MintedProxyToken
@@ -320,6 +321,7 @@ export async function runSandboxTurn(input: TurnInput): Promise<{ exitCode: numb
   const env = sandboxAgentEnv({
     actionUrl: input.actionUrl,
     databaseBranchesUrl: input.databaseBranchesUrl,
+    upstreamUpdateUrl: input.upstreamUpdateUrl,
     groupPrimaryCandidates: input.groupPrimaryCandidates,
     harness: input.harness,
     model: input.model,

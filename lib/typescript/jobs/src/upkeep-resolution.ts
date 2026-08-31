@@ -8,6 +8,7 @@ import { crudAgentSession, crudProjectJob, recordUpkeepRun } from "@lib/dao"
 import type { GitHubCredential } from "@lib/github"
 import type { JobHandler } from "./worker"
 import { resolveUpstreamConflict, type UpstreamConflictResolution } from "./upstream-conflict"
+import { enqueueUpkeepPrFinalizer } from "./upkeep-pr"
 
 export const UPKEEP_RESOLUTION_KIND = "upkeep.resolve_conflict"
 const STALE_AFTER_MS = 4 * 60 * 1000
@@ -185,9 +186,10 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
         .executeTakeFirst()
       if (state?.state === "canceled") return
 
-      await recordUpkeepRun(context.db).record({
+      const updateBranch = `sproutos/upkeep-${projectJob.id.slice(0, 8)}-${details.expectedUpstreamSha.slice(0, 12)}`
+      const run = await recordUpkeepRun(context.db).record({
         repositoryId: projectJob.repositoryId,
-        branch: facts.defaultBranch,
+        branch: updateBranch,
         outcome: "pr_opened",
         upstreamSha: details.expectedUpstreamSha,
         forkSha: details.expectedTargetSha,
@@ -195,6 +197,7 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
         pullRequestNumber: result.pullRequestNumber,
         pullRequestUrl: result.pullRequestUrl,
       })
+      await enqueueUpkeepPrFinalizer(context.db, run.id)
       await crudProjectJob(context.db).update(projectJob.id, {
         state: "succeeded",
         progress: 100,

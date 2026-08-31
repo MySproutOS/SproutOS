@@ -21,7 +21,7 @@ afterAll(async () => {
 })
 
 describe.skipIf(!reachable)("upkeep scheduling", () => {
-  it("enqueues one scan per UTC day and catches the next window after downtime", async ({
+  it("enqueues one scan per UTC hour and catches the next window after downtime", async ({
     skip,
   }) => {
     if (!reachable) skip()
@@ -40,8 +40,8 @@ describe.skipIf(!reachable)("upkeep scheduling", () => {
       .execute()
 
     expect(rows).toEqual([
-      { idempotencyKey: `${UPKEEP_KINDS.scan}:2098-04-01` },
-      { idempotencyKey: `${UPKEEP_KINDS.scan}:2098-04-08` },
+      { idempotencyKey: `${UPKEEP_KINDS.scan}:2098-04-01T00` },
+      { idempotencyKey: `${UPKEEP_KINDS.scan}:2098-04-08T15` },
     ])
   })
 })

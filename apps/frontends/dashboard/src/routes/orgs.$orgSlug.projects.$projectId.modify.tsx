@@ -255,10 +255,15 @@ function ModifyForm({
               <Select
                 items={[
                   { label: "Off", value: "off" },
-                  { label: "When a tag changes", value: "tag" },
-                  { label: "Daily", value: "daily" },
-                  { label: "Weekly", value: "weekly" },
-                  { label: "Monthly", value: "monthly" },
+                  { label: "1 day", value: "one_day" },
+                  { label: "2 days", value: "two_days" },
+                  { label: "1 week", value: "one_week" },
+                  { label: "1 month", value: "one_month" },
+                  { label: "3 months", value: "three_months" },
+                  { label: "6 months", value: "six_months" },
+                  { label: "9 months", value: "nine_months" },
+                  { label: "1 year", value: "one_year" },
+                  { label: "2 years", value: "two_years" },
                 ]}
                 disabled={upstreamFullName === null}
                 value={updateSchedule}
@@ -271,16 +276,21 @@ function ModifyForm({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="tag">When a tag changes</SelectItem>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
+                  <SelectItem value="one_day">1 day</SelectItem>
+                  <SelectItem value="two_days">2 days</SelectItem>
+                  <SelectItem value="one_week">1 week</SelectItem>
+                  <SelectItem value="one_month">1 month</SelectItem>
+                  <SelectItem value="three_months">3 months</SelectItem>
+                  <SelectItem value="six_months">6 months</SelectItem>
+                  <SelectItem value="nine_months">9 months</SelectItem>
+                  <SelectItem value="one_year">1 year</SelectItem>
+                  <SelectItem value="two_years">2 years</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
                 {upstreamFullName === null
                   ? "This repository was not copied from an upstream repository."
-                  : `Tracking ${upstreamFullName}. Updates can change any repository file, including GitHub Actions workflows. Tag updates run when its Git tags change; monthly means every 30 days. Scheduled updates catch up after downtime.`}
+                  : `Tracking ${upstreamFullName}. Updates can change any repository file, including GitHub Actions workflows. Month and year schedules use fixed elapsed days, and overdue updates catch up after downtime.`}
               </p>
             </div>
           </div>

@@ -43,10 +43,15 @@ export const projectSchemaListQuery = Type.Object({
 const ProjectKind = Type.Union([Type.Literal("site"), Type.Literal("workflow")])
 const AutoUpdateMode = Type.Union([Type.Literal("suggest"), Type.Literal("auto_merge")])
 const AutoUpdateCadence = Type.Union([
-  Type.Literal("tag"),
-  Type.Literal("daily"),
-  Type.Literal("weekly"),
-  Type.Literal("monthly"),
+  Type.Literal("one_day"),
+  Type.Literal("two_days"),
+  Type.Literal("one_week"),
+  Type.Literal("one_month"),
+  Type.Literal("three_months"),
+  Type.Literal("six_months"),
+  Type.Literal("nine_months"),
+  Type.Literal("one_year"),
+  Type.Literal("two_years"),
 ])
 const ScaleMode = Type.Union([Type.Literal("cold"), Type.Literal("warm")])
 const EnvTarget = Type.Union([

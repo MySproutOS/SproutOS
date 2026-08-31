@@ -85,9 +85,11 @@ type InstallationTokenResponse = {
 
 type RepositoryPermission =
   | "administration"
+  | "checks"
   | "contents"
   | "metadata"
   | "pull_requests"
+  | "statuses"
   | "workflows"
 type PermissionLevel = "read" | "write"
 
@@ -118,6 +120,7 @@ export type InstallationTokenRequest =
         | "upkeep-inspect"
         | "upkeep-sync"
         | "upkeep-resolution"
+        | "upkeep-pr-finalize"
       repositoryId: number
     }
 
@@ -186,12 +189,20 @@ function resolveInstallationTokenScope(
     case "agent-push":
     case "sandbox-push":
     case "catalogue-template-push":
-    case "upkeep-sync":
       return exactRepositoryScope(request, { contents: "write", workflows: "write" })
-    case "upkeep-resolution":
+    case "upkeep-sync":
       return exactRepositoryScope(request, {
         contents: "write",
         pull_requests: "write",
+        workflows: "write",
+      })
+    case "upkeep-resolution":
+    case "upkeep-pr-finalize":
+      return exactRepositoryScope(request, {
+        checks: "read",
+        contents: "write",
+        pull_requests: "write",
+        statuses: "read",
         workflows: "write",
       })
   }

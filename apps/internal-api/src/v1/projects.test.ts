@@ -1101,25 +1101,25 @@ describe.skipIf(!reachable)("project routes", () => {
         name: "Explicit Choice",
         rootDir: "apps/explicit",
         autoUpdateEnabled: true,
-        autoUpdateCadence: "weekly",
+        autoUpdateCadence: "one_week",
         autoUpdateMode: "auto_merge",
         source: { type: "repository", repositoryId },
       })
 
       const project = response.json.project as Json
       expect(project.autoUpdateEnabled).toBe(true)
-      expect(project.autoUpdateCadence).toBe("weekly")
+      expect(project.autoUpdateCadence).toBe("one_week")
       expect(project.autoUpdateMode).toBe("auto_merge")
 
       const updated = await call(
         "PATCH",
         `/v1/orgs/${orgA}/projects/${project.id as string}`,
         alice,
-        { autoUpdateEnabled: false, autoUpdateCadence: "monthly" },
+        { autoUpdateEnabled: false, autoUpdateCadence: "one_month" },
       )
       expect(updated.status).toBe(200)
       expect(updated.json.autoUpdateEnabled).toBe(false)
-      expect(updated.json.autoUpdateCadence).toBe("monthly")
+      expect(updated.json.autoUpdateCadence).toBe("one_month")
 
       await call("DELETE", `/v1/orgs/${orgA}/projects/${project.id as string}`, alice)
       await db.deleteFrom("agentCredential").where("id", "=", credentialId).execute()

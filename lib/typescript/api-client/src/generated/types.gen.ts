@@ -260,6 +260,52 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryRespon
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/update-upstream"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors = {
+  /**
+   * The project has no recorded upstream
+   */
+  400: ErrorResponseT
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The person who started the turn lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses = {
+  /**
+   * The upstream comparison and PR-gated update were queued
+   */
+  202: {
+    action: "update_from_upstream"
+    jobId: string
+    upstreamFullName: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses]
+
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData = {
   body?: {
     name: string
@@ -1170,7 +1216,16 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
-      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+      autoUpdateCadence:
+        | "one_day"
+        | "two_days"
+        | "one_week"
+        | "one_month"
+        | "three_months"
+        | "six_months"
+        | "nine_months"
+        | "one_year"
+        | "two_years"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1217,7 +1272,16 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
-    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence?:
+      | "one_day"
+      | "two_days"
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
@@ -1296,7 +1360,16 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
-      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+      autoUpdateCadence:
+        | "one_day"
+        | "two_days"
+        | "one_week"
+        | "one_month"
+        | "three_months"
+        | "six_months"
+        | "nine_months"
+        | "one_year"
+        | "two_years"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1471,7 +1544,16 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
-    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence:
+      | "one_day"
+      | "two_days"
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -1531,7 +1613,16 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
-    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence?:
+      | "one_day"
+      | "two_days"
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
@@ -1584,7 +1675,16 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
-    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence:
+      | "one_day"
+      | "two_days"
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -7672,73 +7772,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]
