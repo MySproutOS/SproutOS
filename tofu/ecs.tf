@@ -429,7 +429,11 @@ resource "aws_ecs_task_definition" "acme_worker" {
       { name = "KMS_KEY_ID", value = aws_kms_key.envelope.arn },
       { name = "NEXT_PUBLIC_API_URL", value = "https://api.${var.control_plane_domain}" },
       { name = "LLM_PROXY_URL", value = "https://${var.llm_subdomain}.${var.control_plane_domain}" },
-      { name = "SANDBOX_FORWARD_PROXY_URL", value = "https://${var.egress_subdomain}.${var.control_plane_domain}" },
+      # Daytona's documented HTTPS-upstream mode currently fails before CONNECT reaches Rust.
+      # Keep the destination TLS end-to-end through CONNECT, but use the dedicated cleartext proxy
+      # listener until Daytona repairs HTTPS proxy chaining. The per-sandbox credential is derived,
+      # revocable with lifecycle state, and accepted only by the forward-proxy listener.
+      { name = "SANDBOX_FORWARD_PROXY_URL", value = "http://${var.egress_subdomain}.${var.control_plane_domain}:3128" },
       { name = "KAFKA_RUNTIME_LOG_TOPIC", value = "runtime-logs" },
       { name = "KAFKA_USAGE_EVENT_TOPIC", value = "usage-events" },
       { name = "SEARCH_ADMIN_URL", value = "https://${var.opensearch_subdomain}.${var.control_plane_domain}" },

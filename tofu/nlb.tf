@@ -342,6 +342,19 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
   to_port           = 443
 }
 
+# Daytona's HTTPS-upstream chaining currently returns 502 before a CONNECT request reaches Rust.
+# This is the same authenticated proxy and the same NLB, exposed as a cleartext HTTP upstream; TLS
+# to each HTTPS destination remains end-to-end inside CONNECT. Remove this listener when Daytona's
+# documented HTTPS upstream mode works in production.
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy_http" {
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Authenticated Daytona HTTP upstream proxy"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 3128
+  to_port           = 3128
+}
+
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
   count = var.tenant_edge_preview_enabled ? 1 : 0
 
@@ -456,6 +469,30 @@ resource "aws_lb_listener" "forward_proxy" {
     ignore_changes       = [default_action]
     replace_triggered_by = [terraform_data.tenant_edge_mode]
   }
+}
+
+resource "aws_lb_listener" "forward_proxy_http" {
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 3128
+  protocol          = "TCP"
+
+  default_action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.forward_proxy["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.forward_proxy["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  # Blue/green cutover owns the weights after the listener is created.
+  lifecycle { ignore_changes = [default_action] }
 }
 
 resource "aws_lb_listener" "tenant_https" {

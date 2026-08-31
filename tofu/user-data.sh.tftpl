@@ -153,7 +153,9 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # no listener rule, no target group, no \`LLM_PROXY_LISTEN\`. Set here so the value comes from the
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
-SANDBOX_FORWARD_PROXY_URL=https://${egress_subdomain}.${control_plane_domain}
+# Temporary Daytona compatibility path: HTTPS destination traffic remains encrypted inside
+# CONNECT, while Daytona chains to the authenticated platform proxy over cleartext HTTP.
+SANDBOX_FORWARD_PROXY_URL=http://${egress_subdomain}.${control_plane_domain}:3128
 METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/events
 
 # Separate topics because their failure policies differ: runtime logs may be dropped to protect a

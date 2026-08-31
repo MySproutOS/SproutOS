@@ -552,7 +552,7 @@ impl RequestHead {
             return Err(());
         }
         let port = authority.port_u16().unwrap_or(80);
-        if port == 0 {
+        if port != 80 {
             return Err(());
         }
         Ok(Destination {
@@ -1280,6 +1280,23 @@ mod tests {
             (forwarded_bytes.len() + upstream_response.len()) as u64
         );
         assert_eq!(observations[0].protocol, "http");
+    }
+
+    #[tokio::test]
+    async fn absolute_form_http_refuses_nonstandard_ports() {
+        let root = &ROOT;
+        let (proxy, dialed, _) = make_proxy(
+            root,
+            Ok(Some(authorization(SandboxState::Running))),
+            vec!["1.1.1.1".parse().unwrap()],
+        );
+        let response = exchange(
+            proxy,
+            request(root, "http://example.com:8080/", "").as_bytes(),
+        )
+        .await;
+        assert!(response.starts_with(b"HTTP/1.1 400"));
+        assert!(dialed.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

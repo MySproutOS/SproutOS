@@ -164,6 +164,7 @@ for service in $SERVICES; do
     [ -n "${PG_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts pg"
     [ -n "${VALKEY_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts valkey"
     [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts ${TENANT_HTTPS_TARGET_GROUP_SHORT:-egress}"
+    [ -n "${FORWARD_PROXY_HTTP_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts egress"
     [ -n "${TENANT_HTTP_LISTENER_ARN:-}" ] && wait_shorts="$wait_shorts edge-http"
   fi
 

@@ -20,7 +20,7 @@ const config: DaytonaConfig = {
   apiKey: "k",
   organizationId: "org",
   snapshot: "sproutos/agent:1",
-  forwardProxyUrl: "https://egress.sproutos.me",
+  forwardProxyUrl: "http://egress.sproutos.me:3128",
   forwardProxyRootKey: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 }
 
@@ -104,7 +104,7 @@ describe("buildCreateParams", () => {
 
   it("routes all HTTP traffic through the authenticated platform proxy", () => {
     const proxy = new URL(buildCreateParams(config, input).outboundProxyUrl!)
-    expect(`${proxy.protocol}//${proxy.host}`).toBe("https://egress.sproutos.me")
+    expect(`${proxy.protocol}//${proxy.host}`).toBe("http://egress.sproutos.me:3128")
     expect(proxy.username).toBe(input.sandboxId)
     expect(proxy.password).toBe("_OA0k2a79uUCiL9bKly4ERxxh9fl1NChPL2VwVzvDbU")
   })
@@ -427,7 +427,7 @@ describe("Daytona sensitive stream transport", () => {
 
 describe("daytonaConfigFromEnv", () => {
   const proxyEnv = {
-    SANDBOX_FORWARD_PROXY_URL: "https://egress.sproutos.me",
+    SANDBOX_FORWARD_PROXY_URL: "http://egress.sproutos.me:3128",
     SANDBOX_FORWARD_PROXY_ROOT_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
   }
   it("refuses a missing api key", () => {
@@ -495,8 +495,8 @@ describe("daytonaConfigFromEnv", () => {
     }
     expect(() => daytonaConfigFromEnv(base)).toThrow(/SANDBOX_FORWARD_PROXY_URL/)
     expect(() =>
-      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "http://proxy" }),
-    ).toThrow(/HTTPS origin/)
+      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "https://proxy" }),
+    ).toThrow(/HTTP origin/)
     expect(() =>
       daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_ROOT_KEY: "bad" }),
     ).toThrow(/32 bytes/)

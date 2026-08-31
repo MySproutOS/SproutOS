@@ -375,6 +375,7 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener.postgres.arn,
           aws_lb_listener.valkey.arn,
           aws_lb_listener.forward_proxy.arn,
+          aws_lb_listener.forward_proxy_http.arn,
           # The search split's rule moves with the router's listener, for the same reason.
           #
           # Enumerated rather than a wildcard on the listener, so a rule added by hand cannot be

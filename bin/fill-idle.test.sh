@@ -91,13 +91,14 @@ export LLM_RULE_ARN=arn:llm-rule
 export PG_LISTENER_ARN=arn:pg-listener
 export VALKEY_LISTENER_ARN=arn:valkey-listener
 export FORWARD_PROXY_LISTENER_ARN=arn:egress-listener
+export FORWARD_PROXY_HTTP_LISTENER_ARN=arn:egress-http-listener
 export TENANT_HTTP_LISTENER_ARN=arn:tenant-http-listener
 export TENANT_HTTPS_TARGET_GROUP_SHORT=edge
 
 out=$(run); status=$?
 check "accepts a router release healthy on every configured port" "0" "$status"
-check "checks all eight router target groups" "8" "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
-for short in router search storage llm pg valkey edge edge-http; do
+check "checks all nine router target groups" "9" "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
+for short in router search storage llm pg valkey edge egress edge-http; do
   check "checks $short on the idle colour" "1" \
     "$(grep -c "^arn:$short-green$" "$STUB_HEALTH_CALLS")"
 done
@@ -120,13 +121,14 @@ out=$(run); status=$?
 check "refuses when one configured router port is unhealthy" "1" "$status"
 check "reports the minimum health across the groups" "1" \
   "$(grep -c 'only 0 of 1 targets healthy' <<<"$out")"
-check "still inspected every group before refusing" "8" \
+check "still inspected every group before refusing" "9" \
   "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
 unset STUB_UNHEALTHY_ARN
 
 # Optional means absent from this estate, not silently ignored after it was configured.
 unset SEARCH_RULE_ARN STORAGE_RULE_ARN LLM_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN \
   FORWARD_PROXY_LISTENER_ARN TENANT_HTTP_LISTENER_ARN TENANT_HTTPS_TARGET_GROUP_SHORT
+unset FORWARD_PROXY_HTTP_LISTENER_ARN
 out=$(run); status=$?
 check "allows an estate with only the router target group" "0" "$status"
 check "checks only the primary group when no split is configured" "1" \

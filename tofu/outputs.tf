@@ -169,6 +169,11 @@ output "forward_proxy_listener_arn" {
   value       = aws_lb_listener.forward_proxy.arn
 }
 
+output "forward_proxy_http_listener_arn" {
+  description = "Temporary cleartext Daytona upstream-proxy listener. Set as FORWARD_PROXY_HTTP_LISTENER_ARN."
+  value       = aws_lb_listener.forward_proxy_http.arn
+}
+
 output "tenant_http_listener_arn" {
   description = "Rust tenant HTTP/ACME listener on the shared tenant NLB. Set as TENANT_HTTP_LISTENER_ARN."
   value       = one(aws_lb_listener.tenant_http[*].arn)
