@@ -12,6 +12,7 @@ import {
   failClientSigning,
   finalizeClientReleaseUpload,
   prepareClientRelease,
+  reconcileClientDeveloperRegistration,
 } from "./client-apk-signing"
 import { CLAIM_TIMEOUT_MS } from "./apk-signing"
 
@@ -88,6 +89,15 @@ async function queuedRelease(versionCode = 1) {
     }),
   ).toBe(true)
   return prepared
+}
+
+async function markRegistrationVerified() {
+  await db
+    .updateTable("clientSigningIdentity")
+    .set({ developerConsoleAccount: "developerAccounts/123" })
+    .where("packageName", "=", CLIENT_PACKAGE_NAME)
+    .execute()
+  await reconcileClientDeveloperRegistration(db, "REGISTERED")
 }
 
 describe.runIf(reachable)("the catalogue-client signer state machine", () => {
@@ -175,6 +185,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
 
   it("atomically publishes the signed object version and refuses altered callback replay", async () => {
     await provision()
+    await markRegistrationVerified()
     const prepared = await queuedRelease(7)
     const claim = await claimClientSigningJob(db, "signer")
     if (claim?.kind !== "sign_client_release") throw new Error("expected release job")
@@ -191,8 +202,16 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       versionCode: 7,
       versionName: "1.0.0",
       certificateSha256: CERTIFICATE,
+      developerConsoleAccount: "developerAccounts/123",
       idempotencyKey: KEY_2,
     }
+    expect(
+      await completeClientSigning(db, {
+        ...completion,
+        developerConsoleAccount: "developerAccounts/999",
+        idempotencyKey: KEY_1,
+      }),
+    ).toBe(false)
     expect(await completeClientSigning(db, completion)).toBe(true)
     expect(await completeClientSigning(db, completion)).toBe(true)
     expect(await completeClientSigning(db, { ...completion, signedDigest: "e".repeat(64) })).toBe(
@@ -222,6 +241,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
 
   it("serializes catalogue releases until the active version succeeds", async () => {
     await provision()
+    await markRegistrationVerified()
     await queuedRelease(2)
     await expect(
       prepareClientRelease(db, {
@@ -267,6 +287,7 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
         versionCode: 2,
         versionName: "2",
         certificateSha256: CERTIFICATE,
+        developerConsoleAccount: "developerAccounts/123",
         idempotencyKey: KEY_2,
       }),
     ).toBe(true)
@@ -340,5 +361,37 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       error: "current-attempt failure",
       callbackClaimToken: secondToken,
     })
+  })
+
+  it("keeps a signed client release unpublished until independent registration proof", async () => {
+    await provision()
+    await queuedRelease(11)
+    const claim = await claimClientSigningJob(db, "signer")
+    if (claim?.kind !== "sign_client_release") throw new Error("expected release job")
+    expect(
+      await completeClientSigning(db, {
+        jobId: claim.id,
+        signerId: "signer",
+        claimToken: claim.claimToken,
+        signedKey: `signed/client/${claim.id}.apk`,
+        signedObjectVersion: "signed-v11",
+        signedDigest: "b".repeat(64),
+        signedSizeBytes: 456n,
+        packageName: CLIENT_PACKAGE_NAME,
+        versionCode: 11,
+        versionName: "11",
+        certificateSha256: CERTIFICATE,
+        developerConsoleAccount: "developerAccounts/123",
+        idempotencyKey: KEY_2,
+      }),
+    ).toBe(true)
+    expect(await db.selectFrom("clientRelease").select("id").execute()).toEqual([])
+
+    await reconcileClientDeveloperRegistration(db, "NOT_REGISTERED")
+    expect(await db.selectFrom("clientRelease").select("id").execute()).toEqual([])
+    await reconcileClientDeveloperRegistration(db, "REGISTERED")
+    expect(
+      await db.selectFrom("clientRelease").select("versionCode").executeTakeFirstOrThrow(),
+    ).toEqual({ versionCode: 11 })
   })
 })

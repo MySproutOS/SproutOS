@@ -27,6 +27,7 @@ import { Type } from "typebox"
 import { validator } from "../utils/validator"
 
 const digest = Type.String({ pattern: "^[0-9a-f]{64}$" })
+const developerAccount = Type.String({ pattern: "^developerAccounts/[0-9]+$" })
 const claimRequest = Type.Object({ signer_id: Type.String({ minLength: 1, maxLength: 200 }) })
 const provisionClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
@@ -112,6 +113,7 @@ const signComplete = Type.Object({
   version_code: Type.Integer({ minimum: 1 }),
   version_name: Type.String({ minLength: 1, maxLength: 255 }),
   certificate_sha256: digest,
+  developer_console_account: developerAccount,
 })
 const provisionClientComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
@@ -135,6 +137,7 @@ const signClientComplete = Type.Object({
   version_code: Type.Integer({ minimum: 1, maximum: 2_100_000_000 }),
   version_name: Type.String({ minLength: 1, maxLength: 100 }),
   certificate_sha256: digest,
+  developer_console_account: developerAccount,
 })
 const completeRequest = Type.Union([
   provisionComplete,
@@ -396,6 +399,16 @@ const app: Hono = new Hono()
       return c.json({
         package_name: identity.packageName,
         state: identity.state,
+        developer_console_state: identity.developerConsoleState,
+        ...(identity.developerConsoleProviderState === null
+          ? {}
+          : { developer_console_provider_state: identity.developerConsoleProviderState }),
+        ...(identity.developerConsoleError === null
+          ? {}
+          : { developer_console_error: identity.developerConsoleError }),
+        ...(identity.developerConsoleAccount === null
+          ? {}
+          : { developer_console_account: identity.developerConsoleAccount }),
         ...(identity.certificateSha256 === null
           ? {}
           : { certificate_sha256: identity.certificateSha256 }),
@@ -577,6 +590,7 @@ const app: Hono = new Hono()
           versionCode: json.version_code,
           versionName: json.version_name,
           certificateSha256: json.certificate_sha256,
+          developerConsoleAccount: json.developer_console_account,
           idempotencyKey,
         })
       } else if (json.kind === "provision_client_key") {
@@ -602,6 +616,7 @@ const app: Hono = new Hono()
           versionCode: json.version_code,
           versionName: json.version_name,
           certificateSha256: json.certificate_sha256,
+          developerConsoleAccount: json.developer_console_account,
           idempotencyKey,
         })
       }

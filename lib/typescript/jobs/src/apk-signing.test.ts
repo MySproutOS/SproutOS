@@ -141,6 +141,7 @@ async function recordRegistered(androidAppId: string) {
     .set({
       developerConsoleClaimToken: claimToken,
       developerConsoleClaimExpiresAt: new Date(Date.now() + 60_000),
+      developerConsoleAccount: "developerAccounts/123",
     })
     .where("id", "=", androidAppId)
     .execute()
@@ -218,8 +219,16 @@ describe.runIf(reachable)("the Android signer state machine", () => {
       versionCode: 7,
       versionName: "1.0.0",
       certificateSha256: signing.certificateSha256,
+      developerConsoleAccount: "developerAccounts/123",
       idempotencyKey: KEY_1,
     }
+    expect(
+      await completeSigning(db, {
+        ...completion,
+        developerConsoleAccount: "developerAccounts/999",
+        idempotencyKey: KEY_2,
+      }),
+    ).toBe(false)
     expect(await completeSigning(db, completion)).toBe(true)
     // The response can disappear after the transaction commits. The same callback must converge
     // instead of turning a successful release into an apparent lost-claim failure.
@@ -262,6 +271,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         versionCode: 11,
         versionName: "1.1.0",
         certificateSha256: signing.certificateSha256,
+        developerConsoleAccount: "developerAccounts/123",
         idempotencyKey: KEY_1,
       }),
     ).toBe(true)
@@ -325,6 +335,7 @@ describe.runIf(reachable)("the Android signer state machine", () => {
         versionCode: 1,
         versionName: "1",
         certificateSha256: held.certificateSha256,
+        developerConsoleAccount: "developerAccounts/123",
         idempotencyKey: KEY_1,
       }),
     ).toBe(false)

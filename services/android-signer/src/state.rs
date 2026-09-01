@@ -27,6 +27,7 @@ pub struct SignCheckpoint {
     pub unsigned_digest: String,
     pub encrypted_key_object_key: String,
     pub encrypted_key_object_version: String,
+    pub developer_console_account: String,
     pub signed_key: String,
     pub signed_digest: String,
     pub size_bytes: u64,
@@ -73,6 +74,7 @@ impl SignCheckpoint {
             version_code: self.version_code,
             version_name: self.version_name.clone(),
             certificate_sha256: self.certificate_sha256.clone(),
+            developer_console_account: self.developer_console_account.clone(),
         }
     }
 }
@@ -280,6 +282,7 @@ mod tests {
             unsigned_digest: job.unsigned_digest.clone(),
             encrypted_key_object_key: job.encrypted_key_object_key.clone(),
             encrypted_key_object_version: job.encrypted_key_object_version.clone(),
+            developer_console_account: "developerAccounts/123".into(),
             signed_key: job.signed_key.clone(),
             signed_digest: crate::apk::sha256_file(&signed_apk).unwrap(),
             size_bytes: 12,
