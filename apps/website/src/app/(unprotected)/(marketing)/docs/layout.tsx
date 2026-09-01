@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { Context7Widget } from "./_components/context7-widget"
 import { HashScroll } from "./_components/hash-scroll"
 import { DocsSidebar, DocsSidebarSheet } from "./_components/sidebar"
 
@@ -11,13 +12,16 @@ import { DocsSidebar, DocsSidebarSheet } from "./_components/sidebar"
  */
 export default function DocsLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="container-page grid gap-10 py-12 lg:grid-cols-[16rem_1fr] lg:gap-14 lg:py-16">
-      <HashScroll />
-      <DocsSidebar />
-      <div className="min-w-0">
-        <DocsSidebarSheet />
-        {children}
+    <>
+      <div className="container-page grid gap-10 py-12 lg:grid-cols-[16rem_1fr] lg:gap-14 lg:py-16">
+        <HashScroll />
+        <DocsSidebar />
+        <div className="min-w-0">
+          <DocsSidebarSheet />
+          {children}
+        </div>
       </div>
-    </div>
+      <Context7Widget />
+    </>
   )
 }
