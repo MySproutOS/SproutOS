@@ -11,7 +11,7 @@ order: 3
 
 Build the target, then call the Marketplace action. The reviewed action at commit
 `0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180` is a thin wrapper around the published `sprout` CLI
-v0.1.0. The current local CLI is v0.2.0; it adds the complete region-aware project, signed-template,
+v0.1.0. The current local CLI is v0.2.1; it adds the complete region-aware project, signed-template,
 Android release, and resumable log-stream commands while preserving the action's packaging and
 deployment protocol.
 
@@ -66,7 +66,7 @@ boundaries.
 ## Run the same deployment locally
 
 Install `sprout` from the checksummed binaries in the
-[SproutOS CLI v0.2.0 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.2.0), then
+[SproutOS CLI v0.2.1 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.2.1), then
 sign in and deploy:
 
 ```shell
@@ -84,7 +84,7 @@ Every command also supports stable `--json` output for scripts and coding agents
 commands require confirmation or `--yes`.
 
 The release contains macOS arm64 and x86-64, Linux arm64 and x86-64, and Windows x86-64 binaries,
-plus `SHA256SUMS` and `sprout-v0.2.0-manifest.json`. Verify the selected archive against both files.
+plus `SHA256SUMS` and `sprout-v0.2.1-manifest.json`. Verify the selected archive against both files.
 The action also verifies GitHub's artifact attestation and the release's exact source revision
 before it executes the binary.
 
