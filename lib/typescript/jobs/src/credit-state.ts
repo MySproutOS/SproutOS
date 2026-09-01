@@ -30,13 +30,20 @@ function valkey(): Redis {
   return shared
 }
 
-export function refreshCreditStates(options?: { valkey: Redis }): JobHandler {
+export function refreshCreditStates(options?: {
+  valkey: Redis
+  /** Keep integration tests from mutating organizations owned by concurrently running suites. */
+  organizationIds?: string[]
+}): JobHandler {
   return async (_job, { db }) => {
     const client = options?.valkey ?? valkey()
     const organizations = await db
       .selectFrom("organization")
       .select("id")
       .where("deletedAt", "is", null)
+      .$if(options?.organizationIds !== undefined, (query) =>
+        query.where("id", "in", options?.organizationIds ?? []),
+      )
       .execute()
 
     let exhausted = 0
