@@ -862,7 +862,7 @@ mod tests {
             ),
             (
                 serde_json::to_string(&complete).unwrap(),
-                "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
+                "bcde482511c29bca8a009add26dfbba0a994b551191b2f386a3401a7c4ec4646",
             ),
             (
                 serde_json::to_string(&fail).unwrap(),
