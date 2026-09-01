@@ -8,6 +8,7 @@ import { v7 } from "uuid"
 import type { JobHandler } from "./worker"
 import { enqueue } from "./queue"
 import { SANDBOX_KINDS } from "./sandbox"
+import { enqueueStaticAccessReconciliation } from "./static-suspension"
 import {
   OBJECT_STORAGE_RETENTION_SECONDS,
   objectStorageReserveMicroUsd,
@@ -152,8 +153,18 @@ export async function refreshOrganizationCreditState(
     }
     if (previous?.status === "suspended" && !exhausted && previous.generation !== null) {
       await queueRetentionNotice(trx, organizationId, previous.generation, "reprieved")
+      await enqueueStaticAccessReconciliation(trx, {
+        organizationId,
+        generation: previous.generation,
+        suspended: false,
+      })
     }
     if (exhausted && previous?.status !== "suspended") {
+      await enqueueStaticAccessReconciliation(trx, {
+        organizationId,
+        generation,
+        suspended: true,
+      })
       const sandboxes = await trx
         .selectFrom("sandbox")
         .innerJoin("project", "project.id", "sandbox.projectId")

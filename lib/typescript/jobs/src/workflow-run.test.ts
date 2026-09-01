@@ -4,6 +4,15 @@ import { beforeAll, describe, expect, it } from "vitest"
 import { v7 } from "uuid"
 import { MAX_DELAY_MS, delayMs, runWorkflow, stepRowsFor } from "./workflow-run"
 
+const retentionReachable = await (async () => {
+  try {
+    await sql`select 1 from credit_retention_state limit 0`.execute(db)
+    return true
+  } catch {
+    return false
+  }
+})()
+
 describe("delayMs", () => {
   it("takes any of the three spellings a node config might use", () => {
     expect(delayMs({ ms: 100 })).toBe(100)
@@ -85,7 +94,7 @@ describe("the status vocabulary", () => {
     // Every status `runWorkflow` can set on a run. Asserted as a subset in one comparison so a
     // failure names the offending status; vitest's matcher takes one argument, so a per-status
     // label is not available.
-    const written = ["running", "succeeded", "failed"]
+    const written = ["running", "succeeded", "failed", "cancelled"]
     expect(written.filter((status) => !allowed.run.includes(status))).toEqual([])
   })
 
@@ -206,6 +215,118 @@ describe("terminal workflow usage", () => {
       await db
         .deleteFrom("meteringOutbox")
         .where(sql<boolean>`payload ->> 'resource_id' = ${runId}`)
+        .execute()
+      await db.deleteFrom("workflowRun").where("id", "=", runId).execute()
+      await db.deleteFrom("workflow").where("id", "=", workflowId).execute()
+      await db.deleteFrom("project").where("id", "=", projectId).execute()
+      await db.deleteFrom("repository").where("id", "=", repositoryId).execute()
+      await db.deleteFrom("organization").where("id", "=", organizationId).execute()
+      await db.deleteFrom("user").where("id", "=", userId).execute()
+    }
+  })
+
+  it("cancels a queued run before execution when credit is suspended", async ({ skip }) => {
+    if (!reachable || !retentionReachable) skip()
+
+    const userId = v7()
+    const organizationId = v7()
+    const repositoryId = v7()
+    const projectId = v7()
+    const workflowId = v7()
+    const runId = v7()
+    const suffix = runId.replaceAll("-", "")
+
+    try {
+      await db
+        .insertInto("user")
+        .values({ id: userId, email: `workflow-suspended-${suffix}@example.test` })
+        .execute()
+      await db
+        .insertInto("organization")
+        .values({
+          id: organizationId,
+          slug: `workflow-suspended-${suffix}`,
+          name: "Suspended workflow",
+          kind: "team",
+          ownerUserId: userId,
+        })
+        .execute()
+      await db
+        .insertInto("repository")
+        .values({
+          id: repositoryId,
+          organizationId,
+          githubRepoId: BigInt(Date.now()),
+          ownerLogin: "sprout-test",
+          name: `workflow-suspended-${suffix}`,
+          provenance: "new",
+        })
+        .execute()
+      await db
+        .insertInto("project")
+        .values({
+          id: projectId,
+          organizationId,
+          repositoryId,
+          name: "Suspended workflow",
+          slug: `workflow-suspended-${suffix}`,
+        })
+        .execute()
+      await db
+        .insertInto("workflow")
+        .values({
+          id: workflowId,
+          projectId,
+          slug: `workflow-suspended-${suffix}`,
+          name: "Suspended workflow",
+          queueName: `workflow-suspended-${suffix}`,
+        })
+        .execute()
+      await db
+        .insertInto("workflowRun")
+        .values({ id: runId, workflowId, triggerType: "manual", status: "queued" })
+        .execute()
+      await db
+        .insertInto("creditRetentionState")
+        .values({
+          organizationId,
+          generation: v7(),
+          status: "suspended",
+          warningStage: "suspended",
+          exhaustedAt: new Date(),
+          deleteAfter: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        })
+        .execute()
+
+      await runWorkflow(db, { workflowRunId: runId })
+
+      const run = await db
+        .selectFrom("workflowRun")
+        .select(["status", "startedAt", "finishedAt", "error"])
+        .where("id", "=", runId)
+        .executeTakeFirstOrThrow()
+      expect(run.status).toBe("cancelled")
+      expect(run.startedAt).toBeNull()
+      expect(run.finishedAt).not.toBeNull()
+      expect(run.error).toEqual({
+        code: "InsufficientCredit",
+        message:
+          "The run was not started because the organization is suspended for insufficient credit.",
+      })
+      const outboxCount = await db
+        .selectFrom("meteringOutbox")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where(sql<boolean>`payload ->> 'resource_id' = ${runId}`)
+        .executeTakeFirstOrThrow()
+      expect(Number(outboxCount.count)).toBe(0)
+    } finally {
+      await db
+        .deleteFrom("meteringOutbox")
+        .where(sql<boolean>`payload ->> 'resource_id' = ${runId}`)
+        .execute()
+      await db
+        .deleteFrom("creditRetentionState")
+        .where("organizationId", "=", organizationId)
         .execute()
       await db.deleteFrom("workflowRun").where("id", "=", runId).execute()
       await db.deleteFrom("workflow").where("id", "=", workflowId).execute()

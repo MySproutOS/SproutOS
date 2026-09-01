@@ -5,6 +5,7 @@ import {
   crudProjectEnvVar,
   crudProjectTemplateInstall,
   crudProjectTemplateService,
+  fetchCreditRetentionState,
   fetchProjectEnvVar,
   fetchProjectTemplateInstall,
   fetchProjectTemplateService,
@@ -388,6 +389,12 @@ export async function provisionTemplateServices(
   context: CatalogueTemplateContext,
   keepAlive?: () => Promise<boolean>,
 ): Promise<void> {
+  if (
+    context.manifest.services.length > 0 &&
+    (await fetchCreditRetentionState(db).isUsageSuspended(context.organizationId))
+  ) {
+    throw new Error("The organization is suspended; add credit before provisioning services")
+  }
   if (
     context.manifest.services.length > 0 &&
     (await availableBalance(db, context.organizationId)) <= 0n

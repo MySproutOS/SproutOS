@@ -20,6 +20,11 @@ export async function runDueWorkflowSchedules(
       .innerJoin("workflow", "workflow.id", "workflowSchedule.workflowId")
       .innerJoin("project", "project.id", "workflow.projectId")
       .innerJoin("workflowVersion", "workflowVersion.id", "workflow.currentVersionId")
+      .leftJoin(
+        "creditRetentionState",
+        "creditRetentionState.organizationId",
+        "project.organizationId",
+      )
       .select([
         "workflowSchedule.id as scheduleId",
         "workflowSchedule.workflowId",
@@ -33,6 +38,14 @@ export async function runDueWorkflowSchedules(
       ])
       .where("workflowSchedule.enabled", "=", true)
       .where("workflow.enabled", "=", true)
+      .where("workflow.deletedAt", "is", null)
+      .where("project.deletedAt", "is", null)
+      .where((eb) =>
+        eb.or([
+          eb("creditRetentionState.status", "is", null),
+          eb("creditRetentionState.status", "=", "active"),
+        ]),
+      )
       .where("workflowSchedule.nextRunAt", "<=", now)
       .orderBy("workflowSchedule.nextRunAt")
       .limit(limit)

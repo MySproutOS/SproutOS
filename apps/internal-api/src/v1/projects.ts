@@ -25,6 +25,7 @@ import {
   crudProjectUpdateSuggestion,
   crudStoreListingEvent,
   fetchAgentCredential,
+  fetchCreditRetentionState,
   fetchDeploymentCatalogueImport,
   fetchGithubInstallation,
   fetchProject,
@@ -888,6 +889,10 @@ const app = new Hono()
           content: { "application/json": { schema: resolver(projectSchemaCreateResponse) } },
         },
         400: { description: "Invalid source, slug, or missing GitHub account", ...errorResponse },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         403: { description: "Caller lacks project:create", ...errorResponse },
         404: notFoundResponse,
         409: {
@@ -904,6 +909,15 @@ const app = new Hono()
       const organization = c.var.organization
       const json = c.req.valid("json")
       const source = json.source
+
+      if (await fetchCreditRetentionState(db).isUsageSuspended(organization.id)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before creating a project. Hosted data remains protected during the 48-hour retention window.",
+        )
+      }
 
       if (source.type !== "store" && (json.templateInputs?.length ?? 0) > 0) {
         return throwBadRequest(

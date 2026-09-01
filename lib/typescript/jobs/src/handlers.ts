@@ -51,6 +51,7 @@ import { finalizeUpkeepPullRequest, UPKEEP_PR_KIND } from "./upkeep-pr"
 import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
+import { reconcileStaticAccess, STATIC_ACCESS_RECONCILIATION_KIND } from "./static-suspension"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
@@ -115,6 +116,7 @@ export const JOB_KINDS = {
   chargeUsage: "billing.charge_usage",
   generateStatements: "billing.generate_statements",
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
+  reconcileStaticAccess: STATIC_ACCESS_RECONCILIATION_KIND,
   scanNonpaymentRetention: NONPAYMENT_RETENTION_KINDS.scan,
   deleteNonpaymentData: NONPAYMENT_RETENTION_KINDS.delete,
   sendRetentionNotices: NONPAYMENT_RETENTION_KINDS.sendNotices,
@@ -435,6 +437,7 @@ export const ACME_HANDLERS: Record<string, JobHandler> = {
   // needs the same certificate-object and tenant-DNS authority as a direct project teardown.
   [JOB_KINDS.tearDownAccount]: tearDownAccount,
   [JOB_KINDS.deleteNonpaymentData]: deleteNonpaymentData(),
+  [JOB_KINDS.reconcileStaticAccess]: reconcileStaticAccess(),
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),

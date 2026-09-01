@@ -1,5 +1,10 @@
 import { lockAvailableBalance } from "@lib/billing"
-import { crudAuditLog, crudProjectEnvVar, fetchBackendService } from "@lib/dao"
+import {
+  crudAuditLog,
+  crudProjectEnvVar,
+  fetchBackendService,
+  fetchCreditRetentionState,
+} from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
@@ -388,6 +393,15 @@ const app = new Hono()
     async (c) => {
       const body = c.req.valid("json")
       const organization = c.var.organization
+
+      if (await fetchCreditRetentionState(db).isUsageSuspended(organization.id)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before provisioning a service. Hosted data remains protected during the 48-hour retention window.",
+        )
+      }
 
       if (body.projectId != null) {
         // The foreign key proves the project exists, not that it is this organization's.

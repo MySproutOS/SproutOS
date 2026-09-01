@@ -15,6 +15,7 @@ import {
   refreshOrganizationCreditState,
 } from "./credit-state"
 import { tearDownProject, type TeardownClients } from "./teardown"
+import { enqueueStaticAccessReconciliation } from "./static-suspension"
 import type { JobHandler } from "./worker"
 import { Redis } from "ioredis"
 
@@ -161,6 +162,11 @@ export function deleteNonpaymentData(options?: {
             recipient: recipient.email,
           })
         }
+        await enqueueStaticAccessReconciliation(db, {
+          organizationId: payload.organizationId,
+          generation: payload.generation,
+          suspended: false,
+        })
         await refreshOrganizationCreditState(
           db,
           options?.valkey ?? new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
@@ -230,6 +236,11 @@ export function deleteNonpaymentData(options?: {
             recipient: recipient.email,
           })
         }
+        await enqueueStaticAccessReconciliation(db, {
+          organizationId,
+          generation,
+          suspended: false,
+        })
         await refreshOrganizationCreditState(
           db,
           options?.valkey ?? new Redis(process.env.VALKEY_URL ?? "redis://localhost:41023"),
