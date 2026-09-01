@@ -24,6 +24,17 @@ export const observabilitySchemaLogQuery = Type.Object({
   before: Type.Optional(Type.String({ maxLength: 32 })),
 })
 
+export const observabilitySchemaLogFollowQuery = Type.Object({
+  /** ISO 8601 lower bound used only when no resume cursor is present. */
+  since: Type.Optional(Type.String({ maxLength: 64 })),
+  search: Type.Optional(Type.String({ maxLength: 500 })),
+  level: Type.Optional(Type.String({ maxLength: 16 })),
+  /** Bounded drain page size; this does not cap total streamed records. */
+  limit: Type.Optional(Type.String()),
+  /** Opaque v1 cursor from an SSE `id` field. Never a credential. */
+  cursor: Type.Optional(Type.String({ maxLength: 100 })),
+})
+
 /*
   A line as the platform observed it, which is what a customer means by "my logs".
 

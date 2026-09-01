@@ -121,6 +121,27 @@ a term — but only for whole tokens. A person searching a log box types `timeou
 boundaries looks broken rather than slow. So the predicate is `positionCaseInsensitive`, which is
 slower in the worst case and correct in every case. Real full-text search is TASK 33.
 
+## Following is a separate forward query
+
+The ordinary log page is newest-first. Repeating it is not streaming: a burst larger than the page
+can push an unseen line out before the next poll. `GET
+/v1/orgs/:orgSlug/projects/:projectId/logs/follow` therefore uses a separate arrival-ordered query
+and returns SSE. It is intentionally absent from OpenAPI because the generated buffered client
+cannot consume an unbounded response.
+
+Every `log` event has a version-1 JSON body and an SSE `id`. That opaque id combines Kafka's durable
+partition/offset arrival sequence with an ingest key stamped before Kafka. Projects are keyed to
+one partition, so a delayed record remains after the last displayed cursor even when its Lambda
+timestamp is older. An exact Kafka replay keeps the same offset and key and collapses to one event.
+A reconnect supplies the id as both `cursor` and `Last-Event-ID`, and the server rejects
+disagreement. Authorization stays in the bearer header. Connections rotate after a bounded
+interval with heartbeat and reconnect control events, allowing the ALB and CLI to recover without
+guessing from their clocks.
+
+The runtime-log topic's partition count is therefore part of this contract: changing it requires a
+cursor migration, because `partition_for(project_id)` must keep one project's offset sequence on
+the same partition.
+
 ## Testing
 
 ```bash

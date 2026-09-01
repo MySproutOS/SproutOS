@@ -14,6 +14,15 @@ export default defineConfig({
     indexFile: false,
     path: "lib/typescript/api-client/src/generated",
   },
+  parser: {
+    filters: {
+      // The generated fetch client buffers ordinary responses. The CLI owns the bounded SSE
+      // parser for this operation, including resumable checkpoints and idle deadlines.
+      operations: {
+        exclude: ["GET /v1/orgs/{orgSlug}/projects/{projectId}/logs/follow"],
+      },
+    },
+  },
   plugins: [
     "@hey-api/client-fetch",
     { name: "@tanstack/react-query", mutationOptions: true, queryKeys: true },

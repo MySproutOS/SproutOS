@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 use crate::{
-    Backend, CliError, Result,
+    Backend, CliError, LogStreamEvent, Result, StreamOutput,
     auth::{self, BrowserLauncher},
     cli::{self, *},
     config,
@@ -19,6 +19,7 @@ pub struct Dependencies<'a> {
     pub browser: &'a dyn BrowserLauncher,
     pub confirmation: &'a dyn Confirmation,
     pub config_path: &'a Path,
+    pub stream_output: &'a dyn StreamOutput,
 }
 
 pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
@@ -198,10 +199,25 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
             .await?
         }
         Command::Logs(LogsArgs { follow: true, .. }) => {
-            return Err(CliError::Unavailable(
-                "continuous log streaming does not have a stable JSONL contract yet; omit --follow"
-                    .into(),
-            ));
+            let planned = request::plan(&cli.command, organization, None)?.ok_or_else(|| {
+                CliError::Unavailable("logs has no runtime implementation".into())
+            })?;
+            let mut emit = |event: LogStreamEvent| {
+                let rendered = if cli.json {
+                    output::json_success("logs", event)?
+                } else {
+                    format!(
+                        "{} {:<8} {}",
+                        event.line.timestamp, event.line.level, event.line.message
+                    )
+                };
+                dependencies.stream_output.write_line(&rendered)
+            };
+            dependencies
+                .backend
+                .follow_logs(planned, credential.expose(), &mut emit)
+                .await?;
+            return Ok(String::new());
         }
         _ => {
             let stdin_value = read_stdin_value(&cli.command)?;
@@ -457,6 +473,14 @@ mod tests {
             Ok(true)
         }
     }
+    #[derive(Default)]
+    struct CapturedStream(Mutex<Vec<String>>);
+    impl StreamOutput for CapturedStream {
+        fn write_line(&self, line: &str) -> Result<()> {
+            self.0.lock().unwrap().push(line.to_owned());
+            Ok(())
+        }
+    }
     struct FakeBackend(Mutex<Vec<request::ApiRequest>>);
     #[async_trait]
     impl Backend for FakeBackend {
@@ -483,6 +507,51 @@ mod tests {
         }
     }
 
+    struct FollowingBackend;
+    #[async_trait]
+    impl Backend for FollowingBackend {
+        async fn request(
+            &self,
+            _request: request::ApiRequest,
+            _token: Option<&str>,
+        ) -> Result<Value> {
+            panic!("follow mode must not use the buffered request adapter")
+        }
+
+        async fn follow_logs(
+            &self,
+            request: request::ApiRequest,
+            token: &str,
+            emit: &mut (dyn FnMut(LogStreamEvent) -> Result<()> + Send),
+        ) -> Result<()> {
+            assert_eq!(token, "canary-token");
+            assert_eq!(request.method, request::Method::Get);
+            assert_eq!(
+                request.path,
+                "/v1/orgs/acme/projects/project-1/logs/follow?since=2026-08-28T12%3A00%3A00Z&limit=100"
+            );
+            let cursor = format!("1:1787918400000:{}", "A".repeat(64));
+            emit(LogStreamEvent {
+                schema_version: 1,
+                kind: "log".into(),
+                cursor: cursor.clone(),
+                line: crate::LogLine {
+                    timestamp: "2026-08-28T12:00:00.000Z".into(),
+                    cursor,
+                    level: "info".into(),
+                    message: "ready".into(),
+                    request_id: "request-1".into(),
+                    deployment_id: "deployment-1".into(),
+                    duration_ms: None,
+                    billed_ms: None,
+                    memory_mb: None,
+                    init_ms: None,
+                    cold_start: None,
+                },
+            })
+        }
+    }
+
     #[tokio::test]
     async fn json_mode_is_one_versioned_document_and_token_is_absent() {
         let directory = tempfile::tempdir().unwrap();
@@ -490,6 +559,7 @@ mod tests {
         let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let backend = FakeBackend(Mutex::new(Vec::new()));
+        let stream = CapturedStream::default();
         let cli = Cli::parse_from(["sprout", "--json", "org", "list"]);
         let rendered = run(
             &cli,
@@ -499,6 +569,7 @@ mod tests {
                 browser: &NeverBrowser,
                 confirmation: &Yes,
                 config_path: &directory.path().join("config.json"),
+                stream_output: &stream,
             },
         )
         .await
@@ -517,6 +588,7 @@ mod tests {
         let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let backend = FakeBackend(Mutex::new(Vec::new()));
+        let stream = CapturedStream::default();
         let cli = Cli::parse_from(["sprout", "org", "use", "acme"]);
         run(
             &cli,
@@ -526,6 +598,7 @@ mod tests {
                 browser: &NeverBrowser,
                 confirmation: &Yes,
                 config_path: &directory.path().join("config.json"),
+                stream_output: &stream,
             },
         )
         .await
@@ -547,6 +620,7 @@ mod tests {
         let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
         store.set(&account, "canary-token").unwrap();
         let cli = Cli::parse_from(["sprout", "--yes", "auth", "logout"]);
+        let stream = CapturedStream::default();
         assert!(
             run(
                 &cli,
@@ -556,6 +630,7 @@ mod tests {
                     browser: &NeverBrowser,
                     confirmation: &Yes,
                     config_path: &directory.path().join("config.json"),
+                    stream_output: &stream,
                 },
             )
             .await
@@ -565,5 +640,49 @@ mod tests {
             store.get(&account).unwrap().as_deref(),
             Some("canary-token")
         );
+    }
+
+    #[tokio::test]
+    async fn follow_logs_uses_the_stream_adapter_and_writes_versioned_jsonl() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FakeStore::default();
+        let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
+        store.set(&account, "canary-token").unwrap();
+        let stream = CapturedStream::default();
+        let cli = Cli::parse_from([
+            "sprout",
+            "--json",
+            "--org",
+            "acme",
+            "logs",
+            "project-1",
+            "--follow",
+            "--since",
+            "2026-08-28T12:00:00Z",
+        ]);
+
+        let rendered = run(
+            &cli,
+            &Dependencies {
+                backend: &FollowingBackend,
+                credentials: &store,
+                browser: &NeverBrowser,
+                confirmation: &Yes,
+                config_path: &directory.path().join("config.json"),
+                stream_output: &stream,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(rendered.is_empty());
+        let output = stream.0.lock().unwrap();
+        assert_eq!(output.len(), 1);
+        let line: Value = serde_json::from_str(&output[0]).unwrap();
+        assert_eq!(line["schema_version"], 1);
+        assert_eq!(line["command"], "logs");
+        assert_eq!(line["data"]["type"], "log");
+        assert_eq!(line["data"]["line"]["message"], "ready");
+        assert!(!output[0].contains("canary-token"));
     }
 }

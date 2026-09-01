@@ -466,9 +466,10 @@ pub fn plan(
         ),
         Command::Logs(args) => {
             let mut path = format!(
-                "{}/projects/{}/logs",
+                "{}/projects/{}/logs{}",
                 org_path(org, "")?,
-                segment(&args.project)
+                segment(&args.project),
+                if args.follow { "/follow" } else { "" }
             );
             add_query(
                 &mut path,

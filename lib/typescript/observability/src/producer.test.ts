@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest"
 import { clickhouse, observabilityConfigured } from "./client"
 import { connectProducer, encode, type LogProducer } from "./producer"
 import { queryRuntimeLogs, toRows } from "./runtime-logs"
+import { ensureSchema } from "./schema"
 
 /**
  * The whole log path, end to end: produce to Kafka, and read it back out of ClickHouse.
@@ -62,6 +63,8 @@ describe("the wire form", () => {
       "cold_start",
       "deployment_id",
       "duration_ms",
+      "ingest_id",
+      "ingested_at",
       "init_ms",
       "level",
       "memory_mb",
@@ -78,6 +81,9 @@ describe("the wire form", () => {
 describe.runIf(reachable)("through the broker", () => {
   it("arrives in ClickHouse without anything inserting it", async () => {
     producer = await connectProducer(BROKERS)
+    // Other schema assertions run in parallel and exercise the boot-time Kafka table refresh.
+    // Re-establish the current projection immediately before this end-to-end producer proof.
+    await ensureSchema()
 
     const base = Date.now() - 30_000
     const rows = toRows(`/aws/lambda/sproutos-app-${projectId}`, deploymentId, [

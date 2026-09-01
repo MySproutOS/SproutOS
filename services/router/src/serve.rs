@@ -464,6 +464,13 @@ fn ingest_logs(
     let Ok(records) = serde_json::from_slice::<Vec<crate::logs::IncomingRecord>>(body) else {
         return (StatusCode::BAD_REQUEST, "expected an array of log records").into_response();
     };
+    if !crate::logs::messages_fit_stream(&records) {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "one log message exceeded the 64 KiB limit",
+        )
+            .into_response();
+    }
 
     // The deployment is a header rather than part of the token: it changes on every release, and
     // reminting a token per deployment would mean a token whose lifetime is a deployment's. It is

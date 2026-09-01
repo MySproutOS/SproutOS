@@ -1,16 +1,19 @@
+/* oxlint-disable no-await-in-loop -- stream queries, frames, checkpoints, and delays are ordered */
 import {
+  decodeRuntimeLogStreamCursor,
   issueIngestKey,
   MAX_LIMIT,
   observabilityConfigured,
   projectServices,
+  queryRuntimeLogsAfter,
   queryRuntimeLogs,
   searchLogs,
   RUNTIME_LOG_RETENTION_DAYS,
   runtimeUsage,
-  type RetentionDays,
 } from "@lib/observability"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
 import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
@@ -22,6 +25,7 @@ import { ErrorCode } from "../utils/errors.enum"
 import {
   observabilitySchemaKeyRequest,
   observabilitySchemaKeyResponse,
+  observabilitySchemaLogFollowQuery,
   observabilitySchemaLogQuery,
   observabilitySchemaLogsResponse,
   observabilitySchemaOtlpQuery,
@@ -36,6 +40,104 @@ const errorResponse = {
 
 /** The default window a log page opens on. Long enough to see a deploy, short enough to be fast. */
 const DEFAULT_WINDOW_MS = 60 * 60 * 1000
+const LOG_STREAM_POLL_MS = 1_000
+const LOG_STREAM_CONNECTION_MS = 25_000
+const LOG_STREAM_PAGE_SIZE = 200
+const LOG_STREAM_FRAME_BYTES = 512 * 1024
+const LOG_STREAM_RECONNECT_WRITE_MS = 1_000
+
+type RuntimeStreamLine = {
+  ts: Date
+  cursor: string
+  level: string
+  message: string
+  requestId: string
+  deploymentId: string
+  durationMs?: number
+  billedMs?: number
+  memoryMb?: number
+  initMs?: number
+  coldStart?: boolean
+}
+
+/** Public so the protocol's exact versioned payload is unit-testable without ClickHouse. */
+export function runtimeLogStreamEvent(line: RuntimeStreamLine) {
+  return {
+    schemaVersion: 1 as const,
+    type: "log" as const,
+    cursor: line.cursor,
+    line: {
+      timestamp: line.ts.toISOString(),
+      cursor: line.cursor,
+      level: line.level,
+      message: line.message,
+      requestId: line.requestId,
+      deploymentId: line.deploymentId,
+      durationMs: line.durationMs ?? null,
+      billedMs: line.billedMs ?? null,
+      memoryMb: line.memoryMb ?? null,
+      initMs: line.initMs ?? null,
+      coldStart: line.coldStart ?? null,
+    },
+  }
+}
+
+function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, milliseconds)
+    signal.addEventListener("abort", done, { once: true })
+    function done() {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", done)
+      resolve()
+    }
+  })
+}
+
+function beforeAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  const reason = () =>
+    signal.reason instanceof Error ? signal.reason : new Error("log stream operation aborted")
+  if (signal.aborted) return Promise.reject(reason())
+  return new Promise((resolve, reject) => {
+    const aborted = () => {
+      reject(reason())
+    }
+    signal.addEventListener("abort", aborted, { once: true })
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", aborted)
+    })
+  })
+}
+
+type StreamErrorEvent = { event: "error"; data: string }
+
+/**
+ * The terminal store-error frame is best effort, but it must not outlive the connection deadline
+ * when a downstream client stops reading and the response writer applies backpressure.
+ */
+export async function writeRuntimeLogStreamStoreError(
+  write: (event: StreamErrorEvent) => Promise<unknown>,
+  signal: AbortSignal,
+): Promise<void> {
+  await beforeAbort(
+    write({
+      event: "error",
+      data: JSON.stringify({
+        schemaVersion: 1,
+        type: "error",
+        code: "log_store_unavailable",
+        message: "The log store did not answer",
+        retryable: true,
+      }),
+    }),
+    signal,
+  ).catch(() => undefined)
+}
+
+function responseBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength
+}
 
 /*
   Where a customer points their OTLP exporter.
@@ -167,6 +269,165 @@ observability
       } catch (error) {
         return throwError(c, 502, ErrorCode.ServiceUnavailable, logStoreFailure(error))
       }
+    },
+  )
+  .get(
+    "/:orgSlug/projects/:projectId/logs/follow",
+    requirePermission("observability:logs:read", paramResource("project", "project", "projectId")),
+    validator("param", observabilitySchemaProjectParam),
+    validator("query", observabilitySchemaLogFollowQuery),
+    async (c) => {
+      if (!observabilityConfigured()) {
+        return throwConflict(c, "Log storage is not configured on this deployment")
+      }
+      const { projectId } = c.req.valid("param")
+      const query = c.req.valid("query")
+      if ((await ownedProject(c.var.organization.id, projectId)) === undefined) {
+        return throwNotFound(c, "Project not found")
+      }
+
+      const queryCursor = query.cursor
+      const headerCursor = c.req.header("Last-Event-ID")
+      if (queryCursor !== undefined && headerCursor !== undefined && queryCursor !== headerCursor) {
+        return throwError(c, 400, ErrorCode.InvalidInput, "Log resume cursors do not match")
+      }
+      const resumeCursor = queryCursor ?? headerCursor
+
+      let after
+      try {
+        after = resumeCursor === undefined ? undefined : decodeRuntimeLogStreamCursor(resumeCursor)
+      } catch {
+        return throwError(c, 400, ErrorCode.InvalidInput, "Invalid log resume cursor")
+      }
+      const parsedSince = query.since === undefined ? undefined : new Date(query.since)
+      if (parsedSince !== undefined && Number.isNaN(parsedSince.getTime())) {
+        return throwError(c, 400, ErrorCode.InvalidInput, "Invalid log start time")
+      }
+      // A cursor is authoritative. `since` is only the initial checkpoint and must not be allowed
+      // to move a resumed stream forward past records it has not delivered.
+      const since =
+        after === undefined
+          ? (parsedSince ?? new Date(Date.now() - DEFAULT_WINDOW_MS))
+          : new Date(0)
+      const requestedLimit = Number(query.limit)
+      const pageSize =
+        Number.isFinite(requestedLimit) && requestedLimit > 0
+          ? Math.min(requestedLimit, 500)
+          : LOG_STREAM_PAGE_SIZE
+
+      c.header("X-Accel-Buffering", "no")
+      c.header("X-Content-Type-Options", "nosniff")
+
+      const response = streamSSE(c, async (stream) => {
+        const requestSignal = c.req.raw.signal
+        const deadlineController = new AbortController()
+        const abortForRequest = () => {
+          deadlineController.abort(requestSignal.reason)
+        }
+        requestSignal.addEventListener("abort", abortForRequest, { once: true })
+        const deadlineTimer = setTimeout(() => {
+          deadlineController.abort(new Error("log stream connection deadline"))
+        }, LOG_STREAM_CONNECTION_MS)
+        const signal = deadlineController.signal
+        const deadline = Date.now() + LOG_STREAM_CONNECTION_MS
+        let cursor = after
+
+        try {
+          await beforeAbort(
+            stream.writeSSE({
+              event: "ready",
+              retry: LOG_STREAM_POLL_MS,
+              data: JSON.stringify({ schemaVersion: 1, type: "ready" }),
+            }),
+            signal,
+          )
+
+          while (!signal.aborted && Date.now() < deadline) {
+            const lines = await queryRuntimeLogsAfter({
+              projectId,
+              since,
+              ...(cursor === undefined ? {} : { after: cursor }),
+              ...(query.search === undefined || query.search === ""
+                ? {}
+                : { search: query.search }),
+              ...(query.level === undefined || query.level === "" ? {} : { level: query.level }),
+              limit: pageSize,
+              signal,
+            })
+
+            for (const line of lines) {
+              if (signal.aborted) return
+              const data = JSON.stringify(runtimeLogStreamEvent(line))
+              if (responseBytes(data) > LOG_STREAM_FRAME_BYTES) {
+                await beforeAbort(
+                  stream.writeSSE({
+                    event: "error",
+                    data: JSON.stringify({
+                      schemaVersion: 1,
+                      type: "error",
+                      code: "log_record_too_large",
+                      message: "A stored log record exceeds the streaming limit",
+                      retryable: false,
+                    }),
+                  }),
+                  signal,
+                )
+                return
+              }
+              await beforeAbort(stream.writeSSE({ event: "log", id: line.cursor, data }), signal)
+              cursor = decodeRuntimeLogStreamCursor(line.cursor)
+            }
+
+            // Full pages are drained immediately. Sleeping between them recreates the burst gap
+            // this forward-only endpoint exists to prevent.
+            if (lines.length < pageSize) {
+              await beforeAbort(
+                stream.writeSSE({
+                  event: "heartbeat",
+                  data: JSON.stringify({ schemaVersion: 1, type: "heartbeat" }),
+                }),
+                signal,
+              )
+              await abortableSleep(LOG_STREAM_POLL_MS, signal)
+            }
+          }
+        } catch (error) {
+          if (!signal.aborted) {
+            const detail = error instanceof Error ? error.message : String(error)
+            console.error(`[observability] runtime log stream query failed: ${detail}`)
+            await writeRuntimeLogStreamStoreError((event) => stream.writeSSE(event), signal)
+            return
+          }
+        } finally {
+          clearTimeout(deadlineTimer)
+          requestSignal.removeEventListener("abort", abortForRequest)
+        }
+
+        if (!requestSignal.aborted) {
+          const reconnectController = new AbortController()
+          const reconnectTimer = setTimeout(() => {
+            reconnectController.abort(new Error("log stream reconnect write deadline"))
+          }, LOG_STREAM_RECONNECT_WRITE_MS)
+          await beforeAbort(
+            stream.writeSSE({
+              event: "reconnect",
+              data: JSON.stringify({
+                schemaVersion: 1,
+                type: "reconnect",
+                retryAfterMs: LOG_STREAM_POLL_MS,
+              }),
+            }),
+            reconnectController.signal,
+          ).catch(() => undefined)
+          clearTimeout(reconnectTimer)
+        }
+      })
+      // `streamSSE` sets `no-cache` after context headers are applied. Runtime logs are tenant
+      // data, so replace it on the final response rather than allowing a shared cache to store it.
+      c.header("Cache-Control", "no-store, no-transform")
+      const headers = new Headers(response.headers)
+      headers.set("Cache-Control", "no-store, no-transform")
+      return new Response(response.body, { status: response.status, headers })
     },
   )
   /*
@@ -340,7 +601,10 @@ observability
         .where("projectId", "=", projectId)
         .executeTakeFirst()
 
-      const days = (retentionDays ?? Number(existing?.retentionDays ?? 7)) as RetentionDays
+      const storedDays = existing?.retentionDays ?? 7
+      const days =
+        retentionDays ??
+        (storedDays === 7 || storedDays === 30 || storedDays === 90 ? storedDays : 7)
       const issued = await issueIngestKey(db, projectId, days)
 
       return c.json({ ...issued, endpoint: ingestEndpoint(), retentionDays: days }, 201)

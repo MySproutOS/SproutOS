@@ -443,3 +443,46 @@ fn blank_repository_modifiers_are_rejected_with_every_nonblank_source() {
         }
     }
 }
+
+#[test]
+fn log_transport_failure_does_not_leak_request_query_or_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        use std::io::Write as _;
+
+        // Send malformed response headers on every bounded retry. This deterministically
+        // exercises reqwest's real request error without waiting for a network timeout.
+        for _ in 0..8 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(b"HTTP/1.1 nope\r\n\r\n").unwrap();
+        }
+    });
+    let mut command = cargo_bin_cmd!("sprout");
+    command
+        .env("SPROUTOS_TOKEN", "PRIVATE-BEARER-CANARY")
+        .env("SPROUTOS_ORG", "acme")
+        .env("SPROUTOS_CONFIG", directory.path().join("config.json"))
+        .args([
+            "--api-url",
+            &format!("http://{address}"),
+            "logs",
+            "project-1",
+            "--follow",
+            "--search",
+            "PRIVATE-SEARCH-CANARY",
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(
+            predicate::str::contains("transport failed before response headers")
+                .and(predicate::str::contains("PRIVATE-SEARCH-CANARY").not())
+                .and(predicate::str::contains("PRIVATE-BEARER-CANARY").not())
+                .and(predicate::str::contains("127.0.0.1").not())
+                .and(predicate::str::contains("search=").not())
+                .and(predicate::str::contains("authorization").not()),
+        );
+    server.join().unwrap();
+}

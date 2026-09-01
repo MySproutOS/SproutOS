@@ -11,6 +11,21 @@ CREATE TABLE IF NOT EXISTS sproutos.runtime_log
     -- Millisecond precision. Lambda emits it, and a log viewer that cannot order two lines from the
     -- same second is not a log viewer.
     ts            DateTime64(3) CODEC(Delta, ZSTD(1)),
+    -- Arrival time is the stream order. Kafka may deliver a record whose Lambda timestamp is
+    -- older than the last line already displayed; ordering the stream by ts would lose it.
+    ingested_at   DateTime64(3) DEFAULT ts CODEC(Delta, ZSTD(1)),
+    -- Set by the router before Kafka, and therefore stable across an at-least-once replay.
+    ingest_id     String DEFAULT hex(SHA256(concat(
+                        toString(toUnixTimestamp64Milli(ts)), '\0',
+                        toString(deployment_id), '\0', request_id, '\0', level, '\0', message, '\0',
+                        ifNull(toString(duration_ms), ''), '\0', ifNull(toString(billed_ms), ''), '\0',
+                        ifNull(toString(memory_mb), ''), '\0', ifNull(toString(init_ms), ''), '\0',
+                        ifNull(toString(cold_start), '')
+                      ))) CODEC(ZSTD(1)),
+    -- Kafka's partition/offset is the durable arrival sequence. A project is keyed to one
+    -- partition by the router; replaying an offset names the same observation.
+    ingest_partition UInt16 DEFAULT 0,
+    ingest_offset    UInt64 DEFAULT 0,
     project_id    UUID,
     deployment_id UUID,
     request_id    String        CODEC(ZSTD(1)),

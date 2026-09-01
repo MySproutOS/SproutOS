@@ -1,5 +1,6 @@
 use clap::{Parser, error::ErrorKind};
 use sprout_cli::{
+    StreamOutput,
     app::{self, Dependencies},
     auth::SystemBrowser,
     cli::Cli,
@@ -8,6 +9,18 @@ use sprout_cli::{
     credential::OsCredentialStore,
     output,
 };
+
+struct StdoutStream;
+
+impl StreamOutput for StdoutStream {
+    fn write_line(&self, line: &str) -> sprout_cli::Result<()> {
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{line}")
+            .and_then(|()| stdout.flush())
+            .map_err(|error| sprout_cli::CliError::Configuration(error.to_string()))
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -41,13 +54,15 @@ async fn main() {
                 browser: &SystemBrowser,
                 confirmation: &TerminalConfirmation,
                 config_path: &config_path,
+                stream_output: &StdoutStream,
             },
         )
         .await
     }
     .await;
     match result {
-        Ok(rendered) => println!("{rendered}"),
+        Ok(rendered) if !rendered.is_empty() => println!("{rendered}"),
+        Ok(_) => {}
         Err(error) => {
             if cli.json {
                 println!("{}", output::json_error(&error));

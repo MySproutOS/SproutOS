@@ -31,8 +31,12 @@ stdout:
 ```
 
 Failures use the same version and a stable error object. Progress and prompts never enter JSON
-stdout. Streaming logs will use one JSON object per line only after an explicit output-schema
-version adds that mode.
+stdout. `sprout logs --follow --json` is the explicit streaming exception: it emits one complete
+version-1 success envelope per line. Each envelope contains one `log` event and its opaque resume
+cursor; partial JSON is never written. The CLI reconnects with that cursor and never puts its
+bearer credential in a URL. The checkpoint advances after each successfully flushed line rather
+than at the end of a connection, and first-byte, total-read, and between-chunk idle waits are all
+bounded.
 
 Destructive commands require an interactive confirmation or `--yes`. `--json` never prompts and
 therefore requires `--yes` for destructive operations.
@@ -106,8 +110,8 @@ reviewed operation rather than a disguised release promotion.
 
 The first authenticated production build was the immutable `cli-v0.1.1` release. Its `/download`
 consumer and production IAM/task wiring were deployed before that tag was created and promoted.
-For the current `cli-v0.1.2` release, and every later release, first merge and deploy the consumer
-changes, then run **Promote an existing CLI release** with the matching version and the exact
+For every later release, first merge and deploy the consumer changes, then run **Promote an
+existing CLI release** with the matching version and the exact
 task-definition ARN registered by the reviewed deployment contract. The protected workflow records
 the pointer, then uses the existing deployment role to combine that contract with the image already
 serving; the promotion role itself cannot register or select code. Do not put a placeholder version

@@ -1,11 +1,14 @@
 import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import { clickhouse, observabilityConfigured } from "./client"
+import { ensureSchema } from "./schema"
 import {
+  decodeRuntimeLogStreamCursor,
   levelOf,
   parseReport,
   projectIdFromLogGroup,
   queryRuntimeLogs,
+  queryRuntimeLogsAfter,
   requestIdOf,
   toRows,
   writeRuntimeLogs,
@@ -19,7 +22,7 @@ import {
 const reachable = await (async () => {
   if (!observabilityConfigured()) return false
   try {
-    await clickhouse().query({ query: "select 1", format: "JSONEachRow" })
+    await ensureSchema()
     return true
   } catch {
     return false
@@ -138,6 +141,128 @@ describe.runIf(reachable)("the round trip through ClickHouse", () => {
     // Case-insensitive: a customer searching their logs types what they remember, not what they
     // logged.
     expect(found).toHaveLength(1)
+  })
+
+  it("drains distinct same-millisecond rows forward without a gap", async () => {
+    const timestamp = new Date()
+    await writeRuntimeLogs([
+      {
+        ts: timestamp,
+        projectId,
+        deploymentId,
+        requestId: "same-millisecond",
+        level: "info",
+        message: "stream-a",
+      },
+      {
+        ts: timestamp,
+        projectId,
+        deploymentId,
+        requestId: "same-millisecond",
+        level: "info",
+        message: "stream-b",
+      },
+    ])
+
+    const first = await queryRuntimeLogsAfter({
+      projectId,
+      since: new Date(timestamp.getTime() - 1),
+      search: "stream-",
+      limit: 1,
+    })
+    expect(first).toHaveLength(1)
+    const second = await queryRuntimeLogsAfter({
+      projectId,
+      since: new Date(timestamp.getTime() - 1),
+      after: decodeRuntimeLogStreamCursor(first[0]?.cursor ?? ""),
+      search: "stream-",
+      limit: 1,
+    })
+
+    expect(second).toHaveLength(1)
+    expect(new Set([first[0]?.message, second[0]?.message])).toEqual(
+      new Set(["stream-a", "stream-b"]),
+    )
+    expect(second[0]?.cursor).not.toBe(first[0]?.cursor)
+  })
+
+  it("discovers a late arrival even when its Lambda timestamp is older than the cursor", async () => {
+    const marker = `late-arrival-${v7()}`
+    const now = Date.now()
+    await writeRuntimeLogs([
+      {
+        ts: new Date(now),
+        projectId,
+        deploymentId,
+        requestId: "arrived-first",
+        level: "info",
+        message: `${marker}-first`,
+      },
+    ])
+    const first = await queryRuntimeLogsAfter({
+      projectId,
+      since: new Date(now - 120_000),
+      search: marker,
+      limit: 1,
+    })
+    expect(first).toHaveLength(1)
+
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await writeRuntimeLogs([
+      {
+        // An older source timestamp delivered after the first query. A cursor ordered by `ts`
+        // permanently skipped this row; arrival ordering must return it.
+        ts: new Date(now - 60_000),
+        projectId,
+        deploymentId,
+        requestId: "arrived-late",
+        level: "info",
+        message: `${marker}-late`,
+      },
+    ])
+    const late = await queryRuntimeLogsAfter({
+      projectId,
+      since: new Date(now - 120_000),
+      after: decodeRuntimeLogStreamCursor(first[0]?.cursor ?? ""),
+      search: marker,
+      limit: 1,
+    })
+    expect(late.map((line) => line.message)).toEqual([`${marker}-late`])
+  })
+
+  it("collapses an exact Kafka replay carrying the same ingest key", async () => {
+    const marker = `replay-${v7()}`
+    const timestamp = new Date()
+    const storedTime = timestamp.toISOString().replace("T", " ").replace("Z", "")
+    const row = {
+      ts: storedTime,
+      ingested_at: storedTime,
+      ingest_id: v7().replaceAll("-", "").toUpperCase(),
+      ingest_partition: 0,
+      ingest_offset: String(Date.now() * 1_000),
+      project_id: projectId,
+      deployment_id: deploymentId,
+      request_id: "replayed-request",
+      level: "info",
+      message: marker,
+      duration_ms: null,
+      billed_ms: null,
+      memory_mb: null,
+      init_ms: null,
+      cold_start: null,
+    }
+    await clickhouse().insert({
+      table: "runtime_log",
+      format: "JSONEachRow",
+      values: [row, row],
+    })
+
+    const streamed = await queryRuntimeLogsAfter({
+      projectId,
+      since: new Date(timestamp.getTime() - 1),
+      search: marker,
+    })
+    expect(streamed).toHaveLength(1)
   })
 
   it("does not let a search string reach ClickHouse as SQL", async () => {
