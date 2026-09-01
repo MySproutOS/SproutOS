@@ -209,4 +209,10 @@ for defect in operator-in-worker google-in-worker broad-execution-role token-ext
   fi
 done
 
+# The live auth-boundary probe must pass request validation before it can distinguish the runtime
+# token from the operator token. A probe without the required claim token returns 400 for both and
+# can hide a broken credential boundary.
+grep -q '"claim_token":"0000000000000000000000000000000000000000000000000000000000000000"' \
+  "$ROOT/docs/android-signing-infrastructure.md"
+
 echo "Android custody delivery staging tests passed"
