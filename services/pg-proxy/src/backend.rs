@@ -89,10 +89,18 @@ fn connector() -> TlsConnector {
             let roots = RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
             };
+            // The binary links both rustls providers: reqwest brings aws-lc-rs while the
+            // Postgres TLS path enables ring. `ClientConfig::builder()` therefore panics on the
+            // first managed-Postgres connection instead of choosing one. Name ring here so this
+            // library is correct in every binary and test process that links it.
             TlsConnector::from(Arc::new(
-                ClientConfig::builder()
-                    .with_root_certificates(roots)
-                    .with_no_client_auth(),
+                ClientConfig::builder_with_provider(Arc::new(
+                    tokio_rustls::rustls::crypto::ring::default_provider(),
+                ))
+                .with_safe_default_protocol_versions()
+                .expect("ring supports rustls' default protocol versions")
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
             ))
         })
         .clone()
@@ -577,6 +585,13 @@ mod tests {
         assert_eq!(hashed.len(), 35);
         assert!(hashed[3..].chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    #[test]
+    fn backend_tls_connector_does_not_depend_on_a_process_default() {
+        // `pg-proxy` links both ring and aws-lc-rs. Construction must still be deterministic;
+        // waiting until the first live Neon connection to find out produces a worker panic.
+        let _ = connector();
+    }
 }
 
 /// The client half of TLS: what this proxy presents when a customer asks for it.
@@ -630,9 +645,13 @@ pub mod client_tls {
             rustls_pemfile::private_key(&mut io::BufReader::new(std::fs::File::open(&key_path)?))?
                 .ok_or_else(|| anyhow::anyhow!("{key_path} contains no private key"))?;
 
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)?;
+        // As above, never ask rustls to infer a provider from a graph that contains two.
+        let config = ServerConfig::builder_with_provider(Arc::new(
+            tokio_rustls::rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
 
         Ok(Some(TlsAcceptor::from(Arc::new(config))))
     }
