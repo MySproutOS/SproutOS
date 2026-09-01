@@ -69,6 +69,32 @@ export type ReconcileOptions = {
   inspectionOffset?: number
 }
 
+export type ValkeyAclTokenDifference = {
+  missing: string[]
+  extra: string[]
+}
+
+/** Explain ACL drift without exposing the derived password hash in CI output. */
+export function valkeyAclTokenDifference(
+  line: string,
+  expected: Set<string>,
+): ValkeyAclTokenDifference {
+  const actual = new Set(
+    line
+      .split(/\s+/u)
+      .slice(2)
+      .map((token) => token.toLowerCase()),
+  )
+  return {
+    missing: [...expected].filter((token) => !actual.has(token)).map(redactAclToken),
+    extra: [...actual].filter((token) => !expected.has(token)).map(redactAclToken),
+  }
+}
+
+function redactAclToken(token: string): string {
+  return token.startsWith("#") ? "#<password-hash>" : token
+}
+
 export async function reconcileValkeyAclIdentities(
   redis: AclRedis,
   identities: ValkeyAclIdentity[],
@@ -153,13 +179,8 @@ export async function reconcileValkeyAclIdentities(
 }
 
 function sameTokens(line: string, expected: Set<string>): boolean {
-  const actual = new Set(
-    line
-      .split(/\s+/u)
-      .slice(2)
-      .map((token) => token.toLowerCase()),
-  )
-  return actual.size === expected.size && [...actual].every((token) => expected.has(token))
+  const difference = valkeyAclTokenDifference(line, expected)
+  return difference.missing.length === 0 && difference.extra.length === 0
 }
 
 function cyclicWindow<T>(values: T[], offset: number, limit: number): T[] {

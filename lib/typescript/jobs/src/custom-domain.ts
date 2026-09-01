@@ -3,6 +3,7 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import {
+  lambdaAliasArn,
   publishRoute as publishLambdaRoute,
   type Route,
   withdrawRoute as withdrawLambdaRoute,
@@ -469,7 +470,11 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
             throw new Error("The custom domain's live deployment is not a routable Lambda release")
           }
           const route: Route = {
-            arn: `arn:aws:lambda:${process.env.AWS_REGION ?? "us-east-1"}:${required("AWS_ACCOUNT_ID")}:function:sproutos-app-${domain.projectId}:live`,
+            arn: lambdaAliasArn({
+              region: process.env.AWS_REGION ?? "us-east-1",
+              accountId: required("AWS_ACCOUNT_ID"),
+              projectId: domain.projectId,
+            }),
             projectId: domain.projectId,
             organizationId: domain.organizationId,
             deploymentId: deployment.id,
