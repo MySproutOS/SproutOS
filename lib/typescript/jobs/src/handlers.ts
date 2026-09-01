@@ -80,6 +80,7 @@ import {
   ANDROID_REGISTRATION_RECONCILE_KIND,
   reconcileAndroidDeveloperRegistrationsJob,
 } from "./android-developer-registration"
+import { ANDROID_SIGNER_HEALTH_KIND, sampleAndroidSignerHealthJob } from "./android-signer-health"
 import {
   deleteNonpaymentData,
   NONPAYMENT_RETENTION_KINDS,
@@ -160,6 +161,7 @@ export const JOB_KINDS = {
   importDeploymentCatalogue: DEPLOYMENT_CATALOGUE_IMPORT_KIND,
   reconcileStaticCloudFrontUsage: STATIC_CLOUDFRONT_METERING_KINDS.reconcile,
   reconcileAndroidDeveloperRegistration: ANDROID_REGISTRATION_RECONCILE_KIND,
+  sampleAndroidSignerHealth: ANDROID_SIGNER_HEALTH_KIND,
   /*
     The GitHub webhook kinds, declared here as well as produced there.
 
@@ -499,6 +501,7 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.importDeploymentCatalogue]: importDeploymentCatalogue(),
   [JOB_KINDS.reconcileStaticCloudFrontUsage]: reconcileStaticCloudFrontUsage(),
   [JOB_KINDS.reconcileAndroidDeveloperRegistration]: reconcileAndroidDeveloperRegistrationsJob(),
+  [JOB_KINDS.sampleAndroidSignerHealth]: sampleAndroidSignerHealthJob(),
 }
 
 const FALLBACK_PLATFORM_HANDLERS: Record<string, JobHandler> = {
@@ -563,6 +566,16 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     await enqueue(db, {
       kind: JOB_KINDS.reconcileAndroidDeveloperRegistration,
       idempotencyKey: `${JOB_KINDS.reconcileAndroidDeveloperRegistration}:${now.toISOString().slice(0, 16)}`,
+      maxAttempts: 5,
+    })
+  }
+
+  if (process.env.ANDROID_SIGNING_METRICS_ENABLED === "1") {
+    const window = now.toISOString().slice(0, 16)
+    await enqueue(db, {
+      kind: JOB_KINDS.sampleAndroidSignerHealth,
+      payload: { window },
+      idempotencyKey: `${JOB_KINDS.sampleAndroidSignerHealth}:${window}`,
       maxAttempts: 5,
     })
   }
