@@ -55,7 +55,9 @@ jobs:
       # TASK 35's job inspection reads and writes real BullMQ jobs. Without this the tests skip,
       # and a skipped test looks exactly like a passing one in the summary.
       valkey:
-        image: valkey/valkey:9-alpine
+        # ACL serialization is part of the reconciliation contract, so CI must not silently change
+        # engine versions when the moving `9-alpine` tag advances.
+        image: valkey/valkey:9.1.1-alpine
         ports:
           - 41023:6379
         options: >-
@@ -280,7 +282,15 @@ jobs:
           version: "0.11.6"
 
       - name: Test
-        run: pnpm exec vitest --run --config .config/vitest.config.mts --reporter=default --reporter=json --outputFile.json=vitest-report.json
+        env:
+          AWS_ACCOUNT_ID: "000000000000"
+        run: pnpm exec vitest --run --config .config/vitest.config.mts --exclude '**/reconcile-valkey.integration.test.ts' --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # ACL LIST is process-global state. Suites that provision tenant users cannot share the
+      # interval between this test's repair pass and its idempotency pass without manufacturing
+      # drift and orphan-count changes that no single reconciler caused.
+      - name: Test Valkey ACL reconciliation in isolation
+        run: pnpm exec vitest --run --config .config/vitest.config.mts --no-file-parallelism lib/typescript/reaper/src/reconcile-valkey.integration.test.ts
 
       # A skipped test reads exactly like a passing one in the summary. Several suites gate on a
       # capability this environment lacks — LocalStack for KMS, a GitHub App, an Anthropic key — so
@@ -331,7 +341,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       valkey:
-        image: valkey/valkey:9-alpine
+        # Keep Rust and TypeScript integration tests on the same pinned Valkey version.
+        image: valkey/valkey:9.1.1-alpine
         ports:
           - 41023:6379
         options: >-

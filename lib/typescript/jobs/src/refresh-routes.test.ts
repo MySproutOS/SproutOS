@@ -128,11 +128,14 @@ describe.skipIf(!reachable)("refreshRoutes", () => {
     await valkey.del(`route:${hostname}`)
     expect(await readRoute(valkey, hostname)).toBeUndefined()
 
-    await refreshRoutes({ valkey })(job, context)
+    await refreshRoutes({ valkey, region: "us-east-1", accountId: "000000000000" })(job, context)
 
     const route = await readRoute(valkey, hostname)
     expect(route).toBeDefined()
     expect(route?.projectId).toBe(projectId)
+    expect(route?.arn).toBe(
+      `arn:aws:lambda:us-east-1:000000000000:function:sproutos-app-${projectId}:live`,
+    )
   })
 
   it("gives the route a fresh lease, so the next expiry is a day away again", async () => {
@@ -141,7 +144,7 @@ describe.skipIf(!reachable)("refreshRoutes", () => {
     // A key about to expire is the state this job exists to prevent reaching zero.
     await valkey.set(`route:${hostname}`, JSON.stringify({ arn: "x" }), "EX", 5)
 
-    await refreshRoutes({ valkey })(job, context)
+    await refreshRoutes({ valkey, region: "us-east-1", accountId: "000000000000" })(job, context)
 
     const ttl = await valkey.ttl(`route:${hostname}`)
     expect(ttl).toBeGreaterThan(60 * 60)
@@ -169,7 +172,7 @@ describe.skipIf(!reachable)("refreshRoutes", () => {
       )
       .execute()
 
-    await refreshRoutes({ valkey })(job, context)
+    await refreshRoutes({ valkey, region: "us-east-1", accountId: "000000000000" })(job, context)
 
     expect(await readRoute(valkey, hostname)).toBeUndefined()
   })

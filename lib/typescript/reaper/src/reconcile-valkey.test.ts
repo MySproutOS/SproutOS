@@ -7,7 +7,7 @@ import {
   type ValkeyAclIdentity,
   VALKEY_ACL_POLICY,
 } from "@lib/services"
-import { reconcileValkeyAclIdentities } from "./reconcile-valkey"
+import { reconcileValkeyAclIdentities, valkeyAclTokenDifference } from "./reconcile-valkey"
 
 const ROOT = "r".repeat(32)
 const first = identity(1)
@@ -37,6 +37,15 @@ class FakeRedis {
 }
 
 describe("Valkey ACL reconciliation", () => {
+  it("reports ACL token differences without exposing password hashes", () => {
+    expect(
+      valkeyAclTokenDifference("user tenant on #secret +acl", new Set(["on", "#other"])),
+    ).toEqual({
+      missing: ["#<password-hash>"],
+      extra: ["#<password-hash>", "+acl"],
+    })
+  })
+
   it("matches the shared Rust credential vector", () => {
     const vector = VALKEY_ACL_POLICY.credentialVector
     const args = valkeyAclSetUserArgs(
