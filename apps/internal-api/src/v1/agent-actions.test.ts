@@ -110,6 +110,7 @@ describe.skipIf(!reachable)("agent group-primary action", () => {
           isFork: true,
           upstreamFullName: "TestSproutOS/upstream-action-test",
           upstreamDefaultBranch: "main",
+          upstreamStrategy: "github_fork",
         },
         {
           id: repositoryB,

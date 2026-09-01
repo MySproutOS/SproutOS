@@ -20,6 +20,7 @@ import {
   GlobeIcon,
   LockIcon,
   PlusIcon,
+  RefreshCwIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react"
@@ -56,7 +57,7 @@ const CARDS: { id: Source; icon: typeof GitForkIcon; title: string; detail: stri
   {
     id: "store",
     icon: GitForkIcon,
-    title: "Fork an app",
+    title: "Copy an app",
     detail: "Start from something in the store that already runs, then make it yours.",
   },
   {
@@ -126,7 +127,7 @@ export function NewProjectDialog({
         <DialogHeader>
           <DialogTitle>{kind === "workflow" ? "New workflow" : "New project"}</DialogTitle>
           <DialogDescription>
-            Three ways to start. All of them end up as your code.
+            Four ways to start. All of them end up as your code.
           </DialogDescription>
         </DialogHeader>
         <NewProjectForm
@@ -166,6 +167,18 @@ function NewProjectForm({
     have no row here at all, so GitHub's id is the only handle it has. The API imports on first use.
   */
   const [githubRepoId, setGithubRepoId] = useState<string | null>(null)
+  const [manualUpstreamRef, setManualUpstreamRef] = useState("")
+  const [updateSchedule, setUpdateSchedule] = useState<
+    | "off"
+    | "one_week"
+    | "one_month"
+    | "three_months"
+    | "six_months"
+    | "nine_months"
+    | "one_year"
+    | "two_years"
+  >("one_week")
+  const [syncUpstreamNow, setSyncUpstreamNow] = useState(false)
   const [touchedRepoName, setTouchedRepoName] = useState(false)
   const [owner, setOwner] = useState<string | null>(null)
   const [templateRef, setTemplateRef] = useState("")
@@ -262,6 +275,17 @@ function NewProjectForm({
         candidate.name.toLowerCase() === repositoryName.toLowerCase() &&
         candidate.ownerLogin.toLowerCase() === (effectiveOwner ?? "").toLowerCase(),
     )?.githubRepoId ?? null
+  const selectedRepository = repositories.data?.data.find(
+    (candidate) => candidate.githubRepoId === githubRepoId,
+  )
+  const manualUpstream = parseRepoRef(manualUpstreamRef)
+  const effectiveManualUpstream = selectedRepository?.fork === true ? null : manualUpstream
+  const tracksUpstream =
+    source === "store"
+      ? listingId !== null
+      : source === "template"
+        ? template !== null
+        : selectedRepository?.fork === true || manualUpstream !== null
 
   const needsRepoName = source !== "repository"
   const ready =
@@ -270,6 +294,7 @@ function NewProjectForm({
     (source !== "store" || listingId !== null) &&
     (source !== "template" || template !== null) &&
     (source !== "repository" || githubRepoId !== null) &&
+    (source !== "repository" || manualUpstreamRef.trim() === "" || manualUpstream !== null) &&
     (source !== "repository" || isProjectRootDir(rootDir)) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
@@ -299,6 +324,11 @@ function NewProjectForm({
                     ? {
                         type: "repository",
                         githubRepoId: githubRepoId!,
+                        ...(effectiveManualUpstream === null
+                          ? {}
+                          : {
+                              upstreamFullName: `${effectiveManualUpstream.owner}/${effectiveManualUpstream.repo}`,
+                            }),
                       }
                     : {
                         /*
@@ -320,6 +350,14 @@ function NewProjectForm({
               // This is part of the API JSON body. Putting it beside `body` makes it client
               // metadata, which the generated client accepts and silently omits from the request.
               ...(source === "repository" ? { rootDir: rootDir.trim() } : {}),
+              ...(tracksUpstream
+                ? {
+                    autoUpdateEnabled: updateSchedule !== "off",
+                    ...(updateSchedule === "off" ? {} : { autoUpdateCadence: updateSchedule }),
+                    autoUpdateMode: "auto_merge",
+                    syncUpstreamNow,
+                  }
+                : {}),
             },
           },
           {
@@ -460,7 +498,7 @@ function NewProjectForm({
 
       {source === "store" && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="np-listing">App to fork</Label>
+          <Label htmlFor="np-listing">App to copy</Label>
           <select
             id="np-listing"
             value={listingId ?? ""}
@@ -512,7 +550,21 @@ function NewProjectForm({
       {source === "repository" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="np-repo">Repository</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="np-repo">Repository</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={repositories.isFetching}
+                onClick={() => {
+                  void repositories.refetch()
+                }}
+              >
+                <RefreshCwIcon className={repositories.isFetching ? "animate-spin" : ""} />
+                Refresh
+              </Button>
+            </div>
             {repositories.isError ? (
               <p className="text-[13px] text-muted-foreground">
                 No GitHub account is connected to this organization yet, so there is nothing to
@@ -544,6 +596,40 @@ function NewProjectForm({
               </Select>
             )}
           </div>
+          {selectedRepository !== undefined && (
+            <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
+              <Label htmlFor="np-upstream">Upstream repository</Label>
+              {selectedRepository.fork ? (
+                <p className="text-[13px] text-muted-foreground">
+                  GitHub identifies this as a fork. SproutOS will record its GitHub parent
+                  automatically.
+                </p>
+              ) : (
+                <>
+                  <Input
+                    id="np-upstream"
+                    value={manualUpstreamRef}
+                    onChange={(event) => {
+                      setManualUpstreamRef(event.target.value)
+                    }}
+                    placeholder="owner/upstream (optional)"
+                    spellCheck={false}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use this only if this repository was cloned or copied outside GitHub&apos;s fork
+                    flow. SproutOS verifies that the upstream exists before creating the project.
+                    The first comparison can be large and may require a paid conflict-resolution
+                    run; for a fresh project, copying the upstream into a new repository is safer.
+                  </p>
+                  {manualUpstreamRef.trim() !== "" && manualUpstream === null && (
+                    <p className="text-xs text-destructive">
+                      Enter a GitHub URL or owner/repository.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="np-root-dir">Project directory</Label>
             <Input
@@ -565,6 +651,44 @@ function NewProjectForm({
                 : "Enter . or a relative directory without empty, . or .. segments."}
             </p>
           </div>
+        </div>
+      )}
+
+      {tracksUpstream && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
+          <Label htmlFor="np-upstream-schedule">Upstream update schedule</Label>
+          <Select
+            value={updateSchedule}
+            onValueChange={(value) => {
+              if (value !== null) setUpdateSchedule(value)
+            }}
+          >
+            <SelectTrigger id="np-upstream-schedule">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="one_week">1 week</SelectItem>
+              <SelectItem value="one_month">1 month</SelectItem>
+              <SelectItem value="three_months">3 months</SelectItem>
+              <SelectItem value="six_months">6 months</SelectItem>
+              <SelectItem value="nine_months">9 months</SelectItem>
+              <SelectItem value="one_year">1 year</SelectItem>
+              <SelectItem value="two_years">2 years</SelectItem>
+            </SelectContent>
+          </Select>
+          <label className="flex items-start gap-2 text-[13px] text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={syncUpstreamNow}
+              onChange={(event) => {
+                setSyncUpstreamNow(event.target.checked)
+              }}
+            />
+            Compare now and open a PR after project setup. Otherwise the first comparison runs after
+            the selected interval.
+          </label>
         </div>
       )}
 

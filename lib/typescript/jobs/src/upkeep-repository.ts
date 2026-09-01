@@ -183,6 +183,7 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
         "name",
         "defaultBranch",
         "provenance",
+        "upstreamStrategy",
         "upstreamFullName",
         "upstreamDefaultBranch",
         "githubInstallationId",
@@ -233,7 +234,7 @@ export function upkeepRepository(deps?: UpkeepDeps): JobHandler {
       repositoryId: githubRepoId,
     })
 
-    if (repository.provenance === "template") {
+    if (repository.upstreamStrategy !== "github_fork") {
       const writeCredential = await credentialFor(installationId, {
         purpose: "upkeep-sync",
         repositoryId: githubRepoId,

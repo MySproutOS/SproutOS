@@ -44,7 +44,13 @@ import {
   provisionProject,
   type RepositoryPlan,
 } from "@lib/dao"
-import { createGitHubClient, getRepositoryById, organizationGitHubCredential } from "@lib/github"
+import {
+  createGitHubClient,
+  GitHubNotFoundError,
+  getRepository,
+  getRepositoryById,
+  organizationGitHubCredential,
+} from "@lib/github"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -638,13 +644,19 @@ async function resolveSuggestion(
  */
 async function resolveOwnRepository(
   organizationId: string,
-  source: { repositoryId?: string; githubRepoId?: string },
+  source: { repositoryId?: string; githubRepoId?: string; upstreamFullName?: string },
 ): Promise<{ id: string; defaultBranch: string } | undefined> {
   if (source.repositoryId !== undefined) {
-    return await fetchRepository(db).getInOrganization(organizationId, source.repositoryId, [
+    const known = await fetchRepository(db).getInOrganization(organizationId, source.repositoryId, [
       "id",
       "defaultBranch",
+      "githubRepoId",
     ])
+    if (known === undefined || source.upstreamFullName === undefined) return known
+    return await resolveOwnRepository(organizationId, {
+      githubRepoId: String(known.githubRepoId),
+      upstreamFullName: source.upstreamFullName,
+    })
   }
 
   const githubRepoId = source.githubRepoId
@@ -653,8 +665,16 @@ async function resolveOwnRepository(
   const known = await fetchRepository(db).getByGithubRepoId(organizationId, githubRepoId, [
     "id",
     "defaultBranch",
+    "upstreamFullName",
   ])
-  if (known) return known
+  if (known && source.upstreamFullName === undefined) return known
+  if (
+    known !== undefined &&
+    known.upstreamFullName !== null &&
+    known.upstreamFullName !== source.upstreamFullName
+  ) {
+    return undefined
+  }
 
   const repositoryId = Number(githubRepoId)
   if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) return undefined
@@ -676,7 +696,36 @@ async function resolveOwnRepository(
   )
   if (installation === undefined) return undefined
 
-  const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)
+  const client = createGitHubClient()
+  const repository = await getRepositoryById(client, credential, githubRepoId)
+  let manualUpstream: { id: number; fullName: string; defaultBranch: string } | null = null
+  if (repository.parent === null && source.upstreamFullName !== undefined) {
+    const [owner, name] = source.upstreamFullName.split("/")
+    if (owner === undefined || name === undefined) return undefined
+    let inspected
+    try {
+      inspected = await getRepository(client, credential, owner, name)
+    } catch (error) {
+      if (error instanceof GitHubNotFoundError) return undefined
+      throw error
+    }
+    if (inspected.id === repository.id) return undefined
+    manualUpstream = {
+      id: inspected.id,
+      fullName: inspected.fullName,
+      defaultBranch: inspected.defaultBranch,
+    }
+  }
+
+  if (known) {
+    await crudRepository(db).update(known.id, {
+      upstreamGithubRepoId: manualUpstream?.id ?? null,
+      upstreamFullName: manualUpstream?.fullName ?? null,
+      upstreamDefaultBranch: manualUpstream?.defaultBranch ?? null,
+      upstreamStrategy: manualUpstream === null ? null : "manual",
+    })
+    return known
+  }
 
   /*
     `provenance: "imported"` and a real `github_repo_id`, so provisioning reads it rather than
@@ -685,16 +734,19 @@ async function resolveOwnRepository(
   return await crudRepository(db).create({
     organizationId,
     githubInstallationId: installation.id,
-    githubRepoId: String(upstream.id),
-    ownerLogin: upstream.ownerLogin,
-    name: upstream.name,
-    defaultBranch: upstream.defaultBranch,
-    private: upstream.private,
-    isFork: upstream.parent !== null,
-    provenance: upstream.parent === null ? "imported" : "fork",
-    upstreamGithubRepoId: upstream.parent?.id ?? null,
-    upstreamFullName: upstream.parent?.fullName ?? null,
-    upstreamDefaultBranch: upstream.parent?.defaultBranch ?? null,
+    githubRepoId: String(repository.id),
+    ownerLogin: repository.ownerLogin,
+    name: repository.name,
+    defaultBranch: repository.defaultBranch,
+    private: repository.private,
+    isFork: repository.parent !== null,
+    provenance: "imported",
+    upstreamGithubRepoId: repository.parent?.id ?? manualUpstream?.id ?? null,
+    upstreamFullName: repository.parent?.fullName ?? manualUpstream?.fullName ?? null,
+    upstreamDefaultBranch:
+      repository.parent?.defaultBranch ?? manualUpstream?.defaultBranch ?? null,
+    upstreamStrategy:
+      repository.parent === null ? (manualUpstream === null ? null : "manual") : "github_fork",
   })
 }
 
@@ -950,7 +1002,7 @@ const app = new Hono()
         if (!listing || listing.status !== "published") {
           return throwBadRequest(
             c,
-            "Listing is not available to fork",
+            "Listing is not available to copy",
             ErrorCode.ResourceNotFound,
             {
               target: "source.storeListingId",
@@ -962,7 +1014,7 @@ const app = new Hono()
         if (ownerLogin === undefined) {
           return throwBadRequest(
             c,
-            "No GitHub account to fork into. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
+            "No GitHub account to copy into. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
             ErrorCode.ValidationFailed,
             { target: "source.ownerLogin" },
           )
@@ -1031,19 +1083,20 @@ const app = new Hono()
         }
         listingRootDir = listing.rootDir
         listingDockerfilePath = listing.dockerfilePath
-        jobKind = "fork"
+        jobKind = "provision"
         productionBranch ??= listing.defaultBranch
         plan = {
           defaultBranch: listing.defaultBranch,
           githubInstallationId: defaultInstallation?.id ?? null,
-          isFork: true,
+          isFork: false,
           mode: "create",
           name: source.repositoryName ?? listing.slug,
           ownerLogin,
           private: source.private ?? true,
-          provenance: "fork",
+          provenance: "copy",
           upstreamDefaultBranch: listing.defaultBranch,
           upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+          upstreamStrategy: "snapshot_copy",
         }
       } else {
         const ownerLogin = source.ownerLogin ?? forkDestination
@@ -1070,6 +1123,7 @@ const app = new Hono()
           private: source.private ?? true,
           provenance: fromTemplate ? "template" : "new",
           upstreamFullName: fromTemplate ? `${source.templateOwner}/${source.templateRepo}` : null,
+          upstreamStrategy: fromTemplate ? "snapshot_copy" : null,
         }
       }
 
@@ -1188,8 +1242,9 @@ const app = new Hono()
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),
-        autoUpdateCadence: json.autoUpdateCadence ?? "one_day",
+        autoUpdateCadence: json.autoUpdateCadence ?? "one_week",
         autoUpdateMode: json.autoUpdateMode ?? "suggest",
+        syncUpstreamNow: json.syncUpstreamNow,
         idempotencyKey:
           json.idempotencyKey === undefined
             ? null
@@ -1339,6 +1394,7 @@ const app = new Hono()
           "isFork",
           "provenance",
           "upstreamFullName",
+          "upstreamStrategy",
           "githubInstallationId",
         ],
       )
@@ -1369,6 +1425,7 @@ const app = new Hono()
           private: repository.private,
           provenance: repository.provenance,
           upstreamFullName: repository.upstreamFullName,
+          upstreamStrategy: repository.upstreamStrategy,
         },
       })
     },

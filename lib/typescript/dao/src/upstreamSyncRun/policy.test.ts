@@ -81,6 +81,7 @@ async function fixture(
       provenance: "fork",
       isFork: options.isFork ?? true,
       upstreamFullName: (options.tracksUpstream ?? true) ? "upstream/original" : null,
+      upstreamStrategy: (options.tracksUpstream ?? true) ? "github_fork" : null,
     })
     .execute()
 
@@ -97,7 +98,7 @@ async function fixture(
       productionBranch: "main",
       state: "ready",
       autoUpdateEnabled: options.autoUpdate ?? true,
-      autoUpdateCadence: options.cadence ?? "one_day",
+      autoUpdateCadence: options.cadence ?? "one_week",
       autoUpdateMode: "suggest",
     })
     .execute()
@@ -115,20 +116,17 @@ describe("cadence windows", () => {
   const now = new Date("2026-08-28T12:00:00.000Z")
 
   it("runs a never-checked cadence immediately", () => {
-    expect(cadenceIsDue("one_day", null, now)).toBe(true)
+    expect(cadenceIsDue("one_week", null, now)).toBe(true)
   })
 
   it("catches up after each complete interval and not before", () => {
-    expect(cadenceIsDue("one_day", new Date("2026-08-27T12:00:00.001Z"), now)).toBe(false)
-    expect(cadenceIsDue("one_day", new Date("2026-08-27T12:00:00.000Z"), now)).toBe(true)
+    expect(cadenceIsDue("one_week", new Date("2026-08-21T12:00:00.001Z"), now)).toBe(false)
     expect(cadenceIsDue("one_week", new Date("2026-08-21T12:00:00.000Z"), now)).toBe(true)
     expect(cadenceIsDue("one_month", new Date("2026-07-29T12:00:00.000Z"), now)).toBe(true)
   })
 
   it("uses fixed elapsed durations for every offered schedule", () => {
     const days = {
-      one_day: 1,
-      two_days: 2,
       one_week: 7,
       one_month: 30,
       three_months: 90,
@@ -182,7 +180,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
     // repositories that are being used.
     const status = await fetchUpkeepStatus(db).forRepository(repositoryId)
     expect(status.consecutiveFailures).toBe(0)
-    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))).toBe(true)
   })
 
   it("comes back once a run succeeds", async ({ skip }) => {
@@ -193,7 +191,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
 
     // Derived from history rather than a counter, so nothing has to remember to reset it.
     await recordRuns(repositoryId, ["up_to_date"])
-    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))).toBe(true)
   })
 })
 

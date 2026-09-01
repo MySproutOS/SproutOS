@@ -90,6 +90,7 @@ async function seed(options: {
       isFork: (options.provenance ?? "fork") === "fork",
       upstreamFullName: "upstream/app",
       upstreamDefaultBranch: "main",
+      upstreamStrategy: (options.provenance ?? "fork") === "fork" ? "github_fork" : "snapshot_copy",
       githubInstallationId: installId,
     })
     .execute()

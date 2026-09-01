@@ -116,6 +116,7 @@ async function seed(projectJobDetails: JsonObject) {
       provenance: "fork",
       isFork: true,
       upstreamFullName: "upstream/app",
+      upstreamStrategy: "github_fork",
       upstreamDefaultBranch: "main",
     })
     .execute()

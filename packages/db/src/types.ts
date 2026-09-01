@@ -1087,6 +1087,7 @@ export interface Repository {
   upstreamDefaultBranch: string | null
   upstreamFullName: string | null
   upstreamGithubRepoId: Int8 | null
+  upstreamStrategy: string | null
   upstreamTagCheckedAt: Timestamp | null
   upstreamTagFingerprint: string | null
 }

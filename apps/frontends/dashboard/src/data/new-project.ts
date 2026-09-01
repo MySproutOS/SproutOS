@@ -54,6 +54,8 @@ export function useGithubRepositories(orgSlug: string, enabled: boolean) {
   return useQuery({
     ...getV1OrgsByOrgSlugGithubRepositoriesOptions({ path: { orgSlug }, query: { perPage: 100 } }),
     enabled,
+    refetchOnMount: "always",
+    staleTime: 0,
     retry: false,
   })
 }
