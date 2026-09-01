@@ -227,7 +227,7 @@ grep -q 'wrong version, tag, schema, or platform set' "$TEST_DIR/wrong-platform.
 cp "$TEST_DIR/capture/manifest.json" "$manifest"
 
 # Evidence may be recorded independently, but a pointer cannot move until an exact task contract
-# with the SSM reference is already reviewed and available for deployment.
+# with the SSM reference is already versioned and available for deployment.
 if "$HERE/promote-cli-release.sh" "$version" --record-only >"$TEST_DIR/missing-contract.out" 2>&1; then
   echo "pointer moved without a deployable task contract" >&2
   exit 1
@@ -236,7 +236,10 @@ grep -q 'task contract does not contain the exact' "$TEST_DIR/missing-contract.o
 test ! -f "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION"
 
 : >"$CALLS"
-ECS_BASE_TASK_DEFINITION=arn:aws:ecs:us-east-1:123:task-definition/sproutos-web:8 \
+cat >"$TEST_DIR/versioned-task.json" <<'JSON'
+{"family":"sproutos-web","containerDefinitions":[{"name":"website","secrets":[{"name":"SPROUT_CLI_RELEASE_VERSION","valueFrom":"arn:aws:ssm:us-east-1:123:parameter/sproutos/application/SPROUT_CLI_RELEASE_VERSION"}]}]}
+JSON
+ECS_TASK_DEFINITION_FILE="$TEST_DIR/versioned-task.json" \
   "$HERE/promote-cli-release.sh" "$version" --record-only
 
 [ "$(cat "$TEST_DIR/state/SPROUT_CLI_RELEASE_VERSION")" = "$version" ]

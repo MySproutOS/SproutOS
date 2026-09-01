@@ -9,6 +9,7 @@ let organizationId: string
 let ownerUserId: string
 let repositoryId: string
 let linkedInstallationId: string
+let linkedProviderInstallationId: string
 
 beforeAll(async () => {
   try {
@@ -22,6 +23,7 @@ beforeAll(async () => {
   organizationId = v7()
   repositoryId = v7()
   linkedInstallationId = v7()
+  linkedProviderInstallationId = String(Date.now() + 1)
 
   await db
     .insertInto("user")
@@ -50,7 +52,7 @@ beforeAll(async () => {
       {
         id: linkedInstallationId,
         organizationId,
-        installationId: String(Date.now() + 1),
+        installationId: linkedProviderInstallationId,
         accountLogin: "linked-installation",
         accountType: "Organization",
       },
@@ -91,6 +93,21 @@ describe("fetchGithubInstallation", () => {
     const installation = await fetchGithubInstallation(db).getForRepository(
       organizationId,
       repositoryId,
+      ["id", "accountLogin"],
+    )
+
+    expect(installation).toEqual({
+      id: linkedInstallationId,
+      accountLogin: "linked-installation",
+    })
+  })
+
+  it("resolves the platform row from GitHub's installation id", async ({ skip }) => {
+    if (!reachable) skip()
+
+    const installation = await fetchGithubInstallation(db).getByInstallationId(
+      organizationId,
+      linkedProviderInstallationId,
       ["id", "accountLogin"],
     )
 

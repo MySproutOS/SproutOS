@@ -23,6 +23,11 @@ import type { JobHandler } from "./worker"
 import { removeStaticSite, type StaticPublisherClients } from "./static-publish"
 import { withProjectLock } from "./project-lock"
 import { destroySandbox, SANDBOX_KINDS } from "./sandbox"
+import { meterSandboxUsage } from "./sandbox"
+import { meterValkeyQueues } from "./valkey-metering"
+import { meterObjectStorage } from "./object-storage-metering"
+import { meterNeonDatabases } from "./neon-metering"
+import { neonApiConfigFromEnv } from "@lib/services"
 
 /**
  * Destroy what a deleted project left running.
@@ -90,15 +95,28 @@ export type TeardownClients = {
     tenantZoneId: string
     keyValueStoreArn: string
   }
+  finalizeMetering?: (input: {
+    db: Kysely<DB>
+    projectId: string
+    cutoff: Date
+    backendServices: Array<{ id: string; kind: string }>
+  }) => Promise<void>
 }
 
 export function tearDownProject(clients?: TeardownClients): JobHandler {
   let resolvedClients = clients
   return async (job, context) => {
     const { db, keepAlive, signal } = context
-    const { projectId, projectJobId } = job.payload as {
+    const {
+      projectId,
+      projectJobId,
+      deletionReason: payloadDeletionReason,
+      serviceCutoffAt: payloadServiceCutoffAt,
+    } = job.payload as {
       projectId?: string
       projectJobId?: string
+      deletionReason?: "user_requested" | "nonpayment"
+      serviceCutoffAt?: Date | string
     }
     if (projectId === undefined) throw new Error("project.teardown needs a projectId")
 
@@ -130,6 +148,18 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
 
         // Gone entirely, or never existed. Nothing to tear down and nothing to report.
         if (project === undefined) return
+        const teardownJob =
+          projectJobId === undefined
+            ? undefined
+            : await db
+                .selectFrom("projectJob")
+                .select(["deletionReason", "serviceCutoffAt"])
+                .where("id", "=", projectJobId)
+                .executeTakeFirst()
+        const deletionReason =
+          payloadDeletionReason ?? teardownJob?.deletionReason ?? "user_requested"
+        const serviceCutoffAt =
+          payloadServiceCutoffAt ?? teardownJob?.serviceCutoffAt ?? project.deletedAt
 
         /*
       Refuses to tear down a project that is not deleted.
@@ -138,8 +168,20 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       thing standing between the two is a payload field. This is the check that makes an
       accidentally-enqueued job harmless instead of catastrophic.
     */
-        if (project.deletedAt === null) {
+        if (project.deletedAt === null && deletionReason !== "nonpayment") {
           throw new Error(`Project ${projectId} is not deleted; refusing to tear it down`)
+        }
+        if (deletionReason === "nonpayment") {
+          const retention = await db
+            .selectFrom("creditRetentionState")
+            .select("status")
+            .where("organizationId", "=", project.organizationId)
+            .executeTakeFirst()
+          if (retention?.status !== "deleting") {
+            throw new Error(
+              `Organization ${project.organizationId} is not deleting; refusing nonpayment teardown`,
+            )
+          }
         }
 
         // Built here, not at registration: constructing clients at import time makes a worker fail to
@@ -161,6 +203,22 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
           sandboxes: 0,
           workers: 0,
           envVars: 0,
+        }
+
+        // All recurring provider usage is closed through the one authoritative cutoff before the
+        // first provider object is removed. Outbox event identities include their intervals, so a
+        // retry can repeat this settlement without charging twice.
+        const allServices = await db
+          .selectFrom("backendService")
+          .select(["id", "kind"])
+          .where("projectId", "=", projectId)
+          .where("deletedAt", "is", null)
+          .execute()
+        const cutoff = new Date(serviceCutoffAt ?? project.deletedAt ?? new Date())
+        if (aws.finalizeMetering !== undefined) {
+          await aws.finalizeMetering({ db, projectId, cutoff, backendServices: allServices })
+        } else if (clients === undefined) {
+          await finalizeProjectMetering(db, projectId, cutoff, allServices)
         }
 
         /*
@@ -385,11 +443,13 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       no statement resolves through them, and the request that triggered this was a request to stop
       holding the project's data.
     */
-        const envVars = await db
-          .deleteFrom("projectEnvVar")
-          .where("projectId", "=", projectId)
-          .executeTakeFirst()
-        result.envVars = Number(envVars.numDeletedRows ?? 0)
+        if (deletionReason !== "nonpayment") {
+          const envVars = await db
+            .deleteFrom("projectEnvVar")
+            .where("projectId", "=", projectId)
+            .executeTakeFirst()
+          result.envVars = Number(envVars.numDeletedRows ?? 0)
+        }
 
         /*
       There is no second copy to chase, and that is worth recording rather than leaving as a gap.
@@ -400,18 +460,21 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       it, and the function went above, before this line runs.
     */
 
-        await db
-          .updateTable("project")
-          .set({ state: "deleted", updatedAt: new Date() })
-          .where("id", "=", projectId)
-          .execute()
+        if (deletionReason !== "nonpayment") {
+          await db
+            .updateTable("project")
+            .set({ state: "deleted", updatedAt: new Date() })
+            .where("id", "=", projectId)
+            .execute()
+        }
 
         await crudAuditLog(db).record({
           organizationId: project.organizationId,
           actorUserId: null,
-          action: "project:delete",
+          action:
+            deletionReason === "nonpayment" ? "project:nonpayment_data_delete" : "project:delete",
           resourceSrn: `srn:sproutos:compute:${project.organizationId}:project/${projectId}`,
-          after: { ...result },
+          after: { ...result, deletionReason, serviceCutoffAt: cutoff.toISOString() },
         })
 
         if (projectJobId !== undefined) {
@@ -430,6 +493,46 @@ export function tearDownProject(clients?: TeardownClients): JobHandler {
       },
       { keepAlive },
     )
+  }
+}
+
+async function finalizeProjectMetering(
+  db: Kysely<DB>,
+  projectId: string,
+  cutoff: Date,
+  services: Array<{ id: string; kind: string }>,
+): Promise<void> {
+  await meterSandboxUsage(db, { projectIds: [projectId], through: cutoff })
+  const valkeyIds = services.filter(({ kind }) => kind === "valkey").map(({ id }) => id)
+  if (valkeyIds.length > 0) {
+    const url = requiredEnvironment("SERVICE_VALKEY_ADMIN_URL")
+    await meterValkeyQueues(db, url, {
+      backendServiceIds: valkeyIds,
+      observedAt: cutoff,
+      final: true,
+    })
+  }
+  for (const service of services.filter(({ kind }) => kind === "object_storage")) {
+    await meterObjectStorage(db, { backendServiceId: service.id, now: cutoff })
+  }
+  const postgresIds = services.filter(({ kind }) => kind === "postgres").map(({ id }) => id)
+  const neonIds =
+    postgresIds.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom("databaseInstance")
+            .select("backendServiceId")
+            .where("backendServiceId", "in", postgresIds)
+            .where("provider", "=", "neon")
+            .where("deletedAt", "is", null)
+            .execute()
+        ).map(({ backendServiceId }) => backendServiceId)
+  if (neonIds.length > 0) {
+    await meterNeonDatabases(db, neonApiConfigFromEnv(), {
+      backendServiceIds: neonIds,
+      now: cutoff,
+    })
   }
 }
 

@@ -6,6 +6,8 @@ import {
   DAYTONA_DELETE_TIMEOUT_SECONDS,
   DAYTONA_READ_MAX_ATTEMPTS,
   buildCreateParams,
+  DAYTONA_PROXY_CREDENTIAL_TTL_SECONDS,
+  daytonaProxyCredential,
   daytonaConfigFromEnv,
   deleteDaytonaSandboxAndWait,
   executeDaytonaSensitiveStream,
@@ -20,7 +22,7 @@ const config: DaytonaConfig = {
   apiKey: "k",
   organizationId: "org",
   snapshot: "sproutos/agent:1",
-  forwardProxyUrl: "https://egress.sproutos.me",
+  forwardProxyUrl: "http://egress.sproutos.me:3128",
   forwardProxyRootKey: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 }
 
@@ -104,9 +106,23 @@ describe("buildCreateParams", () => {
 
   it("routes all HTTP traffic through the authenticated platform proxy", () => {
     const proxy = new URL(buildCreateParams(config, input).outboundProxyUrl!)
-    expect(`${proxy.protocol}//${proxy.host}`).toBe("https://egress.sproutos.me")
+    expect(`${proxy.protocol}//${proxy.host}`).toBe("http://egress.sproutos.me:3128")
     expect(proxy.username).toBe(input.sandboxId)
-    expect(proxy.password).toBe("_OA0k2a79uUCiL9bKly4ERxxh9fl1NChPL2VwVzvDbU")
+    const segments = proxy.password.split(".")
+    expect(segments).toHaveLength(3)
+    const claims = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8")) as {
+      sub: string
+      organizationId: string
+      projectId: string
+      iat: number
+      exp: number
+    }
+    expect(claims).toMatchObject({
+      sub: input.sandboxId,
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+    })
+    expect(claims.exp - claims.iat).toBe(DAYTONA_PROXY_CREDENTIAL_TTL_SECONDS)
   })
 
   describe("autostop backstop", () => {
@@ -427,7 +443,7 @@ describe("Daytona sensitive stream transport", () => {
 
 describe("daytonaConfigFromEnv", () => {
   const proxyEnv = {
-    SANDBOX_FORWARD_PROXY_URL: "https://egress.sproutos.me",
+    SANDBOX_FORWARD_PROXY_URL: "http://egress.sproutos.me:3128",
     SANDBOX_FORWARD_PROXY_ROOT_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
   }
   it("refuses a missing api key", () => {
@@ -494,9 +510,10 @@ describe("daytonaConfigFromEnv", () => {
       SANDBOX_DAYTONA_SNAPSHOT: "s",
     }
     expect(() => daytonaConfigFromEnv(base)).toThrow(/SANDBOX_FORWARD_PROXY_URL/)
-    expect(() =>
-      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "http://proxy" }),
-    ).toThrow(/HTTPS origin/)
+    expect(
+      daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_URL: "https://proxy" })
+        .forwardProxyUrl,
+    ).toBe("https://proxy")
     expect(() =>
       daytonaConfigFromEnv({ ...base, ...proxyEnv, SANDBOX_FORWARD_PROXY_ROOT_KEY: "bad" }),
     ).toThrow(/32 bytes/)
@@ -516,5 +533,21 @@ describe("sandbox forward proxy credential contract", () => {
 
   it.each(fixture.vectors)("matches the Rust vector for $sandboxId", ({ sandboxId, password }) => {
     expect(sandboxForwardProxyPassword(fixture.rootKeyBase64, sandboxId)).toBe(password)
+  })
+
+  it("mints a deterministic cross-language 24-hour credential", () => {
+    expect(
+      daytonaProxyCredential(
+        fixture.rootKeyBase64,
+        {
+          sandboxId: "01930000-0000-7000-8000-000000000001",
+          organizationId: "01930000-0000-7000-8000-000000000002",
+          projectId: "01930000-0000-7000-8000-000000000003",
+        },
+        1_800_000_000,
+      ),
+    ).toBe(
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzcHJvdXRvcy1jb250cm9sLXBsYW5lIiwiYXVkIjoic3Byb3V0b3MtZGF5dG9uYS1wcm94eSIsInN1YiI6IjAxOTMwMDAwLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMSIsIm9yZ2FuaXphdGlvbklkIjoiMDE5MzAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAyIiwicHJvamVjdElkIjoiMDE5MzAwMDAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAzIiwiaWF0IjoxODAwMDAwMDAwLCJleHAiOjE4MDAwODY0MDB9.koRIqFKmPJ8Ghp8iKunuurZQmaRISE67KW1gGoRuYWA",
+    )
   })
 })

@@ -62,6 +62,15 @@ const reachable = await (async () => {
     return false
   }
 })()
+const retentionReachable = await (async () => {
+  if (!reachable) return false
+  try {
+    await sql`select 1 from credit_retention_state limit 0`.execute(db)
+    return true
+  } catch {
+    return false
+  }
+})()
 
 /** The smallest valid zip holding one handler. */
 function zip(content: string, path = "index.mjs"): Buffer {
@@ -334,6 +343,40 @@ describe.runIf(reachable)("publishing a release", () => {
     expect(row.failureReason).toContain("No build artifact")
     expect(row.hostname).toBeNull()
   })
+
+  it.runIf(retentionReachable)(
+    "does not publish a deployment queued before suspension",
+    async () => {
+      const { deploymentId, organizationId } = await seed()
+      await db
+        .insertInto("creditRetentionState")
+        .values({
+          organizationId,
+          generation: v7(),
+          status: "suspended",
+          warningStage: "suspended",
+          exhaustedAt: new Date(),
+          deleteAfter: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        })
+        .execute()
+      try {
+        await publishRelease({ lambda, valkey, bucket: BUCKET, roleArn: ROLE })(
+          jobFor(deploymentId),
+          context,
+        )
+        const row = await deploymentRow(deploymentId)
+        expect(row.status).toBe("error")
+        expect(row.failureReason).toContain("suspended for insufficient credit")
+        expect(row.hostname).toBeNull()
+        expect(row.lambdaVersion).toBeNull()
+      } finally {
+        await db
+          .deleteFrom("creditRetentionState")
+          .where("organizationId", "=", organizationId)
+          .execute()
+      }
+    },
+  )
 
   it("projects a terminal publisher failure onto the deployment row", async () => {
     const { deploymentId } = await seed({ artifactKey: "builds/missing/app.zip" })

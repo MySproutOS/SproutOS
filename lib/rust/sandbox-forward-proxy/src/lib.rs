@@ -93,6 +93,14 @@ pub trait Authorizer: Send + Sync {
     async fn lookup(&self, sandbox_id: Uuid) -> Result<Option<SandboxAuthorization>, AuthzError>;
 }
 
+/// An alternate, self-contained credential boundary for deployments that cannot reach the
+/// control-plane database. The verifier receives the Basic username and password exactly once and
+/// must return the attribution carried by that credential. When installed it replaces both the
+/// legacy derived-password check and the live-state authorizer lookup.
+pub trait CredentialVerifier: Send + Sync {
+    fn verify(&self, sandbox_id: Uuid, supplied_password: &str) -> Option<SandboxAuthorization>;
+}
+
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("sandbox authorization lookup failed")]
 pub struct AuthzError;
@@ -164,6 +172,7 @@ impl Default for Limits {
 pub struct SandboxForwardProxy {
     root_key: Arc<[u8]>,
     authorizer: Arc<dyn Authorizer>,
+    credential_verifier: Option<Arc<dyn CredentialVerifier>>,
     resolver: Arc<dyn Resolver>,
     dialer: Arc<dyn Dialer>,
     connect_overrides: Arc<BTreeMap<(String, u16), SocketAddr>>,
@@ -189,6 +198,7 @@ impl SandboxForwardProxy {
         Ok(Self {
             root_key: root_key.into(),
             authorizer,
+            credential_verifier: None,
             resolver,
             dialer,
             connect_overrides: Arc::new(BTreeMap::new()),
@@ -200,6 +210,13 @@ impl SandboxForwardProxy {
     #[must_use]
     pub fn with_meter(mut self, meter: Arc<dyn EgressMeter>) -> Self {
         self.meter = Some(meter);
+        self
+    }
+
+    /// Use a stateless credential instead of the legacy derived password plus live database lookup.
+    #[must_use]
+    pub fn with_credential_verifier(mut self, verifier: Arc<dyn CredentialVerifier>) -> Self {
+        self.credential_verifier = Some(verifier);
         self
     }
 
@@ -257,28 +274,35 @@ impl SandboxForwardProxy {
         let Some((sandbox_id, supplied_password)) = basic_credentials(&request.headers) else {
             return respond(&mut client, ResponseKind::ProxyAuthRequired).await;
         };
-        let expected = derive_password(&self.root_key, sandbox_id);
-        if supplied_password
-            .as_bytes()
-            .ct_eq(expected.as_bytes())
-            .unwrap_u8()
-            != 1
-        {
-            return respond(&mut client, ResponseKind::ProxyAuthRequired).await;
-        }
-        let authorization = match timeout(
-            self.limits.authorization_timeout,
-            self.authorizer.lookup(sandbox_id),
-        )
-        .await
-        {
-            Ok(Ok(Some(authorization)))
-                if authorization.sandbox_id == sandbox_id
-                    && authorization.state.allows_egress() =>
-            {
-                authorization
+        let authorization = if let Some(verifier) = &self.credential_verifier {
+            match verifier.verify(sandbox_id, &supplied_password) {
+                Some(authorization) if authorization.sandbox_id == sandbox_id => authorization,
+                _ => return respond(&mut client, ResponseKind::ProxyAuthRequired).await,
             }
-            _ => return respond(&mut client, ResponseKind::ProxyAuthRequired).await,
+        } else {
+            let expected = derive_password(&self.root_key, sandbox_id);
+            if supplied_password
+                .as_bytes()
+                .ct_eq(expected.as_bytes())
+                .unwrap_u8()
+                != 1
+            {
+                return respond(&mut client, ResponseKind::ProxyAuthRequired).await;
+            }
+            match timeout(
+                self.limits.authorization_timeout,
+                self.authorizer.lookup(sandbox_id),
+            )
+            .await
+            {
+                Ok(Ok(Some(authorization)))
+                    if authorization.sandbox_id == sandbox_id
+                        && authorization.state.allows_egress() =>
+                {
+                    authorization
+                }
+                _ => return respond(&mut client, ResponseKind::ProxyAuthRequired).await,
+            }
         };
         let destination = match request.destination() {
             Ok(destination) => destination,
@@ -552,7 +576,7 @@ impl RequestHead {
             return Err(());
         }
         let port = authority.port_u16().unwrap_or(80);
-        if port == 0 {
+        if port != 80 {
             return Err(());
         }
         Ok(Destination {
@@ -1280,6 +1304,23 @@ mod tests {
             (forwarded_bytes.len() + upstream_response.len()) as u64
         );
         assert_eq!(observations[0].protocol, "http");
+    }
+
+    #[tokio::test]
+    async fn absolute_form_http_refuses_nonstandard_ports() {
+        let root = &ROOT;
+        let (proxy, dialed, _) = make_proxy(
+            root,
+            Ok(Some(authorization(SandboxState::Running))),
+            vec!["1.1.1.1".parse().unwrap()],
+        );
+        let response = exchange(
+            proxy,
+            request(root, "http://example.com:8080/", "").as_bytes(),
+        )
+        .await;
+        assert!(response.starts_with(b"HTTP/1.1 400"));
+        assert!(dialed.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

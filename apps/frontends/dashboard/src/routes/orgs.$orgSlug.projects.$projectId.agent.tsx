@@ -34,6 +34,7 @@ import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page
 import { SandboxPreviewPanel } from "@frontends/dashboard/components/sandbox/preview-panel"
 import {
   type AgentEvent,
+  agentSessionIsRunning,
   ensureSandboxRunning,
   latestRestorableAgentSession,
   loadAgentTranscript,
@@ -53,8 +54,7 @@ export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/agent")
 })
 
 function AgentChatRoute() {
-  const search = Route.useSearch()
-  return <AgentChat key={search.session ?? "new"} />
+  return <AgentChat />
 }
 
 /** What the transcript is made of. Tool calls are collapsed into one line each. */
@@ -81,6 +81,7 @@ function AgentChat() {
   const [confirmingFinish, setConfirmingFinish] = useState(false)
   const [finishError, setFinishError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
+  const sessionIdRef = useRef<string | null>(search.session ?? null)
   const adoptedExistingSession = useRef(search.session !== undefined)
   const routeScope = useRef(`${orgSlug}/${projectId}`)
   const tail = useRef<HTMLDivElement>(null)
@@ -91,11 +92,28 @@ function AgentChat() {
 
   useEffect(() => () => abort.current?.abort(), [])
 
+  /*
+    A session belongs in the URL so reload, Back, and Forward restore the same conversation. Do
+    not key the component by that URL value: the first send creates the session and then updates
+    the URL, and remounting at that point aborts the stream that is still writing the first turn.
+
+    `selectSession` updates the ref before navigation, so its own URL update is a no-op here. A
+    browser-history change has a different value and restores the selected durable transcript.
+  */
+  useEffect(() => {
+    const nextSessionId = search.session ?? null
+    if (sessionIdRef.current === nextSessionId) return
+    sessionIdRef.current = nextSessionId
+    setSessionId(nextSessionId)
+    setBubbles([])
+  }, [search.session])
+
   useEffect(() => {
     const nextScope = `${orgSlug}/${projectId}`
     if (routeScope.current === nextScope) return
     routeScope.current = nextScope
     adoptedExistingSession.current = false
+    sessionIdRef.current = null
     setSessionId(null)
     setBubbles([])
   }, [orgSlug, projectId])
@@ -137,7 +155,7 @@ function AgentChat() {
           if (turn.error !== null) restored.push({ kind: "failed", message: turn.error })
         }
         setBubbles(restored)
-        setRunning(transcript.session.status === "active")
+        setRunning(agentSessionIsRunning(transcript.session.status, sandbox.data?.state))
       } catch {
         if (!cancelled)
           setBubbles([{ kind: "failed", message: "The conversation could not be loaded" }])
@@ -149,15 +167,17 @@ function AgentChat() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [orgSlug, projectId, sessionId])
+  }, [orgSlug, projectId, sandbox.data?.state, sessionId])
 
-  function selectSession(id: string | null) {
+  function selectSession(id: string | null, draft?: string, preserveBubbles = false) {
+    const changed = sessionIdRef.current !== id
+    sessionIdRef.current = id
     setSessionId(id)
-    setBubbles([])
+    if (changed && !preserveBubbles) setBubbles([])
     void navigate({
       to: "/orgs/$orgSlug/projects/$projectId/agent",
       params: { orgSlug, projectId },
-      search: id === null ? {} : { session: id },
+      search: id === null ? {} : { session: id, ...(draft === undefined ? {} : { prompt: draft }) },
       replace: false,
     })
   }
@@ -174,9 +194,16 @@ function AgentChat() {
     abort.current = controller
 
     try {
+      // Give the conversation a durable identity before Daytona starts. Provisioning can take
+      // minutes; with the session and draft in the URL, Reload/Back/Forward never discard the
+      // message the user just sent while the workspace is still booting.
+      const id = sessionId ?? (await createSession(text))
+      if (sessionId === null) selectSession(id, text, true)
+
       await ensureSandboxRunning({ orgSlug, projectId }, controller.signal)
       await sandbox.refetch()
-      const id = sessionId ?? (await createSession())
+      // From this point the messages endpoint persists the user turn, so the URL no longer needs
+      // the draft fallback.
       selectSession(id)
 
       await streamAgentTurn(
@@ -365,6 +392,9 @@ function AgentChat() {
                 void finishSandbox
                   .finish()
                   .then(() => {
+                    abort.current?.abort()
+                    abort.current = null
+                    setRunning(false)
                     setConfirmingFinish(false)
                     selectSession(null)
                   })

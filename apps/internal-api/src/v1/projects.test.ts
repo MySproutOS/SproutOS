@@ -44,11 +44,21 @@ async function call(
   path: string,
   user: TestUser | null,
   body?: unknown,
+  options: { supplyDefaultProjectRegion?: boolean } = {},
 ): Promise<{ status: number; json: Json }> {
+  const isProjectCreate = method === "POST" && /^\/v1\/orgs\/[^/]+\/projects$/.test(path)
+  const requestBody =
+    isProjectCreate &&
+    options.supplyDefaultProjectRegion !== false &&
+    typeof body === "object" &&
+    body !== null &&
+    !Object.hasOwn(body, "region")
+      ? { ...body, region: "us-east-1" }
+      : body
   const response = await app.request(path, {
     method,
     headers: user === null ? { "Content-Type": "application/json" } : authHeaders(user),
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
   })
 
   const text = await response.text()
@@ -224,10 +234,31 @@ describe.skipIf(!reachable)("project routes", () => {
   })
 
   describe("creating a project", () => {
-    it("forks a store listing through the one project entry point", async () => {
+    it("requires a non-null region", async () => {
+      const missing = await call(
+        "POST",
+        `/v1/orgs/${orgA}/projects`,
+        alice,
+        { name: "Missing Region", source: { type: "blank" } },
+        { supplyDefaultProjectRegion: false },
+      )
+      const explicitNull = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+        name: "Null Region",
+        region: null,
+        source: { type: "blank" },
+      })
+
+      expect(missing.status).toBe(400)
+      expect(explicitNull.status).toBe(400)
+    })
+
+    it("copies a store listing into an unrelated repository through the project entry point", async () => {
       const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
         name: "Forked Fixture",
         source: { type: "store", storeListingId: listingId, ownerLogin: "acme-test" },
+        autoUpdateCadence: "nine_months",
+        autoUpdateMode: "auto_merge",
+        syncUpstreamNow: true,
       })
 
       expect(response.status).toBe(201)
@@ -241,11 +272,31 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(project.slug).toBe("forked-fixture")
       expect(project.state).toBe("creating")
       expect(project.storeListingId).toBe(listingId)
-      expect(project.repositoryProvenance).toBe("fork")
+      expect(project.repositoryProvenance).toBe("copy")
+      expect(project.autoUpdateCadence).toBe("nine_months")
+      expect(project.autoUpdateMode).toBe("auto_merge")
 
-      expect(job.kind).toBe("fork")
+      expect(job.kind).toBe("provision")
       expect(job.state).toBe("queued")
       expect((job.steps as unknown[]).length).toBeGreaterThan(0)
+
+      const queued = await db
+        .selectFrom("projectJob")
+        .select("details")
+        .where("id", "=", job.id as string)
+        .executeTakeFirstOrThrow()
+      expect(queued.details).toEqual({ syncUpstreamNow: true })
+
+      const repository = await db
+        .selectFrom("repository")
+        .select(["isFork", "upstreamFullName", "upstreamStrategy"])
+        .where("id", "=", repositoryId)
+        .executeTakeFirstOrThrow()
+      expect(repository).toMatchObject({
+        isFork: false,
+        upstreamFullName: `example/forkable-${listingId.slice(-8)}`,
+        upstreamStrategy: "snapshot_copy",
+      })
 
       const install = await db
         .selectFrom("projectTemplateInstall")
@@ -425,6 +476,94 @@ describe.skipIf(!reachable)("project routes", () => {
         alice,
       )
       expect(bogus.status).toBe(404)
+    })
+
+    it("retries a failed provision against the repository GitHub already created exactly once", async () => {
+      const retryRepositoryId = v7()
+      const retryProjectId = v7()
+      const retryJobId = v7()
+      await db
+        .insertInto("repository")
+        .values({
+          id: retryRepositoryId,
+          organizationId: orgAId,
+          githubRepoId: "987654321",
+          ownerLogin: "acme-test",
+          name: `retry-${retryProjectId.slice(-8)}`,
+          provenance: "copy",
+        })
+        .execute()
+      await db
+        .insertInto("project")
+        .values({
+          id: retryProjectId,
+          organizationId: orgAId,
+          repositoryId: retryRepositoryId,
+          name: "Retry Fixture",
+          slug: `retry-${retryProjectId.slice(-8)}`,
+          state: "failed",
+          stateReason: "first push failed",
+        })
+        .execute()
+      await db
+        .insertInto("projectJob")
+        .values({
+          id: retryJobId,
+          organizationId: orgAId,
+          projectId: retryProjectId,
+          repositoryId: retryRepositoryId,
+          kind: "provision",
+          state: "failed",
+          errorCode: "GitHubTransportError",
+          errorMessage: "first push failed",
+          finishedAt: new Date(),
+          steps: JSON.stringify([
+            { key: "create_repository", label: "Creating the repository", state: "failed" },
+          ]),
+        })
+        .execute()
+
+      try {
+        const first = await call(
+          "POST",
+          `/v1/orgs/${orgA}/projects/${retryProjectId}/jobs/${retryJobId}/retry`,
+          alice,
+        )
+        const second = await call(
+          "POST",
+          `/v1/orgs/${orgA}/projects/${retryProjectId}/jobs/${retryJobId}/retry`,
+          alice,
+        )
+
+        expect(first.status).toBe(200)
+        expect(second.status).toBe(200)
+        expect(first.json).toMatchObject({ id: retryJobId, state: "queued", attempt: 1 })
+        const [project, background] = await Promise.all([
+          db
+            .selectFrom("project")
+            .select(["state", "stateReason"])
+            .where("id", "=", retryProjectId)
+            .executeTakeFirstOrThrow(),
+          db
+            .selectFrom("backgroundJob")
+            .select(["kind", "payload"])
+            .where("idempotencyKey", "=", `project.provision:retry:${retryJobId}:1`)
+            .execute(),
+        ])
+        expect(project).toEqual({ state: "provisioning", stateReason: null })
+        expect(background).toHaveLength(1)
+        expect(background[0]).toMatchObject({
+          kind: "project.provision",
+          payload: { projectJobId: retryJobId, userId: alice.id },
+        })
+      } finally {
+        await db
+          .deleteFrom("backgroundJob")
+          .where("idempotencyKey", "=", `project.provision:retry:${retryJobId}:1`)
+          .execute()
+        await db.deleteFrom("project").where("id", "=", retryProjectId).execute()
+        await db.deleteFrom("repository").where("id", "=", retryRepositoryId).execute()
+      }
     })
 
     it("refuses to fork a listing that is not published", async () => {
@@ -1073,25 +1212,25 @@ describe.skipIf(!reachable)("project routes", () => {
         name: "Explicit Choice",
         rootDir: "apps/explicit",
         autoUpdateEnabled: true,
-        autoUpdateCadence: "weekly",
+        autoUpdateCadence: "one_week",
         autoUpdateMode: "auto_merge",
         source: { type: "repository", repositoryId },
       })
 
       const project = response.json.project as Json
       expect(project.autoUpdateEnabled).toBe(true)
-      expect(project.autoUpdateCadence).toBe("weekly")
+      expect(project.autoUpdateCadence).toBe("one_week")
       expect(project.autoUpdateMode).toBe("auto_merge")
 
       const updated = await call(
         "PATCH",
         `/v1/orgs/${orgA}/projects/${project.id as string}`,
         alice,
-        { autoUpdateEnabled: false, autoUpdateCadence: "monthly" },
+        { autoUpdateEnabled: false, autoUpdateCadence: "one_month" },
       )
       expect(updated.status).toBe(200)
       expect(updated.json.autoUpdateEnabled).toBe(false)
-      expect(updated.json.autoUpdateCadence).toBe("monthly")
+      expect(updated.json.autoUpdateCadence).toBe("one_month")
 
       await call("DELETE", `/v1/orgs/${orgA}/projects/${project.id as string}`, alice)
       await db.deleteFrom("agentCredential").where("id", "=", credentialId).execute()
@@ -1388,6 +1527,101 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(created.status).toBe(201)
       return { id: (created.json.project as Json).id as string, repositoryId: repository }
     }
+
+    it("includes the serving mode in the list used by custom-domain selection", async () => {
+      const { id: projectId } = await ownProject("Domain Eligible")
+      await db
+        .updateTable("project")
+        .set({ servingMode: "serverless" })
+        .where("id", "=", projectId)
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+
+      expect(entry?.servingMode).toBe("serverless")
+    })
+
+    it("prefers a serving custom domain over the generated deployment domain", async () => {
+      const { id: projectId } = await ownProject("Custom Domain Primary")
+      const customHostname = `${projectId}.customer.example.test`
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId,
+          kind: "production",
+          gitSha: "c".repeat(40),
+          status: "ready",
+          url: "https://generated.sproutos.run",
+          hostname: "generated.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: deploymentId })
+        .where("id", "=", projectId)
+        .execute()
+      await db
+        .insertInto("customDomain")
+        .values({
+          id: v7(),
+          organizationId: orgAId,
+          projectId,
+          hostname: customHostname,
+          verificationToken: "custom-primary-token",
+          status: "active",
+        })
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      expect(entry?.hostname).toBe(customHostname)
+      expect(entry?.url).toBe(`https://${customHostname}`)
+
+      const detail = await call("GET", `/v1/orgs/${orgA}/projects/${projectId}`, alice)
+      expect(detail.json.hostname).toBe(customHostname)
+      expect(detail.json.url).toBe(`https://${customHostname}`)
+    })
+
+    it("does not expose a deployment domain for a workflow runtime", async () => {
+      const { id: projectId } = await ownProject("Domainless Workflow")
+      const deploymentId = v7()
+      await db
+        .insertInto("deployment")
+        .values({
+          id: deploymentId,
+          projectId,
+          kind: "production",
+          gitSha: "d".repeat(40),
+          status: "ready",
+          url: "https://workflow.sproutos.run",
+          hostname: "workflow.sproutos.run",
+        })
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ kind: "workflow", liveDeploymentId: deploymentId })
+        .where("id", "=", projectId)
+        .execute()
+
+      const list = await call("GET", `/v1/orgs/${orgA}/projects`, alice)
+      const entry = (list.json.data as Array<Record<string, unknown>>).find(
+        (project) => project.id === projectId,
+      )
+      expect(entry?.hostname).toBeNull()
+      expect(entry?.url).toBeNull()
+
+      const detail = await call("GET", `/v1/orgs/${orgA}/projects/${projectId}`, alice)
+      expect(detail.json.hostname).toBeNull()
+      expect(detail.json.url).toBeNull()
+    })
+
     it("reports zero cost for a project with no metered usage", async () => {
       const { id: projectId } = await ownProject("Unmetered")
 
@@ -1504,7 +1738,12 @@ describe.skipIf(!reachable)("project routes", () => {
       const beforeEntry = (before.json.data as Array<Record<string, unknown>>).find(
         (project) => project.id === projectId,
       )
-      expect(beforeEntry?.region).toBeNull()
+      expect(beforeEntry?.region).toBe("us-east-1")
+
+      const cleared = await call("PATCH", `/v1/orgs/${orgA}/projects/${projectId}`, alice, {
+        region: null,
+      })
+      expect(cleared.status).toBe(400)
 
       const region = await db
         .selectFrom("region")

@@ -12,6 +12,19 @@ import { baseUrl } from "@lib/api-client/index"
 
 export type CreditBalance = {
   balanceMicros: bigint
+  retentionReserveMicros: bigint
+  spendableMicros: bigint
+  requiredReloadMicros: bigint
+  retentionStatus: "active" | "suspended" | "deleting" | "data_deleted"
+  warningStage:
+    | "safe"
+    | "warning"
+    | "critical"
+    | "suspended"
+    | "deletion_imminent"
+    | "deleting"
+    | "data_deleted"
+  deleteAfter: Date | null
   /** 0-100, drives the meter under the balance. */
   percentRemaining: number
   runwayLabel: string
@@ -37,6 +50,7 @@ const CATEGORY_ORDER = [
   "Postgres",
   "Cache",
   "Queue",
+  "Object storage",
   "AI",
   "Sites",
   "Workflows",
@@ -47,6 +61,7 @@ const CATEGORY_ORDER = [
 export function usageCategory(dimension: string): string {
   if (dimension.startsWith("sandbox_")) return "Sandbox"
   if (dimension.startsWith("db_")) return "Postgres"
+  if (dimension.startsWith("object_storage_")) return "Object storage"
   if (dimension === "valkey_queue_byte_second" || dimension === "workflow_job_enqueued") {
     return "Queue"
   }
@@ -177,7 +192,9 @@ export function useCreditBalance(orgSlug: string) {
   const available = balance.data === undefined ? 0n : BigInt(balance.data.availableMicroUsd)
   const burnPerDay = usage.data === undefined ? 0n : BigInt(usage.data.burnPerDayMicroUsd)
 
-  const runway = creditRunway(available, burnPerDay)
+  const spendable =
+    balance.data === undefined ? 0n : BigInt(balance.data.spendableAboveReserveMicroUsd)
+  const runway = creditRunway(spendable, burnPerDay)
 
   return {
     isPending: balance.isPending || usage.isPending,
@@ -191,6 +208,13 @@ export function useCreditBalance(orgSlug: string) {
         ? undefined
         : ({
             balanceMicros: available,
+            retentionReserveMicros: BigInt(balance.data.retentionReserveMicroUsd),
+            spendableMicros: spendable,
+            requiredReloadMicros: BigInt(balance.data.requiredReloadMicroUsd),
+            retentionStatus: balance.data.retentionStatus,
+            warningStage: balance.data.warningStage,
+            deleteAfter:
+              balance.data.deleteAfter === null ? null : new Date(balance.data.deleteAfter),
             percentRemaining: runway.percentRemaining,
             runwayLabel: runway.label,
           } satisfies CreditBalance),

@@ -213,6 +213,7 @@ pub async fn serve(
                                 && matches!(
                                     verb.as_str(),
                                     "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                        | "SSUBSCRIBE" | "SUNSUBSCRIBE"
                                 )
                             {
                                 pending.push_back(Pending::Local(error(
@@ -254,15 +255,14 @@ pub async fn serve(
                                     // `args[1]`: for EVAL that argument is the script and the first
                                     // key follows `numkeys`. `queue_of` accepts both the published
                                     // BullMQ form and a Celery key the proxy just prefixed.
-                                    let queue = if adds_work(&verb) {
-                                        namespaced_keys.first().and_then(|key| {
-                                            queue_of(&command.args[key.index], &prefix)
-                                        })
-                                    } else {
-                                        None
-                                    };
+                                    let queue = namespaced_keys.first().and_then(|key| {
+                                        let first_key = &command.args[key.index];
+                                        adds_work(&verb, first_key, &prefix)
+                                            .then(|| queue_of(first_key, &prefix))
+                                            .flatten()
+                                    });
                                     upstream_write.write_all(&command.encode()).await?;
-                                    let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE") {
+                                    let rewrite = if matches!(verb.as_str(), "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE") {
                                         ReplyRewrite::Pubsub
                                     } else if matches!(verb.as_str(), "XREAD" | "XREADGROUP") {
                                         ReplyRewrite::Streams {
@@ -297,6 +297,7 @@ pub async fn serve(
                                     if matches!(
                                         verb.as_str(),
                                         "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE"
+                                            | "SSUBSCRIBE" | "SUNSUBSCRIBE"
                                     ) {
                                         mode = if subscriptions.is_empty() && patterns.is_empty() {
                                             ConnectionMode::Normal
@@ -531,11 +532,11 @@ fn update_pubsub_state(
     patterns: &mut BTreeSet<Vec<u8>>,
 ) -> Result<usize, &'static str> {
     let target = match verb {
-        "SUBSCRIBE" | "UNSUBSCRIBE" => subscriptions,
+        "SUBSCRIBE" | "UNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE" => subscriptions,
         "PSUBSCRIBE" | "PUNSUBSCRIBE" => patterns,
         _ => return Ok(1),
     };
-    let subscribing = matches!(verb, "SUBSCRIBE" | "PSUBSCRIBE");
+    let subscribing = matches!(verb, "SUBSCRIBE" | "PSUBSCRIBE" | "SSUBSCRIBE");
     if subscribing && args.len() < 2 {
         return Err("subscribe requires at least one channel");
     }

@@ -25,6 +25,7 @@ import {
   crudProjectUpdateSuggestion,
   crudStoreListingEvent,
   fetchAgentCredential,
+  fetchCreditRetentionState,
   fetchDeploymentCatalogueImport,
   fetchGithubInstallation,
   fetchProject,
@@ -42,9 +43,16 @@ import {
   type ProjectJobKind,
   type ProjectJobStep,
   provisionProject,
+  retryFailedProvision,
   type RepositoryPlan,
 } from "@lib/dao"
-import { createGitHubClient, getRepositoryById, organizationGitHubCredential } from "@lib/github"
+import {
+  createGitHubClient,
+  GitHubNotFoundError,
+  getRepository,
+  getRepositoryById,
+  organizationGitHubCredential,
+} from "@lib/github"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { srnFor } from "@lib/srn"
 import { db } from "@sproutos/db"
@@ -112,6 +120,7 @@ const notFoundResponse = {
 type ProjectRow = {
   id: string
   repositoryId: string
+  kind: string
   regionId?: string | null
   primaryChildProjectId?: string | null
   createdAt: Date
@@ -122,15 +131,15 @@ type ProjectRow = {
  * Adds what the project list actually shows: what it has cost, where it runs, and whether its
  * upstream has moved.
  *
- * Five lookups for the whole page rather than five per project. A dashboard with thirty projects
- * would otherwise make 150 round trips to render one screen, and none of them needs to know about
- * any single project to answer for all of them.
+ * Batched lookups for the whole page rather than per-project lookups. A dashboard with thirty
+ * projects would otherwise make hundreds of round trips to render one screen, and none needs to
+ * know about any single project to answer for all of them.
  */
 async function enrich<T extends ProjectRow>(organizationId: string, rows: readonly T[]) {
   if (rows.length === 0) return []
   const projectIds = rows.map((row) => row.id)
 
-  const [rated, regions, behind, live, managers, primaryTargets] = await Promise.all([
+  const [rated, regions, behind, live, domains, managers, primary] = await Promise.all([
     /*
       Rated at read time against the price book in force, never stored. A stored cost is wrong the
       moment a rate changes, and wrong in a way nobody can reconstruct.
@@ -190,6 +199,21 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .where("project.id", "in", projectIds)
       .where("deployment.deletedAt", "is", null)
       .execute(),
+    /*
+      A serving custom hostname is the customer's primary address.
+
+      The group-primary query already knew this, but ordinary projects did not: the list therefore
+      showed the generated sproutos.run deployment while the project detail showed its custom
+      domain. A renewal warning still represents a serving certificate and must not cause fallback.
+    */
+    db
+      .selectFrom("customDomain")
+      .select(["projectId", "hostname", "createdAt"])
+      .where("projectId", "in", projectIds)
+      .where("status", "in", ["active", "renewal_warning"])
+      .where("deletedAt", "is", null)
+      .orderBy("createdAt", "asc")
+      .execute(),
     db
       .selectFrom("project")
       .innerJoin("oauthGrant", "oauthGrant.id", "project.createdByOauthGrantId")
@@ -204,11 +228,12 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .leftJoin("customDomain", (join) =>
         join
           .onRef("customDomain.projectId", "=", "childProject.id")
-          .on("customDomain.status", "=", "active")
+          .on("customDomain.status", "in", ["active", "renewal_warning"])
           .on("customDomain.deletedAt", "is", null),
       )
       .select([
         "groupProject.id as groupProjectId",
+        "childProject.kind as childKind",
         "deployment.url as url",
         "deployment.hostname as hostname",
         "customDomain.hostname as customHostname",
@@ -219,7 +244,7 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
       .execute(),
   ])
 
-  // The join is one-to-one today; keeping the map makes this enrichment match the other lookups.
+  // Keeping maps makes every enrichment a single lookup while serializing the project rows.
   const regionByProject = new Map<string, string>()
   for (const row of regions) {
     if (row.projectId !== null && !regionByProject.has(row.projectId)) {
@@ -228,6 +253,10 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
   }
   const behindByRepository = new Map(behind.map((row) => [row.repositoryId, row.behindBy]))
   const liveByProject = new Map(live.map((row) => [row.projectId, row]))
+  // Rows are oldest-first and later assignments win, matching the detail screen's newest domain.
+  const customHostnameByProject = new Map(
+    domains.map((domain) => [domain.projectId, domain.hostname]),
+  )
   const managerByProject = new Map(
     managers.map((row) => [row.projectId, { clientId: row.clientId, name: row.name }]),
   )
@@ -235,8 +264,8 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     string,
     { primaryUrl: string | null; primaryHostname: string | null }
   >()
-  for (const target of primaryTargets) {
-    if (primaryByGroup.has(target.groupProjectId)) continue
+  for (const target of primary) {
+    if (target.childKind === "workflow") continue
     const hostname = target.customHostname ?? target.hostname ?? null
     primaryByGroup.set(target.groupProjectId, {
       primaryHostname: hostname,
@@ -254,8 +283,16 @@ async function enrich<T extends ProjectRow>(organizationId: string, rows: readon
     costMicroUsd: (rated.get(row.id)?.total ?? 0n).toString(),
     region: regionByProject.get(row.id) ?? null,
     hasUpstreamUpdate: (behindByRepository.get(row.repositoryId) ?? 0) > 0,
-    url: liveByProject.get(row.id)?.url ?? null,
-    hostname: liveByProject.get(row.id)?.hostname ?? null,
+    url:
+      row.kind === "workflow"
+        ? null
+        : customHostnameByProject.has(row.id)
+          ? `https://${customHostnameByProject.get(row.id)}`
+          : (liveByProject.get(row.id)?.url ?? null),
+    hostname:
+      row.kind === "workflow"
+        ? null
+        : (customHostnameByProject.get(row.id) ?? liveByProject.get(row.id)?.hostname ?? null),
     managedByOauthApp: managerByProject.get(row.id) ?? null,
     primaryUrl: primaryByGroup.get(row.id)?.primaryUrl ?? null,
     primaryHostname: primaryByGroup.get(row.id)?.primaryHostname ?? null,
@@ -411,6 +448,7 @@ function serializeProject(
     storeListingId: project.storeListingId,
     agentCredentialId: project.agentCredentialId,
     isGroup: project.isGroup,
+    servingMode: project.servingMode,
     parentProjectId: project.parentProjectId,
     managedByOauthApp,
     primaryChildProjectId: project.primaryChildProjectId,
@@ -608,13 +646,19 @@ async function resolveSuggestion(
  */
 async function resolveOwnRepository(
   organizationId: string,
-  source: { repositoryId?: string; githubRepoId?: string },
+  source: { repositoryId?: string; githubRepoId?: string; upstreamFullName?: string },
 ): Promise<{ id: string; defaultBranch: string } | undefined> {
   if (source.repositoryId !== undefined) {
-    return await fetchRepository(db).getInOrganization(organizationId, source.repositoryId, [
+    const known = await fetchRepository(db).getInOrganization(organizationId, source.repositoryId, [
       "id",
       "defaultBranch",
+      "githubRepoId",
     ])
+    if (known === undefined || source.upstreamFullName === undefined) return known
+    return await resolveOwnRepository(organizationId, {
+      githubRepoId: String(known.githubRepoId),
+      upstreamFullName: source.upstreamFullName,
+    })
   }
 
   const githubRepoId = source.githubRepoId
@@ -623,8 +667,16 @@ async function resolveOwnRepository(
   const known = await fetchRepository(db).getByGithubRepoId(organizationId, githubRepoId, [
     "id",
     "defaultBranch",
+    "upstreamFullName",
   ])
-  if (known) return known
+  if (known && source.upstreamFullName === undefined) return known
+  if (
+    known !== undefined &&
+    known.upstreamFullName !== null &&
+    known.upstreamFullName !== source.upstreamFullName
+  ) {
+    return undefined
+  }
 
   const repositoryId = Number(githubRepoId)
   if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) return undefined
@@ -632,9 +684,50 @@ async function resolveOwnRepository(
     purpose: "project-repository-read",
     repositoryId,
   })
-  if (credential === undefined) return undefined
+  if (credential === undefined || credential.kind !== "installation") return undefined
 
-  const upstream = await getRepositoryById(createGitHubClient(), credential, githubRepoId)
+  /*
+    The installation is provenance too. Without this foreign key the import succeeds and the
+    project points at the right fork, but every later headless operation fails because it cannot
+    mint the repository-scoped credential that authorized this read.
+  */
+  const installation = await fetchGithubInstallation(db).getByInstallationId(
+    organizationId,
+    String(credential.installationId),
+    ["id"],
+  )
+  if (installation === undefined) return undefined
+
+  const client = createGitHubClient()
+  const repository = await getRepositoryById(client, credential, githubRepoId)
+  let manualUpstream: { id: number; fullName: string; defaultBranch: string } | null = null
+  if (repository.parent === null && source.upstreamFullName !== undefined) {
+    const [owner, name] = source.upstreamFullName.split("/")
+    if (owner === undefined || name === undefined) return undefined
+    let inspected
+    try {
+      inspected = await getRepository(client, credential, owner, name)
+    } catch (error) {
+      if (error instanceof GitHubNotFoundError) return undefined
+      throw error
+    }
+    if (inspected.id === repository.id) return undefined
+    manualUpstream = {
+      id: inspected.id,
+      fullName: inspected.fullName,
+      defaultBranch: inspected.defaultBranch,
+    }
+  }
+
+  if (known) {
+    await crudRepository(db).update(known.id, {
+      upstreamGithubRepoId: manualUpstream?.id ?? null,
+      upstreamFullName: manualUpstream?.fullName ?? null,
+      upstreamDefaultBranch: manualUpstream?.defaultBranch ?? null,
+      upstreamStrategy: manualUpstream === null ? null : "manual",
+    })
+    return known
+  }
 
   /*
     `provenance: "imported"` and a real `github_repo_id`, so provisioning reads it rather than
@@ -642,13 +735,20 @@ async function resolveOwnRepository(
   */
   return await crudRepository(db).create({
     organizationId,
-    githubRepoId: String(upstream.id),
-    ownerLogin: upstream.ownerLogin,
-    name: upstream.name,
-    defaultBranch: upstream.defaultBranch,
-    private: upstream.private,
-    isFork: upstream.fork,
+    githubInstallationId: installation.id,
+    githubRepoId: String(repository.id),
+    ownerLogin: repository.ownerLogin,
+    name: repository.name,
+    defaultBranch: repository.defaultBranch,
+    private: repository.private,
+    isFork: repository.parent !== null,
     provenance: "imported",
+    upstreamGithubRepoId: repository.parent?.id ?? manualUpstream?.id ?? null,
+    upstreamFullName: repository.parent?.fullName ?? manualUpstream?.fullName ?? null,
+    upstreamDefaultBranch:
+      repository.parent?.defaultBranch ?? manualUpstream?.defaultBranch ?? null,
+    upstreamStrategy:
+      repository.parent === null ? (manualUpstream === null ? null : "manual") : "github_fork",
   })
 }
 
@@ -667,6 +767,7 @@ async function ensureRepositoryGroup(
     productionBranch: string | null
     repositoryId: string
     createdByOauthGrantId: string | null
+    regionId: string
   },
 ): Promise<string | null> {
   try {
@@ -710,6 +811,7 @@ async function ensureRepositoryGroup(
         // unique index excludes groups from, so these are recorded rather than meaningful.
         productionBranch: input.productionBranch ?? "main",
         repositoryId: input.repositoryId,
+        regionId: input.regionId,
         rootDir: ".",
         slug,
         state: "ready",
@@ -787,6 +889,10 @@ const app = new Hono()
           content: { "application/json": { schema: resolver(projectSchemaCreateResponse) } },
         },
         400: { description: "Invalid source, slug, or missing GitHub account", ...errorResponse },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         403: { description: "Caller lacks project:create", ...errorResponse },
         404: notFoundResponse,
         409: {
@@ -804,6 +910,15 @@ const app = new Hono()
       const json = c.req.valid("json")
       const source = json.source
 
+      if (await fetchCreditRetentionState(db).isUsageSuspended(organization.id)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before creating a project. Hosted data remains protected during the 48-hour retention window.",
+        )
+      }
+
       if (source.type !== "store" && (json.templateInputs?.length ?? 0) > 0) {
         return throwBadRequest(
           c,
@@ -813,16 +928,13 @@ const app = new Hono()
         )
       }
 
-      let selectedRegion =
-        json.region === undefined || json.region === null
-          ? undefined
-          : await db
-              .selectFrom("region")
-              .select("id")
-              .where("code", "=", json.region)
-              .where("isActive", "=", true)
-              .executeTakeFirst()
-      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+      const selectedRegion = await db
+        .selectFrom("region")
+        .select("id")
+        .where("code", "=", json.region)
+        .where("isActive", "=", true)
+        .executeTakeFirst()
+      if (selectedRegion === undefined) {
         return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
           target: "region",
         })
@@ -905,7 +1017,7 @@ const app = new Hono()
         if (!listing || listing.status !== "published") {
           return throwBadRequest(
             c,
-            "Listing is not available to fork",
+            "Listing is not available to copy",
             ErrorCode.ResourceNotFound,
             {
               target: "source.storeListingId",
@@ -917,7 +1029,7 @@ const app = new Hono()
         if (ownerLogin === undefined) {
           return throwBadRequest(
             c,
-            "No GitHub account to fork into. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
+            "No GitHub account to copy into. Sign in with GitHub, install the SproutOS GitHub App, or name the account with source.ownerLogin.",
             ErrorCode.ValidationFailed,
             { target: "source.ownerLogin" },
           )
@@ -986,19 +1098,20 @@ const app = new Hono()
         }
         listingRootDir = listing.rootDir
         listingDockerfilePath = listing.dockerfilePath
-        jobKind = "fork"
+        jobKind = "provision"
         productionBranch ??= listing.defaultBranch
         plan = {
           defaultBranch: listing.defaultBranch,
           githubInstallationId: defaultInstallation?.id ?? null,
-          isFork: true,
+          isFork: false,
           mode: "create",
           name: source.repositoryName ?? listing.slug,
           ownerLogin,
           private: source.private ?? true,
-          provenance: "fork",
+          provenance: "copy",
           upstreamDefaultBranch: listing.defaultBranch,
           upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+          upstreamStrategy: "snapshot_copy",
         }
       } else {
         const ownerLogin = source.ownerLogin ?? forkDestination
@@ -1025,6 +1138,7 @@ const app = new Hono()
           private: source.private ?? true,
           provenance: fromTemplate ? "template" : "new",
           upstreamFullName: fromTemplate ? `${source.templateOwner}/${source.templateRepo}` : null,
+          upstreamStrategy: fromTemplate ? "snapshot_copy" : null,
         }
       }
 
@@ -1063,6 +1177,7 @@ const app = new Hono()
           productionBranch,
           repositoryId: plan.id,
           createdByOauthGrantId: c.var.auth.kind === "session" ? null : c.var.auth.oauthGrantId,
+          regionId: selectedRegion.id,
         })
       }
 
@@ -1085,9 +1200,6 @@ const app = new Hono()
             ErrorCode.ValidationFailed,
             { target: "parentProjectId" },
           )
-        }
-        if (json.region === undefined && parent.regionId !== null) {
-          selectedRegion = { id: parent.regionId }
         }
       }
 
@@ -1145,8 +1257,9 @@ const app = new Hono()
         agentCredentialId: credential?.id ?? null,
         audit: auditContext(c),
         autoUpdateEnabled: json.autoUpdateEnabled ?? autoUpdateDefaultFor(credential?.kind),
-        autoUpdateCadence: json.autoUpdateCadence ?? "daily",
+        autoUpdateCadence: json.autoUpdateCadence ?? "one_week",
         autoUpdateMode: json.autoUpdateMode ?? "suggest",
+        syncUpstreamNow: json.syncUpstreamNow,
         idempotencyKey:
           json.idempotencyKey === undefined
             ? null
@@ -1166,7 +1279,7 @@ const app = new Hono()
         ...(templateInstall === undefined ? {} : { templateInstall }),
         isGroup: json.isGroup ?? false,
         parentProjectId,
-        regionId: selectedRegion?.id ?? null,
+        regionId: selectedRegion.id,
       })
 
       /*
@@ -1296,6 +1409,7 @@ const app = new Hono()
           "isFork",
           "provenance",
           "upstreamFullName",
+          "upstreamStrategy",
           "githubInstallationId",
         ],
       )
@@ -1326,6 +1440,7 @@ const app = new Hono()
           private: repository.private,
           provenance: repository.provenance,
           upstreamFullName: repository.upstreamFullName,
+          upstreamStrategy: repository.upstreamStrategy,
         },
       })
     },
@@ -1412,7 +1527,7 @@ const app = new Hono()
       }
 
       const selectedRegion =
-        json.region === undefined || json.region === null
+        json.region === undefined
           ? undefined
           : await db
               .selectFrom("region")
@@ -1420,7 +1535,7 @@ const app = new Hono()
               .where("code", "=", json.region)
               .where("isActive", "=", true)
               .executeTakeFirst()
-      if (json.region !== undefined && json.region !== null && selectedRegion === undefined) {
+      if (json.region !== undefined && selectedRegion === undefined) {
         return throwBadRequest(c, "Region is not available", ErrorCode.ValidationFailed, {
           target: "region",
         })
@@ -1558,9 +1673,7 @@ const app = new Hono()
         const row = await crudProject(tx).update(organization.id, projectId, {
           ...(json.name === undefined ? {} : { name: json.name }),
           ...(json.description === undefined ? {} : { description: json.description }),
-          ...(json.region === undefined
-            ? {}
-            : { regionId: json.region === null ? null : selectedRegion?.id }),
+          ...(json.region === undefined ? {} : { regionId: selectedRegion?.id }),
           ...(json.slug === undefined ? {} : { slug: json.slug }),
           ...(json.rootDir === undefined ? {} : { rootDir: json.rootDir }),
           ...(json.dockerfilePath === undefined ? {} : { dockerfilePath: json.dockerfilePath }),
@@ -1794,6 +1907,51 @@ const app = new Hono()
       if (!job || job.projectId !== projectId) return throwNotFound(c, "Job not found")
 
       return c.json(serializeJob(job))
+    },
+  )
+  .post(
+    "/:orgSlug/projects/:projectId/jobs/:jobId/retry",
+    describeRoute({
+      description: "Retries failed provisioning after GitHub already created the repository",
+      responses: {
+        200: {
+          description: "The queued or already-running provisioning job",
+          content: { "application/json": { schema: resolver(projectSchemaJobResponse) } },
+        },
+        400: { description: "The job cannot be retried safely", ...errorResponse },
+        403: { description: "Caller lacks project:update", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaJobParam),
+    requirePermission("project:update", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const organization = c.var.organization
+      const user = c.var.user
+      const { jobId, projectId } = c.req.valid("param")
+      const retried = await retryFailedProvision(db, {
+        organizationId: organization.id,
+        projectId,
+        projectJobId: jobId,
+        userId: user.id,
+      })
+
+      if (retried === undefined) {
+        return throwBadRequest(
+          c,
+          "Only failed provisioning jobs whose GitHub repository was already created can be retried.",
+        )
+      }
+
+      await crudAuditLog(db).record({
+        ...auditContext(c),
+        organizationId: organization.id,
+        actorUserId: user.id,
+        action: retried.enqueued ? "project.provision_retry" : "project.provision_retry_reused",
+        resourceSrn: srnFor("project", organization.id, "project", projectId),
+        after: { projectJobId: retried.job.id, attempt: retried.job.attempt },
+      })
+
+      return c.json(serializeJob(retried.job))
     },
   )
   .post(

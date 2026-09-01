@@ -101,8 +101,51 @@
     scroll-behavior: auto !important;
   }
 
+  /*
+    The clamp above ends an animation rather than preventing it, which would leave the marquee
+    parked at translateX(-50%) — the duplicate half — instead of at its start. Stop it outright.
+  */
+  .marquee-track {
+    animation: none !important;
+    transform: none !important;
+  }
+
   .js .reveal {
     opacity: 1;
     transform: none;
+  }
+}
+
+/*
+  A continuously scrolling rail.
+
+  The track holds the list twice and translates by exactly -50%, so the reset lands the second copy
+  where the first started. `width: max-content` keeps the children at their natural size instead of
+  being squeezed to fit the viewport, which is what makes the overflow — and therefore the motion —
+  exist at all.
+*/
+@utility marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 5%, #000 95%, transparent);
+
+  &:hover .marquee-track {
+    animation-play-state: paused;
+  }
+}
+
+@utility marquee-track {
+  display: flex;
+  gap: 1.25rem;
+  width: max-content;
+  animation: marquee 46s linear infinite;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
   }
 }

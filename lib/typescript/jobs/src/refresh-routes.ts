@@ -1,4 +1,4 @@
-import { publishLiveDeployment, publishRoute, type Route } from "@lib/lambda"
+import { lambdaAliasArn, publishLiveDeployment, publishRoute, type Route } from "@lib/lambda"
 import { Redis } from "ioredis"
 import type { JobHandler } from "./worker"
 
@@ -26,7 +26,11 @@ function valkey(): Redis {
   return shared
 }
 
-export function refreshRoutes(options?: { valkey: Redis }): JobHandler {
+export function refreshRoutes(options?: {
+  valkey: Redis
+  region?: string
+  accountId?: string
+}): JobHandler {
   return async (_job, { db }) => {
     const client = options?.valkey ?? valkey()
 
@@ -52,8 +56,8 @@ export function refreshRoutes(options?: { valkey: Redis }): JobHandler {
       .where("deployment.hostname", "is not", null)
       .execute()
 
-    const region = process.env.AWS_REGION ?? "us-east-1"
-    const account = process.env.AWS_ACCOUNT_ID ?? ""
+    const region = options?.region ?? process.env.AWS_REGION ?? "us-east-1"
+    const accountId = options?.accountId ?? process.env.AWS_ACCOUNT_ID ?? ""
 
     let published = 0
 
@@ -69,7 +73,7 @@ export function refreshRoutes(options?: { valkey: Redis }): JobHandler {
         which is what makes this correct after a rollback as well as after a deploy.
       */
       const route: Route = {
-        arn: `arn:aws:lambda:${region}:${account}:function:sproutos-app-${row.projectId}:live`,
+        arn: lambdaAliasArn({ region, accountId, projectId: row.projectId }),
         projectId: row.projectId,
         organizationId: row.organizationId,
         deploymentId: row.deploymentId,

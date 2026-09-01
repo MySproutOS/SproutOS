@@ -246,6 +246,15 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "*"
       },
       {
+        # CloudWatch metric reads cannot be resource-scoped. The deploy uses this only to ensure
+        # the control-plane database has connection headroom before and after a rollout; without
+        # it, healthy HTTP listeners can hide a database that is already refusing dashboard work.
+        Sid      = "ReadDeploymentHealthMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:GetMetricStatistics"]
+        Resource = "*"
+      },
+      {
         /*
           The describes are unscoped and the modifies are not.
 
@@ -310,8 +319,8 @@ resource "aws_iam_role_policy" "deploy" {
         /*
           Registering an immutable ECS revision has no resource ARN yet, so AWS only supports `*`
           here. This is registration, not execution: the two capabilities below remain scoped to
-          the platform's web service and migration family, and PassRole names the only two roles a
-          registered task may receive from this workflow.
+          the platform's web and ACME-worker services and migration family, and PassRole names the
+          only four roles a registered task may receive from this workflow.
         */
         Sid      = "RegisterWebTaskDefinitions"
         Effect   = "Allow"
@@ -329,10 +338,10 @@ resource "aws_iam_role_policy" "deploy" {
         Resource = "*"
       },
       {
-        Sid      = "UpdateTheWebService"
+        Sid      = "UpdateTheDeployedEcsServices"
         Effect   = "Allow"
         Action   = ["ecs:UpdateService"]
-        Resource = aws_ecs_service.web.id
+        Resource = [aws_ecs_service.web.id, aws_ecs_service.acme_worker.id]
       },
       {
         Sid      = "RunTheWebMigrationTask"
@@ -346,10 +355,15 @@ resource "aws_iam_role_policy" "deploy" {
         }
       },
       {
-        Sid      = "PassOnlyWebTaskRolesToECS"
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = [aws_iam_role.task.arn, aws_iam_role.ecs_execution.arn]
+        Sid    = "PassOnlyDeployedTaskRolesToECS"
+        Effect = "Allow"
+        Action = ["iam:PassRole"]
+        Resource = [
+          aws_iam_role.task.arn,
+          aws_iam_role.acme_task.arn,
+          aws_iam_role.ecs_execution.arn,
+          aws_iam_role.acme_execution.arn,
+        ]
         Condition = {
           StringEquals = {
             "iam:PassedToService" = "ecs-tasks.amazonaws.com"
@@ -370,6 +384,7 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener.postgres.arn,
           aws_lb_listener.valkey.arn,
           aws_lb_listener.forward_proxy.arn,
+          aws_lb_listener.forward_proxy_http.arn,
           # The search split's rule moves with the router's listener, for the same reason.
           #
           # Enumerated rather than a wildcard on the listener, so a rule added by hand cannot be
@@ -387,6 +402,7 @@ resource "aws_iam_role_policy" "deploy" {
           aws_lb_listener_rule.llm.arn,
           ], local.tenant_edge_provisioned ? [
           aws_lb_listener.tenant_http[0].arn,
+          ] : [], var.tenant_edge_preview_enabled ? [
           aws_lb_listener.tenant_https[0].arn,
         ] : [])
       },

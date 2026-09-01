@@ -4,10 +4,19 @@ import {
   renderSproutosSkill,
   resolveAgentCredential,
 } from "@lib/agent"
-import { crudMeteringOutbox, crudSandbox, fetchGithubInstallation, fetchSandbox } from "@lib/dao"
+import {
+  crudAgentSession,
+  crudDatabaseBranch,
+  crudMeteringOutbox,
+  crudSandbox,
+  fetchDatabaseBranch,
+  fetchGithubInstallation,
+  fetchSandbox,
+  fetchSandboxDatabaseBranch,
+} from "@lib/dao"
 import { createGitHubClient, createInstallationTokenStore, envAppJwtSigner } from "@lib/github"
 import { encodeUsageEvent, usageEventRecord, type BillableDimension } from "@lib/metering"
-import { createDevBranch, dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
+import { dropDevBranch, neonPostgresConfigFromEnv } from "@lib/services"
 import { daytonaClientFromEnv, SandboxNotFoundError } from "@lib/sandbox"
 import type { DaytonaSandboxClient } from "@lib/sandbox"
 import type { DB, JsonValue } from "@sproutos/db"
@@ -24,7 +33,11 @@ export const SANDBOX_KINDS = {
   reconcile: "sandbox.reconcile",
   reap: "sandbox.reap",
   meter: "sandbox.meter",
+  reapDatabaseBranches: "sandbox.database_branch.reap",
+  repairDestroy: "sandbox.destroy.repair",
 } as const
+
+const DATABASE_BRANCH_REAP_BATCH_SIZE = 25
 
 /**
  * What a sandbox costs us, per second, in micro-USD.
@@ -61,6 +74,9 @@ export async function requestSandboxStart(
   },
 ): Promise<Selectable<DB["sandbox"]>> {
   return await db.transaction().execute(async (tx) => {
+    if ((await organizationUsageSuspensionCutoff(tx, input.organizationId)) !== null) {
+      throw new OrganizationUsageSuspendedError(input.organizationId)
+    }
     let sandbox = await fetchSandbox(tx).forUserForUpdate(
       input.organizationId,
       input.projectId,
@@ -130,6 +146,30 @@ export class SandboxDeletingError extends Error {
   }
 }
 
+export class OrganizationUsageSuspendedError extends Error {
+  override readonly name = "OrganizationUsageSuspendedError"
+
+  constructor(readonly organizationId: string) {
+    super(`organization ${organizationId} is suspended for insufficient credit`)
+  }
+}
+
+async function organizationUsageSuspensionCutoff(
+  db: Kysely<DB>,
+  organizationId: string,
+): Promise<Date | null> {
+  const retention = await db
+    .selectFrom("creditRetentionState")
+    .select(["status", "exhaustedAt", "deletionStartedAt"])
+    .where("organizationId", "=", organizationId)
+    .executeTakeFirst()
+  const suspended =
+    retention?.status === "suspended" ||
+    retention?.status === "deleting" ||
+    retention?.status === "data_deleted"
+  return suspended ? (retention.exhaustedAt ?? retention.deletionStartedAt ?? new Date()) : null
+}
+
 export async function requestSandboxDestroy(
   db: Kysely<DB>,
   input: { organizationId: string; projectId: string; userId: string },
@@ -158,6 +198,7 @@ export async function requestSandboxDestroy(
       idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}`,
       maxAttempts: 3,
     })
+    await crudAgentSession(tx).archiveRestorableForSandboxScope(input.projectId, input.userId)
     return deleting
   })
 }
@@ -176,8 +217,11 @@ export async function requestSandboxDestroy(
  * consults a vendor billing API. That is ADR 0014's rule — money never rides the telemetry path —
  * and it also means a provider outage cannot silently stop the meter.
  */
-export const meterSandboxes: JobHandler = async (_job, { db }) => {
-  const due = await db
+export async function meterSandboxUsage(
+  db: Kysely<DB>,
+  options: { projectIds?: string[]; sandboxIds?: string[]; through?: Date } = {},
+): Promise<number> {
+  let dueQuery = db
     .selectFrom("sandbox")
     .select("id")
     .where("sandbox.state", "in", ["starting", "running", "idle", "stopped", "deleting"])
@@ -187,7 +231,15 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
     // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
     // deadlock by each holding the row the other plans to claim next.
     .orderBy("id")
-    .execute()
+  if (options.projectIds !== undefined) {
+    if (options.projectIds.length === 0) return 0
+    dueQuery = dueQuery.where("sandbox.projectId", "in", options.projectIds)
+  }
+  if (options.sandboxIds !== undefined) {
+    if (options.sandboxIds.length === 0) return 0
+    dueQuery = dueQuery.where("sandbox.id", "in", options.sandboxIds)
+  }
+  const due = await dueQuery.execute()
 
   let metered = 0
 
@@ -236,7 +288,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
         a concurrent meter whose row lock this transaction just waited for.
       */
       const clock = await sql<{ now: Date }>`select clock_timestamp() as now`.execute(tx)
-      const databaseNow = clock.rows[0]?.now
+      const databaseNow = options.through ?? clock.rows[0]?.now
       if (databaseNow === undefined) throw new Error("Postgres returned no clock timestamp")
       // Daytona's provider backstop stops an ordinary sandbox at this same idle deadline. If its
       // webhook/reconciliation arrives late, billing to the sweep time would charge for a machine
@@ -322,6 +374,11 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
   }
 
   if (metered > 0) console.info(`[jobs] metered ${metered} sandboxes`)
+  return metered
+}
+
+export const meterSandboxes: JobHandler = async (_job, { db }) => {
+  await meterSandboxUsage(db)
 }
 
 /**
@@ -350,12 +407,18 @@ export const reapSandboxes: JobHandler = async (_job, { db }) => {
 }
 
 /** Repair provider-driven state changes before the database can keep metering a stopped machine. */
-export function reconcileSandboxes(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function reconcileSandboxes(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
     const candidates = await context.db
       .selectFrom("sandbox")
       .select(["id", "externalId"])
-      .where("state", "in", ["starting", "running", "idle"])
+      // A stopped Daytona object still incurs reserved-disk cost until the provider archives or
+      // deletes it. Keep observing stopped joins so provider loss clears both billing and branches.
+      .where("state", "in", ["starting", "running", "idle", "stopped"])
       .where("externalId", "is not", null)
       .execute()
 
@@ -370,13 +433,41 @@ export function reconcileSandboxes(makeDriver: () => DaytonaSandboxClient = dayt
       try {
         const providerState = await sandboxDriver.state(candidate.externalId!)
         if (["stopped", "archived", "paused"].includes(providerState)) {
-          await crudSandbox(context.db).update(candidate.id, { state: "stopped" })
-        } else if (["destroyed", "error", "build_failed"].includes(providerState)) {
-          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          await crudSandbox(context.db).updateIfState(
+            candidate.id,
+            ["starting", "running", "idle", "stopped"],
+            { state: "stopped" },
+          )
+        } else if (providerState === "destroyed") {
+          await cleanMissingProviderObject(
+            context.db,
+            { sandboxId: candidate.id, externalId: candidate.externalId! },
+            drop,
+            branchConfig,
+          )
+        } else if (["error", "build_failed"].includes(providerState)) {
+          await crudSandbox(context.db).updateIfState(
+            candidate.id,
+            ["starting", "running", "idle", "stopped"],
+            { state: "failed" },
+          )
         }
       } catch (error) {
         if (error instanceof SandboxNotFoundError) {
-          await crudSandbox(context.db).update(candidate.id, { state: "failed" })
+          try {
+            await cleanMissingProviderObject(
+              context.db,
+              { sandboxId: candidate.id, externalId: candidate.externalId! },
+              drop,
+              branchConfig,
+            )
+          } catch (cleanupError) {
+            // The shared cleanup marks the row failed before touching Neon. Failed is non-metered,
+            // and the sandbox reaper gives it fresh stop jobs until cleanup finishes.
+            console.error(
+              `[jobs] failed to clean missing sandbox ${candidate.id}: ${String(cleanupError)}`,
+            )
+          }
           continue
         }
         // One provider object must not prevent every other row from reconciling. The recurring job
@@ -411,10 +502,13 @@ async function bootstrap(
       .select([
         "project.slug as slug",
         "project.productionBranch as branch",
+        "project.autoUpdateCadence as autoUpdateCadence",
         "repository.id as repositoryId",
         "repository.githubRepoId as githubRepoId",
         "repository.ownerLogin as owner",
         "repository.name as name",
+        "repository.upstreamFullName as upstreamFullName",
+        "repository.upstreamDefaultBranch as upstreamDefaultBranch",
       ])
       .where("project.id", "=", input.projectId)
       .executeTakeFirst()
@@ -484,54 +578,21 @@ async function bootstrap(
         projectSlug: project.slug,
         tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
         workspacePath: sandboxDriver.workspaceDir,
+        ...(project.upstreamFullName === null
+          ? {}
+          : {
+              upstream: {
+                fullName: project.upstreamFullName,
+                branch: project.upstreamDefaultBranch ?? project.branch,
+                cadence: project.autoUpdateCadence,
+              },
+            }),
       }),
     })
 
     return result.problems
   } catch (cause) {
     return [String(cause)]
-  }
-}
-
-/**
- * The dev database a sandbox works against, and the environment variable that names it.
- *
- * A coding agent with a checkout and no database can read code and cannot run it: no dev server, no
- * migration, no test that touches a row. This branches the project's Postgres — copy-on-write, so a
- * copy of a hundred gigabytes is instant and costs only what the agent changes — and hands back a
- * `DATABASE_URL` pointing at `pg-proxy` with a credential that can reach the branch and nothing
- * else. Production is one connection away and unreachable, which is the point.
- *
- * Returns nothing rather than throwing when the project has no database. Most projects do not, and
- * a sandbox without one is the normal case, not a failure.
- *
- * The service is looked up for the *group* as well as the project: a group holds the databases its
- * children share, and a sandbox is scoped to the group — see `sandboxScopeFor`.
- */
-async function devDatabase(
-  db: Kysely<DB>,
-  input: { projectId: string; organizationId: string; sandboxId: string },
-): Promise<{ env: Record<string, string>; databaseBranchId: string } | undefined> {
-  const serviceId = await findSandboxPostgresServiceId(db, input.projectId)
-
-  if (serviceId === undefined) return undefined
-
-  try {
-    const branch = await createDevBranch(db, neonPostgresConfigFromEnv(), {
-      backendServiceId: serviceId,
-      organizationId: input.organizationId,
-      label: input.sandboxId.slice(-12),
-    })
-    return { databaseBranchId: branch.databaseBranchId, env: { DATABASE_URL: branch.uri } }
-  } catch (cause) {
-    /*
-      A sandbox with no dev database is worth having; a provision that failed because Neon was busy
-      is not. Logged rather than raised, and the sandbox comes up without `DATABASE_URL` — which the
-      agent discovers immediately and can say, instead of the customer waiting for a container that
-      never arrives.
-    */
-    console.warn(`[jobs] sandbox ${input.sandboxId} has no dev database: ${String(cause)}`)
-    return undefined
   }
 }
 
@@ -547,110 +608,108 @@ export async function findSandboxPostgresServiceId(
   db: Kysely<DB>,
   projectId: string,
 ): Promise<string | undefined> {
-  const service = await db
-    .selectFrom("backendService")
-    .select(["id"])
-    .where("kind", "=", "postgres")
-    .where("status", "=", "active")
-    .where("deletedAt", "is", null)
-    .where((eb) =>
-      eb.or([
-        eb("projectId", "=", projectId),
-        eb(
-          "projectId",
-          "in",
-          eb
-            .selectFrom("project")
-            .select("parentProjectId")
-            .where("id", "=", projectId)
-            .where("deletedAt", "is", null)
-            .where("parentProjectId", "is not", null)
-            .$castTo<string>(),
-        ),
-        eb(
-          "projectId",
-          "in",
-          eb
-            .selectFrom("project")
-            .select("id")
-            .where("parentProjectId", "=", projectId)
-            .where("deletedAt", "is", null),
-        ),
-      ]),
-    )
-    .orderBy(
-      sql<number>`case
-        when project_id = ${projectId} then 0
-        when project_id = (
-          select parent_project_id from project where id = ${projectId}
-        ) then 1
-        else 2
-      end`,
-      "asc",
-    )
-    .orderBy("createdAt", "asc")
-    .executeTakeFirst()
-
-  return service?.id
+  return await fetchSandbox(db).postgresServiceIdForScope(projectId)
 }
 
-type SandboxPayload = { sandboxId?: string }
+type SandboxPayload = { sandboxId?: string; meterThrough?: string }
 
 function daytona(): DaytonaSandboxClient {
   return daytonaClientFromEnv()
 }
 
-/** Replace a control-plane join whose Daytona object has disappeared. */
-async function reprovisionMissingProviderObject(
+/** Remove the stale Daytona join and every branch; replacement requires a new user request. */
+async function cleanMissingProviderObject(
   db: Kysely<DB>,
-  input: { sandboxId: string; externalId: string; organizationId: string },
+  input: { sandboxId: string; externalId: string },
+  drop: typeof dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv,
 ): Promise<boolean> {
-  return await db.transaction().execute(async (tx) => {
-    const current = await tx
-      .selectFrom("sandbox")
-      .select(["externalId", "state", "databaseBranchId"])
-      .where("id", "=", input.sandboxId)
-      .forUpdate()
-      .executeTakeFirst()
-    if (
-      current === undefined ||
-      current.externalId !== input.externalId ||
-      !["starting", "failed"].includes(current.state)
-    ) {
-      return false
-    }
+  const current = await db
+    .selectFrom("sandbox")
+    .select(["externalId", "state", "databaseBranchId"])
+    .where("id", "=", input.sandboxId)
+    .executeTakeFirst()
+  if (
+    current === undefined ||
+    current.externalId !== input.externalId ||
+    !["starting", "running", "idle", "stopped", "failed"].includes(current.state)
+  ) {
+    return false
+  }
 
-    /*
+  // Provider absence is authoritative. Persist it before any Neon call so a crash or provider
+  // outage cannot leave phantom CPU/memory/disk billing. `failed` is picked up by reapSandboxes,
+  // whose fresh stop jobs retry this same cleanup, but is deliberately excluded from metering.
+  const missing = await db
+    .updateTable("sandbox")
+    .set({ state: "failed", updatedAt: new Date() })
+    .where("id", "=", input.sandboxId)
+    .where("externalId", "=", input.externalId)
+    .where("state", "in", ["starting", "running", "idle", "stopped", "failed"])
+    .returning(["databaseBranchId"])
+    .executeTakeFirst()
+  if (missing === undefined) return false
+
+  /*
       The branch credential exists only inside the missing container. Its secret is intentionally
       stored as a one-way hash, so a replacement cannot reuse it. Drop the branch before severing
       the row's reference; otherwise every provider-side disappearance leaves a paid Neon branch
       with no sandbox pointing at it. The protected-primary check in `dropDevBranch` is the final
       guard if this foreign key is ever wrong.
     */
-    if (current.databaseBranchId !== null) {
-      await dropDevBranch(tx, neonPostgresConfigFromEnv(), current.databaseBranchId)
+  const ownedBranches = await fetchSandboxDatabaseBranch(db).listForSandbox(input.sandboxId)
+  const branchIds = new Set(ownedBranches.map((owned) => owned.databaseBranchId))
+  if (missing.databaseBranchId !== null) branchIds.add(missing.databaseBranchId)
+  const cleanupFailures: unknown[] = []
+  for (const databaseBranchId of branchIds) {
+    try {
+      await drop(db, branchConfig(), databaseBranchId)
+    } catch (error) {
+      try {
+        await crudDatabaseBranch(db).deferCleanup(databaseBranchId, error)
+        cleanupFailures.push(error)
+      } catch (deferError) {
+        cleanupFailures.push(
+          new AggregateError(
+            [error, deferError],
+            `branch ${databaseBranchId} failed cleanup and retry deferral`,
+            { cause: error },
+          ),
+        )
+      }
     }
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      `${cleanupFailures.length} branch cleanup attempt(s) failed for missing sandbox ${input.sandboxId}`,
+    )
+  }
 
-    await crudSandbox(tx).update(input.sandboxId, {
+  const cleaned = await db
+    .updateTable("sandbox")
+    .set({
       externalId: null,
       databaseBranchId: null,
-      state: "starting",
+      state: "stopped",
       lastActivityAt: sql<Date>`now()` as unknown as Date,
+      updatedAt: new Date(),
     })
-    await enqueue(tx, {
-      kind: SANDBOX_KINDS.provision,
-      organizationId: input.organizationId,
-      payload: { sandboxId: input.sandboxId },
-      idempotencyKey: `${SANDBOX_KINDS.provision}:${input.sandboxId}:missing:${input.externalId}`,
-      maxAttempts: 3,
-    })
-    return true
-  })
+    .where("id", "=", input.sandboxId)
+    .where("externalId", "=", input.externalId)
+    .where("state", "in", ["starting", "running", "idle", "stopped", "failed"])
+    .executeTakeFirst()
+  return Number(cleaned.numUpdatedRows) === 1
 }
 
 /** Create the sandbox at the provider and record what it gave back. */
-export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
-  return async (job, { db }) => {
+export function provisionSandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
+  return async (job, context) => {
+    const { db } = context
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
 
@@ -676,6 +735,16 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
 
     // Deleted between enqueue and claim. Nothing to provision and nothing to report.
     if (sandbox === undefined) return
+
+    const suspensionCutoff = await organizationUsageSuspensionCutoff(db, sandbox.organizationId)
+    if (suspensionCutoff !== null) {
+      await stopSandbox(
+        makeDriver,
+        drop,
+        branchConfig,
+      )({ ...job, payload: { sandboxId, meterThrough: suspensionCutoff.toISOString() } }, context)
+      return
+    }
 
     if (
       sandbox.state === "running" ||
@@ -742,20 +811,6 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
         return
       }
 
-      /*
-        The branch is created before the container, because it is the part that can fail.
-
-        A container that comes up and then finds it has no database has already cost the customer
-        the wait; a branch that fails while nothing has been created costs a log line. The reverse
-        order also leaks: a create that succeeds and a branch that throws leaves a running sandbox
-        nobody recorded.
-      */
-      const database = await devDatabase(db, {
-        organizationId: sandbox.organizationId,
-        projectId: sandbox.projectId,
-        sandboxId: sandbox.id,
-      })
-
       const created = await sandboxDriver.create({
         sandboxId: sandbox.id,
         organizationId: sandbox.organizationId,
@@ -769,13 +824,11 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
         },
         idleTimeoutS: sandbox.idleTimeoutS,
         alwaysOn: sandbox.alwaysOn,
-        ...(database === undefined ? {} : { env: database.env }),
       })
       providerExternalId = created.externalId
 
       const recorded = await crudSandbox(db).updateIfState(sandbox.id, ["starting", "failed"], {
         externalId: created.externalId,
-        ...(database === undefined ? {} : { databaseBranchId: database.databaseBranchId }),
         // The meter starts when the sandbox does, not when the row was inserted — a create that
         // queued behind other work should not bill for the wait.
         meteredThrough: sql<Date>`now()` as unknown as Date,
@@ -783,9 +836,6 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
       })
       if (recorded === undefined) {
         await sandboxDriver.destroy(created.externalId)
-        if (database !== undefined) {
-          await dropDevBranch(db, neonPostgresConfigFromEnv(), database.databaseBranchId)
-        }
         return
       }
 
@@ -816,11 +866,15 @@ export function provisionSandbox(makeDriver: () => DaytonaSandboxClient = dayton
       if (
         error instanceof SandboxNotFoundError &&
         providerExternalId !== null &&
-        (await reprovisionMissingProviderObject(db, {
-          sandboxId: sandbox.id,
-          externalId: providerExternalId,
-          organizationId: sandbox.organizationId,
-        }))
+        (await cleanMissingProviderObject(
+          db,
+          {
+            sandboxId: sandbox.id,
+            externalId: providerExternalId,
+          },
+          drop,
+          branchConfig,
+        ))
       ) {
         return
       }
@@ -858,8 +912,13 @@ export class SandboxBootstrapError extends Error {
 }
 
 /** Start a stopped provider sandbox without replacing its persistent workspace. */
-export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
-  return async (job, { db }) => {
+export function startSandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
+  return async (job, context) => {
+    const { db } = context
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
 
@@ -877,6 +936,15 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
       sandbox.state === "stopped" ||
       sandbox.state === "deleting"
     ) {
+      return
+    }
+    const suspensionCutoff = await organizationUsageSuspensionCutoff(db, sandbox.organizationId)
+    if (suspensionCutoff !== null) {
+      await stopSandbox(
+        makeDriver,
+        drop,
+        branchConfig,
+      )({ ...job, payload: { sandboxId, meterThrough: suspensionCutoff.toISOString() } }, context)
       return
     }
     if (sandbox.externalId === null) {
@@ -911,16 +979,19 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
           Daytona auto-archives stopped sandboxes and the reaper also treats an already-missing
           object as stopped. Starting that stale id can never succeed: retrying the same start job
           only turns `starting` into `failed`, after which the reaper writes `stopped` again and
-          the next request repeats the loop. Clear the stale join and enqueue the ordinary
-          provision path instead. The row lock makes concurrent missing-object observations
-          collapse into one replacement, and the old provider id is part of the idempotency key so
-          a later, genuinely different replacement is not suppressed.
+          the next request repeats the loop. Clear the stale join and its branch credentials, then
+          leave the row stopped. Provisioning here would rent a replacement without a new user
+          request; `requestSandboxStart` is the only path allowed to do that.
         */
-        await reprovisionMissingProviderObject(db, {
-          sandboxId: sandbox.id,
-          externalId: sandbox.externalId,
-          organizationId: sandbox.organizationId,
-        })
+        await cleanMissingProviderObject(
+          db,
+          {
+            sandboxId: sandbox.id,
+            externalId: sandbox.externalId,
+          },
+          drop,
+          branchConfig,
+        )
         return
       }
 
@@ -941,9 +1012,13 @@ export function startSandbox(makeDriver: () => DaytonaSandboxClient = daytona): 
 }
 
 /** Stop at the provider, settle the tail, leave the workspace. */
-export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function stopSandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
-    const { sandboxId } = job.payload as SandboxPayload
+    const { sandboxId, meterThrough } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
     const { db } = context
 
@@ -962,26 +1037,38 @@ export function stopSandbox(makeDriver: () => DaytonaSandboxClient = daytona): J
       writes `stopped` the tail between the last run and now becomes unbillable — and unlike a
       failed insert, nothing is left to notice it. Metering everything is cheap and idempotent.
     */
-    await meterSandboxes(job, context)
+    await meterSandboxUsage(db, {
+      sandboxIds: [sandbox.id],
+      through: meterThrough === undefined ? undefined : new Date(meterThrough),
+    })
 
     if (sandbox.externalId !== null) {
       try {
         await makeDriver().stop(sandbox.externalId)
       } catch (error) {
-        // Already gone is stopped. Anything else has to fail the job, because the row would
-        // otherwise say stopped while the provider goes on billing.
         if (!(error instanceof SandboxNotFoundError)) throw error
+        await cleanMissingProviderObject(
+          db,
+          { sandboxId: sandbox.id, externalId: sandbox.externalId },
+          drop,
+          branchConfig,
+        )
+        return
       }
     }
 
-    await crudSandbox(db).updateIfState(sandbox.id, ["starting", "running", "idle"], {
+    await crudSandbox(db).updateIfState(sandbox.id, ["starting", "running", "idle", "failed"], {
       state: "stopped",
     })
   }
 }
 
 /** Destroy at the provider, then drop the row. Order matters — see `teardown.ts`. */
-export function destroySandbox(makeDriver: () => DaytonaSandboxClient = daytona): JobHandler {
+export function destroySandbox(
+  makeDriver: () => DaytonaSandboxClient = daytona,
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
   return async (job, context) => {
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
@@ -1016,16 +1103,89 @@ export function destroySandbox(makeDriver: () => DaytonaSandboxClient = daytona)
       Failing the job on error is deliberate. Dropping the row while the branch survives is exactly
       how the reference is lost.
     */
-    if (sandbox.databaseBranchId !== null) {
-      await dropDevBranch(db, neonPostgresConfigFromEnv(), sandbox.databaseBranchId)
+    const ownedBranches = await fetchSandboxDatabaseBranch(db).listForSandbox(sandbox.id)
+    const branchIds = new Set(ownedBranches.map((owned) => owned.databaseBranchId))
+    if (sandbox.databaseBranchId !== null) branchIds.add(sandbox.databaseBranchId)
+    const cleanupFailures: unknown[] = []
+    for (const databaseBranchId of branchIds) {
+      try {
+        await drop(db, branchConfig(), databaseBranchId)
+      } catch (error) {
+        cleanupFailures.push(error)
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        cleanupFailures,
+        `${cleanupFailures.length} branch cleanup attempt(s) failed for sandbox ${sandbox.id}`,
+      )
     }
 
     await crudSandbox(db).remove(sandbox.id)
   }
 }
 
+export function reapExpiredDatabaseBranches(
+  drop: typeof dropDevBranch = dropDevBranch,
+  branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
+): JobHandler {
+  return async (_job, { db }) => {
+    const expired = await fetchDatabaseBranch(db).expiredUnprotected(
+      new Date(),
+      DATABASE_BRANCH_REAP_BATCH_SIZE,
+    )
+    const failures: unknown[] = []
+    for (const branch of expired) {
+      try {
+        await drop(db, branchConfig(), branch.id)
+      } catch (error) {
+        try {
+          await crudDatabaseBranch(db).deferCleanup(branch.id, error)
+          failures.push(error)
+        } catch (deferError) {
+          failures.push(
+            new AggregateError(
+              [error, deferError],
+              `branch ${branch.id} failed cleanup and retry deferral`,
+              { cause: error },
+            ),
+          )
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `${failures.length} expired database branch cleanup attempt(s) failed`,
+      )
+    }
+  }
+}
+
+/** Requeue deletion with a fresh key even when an older destroy job is terminal. */
+export const repairDeletingSandboxes: JobHandler = async (_job, { db }) => {
+  const minute = new Date().toISOString().slice(0, 16)
+  const deleting = await db
+    .selectFrom("sandbox")
+    .innerJoin("project", "project.id", "sandbox.projectId")
+    .select(["sandbox.id", "project.organizationId"])
+    .where("sandbox.state", "=", "deleting")
+    .orderBy("sandbox.updatedAt", "asc")
+    .limit(100)
+    .execute()
+  for (const sandbox of deleting) {
+    await enqueue(db, {
+      kind: SANDBOX_KINDS.destroy,
+      organizationId: sandbox.organizationId,
+      payload: { sandboxId: sandbox.id },
+      idempotencyKey: `${SANDBOX_KINDS.destroy}:${sandbox.id}:repair:${minute}`,
+      maxAttempts: 3,
+    })
+  }
+}
+
 /**
- * Keep the two recurring sandbox jobs scheduled.
+ * Keep metering, reconciliation, idle/branch reaping, and destroy repair scheduled.
  *
  * Both key on the minute rather than the ten-minute window the billing jobs use. A sandbox is
  * billed by the second and reaped on a fifteen-minute idle timer, so ten minutes of slack is most
@@ -1047,6 +1207,16 @@ export async function scheduleSandboxJobs(db: Kysely<DB>, now: Date = new Date()
   await enqueue(db, {
     kind: SANDBOX_KINDS.reap,
     idempotencyKey: `${SANDBOX_KINDS.reap}:${minute}`,
+    maxAttempts: 3,
+  })
+  await enqueue(db, {
+    kind: SANDBOX_KINDS.reapDatabaseBranches,
+    idempotencyKey: `${SANDBOX_KINDS.reapDatabaseBranches}:${minute}`,
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    kind: SANDBOX_KINDS.repairDestroy,
+    idempotencyKey: `${SANDBOX_KINDS.repairDestroy}:${minute}`,
     maxAttempts: 3,
   })
 }

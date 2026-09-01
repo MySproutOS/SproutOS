@@ -232,6 +232,77 @@ async fn a_command_pipelined_with_auth_is_not_stranded() {
 }
 
 #[tokio::test]
+async fn broad_tenant_data_structures_work_without_cross_tenant_keys() {
+    let Some(url) = database_url() else { return };
+    if !services_up(&url).await {
+        return;
+    }
+
+    let address = start_proxy(&url).await;
+    let (username_a, secret_a, _service_a, fixtures_a) = provision(&url).await;
+    let (username_b, secret_b, _service_b, fixtures_b) = provision(&url).await;
+    let mut a = Client::connect(address).await;
+    let mut b = Client::connect(address).await;
+    assert_eq!(a.send(&["AUTH", &username_a, &secret_a]).await, "+OK\r\n");
+    assert_eq!(b.send(&["AUTH", &username_b, &secret_b]).await, "+OK\r\n");
+
+    assert_eq!(a.send(&["SET", "bits-a", "a"]).await, "+OK\r\n");
+    assert_eq!(a.send(&["SET", "bits-b", "b"]).await, "+OK\r\n");
+    assert!(
+        a.send(&["BITOP", "AND", "bits-out", "bits-a", "bits-b"])
+            .await
+            .starts_with(':')
+    );
+    assert_eq!(a.send(&["HSET", "hash", "field", "value"]).await, ":1\r\n");
+    assert_eq!(a.send(&["HSTRLEN", "hash", "field"]).await, ":5\r\n");
+
+    for (key, member) in [("set-a", "one"), ("set-b", "one")] {
+        assert_eq!(a.send(&["SADD", key, member]).await, ":1\r\n");
+    }
+    assert_eq!(
+        a.send(&["SINTERSTORE", "set-out", "set-a", "set-b"]).await,
+        ":1\r\n"
+    );
+
+    for (key, score) in [("z-a", "1"), ("z-b", "2")] {
+        assert_eq!(a.send(&["ZADD", key, score, "one"]).await, ":1\r\n");
+    }
+    assert_eq!(
+        a.send(&[
+            "ZINTERSTORE",
+            "z-out",
+            "2",
+            "z-a",
+            "z-b",
+            "AGGREGATE",
+            "SUM",
+        ])
+        .await,
+        ":1\r\n"
+    );
+    assert_eq!(
+        a.send(&["GEOADD", "places", "0", "0", "origin"]).await,
+        ":1\r\n"
+    );
+    assert_eq!(a.send(&["PFADD", "visitors", "alice"]).await, ":1\r\n");
+    assert_eq!(a.send(&["PFCOUNT", "visitors"]).await, ":1\r\n");
+
+    // The same logical names in another tenant are empty. This is the end-to-end property the
+    // command table alone cannot prove.
+    for key in ["bits-out", "hash", "set-out", "z-out", "places", "visitors"] {
+        assert_eq!(b.send(&["EXISTS", key]).await, ":0\r\n", "{key}");
+    }
+
+    a.send(&[
+        "DEL", "bits-a", "bits-b", "bits-out", "hash", "set-a", "set-b", "set-out", "z-a", "z-b",
+        "z-out", "places", "visitors",
+    ])
+    .await;
+    cleanup(&url, &fixtures_a).await;
+    cleanup(&url, &fixtures_b).await;
+}
+
+#[tokio::test]
 async fn fragmented_auth_preserves_a_fragmented_following_command() {
     let Some(url) = database_url() else { return };
     if !services_up(&url).await {
@@ -1638,9 +1709,10 @@ async fn a_real_celery_repository_round_trips_a_task() {
         sproutos_tenant_auth::encode_short_id(service_id),
         queue
     );
-    assert!(
-        members.contains(&expected),
-        "missing Celery wake: {members}"
+    assert_eq!(
+        members,
+        format!("*1\r\n${}\r\n{expected}\r\n", expected.len()),
+        "Celery must wake only its published queue; binding and unacknowledged-delivery writes are not jobs: {members}"
     );
 
     raw.send(&["DEL", "sproutos:master:wake"]).await;

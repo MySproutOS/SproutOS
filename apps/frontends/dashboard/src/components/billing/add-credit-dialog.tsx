@@ -13,7 +13,12 @@ import {
 import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { useState } from "react"
-import { useAwaitTopup, useStartTopup, useTopupQuote } from "@frontends/dashboard/data/billing"
+import {
+  useAwaitTopup,
+  useCreditBalance,
+  useStartTopup,
+  useTopupQuote,
+} from "@frontends/dashboard/data/billing"
 import { stripeConfigured, stripePromise, stripeTestMode } from "./stripe"
 
 /** Dollars a person actually picks, as micro-USD. The field below takes anything above the floor. */
@@ -82,6 +87,7 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   const startTopup = useStartTopup(orgSlug)
   const quote = useTopupQuote(orgSlug, amountMicroUsd, clientSecret === null)
+  const balance = useCreditBalance(orgSlug)
 
   /*
     `night`, because ADR 0010 makes the product dark-only.
@@ -169,6 +175,16 @@ function AmountStep({ orgSlug, onDone }: { orgSlug: string; onDone: () => void }
           }}
         />
       </div>
+
+      <p className="rounded-md border border-warning/30 bg-warning/6 p-3 text-xs leading-relaxed text-muted-foreground">
+        SproutOS reserves enough credit for 48 hours of retained provider data. Active service is
+        suspended when only that reserve remains, and irreversible provider-data deletion may begin
+        48 hours later. GitHub repositories are preserved. Add at least{" "}
+        {formatMicroUsd(balance.data?.requiredReloadMicros ?? 0n)} to get above the current reserve.{" "}
+        <a className="text-foreground underline" href="https://sproutos.me/legal/terms">
+          Terms
+        </a>
+      </p>
 
       {/*
         The fee is quoted by the server. Computing it here would be a second implementation of

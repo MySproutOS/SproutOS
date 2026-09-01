@@ -169,7 +169,12 @@ resource "aws_lb" "main" {
   # A tenant application can legitimately hold a connection open — a server-sent event stream, a
   # long poll. The default 60s would cut those at exactly one minute, which reads to the customer
   # as their own bug.
-  idle_timeout = 300
+  idle_timeout         = 300
+  preserve_host_header = true
+
+  # The storage endpoint verifies the customer's S3 SigV4 signature. `host` is one of boto3's
+  # signed headers, so the ALB must forward it byte-for-byte instead of normalizing it before the
+  # request reaches storage-proxy. This is also the least surprising behaviour for tenant hosts.
 
   enable_deletion_protection = var.deletion_protection
   tags                       = { Name = "${var.name_prefix}-alb" }
@@ -1027,6 +1032,13 @@ resource "aws_iam_policy" "application" {
         Resource = "*"
       },
       {
+        # Transactional retention and billing notices. The identity is domain-scoped and the
+        # application uses SES v2's SendEmail API; no bulk or identity-management permission.
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail"]
+        Resource = aws_sesv2_email_identity.sproutos.arn
+      },
+      {
         # The last write of a static release: one atomic hostname-to-digest pointer at the edge.
         Effect = "Allow"
         Action = [
@@ -1731,7 +1743,7 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
             dimensions {
               name  = "LoadBalancer"
-              value = aws_lb.tenant_edge[0].arn_suffix
+              value = aws_lb.tenant.arn_suffix
             }
             dimensions {
               name  = "TargetGroup"
@@ -1755,7 +1767,7 @@ resource "aws_autoscaling_policy" "router_tenant_edge" {
 
             dimensions {
               name  = "LoadBalancer"
-              value = aws_lb.tenant_edge[0].arn_suffix
+              value = aws_lb.tenant.arn_suffix
             }
             dimensions {
               name  = "TargetGroup"

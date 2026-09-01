@@ -15,6 +15,28 @@ export const billingSchemaBalanceResponse = Type.Object({
   balanceMicroUsd: MicroUsdString,
   heldMicroUsd: MicroUsdString,
   availableMicroUsd: MicroUsdString,
+  retentionReserveMicroUsd: MicroUsdString,
+  spendableAboveReserveMicroUsd: MicroUsdString,
+  requiredReloadMicroUsd: MicroUsdString,
+  retentionStatus: Type.Union([
+    Type.Literal("active"),
+    Type.Literal("suspended"),
+    Type.Literal("deleting"),
+    Type.Literal("data_deleted"),
+  ]),
+  warningStage: Type.Union([
+    Type.Literal("safe"),
+    Type.Literal("warning"),
+    Type.Literal("critical"),
+    Type.Literal("suspended"),
+    Type.Literal("deletion_imminent"),
+    Type.Literal("deleting"),
+    Type.Literal("data_deleted"),
+  ]),
+  exhaustedAt: Nullable(Type.String({ format: "date-time" })),
+  deleteAfter: Nullable(Type.String({ format: "date-time" })),
+  deletionStartedAt: Nullable(Type.String({ format: "date-time" })),
+  deletionCompletedAt: Nullable(Type.String({ format: "date-time" })),
   currency: Type.String(),
 })
 

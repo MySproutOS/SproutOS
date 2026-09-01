@@ -101,12 +101,9 @@ output "api_rule_arn" {
   value       = aws_lb_listener_rule.api.arn
 }
 
-# ECS services intentionally ignore task-definition drift because the release script owns image
-# revisions. After an infrastructure apply changes environment/IAM/container contracts, these exact
-# registered revisions are the only safe handoff into that release script.
 output "ecs_web_task_definition_arn" {
-  description = "Exact OpenTofu-registered web task revision to pass as ECS_BASE_TASK_DEFINITION after an infrastructure apply."
-  value       = aws_ecs_task_definition.web.arn
+  description = "Latest release-registered web task revision used to bootstrap or repair the ECS service pointer."
+  value       = data.aws_ecs_task_definition.web.arn
 }
 
 output "ecs_acme_worker_task_definition_arn" {
@@ -169,11 +166,16 @@ output "valkey_listener_arn" {
 
 output "forward_proxy_listener_arn" {
   description = "Serving sandbox egress listener: legacy TLS before cutover, Rust tenant TLS edge afterward. Set as FORWARD_PROXY_LISTENER_ARN."
-  value       = var.tenant_edge_enabled ? aws_lb_listener.tenant_https[0].arn : aws_lb_listener.forward_proxy.arn
+  value       = aws_lb_listener.forward_proxy.arn
+}
+
+output "forward_proxy_http_listener_arn" {
+  description = "Temporary cleartext Daytona upstream-proxy listener. Set as FORWARD_PROXY_HTTP_LISTENER_ARN."
+  value       = aws_lb_listener.forward_proxy_http.arn
 }
 
 output "tenant_http_listener_arn" {
-  description = "Rust tenant HTTP/ACME listener on the parallel dual-stack edge NLB. Set as TENANT_HTTP_LISTENER_ARN."
+  description = "Rust tenant HTTP/ACME listener on the shared tenant NLB. Set as TENANT_HTTP_LISTENER_ARN."
   value       = one(aws_lb_listener.tenant_http[*].arn)
 }
 
@@ -184,16 +186,16 @@ output "tenant_ingress_ipv4_addresses" {
 
 output "tenant_ingress_ipv6_addresses" {
   description = "Stable NLB IPv6 fallback records for customer apex domains without DNS flattening."
-  value       = local.tenant_edge_provisioned ? local.tenant_edge_ipv6_addresses : []
+  value       = local.tenant_edge_ipv6_addresses
 }
 
 output "tenant_edge_dns_name" {
-  description = "Parallel dual-stack tenant edge NLB name for IPv4 and IPv6 preview smoke tests."
-  value       = local.tenant_edge_provisioned ? aws_lb.tenant_edge[0].dns_name : null
+  description = "Shared dual-stack tenant NLB name for IPv4 and IPv6 edge smoke tests."
+  value       = aws_lb.tenant.dns_name
 }
 
 output "tenant_edge_preview_ingress" {
-  description = "Stable dual-stack preview hostname that reaches edge ports 80 and 443 without moving production traffic."
+  description = "Stable dual-stack preview hostname that reaches HTTP 80 and TLS preview 8444 without moving production traffic."
   value       = local.tenant_edge_provisioned ? "preview-ingress.${var.tenant_domain}" : null
 }
 

@@ -124,11 +124,19 @@ services:
       - "127.0.0.1:4510-4559:4510-4559"
     environment:
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
-      - SERVICES=kms,s3,secretsmanager,ssm,kinesis,ses,sqs,sns,iam,sts
+      - SERVICES=kms,s3,secretsmanager,ssm,kinesis,sqs,sns,iam,sts
       - DEBUG=${DEBUG:-0}
     volumes:
       - localstack:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock
+
+  # Local transactional-email sink. SMTP is on 1025 and the browser inbox is on 8025.
+  mailhog:
+    container_name: sproutos_mailhog
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   postgres:

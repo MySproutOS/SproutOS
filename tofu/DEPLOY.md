@@ -159,95 +159,28 @@ With the gate enabled, legacy fill, SSM migration and website cutover are remove
 router blue/green is unchanged. A migration failure never updates the service. A failed service
 rollout is automatically restored by the ECS deployment circuit breaker.
 
-The service ignores `task_definition` changes in OpenTofu because application deploys own image
-revisions. When an apply registers an infrastructure-only container contract change, hand that
-exact revision to the migration-first deploy instead of updating the service directly:
+The service ignores `task_definition` changes in OpenTofu because application releases own the
+entire task contract. Edit the versioned service and migration templates together, then let the
+deployment workflow render the immutable image into each container:
 
 ```bash
-corrected_task_arn="$(tofu -chdir=tofu state show -no-color aws_ecs_task_definition.web \
-  | sed -n 's/^    arn *= *"\([^"]*\)"/\1/p')"
-test -n "$corrected_task_arn"
-
-aws ecs describe-task-definition --task-definition "$corrected_task_arn" \
-  --query 'taskDefinition.containerDefinitions[?name==`api`].environment[?name==`CLICKHOUSE_DATABASE`].value' \
-  --output text
-
-ECS_BASE_TASK_DEFINITION="$corrected_task_arn" \
-  IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
-  NAME_PREFIX=sproutos \
-  bin/deploy-ecs-web.sh --cutover
+jq -e . deploy/ecs/web-task-definition.json \
+  deploy/ecs/web-migrate-task-definition.json
+bash bin/deploy-ecs-web.test.sh
+bash bin/deploy-workflow.test.sh
 ```
 
-The inspection prints only the non-secret database name and must report `sproutos`. The deploy
-requires an exact active ARN in the service's task family, derives both new definitions from it,
-runs migrations first, and changes the service only after a zero exit.
+OpenTofu owns the cluster, service, roles, capacity and networking. It reads the latest registered
+`sproutos-web` revision only as the service's bootstrap/repair pointer and never registers an
+application task definition. The workflow renders website, API, worker and migration images from
+the checked-in templates, runs migrations first, and changes the service only after a zero exit.
 
-The same handoff is mandatory for the isolated certificate worker. Both ECS services ignore
-`task_definition` drift so an ordinary apply cannot replace an application image behind the
-release workflow. That also means an apply which changes `ACME_JOBS_ENABLED`,
-`ACME_HANDLER_OWNERSHIP_ENABLED`, `CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`,
-`PLATFORM_EDGE_ROLLOUT_ENABLED`, or either task's
-IAM/container contract has
-only _registered_ the new revision: it has not proved that any running task uses it. After every
-such apply, pass both exact OpenTofu outputs into one migration-first release of the already chosen
-immutable image:
-
-```bash
-IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
-  NAME_PREFIX=sproutos \
-  bin/handoff-ecs-task-definitions.sh <current-phase-A-through-D>
-```
-
-Do not continue merely because the apply or ECS waiter succeeded. Read both services back and
-verify their exact task-definition revisions match the release revisions derived from these two
-outputs. This command intentionally omits `--cutover`; configuration handoff is not permission to
-move traffic.
-
-For every saved plan that changes ACME capacity, ownership, or fallback IAM, run this before review
-or apply:
-
-```bash
-bin/check-acme-worker-rollout-plan.sh tofu/<saved-plan>.tfplan
-```
-
-It reads the saved plan's output `before` and `after`, accepts only
-`A -> B -> C -> D` or the exact reverse, and compares every non-no-op resource/action to the exact
-allowlist for that adjacent phase while requiring its transition-critical changes. Already-converged
-bootstrap entries may be absent; an unexpected address or action may not replace them. Direct
-`A -> D` and `D -> A`, an unchanged phase, a target-group
-change during an ACME gate transition, deletion of the fallback attachment before `C -> D`, and
-replacement of the shared application policy all fail.
-
-The one-time `NONE -> A` foundation allowlist contains all four existing tenant-edge target-group
-PPv2/readiness updates together. Immediately before applying, the wrapper reads their exact ARNs
-from the saved plan and refuses unless every group is empty, unassociated with a load balancer, and
-absent from both router Auto Scaling groups' `TargetGroupARNs`; a mixed or live target-group mutation
-cannot proceed.
-
-Do not run `tofu apply` separately for an ACME phase. The rollout wrapper checks the saved plan,
-proves the current live ECS/IAM state implements the `before` phase, applies that exact plan, hands
-off task definitions where required, and proves the `after` phase:
-
-```bash
-IMAGE="ghcr.io/mysproutos/sproutos-web:<12-character Git SHA>" \
-  NAME_PREFIX=sproutos \
-  bin/apply-acme-worker-rollout.sh tofu/<saved-plan>.tfplan
-```
-
-The wrapper first copies the caller-owned plan into a private directory, makes that copy read-only,
-checks only the copy, and records its SHA-256 digest. It rechecks the digest immediately before
-`tofu apply` and applies only the protected copy. Any byte change after plan inspection fails before
-OpenTofu is invoked.
-
-At every phase it requires the web service at desired/running `2`, pending `0`, one completed
-PRIMARY deployment, and exactly two running tasks on the service's exact revision. Phase A requires
-the isolated service at `0/0/0`; phases B-D require `2/2/0` and two exact-revision running tasks.
-Both serving definitions must use the chosen immutable image and the exact roles from the reviewed
-OpenTofu definitions. The platform worker's two gate environment values, the isolated profile, and
-the fallback policy attachment must all match the phase. The live application policy is normalized
-and compared statement-for-statement with the reviewed OpenTofu policy across `Effect`, `Action`,
-`Resource`, and `Condition`; a `Deny`, wildcard broadening, alternate grant form, or extra permission
-cannot pass as an equivalent Route 53 capability.
+ACME configuration follows the same versioned-template release above. After changing
+`ACME_JOBS_ENABLED`, `CUSTOM_DOMAINS_ENABLED`, `ACME_DIRECTORY_URL`,
+`PLATFORM_EDGE_ROLLOUT_ENABLED`, or the worker's IAM/container contract, edit both templates where
+the API/migration and worker contracts overlap, deploy, then verify both running tasks use the
+resulting revision and read the worker environment back before continuing. The dormant
+`sproutos-acme-worker` service must remain at desired/running/pending `0/0/0`.
 
 ### Wiring the first Sprout CLI release
 
@@ -271,11 +204,11 @@ then save and review a plan. It should add the least-privilege
 whose website container references the exact SSM pointer ARN. It must not create either parameter,
 change the ECS service revision, or contain an invented version. Apply that exact saved plan, inspect
 the role trust/policy and registered task definition, and publish the immutable `cli-v0.1.1` release.
-Then run the protected **Promote an existing CLI release** workflow with `0.1.1` and that exact
-registered task-definition ARN. It first verifies and records the release. The existing deployment
-role—not the much smaller promotion role—then combines the reviewed task contract with the image
-already serving and runs the ordinary migration-first deployment. This stops the OpenTofu revision
-rolling application code backward and stops a tag workflow gaining code-deployment authority.
+Then run the protected **Promote an existing CLI release** workflow with `0.1.1`. It first verifies
+and records the release. The existing deployment role—not the much smaller promotion role—then
+renders the versioned task templates with the image already serving and runs the ordinary
+migration-first deployment. This stops infrastructure state rolling application code backward and
+stops a tag workflow gaining code-deployment authority.
 
 The GitHub `cli-release-production` environment must exist with required reviewers and a custom
 deployment branch policy that allows only `main` before the promotion workflow is used. An
@@ -338,104 +271,54 @@ production custom-domain activation, separate reviewed changes must prove all of
   forces a new order rather than activating or renewing staging material;
 - renewal scheduling follows ACME Renewal Information when offered, with a bounded fallback;
 - deletion and supersession clean up every versioned certificate/key object after route withdrawal;
-- Route 53 mutation is absent from the public router instance role and exists only on the narrowly
-  scoped certificate/deployment worker role;
+- Route 53 mutation is absent from the public router instance role and is available only to the
+  background worker container that owns certificate/deployment jobs;
 - static CloudFront log reconciliation and delayed-delivery credit safeguards are deployed and
   verified independently of this dynamic edge.
 
-1. Save a foundation plan with `acme_worker_enabled`, `acme_handler_ownership_enabled`,
-   `tenant_edge_preview_enabled`, and `tenant_edge_enabled` false, and
-   `acme_fallback_iam_enabled` true. Then seed the account key once with
-   `bin/bootstrap-acme-account-key.sh`. The script refuses to overwrite an existing secret version.
-   Apply it only through `bin/apply-acme-worker-rollout.sh`; this is the one-time `NONE -> A`
-   allowlist. The worker stays at desired count zero during this apply: the old web task reserves 768 MiB and
-   must retain the second host for its replacement.
-2. Treat the `NONE -> A` wrapper as incomplete until it proves the live web task uses the new 640
-   MiB contract and the chosen edge-capable image. It must expose `ACME_JOBS_ENABLED=0` and
-   `ACME_HANDLER_OWNERSHIP_ENABLED=0`; the platform worker remains the live fallback owner with its
-   legacy privileged IAM.
-3. Set only `acme_worker_enabled = true`, leaving ownership false and fallback IAM true. Save and
-   review the exact `A -> B` plan, then run the rollout wrapper. It applies, hands off, and refuses
-   success until two healthy isolated tasks are live. Both tasks must use the exact
-   immutable image and task role, occupy the same two hosts as the web tasks, and leave the rolling
-   spare empty. The wrapper's exact two-task handoff gives the platform scheduler
-   `ACME_JOBS_ENABLED=1` while it still owns the fallback handler map.
-   The 256 MiB isolated worker must binpack beside web on one 916 MiB registered host; refuse the
-   rollout if it instead pins the spare host. Rebuild the exact production Linux/arm64 image from
-   the final deployment commit and measure both startup and a staging issuance/deployment job before
-   enabling it; refuse the rollout if either approaches the 256 MiB hard limit. A macOS startup
-   measurement is only a regression signal because native plugin isolation exits before the worker
-   reaches its poll loop. While the edge flags remain false the worker may issue and store a Let's
-   Encrypt staging certificate, but `PLATFORM_EDGE_ROLLOUT_ENABLED=0` prevents it from refreshing
-   either router Auto Scaling group.
-4. Set `acme_handler_ownership_enabled = true`, save/review the exact `B -> C` plan which changes
-   only the web task contract, and run the rollout wrapper. During the rolling handoff, old
-   platform tasks and the already-healthy isolated tasks overlap; `FOR UPDATE SKIP LOCKED` prevents
-   a double claim. Verify every serving platform task exposes
-   `ACME_HANDLER_OWNERSHIP_ENABLED=1`, both isolated tasks remain healthy, and a real privileged job
-   is claimed before continuing.
-5. Set `acme_fallback_iam_enabled = false`, save/review the exact `C -> D` plan which only removes
-   the gated platform permissions, and run the rollout wrapper. The application policy must update in place; refuse any plan
-   that replaces `aws_iam_policy.application`. Verify the platform task and router roles cannot
-   mutate Route 53 or read/write ACME material, while the isolated task role retains its exact
-   grants.
-6. Set `tenant_edge_preview_enabled = true` and set `tenant_edge_preview_colour` to the colour that
-   contains the new release. Apply a reviewed plan, then repeat the exact two-task handoff above so
-   the ACME workers actually receive `PLATFORM_EDGE_ROLLOUT_ENABLED=1`. This creates a separate dual-stack, EIP-backed
-   edge NLB. Its listeners use public 80/443 so HTTP-01 and ordinary TLS clients exercise the real
-   protocol, while `preview-ingress.<tenant-domain>` points only at this parallel balancer. This does
-   not replace the live Postgres/Valkey NLB or move generated production DNS.
-7. Wait for the platform certificate row to become active after every live serving router in the
-   Valkey membership set acknowledges the exact version. Smoke the generated wildcard, tenant apex, exact egress
-   hostname, HTTP challenge/redirect behavior, unknown SNI, Host/SNI mismatch, and the existing
-   Postgres and Valkey listeners through the unchanged data-plane NLB. Exercise preview over both
-   IPv4 and IPv6 through the preview ingress name and confirm Lambda receives the viewer address
-   from Proxy Protocol v2.
-8. While `tenant_edge_enabled` remains false, set `custom_domain_issuance_enabled = true` only after
-   a test hostname points at `preview-ingress.<tenant-domain>`. Apply, repeat the exact two-task
-   handoff above, and verify the serving API task now has `CUSTOM_DOMAINS_ENABLED=1` before creating
-   a claim. Exercise the complete asynchronous
-   ownership and HTTP-01 flow against Let's Encrypt staging. This flag is deliberately independent
-   of generated-traffic cutover; do not move the wildcard merely to test issuance. Turn the flag
-   back off as soon as the controlled staging claim is created so other organizations cannot begin
-   claims during the preview. Save/review and apply the flag-off plan, repeat the exact two-task
-   handoff, and verify the serving API task has `CUSTOM_DOMAINS_ENABLED=0`; changing tfvars alone
-   does not close the issuance gate.
-9. Change `acme_directory_url` from Let's Encrypt staging to production, apply, and repeat the exact
-   two-task handoff above. Verify both running ACME tasks expose the production directory before
-   waking reconciliation, then repeat issuance and the preview checks. Never reuse a staging certificate for the public cutover. The certificate row
-   must prove production-directory provenance before it is eligible for activation.
-10. Save and review a plan with `tenant_edge_enabled = true`. The preview NLB and its EIPs must remain
-    in place, as must its existing public TCP 80/443 listeners: the plan moves generated A/AAAA plus
-    ingress/egress DNS to them without a destroy/create listener gap. Refuse a plan which replaces
-    `aws_lb.tenant`, `aws_lb.tenant_edge[0]`, or either `aws_lb_listener.tenant_*[0]`; the existing
-    data-plane NLB continues serving Postgres, Valkey, and the legacy egress rollback listener
-    throughout the web-edge cutover.
-11. Apply that exact plan, repeat the exact two-task handoff above, update repository variables from `tofu output` (including
-    `TENANT_HTTP_LISTENER_ARN` and `TENANT_HTTPS_TARGET_GROUP_SHORT=edge`), deploy both colours, and
-    run the production browser and protocol smoke suite. Set `custom_domain_issuance_enabled = true`
-    only after production-directory provenance and the remaining certificate lifecycle gates pass.
-    Save/review and apply that final flag plan, repeat the exact two-task handoff, and verify the
-    serving API task has `CUSTOM_DOMAINS_ENABLED=1` before accepting production claims.
+The ordinary platform worker owns ACME scheduling and handlers. Keep
+`acme_worker_enabled = false`, `acme_handler_ownership_enabled = false`, and
+`acme_fallback_iam_enabled = true`. The retained `sproutos-acme-worker` ECS service stays at desired
+count zero and is not part of the rollout.
 
-`acme_worker_enabled` controls isolated capacity and scheduling;
-`acme_handler_ownership_enabled` transfers the privileged handler map; and
-`acme_fallback_iam_enabled` retains the platform role's temporary authority until that transfer is
-proven. Enabling is capacity, ownership, then IAM removal. Disabling reverses the sequence: restore
-fallback IAM, hand ownership back and prove a platform claim, then scale isolated capacity to zero.
+1. Seed the account key once with `bin/bootstrap-acme-account-key.sh`; the script refuses to
+   overwrite an existing secret version. Verify the live platform worker has `ACME_JOBS_ENABLED=1`,
+   `ACME_HANDLER_OWNERSHIP_ENABLED=0`, and the certificate/deployment environment contract.
+2. Set `tenant_edge_preview_enabled = true` and choose the preview colour containing the new router
+   release. Apply a reviewed plan and deploy the resulting platform task contract so the worker
+   receives `PLATFORM_EDGE_ROLLOUT_ENABLED=1`. This makes the existing tenant NLB dual-stack and
+   EIP-backed, adds public HTTP 80, and exposes the Rust TLS preview on 8444 without moving
+   production tenant DNS or replacing the legacy egress listener on 443.
+3. Wait for the platform certificate row to become active after every live router in the Valkey
+   membership set acknowledges its exact version. Smoke wildcard, tenant apex, egress, HTTP
+   challenge/redirect behavior, unknown SNI, Host/SNI mismatch, IPv4/IPv6, and trusted client IP.
+4. While `tenant_edge_enabled` is false, enable `custom_domain_issuance_enabled` only long enough to
+   exercise one controlled claim against Let's Encrypt staging. Deploy every changed platform task
+   contract and verify `CUSTOM_DOMAINS_ENABLED` live; changing tfvars alone does not change a running
+   container. Disable issuance again after creating the staging claim.
+5. Change `acme_directory_url` from staging to production, apply, deploy the platform task contract,
+   and verify the live workers expose the production directory before reconciling. Never activate or
+   renew staging material for public traffic.
+6. Save and review a plan with `tenant_edge_enabled = true`. The shared NLB, EIPs, public TCP 80,
+   and preview 8444 listener must remain in place. Refuse replacement of `aws_lb.tenant`; cutover
+   changes that NLB's existing 443 listener from NLB-terminated TLS to TCP passthrough only after
+   the Rust preview passes. Postgres and Valkey remain listeners on the same NLB throughout.
+7. Apply that exact plan, deploy both router colours and the platform task contract, update repository
+   variables from `tofu output`, and run the production browser and protocol smoke suite. Enable
+   production custom-domain issuance only after production-directory provenance and the certificate
+   lifecycle gates pass, then verify `CUSTOM_DOMAINS_ENABLED=1` on every serving API task.
+
 `tenant_edge_enabled` controls generated traffic and the egress DNS cutover;
 `custom_domain_issuance_enabled` controls API claim/check operations. Keep both decisions explicit
 in persistent tfvars. Reverting the edge flag in a later apply would attempt to move generated and
 egress traffic back to the legacy listeners; reverting only issuance stops new/check-now API work
 without withdrawing routes or destroying certificate material.
 
-To abandon preview, leave `tenant_edge_preview_enabled = true`, keep
-`tenant_edge_enabled = false`, and apply once so edge deletion protection is off; only then set the
-preview flag false and review the destroy plan. To roll back after cutover, use the same two applies
-after DNS and protocol smoke prove the legacy paths healthy. The parallel edge cannot be removed
-while any active custom hostname still points at either ingress alias: withdraw/migrate every route
-and certificate first. Never turn the global `deletion_protection` variable off merely to remove
-the preview NLB.
+To abandon preview, keep `tenant_edge_enabled = false`, set `tenant_edge_preview_enabled = false`,
+and review removal of only the HTTP/preview listeners and their rules. The shared tenant NLB must
+remain because it also serves Postgres, Valkey, and egress. To roll back after cutover, restore its
+legacy TLS 443 action only after DNS and protocol smoke prove that path healthy. Never turn the
+global `deletion_protection` variable off to remove an edge preview.
 
 ### Static-site metering
 

@@ -90,11 +90,15 @@ if [[ "$security_options" != *'name=seccomp,profile=/etc/docker/sproutos-seccomp
 fi
 
 if [[ -e "$ecs_config" ]]; then
-  grep -Ev '^(ECS_CLUSTER|ECS_ENABLE_CONTAINER_METADATA|ECS_DISABLE_PRIVILEGED)=' \
+  awk '!/^(ECS_CLUSTER|ECS_ENABLE_CONTAINER_METADATA|ECS_DISABLE_PRIVILEGED)=/' \
     "$ecs_config" >"$ecs_tmp"
 fi
 printf 'ECS_CLUSTER=%s\n' "$SPROUT_ECS_CLUSTER" >>"$ecs_tmp"
 printf 'ECS_ENABLE_CONTAINER_METADATA=true\n' >>"$ecs_tmp"
 printf 'ECS_DISABLE_PRIVILEGED=true\n' >>"$ecs_tmp"
 install -m 0600 "$ecs_tmp" "$ecs_config"
-systemctl restart ecs
+# ecs.service is ordered after cloud-final.service on the ECS-optimised AMI. This bootstrap runs
+# inside cloud-final, so a blocking restart waits for the unit that is waiting for this script and
+# deadlocks every fresh host. Queue the restart and let systemd execute it as soon as cloud-final
+# exits; all fail-closed validation above has already completed before ECS is allowed to start.
+systemctl --no-block restart ecs

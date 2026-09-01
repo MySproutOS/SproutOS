@@ -19,6 +19,7 @@ import {
   GitHubValidationError,
   installationToken,
   listInstallationRepositories,
+  listAllInstallationRepositories,
   MissingGitHubAppConfigError,
   userToken,
 } from "./index"
@@ -159,6 +160,33 @@ describe("repository operations", () => {
     expect(page.totalCount).toBe(1)
     expect(page.repositories[0].fullName).toBe("acme/linkding")
     expect(client.calls[0].query).toStrictEqual({ page: 1, per_page: 100 })
+  })
+
+  it("lists every repository page an installation can reach", async () => {
+    const client = fakeClient({
+      "GET /installation/repositories": ({ query }) => {
+        const page = Number(query?.page)
+        return {
+          total_count: 3,
+          repositories:
+            page === 1
+              ? [REPO, { ...REPO, id: 2, name: "second", full_name: "acme/second" }]
+              : [{ ...REPO, id: 3, name: "third", full_name: "acme/third" }],
+        }
+      },
+    })
+
+    const result = await listAllInstallationRepositories(
+      client,
+      installationToken("ghs_x", 42, new Date(Date.now() + 3_600_000)),
+      { perPage: 2 },
+    )
+
+    expect(result.repositories.map((repository) => repository.id)).toEqual([REPO.id, 2, 3])
+    expect(client.calls.map((call) => call.query)).toEqual([
+      { page: 1, per_page: 2 },
+      { page: 2, per_page: 2 },
+    ])
   })
 })
 

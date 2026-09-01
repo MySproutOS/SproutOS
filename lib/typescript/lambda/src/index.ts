@@ -1,5 +1,6 @@
 export {
   functionName,
+  lambdaAliasArn,
   LIVE_ALIAS,
   LOG_INGEST_PATH,
   logEndpointFor,

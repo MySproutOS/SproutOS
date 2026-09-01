@@ -18,7 +18,7 @@ describe("DEPLOYMENT_DOCTRINE", () => {
     ["static assets", /static assets/i],
     ["media asset upload", /media asset upload/i],
     ["databases", /databases/i],
-    ["migrations on push", /migrations.*push|automated database migrations/i],
+    ["customer-owned migrations on push", /customer-owned database migrations on push/i],
   ])("names %s", (_label, pattern) => {
     expect(DEPLOYMENT_DOCTRINE).toMatch(pattern)
   })
@@ -43,5 +43,11 @@ describe("DEPLOYMENT_DOCTRINE", () => {
   it("forbids reporting a step as done when it is not", () => {
     expect(DEPLOYMENT_DOCTRINE).toMatch(/do not report a step as done when it is not/i)
     expect(DEPLOYMENT_DOCTRINE).toMatch(/rather than skipping it silently/i)
+  })
+
+  it("makes the GitHub Actions migration gate explicit", () => {
+    expect(DEPLOYMENT_DOCTRINE).toContain("dedicated migrator project")
+    expect(DEPLOYMENT_DOCTRINE).toContain("application deploy wait")
+    expect(DEPLOYMENT_DOCTRINE).toContain("does not discover migrations automatically")
   })
 })

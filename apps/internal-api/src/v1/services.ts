@@ -1,5 +1,10 @@
-import { availableBalance } from "@lib/billing"
-import { crudAuditLog, crudProjectEnvVar } from "@lib/dao"
+import { lockAvailableBalance } from "@lib/billing"
+import {
+  crudAuditLog,
+  crudProjectEnvVar,
+  fetchBackendService,
+  fetchCreditRetentionState,
+} from "@lib/dao"
 import { sealEnvVarValue } from "@lib/envelope"
 import {
   ServiceKindUnavailableError,
@@ -23,7 +28,7 @@ import { v7 } from "uuid"
 import { type AuthContext, authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
+import { throwBadRequest, throwError, throwForbidden, throwNotFound } from "../utils/http-exception"
 import { ErrorCode } from "../utils/errors.enum"
 import { auditContext } from "../utils/request-context"
 import {
@@ -309,6 +314,61 @@ const app = new Hono()
       })
     },
   )
+  .get(
+    "/:orgSlug/services/:serviceId/connection",
+    describeRoute({
+      description: "Reconstructs the active object-storage connection for an interactive user",
+      responses: {
+        200: {
+          description: "Current object-storage connection URI",
+          content: {
+            "application/json": { schema: resolver(servicesSchemaConnectionResponse) },
+          },
+        },
+        400: { description: "This service kind has no recoverable credential", ...errorResponse },
+        403: {
+          description: "Caller is not an interactive user or lacks database:read",
+          ...errorResponse,
+        },
+        404: { description: "No such service", ...errorResponse },
+      },
+    }),
+    requirePermission("database:read"),
+    validator("param", servicesSchemaIdParam),
+    async (c) => {
+      if (c.var.auth.kind !== "session") {
+        return throwForbidden(c, "Only an interactive user may reveal a storage credential")
+      }
+      const { serviceId } = c.req.valid("param")
+      const service = await fetchBackendService(db).getInOrganization(
+        c.var.organization.id,
+        serviceId,
+        ["id", "kind", "status"],
+      )
+      if (service === undefined) return throwNotFound(c, "Service not found")
+      if (service.kind !== "object_storage") {
+        return throwBadRequest(c, "Only object-storage credentials can be shown again")
+      }
+      if (service.status !== "active") {
+        return throwBadRequest(c, "That service has not finished provisioning")
+      }
+
+      const connectionUri = await driverFor(service.kind).connectionUri(service.id)
+      await crudAuditLog(db).record({
+        organizationId: c.var.organization.id,
+        actorUserId: c.var.user.id,
+        action: "database:read",
+        resourceSrn: srnFor("db", c.var.organization.id, "service", service.id),
+        after: { credentialViewed: true },
+        ...auditContext(c),
+      })
+      // A GET is convenient for the generated client, but this response is never cacheable: it
+      // contains a live SigV4 secret reconstructed specifically for this interactive request.
+      c.header("Cache-Control", "no-store")
+      c.header("Pragma", "no-cache")
+      return c.json(connectionResponse(service.id, { connectionUri }))
+    },
+  )
   .post(
     "/:orgSlug/services",
     describeRoute({
@@ -334,25 +394,25 @@ const app = new Hono()
       const body = c.req.valid("json")
       const organization = c.var.organization
 
-      if (!hasProvisioningCredit(await availableBalance(db, organization.id))) {
+      if (await fetchCreditRetentionState(db).isUsageSuspended(organization.id)) {
         return throwError(
           c,
           402,
           ErrorCode.InsufficientCredit,
-          "Add credit before creating a database. Granting database access does not itself charge anything.",
+          "Add credit before provisioning a service. Hosted data remains protected during the 48-hour retention window.",
         )
       }
 
       if (body.projectId != null) {
         // The foreign key proves the project exists, not that it is this organization's.
-        const owned = await db
+        const ownedProject = await db
           .selectFrom("project")
           .select("id")
           .where("id", "=", body.projectId)
           .where("organizationId", "=", organization.id)
           .where("deletedAt", "is", null)
           .executeTakeFirst()
-        if (owned === undefined) {
+        if (ownedProject === undefined) {
           return throwBadRequest(c, "That project does not belong to this organization")
         }
       }
@@ -361,18 +421,44 @@ const app = new Hono()
       if (region === undefined) return throwBadRequest(c, "No region is configured")
 
       const backendServiceId = v7()
-      await db
-        .insertInto("backendService")
-        .values({
-          id: backendServiceId,
-          organizationId: organization.id,
-          projectId: body.projectId ?? null,
-          regionId: region.id,
-          name: body.name,
-          kind: body.kind,
-          status: "provisioning",
-        })
-        .execute()
+      const hasCredit = await db.transaction().execute(async (tx) => {
+        /*
+          The lock and the durable provisioning row are one decision.
+
+          Reading the balance before opening this transaction allowed a concurrent charge to take
+          the account to zero between the check and this insert. The resource would then be
+          provisioned even though the prepaid invariant had already stopped permitting new work.
+          Every ledger debit uses the same credit-account row lock, so holding it through this
+          insert gives the decision one serial order relative to charging.
+
+          Do not hold the lock during the provider call below. Provisioning can take seconds and a
+          network request must not freeze every ledger write for this organization.
+        */
+        if (!hasProvisioningCredit(await lockAvailableBalance(tx, organization.id))) return false
+
+        await tx
+          .insertInto("backendService")
+          .values({
+            id: backendServiceId,
+            organizationId: organization.id,
+            projectId: body.projectId ?? null,
+            regionId: region.id,
+            name: body.name,
+            kind: body.kind,
+            status: "provisioning",
+          })
+          .execute()
+        return true
+      })
+
+      if (!hasCredit) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before creating a database. Granting database access does not itself charge anything.",
+        )
+      }
 
       try {
         const result = await driverFor(body.kind).provision({
@@ -622,13 +708,13 @@ const app = new Hono()
   )
 
 async function owned(organizationId: string, serviceId: string) {
-  return await db
-    .selectFrom("backendService")
-    .select(["id", "kind", "name", "projectId", "status"])
-    .where("id", "=", serviceId)
-    .where("organizationId", "=", organizationId)
-    .where("deletedAt", "is", null)
-    .executeTakeFirst()
+  return await fetchBackendService(db).getInOrganization(organizationId, serviceId, [
+    "id",
+    "kind",
+    "name",
+    "projectId",
+    "status",
+  ])
 }
 
 export async function withQueueLifecycleLock<T>(
@@ -656,6 +742,24 @@ export function servicePublicEndpoint(
   env: NodeJS.ProcessEnv = process.env,
 ): { host: string | null; port: number | null } {
   if (status !== "active") return { host: null, port: null }
+
+  if (kind === "object_storage") {
+    const raw = env.SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT
+    if (raw === undefined || raw.trim() === "") return { host: null, port: null }
+    try {
+      const endpoint = new URL(raw)
+      if (endpoint.protocol !== "https:" && endpoint.protocol !== "http:") {
+        return { host: null, port: null }
+      }
+      const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80))
+      if (endpoint.hostname === "" || !Number.isInteger(port) || port < 1 || port > 65_535) {
+        return { host: null, port: null }
+      }
+      return { host: endpoint.hostname, port }
+    } catch {
+      return { host: null, port: null }
+    }
+  }
 
   const config =
     kind === "postgres"

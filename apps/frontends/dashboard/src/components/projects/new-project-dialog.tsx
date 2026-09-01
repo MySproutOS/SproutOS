@@ -20,6 +20,7 @@ import {
   GlobeIcon,
   LockIcon,
   PlusIcon,
+  RefreshCwIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react"
@@ -28,13 +29,16 @@ import {
   useCreateProject,
   useGithubOwners,
   useGithubRepositories,
+  useManualUpstreamCheck,
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
+import { useRegions } from "@frontends/dashboard/data/projects"
 import { projectCreateErrorMessage } from "./project-create-error"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { isProjectRootDir } from "./project-root-dir"
 import { slugify } from "./slug"
+import { type WorkflowStack, WORKFLOW_STACKS, workflowAgentPrompt } from "./workflow-scaffold"
 
 /**
  * Starting a project, in the three ways the API has always supported.
@@ -54,7 +58,7 @@ const CARDS: { id: Source; icon: typeof GitForkIcon; title: string; detail: stri
   {
     id: "store",
     icon: GitForkIcon,
-    title: "Fork an app",
+    title: "Copy an app",
     detail: "Start from something in the store that already runs, then make it yours.",
   },
   {
@@ -124,7 +128,7 @@ export function NewProjectDialog({
         <DialogHeader>
           <DialogTitle>{kind === "workflow" ? "New workflow" : "New project"}</DialogTitle>
           <DialogDescription>
-            Three ways to start. All of them end up as your code.
+            Four ways to start. All of them end up as your code.
           </DialogDescription>
         </DialogHeader>
         <NewProjectForm
@@ -164,6 +168,18 @@ function NewProjectForm({
     have no row here at all, so GitHub's id is the only handle it has. The API imports on first use.
   */
   const [githubRepoId, setGithubRepoId] = useState<string | null>(null)
+  const [manualUpstreamRef, setManualUpstreamRef] = useState("")
+  const [updateSchedule, setUpdateSchedule] = useState<
+    | "off"
+    | "one_week"
+    | "one_month"
+    | "three_months"
+    | "six_months"
+    | "nine_months"
+    | "one_year"
+    | "two_years"
+  >("one_week")
+  const [syncUpstreamNow, setSyncUpstreamNow] = useState(false)
   const [touchedRepoName, setTouchedRepoName] = useState(false)
   const [owner, setOwner] = useState<string | null>(null)
   const [templateRef, setTemplateRef] = useState("")
@@ -177,6 +193,8 @@ function NewProjectForm({
   */
   const [isPrivate, setIsPrivate] = useState(false)
   const [workflowTrigger, setWorkflowTrigger] = useState<"interval" | "webhook">("interval")
+  const [workflowStack, setWorkflowStack] = useState<WorkflowStack>("bullmq-typescript")
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
 
   const navigate = useNavigate()
   const listings = useStoreListings()
@@ -191,6 +209,16 @@ function NewProjectForm({
   const effectiveOwner =
     owner ?? ownerOptions.find((candidate) => candidate.isDefault)?.login ?? null
   const create = useCreateProject(orgSlug)
+  const regions = useRegions()
+  const availableRegions = regions.data?.data ?? []
+  const defaultRegion =
+    availableRegions.find((candidate) => candidate.code === "us-east-1")?.code ??
+    availableRegions[0]?.code ??
+    null
+  // us-east-1 is the product default. Keep it visible as a choice and select it when the server
+  // answers, falling back only if that region is unavailable rather than silently creating a
+  // project with no placement and displaying "—".
+  const region = selectedRegion ?? defaultRegion
 
   /*
     The repository name follows the project name until somebody edits it.
@@ -248,13 +276,42 @@ function NewProjectForm({
         candidate.name.toLowerCase() === repositoryName.toLowerCase() &&
         candidate.ownerLogin.toLowerCase() === (effectiveOwner ?? "").toLowerCase(),
     )?.githubRepoId ?? null
+  const selectedRepository = repositories.data?.data.find(
+    (candidate) => candidate.githubRepoId === githubRepoId,
+  )
+  const manualUpstream = parseRepoRef(manualUpstreamRef)
+  const debouncedManualUpstreamRef = useDebounced(manualUpstreamRef, 400)
+  const debouncedManualUpstream = parseRepoRef(debouncedManualUpstreamRef)
+  const manualUpstreamSettled = manualUpstreamRef === debouncedManualUpstreamRef
+  const manualUpstreamCheck = useManualUpstreamCheck(
+    orgSlug,
+    debouncedManualUpstream === null
+      ? "invalid/invalid"
+      : `${debouncedManualUpstream.owner}/${debouncedManualUpstream.repo}`,
+    githubRepoId,
+    source === "repository" &&
+      selectedRepository?.fork === false &&
+      debouncedManualUpstream !== null,
+  )
+  const effectiveManualUpstream = selectedRepository?.fork === true ? null : manualUpstream
+  const tracksUpstream =
+    source === "store"
+      ? listingId !== null
+      : source === "template"
+        ? template !== null
+        : selectedRepository?.fork === true || manualUpstream !== null
 
   const needsRepoName = source !== "repository"
   const ready =
     name.trim().length > 0 &&
+    region !== null &&
     (source !== "store" || listingId !== null) &&
     (source !== "template" || template !== null) &&
     (source !== "repository" || githubRepoId !== null) &&
+    (source !== "repository" || manualUpstreamRef.trim() === "" || manualUpstream !== null) &&
+    (source !== "repository" ||
+      manualUpstreamRef.trim() === "" ||
+      (manualUpstreamSettled && manualUpstreamCheck.data?.accessible === true)) &&
     (source !== "repository" || isProjectRootDir(rootDir)) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
@@ -269,6 +326,7 @@ function NewProjectForm({
             body: {
               name: name.trim(),
               kind,
+              region,
               ...(parentProjectId === null ? {} : { parentProjectId }),
               source:
                 source === "store"
@@ -283,6 +341,11 @@ function NewProjectForm({
                     ? {
                         type: "repository",
                         githubRepoId: githubRepoId!,
+                        ...(effectiveManualUpstream === null
+                          ? {}
+                          : {
+                              upstreamFullName: `${effectiveManualUpstream.owner}/${effectiveManualUpstream.repo}`,
+                            }),
                       }
                     : {
                         /*
@@ -304,6 +367,14 @@ function NewProjectForm({
               // This is part of the API JSON body. Putting it beside `body` makes it client
               // metadata, which the generated client accepts and silently omits from the request.
               ...(source === "repository" ? { rootDir: rootDir.trim() } : {}),
+              ...(tracksUpstream
+                ? {
+                    autoUpdateEnabled: updateSchedule !== "off",
+                    ...(updateSchedule === "off" ? {} : { autoUpdateCadence: updateSchedule }),
+                    autoUpdateMode: "auto_merge",
+                    syncUpstreamNow,
+                  }
+                : {}),
             },
           },
           {
@@ -320,7 +391,7 @@ function NewProjectForm({
                   ...(kind === "workflow"
                     ? {
                         search: {
-                          prompt: `Create a ${workflowTrigger} workflow in this repository. Include environment variable documentation, structured logs, and observable failure handling.`,
+                          prompt: workflowAgentPrompt(workflowTrigger, workflowStack),
                         },
                       }
                     : {}),
@@ -360,28 +431,91 @@ function NewProjectForm({
       </div>
 
       {kind === "workflow" && (
-        <div className="flex flex-col gap-1.5">
-          <Label>Trigger</Label>
-          <Select
-            value={workflowTrigger}
-            onValueChange={(value: "interval" | "webhook" | null) => {
-              if (value !== null) setWorkflowTrigger(value)
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="interval">Interval schedule</SelectItem>
-              <SelectItem value="webhook">Webhook</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid gap-4 rounded-lg border border-border p-3">
+          <p className="text-xs text-muted-foreground">
+            {parentProjectId === null
+              ? "This is a standalone workflow and will appear in the organization Workflow tab."
+              : "This workflow belongs to this project group and will appear beneath it."}
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <Label>Queue stack</Label>
+            <Select
+              value={workflowStack}
+              onValueChange={(value: WorkflowStack | null) => {
+                if (value !== null) setWorkflowStack(value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WORKFLOW_STACKS.map((stack) => (
+                  <SelectItem key={stack.value} value={stack.value}>
+                    {stack.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {WORKFLOW_STACKS.find((stack) => stack.value === workflowStack)?.detail}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Trigger</Label>
+            <Select
+              value={workflowTrigger}
+              onValueChange={(value: "interval" | "webhook" | null) => {
+                if (value !== null) setWorkflowTrigger(value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="interval">Interval schedule</SelectItem>
+                <SelectItem value="webhook">Webhook</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )}
 
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="np-region">Region</Label>
+        <Select
+          items={availableRegions.map((candidate) => ({
+            label: candidate.code,
+            value: candidate.code,
+          }))}
+          value={region}
+          onValueChange={(value) => {
+            setSelectedRegion(value)
+          }}
+          disabled={regions.isPending || regions.isError || availableRegions.length === 0}
+        >
+          <SelectTrigger id="np-region">
+            <SelectValue
+              placeholder={regions.isPending ? "Loading regions…" : "Choose a region…"}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {availableRegions.map((candidate) => (
+              <SelectItem key={candidate.code} value={candidate.code}>
+                {candidate.code}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {regions.isError && (
+          <p className="text-[13px] text-destructive">
+            Regions could not be loaded. Try reopening this dialog.
+          </p>
+        )}
+      </div>
+
       {source === "store" && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="np-listing">App to fork</Label>
+          <Label htmlFor="np-listing">App to copy</Label>
           <select
             id="np-listing"
             value={listingId ?? ""}
@@ -433,7 +567,21 @@ function NewProjectForm({
       {source === "repository" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="np-repo">Repository</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="np-repo">Repository</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={repositories.isFetching}
+                onClick={() => {
+                  void repositories.refetch()
+                }}
+              >
+                <RefreshCwIcon className={repositories.isFetching ? "animate-spin" : ""} />
+                Refresh
+              </Button>
+            </div>
             {repositories.isError ? (
               <p className="text-[13px] text-muted-foreground">
                 No GitHub account is connected to this organization yet, so there is nothing to
@@ -465,6 +613,73 @@ function NewProjectForm({
               </Select>
             )}
           </div>
+          {selectedRepository !== undefined && (
+            <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
+              <Label htmlFor="np-upstream">Upstream repository</Label>
+              {selectedRepository.fork ? (
+                <p className="text-[13px] text-muted-foreground">
+                  GitHub identifies this as a fork. SproutOS will record its GitHub parent
+                  automatically.
+                </p>
+              ) : (
+                <>
+                  <Input
+                    id="np-upstream"
+                    value={manualUpstreamRef}
+                    onChange={(event) => {
+                      setManualUpstreamRef(event.target.value)
+                    }}
+                    placeholder="owner/upstream (optional)"
+                    spellCheck={false}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use this only if this repository was cloned or copied outside GitHub&apos;s fork
+                    flow. SproutOS verifies that the upstream exists before creating the project.
+                    The first comparison can be large and may require a paid conflict-resolution
+                    run; for a fresh project, copying the upstream into a new repository is safer.
+                  </p>
+                  {manualUpstreamRef.trim() !== "" && manualUpstream === null && (
+                    <p className="text-xs text-destructive">
+                      Enter a GitHub URL or owner/repository.
+                    </p>
+                  )}
+                  {manualUpstream !== null && !manualUpstreamSettled && (
+                    <p className="text-xs text-muted-foreground">Waiting to check this upstream…</p>
+                  )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.isFetching && (
+                      <p className="text-xs text-muted-foreground">Checking GitHub access…</p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.data?.accessible === true && (
+                      <p className="flex items-center gap-1 text-xs text-leaf">
+                        <CheckIcon className="size-3" aria-hidden="true" />
+                        Accessible on GitHub. Default branch:{" "}
+                        {manualUpstreamCheck.data.defaultBranch}
+                      </p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.data?.accessible === false && (
+                      <p className="flex items-center gap-1 text-xs text-destructive">
+                        <XIcon className="size-3" aria-hidden="true" />
+                        {manualUpstreamCheck.data.reason}
+                      </p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.isError && (
+                      <p className="text-xs text-destructive">
+                        SproutOS could not check this upstream. Try again before creating the
+                        project.
+                      </p>
+                    )}
+                </>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="np-root-dir">Project directory</Label>
             <Input
@@ -486,6 +701,44 @@ function NewProjectForm({
                 : "Enter . or a relative directory without empty, . or .. segments."}
             </p>
           </div>
+        </div>
+      )}
+
+      {tracksUpstream && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-border p-3">
+          <Label htmlFor="np-upstream-schedule">Upstream update schedule</Label>
+          <Select
+            value={updateSchedule}
+            onValueChange={(value) => {
+              if (value !== null) setUpdateSchedule(value)
+            }}
+          >
+            <SelectTrigger id="np-upstream-schedule">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="one_week">1 week</SelectItem>
+              <SelectItem value="one_month">1 month</SelectItem>
+              <SelectItem value="three_months">3 months</SelectItem>
+              <SelectItem value="six_months">6 months</SelectItem>
+              <SelectItem value="nine_months">9 months</SelectItem>
+              <SelectItem value="one_year">1 year</SelectItem>
+              <SelectItem value="two_years">2 years</SelectItem>
+            </SelectContent>
+          </Select>
+          <label className="flex items-start gap-2 text-[13px] text-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={syncUpstreamNow}
+              onChange={(event) => {
+                setSyncUpstreamNow(event.target.checked)
+              }}
+            />
+            Compare now and open a PR after project setup. Otherwise the first comparison runs after
+            the selected interval.
+          </label>
         </div>
       )}
 

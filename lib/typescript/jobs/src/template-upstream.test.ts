@@ -240,6 +240,30 @@ describe("reconcileTemplateUpstream", () => {
     )
   })
 
+  it("pushes a proposal branch without moving the production branch", async () => {
+    const made = await fixture()
+    const originalTarget = await git(made.targetBare, "rev-parse", "main")
+    await writeFile(join(made.upstreamWork, "new.txt"), "new\n")
+    await commit(made.upstreamWork, "v2")
+    await git(made.upstreamWork, "push", made.upstreamBare, "main")
+
+    const result = await reconcileTemplateUpstream({
+      owner: "customer",
+      repo: "copy",
+      branch: "main",
+      updateBranch: "sproutos/upkeep-proposal",
+      upstreamFullName: "catalogue/template",
+      upstreamBranch: "main",
+      token: "not-used-for-local-remotes",
+      targetUrl: made.targetBare,
+      upstreamUrl: made.upstreamBare,
+      baseUpstreamSha: made.initialUpstreamSha,
+    })
+    expect(result.outcome).toBe("merged")
+    expect(await git(made.targetBare, "rev-parse", "main")).toBe(originalTarget)
+    expect(await git(made.targetBare, "show", "sproutos/upkeep-proposal:new.txt")).toBe("new")
+  })
+
   it("refuses to overwrite a commit pushed after the target was fetched", async () => {
     const made = await fixture()
     await writeFile(join(made.upstreamWork, "new.txt"), "new\n")

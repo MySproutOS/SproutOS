@@ -285,6 +285,7 @@ describe("bootstrapSandbox", () => {
 describe("runSandboxTurn", () => {
   const base = {
     actionUrl: "https://api.sproutos.me/v1/agent/action",
+    databaseBranchesUrl: "https://api.sproutos.me/v1/agent/database-branches",
     groupPrimaryCandidates: [],
     externalId: "sb",
     harness: "claude-code" as const,
@@ -539,6 +540,7 @@ describe("a turn that was refused its tools", () => {
       externalId: "sandbox",
       harness,
       actionUrl: "https://api.sproutos.me/v1/agent/action",
+      databaseBranchesUrl: "https://api.sproutos.me/v1/agent/database-branches",
       groupPrimaryCandidates: [],
       model: null,
       onEvent: (event) => events.push(event),

@@ -10,7 +10,7 @@ import type { Kysely, Transaction } from "kysely"
  */
 export const CONSECUTIVE_FAILURE_LIMIT = 5
 
-export type UpkeepOutcome = "up_to_date" | "pr_opened" | "conflict" | "failed"
+export type UpkeepOutcome = "up_to_date" | "pr_opened" | "merged" | "conflict" | "failed"
 
 export type UpkeepStatus = {
   consecutiveFailures: number
@@ -19,19 +19,29 @@ export type UpkeepStatus = {
   lastRunAt: Date | null
 }
 
-export type AutoUpdateCadence = "tag" | "daily" | "weekly" | "monthly"
-export type UpkeepTrigger = "interval" | "tag"
+export type AutoUpdateCadence =
+  | "one_week"
+  | "one_month"
+  | "three_months"
+  | "six_months"
+  | "nine_months"
+  | "one_year"
+  | "two_years"
 
-const CADENCE_MS: Record<Exclude<AutoUpdateCadence, "tag">, number> = {
-  daily: 24 * 60 * 60 * 1000,
-  weekly: 7 * 24 * 60 * 60 * 1000,
-  // A stable interval, rather than a calendar boundary whose length varies by month and timezone.
-  monthly: 30 * 24 * 60 * 60 * 1000,
+const DAY_MS = 24 * 60 * 60 * 1000
+const CADENCE_MS: Record<AutoUpdateCadence, number> = {
+  one_week: 7 * DAY_MS,
+  one_month: 30 * DAY_MS,
+  three_months: 90 * DAY_MS,
+  six_months: 180 * DAY_MS,
+  nine_months: 270 * DAY_MS,
+  one_year: 365 * DAY_MS,
+  two_years: 730 * DAY_MS,
 }
 
 /** A missed interval remains due until a run is recorded, so worker downtime is caught up. */
 export function cadenceIsDue(
-  cadence: Exclude<AutoUpdateCadence, "tag">,
+  cadence: AutoUpdateCadence,
   lastRunAt: Date | null,
   now: Date,
 ): boolean {
@@ -85,14 +95,10 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
   async function dueForUpkeep(
     now: Date = new Date(),
     limit = 200,
-  ): Promise<{ id: string; organizationId: string; trigger: UpkeepTrigger }[]> {
+  ): Promise<{ id: string; organizationId: string }[]> {
     const candidates = await db
       .selectFrom("repository")
-      .select([
-        "repository.id as id",
-        "repository.organizationId as organizationId",
-        "repository.upstreamTagCheckedAt as upstreamTagCheckedAt",
-      ])
+      .select(["repository.id as id", "repository.organizationId as organizationId"])
       .where("repository.deletedAt", "is", null)
       .where("repository.upstreamFullName", "is not", null)
       .where((eb) =>
@@ -109,7 +115,7 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
       .limit(limit)
       .execute()
 
-    const due: { id: string; organizationId: string; trigger: UpkeepTrigger }[] = []
+    const due: { id: string; organizationId: string }[] = []
     for (const candidate of candidates) {
       const status = await forRepository(candidate.id)
       if (status.paused) continue
@@ -124,23 +130,11 @@ export function fetchUpkeepStatus(db: Kysely<DB> | Transaction<DB>) {
         .execute()
       const cadences = cadenceRows.map((row) => row.autoUpdateCadence as AutoUpdateCadence)
 
-      if (
-        cadences.some(
-          (cadence) => cadence !== "tag" && cadenceIsDue(cadence, status.lastRunAt, now),
-        )
-      ) {
+      if (cadences.some((cadence) => cadenceIsDue(cadence, status.lastRunAt, now))) {
         due.push({
           id: candidate.id,
           organizationId: candidate.organizationId,
-          trigger: "interval",
         })
-        continue
-      }
-
-      // Tag mode polls once daily. An unchanged tag advances only the checked-at timestamp in the
-      // repository handler; it does not manufacture an upstream_sync_run.
-      if (cadences.includes("tag") && cadenceIsDue("daily", candidate.upstreamTagCheckedAt, now)) {
-        due.push({ id: candidate.id, organizationId: candidate.organizationId, trigger: "tag" })
       }
     }
     return due

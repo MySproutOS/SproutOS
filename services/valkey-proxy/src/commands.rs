@@ -18,6 +18,8 @@ pub enum KeySpec {
     Fixed { first: usize, count: usize },
     /// `EVAL script numkeys key... arg...` — the count is in the command itself.
     Numkeys { count_at: usize },
+    /// A destination key precedes a declared source-key count.
+    NumkeysWithDestination { count_at: usize },
     /// The last argument is a timeout, not a key: `BLPOP key... timeout`.
     RangeExceptLast { first: usize, step: usize },
     /// `XREAD [options] STREAMS key... id...` — keys occupy the first half after `STREAMS`.
@@ -43,6 +45,11 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "DUMP",
     "BITCOUNT",
     "BITPOS",
+    "GETBIT",
+    "SETBIT",
+    "BITFIELD",
+    "BITFIELD_RO",
+    "BITOP",
     "EXPIRETIME",
     "PEXPIRETIME",
     "SET",
@@ -72,6 +79,7 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "RENAMENX",
     "COPY",
     "SMOVE",
+    "LCS",
     "HGET",
     "HSET",
     "HDEL",
@@ -87,6 +95,7 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "HSETNX",
     "HRANDFIELD",
     "HSCAN",
+    "HSTRLEN",
     "LPUSH",
     "RPUSH",
     "LPUSHX",
@@ -122,11 +131,15 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "SUNION",
     "SDIFF",
     "SINTERCARD",
+    "SINTERSTORE",
+    "SUNIONSTORE",
+    "SDIFFSTORE",
     "ZADD",
     "ZREM",
     "ZSCORE",
     "ZCARD",
     "ZCOUNT",
+    "ZLEXCOUNT",
     "ZRANGE",
     "ZREVRANGE",
     "ZRANGEBYSCORE",
@@ -142,10 +155,32 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "ZPOPMIN",
     "ZPOPMAX",
     "ZRANDMEMBER",
+    "ZMSCORE",
+    "ZDIFF",
+    "ZINTER",
+    "ZUNION",
+    "ZINTERCARD",
+    "ZDIFFSTORE",
+    "ZINTERSTORE",
+    "ZUNIONSTORE",
+    "ZRANGESTORE",
     "BZPOPMIN",
     "BZPOPMAX",
     "ZMPOP",
     "BZMPOP",
+    "GEOADD",
+    "GEODIST",
+    "GEOHASH",
+    "GEOPOS",
+    "GEORADIUS",
+    "GEORADIUS_RO",
+    "GEORADIUSBYMEMBER",
+    "GEORADIUSBYMEMBER_RO",
+    "GEOSEARCH",
+    "GEOSEARCHSTORE",
+    "PFADD",
+    "PFCOUNT",
+    "PFMERGE",
     "XADD",
     "XLEN",
     "XRANGE",
@@ -166,6 +201,9 @@ pub const FORWARDED_COMMANDS: &[&str] = &[
     "PSUBSCRIBE",
     "UNSUBSCRIBE",
     "PUNSUBSCRIBE",
+    "SPUBLISH",
+    "SSUBSCRIBE",
+    "SUNSUBSCRIBE",
     "EVAL",
     "EVALSHA",
     "EVAL_RO",
@@ -198,7 +236,9 @@ pub const FORWARDED_SUBCOMMANDS: &[&str] = &["SCRIPT|LOAD"];
 /// `CLIENT`, `CLUSTER`, `ACL`, `REPLICAOF`, and `KEYS` — which scans the whole keyspace and would
 /// walk straight through the namespacing.
 pub fn key_spec(verb: &str) -> Option<KeySpec> {
-    use KeySpec::{Fixed, None as NoKeys, Numkeys, Range, RangeExceptLast, Streams};
+    use KeySpec::{
+        Fixed, None as NoKeys, Numkeys, NumkeysWithDestination, Range, RangeExceptLast, Streams,
+    };
 
     // The same list is installed into each tenant's upstream ACL. Keeping it authoritative here
     // prevents a command from being admitted by the proxy but rejected only after reaching Valkey.
@@ -212,21 +252,20 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
 
         // Strings.
         "GET" | "GETDEL" | "GETEX" | "GETRANGE" | "INCR" | "DECR" | "STRLEN" | "TTL" | "PTTL"
-        | "PERSIST" | "TYPE" | "DUMP" | "BITCOUNT" | "BITPOS" | "EXPIRETIME" | "PEXPIRETIME" => {
-            Fixed { first: 1, count: 1 }
-        }
+        | "PERSIST" | "TYPE" | "DUMP" | "BITCOUNT" | "BITPOS" | "GETBIT" | "SETBIT"
+        | "BITFIELD" | "BITFIELD_RO" | "EXPIRETIME" | "PEXPIRETIME" => Fixed { first: 1, count: 1 },
+        "BITOP" => Range { first: 2, step: 1 },
         "SET" | "SETNX" | "SETEX" | "PSETEX" | "GETSET" | "APPEND" | "INCRBY" | "DECRBY"
         | "INCRBYFLOAT" | "EXPIRE" | "PEXPIRE" | "EXPIREAT" | "PEXPIREAT" | "SETRANGE"
         | "RESTORE" => Fixed { first: 1, count: 1 },
         "MGET" | "DEL" | "UNLINK" | "EXISTS" | "TOUCH" | "WATCH" => Range { first: 1, step: 1 },
         "MSET" | "MSETNX" => Range { first: 1, step: 2 },
-        "RENAME" | "RENAMENX" | "COPY" | "SMOVE" => Fixed { first: 1, count: 2 },
+        "RENAME" | "RENAMENX" | "COPY" | "SMOVE" | "LCS" => Fixed { first: 1, count: 2 },
 
         // Hashes — Celery and BullMQ both keep job data in these.
         "HGET" | "HSET" | "HDEL" | "HGETALL" | "HKEYS" | "HVALS" | "HLEN" | "HEXISTS"
-        | "HINCRBY" | "HINCRBYFLOAT" | "HMGET" | "HMSET" | "HSETNX" | "HRANDFIELD" | "HSCAN" => {
-            Fixed { first: 1, count: 1 }
-        }
+        | "HINCRBY" | "HINCRBYFLOAT" | "HMGET" | "HMSET" | "HSETNX" | "HRANDFIELD" | "HSCAN"
+        | "HSTRLEN" => Fixed { first: 1, count: 1 },
 
         // Lists — Celery's default broker is a list.
         "LPUSH" | "RPUSH" | "LPUSHX" | "RPUSHX" | "LPOP" | "RPOP" | "LLEN" | "LRANGE" | "LREM"
@@ -243,15 +282,35 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
         | "SRANDMEMBER" | "SSCAN" => Fixed { first: 1, count: 1 },
         "SINTER" | "SUNION" | "SDIFF" => Range { first: 1, step: 1 },
         "SINTERCARD" => Numkeys { count_at: 1 },
+        "SINTERSTORE" | "SUNIONSTORE" | "SDIFFSTORE" => Range { first: 1, step: 1 },
 
         // Sorted sets — BullMQ's delayed and prioritised queues.
-        "ZADD" | "ZREM" | "ZSCORE" | "ZCARD" | "ZCOUNT" | "ZRANGE" | "ZREVRANGE"
+        "ZADD" | "ZREM" | "ZSCORE" | "ZCARD" | "ZCOUNT" | "ZLEXCOUNT" | "ZRANGE" | "ZREVRANGE"
         | "ZRANGEBYSCORE" | "ZREVRANGEBYSCORE" | "ZRANGEBYLEX" | "ZRANK" | "ZREVRANK"
         | "ZINCRBY" | "ZREMRANGEBYSCORE" | "ZREMRANGEBYRANK" | "ZREMRANGEBYLEX" | "ZSCAN"
-        | "ZPOPMIN" | "ZPOPMAX" | "ZRANDMEMBER" => Fixed { first: 1, count: 1 },
+        | "ZPOPMIN" | "ZPOPMAX" | "ZRANDMEMBER" | "ZMSCORE" => Fixed { first: 1, count: 1 },
+        "ZDIFF" | "ZINTER" | "ZUNION" | "ZINTERCARD" => Numkeys { count_at: 1 },
+        "ZDIFFSTORE" | "ZINTERSTORE" | "ZUNIONSTORE" => NumkeysWithDestination { count_at: 2 },
+        "ZRANGESTORE" => Fixed { first: 1, count: 2 },
         "BZPOPMIN" | "BZPOPMAX" => RangeExceptLast { first: 1, step: 1 },
         "ZMPOP" => Numkeys { count_at: 1 },
         "BZMPOP" => Numkeys { count_at: 2 },
+
+        // Geospatial indexes are sorted sets. STORE variants have a destination and source key.
+        "GEOADD"
+        | "GEODIST"
+        | "GEOHASH"
+        | "GEOPOS"
+        | "GEORADIUS"
+        | "GEORADIUS_RO"
+        | "GEORADIUSBYMEMBER"
+        | "GEORADIUSBYMEMBER_RO"
+        | "GEOSEARCH" => Fixed { first: 1, count: 1 },
+        "GEOSEARCHSTORE" => Fixed { first: 1, count: 2 },
+
+        // HyperLogLog values are strings; their merges still name every source and destination.
+        "PFADD" => Fixed { first: 1, count: 1 },
+        "PFCOUNT" | "PFMERGE" => Range { first: 1, step: 1 },
 
         // Streams.
         "XADD" | "XLEN" | "XRANGE" | "XREVRANGE" | "XDEL" | "XTRIM" | "XACK" | "XPENDING"
@@ -260,8 +319,9 @@ pub fn key_spec(verb: &str) -> Option<KeySpec> {
         "XREAD" | "XREADGROUP" => Streams,
 
         // Channels use the same namespace and are independently constrained by the ACL's `&` rule.
-        "PUBLISH" => Fixed { first: 1, count: 1 },
-        "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" => Range { first: 1, step: 1 },
+        "PUBLISH" | "SPUBLISH" => Fixed { first: 1, count: 1 },
+        "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" | "SSUBSCRIBE"
+        | "SUNSUBSCRIBE" => Range { first: 1, step: 1 },
 
         // Scripting. BullMQ is almost entirely EVALSHA, so this is the important one.
         "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" => {
@@ -340,6 +400,18 @@ pub fn namespace_command(
                 return Err("numkeys is larger than the arguments given");
             }
             (count_at + 1..count_at + 1 + count).collect()
+        }
+        KeySpec::NumkeysWithDestination { count_at } => {
+            let raw = args.get(count_at).ok_or("wrong number of arguments")?;
+            let text = std::str::from_utf8(raw).map_err(|_| "numkeys is not a number")?;
+            let count: usize = text.parse().map_err(|_| "numkeys is not a number")?;
+            if args.len() < count_at + 1 + count {
+                return Err("numkeys is larger than the arguments given");
+            }
+            let mut indices = Vec::with_capacity(count + 1);
+            indices.push(1);
+            indices.extend(count_at + 1..count_at + 1 + count);
+            indices
         }
         KeySpec::Streams => {
             let grouped = args[0].eq_ignore_ascii_case(b"XREADGROUP");
@@ -668,6 +740,67 @@ mod tests {
             assert!(!out.iter().any(|arg| arg == "{kv:01hb}:LEFT"), "{out:?}");
         }
     }
+
+    #[test]
+    fn broad_data_type_commands_rewrite_every_key_and_no_values() {
+        assert_eq!(
+            namespaced(&["BITOP", "AND", "out", "one", "two"]).unwrap(),
+            [
+                "BITOP",
+                "AND",
+                "{kv:01hb}:out",
+                "{kv:01hb}:one",
+                "{kv:01hb}:two"
+            ]
+        );
+        assert_eq!(
+            namespaced(&[
+                "GEOSEARCHSTORE",
+                "nearby",
+                "places",
+                "FROMLONLAT",
+                "0",
+                "0",
+                "BYRADIUS",
+                "5",
+                "km",
+            ])
+            .unwrap(),
+            [
+                "GEOSEARCHSTORE",
+                "{kv:01hb}:nearby",
+                "{kv:01hb}:places",
+                "FROMLONLAT",
+                "0",
+                "0",
+                "BYRADIUS",
+                "5",
+                "km"
+            ]
+        );
+        assert_eq!(
+            namespaced(&["PFMERGE", "all", "a", "b"]).unwrap(),
+            ["PFMERGE", "{kv:01hb}:all", "{kv:01hb}:a", "{kv:01hb}:b"]
+        );
+    }
+
+    #[test]
+    fn sorted_set_store_commands_rewrite_destination_and_declared_sources_only() {
+        assert_eq!(
+            namespaced(&["ZINTERSTORE", "out", "2", "one", "two", "WEIGHTS", "2", "3",]).unwrap(),
+            [
+                "ZINTERSTORE",
+                "{kv:01hb}:out",
+                "2",
+                "{kv:01hb}:one",
+                "{kv:01hb}:two",
+                "WEIGHTS",
+                "2",
+                "3"
+            ]
+        );
+        assert!(namespaced(&["ZINTERSTORE", "out", "2", "one"]).is_err());
+    }
 }
 
 /// Does this verb *add work* to a queue?
@@ -683,24 +816,27 @@ mod tests {
 /// that finds nothing and scales back down. The opposite mistake — a queue with jobs and no worker
 /// — is a customer's job that never runs.
 ///
+/// Do not add bookkeeping writes merely because they mutate Valkey. Celery declares Kombu bindings
+/// with `SADD` and tracks unacknowledged deliveries with `ZADD`; treating those as publishes made
+/// every Lambda drain enqueue another drain, so one job fanned out into an invocation loop. Celery
+/// publishes with a list push. BullMQ's sorted-set and hash writes happen inside its Lua command,
+/// which is already covered here.
+///
 /// `EVAL_RO`, `EVALSHA_RO` and `FCALL_RO` are excluded: the server itself refuses writes from them,
 /// so they cannot enqueue anything.
-pub fn adds_work(verb: &str) -> bool {
-    matches!(
-        verb,
-        "LPUSH"
-            | "RPUSH"
-            | "LPUSHX"
-            | "RPUSHX"
-            | "LMOVE"
-            | "RPOPLPUSH"
-            | "ZADD"
-            | "XADD"
-            | "SADD"
-            | "EVAL"
-            | "EVALSHA"
-            | "FCALL"
-    )
+pub fn adds_work(verb: &str, first_key: &[u8], prefix: &[u8]) -> bool {
+    match verb {
+        // Celery and direct list/stream producers publish with these commands.
+        "LPUSH" | "RPUSH" | "LPUSHX" | "RPUSHX" | "XADD" => true,
+        // BullMQ scripts use the published `bull:<queue>:...` key family. Kombu also uses Lua for
+        // visibility-timeout bookkeeping (`unacked_mutex`); accepting every script made that lock
+        // look like a queue and recursively woke another Lambda drain.
+        "EVAL" | "EVALSHA" | "FCALL" => first_key
+            .strip_prefix(prefix)
+            .unwrap_or(first_key)
+            .starts_with(b"bull:"),
+        _ => false,
+    }
 }
 
 /// The queue a key belongs to, from the key as the *tenant* wrote it.
@@ -779,10 +915,23 @@ mod master_queue_tests {
 
     #[test]
     fn only_verbs_that_can_enqueue_wake_a_queue() {
-        for verb in ["LPUSH", "RPUSH", "ZADD", "XADD", "EVALSHA", "EVAL", "FCALL"] {
-            assert!(adds_work(verb), "{verb} should wake a queue");
+        for verb in ["LPUSH", "RPUSH", "XADD"] {
+            assert!(
+                adds_work(verb, b"celery", PREFIX),
+                "{verb} should wake a queue"
+            );
         }
-        // Reads, and the acknowledgement traffic a running worker produces.
+        for verb in ["EVALSHA", "EVAL", "FCALL"] {
+            assert!(
+                adds_work(verb, b"{kv:01hb}:bull:emails:wait", PREFIX),
+                "BullMQ {verb} should wake a queue"
+            );
+            assert!(
+                !adds_work(verb, b"{kv:01hb}:unacked_mutex", PREFIX),
+                "Kombu bookkeeping {verb} must not wake a queue"
+            );
+        }
+        // Reads, and the binding/unacknowledged/acknowledgement traffic a running worker produces.
         for verb in [
             "GET",
             "LRANGE",
@@ -792,12 +941,19 @@ mod master_queue_tests {
             "ZREM",
             "HGET",
             "XACK",
+            "SADD",
+            "ZADD",
+            "LMOVE",
+            "RPOPLPUSH",
             "DEL",
             "EVALSHA_RO",
             "EVAL_RO",
             "FCALL_RO",
         ] {
-            assert!(!adds_work(verb), "{verb} should not wake a queue");
+            assert!(
+                !adds_work(verb, b"celery", PREFIX),
+                "{verb} should not wake a queue"
+            );
         }
     }
 }

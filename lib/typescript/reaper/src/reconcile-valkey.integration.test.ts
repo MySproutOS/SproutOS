@@ -1,8 +1,8 @@
 import { Redis } from "ioredis"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { valkeyAclUsername, type ValkeyAclIdentity } from "@lib/services"
-import { reconcileValkeyAclIdentities } from "./reconcile-valkey"
+import { expectedValkeyAclTokens, valkeyAclUsername, type ValkeyAclIdentity } from "@lib/services"
+import { reconcileValkeyAclIdentities, valkeyAclTokenDifference } from "./reconcile-valkey"
 
 const adminUrl = process.env.SERVICE_VALKEY_ADMIN_URL ?? "redis://127.0.0.1:41023"
 const redis = new Redis(adminUrl, {
@@ -49,7 +49,21 @@ describe("Valkey ACL reconciliation against a real engine", () => {
     expect(report.orphaned).toBeGreaterThanOrEqual(1)
     expect(await redis.call("ACL", "GETUSER", valkeyAclUsername(identities[2]))).not.toBeNull()
     const stable = await reconcileValkeyAclIdentities(redis, identities.slice(0, 2), root)
+    const lines = (await redis.call("ACL", "LIST")) as string[]
+    const diagnostics = identities.slice(0, 2).map((identity) => {
+      const username = valkeyAclUsername(identity)
+      const line = lines.find((candidate) => candidate.startsWith(`user ${username} `)) ?? ""
+      return {
+        username,
+        ...valkeyAclTokenDifference(line, expectedValkeyAclTokens(identity, root)),
+      }
+    })
+    if (stable.missing !== 0 || stable.drifted !== 0 || stable.repaired !== 0) {
+      throw new Error(
+        `Valkey ACL reconciliation was not idempotent: ${JSON.stringify(diagnostics)}`,
+      )
+    }
     expect(stable).toMatchObject({ missing: 0, drifted: 0, repaired: 0 })
-    expect(stable.orphaned).toBe(report.orphaned)
+    expect(await redis.call("ACL", "GETUSER", valkeyAclUsername(identities[2]))).not.toBeNull()
   })
 })

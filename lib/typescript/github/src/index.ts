@@ -40,6 +40,7 @@ export {
   getRepositoryById,
   type InstallationRepositoryPage,
   listInstallationRepositories,
+  listAllInstallationRepositories,
   toRepository,
 } from "./repositories"
 export {
@@ -69,4 +70,12 @@ export {
 } from "./upstream"
 export { REPOSITORY_SCOPE, userGitHubCredential, userGitHubIdentity } from "./user-credential"
 export { linkInstallation, type InstallationFacts } from "./link-installation"
-export { ensurePullRequest, type PullRequestResult } from "./pull-requests"
+export {
+  deleteBranch,
+  ensureBranch,
+  ensurePullRequest,
+  getPullRequestState,
+  mergePullRequest,
+  type PullRequestResult,
+  type PullRequestState,
+} from "./pull-requests"

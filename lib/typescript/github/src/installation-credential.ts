@@ -125,7 +125,9 @@ function repositoryOutsideInstallation(error: unknown): boolean {
   const message = error.message.trim().toLowerCase().replace(/\.$/, "")
   return (
     message === "the repository is not accessible to the parent installation" ||
-    message === "the repository does not exist or is inaccessible to the parent installation"
+    message === "the repository does not exist or is inaccessible to the parent installation" ||
+    message ===
+      "there is at least one repository that does not exist or is not accessible to the parent installation"
   )
 }
 

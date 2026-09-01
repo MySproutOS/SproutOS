@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   type AgentEvent,
+  agentSessionIsRunning,
+  agentSessionTitle,
   ensureSandboxRunning,
   latestRestorableAgentSession,
   streamAgentTurn,
   waitForSandboxDeletion,
 } from "./agent-chat"
+
+describe("agentSessionTitle", () => {
+  it("bounds a first prompt to the API's session-title limit", () => {
+    const prompt = "Create an interval workflow and verify the preview. ".repeat(10)
+
+    expect(prompt.length).toBeGreaterThan(200)
+    expect(agentSessionTitle(prompt)).toBe(prompt.slice(0, 200))
+    expect(agentSessionTitle(prompt)).toHaveLength(200)
+  })
+})
 
 /**
  * SSE framing is parsed here rather than by the browser, because EventSource only issues GET
@@ -122,6 +134,19 @@ describe("latestRestorableAgentSession", () => {
         { id: "done", title: null, status: "completed", createdLabel: "now" },
       ]),
     ).toBeUndefined()
+  })
+})
+
+describe("agentSessionIsRunning", () => {
+  it("keeps a live turn running across reload while Daytona starts or serves it", () => {
+    expect(agentSessionIsRunning("active", "starting")).toBe(true)
+    expect(agentSessionIsRunning("active", "running")).toBe(true)
+  })
+
+  it("does not let a stale active row disable chat after its sandbox was deleted", () => {
+    expect(agentSessionIsRunning("active", undefined)).toBe(false)
+    expect(agentSessionIsRunning("active", "deleting")).toBe(false)
+    expect(agentSessionIsRunning("idle", "running")).toBe(false)
   })
 })
 

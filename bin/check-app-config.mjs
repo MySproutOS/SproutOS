@@ -49,6 +49,7 @@ import { readFileSync } from "node:fs"
 const putSecrets = readFileSync("bin/put-app-secrets.sh", "utf8")
 const userData = readFileSync("tofu/user-data.sh.tftpl", "utf8")
 const ecs = readFileSync("tofu/ecs.tf", "utf8")
+const ecsReleaseTemplate = readFileSync("deploy/ecs/web-task-definition.json", "utf8")
 const templateEnv = readFileSync(".template.env", "utf8")
 const routerLogs = readFileSync("services/router/src/logs.rs", "utf8")
 const lambdaPublish = readFileSync("lib/typescript/lambda/src/publish.ts", "utf8")
@@ -59,11 +60,13 @@ const lambdaPublish = readFileSync("lib/typescript/lambda/src/publish.ts", "utf8
   SERVICE_BUILD_BUCKET existed on the worker while the API used its development fallback, and a
   real CLI deploy received a validly signed PUT URL for a bucket that did not exist.
 */
-const apiContainer = /\n\s*name\s*=\s*"api"([\s\S]*?)\n\s*name\s*=\s*"worker"/.exec(ecs)?.[1]
+const apiContainer = /"name"\s*:\s*"api"([\s\S]*?)"name"\s*:\s*"worker"/.exec(
+  ecsReleaseTemplate,
+)?.[1]
 if (apiContainer === undefined) {
-  throw new Error("tofu/ecs.tf no longer has an API container followed by the worker container")
+  throw new Error("deploy/ecs/web-task-definition.json no longer has an API container")
 }
-if (!/name\s*=\s*"SERVICE_BUILD_BUCKET"/.test(apiContainer)) {
+if (!/"name"\s*:\s*"SERVICE_BUILD_BUCKET"/.test(apiContainer)) {
   throw new Error(
     "the API container must receive SERVICE_BUILD_BUCKET because deploy.ts signs primary build uploads",
   )

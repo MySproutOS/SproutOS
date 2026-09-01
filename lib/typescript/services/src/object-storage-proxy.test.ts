@@ -4,7 +4,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { db } from "@sproutos/db"
+import { Redis } from "ioredis"
 import { sql } from "kysely"
 import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -58,6 +61,37 @@ const reachable = await (async () => {
  * first still answers, and the second suite asserts against a process it did not configure.
  */
 const PROXY_PORT = 9002
+const TEST_VALKEY_URL = "redis://localhost:41023/14"
+const execFileAsync = promisify(execFile)
+
+const BOTO3_SMOKE = String.raw`
+import json
+import os
+
+import boto3
+from botocore.config import Config
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["S3_ENDPOINT"],
+    region_name=os.environ["S3_REGION"],
+    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
+    config=Config(s3={"addressing_style": "path"}),
+)
+bucket = os.environ["S3_BUCKET"]
+key = "python/boto3.txt"
+s3.put_object(Bucket=bucket, Key=key, Body=b"boto3")
+body = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode()
+listed = any(item["Key"] == key for item in s3.list_objects_v2(Bucket=bucket, Prefix="python/").get("Contents", []))
+s3.delete_object(Bucket=bucket, Key=key)
+large_key = "python/larger-than-the-old-memory-limit.bin"
+large = b"x" * (17 * 1024 * 1024)
+s3.put_object(Bucket=bucket, Key=large_key, Body=large)
+large_length = len(s3.get_object(Bucket=bucket, Key=large_key)["Body"].read())
+s3.delete_object(Bucket=bucket, Key=large_key)
+print(json.dumps({"body": body, "listed": listed, "largeLength": large_length}))
+`
 
 let proxy: RunningProxy | undefined
 /** The config with `publicEndpoint` pointing at *this* suite's proxy. */
@@ -126,7 +160,10 @@ function asCustomer(connectionUri: string) {
 beforeAll(async () => {
   if (!reachable) return
 
-  proxy = await startStorageProxy(config!, PROXY_PORT)
+  const isolatedValkey = new Redis(TEST_VALKEY_URL)
+  await isolatedValkey.flushdb()
+  isolatedValkey.disconnect()
+  proxy = await startStorageProxy(config!, PROXY_PORT, undefined, { VALKEY_URL: TEST_VALKEY_URL })
   active = proxy.config
 }, 30_000)
 
@@ -170,10 +207,9 @@ describe.runIf(reachable)("through the storage proxy", () => {
 
   it("refuses an unsigned request before admitting its oversized body", async () => {
     /*
-      The body ceiling is 16 MiB. If the handler buffers before parsing Authorization this returns
-      EntityTooLarge after allocating the entire ceiling; a 403 proves the refusal happened from the
-      headers first. That ordering is what prevents an anonymous caller from buying 16 MiB of the
-      router's 1 GiB host on every concurrent request.
+      If the handler spools before parsing Authorization this reads the whole body; a 403 proves the
+      refusal happened from the headers first. That ordering is what prevents an anonymous caller
+      from buying disk and I/O on every concurrent request.
     */
     let outcome: string
     try {
@@ -189,7 +225,7 @@ describe.runIf(reachable)("through the storage proxy", () => {
       // peer refused the request before the client could finish sending the oversized body.
       outcome = `error:${(error as { cause?: { code?: string } }).cause?.code}`
     }
-    expect(["response:403:true", "error:EPIPE"]).toContain(outcome)
+    expect(["response:403:true", "error:EPIPE", "error:ECONNRESET"]).toContain(outcome)
   }, 30_000)
 
   it("lets a customer write and read their own vault", async () => {
@@ -203,6 +239,32 @@ describe.runIf(reachable)("through the storage proxy", () => {
     const read = await client.send(new GetObjectCommand({ Bucket: bucket, Key: "notes/one.md" }))
 
     expect(await read.Body?.transformToString()).toBe("# hi")
+  }, 60_000)
+
+  it("accepts the ordinary boto3 request shape used by Python applications", async () => {
+    const mine = await vault("Python")
+    const parsed = parseObjectStorageUri(mine.uri)
+    const { stdout } = await execFileAsync(
+      "uv",
+      ["run", "--with", "boto3", "python", "-c", BOTO3_SMOKE],
+      {
+        env: {
+          ...process.env,
+          AWS_EC2_METADATA_DISABLED: "true",
+          S3_ENDPOINT: parsed.endpoint,
+          S3_REGION: parsed.region,
+          S3_BUCKET: parsed.bucket,
+          S3_ACCESS_KEY_ID: parsed.accessKeyId,
+          S3_SECRET_ACCESS_KEY: parsed.secretAccessKey,
+        },
+      },
+    )
+
+    expect(JSON.parse(stdout)).toEqual({
+      body: "boto3",
+      listed: true,
+      largeLength: 17 * 1024 * 1024,
+    })
   }, 60_000)
 
   it("refuses one customer's credential against another customer's bucket", async () => {
@@ -295,6 +357,30 @@ describe.runIf(reachable)("through the storage proxy", () => {
     // The same saved settings work again afterwards, which is the point of not rotating.
     await driver().resume?.(mine.backendServiceId)
     await expect(client.send(new ListObjectsV2Command({ Bucket: bucket }))).resolves.toBeDefined()
+  }, 60_000)
+
+  it("cuts off saved S3 credentials when the organization reaches its retention floor", async () => {
+    const mine = await vault("Credit floor")
+    const client = asCustomer(mine.uri)
+    const bucket = bucketNameFor(mine.backendServiceId)
+    const valkey = new Redis(TEST_VALKEY_URL)
+
+    try {
+      await client.send(new PutObjectCommand({ Bucket: bucket, Key: "one.md", Body: "x" }))
+      await valkey.set(`credit:${mine.organizationId}`, "exhausted", "EX", 60)
+
+      await expect(client.send(new ListObjectsV2Command({ Bucket: bucket }))).rejects.toMatchObject(
+        {
+          name: "InsufficientCredit",
+        },
+      )
+
+      await valkey.del(`credit:${mine.organizationId}`)
+      await expect(client.send(new ListObjectsV2Command({ Bucket: bucket }))).resolves.toBeDefined()
+    } finally {
+      await valkey.del(`credit:${mine.organizationId}`)
+      valkey.disconnect()
+    }
   }, 60_000)
 
   it("refuses a rotated-away credential", async () => {

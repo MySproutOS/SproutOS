@@ -75,6 +75,7 @@ export async function seal(
       KeySpec: "AES_256",
       EncryptionContext: context,
     }),
+    { abortSignal: config.abortSignal },
   )
 
   if (!generated.Plaintext || !generated.CiphertextBlob) {
@@ -125,6 +126,7 @@ export async function open(
         EncryptionContext: context,
         KeyId: sealed.kmsKeyId,
       }),
+      { abortSignal: config.abortSignal },
     )
     if (!decrypted.Plaintext) throw new DecryptionFailedError()
     dek = Buffer.from(decrypted.Plaintext)

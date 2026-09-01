@@ -122,17 +122,13 @@ testable without a poller running.
 
 Two job kinds, and a rule about when to stop.
 
-**`upkeep.scan`** finds repositories due under their `tag`, daily, weekly, or monthly policy and
-enqueues one `upkeep.repository` job each, keyed on the repository and the day. Off is represented
-only by `auto_update_enabled = false`. Interval eligibility is derived from the last durable sync
-run, so missed scheduler windows catch up instead of disappearing. Scan-then-fan-out rather than one large job, because a single
-job holding a lease while it reconciles two hundred forks is two hundred failures riding on one
-lease.
-
-Tag mode polls the complete upstream tag set once per day and fingerprints tag names plus target
-commits. A changed fingerprint triggers the same guarded upstream sync; an unchanged poll advances
-only `repository.upstream_tag_checked_at`. No `upstream_sync_run` is written for work that did not
-happen.
+**`upkeep.scan`** runs hourly and finds repositories due under the selected fixed elapsed interval:
+one day, two days, one week, one month, three months, six months, nine months, one year, or two
+years. It enqueues one `upkeep.repository` job each, keyed on the repository and the hour. Off is
+represented only by `auto_update_enabled = false`. Interval eligibility is derived from the last
+durable sync run, so missed scheduler windows catch up instead of disappearing. Scan-then-fan-out
+rather than one large job, because a single job holding a lease while it reconciles two hundred
+forks is two hundred failures riding on one lease.
 
 **One job per _repository_, not per project.** TASK 21 lets several projects share a repository —
 in this schema that means a monorepo, since `project_repository_target_live_key` is unique on
@@ -151,8 +147,14 @@ that silently stops a customer's updates. Deriving it also means recovery needs 
 successful run and the repository is due again.
 
 **A `conflict` is not a failure.** It means upstream and the fork both changed the same lines,
-which is the normal state of a fork someone is actually working on, and it produces a pull request
-a person resolves. Counting it would pause exactly the repositories that are being used.
+which is the normal state of a fork someone is actually working on. It automatically starts the
+bounded Daytona resolver, whose trusted host opens the same CI-gated pull request used by a clean
+update. Counting it would pause exactly the repositories that are being used.
+
+Neither clean nor resolved updates write directly to the production branch. They use a
+`sproutos/upkeep-*` proposal branch, open a pull request, wait for at least one successful GitHub
+check and all branch-protection requirements, and only then merge. `last_synced_at` advances only
+after GitHub reports that merge complete.
 
 Runs are recorded for _every_ outcome, `up_to_date` included — otherwise a repository that failed
 once and then had nothing to do for four nights would read as five failures in a row.

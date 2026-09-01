@@ -15,9 +15,20 @@ export {
 } from "./active-usage-reconciliation"
 export {
   REFRESH_CREDIT_STATES_KIND,
+  protectedObjectStorageReserve,
   refreshCreditStates,
   refreshOrganizationCreditState,
 } from "./credit-state"
+export {
+  METER_OBJECT_STORAGE_KIND,
+  meterObjectStorage,
+  meterObjectStorageJob,
+  objectStorageGbMonthSegments,
+  objectStorageReserveMicroUsd,
+  OBJECT_STORAGE_RETENTION_SECONDS,
+  retainedObjectBytes,
+  type ObjectStorageMeteringOptions,
+} from "./object-storage-metering"
 export {
   decideUpkeepAction,
   type UpkeepAction,
@@ -83,8 +94,11 @@ export {
   provisionSandbox,
   requestSandboxDestroy,
   requestSandboxStart,
+  OrganizationUsageSuspendedError,
   SandboxDeletingError,
   reapSandboxes,
+  reapExpiredDatabaseBranches,
+  repairDeletingSandboxes,
   SANDBOX_KINDS,
   scheduleSandboxJobs,
   stopSandbox,
@@ -116,6 +130,13 @@ export {
   type UpkeepResolutionPayload,
   UPKEEP_RESOLUTION_KIND,
 } from "./upkeep-resolution"
+export {
+  enqueueUpkeepPrFinalizer,
+  finalizeUpkeepPullRequest,
+  type UpkeepPrDeps,
+  type UpkeepPrPayload,
+  UPKEEP_PR_KIND,
+} from "./upkeep-pr"
 export {
   assertSupportedTemplateGit,
   reconcileTemplateUpstream,
@@ -158,7 +179,12 @@ export {
   GITHUB_EVENT_KINDS,
   installationDiscoveryIdempotencyKey,
 } from "./github-events"
-export { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
+export {
+  clearOwnershipTxtCache,
+  CUSTOM_DOMAIN_KINDS,
+  reconcileCustomDomain,
+  scanCustomDomains,
+} from "./custom-domain"
 export {
   nextPlatformRenewal,
   PLATFORM_EDGE_CERTIFICATE_KIND,

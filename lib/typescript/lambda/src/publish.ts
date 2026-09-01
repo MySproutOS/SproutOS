@@ -51,6 +51,22 @@ export function functionName(projectId: string): string {
   return `sproutos-app-${projectId}`
 }
 
+/** Build the stable ARN the router invokes for a project's Lambda alias. */
+export function lambdaAliasArn(input: {
+  region: string
+  accountId: string
+  projectId: string
+  aliasName?: string
+}): string {
+  const region = input.region.trim()
+  const accountId = input.accountId.trim()
+  if (region === "") throw new Error("AWS region is required to build a Lambda alias ARN")
+  if (!/^\d{12}$/u.test(accountId)) {
+    throw new Error("AWS account ID must contain exactly 12 digits")
+  }
+  return `arn:aws:lambda:${region}:${accountId}:function:${functionName(input.projectId)}:${input.aliasName ?? LIVE_ALIAS}`
+}
+
 export type PublishInput = {
   projectId: string
   /** Signed into the telemetry token so the extension body cannot choose a billing owner. */

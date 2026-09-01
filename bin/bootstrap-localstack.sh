@@ -35,11 +35,6 @@ for bucket in sproutos-dev-artifacts sproutos-dev-uploads sproutos-dev-pageserve
     || { aws_local s3api create-bucket --bucket "$bucket" >/dev/null; echo "created bucket $bucket"; }
 done
 
-# SES v1 — v2 is not on the free plan, which is why the mailer targets client-ses.
-aws_local ses verify-email-identity --email-address no-reply@sproutos.dev >/dev/null 2>&1 || true
-aws_local ses verify-domain-identity --domain sproutos.dev >/dev/null 2>&1 || true
-echo "verified SES identities"
-
 # Metering ingest stream.
 aws_local kinesis describe-stream --stream-name sproutos-dev-usage >/dev/null 2>&1 \
   || { aws_local kinesis create-stream --stream-name sproutos-dev-usage --shard-count 1 >/dev/null; \

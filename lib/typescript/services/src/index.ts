@@ -15,9 +15,20 @@ export {
 export { assertSafeIdentifier, databaseNameFor, postgresUri, roleNameFor } from "./naming"
 export {
   createDevBranch,
+  devBranchProviderName,
+  assertDevBranchQuota,
+  DEFAULT_NEON_PROJECT_BRANCH_LIMIT,
+  MAX_SANDBOX_DATABASE_BRANCHES,
+  DevBranchQuotaExceededError,
+  DevBranchNameConflictError,
+  DevBranchHasChildrenError,
+  DevBranchReservationLostError,
   DevBranchUnavailableError,
   dropDevBranch,
+  rotateDevBranchCredential,
   type DevBranch,
+  type DevBranchDependencies,
+  type CreateDevBranchInput,
 } from "./dev-branch"
 export {
   rolePasswordContext,
@@ -42,6 +53,7 @@ export {
   searchUri,
   type SearchServiceConfig,
 } from "./search"
+export { SEARCH_SECURITY_POLICY } from "./search-security-policy"
 export {
   SecretNotRecoverableError,
   valkeyDriver,
@@ -98,6 +110,7 @@ export {
   type NeonConsumptionTimeframe,
   type NeonProject,
   type NeonProjectConsumption,
+  type NeonBranchConsumption,
 } from "./neon-api"
 export { serviceDriverFromEnv } from "./from-env"
 export {

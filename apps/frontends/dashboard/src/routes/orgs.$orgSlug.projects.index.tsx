@@ -15,7 +15,7 @@ import {
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
 import { ProjectRow } from "@frontends/dashboard/components/project-row"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
-import { useProjects } from "@frontends/dashboard/data/projects"
+import { isStandaloneWorkflowProject, useProjects } from "@frontends/dashboard/data/projects"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/")({
   component: ProjectsList,
@@ -27,11 +27,12 @@ function ProjectsList() {
   const [filter, setFilter] = useState("")
 
   const needle = filter.trim().toLowerCase()
-  const sections = data === undefined ? undefined : groupProjects(data, filter)
+  const projectData = data?.filter((project) => !isStandaloneWorkflowProject(project))
+  const sections = projectData === undefined ? undefined : groupProjects(projectData, filter)
 
   return (
     <>
-      <PageHeader title="Projects" count={data?.length}>
+      <PageHeader title="Projects" count={projectData?.length}>
         <div className="relative hidden w-55 sm:block">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

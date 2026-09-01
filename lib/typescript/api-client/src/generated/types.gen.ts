@@ -260,6 +260,155 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryRespon
 export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse =
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/update-upstream"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors = {
+  /**
+   * The project has no recorded upstream
+   */
+  400: ErrorResponseT
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The person who started the turn lacks project:update
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this project
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses = {
+  /**
+   * The upstream comparison and PR-gated update were queued
+   */
+  202: {
+    action: "update_from_upstream"
+    jobId: string
+    upstreamFullName: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData = {
+  body?: {
+    name: string
+  }
+  path: {
+    orgSlug: string
+    projectId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors = {
+  /**
+   * The short-lived agent token is absent or invalid
+   */
+  401: ErrorResponseT
+  /**
+   * The initiating user lacks database:branch:create
+   */
+  403: ErrorResponseT
+  /**
+   * The token does not belong to this scope
+   */
+  404: ErrorResponseT
+  /**
+   * No running sandbox or active Postgres service is available
+   */
+  409: ErrorResponseT
+  /**
+   * The sandbox or Neon project branch quota is full
+   */
+  429: ErrorResponseT
+  /**
+   * Neon is unavailable or not configured
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses = {
+  /**
+   * A branch-scoped pg-proxy URL returned exactly once
+   */
+  201: {
+    databaseBranchId: string
+    name: string
+    databaseUrl: string
+    expiresAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponses]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData =
+  {
+    body?: never
+    path: {
+      orgSlug: string
+      projectId: string
+      databaseBranchId: string
+    }
+    query?: never
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/agent/actions/database-branches/{databaseBranchId}"
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors =
+  {
+    /**
+     * The short-lived agent token is absent or invalid
+     */
+    401: ErrorResponseT
+    /**
+     * The initiating user lacks database:branch:delete
+     */
+    403: ErrorResponseT
+    /**
+     * The branch is not an additional branch of this sandbox
+     */
+    404: ErrorResponseT
+    /**
+     * Neon is unavailable or not configured
+     */
+    503: ErrorResponseT
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdErrors]
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses =
+  {
+    /**
+     * The additional branch was deleted
+     */
+    204: void
+  }
+
+export type DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse =
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses[keyof DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponses]
+
 export type GetV1OrgsData = {
   body?: never
   path?: never
@@ -1067,7 +1216,14 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
-      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+      autoUpdateCadence:
+        | "one_week"
+        | "one_month"
+        | "three_months"
+        | "six_months"
+        | "nine_months"
+        | "one_year"
+        | "two_years"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1106,7 +1262,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
   body?: {
     name: string
     description?: string | null
-    region?: string | null
+    region: string
     slug?: string
     kind?: "site" | "workflow"
     rootDir?: string
@@ -1114,7 +1270,15 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
-    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence?:
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
+    syncUpstreamNow?: boolean
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
@@ -1145,6 +1309,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
           type: "repository"
           repositoryId?: string
           githubRepoId?: string
+          upstreamFullName?: string
         }
   }
   path: {
@@ -1159,6 +1324,10 @@ export type PostV1OrgsByOrgSlugProjectsErrors = {
    * Invalid source, slug, or missing GitHub account
    */
   400: ErrorResponseT
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks project:create
    */
@@ -1193,7 +1362,14 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       dockerfilePath: string
       productionBranch: string
       autoUpdateEnabled: boolean
-      autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+      autoUpdateCadence:
+        | "one_week"
+        | "one_month"
+        | "three_months"
+        | "six_months"
+        | "nine_months"
+        | "one_year"
+        | "two_years"
       autoUpdateMode: string
       scaleMode: string
       repositoryId: string
@@ -1368,7 +1544,14 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
-    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence:
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -1405,6 +1588,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       isFork: boolean
       provenance: string
       upstreamFullName: string | null
+      upstreamStrategy: string | null
       githubInstallationId: string | null
       pendingCreation: boolean
       liveProjectCount: number
@@ -1421,14 +1605,21 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
   body?: {
     name?: string
     description?: string | null
-    region?: string | null
+    region?: string
     slug?: string
     rootDir?: string
     dockerfilePath?: string
     productionBranch?: string
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
-    autoUpdateCadence?: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence?:
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     parentProjectId?: string | null
@@ -1481,7 +1672,14 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     dockerfilePath: string
     productionBranch: string
     autoUpdateEnabled: boolean
-    autoUpdateCadence: "tag" | "daily" | "weekly" | "monthly"
+    autoUpdateCadence:
+      | "one_week"
+      | "one_month"
+      | "three_months"
+      | "six_months"
+      | "nine_months"
+      | "one_year"
+      | "two_years"
     autoUpdateMode: string
     scaleMode: string
     repositoryId: string
@@ -1618,6 +1816,58 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
 
 export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse =
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    jobId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}/retry"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors = {
+  /**
+   * The job cannot be retried safely
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses = {
+  /**
+   * The queued or already-running provisioning job
+   */
+  200: {
+    id: string
+    projectId: string
+    kind: string
+    state: string
+    progress: number
+    attempt: number
+    errorCode: string | null
+    errorMessage: string | null
+    steps: Array<{
+      key: string
+      label: string
+      state: string
+    }>
+    startedAt: Date | null
+    finishedAt: Date | null
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses]
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData = {
   body?: never
@@ -2215,6 +2465,7 @@ export type GetV1OrgsByOrgSlugRepositoriesResponses = {
       isFork: boolean
       provenance: string
       upstreamFullName: string | null
+      upstreamStrategy: string | null
       githubInstallationId: string | null
       pendingCreation: boolean
       createdAt: Date
@@ -2502,6 +2753,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
 }
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks sandbox:write
    */
@@ -2844,6 +3099,51 @@ export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
 
 export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
   GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query: {
+    fullName: string
+    githubRepoId: string
+  }
+  url: "/v1/orgs/{orgSlug}/github/upstream-repository"
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors = {
+  /**
+   * Caller lacks github:read
+   */
+  403: ErrorResponseT
+  /**
+   * GitHub rate limit reached
+   */
+  429: ErrorResponseT
+  /**
+   * GitHub is unreachable
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryError =
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors[keyof GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors]
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses = {
+  /**
+   * The upstream access verdict
+   */
+  200: {
+    fullName: string
+    accessible: boolean
+    defaultBranch: string | null
+    reason: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse =
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses[keyof GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses]
 
 export type GetV1OrgsByOrgSlugGithubOwnersData = {
   body?: never
@@ -3482,6 +3782,48 @@ export type PostV1OrgsByOrgSlugServicesResponses = {
 export type PostV1OrgsByOrgSlugServicesResponse =
   PostV1OrgsByOrgSlugServicesResponses[keyof PostV1OrgsByOrgSlugServicesResponses]
 
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection"
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors = {
+  /**
+   * This service kind has no recoverable credential
+   */
+  400: ErrorResponseT
+  /**
+   * Caller is not an interactive user or lacks database:read
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionError =
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors[keyof GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
+  /**
+   * Current object-storage connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+    keyPrefix?: string
+  }
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse =
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses[keyof GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses]
+
 export type PostV1OrgsByOrgSlugServicesByServiceIdRotateData = {
   body?: never
   path: {
@@ -3555,6 +3897,202 @@ export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponses = {
 
 export type DeleteV1OrgsByOrgSlugServicesByServiceIdResponse =
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdResponses]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches"
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors = {
+  /**
+   * Caller lacks database:read
+   */
+  403: ErrorResponseT
+  /**
+   * No active managed Postgres service
+   */
+  404: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesError =
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors[keyof GetV1OrgsByOrgSlugServicesByServiceIdBranchesErrors]
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses = {
+  /**
+   * Database branches
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      kind: string
+      parentDatabaseBranchId: string | null
+      isProtected: boolean
+      status: string
+      createdAt: Date
+      expiresAt: Date | null
+    }>
+  }
+}
+
+export type GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse =
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses[keyof GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesData = {
+  body?: {
+    name: string
+    parentDatabaseBranchId: string
+  }
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors = {
+  /**
+   * Caller lacks database:branch:create
+   */
+  403: ErrorResponseT
+  /**
+   * Service or parent branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch name or parent state conflicts
+   */
+  409: ErrorResponseT
+  /**
+   * Neon project branch quota is full
+   */
+  429: ErrorResponseT
+  /**
+   * Neon is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesError =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses = {
+  /**
+   * Branch and its one-time connection URI
+   */
+  201: {
+    id: string
+    name: string
+    kind: string
+    parentDatabaseBranchId: string | null
+    isProtected: boolean
+    status: string
+    createdAt: Date
+    expiresAt: Date | null
+  } & {
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponses]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+    databaseBranchId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}/rotate"
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors = {
+  /**
+   * Caller lacks database:connect
+   */
+  403: ErrorResponseT
+  /**
+   * Branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch is not active
+   */
+  409: ErrorResponseT
+  /**
+   * Credential service is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateErrors]
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses = {
+  /**
+   * One-time replacement connection URI
+   */
+  200: {
+    id: string
+    connectionUri: string
+  }
+}
+
+export type PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse =
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses[keyof PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponses]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData = {
+  body?: never
+  path: {
+    orgSlug: string
+    serviceId: string
+    databaseBranchId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/branches/{databaseBranchId}"
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors = {
+  /**
+   * Caller lacks database:branch:delete
+   */
+  403: ErrorResponseT
+  /**
+   * Branch not found
+   */
+  404: ErrorResponseT
+  /**
+   * Branch is protected or still has children
+   */
+  409: ErrorResponseT
+  /**
+   * Neon is unavailable
+   */
+  503: ErrorResponseT
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdErrors]
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses = {
+  /**
+   * Branch deleted
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse =
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses[keyof DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponses]
 
 export type GetV1OrgsByOrgSlugAnalysesData = {
   body?: never
@@ -3832,6 +4370,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors = {
    */
   400: ErrorResponseT
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
+  /**
    * Caller lacks deployment:write
    */
   403: ErrorResponseT
@@ -3947,6 +4489,10 @@ export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackErrors = {
    * This deployment cannot be rolled back to
    */
   400: ErrorResponseT
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks deployment:write
    */
@@ -4678,6 +5224,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData 
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors = {
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
+  /**
    * Caller lacks workflow:run
    */
   403: ErrorResponseT
@@ -5067,6 +5617,22 @@ export type GetV1OrgsByOrgSlugBillingBalanceResponses = {
     balanceMicroUsd: string
     heldMicroUsd: string
     availableMicroUsd: string
+    retentionReserveMicroUsd: string
+    spendableAboveReserveMicroUsd: string
+    requiredReloadMicroUsd: string
+    retentionStatus: "active" | "suspended" | "deleting" | "data_deleted"
+    warningStage:
+      | "safe"
+      | "warning"
+      | "critical"
+      | "suspended"
+      | "deletion_imminent"
+      | "deleting"
+      | "data_deleted"
+    exhaustedAt: Date | null
+    deleteAfter: Date | null
+    deletionStartedAt: Date | null
+    deletionCompletedAt: Date | null
     currency: string
   }
 }
@@ -6967,6 +7533,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors = {
    */
   400: unknown
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
+  /**
    * Caller lacks deployment:write
    */
   403: unknown
@@ -7005,6 +7575,10 @@ export type PostV1DeployTokenErrors = {
    */
   401: unknown
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
+  /**
    * No SproutOS project is connected to that repository
    */
   404: unknown
@@ -7038,6 +7612,10 @@ export type PostV1DeployUploadUrlErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployUploadUrlResponses = {
@@ -7067,6 +7645,10 @@ export type PostV1DeployStaticUploadUrlErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployStaticUploadUrlResponses = {
@@ -7110,6 +7692,10 @@ export type PostV1DeployReleaseErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployReleaseResponses = {
@@ -7178,6 +7764,10 @@ export type PostV1DeployMigrateErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployMigrateResponses = {

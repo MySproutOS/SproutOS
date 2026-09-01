@@ -2,6 +2,9 @@
 slug: navigation
 title: Navigate SproutOS
 summary: Where repositories, deployable projects, workflows, services, and usage live.
+audience: user
+category: Getting started
+order: 1
 ---
 
 ## Organizations and groups
@@ -16,7 +19,7 @@ A project is one deployable directory and branch. Its overview shows the live Sp
 
 ## Databases and other services
 
-Use **Databases** for Postgres and the project service screens for Valkey, search, and object storage. A connection credential is shown once when it is created or rotated. Store it in a project environment variable; it cannot be revealed later.
+Use **Databases** for Postgres and the project service screens for Valkey, search, and object storage. Postgres, Valkey, and search credentials are shown once when created or rotated. Object-storage credentials can be viewed again because their secret is derived; rotation still revokes the previous credential.
 
 ## Workflows and agents
 

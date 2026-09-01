@@ -146,6 +146,7 @@ run() {
   if [ -n "${PG_LISTENER_ARN:-}" ]; then export PG_LISTENER_ARN; fi
   if [ -n "${VALKEY_LISTENER_ARN:-}" ]; then export VALKEY_LISTENER_ARN; fi
   if [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ]; then export FORWARD_PROXY_LISTENER_ARN; fi
+  if [ -n "${FORWARD_PROXY_HTTP_LISTENER_ARN:-}" ]; then export FORWARD_PROXY_HTTP_LISTENER_ARN; fi
   if [ -n "${TENANT_HTTP_LISTENER_ARN:-}" ]; then export TENANT_HTTP_LISTENER_ARN; fi
   if [ -n "${TENANT_HTTPS_TARGET_GROUP_SHORT:-}" ]; then export TENANT_HTTPS_TARGET_GROUP_SHORT; fi
   bash "$HERE/cutover.sh" "$@" 2>&1
@@ -281,15 +282,16 @@ check "the router's listener is written after the extras" \
   "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
-# All eight at once: the ALB listener, three adjacent rules, and four tenant-NLB listeners. The
+# All nine at once: the ALB listener, three adjacent rules, and five tenant-NLB listeners. The
 # production TLS listener deliberately switches from legacy `egress` groups to Rust `edge` groups.
 unset SEARCH_RULE_ARN PG_LISTENER_ARN
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 SEARCH_RULE_ARN=arn:search-rule STORAGE_RULE_ARN=arn:storage-rule LLM_RULE_ARN=arn:llm-rule \
   PG_LISTENER_ARN=arn:pg-listener VALKEY_LISTENER_ARN=arn:valkey-listener \
   FORWARD_PROXY_LISTENER_ARN=arn:forward-proxy-listener \
+  FORWARD_PROXY_HTTP_LISTENER_ARN=arn:forward-proxy-http-listener \
   TENANT_HTTP_LISTENER_ARN=arn:tenant-http-listener \
   TENANT_HTTPS_TARGET_GROUP_SHORT=edge out=$(run router)
-check "moves all eight" "8" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
+check "moves all nine" "9" "$(grep -cE 'modify-rule|modify-listener' "$STUB_CALLS")"
 check "storage among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:storage-green","Weight":100' "$STUB_CALLS")"
 check "llm among them, same colour" "1" \
@@ -298,9 +300,11 @@ check "valkey among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:valkey-green","Weight":100' "$STUB_CALLS")"
 check "Rust TLS edge among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:edge-green","Weight":100' "$STUB_CALLS")"
+check "Daytona HTTP proxy among them, same colour" "1" \
+  "$(grep -c '"TargetGroupArn":"arn:egress-green","Weight":100' "$STUB_CALLS")"
 check "HTTP/ACME edge among them, same colour" "1" \
   "$(grep -c '"TargetGroupArn":"arn:edge-http-green","Weight":100' "$STUB_CALLS")"
-check "and the front door still last" "8" \
+check "and the front door still last" "9" \
   "$(awk '/modify-listener --listener-arn arn:listener/{print NR}' "$STUB_CALLS" | tail -1)"
 
 # During the first half of the rollout the rule exists but OpenTofu deliberately leaves the target
@@ -316,6 +320,7 @@ unset STUB_STORAGE_ATTACHED
 
 unset SEARCH_RULE_ARN STORAGE_RULE_ARN LLM_RULE_ARN PG_LISTENER_ARN VALKEY_LISTENER_ARN \
   FORWARD_PROXY_LISTENER_ARN TENANT_HTTP_LISTENER_ARN TENANT_HTTPS_TARGET_GROUP_SHORT
+unset FORWARD_PROXY_HTTP_LISTENER_ARN
 
 # A transient throttling or control-plane error after traffic moved must not strand the old group
 # at one instance. The mutation is idempotent, so retry it and require a fresh desired-capacity

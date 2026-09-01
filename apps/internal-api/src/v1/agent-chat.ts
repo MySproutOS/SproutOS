@@ -435,6 +435,8 @@ const app = new Hono()
 
             const { exitCode } = await runSandboxTurn({
               actionUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/group-primary`,
+              databaseBranchesUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/database-branches`,
+              upstreamUpdateUrl: `${process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me"}/v1/orgs/${encodeURIComponent(c.req.param("orgSlug"))}/projects/${encodeURIComponent(projectId)}/agent/actions/update-upstream`,
               driver: daytonaClientFromEnv(),
               externalId: sandbox.externalId,
               harness: credential.billing === "byo" ? harnessFor(credential.kind) : "codex",
@@ -543,6 +545,15 @@ const app = new Hono()
             apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "https://api.sproutos.me",
             tenantDomain: process.env.TENANT_DOMAIN ?? "sproutos.run",
             projectSlug: repository.projectSlug,
+            ...(repository.upstreamFullName === null
+              ? {}
+              : {
+                  upstream: {
+                    fullName: repository.upstreamFullName,
+                    branch: repository.upstreamDefaultBranch ?? repository.defaultBranch,
+                    cadence: repository.autoUpdateCadence,
+                  },
+                }),
           })
 
           const outcome = await runAgentTurn(
@@ -756,6 +767,9 @@ async function repositoryFor(
       ownerLogin: string
       name: string
       defaultBranch: string
+      upstreamFullName: string | null
+      upstreamDefaultBranch: string | null
+      autoUpdateCadence: string
       /** Carried so the injected skill can name this project in its workflow snippet. */
       projectSlug: string
       credential: GitHubCredential
@@ -765,13 +779,21 @@ async function repositoryFor(
   const project = await fetchProject(db).getInOrganization(organizationId, projectId, [
     "repositoryId",
     "slug",
+    "autoUpdateCadence",
   ])
   if (project === undefined) return "Project not found"
 
   const repository = await fetchRepository(db).getInOrganization(
     organizationId,
     project.repositoryId,
-    ["ownerLogin", "name", "defaultBranch", "githubRepoId"],
+    [
+      "ownerLogin",
+      "name",
+      "defaultBranch",
+      "githubRepoId",
+      "upstreamFullName",
+      "upstreamDefaultBranch",
+    ],
   )
   if (repository === undefined) return "This project's repository record is missing"
 
@@ -786,6 +808,7 @@ async function repositoryFor(
     return {
       ...repository,
       projectSlug: project.slug,
+      autoUpdateCadence: project.autoUpdateCadence,
       credential: {
         kind: "installation",
         installationId,
@@ -797,7 +820,13 @@ async function repositoryFor(
   }
 
   const user = await userGitHubCredential(db, userId)
-  if (user !== undefined) return { ...repository, projectSlug: project.slug, credential: user }
+  if (user !== undefined)
+    return {
+      ...repository,
+      projectSlug: project.slug,
+      autoUpdateCadence: project.autoUpdateCadence,
+      credential: user,
+    }
 
   return (
     "The agent cannot read this repository. Install the SproutOS GitHub App on this organization, " +

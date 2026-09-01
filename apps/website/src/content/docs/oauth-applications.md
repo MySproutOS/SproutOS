@@ -2,6 +2,9 @@
 slug: oauth-applications
 title: Build a SproutOS OAuth application
 summary: Authorization Code with PKCE, optional database access, tokens, and revocation.
+audience: developer
+category: Building on SproutOS
+order: 4
 ---
 
 ## Register and redirect

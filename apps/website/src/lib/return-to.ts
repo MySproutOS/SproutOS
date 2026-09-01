@@ -14,4 +14,18 @@ export function sanitizeReturnTo(value: string | null): string | null {
   return value
 }
 
+/** Build a login URL without ever turning an untrusted return path into an open redirect. */
+export function loginPathForReturnTo(value: string | null): string {
+  const returnTo = sanitizeReturnTo(value)
+  return returnTo === null ? "/login" : `/login?next=${encodeURIComponent(returnTo)}`
+}
+
+/** Carry the validated return path through the provider-selection page into OAuth. */
+export function providerLoginPath(provider: "github" | "google", value: string | null): string {
+  const returnTo = sanitizeReturnTo(value)
+  return returnTo === null
+    ? `/login/${provider}`
+    : `/login/${provider}?next=${encodeURIComponent(returnTo)}`
+}
+
 export const RETURN_TO_COOKIE = "post_login_return_to"

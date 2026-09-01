@@ -165,43 +165,41 @@ variable "tenant_edge_enabled" {
 }
 
 variable "tenant_edge_preview_enabled" {
-  description = "Provision the parallel Rust edge NLB on public 80/443 and its preview ingress name without moving production tenant DNS."
+  description = "Add Rust HTTP 80 and TLS preview 8444 listeners to the shared tenant NLB without moving production tenant DNS."
   type        = bool
   default     = false
 }
 
 variable "acme_worker_enabled" {
-  description = "Run and schedule work for the IAM-isolated certificate/deployment worker after the smaller web task is live. Capacity is staged before handler ownership moves."
+  description = "Legacy isolated ACME-worker capacity gate. Keep false; the ordinary platform worker owns certificate work."
   type        = bool
   default     = false
 
   validation {
-    condition = var.acme_worker_enabled || !(
-      var.tenant_edge_preview_enabled || var.tenant_edge_enabled || var.custom_domain_issuance_enabled
-    )
-    error_message = "The isolated ACME worker must be enabled before preview edge, tenant edge, or custom-domain issuance."
+    condition     = !var.acme_worker_enabled
+    error_message = "The isolated ACME worker is retired; certificate work runs in the platform worker."
   }
 }
 
 variable "acme_handler_ownership_enabled" {
-  description = "Make the isolated ACME profile the sole owner of privileged handlers. Enable only after its ECS capacity is running and healthy."
+  description = "Legacy isolated ACME-handler ownership gate. Keep false so the ordinary platform worker owns every handler."
   type        = bool
   default     = false
 
   validation {
-    condition     = !var.acme_handler_ownership_enabled || var.acme_worker_enabled
-    error_message = "Privileged handler ownership cannot move until isolated ACME worker capacity is enabled."
+    condition     = !var.acme_handler_ownership_enabled
+    error_message = "The isolated ACME handler profile is retired; the platform worker owns every handler."
   }
 }
 
 variable "acme_fallback_iam_enabled" {
-  description = "Retain privileged IAM on the platform task while it owns fallback ACME/deployment handlers. Disable only after ownership has moved to healthy isolated workers."
+  description = "Keep certificate and tenant-DNS IAM on the platform task that owns those handlers."
   type        = bool
   default     = true
 
   validation {
-    condition     = var.acme_fallback_iam_enabled || var.acme_handler_ownership_enabled
-    error_message = "Fallback ACME IAM cannot be removed while the platform worker still owns privileged handlers."
+    condition     = var.acme_fallback_iam_enabled
+    error_message = "The platform worker requires certificate and tenant-DNS IAM."
   }
 }
 
@@ -360,9 +358,13 @@ variable "forum_repo_ids" {
 }
 
 variable "web_image" {
-  description = "The image the website, API and worker all run. Published to GHCR by the deploy workflow."
+  description = "The immutable image the website, API and worker all run. Published to GHCR by the deploy workflow; production must pass an exact commit tag."
   type        = string
-  default     = "ghcr.io/mysproutos/sproutos-web:main"
+
+  validation {
+    condition     = !endswith(var.web_image, ":main") && length(regexall("@sha256:|:[0-9a-f]{12}$", var.web_image)) == 1
+    error_message = "web_image must use an immutable sha256 digest or 12-character hexadecimal commit tag, never :main."
+  }
 }
 
 variable "ecs_instance_count" {

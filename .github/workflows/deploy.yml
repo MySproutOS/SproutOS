@@ -432,9 +432,57 @@ jobs:
           cache-to: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache,mode=max
     needs: release
 
+  preflight:
+    name: Verify production headroom
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Require API readiness and database connection headroom
+        env:
+          CONTROL_PLANE_DOMAIN: ${{ vars.CONTROL_PLANE_DOMAIN || 'sproutos.me' }}
+          MAX_DB_CONNECTIONS: ${{ vars.DEPLOY_MAX_DB_CONNECTIONS || '60' }}
+        run: |
+          set -euo pipefail
+
+          # `/health` only proves the process is alive. `/ready` executes `SELECT 1`, which is the
+          # distinction that mattered when a deployment exhausted Postgres while liveness stayed
+          # green and authenticated dashboard requests returned 503.
+          curl --fail --silent --show-error \
+            --retry 6 --retry-all-errors --retry-delay 5 \
+            "https://api.${CONTROL_PLANE_DOMAIN}/ready" >/dev/null
+
+          end=$(date -u +%FT%TZ)
+          start=$(date -u -d '10 minutes ago' +%FT%TZ)
+          connections=$(aws cloudwatch get-metric-statistics \
+            --namespace AWS/RDS \
+            --metric-name DatabaseConnections \
+            --dimensions "Name=DBInstanceIdentifier,Value=${NAME_PREFIX}-control-plane" \
+            --start-time "$start" \
+            --end-time "$end" \
+            --period 60 \
+            --statistics Average \
+            --query 'sort_by(Datapoints,&Timestamp)[-1].Average' \
+            --output text)
+
+          if ! [[ "$connections" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            echo "::error::Could not read the current RDS connection count (got '$connections')."
+            exit 1
+          fi
+          if ! awk -v actual="$connections" -v limit="$MAX_DB_CONNECTIONS" 'BEGIN { exit !(actual <= limit) }'; then
+            echo "::error::RDS has $connections connections; deployment limit is $MAX_DB_CONNECTIONS."
+            exit 1
+          fi
+          echo "RDS connection headroom is acceptable: $connections <= $MAX_DB_CONNECTIONS"
+
   ecs_web:
     name: Migrate and deploy the ECS website
-    needs: [release, image]
+    needs: [release, image, preflight]
     # ECS owns the website only after the repository switch is deliberate. A manual run without
     # `cutover` remains a build/stage operation, matching the legacy workflow; a push to main and
     # an explicitly approved manual cutover both deploy.
@@ -452,10 +500,44 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Render website image into the versioned task definition
+        id: render-website
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/web-task-definition.json
+          container-name: website
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render API image into the versioned task definition
+        id: render-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-website.outputs.task-definition }}
+          container-name: api
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render worker image into the versioned task definition
+        id: render-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-api.outputs.task-definition }}
+          container-name: worker
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
+      - name: Render migration image into the versioned task definition
+        id: render-migration
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/ecs/web-migrate-task-definition.json
+          container-name: migrate
+          image: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+
       - name: Run the image's migrations, update ECS, and pin traffic to green
         run: bin/deploy-ecs-web.sh --cutover
         env:
           IMAGE: ${{ needs.image.outputs.image }}:${{ inputs.ecs_image_tag || needs.release.outputs.version }}
+          SERVICE_TASK_DEFINITION_FILE: ${{ steps.render-worker.outputs.task-definition }}
+          MIGRATION_TASK_DEFINITION_FILE: ${{ steps.render-migration.outputs.task-definition }}
           # Two is the HA floor and matches OpenTofu's service/ASG declaration. The deploy script
           # rejects a different value rather than letting repository configuration silently remove
           # a production replica.
@@ -577,7 +659,13 @@ jobs:
 
   fill:
     name: Start the idle colour
-    needs: release
+    needs: [release, preflight, ecs_web]
+    # Website deployment goes first so its migration and replacement tasks cannot race the router
+    # boot checks for the same small control-plane Postgres connection budget. Router-only releases
+    # legitimately skip the ECS job; every other ECS result stops the fill.
+    if: >-
+      ${{ always() && needs.release.result == 'success' && needs.preflight.result == 'success' &&
+          (needs.ecs_web.result == 'success' || needs.ecs_web.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -631,6 +719,7 @@ jobs:
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
           VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}
           FORWARD_PROXY_LISTENER_ARN: ${{ vars.FORWARD_PROXY_LISTENER_ARN }}
+          FORWARD_PROXY_HTTP_LISTENER_ARN: ${{ vars.FORWARD_PROXY_HTTP_LISTENER_ARN }}
           TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
           TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}
           ECS_WEB_ENABLED: ${{ vars.ECS_WEB_ENABLED }}
@@ -732,5 +821,120 @@ jobs:
           PG_LISTENER_ARN: ${{ vars.PG_LISTENER_ARN }}
           VALKEY_LISTENER_ARN: ${{ vars.VALKEY_LISTENER_ARN }}
           FORWARD_PROXY_LISTENER_ARN: ${{ vars.FORWARD_PROXY_LISTENER_ARN }}
+          FORWARD_PROXY_HTTP_LISTENER_ARN: ${{ vars.FORWARD_PROXY_HTTP_LISTENER_ARN }}
           TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
           TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}
+
+  acceptance:
+    name: Verify the deployed production system
+    needs: [cutover, spa]
+    # Keep the workflow-level deployment lock until production has remained usable after cutover.
+    # The SPA is independently published, so its failure must not suppress checks on traffic that
+    # the cutover job already moved.
+    if: ${{ always() && needs.cutover.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.NAME_PREFIX }}-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check control plane, router drain, and database headroom
+        env:
+          CONTROL_PLANE_DOMAIN: ${{ vars.CONTROL_PLANE_DOMAIN || 'sproutos.me' }}
+          MAX_DB_CONNECTIONS: ${{ vars.DEPLOY_MAX_DB_CONNECTIONS || '60' }}
+          LISTENER_ARN: ${{ vars.LISTENER_ARN }}
+        run: |
+          set -euo pipefail
+
+          check_http() {
+            curl --fail --silent --show-error \
+              --retry 12 --retry-all-errors --retry-delay 5 "$1" >/dev/null
+          }
+
+          # Check once immediately and once after a minute. The second pass catches the delayed
+          # connection-pool exhaustion and idle-colour replacement loop that caused this incident.
+          for pass in 1 2; do
+            check_http "https://${CONTROL_PLANE_DOMAIN}/healthz"
+            check_http "https://api.${CONTROL_PLANE_DOMAIN}/ready"
+
+            aws ecs wait services-stable \
+              --cluster "$NAME_PREFIX" --services "$NAME_PREFIX-web"
+            service=$(aws ecs describe-services \
+              --cluster "$NAME_PREFIX" --services "$NAME_PREFIX-web" --output json)
+            desired=$(jq -r '.services[0].desiredCount // -1' <<<"$service")
+            running=$(jq -r '.services[0].runningCount // -1' <<<"$service")
+            [ "$desired" -gt 0 ] && [ "$running" = "$desired" ] || {
+              echo "::error::ECS website is not settled ($running/$desired running)."
+              exit 1
+            }
+
+            requested="${{ inputs.service || 'both' }}"
+            if [ "$requested" != "website" ]; then
+              # The backticks belong to AWS's JMESPath filter, not to the shell.
+              # shellcheck disable=SC2016
+              live=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" \
+                --query 'Listeners[0].DefaultActions[0].ForwardConfig.TargetGroups[?Weight>`0`].TargetGroupArn | [0]' \
+                --output text)
+              live_name=$(aws elbv2 describe-target-groups --target-group-arns "$live" \
+                --query 'TargetGroups[0].TargetGroupName' --output text)
+              case "$live_name" in
+                "$NAME_PREFIX-router-blue") idle=green ;;
+                "$NAME_PREFIX-router-green") idle=blue ;;
+                *) echo "::error::Router listener has an unknown live target group: $live_name"; exit 1 ;;
+              esac
+              # shellcheck disable=SC2016
+              healthy=$(aws elbv2 describe-target-health --target-group-arn "$live" \
+                --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+              [ "$healthy" -ge 1 ] || {
+                echo "::error::Live router target group has no healthy targets."
+                exit 1
+              }
+              idle_desired=$(aws autoscaling describe-auto-scaling-groups \
+                --auto-scaling-group-names "$NAME_PREFIX-router-$idle" \
+                --query 'AutoScalingGroups[0].DesiredCapacity' --output text)
+              [ "$idle_desired" = 0 ] || {
+                echo "::error::Idle router colour $idle still has desired capacity $idle_desired."
+                exit 1
+              }
+
+              # Desired zero is only the start of a drain. The instances keep their processes and
+              # database pools until every target group's deregistration delay expires, which is
+              # exactly how a nominally drained colour exhausted Postgres during this rollout.
+              drain_deadline=$(( $(date +%s) + 600 ))
+              while :; do
+                idle_instances=$(aws autoscaling describe-auto-scaling-groups \
+                  --auto-scaling-group-names "$NAME_PREFIX-router-$idle" \
+                  --query 'length(AutoScalingGroups[0].Instances)' --output text)
+                if [ "$idle_instances" = 0 ]; then break; fi
+                if ! [[ "$idle_instances" =~ ^[0-9]+$ ]]; then
+                  echo "::error::Could not read the idle router instance count: $idle_instances"
+                  exit 1
+                fi
+                if [ "$(date +%s)" -ge "$drain_deadline" ]; then
+                  echo "::error::Idle router colour still has $idle_instances instance(s) after 10 minutes."
+                  exit 1
+                fi
+                sleep 10
+              done
+            fi
+
+            end=$(date -u +%FT%TZ)
+            start=$(date -u -d '10 minutes ago' +%FT%TZ)
+            connections=$(aws cloudwatch get-metric-statistics \
+              --namespace AWS/RDS \
+              --metric-name DatabaseConnections \
+              --dimensions "Name=DBInstanceIdentifier,Value=${NAME_PREFIX}-control-plane" \
+              --start-time "$start" --end-time "$end" --period 60 --statistics Average \
+              --query 'sort_by(Datapoints,&Timestamp)[-1].Average' --output text)
+            if ! [[ "$connections" =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+               ! awk -v actual="$connections" -v limit="$MAX_DB_CONNECTIONS" 'BEGIN { exit !(actual <= limit) }'; then
+              echo "::error::RDS connection headroom check failed: $connections (limit $MAX_DB_CONNECTIONS)."
+              exit 1
+            fi
+
+            [ "$pass" = 2 ] || sleep 60
+          done
+
+          echo "Production remained healthy after cutover."

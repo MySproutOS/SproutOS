@@ -219,15 +219,27 @@ const app = new Hono().post(
     // Dropped rather than rejected: the rest of the batch is good, and usage for an organization
     // that no longer exists cannot be billed to anybody in any case.
     const named = [...new Set(parsed.batch.events.map((event) => event.organizationId))]
-    const known = new Set(
-      (
-        await db
-          .selectFrom("organization")
-          .select("id")
-          .where("id", "in", named)
-          .where("deletedAt", "is", null)
-          .execute()
-      ).map((row) => row.id),
+    const organizationRows = await db
+      .selectFrom("organization")
+      .leftJoin("creditRetentionState", "creditRetentionState.organizationId", "organization.id")
+      .select([
+        "organization.id",
+        "organization.deletedAt",
+        "creditRetentionState.status as retentionStatus",
+        "creditRetentionState.exhaustedAt",
+      ])
+      .where("organization.id", "in", named)
+      .execute()
+    const organizations = new Map(
+      organizationRows.map((row) => [
+        row.id,
+        row.deletedAt ??
+          (row.retentionStatus === "suspended" ||
+          row.retentionStatus === "deleting" ||
+          row.retentionStatus === "data_deleted"
+            ? row.exhaustedAt
+            : null),
+      ]),
     )
 
     // And which projects. A project label can be stale for the same reasons.
@@ -245,31 +257,47 @@ const app = new Hono().post(
           .filter((id): id is string => id !== null),
       ),
     ]
-    const knownProjects =
+    const projectRows =
       namedProjects.length === 0
-        ? new Set<string>()
-        : new Set(
-            (
-              await db
-                .selectFrom("project")
-                .select("id")
-                .where("id", "in", namedProjects)
-                .where("deletedAt", "is", null)
-                .execute()
-            ).map((row) => row.id),
-          )
+        ? []
+        : await db
+            .selectFrom("project")
+            .select(["id", "deletedAt"])
+            .where("id", "in", namedProjects)
+            .execute()
+    const projects = new Map(projectRows.map((row) => [row.id, row.deletedAt]))
 
     const now = Date.now()
     const events = attributed
-      .filter(({ event }) => known.has(event.organizationId))
+      .filter(({ event }) => {
+        if (!organizations.has(event.organizationId)) return false
+        const cutoff = organizations.get(event.organizationId)
+        if (cutoff !== null && cutoff !== undefined && event.occurredAt > cutoff.getTime()) {
+          return false
+        }
+        if (event.projectId === null || !projects.has(event.projectId)) return true
+        const projectCutoff = projects.get(event.projectId)
+        return (
+          projectCutoff === null ||
+          projectCutoff === undefined ||
+          event.occurredAt <= projectCutoff.getTime()
+        )
+      })
       // A batch buffered through a long outage is still worth having; one dated next year is a
       // clock that is wrong. Old events remain valid because ClickHouse partitions them by event
       // time and discovers affected grains by its separate storage timestamp.
       .filter(({ event }) => event.occurredAt <= now + MAX_FUTURE_SKEW_MS)
       .map(({ event, attribution }) => {
         if (attribution === undefined) throw new Error("validated metering attribution disappeared")
+        const projectCutoff = event.projectId === null ? undefined : projects.get(event.projectId)
         const projectId =
-          event.projectId !== null && knownProjects.has(event.projectId) ? event.projectId : null
+          event.projectId !== null &&
+          projects.has(event.projectId) &&
+          (projectCutoff === null ||
+            projectCutoff === undefined ||
+            event.occurredAt <= projectCutoff.getTime())
+            ? event.projectId
+            : null
         return usageEventRecord({
           organizationId: event.organizationId,
           projectId,
@@ -306,8 +334,8 @@ const app = new Hono().post(
       {
         accepted: events.length,
         received: parsed.batch.events.length,
-        unknownOrganizations: named.filter((id) => !known.has(id)).length,
-        unknownProjects: namedProjects.filter((id) => !knownProjects.has(id)).length,
+        unknownOrganizations: named.filter((id) => !organizations.has(id)).length,
+        unknownProjects: namedProjects.filter((id) => !projects.has(id)).length,
       },
       202,
     )

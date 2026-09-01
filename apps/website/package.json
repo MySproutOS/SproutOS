@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "docs:generate": "tsx scripts/generate-docs.ts",
-    "prebuild": "pnpm run docs:generate",
+    "prebuild": "pnpm run docs:generate && pnpm run blog:generate",
     "build": "next build",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "dev": "next dev --turbopack",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "blog:generate": "tsx scripts/generate-blog.ts"
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
@@ -23,6 +24,7 @@
     "@lib/github": "workspace:*",
     "@lib/oauth": "workspace:*",
     "@lib/oauth-provider": "workspace:*",
+    "@markdoc/markdoc": "^0.5.9",
     "@sproutos/db": "workspace:*",
     "@tailwindcss/postcss": "catalog:",
     "@tailwindcss/typography": "^0.5.20",
@@ -42,6 +44,7 @@
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
+    "server-only": "^0.0.1",
     "tailwind-merge": "catalog:",
     "tailwindcss-animate": "catalog:"
   },

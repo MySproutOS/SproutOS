@@ -9,6 +9,54 @@ import { sql, type Kysely, type Selectable } from "kysely"
  * the organization rather than trusting it.
  */
 export function fetchSandbox(db: Kysely<DB>) {
+  async function postgresServiceIdForScope(projectId: string): Promise<string | undefined> {
+    const service = await db
+      .selectFrom("backendService")
+      .select("id")
+      .where("kind", "=", "postgres")
+      .where("status", "=", "active")
+      .where("deletedAt", "is", null)
+      .where((eb) =>
+        eb.or([
+          eb("projectId", "=", projectId),
+          eb(
+            "projectId",
+            "in",
+            eb
+              .selectFrom("project")
+              .select("parentProjectId")
+              .where("id", "=", projectId)
+              .where("deletedAt", "is", null)
+              .where("parentProjectId", "is not", null)
+              .$castTo<string>(),
+          ),
+          eb(
+            "projectId",
+            "in",
+            eb
+              .selectFrom("project")
+              .select("id")
+              .where("parentProjectId", "=", projectId)
+              .where("deletedAt", "is", null),
+          ),
+        ]),
+      )
+      .orderBy(
+        sql<number>`case
+          when project_id = ${projectId} then 0
+          when project_id = (
+            select parent_project_id from project where id = ${projectId}
+          ) then 1
+          else 2
+        end`,
+        "asc",
+      )
+      .orderBy("createdAt", "asc")
+      .executeTakeFirst()
+
+    return service?.id
+  }
+
   /** One user's sandbox for one project. The pair is the identity; there is at most one. */
   async function forUser(
     organizationId: string,
@@ -87,5 +135,5 @@ export function fetchSandbox(db: Kysely<DB>) {
       .execute()
   }
 
-  return { forUser, forUserForUpdate, getInOrganization, idle }
+  return { forUser, forUserForUpdate, getInOrganization, idle, postgresServiceIdForScope }
 }

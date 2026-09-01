@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Button } from "@ui/base/ui/button"
 import { Checkbox } from "@ui/base/ui/checkbox"
+import { deniedAuthorizationRedirect } from "./consent-redirect"
 
 /**
  * What the person actually decides, and the only screen where they can.
@@ -72,11 +73,7 @@ export function ConsentForm({
   const grantedScopes = [...mandatoryScopes, ...grantedOptionalScopes]
 
   function deny() {
-    const target = new URL(redirectUri)
-    target.searchParams.set("error", "access_denied")
-    target.searchParams.set("error_description", "The user declined the request")
-    if (state !== null) target.searchParams.set("state", state)
-    window.location.assign(target.toString())
+    window.location.assign(deniedAuthorizationRedirect(redirectUri, state))
   }
 
   async function approve() {

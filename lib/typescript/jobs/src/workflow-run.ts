@@ -70,6 +70,58 @@ export async function runWorkflow(
   payload: WorkflowRunPayload,
   signal?: AbortSignal,
 ): Promise<void> {
+  const refused = await db.transaction().execute(async (tx) => {
+    const owner = await tx
+      .selectFrom("workflowRun")
+      .innerJoin("workflow", "workflow.id", "workflowRun.workflowId")
+      .innerJoin("project", "project.id", "workflow.projectId")
+      .leftJoin(
+        "creditRetentionState",
+        "creditRetentionState.organizationId",
+        "project.organizationId",
+      )
+      .select(["project.deletedAt", "creditRetentionState.status as retentionStatus"])
+      .where("workflowRun.id", "=", payload.workflowRunId)
+      .executeTakeFirst()
+    const suspended =
+      owner?.retentionStatus === "suspended" ||
+      owner?.retentionStatus === "deleting" ||
+      owner?.retentionStatus === "data_deleted"
+    if (owner === undefined || (owner.deletedAt === null && !suspended)) return false
+
+    const finishedAt = new Date()
+    const cancelled = await tx
+      .updateTable("workflowRun")
+      .set({
+        status: "cancelled",
+        finishedAt,
+        updatedAt: finishedAt,
+        error: {
+          code: suspended ? "InsufficientCredit" : "ProjectDeleted",
+          message: suspended
+            ? "The run was not started because the organization is suspended for insufficient credit."
+            : "The run was not started because its project was deleted.",
+        },
+      })
+      .where("id", "=", payload.workflowRunId)
+      .where("status", "=", "queued")
+      .returning("id")
+      .executeTakeFirst()
+    if (cancelled === undefined) return true
+    await tx
+      .updateTable("workflowRunStep")
+      .set({
+        status: "skipped",
+        finishedAt,
+        output: { reason: "The workflow run was cancelled before execution." },
+      })
+      .where("workflowRunId", "=", payload.workflowRunId)
+      .where("status", "=", "queued")
+      .execute()
+    return true
+  })
+  if (refused) return
+
   const claimed = await db
     .updateTable("workflowRun")
     .set({ status: "running", startedAt: new Date(), updatedAt: new Date() })

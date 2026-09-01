@@ -50,10 +50,17 @@ resource "aws_lb" "tenant" {
   # The same two subnets as the ALB, for the same reason and at the same price: one public IPv4
   # address per subnet spanned, billed since 1 February 2024, and two availability zones is the
   # floor AWS accepts rather than a choice.
-  # This existing balancer keeps Postgres, Valkey, and the rollback egress listener. The Rust web
-  # edge uses a separate dual-stack NLB below so assigning EIPs can never replace these live tenant
-  # protocol endpoints.
-  subnets = slice(aws_subnet.public[*].id, 0, local.serving_zone_count)
+  # One NLB owns every tenant protocol. Stable zonal EIPs support apex customer domains whose DNS
+  # provider cannot flatten a CNAME; dual stack carries IPv6 clients to the same Rust listeners.
+  ip_address_type = "dualstack"
+  dynamic "subnet_mapping" {
+    for_each = range(local.serving_zone_count)
+    content {
+      subnet_id     = aws_subnet.public[subnet_mapping.value].id
+      allocation_id = aws_eip.tenant_edge[subnet_mapping.value].id
+      ipv6_address  = local.tenant_edge_ipv6_addresses[subnet_mapping.value]
+    }
+  }
 
   # A database connection is long-lived and mostly idle — a connection pool holds one open between
   # queries for as long as the application runs. The default 350-second idle timeout would close
@@ -63,6 +70,14 @@ resource "aws_lb" "tenant" {
 
   enable_deletion_protection = var.deletion_protection
   tags                       = { Name = "${var.name_prefix}-tenant-nlb" }
+
+  # ELBv2 returns the IPv4 allocation and IPv6 address as separate address objects. The AWS
+  # provider flattens only the EIP-backed object into state, then proposes empty extra mappings and
+  # re-adding the IPv6 values on every refresh. AWS already owns the requested fixed addresses (and
+  # its API is the rollout assertion), so suppress that provider-only normalization churn.
+  lifecycle {
+    ignore_changes = [subnet_mapping]
+  }
 }
 
 /*
@@ -307,52 +322,13 @@ locals {
   ]
 }
 
-resource "aws_security_group" "tenant_edge_nlb" {
-  name        = "${var.name_prefix}-tenant-edge-nlb"
-  description = "Dual stack tenant HTTP and TLS edge load balancer"
-  vpc_id      = aws_vpc.main.id
-  tags        = { Name = "${var.name_prefix}-tenant-edge-nlb" }
-}
-
-resource "aws_vpc_security_group_egress_rule" "tenant_edge_nlb_out" {
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "To the router IPv4 instance targets"
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 # One stable IPv4 address per serving subnet. The dual-stack NLB supplies stable zonal IPv6
 # addresses and publishes them through its AAAA response; customer A-only apex fallback uses these
 # explicit EIPs, while CNAME/ALIAS/ANAME traffic receives both address families.
 resource "aws_eip" "tenant_edge" {
-  count  = local.tenant_edge_provisioned ? local.serving_zone_count : 0
+  count  = local.serving_zone_count
   domain = "vpc"
   tags   = merge(local.tags, { Name = "${var.name_prefix}-tenant-edge-${count.index + 1}" })
-}
-
-resource "aws_lb" "tenant_edge" {
-  count = local.tenant_edge_provisioned ? 1 : 0
-
-  name               = "${var.name_prefix}-tenant-edge"
-  load_balancer_type = "network"
-  ip_address_type    = "dualstack"
-  security_groups    = [aws_security_group.tenant_edge_nlb.id]
-
-  dynamic "subnet_mapping" {
-    for_each = range(local.serving_zone_count)
-    content {
-      subnet_id     = aws_subnet.public[subnet_mapping.value].id
-      allocation_id = aws_eip.tenant_edge[subnet_mapping.value].id
-      ipv6_address  = local.tenant_edge_ipv6_addresses[subnet_mapping.value]
-    }
-  }
-
-  enable_cross_zone_load_balancing = true
-  # Preview must be safely abortable without disabling deletion protection account-wide. Final
-  # cutover turns protection on in place. To retire a cut-over edge, first leave preview enabled
-  # while disabling the edge so this flips off, then remove preview in a second reviewed apply.
-  enable_deletion_protection = var.deletion_protection && var.tenant_edge_enabled
-  tags                       = { Name = "${var.name_prefix}-tenant-edge" }
 }
 
 # Public deliberately. TLS stays encrypted through the NLB; rustls selects generated/custom tenant
@@ -366,26 +342,39 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy" {
   to_port           = 443
 }
 
-resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
-  count = local.tenant_edge_provisioned ? 1 : 0
-
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "Tenant HTTPS and authenticated sandbox egress"
+# Daytona's HTTPS-upstream chaining currently returns 502 before a CONNECT request reaches Rust.
+# This is the same authenticated proxy and the same NLB, exposed as a cleartext HTTP upstream; TLS
+# to each HTTPS destination remains end-to-end inside CONNECT. Remove this listener when Daytona's
+# documented HTTPS upstream mode works in production.
+resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_forward_proxy_http" {
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Authenticated Daytona HTTP upstream proxy"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
+  from_port         = 3128
+  to_port           = 3128
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https" {
+  count = var.tenant_edge_preview_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Temporary Rust TLS edge preview"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 8444
+  to_port           = 8444
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tenant_edge_https_ipv6" {
-  count = local.tenant_edge_provisioned ? 1 : 0
+  count = var.tenant_edge_preview_enabled ? 1 : 0
 
-  security_group_id = aws_security_group.tenant_edge_nlb.id
-  description       = "IPv6 tenant HTTPS and authenticated sandbox egress"
+  security_group_id = aws_security_group.tenant_nlb.id
+  description       = "Temporary IPv6 Rust TLS edge preview"
   cidr_ipv6         = "::/0"
   ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
+  from_port         = 8444
+  to_port           = 8444
 }
 
 resource "aws_lb_target_group" "forward_proxy" {
@@ -447,12 +436,45 @@ resource "aws_lb_target_group" "tenant_https" {
   tags                 = { Name = "${var.name_prefix}-edge-${each.key}" }
 }
 
+# Changing the public :443 protocol is deliberately a listener replacement. Besides making the
+# TLS-to-TCP transition explicit in a saved plan, replacement causes AWS to install the configured
+# Rust-edge target groups instead of preserving the blue/green action that cutover scripts own.
+resource "terraform_data" "tenant_edge_mode" {
+  triggers_replace = var.tenant_edge_enabled
+}
+
 resource "aws_lb_listener" "forward_proxy" {
   load_balancer_arn = aws_lb.tenant.arn
   port              = 443
-  protocol          = "TLS"
-  certificate_arn   = aws_acm_certificate.tenant.arn
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  protocol          = var.tenant_edge_enabled ? "TCP" : "TLS"
+  certificate_arn   = var.tenant_edge_enabled ? null : aws_acm_certificate.tenant.arn
+  ssl_policy        = var.tenant_edge_enabled ? null : "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  default_action {
+    type = "forward"
+
+    forward {
+      target_group {
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["blue"].arn : aws_lb_target_group.forward_proxy["blue"].arn
+        weight = 100
+      }
+      target_group {
+        arn    = var.tenant_edge_enabled ? aws_lb_target_group.tenant_https["green"].arn : aws_lb_target_group.forward_proxy["green"].arn
+        weight = 0
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes       = [default_action]
+    replace_triggered_by = [terraform_data.tenant_edge_mode]
+  }
+}
+
+resource "aws_lb_listener" "forward_proxy_http" {
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 3128
+  protocol          = "TCP"
 
   default_action {
     type = "forward"
@@ -469,16 +491,15 @@ resource "aws_lb_listener" "forward_proxy" {
     }
   }
 
-  lifecycle {
-    ignore_changes = [default_action]
-  }
+  # Blue/green cutover owns the weights after the listener is created.
+  lifecycle { ignore_changes = [default_action] }
 }
 
 resource "aws_lb_listener" "tenant_https" {
-  count = local.tenant_edge_provisioned ? 1 : 0
+  count = var.tenant_edge_preview_enabled ? 1 : 0
 
-  load_balancer_arn = aws_lb.tenant_edge[0].arn
-  port              = 443
+  load_balancer_arn = aws_lb.tenant.arn
+  port              = 8444
   protocol          = "TCP"
 
   default_action {
@@ -512,7 +533,7 @@ resource "aws_vpc_security_group_ingress_rule" "service_forward_proxy_from_nlb" 
 resource "aws_vpc_security_group_ingress_rule" "service_tenant_https_from_nlb" {
   security_group_id            = aws_security_group.service.id
   ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.tenant_edge_nlb.id
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
   from_port                    = 8443
   to_port                      = 8443
   description                  = "Rust tenant TLS edge from the tenant load balancer"
@@ -521,7 +542,7 @@ resource "aws_vpc_security_group_ingress_rule" "service_tenant_https_from_nlb" {
 resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http" {
   count = local.tenant_edge_provisioned ? 1 : 0
 
-  security_group_id = aws_security_group.tenant_edge_nlb.id
+  security_group_id = aws_security_group.tenant_nlb.id
   description       = "ACME HTTP-01 and tenant HTTPS redirects"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
@@ -532,7 +553,7 @@ resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http" {
 resource "aws_vpc_security_group_ingress_rule" "tenant_nlb_http_ipv6" {
   count = local.tenant_edge_provisioned ? 1 : 0
 
-  security_group_id = aws_security_group.tenant_edge_nlb.id
+  security_group_id = aws_security_group.tenant_nlb.id
   description       = "IPv6 ACME HTTP-01 and tenant HTTPS redirects"
   cidr_ipv6         = "::/0"
   ip_protocol       = "tcp"
@@ -567,7 +588,7 @@ resource "aws_lb_target_group" "tenant_http" {
 resource "aws_lb_listener" "tenant_http" {
   count = local.tenant_edge_provisioned ? 1 : 0
 
-  load_balancer_arn = aws_lb.tenant_edge[0].arn
+  load_balancer_arn = aws_lb.tenant.arn
   port              = 80
   protocol          = "TCP"
 
@@ -595,7 +616,7 @@ resource "aws_lb_listener" "tenant_http" {
 resource "aws_vpc_security_group_ingress_rule" "service_tenant_http_from_nlb" {
   security_group_id            = aws_security_group.service.id
   ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.tenant_edge_nlb.id
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
   from_port                    = 8081
   to_port                      = 8081
   description                  = "Rust tenant HTTP and ACME edge from the tenant load balancer"
@@ -604,7 +625,7 @@ resource "aws_vpc_security_group_ingress_rule" "service_tenant_http_from_nlb" {
 resource "aws_vpc_security_group_ingress_rule" "service_tenant_edge_readiness_from_nlb" {
   security_group_id            = aws_security_group.service.id
   ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.tenant_edge_nlb.id
+  referenced_security_group_id = aws_security_group.tenant_nlb.id
   from_port                    = 8082
   to_port                      = 8082
   description                  = "Proxy Protocol tenant edge readiness from its load balancer"
@@ -622,22 +643,22 @@ resource "aws_route53_record" "forward_proxy" {
   type    = "A"
 
   alias {
-    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.tenant.dns_name
-    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.tenant.zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }
 
 resource "aws_route53_record" "forward_proxy_ipv6" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = 1
 
   zone_id = data.aws_route53_zone.main.zone_id
   name    = "${var.egress_subdomain}.${var.control_plane_domain}"
   type    = "AAAA"
 
   alias {
-    name                   = aws_lb.tenant_edge[0].dns_name
-    zone_id                = aws_lb.tenant_edge[0].zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }
@@ -652,22 +673,22 @@ resource "aws_route53_record" "tenant_ingress" {
   type    = "A"
 
   alias {
-    name                   = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].dns_name : aws_lb.tenant.dns_name
-    zone_id                = var.tenant_edge_enabled ? aws_lb.tenant_edge[0].zone_id : aws_lb.tenant.zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }
 
 resource "aws_route53_record" "tenant_ingress_ipv6" {
-  count = var.tenant_edge_enabled ? 1 : 0
+  count = 1
 
   zone_id = aws_route53_zone.tenant.zone_id
   name    = "ingress.${var.tenant_domain}"
   type    = "AAAA"
 
   alias {
-    name                   = aws_lb.tenant_edge[0].dns_name
-    zone_id                = aws_lb.tenant_edge[0].zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }
@@ -683,8 +704,8 @@ resource "aws_route53_record" "tenant_edge_preview" {
   type    = "A"
 
   alias {
-    name                   = aws_lb.tenant_edge[0].dns_name
-    zone_id                = aws_lb.tenant_edge[0].zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }
@@ -697,8 +718,8 @@ resource "aws_route53_record" "tenant_edge_preview_ipv6" {
   type    = "AAAA"
 
   alias {
-    name                   = aws_lb.tenant_edge[0].dns_name
-    zone_id                = aws_lb.tenant_edge[0].zone_id
+    name                   = aws_lb.tenant.dns_name
+    zone_id                = aws_lb.tenant.zone_id
     evaluate_target_health = false
   }
 }

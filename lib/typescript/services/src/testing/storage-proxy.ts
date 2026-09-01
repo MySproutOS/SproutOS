@@ -45,6 +45,7 @@ export async function startStorageProxy(
     objects in each is the shape that looks like data loss.
   */
   sharedBucket?: string,
+  environment: Record<string, string> = {},
 ): Promise<RunningProxy> {
   const publicEndpoint = `http://127.0.0.1:${port}`
   const log: string[] = []
@@ -62,6 +63,7 @@ export async function startStorageProxy(
       // nothing.
       RUST_LOG: "storage_proxy=debug",
       ...(sharedBucket === undefined ? {} : { STORAGE_PROXY_SHARED_BUCKET: sharedBucket }),
+      ...environment,
     },
     stdio: ["ignore", "pipe", "pipe"],
   })

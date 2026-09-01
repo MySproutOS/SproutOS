@@ -152,7 +152,14 @@ describe("default fallback (non-public, non-shared route)", () => {
   it("no session → redirect to /login", async () => {
     const res = await proxy(makeRequest("/settings"))
     expect(isRewrite(res)).toBe(false)
-    expect(res.headers.get("location")).toContain("/login")
+    expect(res.headers.get("location")).toBe("https://example.com/login?next=%2Fsettings")
+  })
+
+  it("preserves the protected path and query for post-login navigation", async () => {
+    const res = await proxy(makeRequest("/orgs/acme/projects?view=groups"))
+    expect(res.headers.get("location")).toBe(
+      "https://example.com/login?next=%2Forgs%2Facme%2Fprojects%3Fview%3Dgroups",
+    )
   })
 
   // Same mode sensitivity as the shared-route suite above.
@@ -299,5 +306,51 @@ describe("the store is reachable signed in or out", () => {
       expect(isRewrite(res)).toBe(false)
       expect(validateSessionToken).not.toHaveBeenCalled()
     })
+  })
+})
+
+/*
+  Marketing pages, one assertion per URL rather than one per prefix.
+
+  The default branch sends anything unlisted to /login, so a page that is missing from
+  NEXTJS_PUBLIC_PREFIXES does not 404 in a way anybody notices — it renders a login screen to every
+  visitor and every crawler, and looks from the outside like a page that requires an account. That
+  failure is silent in a way a 404 is not, which is why these are pinned by name: adding a marketing
+  route without adding its prefix should fail here, not in production.
+*/
+const MARKETING_PAGES = [
+  "/personalize",
+  "/data-ownership",
+  "/data-ownership/developers",
+  "/platform/databases",
+  "/platform/workflows",
+  "/platform/websites",
+  "/platform/ai-agent",
+  "/business/employees",
+  "/business/it",
+  "/docs/users",
+  "/docs/developers",
+]
+
+describe("marketing pages are public", () => {
+  beforeEach(() => {
+    mockValidate.mockReset()
+  })
+
+  it.each(MARKETING_PAGES)("%s renders Next.js signed out", async (url) => {
+    mockValidate.mockResolvedValue(null)
+    const res = await proxy(makeRequest(url))
+
+    expect(isRewrite(res)).toBe(false)
+    expect(res.headers.get("location")).toBeNull()
+  })
+
+  it.each(MARKETING_PAGES)("%s still renders Next.js signed in", async (url) => {
+    // A signed-in customer following a link from an email or a search result must land on the
+    // marketing page, not on the dashboard SPA's 404 for a route it has never heard of.
+    mockValidate.mockResolvedValue(VALID_SESSION)
+    const res = await proxy(makeRequest(url, "a-session-token"))
+
+    expect(isRewrite(res)).toBe(false)
   })
 })

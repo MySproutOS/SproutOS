@@ -18,12 +18,14 @@ import {
   deleteV1OrgsByOrgSlugMembersByMemberId,
   deleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretId,
   deleteV1OrgsByOrgSlugProjectsByProjectId,
+  deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdFilesByFileId,
   deleteV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   deleteV1OrgsByOrgSlugRolesByRoleId,
   deleteV1OrgsByOrgSlugServicesByServiceId,
+  deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
   getAdminUsers,
@@ -50,6 +52,7 @@ import {
   getV1OrgsByOrgSlugGithubOwners,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugGithubRepositoryName,
+  getV1OrgsByOrgSlugGithubUpstreamRepository,
   getV1OrgsByOrgSlugInvites,
   getV1OrgsByOrgSlugMembers,
   getV1OrgsByOrgSlugOauthClients,
@@ -85,6 +88,8 @@ import {
   getV1OrgsByOrgSlugRoles,
   getV1OrgsByOrgSlugRolesActions,
   getV1OrgsByOrgSlugServices,
+  getV1OrgsByOrgSlugServicesByServiceIdBranches,
+  getV1OrgsByOrgSlugServicesByServiceIdConnection,
   getV1OrgsByOrgSlugStoreListings,
   getV1OrgsByOrgSlugWorkflowRuns,
   getV1OrgsByOrgSlugWorkflows,
@@ -139,7 +144,9 @@ import {
   postV1OrgsByOrgSlugOauthClientsByClientIdSecrets,
   postV1OrgsByOrgSlugOauthGrantsByGrantIdRevoke,
   postV1OrgsByOrgSlugProjects,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimary,
+  postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstream,
   postV1OrgsByOrgSlugProjectsByProjectIdAgentSessions,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetup,
   postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerify,
@@ -150,6 +157,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetry,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity,
@@ -160,6 +168,8 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRuns,
   postV1OrgsByOrgSlugRoles,
   postV1OrgsByOrgSlugServices,
+  postV1OrgsByOrgSlugServicesByServiceIdBranches,
+  postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate,
   postV1OrgsByOrgSlugServicesByServiceIdRotate,
   postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
@@ -196,6 +206,9 @@ import type {
   DeleteV1OrgsByOrgSlugMembersByMemberIdResponse,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdData,
   DeleteV1OrgsByOrgSlugOauthClientsByClientIdSecretsBySecretIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+  DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdData,
   DeleteV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdError,
@@ -214,6 +227,9 @@ import type {
   DeleteV1OrgsByOrgSlugRolesByRoleIdData,
   DeleteV1OrgsByOrgSlugRolesByRoleIdError,
   DeleteV1OrgsByOrgSlugRolesByRoleIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
   DeleteV1OrgsByOrgSlugServicesByServiceIdData,
   DeleteV1OrgsByOrgSlugServicesByServiceIdError,
   DeleteV1OrgsByOrgSlugServicesByServiceIdResponse,
@@ -285,6 +301,9 @@ import type {
   GetV1OrgsByOrgSlugGithubRepositoryNameData,
   GetV1OrgsByOrgSlugGithubRepositoryNameError,
   GetV1OrgsByOrgSlugGithubRepositoryNameResponse,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryData,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryError,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesError,
   GetV1OrgsByOrgSlugInvitesResponse,
@@ -384,6 +403,12 @@ import type {
   GetV1OrgsByOrgSlugRolesData,
   GetV1OrgsByOrgSlugRolesError,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionData,
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionError,
+  GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
   GetV1OrgsByOrgSlugServicesData,
   GetV1OrgsByOrgSlugServicesError,
   GetV1OrgsByOrgSlugServicesResponse,
@@ -518,9 +543,15 @@ import type {
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeData,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeError,
   PostV1OrgsByOrgSlugOauthGrantsByGrantIdRevokeResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsData,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsError,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
@@ -550,6 +581,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
@@ -580,6 +614,12 @@ import type {
   PostV1OrgsByOrgSlugRolesData,
   PostV1OrgsByOrgSlugRolesError,
   PostV1OrgsByOrgSlugRolesResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesData,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateData,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateError,
   PostV1OrgsByOrgSlugServicesByServiceIdRotateResponse,
@@ -823,6 +863,95 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsGroupPrimaryMutat
   }
   return mutationOptions
 }
+
+/**
+ * Queues this project's trusted upstream update flow from a scoped agent turn
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstreamData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsUpdateUpstream({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Creates a short-lived Neon branch for the active sandbox turn
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranches({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Deletes an additional database branch owned by this sandbox
+ */
+export const deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdMutation =
+  (
+    options?: Partial<
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    >,
+  ): UseMutationOptions<
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+    DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+    Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+  > => {
+    const mutationOptions: UseMutationOptions<
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdResponse,
+      DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdError,
+      Options<DeleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchIdData>
+    > = {
+      mutationFn: async (fnOptions) => {
+        const { data } =
+          await deleteV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesByDatabaseBranchId(
+            {
+              ...options,
+              ...fnOptions,
+              throwOnError: true,
+            },
+          )
+        return data
+      },
+    }
+    return mutationOptions
+  }
 
 export const getV1OrgsQueryKey = (options?: Options<GetV1OrgsData>) =>
   createQueryKey("getV1Orgs", options)
@@ -1674,6 +1803,33 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdOptions = (
     },
     queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdQueryKey(options),
   })
+
+/**
+ * Retries failed provisioning after GitHub already created the repository
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetry({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 /**
  * Cancels a queued or running agent-assisted upstream resolution
@@ -2550,6 +2706,34 @@ export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteOptions = (
   return opts as Omit<typeof opts, "initialData">
 }
 
+export const getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugGithubUpstreamRepositoryData>,
+) => createQueryKey("getV1OrgsByOrgSlugGithubUpstreamRepository", options)
+
+/**
+ * Checks whether a manually entered upstream is accessible from a repository
+ */
+export const getV1OrgsByOrgSlugGithubUpstreamRepositoryOptions = (
+  options: Options<GetV1OrgsByOrgSlugGithubUpstreamRepositoryData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryError,
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugGithubUpstreamRepository({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey(options),
+  })
+
 export const getV1OrgsByOrgSlugGithubOwnersQueryKey = (
   options: Options<GetV1OrgsByOrgSlugGithubOwnersData>,
 ) => createQueryKey("getV1OrgsByOrgSlugGithubOwners", options)
@@ -2962,6 +3146,34 @@ export const postV1OrgsByOrgSlugServicesMutation = (
   return mutationOptions
 }
 
+export const getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdConnectionData>,
+) => createQueryKey("getV1OrgsByOrgSlugServicesByServiceIdConnection", options)
+
+/**
+ * Reconstructs the active object-storage connection for an interactive user
+ */
+export const getV1OrgsByOrgSlugServicesByServiceIdConnectionOptions = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdConnectionData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
+    GetV1OrgsByOrgSlugServicesByServiceIdConnectionError,
+    GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugServicesByServiceIdConnection({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey(options),
+  })
+
 /**
  * Issues a new password and invalidates the old URI
  */
@@ -3006,6 +3218,121 @@ export const deleteV1OrgsByOrgSlugServicesByServiceIdMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await deleteV1OrgsByOrgSlugServicesByServiceId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdBranchesData>,
+) => createQueryKey("getV1OrgsByOrgSlugServicesByServiceIdBranches", options)
+
+/**
+ * Lists every active branch of a managed Postgres service
+ */
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesOptions = (
+  options: Options<GetV1OrgsByOrgSlugServicesByServiceIdBranchesData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+    GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugServicesByServiceIdBranches({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugServicesByServiceIdBranchesQueryKey(options),
+  })
+
+/**
+ * Creates a persistent user-managed Neon branch
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdBranches({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Rotates one branch-scoped credential
+ */
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateMutation = (
+  options?: Partial<
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+  >,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+  Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateResponse,
+    PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateError,
+    Options<PostV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate(
+        {
+          ...options,
+          ...fnOptions,
+          throwOnError: true,
+        },
+      )
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Deletes an unprotected database branch
+ */
+export const deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdMutation = (
+  options?: Partial<
+    Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+  >,
+): UseMutationOptions<
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
+  DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+  Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdResponse,
+    DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdError,
+    Options<DeleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId({
         ...options,
         ...fnOptions,
         throwOnError: true,

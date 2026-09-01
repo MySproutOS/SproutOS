@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "node:crypto"
+import { SEARCH_SECURITY_POLICY } from "@lib/services"
 import { tenantIndexPrefix, tenantUsername } from "@lib/services/tenant-auth"
 import type { DB } from "@sproutos/db"
 import type { Kysely } from "kysely"
@@ -16,18 +17,8 @@ const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 export const SEARCH_SECURITY_CARDINALITY_SOFT_LIMIT = 1_000
 export const SEARCH_SECURITY_REPAIRS_PER_PASS = 100
 
-const CLUSTER_PERMISSIONS = ["cluster_composite_ops", "cluster:monitor/main"]
-const INDEX_ACTIONS = [
-  "read",
-  "write",
-  "create_index",
-  "indices_monitor",
-  "indices:admin/refresh",
-  "indices:admin/flush",
-  "indices:admin/forcemerge",
-  "indices:admin/analyze",
-  "indices:data/read/point_in_time/*",
-]
+const CLUSTER_PERMISSIONS = SEARCH_SECURITY_POLICY.clusterPermissions
+const INDEX_ACTIONS = SEARCH_SECURITY_POLICY.indexActions
 
 type SecurityDocument = Record<string, unknown>
 

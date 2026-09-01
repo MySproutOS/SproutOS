@@ -19,7 +19,8 @@ function RootLayout() {
   // Navigating is a side effect, so it belongs in an effect rather than in render.
   useEffect(() => {
     if (unauthenticated) {
-      window.location.href = `${import.meta.env.VITE_NEXTJS_URL ?? ""}/login?next=${window.location.pathname}`
+      const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      window.location.href = `${import.meta.env.VITE_NEXTJS_URL ?? ""}/login?next=${encodeURIComponent(returnTo)}`
     } else if (forbidden) {
       window.location.href = `${import.meta.env.VITE_NEXTJS_URL ?? ""}/dashboard`
     }

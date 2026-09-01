@@ -1,0 +1,18 @@
+{
+  "description": "SproutOS repository safety hooks.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/confirm-opentofu-before-push.sh\"",
+            "statusMessage": "Checking OpenTofu acknowledgement",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

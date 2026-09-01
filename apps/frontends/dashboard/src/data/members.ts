@@ -9,6 +9,7 @@ import {
   getV1OrgsByOrgSlugApiKeysOptions,
   getV1OrgsByOrgSlugApiKeysQueryKey,
   getV1OrgsByOrgSlugMembersOptions,
+  postV1AuthLogoutMutation,
   postV1OrgsByOrgSlugApiKeysMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 import { baseUrl } from "@lib/api-client/index"
@@ -210,6 +211,16 @@ export function useExportMyData() {
 export function useCloseAccount() {
   return useMutation({
     ...deleteV1UserMeDeleteMutation(),
+    onSuccess: () => {
+      window.location.href = "/"
+    },
+  })
+}
+
+/** End only the current browser session, then leave the authenticated SPA. */
+export function useLogout() {
+  return useMutation({
+    ...postV1AuthLogoutMutation(),
     onSuccess: () => {
       window.location.href = "/"
     },

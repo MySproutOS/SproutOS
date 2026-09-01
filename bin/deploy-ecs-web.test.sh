@@ -60,7 +60,7 @@ JSON
       clickhouse_database=observability
     fi
     cat <<JSON
-{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"},{"name":"CLICKHOUSE_DATABASE","value":"$clickhouse_database"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"]}]}}
+{"taskDefinition":{"taskDefinitionArn":"$task_reference","status":"ACTIVE","family":"sproutos-web","taskRoleArn":"arn:task-role","executionRoleArn":"arn:execution-role","networkMode":"bridge","requiresCompatibilities":["EC2"],"cpu":"1024","memory":"768","containerDefinitions":[{"name":"website","image":"old:tag","essential":true,"memoryReservation":320,"portMappings":[{"containerPort":8080,"hostPort":8080}],"environment":[{"name":"PORT","value":"8080"}],"secrets":[],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"website"}}},{"name":"api","image":"old:tag","essential":true,"memoryReservation":320,"command":["node","/opt/sproutos/api/server.js"],"portMappings":[{"containerPort":3001,"hostPort":3001}],"environment":[{"name":"DATABASE_HOST","value":"db"},{"name":"CLICKHOUSE_URL","value":"https://clickhouse.example"},{"name":"CLICKHOUSE_DATABASE","value":"$clickhouse_database"}],"secrets":[{"name":"DATABASE_SECRET","valueFrom":"arn:secret"},{"name":"APK_SIGNER_TOKEN","valueFrom":"arn:runtime"},{"name":"APK_SIGNER_OPERATOR_TOKEN","valueFrom":"arn:operator"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-stream-prefix":"api"}}},{"name":"worker","image":"old:tag","essential":true,"memoryReservation":128,"command":["node","/opt/sproutos/api/worker.js"],"secrets":[]}]}}
 JSON
     ;;
   "ecs register-task-definition")
@@ -150,7 +150,9 @@ export API_RULE_ARN=arn:api-rule
 
 jq -e '
   .family == "sproutos-web" and
-  ([.containerDefinitions[].image] | unique == ["ghcr.io/mysproutos/sproutos-web:0123456789ab"])
+  ([.containerDefinitions[].image] | unique == ["ghcr.io/mysproutos/sproutos-web:0123456789ab"]) and
+  ([.containerDefinitions[] | select(.name == "api") | .secrets[] | select(.name | startswith("APK_SIGNER_")) | .name] | sort) == ["APK_SIGNER_OPERATOR_TOKEN", "APK_SIGNER_TOKEN"] and
+  ([.containerDefinitions[] | select(.name != "api") | (.secrets // [])[] | select(.name | startswith("APK_SIGNER_"))] | length) == 0
 ' "$CAPTURE/task-1.json" >/dev/null
 jq -e '
   .family == "sproutos-web-migrate" and
@@ -158,6 +160,7 @@ jq -e '
   .containerDefinitions[0].name == "migrate" and
   (.containerDefinitions[0].portMappings == null) and
   (.containerDefinitions[0].secrets[] | select(.name == "DATABASE_SECRET")) and
+  ([.containerDefinitions[0].secrets[] | select(.name | startswith("APK_SIGNER_"))] | length) == 0 and
   (.containerDefinitions[0].command[2] | contains("migrate.mjs") and contains("seed.mjs") and contains("clickhouse.mjs"))
 ' "$CAPTURE/task-2.json" >/dev/null
 grep -q 'ecs run-task .*sproutos-web-migrate:3' "$STUB_CALLS"
@@ -169,6 +172,43 @@ if grep -q 'elbv2 modify-rule' "$STUB_CALLS"; then
   echo "an already-green ECS cutover must not rewrite listener rules" >&2
   exit 1
 fi
+
+# The production workflow renders immutable images into checked-in task contracts. Exercise that
+# path directly so a syntactically valid template cannot silently fall back to cloning live AWS
+# state. The migration template must remain a one-container, signer-token-free contract.
+ROOT=$(cd "$HERE/.." && pwd)
+jq --arg image "$IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  "$ROOT/deploy/ecs/web-task-definition.json" > "$TEST_DIR/rendered-service.json"
+jq --arg image "$IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  "$ROOT/deploy/ecs/web-migrate-task-definition.json" > "$TEST_DIR/rendered-migration.json"
+unlink "$UPDATED"
+unlink "$REGISTER_COUNT"
+unlink "$WAIT_COUNT"
+: > "$STUB_CALLS"
+find "$CAPTURE" -type f -exec unlink {} \;
+SERVICE_TASK_DEFINITION_FILE="$TEST_DIR/rendered-service.json" \
+MIGRATION_TASK_DEFINITION_FILE="$TEST_DIR/rendered-migration.json" \
+  "$HERE/deploy-ecs-web.sh"
+if grep -q 'ecs describe-task-definition' "$STUB_CALLS"; then
+  echo "the versioned-template release read a live task definition" >&2
+  exit 1
+fi
+jq -e --arg image "$IMAGE" '
+  .family == "sproutos-web" and
+  ([.containerDefinitions[].name] | sort == ["api", "website", "worker"]) and
+  all(.containerDefinitions[]; .image == $image) and
+  (.containerDefinitions[]
+    | select(.name == "worker")
+    | .secrets[]
+    | select(.name == "LLM_PROXY_SECRET"))
+' "$CAPTURE/task-1.json" >/dev/null
+jq -e --arg image "$IMAGE" '
+  .family == "sproutos-web-migrate" and
+  (.containerDefinitions | length) == 1 and
+  .containerDefinitions[0].name == "migrate" and
+  .containerDefinitions[0].image == $image and
+  all(.containerDefinitions[0].secrets[]?; .name != "APK_SIGNER_TOKEN" and .name != "APK_SIGNER_OPERATOR_TOKEN")
+' "$CAPTURE/task-2.json" >/dev/null
 
 # OpenTofu registers infrastructure-only task contract changes, but the service intentionally
 # ignores task-definition drift. An exact override must seed both the migration and service
@@ -260,9 +300,8 @@ fi
 grep -q 'ECS_WEB_DESIRED_COUNT must be 2' "$TEST_DIR/count-failure.out"
 [ ! -s "$STUB_CALLS" ]
 
-# Once OpenTofu provisions the dedicated service, the same release updates its isolated task role
-# after the old, larger public revision has drained. This preserves the one spare host needed to
-# place the smaller public replacement during the first capacity-envelope rollout.
+# The retired helper still refuses unsafe legacy inputs, but the platform release must never call
+# it: certificate jobs now run in the ordinary worker container.
 : > "$STUB_CALLS"
 if ACME_PRESENT=1 ACME_DESIRED_COUNT=1 "$HERE/deploy-ecs-acme-worker.sh" \
   >"$TEST_DIR/acme-count-failure.out" 2>&1; then
@@ -281,21 +320,8 @@ unlink "$WAIT_COUNT"
 : > "$STUB_CALLS"
 find "$CAPTURE" -type f -exec unlink {} \;
 ACME_PRESENT=1 "$HERE/deploy-ecs-web.sh"
-jq -e '
-  .family == "sproutos-acme-worker" and
-  .taskRoleArn == "arn:acme-task-role" and
-  (.containerDefinitions | length) == 1 and
-  .containerDefinitions[0].name == "acme-worker" and
-  .containerDefinitions[0].image == "ghcr.io/mysproutos/sproutos-web:0123456789ab"
-' "$CAPTURE/task-3.json" >/dev/null
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--desired-count 2 .*--deployment-configuration maximumPercent=150,minimumHealthyPercent=100' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--availability-zone-rebalancing ENABLED' "$STUB_CALLS"
-grep -q 'ecs update-service .*--service sproutos-acme-worker .*--placement-strategy type=spread,field=attribute:ecs.availability-zone type=binpack,field=memory .*--placement-constraints type=distinctInstance' "$STUB_CALLS"
-web_update_line=$(grep -n 'ecs update-service .*--service sproutos-web .*sproutos-web:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
-acme_update_line=$(grep -n 'ecs update-service .*--service sproutos-acme-worker .*sproutos-acme-worker:8' "$STUB_CALLS" | head -1 | cut -d: -f1)
-if [ "$web_update_line" -ge "$acme_update_line" ]; then
-  echo "the isolated worker was updated before the public replacement drained" >&2
+if grep -q -- '--service sproutos-acme-worker' "$STUB_CALLS"; then
+  echo "the platform release attempted to deploy the retired isolated worker" >&2
   exit 1
 fi
 

@@ -2,15 +2,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdMutation,
   getV1OrgsByOrgSlugProjectsByProjectIdOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey,
   getV1OrgsByOrgSlugProjectsByProjectIdQueryKey,
   getV1OrgsByOrgSlugProjectsOptions,
   getV1OrgsByOrgSlugProjectsQueryKey,
   getV1RegionsOptions,
   patchV1OrgsByOrgSlugProjectsByProjectIdMutation,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
-export type AutoUpdateCadence = "tag" | "daily" | "weekly" | "monthly"
+export type AutoUpdateCadence =
+  | "one_week"
+  | "one_month"
+  | "three_months"
+  | "six_months"
+  | "nine_months"
+  | "one_year"
+  | "two_years"
 
 export type Project = {
   id: string
@@ -21,6 +31,8 @@ export type Project = {
   /** `owner/name` on GitHub, so the card can link to it rather than just print it. */
   repoUrl: string
   status: ProjectStatus
+  /** Workflows have their own organization index; sites remain on the Projects index. */
+  kind: "site" | "workflow"
   /** Micro-USD. Never a float: see `@lib/billing`. */
   costMicros: bigint
   updatedLabel: string
@@ -51,6 +63,7 @@ export type ProjectDetail = Project & {
   autoUpdateCadence: AutoUpdateCadence
   upstreamFullName: string | null
   createdLabel: string
+  pendingRepositoryCreation: boolean
 }
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
@@ -134,6 +147,7 @@ export function useProjects(orgSlug: string) {
       repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
       repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
       status: STATE_TO_STATUS[project.state] ?? "building",
+      kind: project.kind === "workflow" ? "workflow" : "site",
       costMicros: BigInt(project.costMicroUsd),
       updatedLabel: relativeLabel(project.updatedAt),
       region: project.region ?? "—",
@@ -176,6 +190,7 @@ export function useProject(orgSlug: string, projectId: string) {
             repo: `${project.repositoryOwnerLogin}/${project.repositoryName}`,
             repoUrl: `https://github.com/${project.repositoryOwnerLogin}/${project.repositoryName}`,
             status: STATE_TO_STATUS[project.state] ?? "building",
+            kind: project.kind === "workflow" ? "workflow" : "site",
             costMicros: BigInt(project.costMicroUsd),
             updatedLabel: relativeLabel(project.updatedAt),
             region: project.region ?? "\u2014",
@@ -209,8 +224,41 @@ export function useProject(orgSlug: string, projectId: string) {
             autoUpdateCadence: project.autoUpdateCadence,
             upstreamFullName: project.repository.upstreamFullName,
             createdLabel: relativeLabel(project.createdAt),
+            pendingRepositoryCreation: project.repository.pendingCreation,
           } satisfies ProjectDetail),
   }
+}
+
+export function useProjectProvisionJobs(orgSlug: string, projectId: string) {
+  return useQuery(
+    getV1OrgsByOrgSlugProjectsByProjectIdJobsOptions({ path: { orgSlug, projectId } }),
+  )
+}
+
+export function useRetryProvision(orgSlug: string, projectId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    ...postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation(),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({
+          queryKey: getV1OrgsByOrgSlugProjectsByProjectIdQueryKey({
+            path: { orgSlug, projectId },
+          }),
+        }),
+        client.invalidateQueries({
+          queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey({
+            path: { orgSlug, projectId },
+          }),
+        }),
+      ])
+    },
+  })
+}
+
+/** A repository-backed workflow that is not nested beneath a project group. */
+export function isStandaloneWorkflowProject(project: Project): boolean {
+  return project.kind === "workflow" && project.parentProjectId === null
 }
 
 /**

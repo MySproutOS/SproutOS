@@ -81,8 +81,6 @@ allowed_changes() {
         'aws_lb_target_group.tenant_http["green"]|update' \
         'aws_lb_target_group.tenant_https["blue"]|update' \
         'aws_lb_target_group.tenant_https["green"]|update' \
-        'aws_security_group.tenant_edge_nlb|create' \
-        'aws_vpc_security_group_egress_rule.tenant_edge_nlb_out|create' \
         'aws_vpc_security_group_ingress_rule.service_tenant_edge_readiness_from_nlb|create' \
         'aws_vpc_security_group_ingress_rule.service_tenant_http_from_nlb|update' \
         'aws_vpc_security_group_ingress_rule.service_tenant_https_from_nlb|update' \

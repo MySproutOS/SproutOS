@@ -24,7 +24,7 @@ import {
   stepRowsFor,
   workflowJobsOutboxRecord,
 } from "@lib/jobs"
-import { crudMeteringOutbox } from "@lib/dao"
+import { crudMeteringOutbox, fetchCreditRetentionState } from "@lib/dao"
 import { rateProjectsForOrganization, startOfMonth } from "@lib/billing/usage"
 import { db, type DB } from "@sproutos/db"
 import { Hono } from "hono"
@@ -36,7 +36,8 @@ import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { collectionResource, paramResource, requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwConflict, throwNotFound } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
+import { throwBadRequest, throwConflict, throwError, throwNotFound } from "../utils/http-exception"
 import {
   workflowsSchemaCreateRequest,
   workflowsSchemaDetailResponse,
@@ -697,6 +698,10 @@ app
           description: "The queued run",
           content: { "application/json": { schema: resolver(workflowsSchemaRun) } },
         },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         403: { description: "Caller lacks workflow:run", ...errorResponse },
         404: { description: "No such workflow", ...errorResponse },
         409: { description: "The workflow has no saved version, or is disabled", ...errorResponse },
@@ -724,6 +729,14 @@ app
       const trigger = (body as { trigger?: unknown }).trigger
       const workflow = await ownedWorkflow(c.var.organization.id, workflowId)
       if (workflow === undefined) return throwNotFound(c, "Workflow not found")
+      if (await fetchCreditRetentionState(db).isUsageSuspended(c.var.organization.id)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before starting a workflow. Hosted data remains protected during the 48-hour retention window.",
+        )
+      }
 
       if (!workflow.enabled) {
         return throwConflict(c, "This workflow is disabled")

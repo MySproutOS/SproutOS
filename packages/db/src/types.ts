@@ -468,6 +468,20 @@ export interface CreditLedgerEntry {
   seq: Generated<Int8>
 }
 
+export interface CreditRetentionState {
+  deleteAfter: Timestamp | null
+  deletionCompletedAt: Timestamp | null
+  deletionStartedAt: Timestamp | null
+  exhaustedAt: Timestamp | null
+  generation: string | null
+  organizationId: string
+  reserveMeasuredAt: Timestamp | null
+  reserveMicroUsd: Generated<Int8>
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+  warningStage: Generated<string>
+}
+
 export interface CreditTransaction {
   createdAt: Generated<Timestamp>
   description: string | null
@@ -513,8 +527,13 @@ export interface CustomDomain {
 }
 
 export interface DatabaseBranch {
+  cleanupAttempts: Generated<number>
+  cleanupError: string | null
+  cleanupRetryAt: Timestamp | null
   createdAt: Generated<Timestamp>
+  createdByUserId: string | null
   databaseInstanceId: string
+  deletedAt: Timestamp | null
   expiresAt: Timestamp | null
   host: string | null
   id: string
@@ -524,7 +543,10 @@ export interface DatabaseBranch {
   parentBranchId: string | null
   pooledHost: string | null
   providerBranchId: string | null
+  providerBranchName: string | null
   providerEndpointId: string | null
+  provisioningState: Generated<string>
+  reservationToken: string | null
   updatedAt: Generated<Timestamp>
 }
 
@@ -686,6 +708,12 @@ export interface MeteringOutbox {
   payload: Json
 }
 
+export interface NeonBranchMeteringState {
+  databaseBranchId: string
+  meteredThrough: Timestamp
+  updatedAt: Generated<Timestamp>
+}
+
 export interface NeonMeteringState {
   backendServiceId: string
   meteredThrough: Timestamp
@@ -802,6 +830,14 @@ export interface OauthSigningKey {
   publicJwk: Json
   rotatedAt: Timestamp | null
   status: Generated<string>
+}
+
+export interface ObjectStorageMeteringState {
+  backendServiceId: string
+  currentBytes: Generated<Int8>
+  measuredAt: Timestamp
+  meteredThrough: Timestamp | null
+  updatedAt: Generated<Timestamp>
 }
 
 export interface ObservabilityStream {
@@ -968,6 +1004,7 @@ export interface ProjectFile {
 export interface ProjectJob {
   attempt: Generated<number>
   createdAt: Generated<Timestamp>
+  deletionReason: string | null
   details: Generated<Json>
   errorCode: string | null
   errorMessage: string | null
@@ -979,6 +1016,8 @@ export interface ProjectJob {
   progress: Generated<number>
   projectId: string | null
   repositoryId: string | null
+  retentionCutoffAt: Timestamp | null
+  serviceCutoffAt: Timestamp | null
   startedAt: Timestamp | null
   state: Generated<string>
   steps: Generated<Json>
@@ -1103,6 +1142,7 @@ export interface Repository {
   upstreamDefaultBranch: string | null
   upstreamFullName: string | null
   upstreamGithubRepoId: Int8 | null
+  upstreamStrategy: string | null
   upstreamTagCheckedAt: Timestamp | null
   upstreamTagFingerprint: string | null
 }
@@ -1116,6 +1156,21 @@ export interface RepositoryCommitter {
   lastSeenAt: Generated<Timestamp>
   login: string | null
   repositoryId: string
+}
+
+export interface RetentionNoticeDelivery {
+  attempts: Generated<number>
+  createdAt: Generated<Timestamp>
+  generation: string
+  id: string
+  lastError: string | null
+  organizationId: string
+  recipient: string
+  sentAt: Timestamp | null
+  stage: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+  userId: string | null
 }
 
 export interface Role {
@@ -1159,6 +1214,12 @@ export interface Sandbox {
   state: Generated<string>
   updatedAt: Generated<Timestamp>
   userId: string
+}
+
+export interface SandboxDatabaseBranch {
+  createdAt: Generated<Timestamp>
+  databaseBranchId: string
+  sandboxId: string
 }
 
 export interface SearchCluster {
@@ -1561,6 +1622,7 @@ export interface DB {
   creditBalanceCache: CreditBalanceCache
   creditHold: CreditHold
   creditLedgerEntry: CreditLedgerEntry
+  creditRetentionState: CreditRetentionState
   creditTransaction: CreditTransaction
   customDomain: CustomDomain
   databaseBranch: DatabaseBranch
@@ -1575,6 +1637,7 @@ export interface DB {
   memberRole: MemberRole
   meteringImportState: MeteringImportState
   meteringOutbox: MeteringOutbox
+  neonBranchMeteringState: NeonBranchMeteringState
   neonMeteringState: NeonMeteringState
   node: Node
   oauthAccessToken: OauthAccessToken
@@ -1585,6 +1648,7 @@ export interface DB {
   oauthGrant: OauthGrant
   oauthRefreshToken: OauthRefreshToken
   oauthSigningKey: OauthSigningKey
+  objectStorageMeteringState: ObjectStorageMeteringState
   observabilityStream: ObservabilityStream
   organization: Organization
   organizationInvite: OrganizationInvite
@@ -1606,9 +1670,11 @@ export interface DB {
   repoAnalysis: RepoAnalysis
   repository: Repository
   repositoryCommitter: RepositoryCommitter
+  retentionNoticeDelivery: RetentionNoticeDelivery
   role: Role
   roleStatement: RoleStatement
   sandbox: Sandbox
+  sandboxDatabaseBranch: SandboxDatabaseBranch
   searchCluster: SearchCluster
   searchTenant: SearchTenant
   serviceCredential: ServiceCredential

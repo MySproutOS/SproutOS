@@ -18,6 +18,7 @@ members = [
   "services/search-proxy",
   "services/storage-proxy",
   "services/android-signer",
+  "services/daytona-proxy",
 ]
 
 [workspace.package]
@@ -67,6 +68,7 @@ tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
 subtle = "2"
 argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
+crc32fast = "1"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 # The tenant Valkey upstream. ElastiCache is created with `transit_encryption_enabled`, so a proxy
 # that can only open a plain socket cannot reach it at all — see `services/valkey-proxy/src/upstream.rs`.

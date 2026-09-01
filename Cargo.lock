@@ -1403,6 +1403,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "daytona-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "hmac 0.12.1",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sproutos-llm-proxy",
+ "sproutos-metering-proto",
+ "sproutos-sandbox-forward-proxy",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "dbus"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4686,15 +4707,25 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "axum",
+ "base64",
  "bytes",
+ "crc32fast",
+ "futures-util",
  "hex",
+ "redis",
  "reqwest 0.12.28",
+ "rustls 0.23.43",
+ "serde_json",
  "sha2 0.10.9",
+ "sproutos-llm-proxy",
+ "sproutos-metering-proto",
  "sproutos-s3-sigv4",
  "sproutos-service-credentials",
  "sproutos-tenant-auth",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",

@@ -55,7 +55,9 @@ jobs:
       # TASK 35's job inspection reads and writes real BullMQ jobs. Without this the tests skip,
       # and a skipped test looks exactly like a passing one in the summary.
       valkey:
-        image: valkey/valkey:9-alpine
+        # ACL serialization is part of the reconciliation contract, so CI must not silently change
+        # engine versions when the moving `9-alpine` tag advances.
+        image: valkey/valkey:9.1.1-alpine
         ports:
           - 41023:6379
         options: >-
@@ -130,6 +132,7 @@ jobs:
       # difference between the two.
       SERVICE_VALKEY_PUBLIC_HOST: localhost
       SERVICE_POSTGRES_PUBLIC_HOST: localhost
+      SERVICE_POSTGRES_PUBLIC_PORT: "5433"
       SERVICE_SEARCH_PUBLIC_HOST: localhost
       SEARCH_ADMIN_URL: http://127.0.0.1:29200
       SEARCH_ADMIN_USER: admin
@@ -222,6 +225,28 @@ jobs:
       - name: Seed reference data
         run: pnpm --filter=dbmigrator run seed:run
 
+      # The OAuth acceptance fixture must use the exact tenant URI returned to a customer. Pointing
+      # that URI at Postgres directly only tests that Postgres rejects the proxy credential, so run
+      # the real wire proxy in front of the CI cluster before the fixture provisions its database.
+      - name: Start the Postgres tenant proxy
+        run: |
+          cargo build -p pg-proxy
+          PG_PROXY_LISTEN=127.0.0.1:5433 \
+            PG_PROXY_DATABASE_URL="$DATABASE_URL" \
+            PG_PROXY_BACKEND_HOST=127.0.0.1 \
+            PG_PROXY_BACKEND_PORT=5432 \
+            PG_PROXY_BACKEND_USER=postgres \
+            PG_PROXY_BACKEND_PASSWORD=postgres \
+            ./target/debug/pg-proxy >"$RUNNER_TEMP/pg-proxy.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if (echo >/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pg-proxy.log"
+          exit 1
+
       - name: Build
         run: pnpm run build
         env:
@@ -248,8 +273,24 @@ jobs:
       - name: Check types
         run: pnpm run check-types
 
+      # The OAuth acceptance test launches the same uv-managed FastAPI fixture a customer would.
+      # A developer machine already has uv through the Brewfile; a clean runner does not, and an
+      # absent executable is not evidence about OAuth, Postgres, or FastAPI.
+      - name: Install uv for FastAPI acceptance
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.6"
+
       - name: Test
-        run: pnpm exec vitest --run --config .config/vitest.config.mts --reporter=default --reporter=json --outputFile.json=vitest-report.json
+        env:
+          AWS_ACCOUNT_ID: "000000000000"
+        run: pnpm exec vitest --run --config .config/vitest.config.mts --exclude '**/reconcile-valkey.integration.test.ts' --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # ACL LIST is process-global state. Suites that provision tenant users cannot share the
+      # interval between this test's repair pass and its idempotency pass without manufacturing
+      # drift and orphan-count changes that no single reconciler caused.
+      - name: Test Valkey ACL reconciliation in isolation
+        run: pnpm exec vitest --run --config .config/vitest.config.mts --no-file-parallelism lib/typescript/reaper/src/reconcile-valkey.integration.test.ts
 
       # A skipped test reads exactly like a passing one in the summary. Several suites gate on a
       # capability this environment lacks — LocalStack for KMS, a GitHub App, an Anthropic key — so
@@ -300,7 +341,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       valkey:
-        image: valkey/valkey:9-alpine
+        # Keep Rust and TypeScript integration tests on the same pinned Valkey version.
+        image: valkey/valkey:9.1.1-alpine
         ports:
           - 41023:6379
         options: >-
@@ -541,11 +583,16 @@ jobs:
           bash bin/fill-idle.test.sh
           bash bin/cutover.test.sh
           bash bin/deploy-ecs-web.test.sh
+          bash bin/deploy-role-policy.test.sh
           bash bin/handoff-ecs-task-definitions.test.sh
           bash bin/check-acme-worker-rollout-plan.test.sh
+          bash bin/check-acme-worker-partial-a-repair-plan.test.sh
+          bash bin/render-ecs-launch-template-user-data.test.sh
           bash bin/verify-acme-worker-rollout.test.sh
+          bash bin/verify-acme-worker-partial-a.test.sh
           bash bin/verify-tenant-edge-target-groups-empty.test.sh
           bash bin/apply-acme-worker-rollout.test.sh
+          bash bin/apply-acme-worker-partial-a-repair.test.sh
           bash bin/ecs-ha-contract.test.sh
           bash bin/deploy-workflow.test.sh
           bash bin/cli-release-workflow.test.sh

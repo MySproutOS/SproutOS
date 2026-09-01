@@ -8,8 +8,11 @@ import {
   GitHubRateLimitError,
   GitHubTransportError,
   getRepository,
-  listInstallationRepositories,
+  listAllInstallationRepositories,
   MissingGitHubAppConfigError,
+  organizationGitHubCredential,
+  type GitHubClient,
+  type GitHubCredential,
 } from "@lib/github"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -28,6 +31,8 @@ import {
   githubSchemaOrgParam,
   githubSchemaRepositoryListQuery,
   githubSchemaRepositoryListResponse,
+  githubSchemaUpstreamCheckQuery,
+  githubSchemaUpstreamCheckResponse,
 } from "./github-repos.serializer"
 
 const errorResponse = {
@@ -70,6 +75,67 @@ export function repositoryNameProblem(name: string): string | null {
     return "Use letters, numbers, hyphens, underscores and dots only — no spaces."
   }
   return null
+}
+
+type InstallationRepositoryPage = Awaited<ReturnType<typeof listAllInstallationRepositories>>
+type ListedInstallation = { accountLogin: string; page: InstallationRepositoryPage }
+
+/**
+ * One organization can connect several GitHub App installations.
+ *
+ * Repository ids are global, so de-duplicating by id also handles the brief overlap that can
+ * occur while a repository transfer and installation sync race each other.
+ */
+export function mergeInstallationRepositoryPages(pages: InstallationRepositoryPage[]) {
+  const repositories = new Map<string, InstallationRepositoryPage["repositories"][number]>()
+  for (const page of pages) {
+    for (const repository of page.repositories) {
+      repositories.set(String(repository.id), repository)
+    }
+  }
+
+  return {
+    repositories: [...repositories.values()],
+    totalCount: repositories.size,
+  }
+}
+
+export function availableInstallationResults(
+  results: PromiseSettledResult<ListedInstallation>[],
+): ListedInstallation[] {
+  return results.flatMap((result) => {
+    if (result.status === "fulfilled") return [result.value]
+    /*
+      GitHub returns 404 when an installation was removed but its webhook has not reached us yet.
+      One stale installation must not hide every healthy account in the picker.
+    */
+    if (result.reason instanceof GitHubNotFoundError) return []
+    throw result.reason
+  })
+}
+
+export async function checkManualUpstreamAccess(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  repositoryId: number,
+  fullName: string,
+) {
+  const [owner, name] = fullName.split("/") as [string, string]
+  const upstream = await getRepository(client, credential, owner, name)
+  if (upstream.id === repositoryId) {
+    return {
+      fullName: upstream.fullName,
+      accessible: false,
+      defaultBranch: null,
+      reason: "A repository cannot be its own upstream.",
+    }
+  }
+  return {
+    fullName: upstream.fullName,
+    accessible: true,
+    defaultBranch: upstream.defaultBranch,
+    reason: null,
+  }
 }
 
 /**
@@ -122,8 +188,7 @@ const app = new Hono()
         "accountLogin",
       ])
 
-      const installation = installations[0]
-      if (installation === undefined) {
+      if (installations.length === 0) {
         return throwNotFound(
           c,
           "This organization has no active GitHub App installation. Install the SproutOS app on the account that owns the repositories.",
@@ -131,13 +196,34 @@ const app = new Hono()
       }
 
       try {
-        const credential = await tokens.get(Number(installation.installationId), {
-          purpose: "repository-picker",
-        })
-        const page = await listInstallationRepositories(createGitHubClient(), credential, {
-          page: query.page ?? 1,
-          perPage: query.perPage ?? 100,
-        })
+        /*
+          The picker is organization-scoped, not installation-scoped. Reading only the first
+          installation made every later account visible in Settings but unusable here — most
+          notably a personal fork when the team's installation happened to be older.
+        */
+        const results = await Promise.allSettled(
+          installations.map(async (installation) => {
+            const credential = await tokens.get(Number(installation.installationId), {
+              purpose: "repository-picker",
+            })
+            return {
+              accountLogin: installation.accountLogin,
+              page: await listAllInstallationRepositories(createGitHubClient(), credential, {
+                perPage: query.perPage ?? 100,
+              }),
+            }
+          }),
+        )
+        const available = availableInstallationResults(results)
+        if (available.length === 0) {
+          return throwNotFound(
+            c,
+            "This organization has no active GitHub App installation. Install the SproutOS app on the account that owns the repositories.",
+          )
+        }
+        const page = mergeInstallationRepositoryPages(
+          available.map(({ page: resultPage }) => resultPage),
+        )
 
         return c.json({
           data: page.repositories.map((repository) => ({
@@ -149,7 +235,8 @@ const app = new Hono()
             ownerLogin: repository.ownerLogin,
             private: repository.private,
           })),
-          installationAccountLogin: installation.accountLogin,
+          // Retained for older clients; the repository rows themselves carry their owner.
+          installationAccountLogin: available[0].accountLogin,
           totalCount: page.totalCount,
         })
       } catch (error) {
@@ -172,6 +259,67 @@ const app = new Hono()
           return throwError(c, 503, ErrorCode.ServiceUnavailable, "GitHub is unreachable")
         }
 
+        throw error
+      }
+    },
+  )
+  .get(
+    "/:orgSlug/github/upstream-repository",
+    describeRoute({
+      description: "Checks whether a manually entered upstream is accessible from a repository",
+      responses: {
+        200: {
+          description: "The upstream access verdict",
+          content: { "application/json": { schema: resolver(githubSchemaUpstreamCheckResponse) } },
+        },
+        403: { description: "Caller lacks github:read", ...errorResponse },
+        429: { description: "GitHub rate limit reached", ...errorResponse },
+        503: { description: "GitHub is unreachable", ...errorResponse },
+      },
+    }),
+    validator("param", githubSchemaOrgParam),
+    validator("query", githubSchemaUpstreamCheckQuery),
+    requirePermission("github:read", collectionResource("github", "installation")),
+    async (c) => {
+      const { fullName, githubRepoId } = c.req.valid("query")
+      const repositoryId = Number(githubRepoId)
+
+      try {
+        const credential = await organizationGitHubCredential(db, c.var.organization.id, {
+          purpose: "project-repository-read",
+          repositoryId,
+        })
+        if (credential === undefined) {
+          return c.json({
+            fullName,
+            accessible: false,
+            defaultBranch: null,
+            reason:
+              "The selected repository is no longer accessible to SproutOS. Refresh the repository list and try again.",
+          })
+        }
+        return c.json(
+          await checkManualUpstreamAccess(createGitHubClient(), credential, repositoryId, fullName),
+        )
+      } catch (error) {
+        if (error instanceof GitHubNotFoundError) {
+          return c.json({
+            fullName,
+            accessible: false,
+            defaultBranch: null,
+            reason: "That upstream does not exist, or SproutOS cannot access it.",
+          })
+        }
+        if (error instanceof GitHubRateLimitError) {
+          return throwTooManyRequests(
+            c,
+            `GitHub rate limit reached. Retry in ${error.retryAfterSeconds} seconds.`,
+            ErrorCode.RateLimitExceeded,
+          )
+        }
+        if (error instanceof GitHubTransportError) {
+          return throwError(c, 503, ErrorCode.ServiceUnavailable, "GitHub is unreachable")
+        }
         throw error
       }
     },

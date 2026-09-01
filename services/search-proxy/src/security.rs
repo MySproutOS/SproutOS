@@ -19,6 +19,20 @@ const MANAGER_USER: &str = "sproutos_search_proxy_manager";
 const SECURITY_PUT_MAX_ATTEMPTS: usize = 4;
 const SECURITY_PUT_BASE_BACKOFF_MS: u64 = 20;
 const ALPHABET: &[u8] = b"0123456789abcdefghjkmnpqrstvwxyz";
+const CLUSTER_PERMISSIONS: &[&str] = &["cluster_composite_ops", "cluster:monitor/main"];
+const INDEX_ACTIONS: &[&str] = &[
+    "read",
+    "write",
+    "create_index",
+    "indices_monitor",
+    "indices:admin/refresh",
+    "indices:admin/refresh*",
+    "indices:admin/flush",
+    "indices:admin/forcemerge",
+    "indices:admin/analyze",
+    "indices:admin/delete",
+    "indices:data/read/point_in_time/*",
+];
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
@@ -94,14 +108,10 @@ impl SecurityManager {
             "role",
             &format!("roles/{}", identity.role),
             json!({
-                "cluster_permissions": ["cluster_composite_ops", "cluster:monitor/main"],
+                "cluster_permissions": CLUSTER_PERMISSIONS,
                 "index_permissions": [{
                     "index_patterns": [format!("{prefix}*")],
-                    "allowed_actions": [
-                        "read", "write", "create_index", "indices_monitor",
-                        "indices:admin/refresh", "indices:admin/flush",
-                        "indices:admin/forcemerge", "indices:admin/analyze"
-                    ]
+                    "allowed_actions": INDEX_ACTIONS
                 }],
                 "tenant_permissions": []
             }),
@@ -336,6 +346,17 @@ mod tests {
             ),
             Err(SecurityError::WeakRootKey)
         ));
+    }
+
+    #[test]
+    fn role_permissions_match_the_control_plane_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../lib/typescript/services/src/search-security-policy.json"
+        ))
+        .unwrap();
+
+        assert_eq!(fixture["clusterPermissions"], json!(CLUSTER_PERMISSIONS));
+        assert_eq!(fixture["indexActions"], json!(INDEX_ACTIONS));
     }
 
     #[tokio::test]

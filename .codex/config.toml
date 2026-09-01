@@ -10,3 +10,19 @@ args = [
   "@modelcontextprotocol/server-postgres",
   "postgresql://postgres:postgres@localhost:25271/main?schema=public",
 ]
+
+[mcp_servers.gradle]
+command = "jbang"
+args = ["run", "--quiet", "--fresh", "gradle-mcp@rnett"]
+
+[mcp_servers.mobile-mcp]
+command = "pnpm"
+args = ["dlx", "@mobilenext/mobile-mcp@latest"]
+
+[mcp_servers.apple-docs]
+command = "pnpm"
+args = ["dlx", "apple-doc-mcp-server@latest"]
+
+[mcp_servers.XcodeBuildMCP]
+command = "pnpm"
+args = ["dlx", "-y", "xcodebuildmcp@latest", "mcp"]

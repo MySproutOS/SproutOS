@@ -64,6 +64,10 @@ import {
 import { type AgentProxyTokenInsert, crudAgentProxyToken } from "./agentProxyToken/crud"
 import { fetchAgentProxyToken } from "./agentProxyToken/fetch"
 import { sandboxScopeFor } from "./sandbox/scope"
+import { crudDatabaseBranch } from "./databaseBranch/crud"
+import { fetchDatabaseBranch } from "./databaseBranch/fetch"
+import { crudSandboxDatabaseBranch } from "./sandboxDatabaseBranch/crud"
+import { fetchSandboxDatabaseBranch } from "./sandboxDatabaseBranch/fetch"
 import { fetchGithubInstallation } from "./githubInstallation/fetch"
 import { crudProject } from "./project/crud"
 import { fetchProject } from "./project/fetch"
@@ -94,6 +98,7 @@ import {
   type ProjectJobStep,
 } from "./projectJob/crud"
 import { fetchProjectJob } from "./projectJob/fetch"
+import { retryFailedProvision, type RetryProvisionResult } from "./projectJob/retry"
 import { crudProjectTemplateInstall } from "./projectTemplateInstall/crud"
 import { fetchProjectTemplateInstall } from "./projectTemplateInstall/fetch"
 import { crudProjectTemplateService } from "./projectTemplateService/crud"
@@ -121,7 +126,6 @@ import {
   type AutoUpdateCadence,
   type UpkeepOutcome,
   type UpkeepStatus,
-  type UpkeepTrigger,
 } from "./upstreamSyncRun/policy"
 import { fetchUpstreamSyncRun } from "./upstreamSyncRun/fetch"
 import { type AuthSession, authUser, type SessionUser } from "./user/auth"
@@ -180,6 +184,10 @@ export {
   crudAgentCredential,
   crudAgentProxyToken,
   sandboxScopeFor,
+  crudDatabaseBranch,
+  fetchDatabaseBranch,
+  crudSandboxDatabaseBranch,
+  fetchSandboxDatabaseBranch,
   fetchAgentProxyToken,
   crudAgentSession,
   crudAccount,
@@ -235,6 +243,8 @@ export {
   fetchProject,
   fetchProjectEnvVar,
   fetchProjectJob,
+  retryFailedProvision,
+  RetryProvisionResult,
   fetchProjectTemplateInstall,
   fetchProjectTemplateService,
   fetchProjectUpdateSuggestion,
@@ -290,7 +300,6 @@ export {
   SystemRoleStatement,
   UpkeepOutcome,
   UpkeepStatus,
-  UpkeepTrigger,
   StartImpersonation,
   UserExport,
   CUSTOM_DOMAIN_FIELDS,
@@ -329,7 +338,13 @@ export { crudStatement } from "./statement/crud"
 export { fetchStatement, type StatementLineRow } from "./statement/fetch"
 export { crudStatementLineItem } from "./statementLineItem/crud"
 export { fetchStatementLineItem } from "./statementLineItem/fetch"
+export { crudBackendService } from "./backendService/crud"
+export { fetchBackendService } from "./backendService/fetch"
 export {
   crudProviderUsageReconciliation,
   type ProviderUsageReconciliationInput,
 } from "./providerUsageReconciliation/crud"
+export { crudCreditRetentionState } from "./creditRetentionState/crud"
+export { fetchCreditRetentionState } from "./creditRetentionState/fetch"
+export { crudRetentionNoticeDelivery } from "./retentionNoticeDelivery/crud"
+export { fetchRetentionNoticeDelivery } from "./retentionNoticeDelivery/fetch"

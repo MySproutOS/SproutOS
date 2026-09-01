@@ -8,6 +8,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ANDROID_TF="$ROOT/tofu/android-signing.tf"
 COMPUTE_TF="$ROOT/tofu/compute.tf"
 ECS_TF="$ROOT/tofu/ecs.tf"
+WEB_TASK="$ROOT/deploy/ecs/web-task-definition.json"
 
 require() {
   local pattern=$1 file=$2 message=$3
@@ -75,7 +76,7 @@ reject 'aws_iam_role\.(instance|router|acme_worker)' \
 API_PARAMETERS=$(sed -n '/ecs_api_parameter_names = \[/,/^  ]/p' "$ECS_TF")
 WEBSITE_PARAMETERS=$(sed -n '/ecs_website_parameter_names = \[/,/^  ]/p' "$ECS_TF")
 WORKER_PARAMETERS=$(sed -n '/ecs_worker_base_parameter_names = \[/,/^  ]/p' "$ECS_TF")
-ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /p' "$ECS_TF")
+ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /,/^  ])/p' "$ECS_TF")
 ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 NORMAL_UPLOAD_KEYS=$(sed -n '/^KEYS=(/,/^)/p' "$ROOT/bin/put-app-secrets.sh")
@@ -122,19 +123,19 @@ require 'ANDROID_CUSTODY_ONLY' "$ROOT/bin/put-app-secrets.sh" \
   'custody parameters need an all-or-nothing out-of-state upload mode'
 require 'APK_SIGNER_TOKEN.*APK_SIGNER_OPERATOR_TOKEN must differ' "$ROOT/bin/put-app-secrets.sh" \
   'the out-of-state upload must reject equal runtime and operator credentials'
-require 'ANDROID_ARTIFACT_BUCKET.*android_artifacts' "$ECS_TF" \
-  'the API and worker need the dedicated bucket name rather than the general build bucket'
-for dependency in \
-  aws_s3_bucket_versioning.android_artifacts \
-  aws_s3_bucket_server_side_encryption_configuration.android_artifacts \
-  aws_s3_bucket_policy.android_artifacts \
-  aws_iam_role_policy_attachment.task_application \
-  aws_iam_role_policy_attachment.task_android_custody_broker \
-  aws_iam_role_policy.ecs_execution_secrets \
-  aws_iam_role_policy.ecs_task_no_parameter_store; do
-  require "$dependency" "$ECS_TF" \
-    "the ECS task definition must wait for $dependency before registration"
-done
+ANDROID_BUCKET_REFERENCES=$(jq \
+  '[.containerDefinitions[].environment[]? | select(.name == "ANDROID_ARTIFACT_BUCKET" and .value == "sproutos-android-artifacts-471112590391")] | length' \
+  "$WEB_TASK")
+if [ "$ANDROID_BUCKET_REFERENCES" -ne 2 ]; then
+  echo 'android signing infrastructure invariant failed: the API and worker need the dedicated bucket name rather than the general build bucket' >&2
+  exit 1
+fi
+require '"taskRoleArn": "arn:aws:iam::471112590391:role/sproutos-task"' "$WEB_TASK" \
+  'the versioned task template must keep the application task role'
+require '"executionRoleArn": "arn:aws:iam::471112590391:role/sproutos-ecs-execution"' "$WEB_TASK" \
+  'the versioned task template must keep the scoped secret-injection role'
+require 'deploy/ecs/web-task-definition\.json' "$ROOT/.github/workflows/deploy.yml" \
+  'production releases must register the reviewed versioned task template'
 TASK_PARAMETER_DENY=$(sed -n \
   '/resource "aws_iam_role_policy" "ecs_task_no_parameter_store"/,/^}/p' "$ECS_TF")
 require 'role[[:space:]]*=[[:space:]]*aws_iam_role.task.id' \
@@ -165,8 +166,12 @@ require 'Resource[[:space:]]*=[[:space:]]*local.ecs_acme_parameter_arns' \
   'the ACME execution role must remain scoped to its separate ordinary-secret list'
 require 'execution_role_arn[[:space:]]*=[[:space:]]*aws_iam_role.acme_execution.arn' "$ECS_TF" \
   'the ACME task must not share the web execution role'
-require 'ecs_acme_worker_parameter_names[[:space:]]*=[[:space:]]*local.ecs_worker_base_parameter_names' "$ECS_TF" \
-  'the ACME task must exclude the independently gated Google credential'
+require 'ecs_acme_worker_parameter_names[[:space:]]*=[[:space:]]*concat\(local.ecs_worker_base_parameter_names' "$ECS_TF" \
+  'the isolated worker must extend only the ordinary worker secret list'
+require '"STRIPE_SECRET_KEY"' <(printf '%s\n' "$ACME_PARAMETERS") \
+  'the isolated nonpayment reaper needs Stripe for its final automatic reload attempt'
+reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ACME_PARAMETERS") \
+  'the isolated worker must still exclude the independently gated Google credential'
 require 'ANDROID_CUSTODY_PARAMETER_PATH' "$ROOT/bin/put-app-secrets.sh" \
   'signer credentials must use their isolated Parameter Store path'
 require '/sproutos/android-custody' "$ROOT/bin/put-app-secrets.sh" \

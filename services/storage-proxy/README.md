@@ -72,9 +72,10 @@ experiences the provider's. The same correction Postgres needed.
 - **Presigned URLs** (`X-Amz-Algorithm` in the query string). A signature over a request that has not
   happened yet, with its own expiry rules, and no client this serves uses them. Refused with a
   message that says so rather than a 403 that reads like a wrong key.
-- **Streaming chunked uploads** (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`). Each chunk carries its own
-  signature and this proxy buffers whole requests, so accepting the literal would be verifying
-  nothing.
+- **SigV4 streaming chunked uploads** (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`). Each AWS-framed chunk
+  carries its own signature, and accepting that literal without validating every frame would be
+  verifying nothing. Ordinary high-level SDK multipart uploads are supported: each `UploadPart`
+  is a normal signed request.
 - **Virtual-host addressing.** The bucket would live in the `Host` header — a wildcard DNS record and
   certificate per tenant, and a header the client controls deciding which tenant it is.
 
@@ -97,15 +98,26 @@ real refusals against each other.
 | `STORAGE_PROXY_REGION`                    | SigV4 region for the re-signed request                         |
 | `SERVICE_OBJECT_STORAGE_ROOT_KEY`         | The key every tenant secret derives from. Required, no default |
 | `STORAGE_PROXY_DATABASE_URL`              | Falls back to `DATABASE_URL`                                   |
-| `STORAGE_PROXY_MAX_BODY_BYTES`            | Per-request buffer ceiling. Default 16 MiB                     |
-| `STORAGE_PROXY_MAX_INFLIGHT_BODIES`       | Simultaneous body buffers. Default 4                           |
-| `STORAGE_PROXY_BODY_READ_TIMEOUT_SECONDS` | Maximum time to receive a body. Default 30 seconds             |
+| `STORAGE_PROXY_MAX_BODY_BYTES`            | Per-request disk-spool ceiling. Default 64 MiB                 |
+| `STORAGE_PROXY_MAX_INFLIGHT_BODIES`       | Simultaneous request spools. Default 4                         |
+| `STORAGE_PROXY_BODY_READ_TIMEOUT_SECONDS` | Maximum time to receive a request body. Default 300 seconds    |
 
 The platform credential comes from the AWS SDK default credential chain. In production, use the
 EC2 instance profile, ECS task role, or another refreshable role provider; the proxy refreshes temporary credentials
 before they expire. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optional
 `AWS_SESSION_TOKEN` remain supported by that chain for local development and tests, but are not
 production configuration requirements.
+
+Uploads are written into an unlinked, bounded temporary file while their payload digest is checked.
+Only a verified body is streamed onward to S3. Object responses stream from S3 to the caller with
+backpressure and are never accumulated in memory; only list responses are buffered because their
+internal tenant prefix must be removed from the XML. A high-level SDK should use multipart upload
+for files whose individual request parts exceed the configured spool ceiling.
+
+This is mutable application storage, not static deployment storage. A customer's SDK may put,
+read, list, and delete these objects. Static SPA releases are immutable, content-addressed build
+artifacts expanded by the platform worker and served through CloudFront; they do not expose this
+endpoint or a customer storage credential.
 
 The database role needs `select` on `service_credential`, `backend_service` and `organization`, and
 `update` on `service_credential.last_used_at`. Nothing else.

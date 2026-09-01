@@ -32,6 +32,8 @@ import {
   reconcileSandboxes,
   meterSandboxes,
   provisionSandbox,
+  reapExpiredDatabaseBranches,
+  repairDeletingSandboxes,
   reapSandboxes,
   SANDBOX_KINDS,
   scheduleSandboxJobs,
@@ -45,12 +47,15 @@ import { sweepExpired } from "./retention"
 import { scanForUpkeep, scheduleUpkeepScan, UPKEEP_KINDS } from "./upkeep"
 import { upkeepRepository } from "./upkeep-repository"
 import { resolveUpkeepConflict, UPKEEP_RESOLUTION_KIND } from "./upkeep-resolution"
+import { finalizeUpkeepPullRequest, UPKEEP_PR_KIND } from "./upkeep-pr"
 import type { JobHandler } from "./worker"
 import { meteringOutboxRelay } from "./metering-outbox"
 import { REFRESH_CREDIT_STATES_KIND, refreshCreditStates } from "./credit-state"
+import { reconcileStaticAccess, STATIC_ACCESS_RECONCILIATION_KIND } from "./static-suspension"
 import { runValkeyAclRevocation, VALKEY_ACL_REVOCATION_KIND } from "@lib/services"
 import { meterValkeyQueuesJob, METER_VALKEY_QUEUES_KIND } from "./valkey-metering"
 import { meterNeonDatabasesJob, METER_NEON_DATABASES_KIND } from "./neon-metering"
+import { meterObjectStorageJob, METER_OBJECT_STORAGE_KIND } from "./object-storage-metering"
 import { reconcileActiveUsageJob, RECONCILE_ACTIVE_USAGE_KIND } from "./active-usage-reconciliation"
 import { CUSTOM_DOMAIN_KINDS, reconcileCustomDomain, scanCustomDomains } from "./custom-domain"
 import {
@@ -75,6 +80,12 @@ import {
   ANDROID_REGISTRATION_RECONCILE_KIND,
   reconcileAndroidDeveloperRegistrationsJob,
 } from "./android-developer-registration"
+import {
+  deleteNonpaymentData,
+  NONPAYMENT_RETENTION_KINDS,
+  scanNonpaymentRetention,
+  sendRetentionNotices,
+} from "./nonpayment-retention"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -105,6 +116,10 @@ export const JOB_KINDS = {
   chargeUsage: "billing.charge_usage",
   generateStatements: "billing.generate_statements",
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
+  reconcileStaticAccess: STATIC_ACCESS_RECONCILIATION_KIND,
+  scanNonpaymentRetention: NONPAYMENT_RETENTION_KINDS.scan,
+  deleteNonpaymentData: NONPAYMENT_RETENTION_KINDS.delete,
+  sendRetentionNotices: NONPAYMENT_RETENTION_KINDS.sendNotices,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   reconcileSearchSecurity: "platform.reconcile_search_security",
@@ -113,6 +128,7 @@ export const JOB_KINDS = {
   upkeepScan: UPKEEP_KINDS.scan,
   upkeepRepository: UPKEEP_KINDS.repository,
   upkeepResolveConflict: UPKEEP_RESOLUTION_KIND,
+  upkeepFinalizePullRequest: UPKEEP_PR_KIND,
   publishRelease: PUBLISH_KINDS.release,
   tearDownPreview: PUBLISH_KINDS.tearDownPreview,
   cleanUpStaticPreview: PUBLISH_KINDS.cleanUpStaticPreview,
@@ -128,9 +144,12 @@ export const JOB_KINDS = {
   destroySandbox: SANDBOX_KINDS.destroy,
   reconcileSandboxes: SANDBOX_KINDS.reconcile,
   reapSandboxes: SANDBOX_KINDS.reap,
+  reapDatabaseBranches: SANDBOX_KINDS.reapDatabaseBranches,
+  repairSandboxDestroy: SANDBOX_KINDS.repairDestroy,
   meterSandboxes: SANDBOX_KINDS.meter,
   meterValkeyQueues: METER_VALKEY_QUEUES_KIND,
   meterNeonDatabases: METER_NEON_DATABASES_KIND,
+  meterObjectStorage: METER_OBJECT_STORAGE_KIND,
   revokeValkeyAclUser: VALKEY_ACL_REVOCATION_KIND,
   customDomainScan: CUSTOM_DOMAIN_KINDS.scan,
   customDomainReconcile: CUSTOM_DOMAIN_KINDS.reconcile,
@@ -417,6 +436,8 @@ export const ACME_HANDLERS: Record<string, JobHandler> = {
   // Account teardown invokes project teardown inline before anonymising the user. It therefore
   // needs the same certificate-object and tenant-DNS authority as a direct project teardown.
   [JOB_KINDS.tearDownAccount]: tearDownAccount,
+  [JOB_KINDS.deleteNonpaymentData]: deleteNonpaymentData(),
+  [JOB_KINDS.reconcileStaticAccess]: reconcileStaticAccess(),
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
@@ -438,16 +459,19 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.generateStatements]: generateStatementsJob,
   [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
+  [JOB_KINDS.scanNonpaymentRetention]: scanNonpaymentRetention,
+  [JOB_KINDS.sendRetentionNotices]: sendRetentionNotices(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
   [JOB_KINDS.reconcileValkeyAcl]: reconcileValkeyAclJob,
   [JOB_KINDS.sweepExpired]: retentionSweep,
-  // The day is baked into the handler so a scan that is retried tomorrow keys tomorrow's jobs.
+  // The hour is baked into the handler so a retry or operator-triggered scan remains idempotent.
   [JOB_KINDS.upkeepScan]: (job, context) =>
-    scanForUpkeep(new Date().toISOString().slice(0, 10))(job, context),
+    scanForUpkeep(new Date().toISOString().slice(0, 13))(job, context),
   [JOB_KINDS.upkeepRepository]: upkeepRepository(),
   [JOB_KINDS.upkeepResolveConflict]: resolveUpkeepConflict(),
+  [JOB_KINDS.upkeepFinalizePullRequest]: finalizeUpkeepPullRequest(),
   [JOB_KINDS.refreshRoutes]: refreshRoutes(),
   [JOB_KINDS.analyzeRepository]: analyzeRepositoryJob,
   [JOB_KINDS.provisionProject]: provisionProjectJob,
@@ -462,9 +486,12 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.destroySandbox]: destroySandbox(),
   [JOB_KINDS.reconcileSandboxes]: reconcileSandboxes(),
   [JOB_KINDS.reapSandboxes]: reapSandboxes,
+  [JOB_KINDS.reapDatabaseBranches]: reapExpiredDatabaseBranches(),
+  [JOB_KINDS.repairSandboxDestroy]: repairDeletingSandboxes,
   [JOB_KINDS.meterSandboxes]: meterSandboxes,
   [JOB_KINDS.meterValkeyQueues]: meterValkeyQueuesJob(),
   [JOB_KINDS.meterNeonDatabases]: meterNeonDatabasesJob(),
+  [JOB_KINDS.meterObjectStorage]: meterObjectStorageJob(),
   [JOB_KINDS.revokeValkeyAclUser]: revokeValkeyAclUser,
   [JOB_KINDS.scanStaticCloudFrontLogs]: scanStaticCloudFrontLogs(),
   [JOB_KINDS.importStaticCloudFrontLog]: importStaticCloudFrontLog(),
@@ -515,6 +542,17 @@ export function parseWorkerFlag(name: string, value: string | undefined): boolea
  */
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
+
+  await enqueue(db, {
+    kind: JOB_KINDS.scanNonpaymentRetention,
+    idempotencyKey: `${JOB_KINDS.scanNonpaymentRetention}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    kind: JOB_KINDS.sendRetentionNotices,
+    idempotencyKey: `${JOB_KINDS.sendRetentionNotices}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
 
   await scheduleDeploymentCatalogueReconciliation(db, now)
 
@@ -574,6 +612,18 @@ export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()):
     idempotencyKey: `${JOB_KINDS.relayMeteringOutbox}:${now.toISOString().slice(0, 16)}`,
     maxAttempts: 10,
   })
+  if (process.env.SERVICE_OBJECT_STORAGE_ENABLED === "true") {
+    await enqueue(db, {
+      /*
+        Hourly. A sample bills only the interval bracketed by the preceding successful S3 version
+        inventory, so a failed scan is visible and never replaced by an invented byte count. The
+        same durable sample feeds the protected forty-eight-hour retention floor.
+      */
+      kind: JOB_KINDS.meterObjectStorage,
+      idempotencyKey: `${JOB_KINDS.meterObjectStorage}:${hour}`,
+      maxAttempts: 10,
+    })
+  }
   await enqueue(db, {
     /*
       Every five minutes, with the actual importer fanned out by immutable S3 object. Standard

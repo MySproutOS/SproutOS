@@ -41,6 +41,11 @@ export type SkillInput = {
   tenantDomain: string
   /** The project this session is for, so the workflow snippet is copy-pasteable rather than a form. */
   projectSlug?: string
+  upstream?: {
+    fullName: string
+    branch: string
+    cadence: string
+  }
 }
 
 /**
@@ -106,7 +111,32 @@ export function renderPublicSproutosSkill(input: { apiUrl: string; tenantDomain:
  * Kept out of the control-plane rendering because none of it is true there: that checkout has no
  * database, no port anybody can reach, and a `Bash` tool that is refused outright.
  */
-function sandboxSection(workspacePath: string): string {
+function sandboxSection(workspacePath: string, upstream: SkillInput["upstream"]): string {
+  const upstreamSection =
+    upstream === undefined
+      ? ""
+      : `
+**This project tracks an upstream repository.** Its source is \`${upstream.fullName}\` on
+\`${upstream.branch}\`; its configured cadence is \`${upstream.cadence}\`. When the user asks to
+update, sync, or refresh from upstream, do not merge or push the production branch yourself. Invoke
+the scoped trusted action below. SproutOS compares provenance, creates a proposal branch, opens a
+pull request, waits for CI and branch protection, then merges automatically. If there is a conflict,
+the platform gives a bounded patch task to its conflict resolver and applies the same PR gate.
+
+\`\`\`bash
+upstream_response="$(curl --silent --show-error --fail-with-body \\
+  --request POST \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  "$SPROUTOS_AGENT_UPSTREAM_UPDATE_URL")"
+upstream_job_id="$(UPSTREAM_RESPONSE="$upstream_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.UPSTREAM_RESPONSE).jobId)')"
+unset upstream_response
+\`\`\`
+
+After the request succeeds, acknowledge that the upstream update was queued and report
+\`$upstream_job_id\`. Do not claim it has merged until the platform reports that terminal state.
+Never print or persist the action token.
+`
   return `
 ## Where you are right now
 
@@ -114,9 +144,37 @@ You are in a SproutOS sandbox: a container of your own, with this repository che
 \`${workspacePath}\`. A shell here is a real shell — install things, run the test suite, start a dev
 server. Nothing you run reaches the platform's own infrastructure.
 
-**There is a database.** \`DATABASE_URL\` points at a *branch* of this project's Postgres, made for
-this sandbox. It is a copy: migrate it, seed it, drop a table. Production is not on the other end of
-that credential, and cannot be reached from here.
+**Databases are created on demand.** This sandbox intentionally starts without \`DATABASE_URL\`.
+When database-backed code needs to be run, request a named, disposable 24-hour branch through the
+scoped action below. It is copied from the project's primary Postgres branch, while the credential
+can reach only the copy. Capture the returned \`databaseUrl\` without printing it. A sandbox may own
+four active branches.
+
+\`\`\`bash
+branch_response="$(curl --silent --show-error --fail-with-body \\
+  --request POST \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  --header "Content-Type: application/json" \\
+  --data '{"name":"schema-alternative"}' \\
+  "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL")"
+alternative_database_url="$(BRANCH_RESPONSE="$branch_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseUrl)')"
+alternative_database_branch_id="$(BRANCH_RESPONSE="$branch_response" node -e \\
+  'process.stdout.write(JSON.parse(process.env.BRANCH_RESPONSE).databaseBranchId)')"
+DATABASE_URL="$alternative_database_url" node \\
+  "${workspacePath}/.git/sproutos/network/run.mjs" -- npm test
+curl --silent --show-error --fail-with-body \\
+  --request DELETE \\
+  --header "Authorization: Bearer $SPROUTOS_AGENT_ACTION_TOKEN" \\
+  "$SPROUTOS_AGENT_DATABASE_BRANCHES_URL/$alternative_database_branch_id"
+unset branch_response alternative_database_url alternative_database_branch_id
+\`\`\`
+
+The network launcher is required: Daytona carries PostgreSQL through its HTTP CONNECT sidecar, and
+ordinary database clients do not speak that protocol themselves. Replace \`npm test\` with the
+database command you need. Names use lowercase letters, numbers, and hyphens. The create response's
+\`databaseBranchId\` is the exact final path segment for deletion, as shown above. Never
+print or commit the returned URL; sandbox destruction removes every remaining branch.
 
 **A person may be watching a port.** A dev server on 3000, 5173 or 8080 is shown to the customer as
 a live preview. Bind to \`0.0.0.0\`, not \`127.0.0.1\` — a server listening on loopback inside a
@@ -142,6 +200,8 @@ leave scratch files in the tree, and do not ask whether you may edit files. You 
 turns, but it stops with the sandbox. Anything that must outlive the sandbox belongs in the
 repository, not only in a process or under \`/tmp\`.
 
+${upstreamSection}
+
 ${DELEGATION_POLICY}
 `
 }
@@ -155,7 +215,7 @@ description: How this repository is built, deployed and connected on SproutOS �
 ---
 
 # Deploying this repository on SproutOS
-${input.sandbox === true ? sandboxSection(input.workspace.path) : ""}
+${input.sandbox === true ? sandboxSection(input.workspace.path, input.upstream) : ""}
 SproutOS runs each deployable target in this repository as its own **project**. A repository with a
 web app and a separate API is one repository and two projects, grouped under a parent that holds
 them and deploys nothing itself.
@@ -300,8 +360,24 @@ was published with** — including a secret rotated since. Worth knowing before 
 
 ## Migrations
 
-Migrations run as a separate step *before* the new version starts serving. A failing migration fails
-the deploy and leaves the previous release up.
+Production migrations are owned and ordered by the customer's GitHub Actions workflow. SproutOS
+does not scan the repository or discover a migration command automatically.
+
+Prefer one dedicated SproutOS migrator project per database. Build its migrator, pass it to the
+deploy action with \`migration-directory\` and, when needed, \`migration-handler\`, and make every
+application job that uses that database declare \`needs: migrate\`. The action waits for SproutOS to
+finish the uploaded migrator. A failure fails that GitHub job, leaves dependent deploy jobs
+unstarted, and is not retried automatically.
+
+Running the repository's migration command directly in CI is also supported. That requires a
+production database credential stored as a GitHub Actions secret; the deploy action's OIDC token is
+not a database credential. In either pattern, one job owns each database migration so application
+projects cannot race it.
+
+A SproutOS sandbox starts without \`DATABASE_URL\`. Create an isolated, on-demand database branch
+through the sandbox's scoped action before validation, and migrate only that branch. Do not report
+production migration as complete until the customer-owned GitHub Actions path exists and gates
+every affected deploy job.
 
 Do not run migrations from application startup. Several Lambda instances start concurrently, and a
 migration racing itself is how a schema ends up half-applied.

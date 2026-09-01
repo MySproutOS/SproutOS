@@ -7,6 +7,7 @@ import type {
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
   GetV1OrgsByOrgSlugApiKeysResponse,
+  GetV1OrgsByOrgSlugBillingBalanceResponse,
   GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
   GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
@@ -34,6 +35,7 @@ import type {
   GetV1OrgsByOrgSlugRepositoriesResponse,
   GetV1OrgsByOrgSlugResponse,
   GetV1OrgsByOrgSlugRolesResponse,
+  GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   GetV1OrgsByOrgSlugServicesResponse,
   GetV1OrgsByOrgSlugStoreListingsResponse,
   GetV1OrgsByOrgSlugWorkflowRunsResponse,
@@ -58,18 +60,21 @@ import type {
   PostV1OrgsByOrgSlugAnalysesResponse,
   PostV1OrgsByOrgSlugApiKeysResponse,
   PostV1OrgsByOrgSlugInvitesResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdSandboxResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsResponse,
   PostV1OrgsByOrgSlugProjectsResponse,
+  PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdEnvResponse,
   PutV1OrgsByOrgSlugProjectsByProjectIdFilesResponse,
@@ -83,6 +88,14 @@ export const postV1AuthCliTokenResponseTransformer = async (
   }
   return data
 }
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponseTransformer =
+  async (
+    data: any,
+  ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAgentActionsDatabaseBranchesResponse> => {
+    data.expiresAt = new Date(data.expiresAt)
+    return data
+  }
 
 export const getV1OrgsResponseTransformer = async (data: any): Promise<GetV1OrgsResponse> => {
   data.data = data.data.map((item: any) => {
@@ -231,6 +244,19 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsResponseTransformer = asyn
 export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse> => {
+  if (data.startedAt) {
+    data.startedAt = new Date(data.startedAt)
+  }
+  if (data.finishedAt) {
+    data.finishedAt = new Date(data.finishedAt)
+  }
+  data.createdAt = new Date(data.createdAt)
+  return data
+}
+
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse> => {
   if (data.startedAt) {
     data.startedAt = new Date(data.startedAt)
   }
@@ -518,6 +544,29 @@ export const getV1OrgsByOrgSlugServicesResponseTransformer = async (
   return data
 }
 
+export const getV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugServicesByServiceIdBranchesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.createdAt = new Date(item.createdAt)
+    if (item.expiresAt) {
+      item.expiresAt = new Date(item.expiresAt)
+    }
+    return item
+  })
+  return data
+}
+
+export const postV1OrgsByOrgSlugServicesByServiceIdBranchesResponseTransformer = async (
+  data: any,
+): Promise<PostV1OrgsByOrgSlugServicesByServiceIdBranchesResponse> => {
+  data.createdAt = new Date(data.createdAt)
+  if (data.expiresAt) {
+    data.expiresAt = new Date(data.expiresAt)
+  }
+  return data
+}
+
 export const getV1OrgsByOrgSlugAnalysesResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugAnalysesResponse> => {
@@ -753,6 +802,24 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransfo
 ): Promise<PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse> => {
   if (data.reviewedAt) {
     data.reviewedAt = new Date(data.reviewedAt)
+  }
+  return data
+}
+
+export const getV1OrgsByOrgSlugBillingBalanceResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugBillingBalanceResponse> => {
+  if (data.exhaustedAt) {
+    data.exhaustedAt = new Date(data.exhaustedAt)
+  }
+  if (data.deleteAfter) {
+    data.deleteAfter = new Date(data.deleteAfter)
+  }
+  if (data.deletionStartedAt) {
+    data.deletionStartedAt = new Date(data.deletionStartedAt)
+  }
+  if (data.deletionCompletedAt) {
+    data.deletionCompletedAt = new Date(data.deletionCompletedAt)
   }
   return data
 }

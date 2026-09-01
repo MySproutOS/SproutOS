@@ -112,6 +112,62 @@ describe("project consumption", () => {
   })
 })
 
+describe("branch consumption", () => {
+  it("scopes invoice-aligned usage to the requested branches and follows pagination", async () => {
+    const requests: URL[] = []
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1")
+      requests.push(url)
+      response.setHeader("Content-Type", "application/json")
+      response.end(
+        JSON.stringify(
+          url.searchParams.has("cursor")
+            ? {
+                branches: [{ project_id: "project-a", branch_id: "branch-b", periods: [] }],
+                pagination: {},
+              }
+            : {
+                branches: [{ project_id: "project-a", branch_id: "branch-a", periods: [] }],
+                pagination: { cursor: "next-page" },
+              },
+        ),
+      )
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    try {
+      const address = server.address()
+      if (address === null || typeof address === "string") throw new Error("server did not listen")
+      const api = neonApi({
+        apiKey: "test-key",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        orgId: "org-test",
+        regionId: "aws-us-east-1",
+      })
+      const branches = await api.branchConsumption({
+        projectIds: ["project-a"],
+        branchIds: ["branch-a", "branch-b"],
+        from: new Date("2026-08-26T00:00:00.000Z"),
+        to: new Date("2026-08-26T01:00:00.000Z"),
+      })
+
+      expect(branches.map((branch) => branch.branch_id)).toEqual(["branch-a", "branch-b"])
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.pathname).toBe("/consumption_history/v2/branches")
+      expect(requests[0]?.searchParams.get("project_ids")).toBe("project-a")
+      expect(requests[0]?.searchParams.get("branch_ids")).toBe("branch-a,branch-b")
+      expect(requests[0]?.searchParams.get("granularity")).toBe("hourly")
+      expect(requests[1]?.searchParams.get("cursor")).toBe("next-page")
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => {
+          if (error === undefined) resolve()
+          else reject(error)
+        }),
+      )
+    }
+  })
+})
+
 describe.runIf(reachable)("the control-plane API", () => {
   it("creates a project that scales to zero, and hands back a connection string", async () => {
     /*

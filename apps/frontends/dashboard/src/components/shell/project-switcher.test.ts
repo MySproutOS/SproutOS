@@ -8,6 +8,7 @@ function project(overrides: Partial<Project> & { id: string; name: string }): Pr
     repo: "acme/repo",
     repoUrl: "https://github.com/acme/repo",
     status: "ready",
+    kind: "site",
     costMicros: 0n,
     updatedLabel: "now",
     region: "us-east-1",

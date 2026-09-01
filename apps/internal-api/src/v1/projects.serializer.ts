@@ -43,10 +43,13 @@ export const projectSchemaListQuery = Type.Object({
 const ProjectKind = Type.Union([Type.Literal("site"), Type.Literal("workflow")])
 const AutoUpdateMode = Type.Union([Type.Literal("suggest"), Type.Literal("auto_merge")])
 const AutoUpdateCadence = Type.Union([
-  Type.Literal("tag"),
-  Type.Literal("daily"),
-  Type.Literal("weekly"),
-  Type.Literal("monthly"),
+  Type.Literal("one_week"),
+  Type.Literal("one_month"),
+  Type.Literal("three_months"),
+  Type.Literal("six_months"),
+  Type.Literal("nine_months"),
+  Type.Literal("one_year"),
+  Type.Literal("two_years"),
 ])
 const ScaleMode = Type.Union([Type.Literal("cold"), Type.Literal("warm")])
 const EnvTarget = Type.Union([
@@ -104,13 +107,17 @@ const ProjectSource = Type.Union([
     repositoryId: Type.Optional(UUID7String),
     /** GitHub's own id, which is what the picker actually knows. Imported on first use. */
     githubRepoId: Type.Optional(Type.String({ pattern: "^[0-9]+$", maxLength: 20 })),
+    /** Optional upstream for an unrelated clone/copy that GitHub cannot infer as a fork. */
+    upstreamFullName: Type.Optional(
+      Type.String({ pattern: "^[^/\\s]+/[^/\\s]+$", maxLength: 140 }),
+    ),
   }),
 ])
 
 export const projectSchemaCreateRequest = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 120 }),
   description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
-  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+  region: Type.String({ minLength: 1, maxLength: 64 }),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   kind: Type.Optional(ProjectKind),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -122,6 +129,8 @@ export const projectSchemaCreateRequest = Type.Object({
   agentCredentialId: Type.Optional(Nullable(UUID7String)),
   autoUpdateEnabled: Type.Optional(Type.Boolean()),
   autoUpdateCadence: Type.Optional(AutoUpdateCadence),
+  /** Queue the first PR-gated comparison immediately instead of waiting for the first interval. */
+  syncUpstreamNow: Type.Optional(Type.Boolean()),
   /**
    * `cold` scales to zero; `warm` keeps one instance running. ADR 0024.
    *
@@ -151,7 +160,7 @@ export const projectSchemaCreateRequest = Type.Object({
 export const projectSchemaUpdateRequest = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
-  region: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 64 }))),
+  region: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */
@@ -279,6 +288,7 @@ export const projectSchemaResponse = Type.Object({
     isFork: Type.Boolean(),
     provenance: Type.String(),
     upstreamFullName: Nullable(Type.String()),
+    upstreamStrategy: Nullable(Type.String()),
     githubInstallationId: Nullable(UUID7String),
     pendingCreation: Type.Boolean(),
     liveProjectCount: Type.Number(),
@@ -484,6 +494,7 @@ export const repositorySchemaListResponse = Type.Object({
       isFork: Type.Boolean(),
       provenance: Type.String(),
       upstreamFullName: Nullable(Type.String()),
+      upstreamStrategy: Nullable(Type.String()),
       githubInstallationId: Nullable(UUID7String),
       pendingCreation: Type.Boolean(),
       createdAt: Type.String({ format: "date-time" }),

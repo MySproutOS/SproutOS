@@ -3,6 +3,8 @@ import {
   CheckIcon,
   CopyIcon,
   DatabaseIcon,
+  EyeIcon,
+  GitBranchIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -43,8 +45,14 @@ import {
   type ServiceKind,
   useBackendServices,
   useCreateBackendService,
+  useCreateDatabaseBranch,
   useDeleteBackendService,
+  useDeleteDatabaseBranch,
+  useDatabaseBranches,
+  parseObjectStorageConnection,
   useRotateConnection,
+  useRotateDatabaseBranch,
+  useViewObjectStorageConnection,
 } from "@frontends/dashboard/data/databases"
 import { useProjects } from "@frontends/dashboard/data/projects"
 
@@ -72,10 +80,10 @@ function DatabasesList() {
 
       <PageBody>
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
-          A database can stand on its own or belong to a project. Connection details are shown here;
-          passwords are shown only once, when a database is created or its credential is rotated.
-          There is no later View action because SproutOS does not keep a recoverable copy. If you
-          lose the URI, rotate the credential to issue a replacement.
+          A data service can stand on its own or belong to a project. Most passwords are shown only
+          when created or rotated because SproutOS stores only their hash. Object-storage keys are
+          derived from a platform root key, so an interactive owner can safely view the current S3
+          connection again without rotating it.
         </p>
 
         {isPending && <ListSkeleton rows={3} />}
@@ -157,19 +165,267 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
 
   return (
     <span className="flex items-center justify-end gap-1">
+      {service.kind === "postgres" && service.status === "active" && (
+        <BranchesButton orgSlug={orgSlug} service={service} />
+      )}
       <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
+      {service.kind === "object_storage" && (
+        <ViewObjectStorageButton orgSlug={orgSlug} service={service} onViewed={setUri} />
+      )}
       <DeleteButton orgSlug={orgSlug} service={service} />
 
       {uri !== null && (
         <ConnectionDialog
           uri={uri}
           name={service.name}
+          kind={service.kind}
           onClose={() => {
             setUri(null)
           }}
         />
       )}
     </span>
+  )
+}
+
+function BranchesButton({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
+  const [parentId, setParentId] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [uri, setUri] = useState<string | null>(null)
+  const branches = useDatabaseBranches(orgSlug, service.id, open)
+  const { createBranch, isPending: isCreating } = useCreateDatabaseBranch(orgSlug, service.id)
+  const { rotateBranch, isPending: isRotating } = useRotateDatabaseBranch(orgSlug, service.id)
+  const { deleteBranch, isPending: isDeleting } = useDeleteDatabaseBranch(orgSlug, service.id)
+  const active = branches.data?.data ?? []
+  const selectedParentId = parentId || active[0]?.id || ""
+
+  const submit = () => {
+    if (name.trim() === "" || selectedParentId === "") return
+    setError(null)
+    createBranch(name.trim(), selectedParentId)
+      .then((created) => {
+        setName("")
+        setParentId(created.id)
+        setUri(created.connectionUri)
+      })
+      .catch(() => {
+        setError("Could not create that branch")
+      })
+  }
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) setError(null)
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DialogTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Manage branches for ${service.name}`}
+                  >
+                    <GitBranchIcon />
+                  </Button>
+                }
+              />
+            }
+          />
+          <TooltipContent>Create, connect to, and delete Postgres branches.</TooltipContent>
+        </Tooltip>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Branches for {service.name}</DialogTitle>
+            <DialogDescription>
+              Branches are copy-on-write databases retained until you delete them. A connection URI
+              is shown only when a branch is created or its credential is rotated.
+            </DialogDescription>
+          </DialogHeader>
+
+          {branches.isPending && <ListSkeleton rows={2} />}
+          {branches.isError && (
+            <ListError
+              title="Could not load branches"
+              onRetry={() => {
+                void branches.refetch()
+              }}
+            />
+          )}
+          {branches.data !== undefined && (
+            <div className="flex flex-col gap-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead className="w-24" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {active.map((branch) => (
+                    <TableRow key={branch.id}>
+                      <TableCell>
+                        <span className="font-medium">{branch.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {branch.kind === "user" ? "Persistent" : branch.kind}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-[12px] text-muted-foreground">
+                        {active.find((candidate) => candidate.id === branch.parentDatabaseBranchId)
+                          ?.name ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isRotating}
+                            aria-label={`Rotate the credential for ${branch.name}`}
+                            onClick={() => {
+                              rotateBranch(branch.id)
+                                .then(setUri)
+                                .catch(() => undefined)
+                            }}
+                          >
+                            <RefreshCwIcon />
+                          </Button>
+                          {!branch.isProtected && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={isDeleting}
+                              aria-label={`Delete ${branch.name}`}
+                              onClick={() => {
+                                deleteBranch(branch.id).catch(() => {
+                                  setError("Delete its child branches first")
+                                })
+                              }}
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          )}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`branch-name-${service.id}`}>New branch name</Label>
+                  <Input
+                    id={`branch-name-${service.id}`}
+                    placeholder="feature-checkout"
+                    value={name}
+                    onChange={(event) => {
+                      setName(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Branch from</Label>
+                  <Select
+                    items={active.map((branch) => ({ label: branch.name, value: branch.id }))}
+                    value={selectedParentId}
+                    onValueChange={(next) => {
+                      setParentId(next ?? "")
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {active.map((branch) => (
+                        <SelectItem key={branch.id} value={branch.id}>
+                          {branch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {error !== null && (
+                  <p className="text-xs text-destructive sm:col-span-2">{error}</p>
+                )}
+                <Button
+                  className="sm:col-span-2"
+                  disabled={isCreating || name.trim() === "" || selectedParentId === ""}
+                  onClick={submit}
+                >
+                  <PlusIcon />
+                  Create branch and show URI
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {uri !== null && (
+        <ConnectionDialog
+          uri={uri}
+          name={`${service.name} branch`}
+          kind="postgres"
+          onClose={() => {
+            setUri(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ViewObjectStorageButton({
+  orgSlug,
+  service,
+  onViewed,
+}: {
+  orgSlug: string
+  service: BackendService
+  onViewed: (uri: string) => void
+}) {
+  const { view, clear, isPending } = useViewObjectStorageConnection(orgSlug, service.id)
+  const enabled = service.status === "active"
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!enabled || isPending}
+              aria-label={`View the S3 connection for ${service.name}`}
+              onClick={() => {
+                view()
+                  .then((uri) => {
+                    onViewed(uri)
+                    clear()
+                  })
+                  .catch(() => undefined)
+              }}
+            >
+              <EyeIcon />
+            </Button>
+          </span>
+        }
+      />
+      <TooltipContent className="max-w-72 leading-relaxed">
+        {enabled
+          ? "View the current endpoint, bucket, access key, and secret without rotating them."
+          : "Connection details are available after this storage service becomes active."}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -236,7 +492,9 @@ function RotateButton({
           <DialogDescription>
             Your current connection URI stops working immediately. Anything still using it — a
             deployed app, a local script — will fail until you give it the new one. The replacement
-            is shown only once, so copy it before closing.
+            {service.kind === "object_storage"
+              ? "can be viewed again by an interactive owner."
+              : "is shown only once, so copy it before closing."}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -283,8 +541,8 @@ function DeleteButton({ orgSlug, service }: { orgSlug: string; service: BackendS
         <DialogHeader>
           <DialogTitle>Delete {service.name}?</DialogTitle>
           <DialogDescription>
-            The database and everything in it is destroyed. There is no undo and no backup to
-            restore from.
+            {service.kind === "object_storage" ? "The storage service" : "The database"} and
+            everything in it is destroyed. There is no undo and no backup to restore from.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-1.5">
@@ -326,13 +584,16 @@ function DeleteButton({ orgSlug, service }: { orgSlug: string; service: BackendS
 function ConnectionDialog({
   uri,
   name,
+  kind,
   onClose,
 }: {
   uri: string
   name: string
+  kind: ServiceKind
   onClose: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const storage = kind === "object_storage" ? parseObjectStorageConnection(uri) : null
 
   return (
     <Dialog
@@ -345,9 +606,29 @@ function ConnectionDialog({
         <DialogHeader>
           <DialogTitle>Connection URI for {name}</DialogTitle>
           <DialogDescription>
-            This contains the password and will not be shown again. Copy it before closing.
+            {storage === null
+              ? "This contains the password and will not be shown again. Copy it before closing."
+              : "Use these values with an ordinary AWS S3 SDK. Keep the access key and secret private; you can view this derived credential again later."}
           </DialogDescription>
         </DialogHeader>
+        {storage !== null && (
+          <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 rounded-lg border border-border bg-soil-800 p-3 text-[12px]">
+            {[
+              ["Endpoint", storage.endpoint],
+              ["Port", String(storage.port)],
+              ["Bucket", storage.bucket],
+              ["Region", storage.region],
+              ["Access key ID", storage.accessKeyId],
+              ["Secret access key", storage.secretAccessKey],
+              ["Path-style", storage.forcePathStyle ? "Required" : "Not required"],
+            ].map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="min-w-0 break-all font-mono">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         <code className="block max-h-32 overflow-y-auto rounded-lg border border-border bg-soil-800 p-3 font-mono text-[12px] break-all">
           {uri}
         </code>
@@ -541,6 +822,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
         <ConnectionDialog
           uri={uri}
           name={createdName}
+          kind={kind}
           onClose={() => {
             setUri(null)
           }}

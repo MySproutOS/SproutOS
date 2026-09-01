@@ -35,7 +35,10 @@ async fn main() -> anyhow::Result<()> {
     router::install_crypto_provider();
 
     let valkey_url = std::env::var("VALKEY_URL").context("VALKEY_URL is not set")?;
-    let client = redis::Client::open(valkey_url).context("VALKEY_URL is not a Valkey URL")?;
+    let master_queue_enabled =
+        std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0");
+    let client =
+        redis::Client::open(valkey_url.clone()).context("VALKEY_URL is not a Valkey URL")?;
     let manager = ConnectionManager::new(client.clone())
         .await
         .context("could not reach the platform Valkey")?;
@@ -207,7 +210,11 @@ async fn main() -> anyhow::Result<()> {
     };
     let edge_readiness = Arc::new(router::edge_readiness::EdgeReadiness::default());
     let splits = [
-        router::listeners::valkey(&database_url).await?,
+        router::listeners::valkey(
+            &database_url,
+            master_queue_enabled.then(|| valkey_url.clone()),
+        )
+        .await?,
         router::listeners::search(&database_url).await?,
         router::listeners::postgres(&database_url).await?,
         router::listeners::llm(&database_url).await?,
@@ -234,7 +241,7 @@ async fn main() -> anyhow::Result<()> {
       `VALKEY_PROXY_MASTER_QUEUE` is set, and a dispatcher polling a set nothing writes to is a
       Valkey round trip every two seconds, forever, to learn nothing.
     */
-    if std::env::var("VALKEY_PROXY_MASTER_QUEUE").is_ok_and(|value| value != "0") {
+    if master_queue_enabled {
         let dispatch_valkey = dispatch_manager.clone();
         let dispatch_lambda = state.lambda.clone();
         tokio::spawn(async move {

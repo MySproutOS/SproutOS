@@ -75,6 +75,12 @@ const CREATED_FORMAT = new Intl.DateTimeFormat("en-US", {
 
 const SANDBOX_START_TIMEOUT_MS = 5 * 60_000
 const SANDBOX_DELETE_TIMEOUT_MS = 120_000
+const AGENT_SESSION_TITLE_MAX_LENGTH = 200
+
+/** The first prompt is useful history context, but it is not an unbounded session title. */
+export function agentSessionTitle(prompt: string): string {
+  return prompt.slice(0, AGENT_SESSION_TITLE_MAX_LENGTH)
+}
 
 type SandboxStartDependencies = {
   preflight: (path: { orgSlug: string }) => Promise<void>
@@ -156,6 +162,11 @@ export function latestRestorableAgentSession(
   return sessions?.find((session) => session.status === "active" || session.status === "idle")
 }
 
+/** An `active` database row is not a running turn once its workspace no longer exists. */
+export function agentSessionIsRunning(status: string, sandboxState: string | undefined): boolean {
+  return status === "active" && (sandboxState === "starting" || sandboxState === "running")
+}
+
 /** The workspace is durable API state; transcript bubbles are not evidence that it exists. */
 export function useAgentSandbox(orgSlug: string, projectId: string) {
   return useQuery({
@@ -170,8 +181,11 @@ export function useCreateAgentSession(orgSlug: string, projectId: string) {
 
   return {
     ...mutation,
-    createSession: async (): Promise<string> => {
-      const session = await mutation.mutateAsync({ path: { orgSlug, projectId }, body: {} })
+    createSession: async (title?: string): Promise<string> => {
+      const session = await mutation.mutateAsync({
+        path: { orgSlug, projectId },
+        body: title === undefined ? {} : { title: agentSessionTitle(title) },
+      })
       await client.invalidateQueries({
         queryKey: getV1OrgsByOrgSlugProjectsByProjectIdAgentSessionsQueryKey({
           path: { orgSlug, projectId },

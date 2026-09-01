@@ -19,3 +19,9 @@ export const agentActionSchemaSetGroupPrimaryResponse = Type.Object({
   primaryHostname: Nullable(Type.String()),
   primaryUrl: Nullable(Type.String()),
 })
+
+export const agentActionSchemaUpdateUpstreamResponse = Type.Object({
+  action: Type.Literal("update_from_upstream"),
+  jobId: UUID7String,
+  upstreamFullName: Type.String(),
+})

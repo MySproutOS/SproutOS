@@ -31,6 +31,9 @@ export const DAYTONA_READ_MAX_ATTEMPTS = 3
 export const DAYTONA_READ_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_BUFFERED_FILE_BYTES = 2 * 1024 * 1024
 export const FORWARD_PROXY_CREDENTIAL_DOMAIN = "sproutos:sandbox-forward-proxy:v1"
+export const DAYTONA_PROXY_CREDENTIAL_TTL_SECONDS = 24 * 60 * 60
+export const DAYTONA_PROXY_CREDENTIAL_ISSUER = "sproutos-control-plane"
+export const DAYTONA_PROXY_CREDENTIAL_AUDIENCE = "sproutos-daytona-proxy"
 
 /*
   A fixed command is the security boundary here.
@@ -182,7 +185,7 @@ export function daytonaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Dayt
 function validateForwardProxyUrl(value: string): URL {
   const url = new URL(value)
   if (
-    url.protocol !== "https:" ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
     url.username !== "" ||
     url.password !== "" ||
     url.pathname !== "/" ||
@@ -190,7 +193,7 @@ function validateForwardProxyUrl(value: string): URL {
     url.hash !== ""
   ) {
     throw new Error(
-      "SANDBOX_FORWARD_PROXY_URL must be an HTTPS origin with no credentials, path, query, or fragment",
+      "SANDBOX_FORWARD_PROXY_URL must be an HTTP(S) origin with no credentials, path, query, or fragment",
     )
   }
   return url
@@ -204,17 +207,59 @@ function decodeForwardProxyRootKey(value: string): Buffer {
   return key
 }
 
-/** Must agree with `lib/rust/sandbox-forward-proxy/fixtures/credentials.json`. */
+/** Legacy AWS-router credential. Must agree with the shared Rust fixture. */
 export function sandboxForwardProxyPassword(rootKeyBase64: string, sandboxId: string): string {
   return createHmac("sha256", decodeForwardProxyRootKey(rootKeyBase64))
     .update(`${FORWARD_PROXY_CREDENTIAL_DOMAIN}\0${sandboxId.toLowerCase()}`, "utf8")
     .digest("base64url")
 }
 
-export function sandboxForwardProxyUrl(config: DaytonaConfig, sandboxId: string): string {
+export type DaytonaProxyCredentialClaims = {
+  iss: typeof DAYTONA_PROXY_CREDENTIAL_ISSUER
+  aud: typeof DAYTONA_PROXY_CREDENTIAL_AUDIENCE
+  sub: string
+  organizationId: string
+  projectId: string
+  iat: number
+  exp: number
+}
+
+/**
+ * Mint the short-lived credential Daytona sends to the standalone OVH proxy as its Basic password.
+ * The proxy verifies the signature and attribution locally; it has no database and makes no
+ * control-plane authorization request. The fixed lifetime is deliberately not configurable.
+ */
+export function daytonaProxyCredential(
+  rootKeyBase64: string,
+  input: Pick<CreateSandboxInput, "sandboxId" | "organizationId" | "projectId">,
+  issuedAtSeconds = Math.floor(Date.now() / 1000),
+): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")
+  const claims: DaytonaProxyCredentialClaims = {
+    iss: DAYTONA_PROXY_CREDENTIAL_ISSUER,
+    aud: DAYTONA_PROXY_CREDENTIAL_AUDIENCE,
+    sub: input.sandboxId.toLowerCase(),
+    organizationId: input.organizationId.toLowerCase(),
+    projectId: input.projectId.toLowerCase(),
+    iat: issuedAtSeconds,
+    exp: issuedAtSeconds + DAYTONA_PROXY_CREDENTIAL_TTL_SECONDS,
+  }
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url")
+  const signingInput = `${header}.${payload}`
+  const signature = createHmac("sha256", decodeForwardProxyRootKey(rootKeyBase64))
+    .update(signingInput, "ascii")
+    .digest("base64url")
+  return `${signingInput}.${signature}`
+}
+
+export function sandboxForwardProxyUrl(
+  config: DaytonaConfig,
+  input: Pick<CreateSandboxInput, "sandboxId" | "organizationId" | "projectId">,
+  issuedAtSeconds?: number,
+): string {
   const url = validateForwardProxyUrl(config.forwardProxyUrl)
-  url.username = sandboxId.toLowerCase()
-  url.password = sandboxForwardProxyPassword(config.forwardProxyRootKey, sandboxId)
+  url.username = input.sandboxId.toLowerCase()
+  url.password = daytonaProxyCredential(config.forwardProxyRootKey, input, issuedAtSeconds)
   return url.toString()
 }
 
@@ -265,9 +310,9 @@ export function buildCreateParams(
     name: `sproutos-${input.sandboxId}`,
     snapshot: config.snapshot,
     // Daytona installs this create-time-only upstream as HTTP_PROXY/HTTPS_PROXY inside the
-    // sandbox. The credential is unique to this sandbox and remains useful only while the router
-    // sees the corresponding control-plane row in a live state.
-    outboundProxyUrl: sandboxForwardProxyUrl(config, input.sandboxId),
+    // sandbox. The signed credential carries attribution and expires after exactly 24 hours; the
+    // standalone proxy verifies it without a database or a control-plane network dependency.
+    outboundProxyUrl: sandboxForwardProxyUrl(config, input),
     /*
     Attribution, and the reason `organizationId` is required rather than optional.
 

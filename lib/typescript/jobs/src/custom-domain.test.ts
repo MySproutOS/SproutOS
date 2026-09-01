@@ -5,7 +5,7 @@ import {
   type S3Client,
 } from "@aws-sdk/client-s3"
 import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
-import { crudCustomDomain } from "@lib/dao"
+import { crudCustomDomain, fetchCustomDomain } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import type { Redis } from "ioredis"
@@ -13,9 +13,11 @@ import { v7 } from "uuid"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import {
   activateCustomDomain,
+  clearOwnershipTxtCache,
   customDomainRetryAfter,
   deleteCustomDomain,
   hasOwnershipTxt,
+  hasOwnershipTxtCached,
   nextRenewal,
   reconcileCustomDomain,
   trafficPointsToIngress,
@@ -42,6 +44,64 @@ describe("custom-domain DNS checks", () => {
     expect(await hasOwnershipTxt(resolver, "example.com", "sproutos-domain-verification=abc")).toBe(
       true,
     )
+  })
+
+  it("caches ownership results in Valkey with shorter negative TTLs", async () => {
+    const values = new Map<string, string>()
+    const writes: Array<[string, string, string, number]> = []
+    const valkey = {
+      get: (key: string) => Promise.resolve(values.get(key) ?? null),
+      set: (key: string, value: string, mode: string, ttl: number) => {
+        values.set(key, value)
+        writes.push([key, value, mode, ttl])
+        return Promise.resolve("OK")
+      },
+    }
+    let lookups = 0
+    const resolver = {
+      resolveTxt: () => {
+        lookups += 1
+        return Promise.resolve([["sproutos-domain-verification=abc"]])
+      },
+      resolve4: absent,
+      resolve6: absent,
+      resolveCname: absent,
+    }
+
+    await expect(
+      hasOwnershipTxtCached(resolver, valkey, "example.com", "sproutos-domain-verification=abc"),
+    ).resolves.toBe(true)
+    await expect(
+      hasOwnershipTxtCached(resolver, valkey, "example.com", "sproutos-domain-verification=abc"),
+    ).resolves.toBe(true)
+    expect(lookups).toBe(1)
+    expect(writes[0]?.slice(1)).toEqual(["1", "EX", 15 * 60])
+
+    resolver.resolveTxt = () => {
+      lookups += 1
+      return Promise.reject(new Error("not found"))
+    }
+    await expect(hasOwnershipTxtCached(resolver, valkey, "missing.example", "proof")).resolves.toBe(
+      false,
+    )
+    expect(writes[1]?.slice(1)).toEqual(["0", "EX", 60])
+  })
+
+  it("invalidates the exact cached proof for a manual re-check", async () => {
+    const deleted: string[] = []
+    await clearOwnershipTxtCache(
+      {
+        del: (key: string) => {
+          deleted.push(key)
+          return Promise.resolve(1)
+        },
+      },
+      "example.com",
+      "sproutos-domain-verification=abc",
+    )
+    expect(deleted).toHaveLength(1)
+    expect(deleted[0]).toMatch(/^custom-domain:ownership:v1:example\.com:[a-f0-9]{64}$/)
+    expect(deleted[0]).not.toContain("sproutos-domain-verification")
   })
 
   it("accepts the exact ingress CNAME and rejects a lookalike suffix", async () => {
@@ -237,6 +297,8 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
   const domainId = v7()
   const issuingDomainId = v7()
   const crashingDomainId = v7()
+  const staleDirectoryDomainId = v7()
+  const recheckDomainId = v7()
 
   beforeAll(async () => {
     await db
@@ -282,6 +344,40 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
         projectId,
         hostname: `${domainId}.example.test`,
         verificationToken: "proof",
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: recheckDomainId,
+        organizationId,
+        projectId,
+        hostname: `${recheckDomainId}.example.test`,
+        verificationToken: "sproutos-domain-verification=proof",
+        status: "active",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.recheck",
+        certificateExpiresAt: new Date("2027-11-28T00:00:00Z"),
+        nextRenewalAt: new Date("2027-10-28T00:00:00Z"),
+        nextRetryAt: new Date("2026-08-30T00:00:00Z"),
+      })
+      .execute()
+    await db
+      .insertInto("customDomain")
+      .values({
+        id: staleDirectoryDomainId,
+        organizationId,
+        projectId,
+        hostname: `${staleDirectoryDomainId}.example.test`,
+        verificationToken: "proof",
+        status: "active",
+        certificateIssuer: "CN=Staging Test CA",
+        certificateDirectoryUrl: "https://acme-staging.example/directory",
+        renewalInfoCertificateId: "aki.serial",
+        certificateExpiresAt: new Date("2027-11-28T00:00:00Z"),
+        nextRenewalAt: new Date("2027-10-28T00:00:00Z"),
+        nextRetryAt: new Date("2027-10-28T00:00:00Z"),
       })
       .execute()
     await db
@@ -335,6 +431,60 @@ describe.runIf(databaseReachable)("custom-domain deletion recovery", () => {
     await db.deleteFrom("organization").where("id", "=", organizationId).execute()
     await db.deleteFrom("user").where("id", "=", userId).execute()
     await db.destroy()
+  })
+
+  it("immediately scans active certificates issued by a different ACME directory", async () => {
+    const due = await fetchCustomDomain(db)
+      .listDueQuery(
+        new Date("2026-08-30T00:00:00Z"),
+        "https://acme-v02.api.letsencrypt.org/directory",
+      )
+      .execute()
+
+    expect(due.map(({ id }) => id)).toContain(staleDirectoryDomainId)
+  })
+
+  it("performs a requested DNS re-check for an active certificate", async () => {
+    vi.stubEnv("ACME_DIRECTORY_URL", "https://acme-staging.example/directory")
+    vi.stubEnv("TENANT_INGRESS_HOST", "ingress.sproutos.run")
+    try {
+      const now = new Date("2026-08-30T12:00:00Z")
+      const handler = reconcileCustomDomain({
+        now: () => now,
+        resolver: {
+          resolveTxt: () => Promise.resolve([["sproutos-domain-verification=proof"]]),
+          resolveCname: () => Promise.resolve(["ingress.sproutos.run."]),
+          resolve4: absent,
+          resolve6: absent,
+        },
+        valkey: {
+          get: vi.fn<() => Promise<null>>(() => Promise.resolve(null)),
+          set: vi.fn<() => Promise<"OK">>(() => Promise.resolve("OK")),
+        } as unknown as Redis,
+      })
+
+      await expect(
+        handler({ payload: { domainId: recheckDomainId } } as never, {
+          db,
+          keepAlive: () => Promise.resolve(true),
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toBeUndefined()
+
+      const checked = await db
+        .selectFrom("customDomain")
+        .select(["status", "statusReason", "lastCheckedAt", "nextRetryAt"])
+        .where("id", "=", recheckDomainId)
+        .executeTakeFirstOrThrow()
+      expect(checked).toEqual({
+        status: "active",
+        statusReason: null,
+        lastCheckedAt: now,
+        nextRetryAt: new Date("2027-10-28T00:00:00Z"),
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it("keeps deleting durable when route withdrawal crashes", async () => {

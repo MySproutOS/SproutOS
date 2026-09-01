@@ -3,6 +3,7 @@ import {
   getV1OrgsByOrgSlugGithubOwnersOptions,
   getV1OrgsByOrgSlugGithubRepositoriesOptions,
   getV1OrgsByOrgSlugGithubRepositoryNameOptions,
+  getV1OrgsByOrgSlugGithubUpstreamRepositoryOptions,
   getV1OrgsByOrgSlugProjectsQueryKey,
   postV1OrgsByOrgSlugProjectsMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -54,6 +55,25 @@ export function useGithubRepositories(orgSlug: string, enabled: boolean) {
   return useQuery({
     ...getV1OrgsByOrgSlugGithubRepositoriesOptions({ path: { orgSlug }, query: { perPage: 100 } }),
     enabled,
+    refetchOnMount: "always",
+    staleTime: 0,
+    retry: false,
+  })
+}
+
+export function useManualUpstreamCheck(
+  orgSlug: string,
+  fullName: string,
+  githubRepoId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    ...getV1OrgsByOrgSlugGithubUpstreamRepositoryOptions({
+      path: { orgSlug },
+      query: { fullName, githubRepoId: githubRepoId ?? "0" },
+    }),
+    enabled: enabled && githubRepoId !== null,
+    staleTime: 30_000,
     retry: false,
   })
 }

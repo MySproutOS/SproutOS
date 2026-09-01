@@ -3,6 +3,7 @@ export {
   availableBalance,
   balances,
   InsufficientBalanceError,
+  lockAvailableBalance,
   post,
   type Posting,
   type PostTransaction,
@@ -47,6 +48,7 @@ export {
 } from "./topup"
 export {
   NoActivePriceBookError,
+  organizationBurnPerDay,
   rateProjectsForOrganization,
   RETIRED_UNBILLABLE_DIMENSIONS,
   startOfMonth,

@@ -30,6 +30,9 @@ export function sandboxAgentEnv(input: {
   refreshUrl: string
   /** The one control-plane action this exact chat turn may perform. */
   actionUrl: string
+  /** Create/delete short-lived database branches owned by this sandbox. */
+  databaseBranchesUrl: string
+  upstreamUpdateUrl?: string
   projectSlug: string
   groupPrimaryCandidates: readonly { name: string; slug: string; rootDir: string | null }[]
   model?: string | null
@@ -52,6 +55,8 @@ export function sandboxAgentEnv(input: {
     SPROUTOS_AGENT_TOKEN_EXPIRES_AT: input.token.accessExpiresAt.toISOString(),
     SPROUTOS_AGENT_ACTION_TOKEN: input.token.accessToken,
     SPROUTOS_AGENT_GROUP_PRIMARY_URL: input.actionUrl,
+    SPROUTOS_AGENT_DATABASE_BRANCHES_URL: input.databaseBranchesUrl,
+    SPROUTOS_AGENT_UPSTREAM_UPDATE_URL: input.upstreamUpdateUrl ?? input.actionUrl,
     SPROUTOS_AGENT_PROJECT_SLUG: input.projectSlug,
     SPROUTOS_AGENT_GROUP_PROJECTS: JSON.stringify(input.groupPrimaryCandidates),
   }

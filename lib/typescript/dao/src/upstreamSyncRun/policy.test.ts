@@ -40,7 +40,6 @@ async function fixture(
     cadence?: AutoUpdateCadence
     tracksUpstream?: boolean
     isFork?: boolean
-    upstreamTagCheckedAt?: Date | null
   } = {},
 ) {
   const userId = v7()
@@ -82,7 +81,7 @@ async function fixture(
       provenance: "fork",
       isFork: options.isFork ?? true,
       upstreamFullName: (options.tracksUpstream ?? true) ? "upstream/original" : null,
-      upstreamTagCheckedAt: options.upstreamTagCheckedAt ?? null,
+      upstreamStrategy: (options.tracksUpstream ?? true) ? "github_fork" : null,
     })
     .execute()
 
@@ -99,7 +98,7 @@ async function fixture(
       productionBranch: "main",
       state: "ready",
       autoUpdateEnabled: options.autoUpdate ?? true,
-      autoUpdateCadence: options.cadence ?? "daily",
+      autoUpdateCadence: options.cadence ?? "one_week",
       autoUpdateMode: "suggest",
     })
     .execute()
@@ -117,14 +116,31 @@ describe("cadence windows", () => {
   const now = new Date("2026-08-28T12:00:00.000Z")
 
   it("runs a never-checked cadence immediately", () => {
-    expect(cadenceIsDue("daily", null, now)).toBe(true)
+    expect(cadenceIsDue("one_week", null, now)).toBe(true)
   })
 
   it("catches up after each complete interval and not before", () => {
-    expect(cadenceIsDue("daily", new Date("2026-08-27T12:00:00.001Z"), now)).toBe(false)
-    expect(cadenceIsDue("daily", new Date("2026-08-27T12:00:00.000Z"), now)).toBe(true)
-    expect(cadenceIsDue("weekly", new Date("2026-08-21T12:00:00.000Z"), now)).toBe(true)
-    expect(cadenceIsDue("monthly", new Date("2026-07-29T12:00:00.000Z"), now)).toBe(true)
+    expect(cadenceIsDue("one_week", new Date("2026-08-21T12:00:00.001Z"), now)).toBe(false)
+    expect(cadenceIsDue("one_week", new Date("2026-08-21T12:00:00.000Z"), now)).toBe(true)
+    expect(cadenceIsDue("one_month", new Date("2026-07-29T12:00:00.000Z"), now)).toBe(true)
+  })
+
+  it("uses fixed elapsed durations for every offered schedule", () => {
+    const days = {
+      one_week: 7,
+      one_month: 30,
+      three_months: 90,
+      six_months: 180,
+      nine_months: 270,
+      one_year: 365,
+      two_years: 730,
+    } as const
+    for (const [cadence, elapsed] of Object.entries(days) as [AutoUpdateCadence, number][]) {
+      expect(cadenceIsDue(cadence, new Date(now.getTime() - elapsed * 86_400_000 + 1), now)).toBe(
+        false,
+      )
+      expect(cadenceIsDue(cadence, new Date(now.getTime() - elapsed * 86_400_000), now)).toBe(true)
+    }
   })
 })
 
@@ -164,7 +180,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
     // repositories that are being used.
     const status = await fetchUpkeepStatus(db).forRepository(repositoryId)
     expect(status.consecutiveFailures).toBe(0)
-    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))).toBe(true)
   })
 
   it("comes back once a run succeeds", async ({ skip }) => {
@@ -175,7 +191,7 @@ describe.skipIf(!reachable)("upkeep status", () => {
 
     // Derived from history rather than a counter, so nothing has to remember to reset it.
     await recordRuns(repositoryId, ["up_to_date"])
-    expect(await isDue(repositoryId, new Date(Date.now() + 24 * 60 * 60 * 1000))).toBe(true)
+    expect(await isDue(repositoryId, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))).toBe(true)
   })
 })
 
@@ -205,7 +221,7 @@ describe.skipIf(!reachable)("what is due", () => {
   it("waits for the chosen weekly interval, then catches up", async ({ skip }) => {
     if (!reachable) skip()
     const now = new Date("2026-08-28T12:00:00.000Z")
-    const { repositoryId } = await fixture({ cadence: "weekly" })
+    const { repositoryId } = await fixture({ cadence: "one_week" })
     await crudUpstreamSyncRun(db).create({
       repositoryId,
       branch: "main",
@@ -214,18 +230,6 @@ describe.skipIf(!reachable)("what is due", () => {
     })
     expect(await isDue(repositoryId, now)).toBe(false)
     expect(await isDue(repositoryId, new Date("2026-08-29T12:00:00.000Z"))).toBe(true)
-  })
-
-  it("polls tag policies daily without creating interval work", async ({ skip }) => {
-    if (!reachable) skip()
-    const now = new Date("2026-08-28T12:00:00.000Z")
-    const { repositoryId } = await fixture({
-      cadence: "tag",
-      upstreamTagCheckedAt: new Date("2026-08-27T13:00:00.000Z"),
-    })
-    expect(await isDue(repositoryId, now)).toBe(false)
-    const due = await fetchUpkeepStatus(db).dueForUpkeep(new Date("2026-08-28T13:00:00.000Z"))
-    expect(due.find((row) => row.id === repositoryId)?.trigger).toBe("tag")
   })
 
   it("lists a repository once even when several projects want upkeep", async ({ skip }) => {

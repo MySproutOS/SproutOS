@@ -4,10 +4,13 @@ import { Button } from "@ui/base/ui/button"
 import { Checkbox } from "@ui/base/ui/checkbox"
 import { Label } from "@ui/base/ui/label"
 import { GitHubMark, GoogleMark } from "@website/components/icons"
+import { providerLoginPath } from "@website/lib/return-to"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useCallback, useId, useState } from "react"
 
 export function SignInForm() {
+  const searchParams = useSearchParams()
   const [signInError, setSignInError] = useState<string | null>(null)
   const [agreedToTerms, setAgreedToTerms] = useState(false)
   const termsId = useId()
@@ -31,9 +34,9 @@ export function SignInForm() {
         setSignInError("Please agree to the terms and conditions to continue")
         return
       }
-      window.location.href = `/login/${provider}`
+      window.location.href = providerLoginPath(provider, searchParams.get("next"))
     },
-    [agreedToTerms],
+    [agreedToTerms, searchParams],
   )
 
   const handleGitHubClick = useCallback(() => {

@@ -32,7 +32,7 @@ export function crudUpstreamSyncRun(db: Kysely<DB>) {
 export type RecordSyncRun = {
   repositoryId: string
   branch: string
-  outcome: "up_to_date" | "pr_opened" | "conflict" | "failed"
+  outcome: "up_to_date" | "pr_opened" | "merged" | "conflict" | "failed"
   upstreamSha?: string | null
   forkSha?: string | null
   behindBy?: number

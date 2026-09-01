@@ -1,6 +1,11 @@
+import { provisionOrganization } from "@lib/dao"
+import { hashGeneratedSecret, lastFour, tenantCredential } from "@lib/services"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
-import { describe, expect, it } from "vitest"
+import { v7 } from "uuid"
+import { afterAll, describe, expect, it } from "vitest"
+import app from "../index"
+import { authHeaders, cleanupFixtures, createTestUser, trackOrganization } from "../test/fixtures"
 import { SERVICE_KINDS } from "./services.serializer"
 import {
   connectionEnvironmentEntries,
@@ -69,6 +74,7 @@ describe("service connection contracts", () => {
       SERVICE_VALKEY_PUBLIC_PORT: "6379",
       SERVICE_SEARCH_PUBLIC_HOST: "search.sproutos.test",
       SERVICE_SEARCH_PUBLIC_PORT: "443",
+      SERVICE_OBJECT_STORAGE_PUBLIC_ENDPOINT: "https://storage.sproutos.test",
     }
 
     expect(servicePublicEndpoint("postgres", "active", env)).toEqual({
@@ -81,6 +87,10 @@ describe("service connection contracts", () => {
     })
     expect(servicePublicEndpoint("elasticsearch", "active", env)).toEqual({
       host: "search.sproutos.test",
+      port: 443,
+    })
+    expect(servicePublicEndpoint("object_storage", "active", env)).toEqual({
+      host: "storage.sproutos.test",
       port: 443,
     })
   })
@@ -124,6 +134,66 @@ const reachable = await (async () => {
     return false
   }
 })()
+
+afterAll(async () => {
+  if (reachable) await cleanupFixtures()
+})
+
+describe.runIf(reachable)("object-storage credential reveal", () => {
+  it("reconstructs the active credential only for an interactive organization member", async () => {
+    const user = await createTestUser("storage-reveal")
+    const organization = await provisionOrganization(db).ensureDefaultOrganization({
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+    })
+    trackOrganization(organization.id)
+    const region = await db.selectFrom("region").select("id").executeTakeFirstOrThrow()
+    const serviceId = v7()
+    const credential = await tenantCredential(
+      process.env.SERVICE_OBJECT_STORAGE_ROOT_KEY!,
+      serviceId,
+      1,
+    )
+
+    await db
+      .insertInto("backendService")
+      .values({
+        id: serviceId,
+        organizationId: organization.id,
+        projectId: null,
+        regionId: region.id,
+        name: "SDK media",
+        kind: "object_storage",
+        status: "active",
+      })
+      .execute()
+    await db
+      .insertInto("serviceCredential")
+      .values({
+        id: v7(),
+        backendServiceId: serviceId,
+        databaseBranchId: null,
+        oauthGrantId: null,
+        username: credential.accessKeyId,
+        secretHash: await hashGeneratedSecret(credential.secretAccessKey),
+        lastFour: lastFour(credential.secretAccessKey),
+      })
+      .execute()
+
+    const response = await app.request(
+      `/v1/orgs/${organization.slug}/services/${serviceId}/connection`,
+      { headers: authHeaders(user) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    const body = (await response.json()) as { id: string; connectionUri: string }
+    expect(body.id).toBe(serviceId)
+    expect(body.connectionUri).toContain(encodeURIComponent(credential.accessKeyId))
+    expect(body.connectionUri).toContain(encodeURIComponent(credential.secretAccessKey))
+  })
+})
 
 async function allowedKinds(): Promise<string[]> {
   const rows = await sql<{ def: string }>`

@@ -100,6 +100,9 @@ describe("the sandbox's own section", () => {
 
     // The three facts that change what the agent does, rather than what it knows.
     expect(body).toContain("DATABASE_URL")
+    expect(body).toContain("SPROUTOS_AGENT_DATABASE_BRANCHES_URL")
+    expect(body).toContain("schema-alternative")
+    expect(body).toContain("24-hour branch")
     expect(body).toContain("0.0.0.0")
     expect(body).toContain("/home/daytona/workspace")
     expect(body).toContain("setsid -f")
@@ -116,6 +119,24 @@ describe("the sandbox's own section", () => {
     expect(body).toContain("`small` role")
     expect(body).toContain("`large` role")
     expect(body).toContain("The parent agent owns the final answer")
+    expect(body).toContain("isolated, on-demand database branch")
+    expect(body).toMatch(/do not report\s+production migration as complete/i)
+  })
+
+  it("names provenance and the trusted update action when the project has an upstream", () => {
+    const body = renderSproutosSkill({
+      ...input,
+      upstream: {
+        fullName: "TestSproutOS/upstream-app",
+        branch: "main",
+        cadence: "one_week",
+      },
+    })
+    expect(body).toContain("TestSproutOS/upstream-app")
+    expect(body).toContain("one_week")
+    expect(body).toContain("SPROUTOS_AGENT_UPSTREAM_UPDATE_URL")
+    expect(body).toContain("acknowledge that the upstream update was queued")
+    expect(body).toContain("waits for CI and branch protection")
   })
 
   it("says none of it in the control-plane checkout, where none of it is true", async () => {
@@ -151,6 +172,10 @@ describe("the public skill", () => {
     expect(body).not.toContain("sproutos-deploy-action@v1")
     expect(body).toContain("AGENTS.md-only harness")
     expect(body).toContain("~/.codex/skills/sproutos/SKILL.md")
+    expect(body).toContain("dedicated SproutOS migrator project")
+    expect(body).toContain("needs: migrate")
+    expect(body).toContain("does not scan the repository")
+    expect(body).toContain("directly in CI")
     expect(body).not.toContain("Where you are right now")
   })
 })

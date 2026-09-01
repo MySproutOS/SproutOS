@@ -1,27 +1,41 @@
 //! The `storage-proxy` binary: an axum server that authorizes, then forwards.
 //!
-//! Everything that decides anything lives in `lib.rs`; this file is the socket, the buffering, and
+//! Everything that decides anything lives in `lib.rs`; this file is the socket, the body spool, and
 //! the two cases that only exist because a browser is on the other end — the CORS preflight and the
 //! CORS response headers.
 
+mod metering;
+
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use base64::Engine;
+use futures_util::StreamExt;
+use redis::AsyncCommands;
+use sha2::{Digest, Sha256};
+use sproutos_metering_proto::UsageDimension;
+use sproutos_s3_sigv4::STREAMING_UNSIGNED_PAYLOAD_TRAILER;
 use sproutos_service_credentials::CredentialStore;
 use storage_proxy::{
     Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredentialProvider, bucket_from_path,
-    finish_authorization, is_list, is_listing_response, prepare_authorization,
+    finish_authorization_with_payload_hash, is_list, is_listing_response, prepare_authorization,
     strip_prefix_from_listing, upstream_headers, upstream_path, upstream_query,
 };
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
+use tokio_util::io::ReaderStream;
 use tracing::{debug, info, warn};
+
+use crate::metering::{StorageMeter, StorageUsage};
 
 /// The origins a vault client sends. Mirrors `VAULT_ORIGINS` in `lib/typescript/services`.
 ///
@@ -41,7 +55,8 @@ const VAULT_ORIGINS: [&str; 3] = [
 /// `Authorization` is credentialed, and the wildcard is ignored for credentialed requests.
 const ALLOWED_HEADERS: &str = "authorization,content-type,content-length,content-md5,\
 x-amz-content-sha256,x-amz-date,x-amz-security-token,x-amz-acl,x-amz-meta-*,range,if-match,\
-if-none-match";
+if-none-match,content-encoding,x-amz-trailer,x-amz-decoded-content-length,\
+x-amz-sdk-checksum-algorithm";
 
 /// Headers the plugin needs to be able to read off the response.
 ///
@@ -49,19 +64,21 @@ if-none-match";
 /// without it makes every object look new — a full resync of the customer's vault, on every open.
 const EXPOSED_HEADERS: &str = "ETag,Content-Length,Content-Type,x-amz-request-id,x-amz-version-id";
 
-// Four simultaneous 16 MiB buffers cap request-body memory at 64 MiB on the 1 GiB t4g.micro that
-// runs this beside the router. Obsidian LiveSync chunks large files itself. Both values may be
-// lowered operationally, but invalid or zero overrides are refused at boot rather than silently
-// removing the bound.
-const DEFAULT_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+// Four simultaneous 64 MiB disk spools bound ephemeral storage at 256 MiB while keeping request
+// bodies out of the 1 GiB router host's RAM. High-level S3 clients multipart large files into parts
+// below this ceiling. Both values may be lowered operationally, but invalid or zero overrides are
+// refused at boot rather than silently removing the bound.
+const DEFAULT_MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_MAX_INFLIGHT_BODIES: usize = 4;
-const DEFAULT_BODY_READ_TIMEOUT_SECONDS: usize = 30;
+const DEFAULT_BODY_READ_TIMEOUT_SECONDS: usize = 300;
 
 struct AppState {
     proxy: Arc<Proxy>,
     body_slots: tokio::sync::Semaphore,
     max_body_bytes: usize,
     body_read_timeout: Duration,
+    credit: Option<redis::aio::ConnectionManager>,
+    meter: Option<StorageMeter>,
 }
 
 fn positive_usize(name: &str, default: usize) -> anyhow::Result<usize> {
@@ -78,6 +95,7 @@ fn positive_usize(name: &str, default: usize) -> anyhow::Result<usize> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -133,6 +151,53 @@ async fn main() -> anyhow::Result<()> {
     // into an operational error.
     store.check().await?;
 
+    let credit = match std::env::var("VALKEY_URL") {
+        Ok(url) if !url.is_empty() => Some(
+            redis::Client::open(url)?
+                .get_connection_manager()
+                .await
+                .map_err(|cause| anyhow::anyhow!("credit-state Valkey is unavailable: {cause}"))?,
+        ),
+        _ => {
+            warn!("VALKEY_URL is not configured; object-storage credit cutoff is disabled");
+            None
+        }
+    };
+
+    let metering_required = std::env::var("STORAGE_METERING_REQUIRED").as_deref() == Ok("1");
+    let ingest_url = std::env::var("METERING_INGEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let metering_key = std::env::var("METERING_INGEST_HMAC_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let meter = match (ingest_url, metering_key) {
+        (Some(ingest_url), Some(metering_key)) => {
+            let directory = std::env::var("STORAGE_METERING_SPOOL_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from(".data/storage-metering"));
+            let spool = sproutos_llm_proxy::spool::MeteringSpool::open(
+                directory,
+                sproutos_llm_proxy::spool::SpoolLimits::default(),
+            )?;
+            spool.spawn_delivery(sproutos_llm_proxy::spool::DeliveryConfig::new(
+                reqwest::Client::new(),
+                ingest_url,
+                metering_key.into_bytes(),
+            ));
+            Some(StorageMeter::new(spool))
+        }
+        _ if metering_required => {
+            anyhow::bail!(
+                "storage metering is required but METERING_INGEST_URL or METERING_INGEST_HMAC_KEY is missing"
+            )
+        }
+        _ => {
+            warn!("object-storage metering is not configured; intended only for local development");
+            None
+        }
+    };
+
     let proxy = Arc::new(Proxy {
         store,
         root_key,
@@ -163,6 +228,8 @@ async fn main() -> anyhow::Result<()> {
         body_slots: tokio::sync::Semaphore::new(max_inflight),
         max_body_bytes,
         body_read_timeout,
+        credit,
+        meter,
     });
 
     let app = Router::new().fallback(any(handle)).with_state(state);
@@ -222,26 +289,273 @@ fn body_error(
 
 #[derive(Debug, Eq, PartialEq)]
 enum BodyReadFailure {
+    TooLarge,
     Rejected,
+    InvalidAwsChunked,
     TimedOut,
+    Spool,
 }
 
-async fn receive_body<F, E>(body: F, timeout: Duration) -> Result<Bytes, BodyReadFailure>
-where
-    F: std::future::Future<Output = Result<Bytes, E>>,
-{
-    match tokio::time::timeout(timeout, body).await {
-        Ok(Ok(bytes)) => Ok(bytes),
-        Ok(Err(_)) => Err(BodyReadFailure::Rejected),
-        Err(_) => Err(BodyReadFailure::TimedOut),
+struct SpooledBody {
+    file: tokio::fs::File,
+    len: u64,
+    payload_hash: String,
+}
+
+struct MeteredResponseStream {
+    inner: Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    usage: Option<StorageUsage>,
+    bytes: u64,
+}
+
+impl MeteredResponseStream {
+    fn new(
+        stream: impl futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+        usage: Option<StorageUsage>,
+    ) -> Self {
+        Self {
+            inner: Box::pin(stream),
+            usage,
+            bytes: 0,
+        }
     }
+
+    fn commit(&mut self) {
+        if let Some(usage) = self.usage.take() {
+            usage.commit(self.bytes);
+        }
+    }
+}
+
+impl futures_util::Stream for MeteredResponseStream {
+    type Item = Result<Bytes, reqwest::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                self.bytes = self.bytes.saturating_add(bytes.len() as u64);
+                Poll::Ready(Some(Ok(bytes)))
+            }
+            Poll::Ready(None) => {
+                self.commit();
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+impl Drop for MeteredResponseStream {
+    fn drop(&mut self) {
+        // A disconnected client still received `bytes`; the unused reservation is committed with
+        // that partial transfer rather than silently turning delivered traffic into free traffic.
+        self.commit();
+    }
+}
+
+async fn spool_body(
+    body: Body,
+    max_body_bytes: usize,
+    timeout: Duration,
+) -> Result<SpooledBody, BodyReadFailure> {
+    let receive = async move {
+        let file = tempfile::tempfile().map_err(|_| BodyReadFailure::Spool)?;
+        let mut file = tokio::fs::File::from_std(file);
+        let mut stream = body.into_data_stream();
+        let mut payload_hash = Sha256::new();
+        let mut len = 0_u64;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| BodyReadFailure::Rejected)?;
+            len = len
+                .checked_add(chunk.len() as u64)
+                .ok_or(BodyReadFailure::TooLarge)?;
+            if len > max_body_bytes as u64 {
+                return Err(BodyReadFailure::TooLarge);
+            }
+            payload_hash.update(&chunk);
+            file.write_all(&chunk)
+                .await
+                .map_err(|_| BodyReadFailure::Spool)?;
+        }
+
+        file.flush().await.map_err(|_| BodyReadFailure::Spool)?;
+        file.rewind().await.map_err(|_| BodyReadFailure::Spool)?;
+        Ok(SpooledBody {
+            file,
+            len,
+            payload_hash: hex::encode(payload_hash.finalize()),
+        })
+    };
+
+    tokio::time::timeout(timeout, receive)
+        .await
+        .map_err(|_| BodyReadFailure::TimedOut)?
+}
+
+/// Decode the `aws-chunked` envelope emitted by current AWS SDKs for checksum trailers.
+///
+/// Hyper has already removed HTTP transfer chunking. This is the inner S3 framing, so forwarding
+/// it as the object body would store chunk sizes and the checksum trailer as customer data. Decode
+/// into a second unlinked file, validate the declared length and CRC32, and hash the real object for
+/// the fresh upstream signature.
+async fn decode_aws_chunked(
+    body: SpooledBody,
+    headers: &BTreeMap<String, String>,
+    max_body_bytes: usize,
+) -> Result<SpooledBody, BodyReadFailure> {
+    if headers.get("content-encoding").map(String::as_str) != Some("aws-chunked")
+        || headers.get("x-amz-trailer").map(String::as_str) != Some("x-amz-checksum-crc32")
+    {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    let output = tempfile::tempfile().map_err(|_| BodyReadFailure::Spool)?;
+    let mut output = tokio::fs::File::from_std(output);
+    let mut reader = BufReader::new(body.file);
+    let mut sha256 = Sha256::new();
+    let mut crc32 = crc32fast::Hasher::new();
+    let mut decoded_len = 0_u64;
+    let mut trailer_crc32 = None;
+    let mut buffer = vec![0_u8; 64 * 1024];
+
+    loop {
+        let mut line = String::new();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+        if read == 0 || read > 8 * 1024 || !line.ends_with("\r\n") {
+            return Err(BodyReadFailure::InvalidAwsChunked);
+        }
+        let size = line
+            .trim_end_matches("\r\n")
+            .split(';')
+            .next()
+            .and_then(|value| u64::from_str_radix(value, 16).ok())
+            .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+
+        if size == 0 {
+            loop {
+                line.clear();
+                let read = reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+                if read == 0 || read > 8 * 1024 || !line.ends_with("\r\n") {
+                    return Err(BodyReadFailure::InvalidAwsChunked);
+                }
+                let line = line.trim_end_matches("\r\n");
+                if line.is_empty() {
+                    break;
+                }
+                let (name, value) = line
+                    .split_once(':')
+                    .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+                if name.eq_ignore_ascii_case("x-amz-checksum-crc32") {
+                    trailer_crc32 = Some(value.trim().to_owned());
+                }
+            }
+            break;
+        }
+
+        decoded_len = decoded_len
+            .checked_add(size)
+            .ok_or(BodyReadFailure::TooLarge)?;
+        if decoded_len > max_body_bytes as u64 {
+            return Err(BodyReadFailure::TooLarge);
+        }
+
+        let mut remaining = size;
+        while remaining > 0 {
+            let take = usize::try_from(remaining.min(buffer.len() as u64))
+                .map_err(|_| BodyReadFailure::TooLarge)?;
+            reader
+                .read_exact(&mut buffer[..take])
+                .await
+                .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+            output
+                .write_all(&buffer[..take])
+                .await
+                .map_err(|_| BodyReadFailure::Spool)?;
+            sha256.update(&buffer[..take]);
+            crc32.update(&buffer[..take]);
+            remaining -= take as u64;
+        }
+
+        let mut delimiter = [0_u8; 2];
+        reader
+            .read_exact(&mut delimiter)
+            .await
+            .map_err(|_| BodyReadFailure::InvalidAwsChunked)?;
+        if delimiter != *b"\r\n" {
+            return Err(BodyReadFailure::InvalidAwsChunked);
+        }
+    }
+
+    let declared_len = headers
+        .get("x-amz-decoded-content-length")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(BodyReadFailure::InvalidAwsChunked)?;
+    if declared_len != decoded_len {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    let expected_crc32 =
+        base64::engine::general_purpose::STANDARD.encode(crc32.finalize().to_be_bytes());
+    if trailer_crc32.as_deref() != Some(expected_crc32.as_str()) {
+        return Err(BodyReadFailure::InvalidAwsChunked);
+    }
+
+    output.flush().await.map_err(|_| BodyReadFailure::Spool)?;
+    output.rewind().await.map_err(|_| BodyReadFailure::Spool)?;
+    Ok(SpooledBody {
+        file: output,
+        len: decoded_len,
+        payload_hash: hex::encode(sha256.finalize()),
+    })
 }
 
 fn declared_body_too_large(headers: &BTreeMap<String, String>, max_body_bytes: usize) -> bool {
     headers
-        .get("content-length")
+        .get("x-amz-decoded-content-length")
+        .or_else(|| headers.get("content-length"))
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > max_body_bytes as u64)
+}
+
+fn billable_dimension(method: &str, path: &str, query: &str) -> Option<UsageDimension> {
+    let bucket = bucket_from_path(path).unwrap_or_default();
+    if is_list(method, bucket, path, query) {
+        return Some(UsageDimension::ObjectStorageWriteRequest);
+    }
+    match method {
+        "PUT" | "POST" => Some(UsageDimension::ObjectStorageWriteRequest),
+        "GET" | "HEAD" => Some(UsageDimension::ObjectStorageReadRequest),
+        // S3 does not charge for DELETE. OPTIONS and health checks never reach this function.
+        _ => None,
+    }
+}
+
+async fn credit_exhausted(
+    manager: Option<&redis::aio::ConnectionManager>,
+    organization_id: uuid::Uuid,
+) -> bool {
+    let Some(manager) = manager else {
+        return false;
+    };
+    let mut connection = manager.clone();
+    match connection
+        .get::<_, Option<String>>(format!("credit:{organization_id}"))
+        .await
+    {
+        Ok(Some(state)) => state == "exhausted",
+        Ok(None) => false,
+        Err(cause) => {
+            warn!(%cause, %organization_id, "could not read object-storage credit state");
+            false
+        }
+    }
 }
 
 /// Reflect the request's origin when it is one we serve.
@@ -351,7 +665,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         );
     }
 
-    // Do not queue an unbounded number of authenticated bodies behind the four allocations. A
+    // Do not queue an unbounded number of authenticated bodies behind the four disk spools. A
     // valid tenant can retry SlowDown; the router sharing this host cannot recover from an OOM.
     let _body_slot = match state.body_slots.try_acquire() {
         Ok(permit) => permit,
@@ -365,18 +679,32 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         }
     };
 
-    // Buffered whole because an actual payload digest must be checked against the bytes. The
-    // admission semaphore above makes the aggregate allocation bounded as well as each request.
-    // The timeout is equally load-bearing: otherwise four authenticated slow uploads can occupy
-    // every slot indefinitely without approaching the byte ceiling.
-    let body = match receive_body(
-        axum::body::to_bytes(request.into_body(), state.max_body_bytes),
+    // SigV4 commits to the payload digest before S3 sees the request. Write into an unlinked
+    // temporary file while hashing, then verify that digest before forwarding. This preserves body
+    // integrity without turning four multipart uploads into four large resident allocations.
+    let aws_chunked = headers
+        .get("x-amz-content-sha256")
+        .is_some_and(|value| value == STREAMING_UNSIGNED_PAYLOAD_TRAILER);
+    // The wire envelope adds one small header per SDK chunk plus the checksum trailer. The decoded
+    // limit remains authoritative; this allowance only keeps an exactly-64-MiB object from being
+    // rejected because its framing is a few KiB larger.
+    let wire_body_limit = if aws_chunked {
+        state
+            .max_body_bytes
+            .saturating_add(state.max_body_bytes / (64 * 1024) * 32)
+            .saturating_add(16 * 1024)
+    } else {
+        state.max_body_bytes
+    };
+    let body = match spool_body(
+        request.into_body(),
+        wire_body_limit,
         state.body_read_timeout,
     )
     .await
     {
-        Ok(bytes) => bytes,
-        Err(BodyReadFailure::Rejected) => {
+        Ok(body) => body,
+        Err(BodyReadFailure::TooLarge) => {
             return body_error(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "EntityTooLarge",
@@ -384,6 +712,15 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 origin.as_deref(),
             );
         }
+        Err(BodyReadFailure::Rejected) => {
+            return body_error(
+                StatusCode::BAD_REQUEST,
+                "IncompleteBody",
+                "The request body could not be read.",
+                origin.as_deref(),
+            );
+        }
+        Err(BodyReadFailure::InvalidAwsChunked) => unreachable!("spooling does not decode"),
         Err(BodyReadFailure::TimedOut) => {
             return body_error(
                 StatusCode::REQUEST_TIMEOUT,
@@ -392,6 +729,46 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 origin.as_deref(),
             );
         }
+        Err(BodyReadFailure::Spool) => {
+            return body_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "SlowDown",
+                "Temporary upload capacity is unavailable.",
+                origin.as_deref(),
+            );
+        }
+    };
+    let body = if aws_chunked {
+        match decode_aws_chunked(body, &headers, state.max_body_bytes).await {
+            Ok(body) => body,
+            Err(BodyReadFailure::TooLarge) => {
+                return body_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "EntityTooLarge",
+                    "The request body is too large.",
+                    origin.as_deref(),
+                );
+            }
+            Err(BodyReadFailure::InvalidAwsChunked | BodyReadFailure::Rejected) => {
+                return body_error(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidRequest",
+                    "The aws-chunked request body or checksum is invalid.",
+                    origin.as_deref(),
+                );
+            }
+            Err(BodyReadFailure::TimedOut) => unreachable!("decoding does not wait on a socket"),
+            Err(BodyReadFailure::Spool) => {
+                return body_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "SlowDown",
+                    "Temporary upload capacity is unavailable.",
+                    origin.as_deref(),
+                );
+            }
+        }
+    } else {
+        body
     };
 
     let incoming = IncomingRequest {
@@ -399,15 +776,49 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         path: &path,
         query: &query,
         headers,
-        body: &body,
+        body: &[],
     };
 
-    let resolved = match finish_authorization(&state.proxy, &incoming, prepared).await {
+    let resolved = match finish_authorization_with_payload_hash(
+        &state.proxy,
+        &incoming,
+        prepared,
+        &body.payload_hash,
+    )
+    .await
+    {
         Ok(resolved) => resolved,
         Err(denied) => {
             warn!(%method, %path, %denied, "refused");
             return s3_error(&denied, origin.as_deref());
         }
+    };
+
+    if credit_exhausted(state.credit.as_ref(), resolved.organization_id).await {
+        return body_error(
+            StatusCode::PAYMENT_REQUIRED,
+            "InsufficientCredit",
+            "This service is suspended until credit is available.",
+            origin.as_deref(),
+        );
+    }
+
+    let usage = match state.meter.as_ref() {
+        Some(meter) => {
+            match meter.begin(resolved, billable_dimension(method.as_str(), &path, &query)) {
+                Ok(usage) => Some(usage),
+                Err(cause) => {
+                    warn!(%cause, service = %resolved.backend_service_id, "object-storage metering capacity is unavailable");
+                    return body_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "SlowDown",
+                        "Metering capacity is temporarily unavailable.",
+                        origin.as_deref(),
+                    );
+                }
+            }
+        }
+        None => None,
     };
 
     // At debug, not info: this is per-request on a data path. It exists because the question
@@ -417,11 +828,11 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         %method,
         %path,
         service = %resolved.backend_service_id,
-        bytes = body.len(),
+        bytes = body.len,
         "forwarding"
     );
 
-    match forward(&state.proxy, &method, &path, &query, &incoming, &body).await {
+    match forward(&state.proxy, &method, &path, &query, &incoming, body, usage).await {
         Ok(mut response) => {
             apply_cors(response.headers_mut(), origin.as_deref());
             response
@@ -443,7 +854,8 @@ async fn forward(
     path: &str,
     query: &str,
     incoming: &IncomingRequest<'_>,
-    body: &Bytes,
+    body: SpooledBody,
+    usage: Option<StorageUsage>,
 ) -> anyhow::Result<Response> {
     /*
       Where the request actually goes.
@@ -500,7 +912,7 @@ async fn forward(
             path,
             query,
             host: &host,
-            body,
+            payload_hash: &body.payload_hash,
             amz_date: &amz_date,
             content_type: incoming.headers.get("content-type").map(String::as_str),
         },
@@ -516,9 +928,48 @@ async fn forward(
         builder = builder.header(name.as_str(), value.as_str());
     }
 
-    let upstream = builder.body(body.clone()).send().await?;
+    let upstream = builder
+        .header(axum::http::header::CONTENT_LENGTH, body.len)
+        .body(reqwest::Body::wrap_stream(ReaderStream::new(body.file)))
+        .send()
+        .await?;
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
+    let tenant_bucket = bucket_from_path(incoming.path).unwrap_or_default();
+    let rewrites_listing = proxy.shared_bucket.is_some()
+        && status.is_success()
+        && is_list(
+            method.as_str(),
+            tenant_bucket,
+            incoming.path,
+            incoming.query,
+        );
+
+    let mut response = Response::builder().status(status);
+    for (name, value) in &upstream_headers {
+        // Hop-by-hop headers belong to the two separate HTTP connections. Content-Length remains
+        // valid for a byte-for-byte streamed object, but not for a listing whose keys are rewritten.
+        if matches!(
+            name.as_str(),
+            "connection" | "transfer-encoding" | "keep-alive"
+        ) || (rewrites_listing && name == axum::http::header::CONTENT_LENGTH)
+        {
+            continue;
+        }
+        if let Ok(name) = HeaderName::try_from(name.as_str()) {
+            response = response.header(name, value.clone());
+        }
+    }
+
+    if !rewrites_listing {
+        // This is the common media GET path. No `bytes().await`: backpressure travels from the
+        // customer socket through reqwest to S3, and the router retains only transport buffers.
+        return Ok(response.body(Body::from_stream(MeteredResponseStream::new(
+            upstream.bytes_stream(),
+            usage,
+        )))?);
+    }
+
     let bytes = upstream.bytes().await?;
 
     /*
@@ -528,33 +979,18 @@ async fn forward(
       thing next time — for `livesync`, a full resync of the vault on every open. Only listings are
       rewritten: an object body is the customer's bytes and must not be touched.
     */
-    let bytes = match proxy.shared_bucket.as_deref() {
-        Some(_) if status.is_success() && is_listing_response(&bytes) => {
-            let tenant_bucket = bucket_from_path(incoming.path).unwrap_or_default();
-            match std::str::from_utf8(&bytes) {
-                Ok(text) => Bytes::from(strip_prefix_from_listing(text, tenant_bucket)),
-                Err(_) => bytes,
-            }
+    let bytes = if is_listing_response(&bytes) {
+        match std::str::from_utf8(&bytes) {
+            Ok(text) => Bytes::from(strip_prefix_from_listing(text, tenant_bucket)),
+            Err(_) => bytes,
         }
-        _ => bytes,
+    } else {
+        bytes
     };
-
-    let mut response = Response::builder().status(status);
-    for (name, value) in &upstream_headers {
-        // Hop-by-hop and length headers are the client's business, not the upstream's: the body is
-        // re-sent by this server and `content-length` would describe the wrong one.
-        if matches!(
-            name.as_str(),
-            "connection" | "transfer-encoding" | "content-length" | "keep-alive"
-        ) {
-            continue;
-        }
-        if let Ok(name) = HeaderName::try_from(name.as_str()) {
-            response = response.header(name, value.clone());
-        }
+    if let Some(usage) = usage {
+        usage.commit(bytes.len() as u64);
     }
-
-    Ok(response.body(axum::body::Body::from(bytes))?)
+    Ok(response.body(Body::from(bytes))?)
 }
 
 /// `YYYYMMDDTHHMMSSZ`, the only date format SigV4 accepts.
@@ -636,14 +1072,73 @@ mod tests {
 
         headers.insert("content-length".to_owned(), "16".to_owned());
         assert!(!declared_body_too_large(&headers, 16));
+
+        // aws-chunked framing may be larger than the object. The decoded declaration is the limit.
+        headers.insert("content-length".to_owned(), "100".to_owned());
+        headers.insert("x-amz-decoded-content-length".to_owned(), "16".to_owned());
+        assert!(!declared_body_too_large(&headers, 16));
+    }
+
+    #[tokio::test]
+    async fn decodes_and_checks_the_body_current_boto3_emits() {
+        // Captured from boto3 1.43.84's before-send hook. This is the inner aws-chunked envelope;
+        // Hyper has already removed the outer HTTP Transfer-Encoding framing.
+        let wire = b"c\r\ncapture-four\r\n0\r\nx-amz-checksum-crc32:oe+05Q==\r\n\r\n";
+        let body = spool_body(
+            Body::from(wire.as_slice()),
+            wire.len(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let mut headers = BTreeMap::new();
+        headers.insert("content-encoding".to_owned(), "aws-chunked".to_owned());
+        headers.insert(
+            "x-amz-trailer".to_owned(),
+            "x-amz-checksum-crc32".to_owned(),
+        );
+        headers.insert("x-amz-decoded-content-length".to_owned(), "12".to_owned());
+
+        let mut decoded = decode_aws_chunked(body, &headers, 64).await.unwrap();
+        let mut bytes = Vec::new();
+        decoded.file.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(bytes, b"capture-four");
+        assert_eq!(decoded.len, 12);
+        assert_eq!(decoded.payload_hash, hex::encode(Sha256::digest(bytes)));
+    }
+
+    #[tokio::test]
+    async fn refuses_an_aws_chunked_body_with_a_false_checksum() {
+        let wire = b"c\r\ncapture-four\r\n0\r\nx-amz-checksum-crc32:AAAAAAAA\r\n\r\n";
+        let body = spool_body(
+            Body::from(wire.as_slice()),
+            wire.len(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let headers = BTreeMap::from([
+            ("content-encoding".to_owned(), "aws-chunked".to_owned()),
+            (
+                "x-amz-trailer".to_owned(),
+                "x-amz-checksum-crc32".to_owned(),
+            ),
+            ("x-amz-decoded-content-length".to_owned(), "12".to_owned()),
+        ]);
+
+        assert!(matches!(
+            decode_aws_chunked(body, &headers, 64).await,
+            Err(BodyReadFailure::InvalidAwsChunked)
+        ));
     }
 
     #[tokio::test]
     async fn stops_a_body_that_never_arrives() {
-        let body = std::future::pending::<Result<Bytes, std::convert::Infallible>>();
-        assert_eq!(
-            receive_body(body, Duration::from_millis(1)).await,
+        let stream = futures_util::stream::pending::<Result<Bytes, std::io::Error>>();
+        let body = Body::from_stream(stream);
+        assert!(matches!(
+            spool_body(body, 16, Duration::from_millis(1)).await,
             Err(BodyReadFailure::TimedOut)
-        );
+        ));
     }
 }

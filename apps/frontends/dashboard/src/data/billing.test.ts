@@ -52,6 +52,7 @@ describe("usage service categories", () => {
     expect(usageDescription("valkey_queue_byte_second")).toContain("queued data")
     expect(usageCategory("sandbox_cpu_second")).toBe("Sandbox")
     expect(usageCategory("db_compute_cu_second")).toBe("Postgres")
+    expect(usageCategory("object_storage_read_request")).toBe("Object storage")
     expect(usageCategory("ai_input_token")).toBe("AI")
     expect(usageCategory("agent_run_second")).toBe("Other")
   })

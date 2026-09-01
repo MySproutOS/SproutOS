@@ -80,6 +80,7 @@ else
   [ -n "${PG_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|pg|$PG_LISTENER_ARN"
   [ -n "${VALKEY_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|valkey|$VALKEY_LISTENER_ARN"
   [ -n "${FORWARD_PROXY_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|$tenant_https_short|$FORWARD_PROXY_LISTENER_ARN"
+  [ -n "${FORWARD_PROXY_HTTP_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|egress|$FORWARD_PROXY_HTTP_LISTENER_ARN"
   [ -n "${TENANT_HTTP_LISTENER_ARN:-}" ] && EXTRAS="$EXTRAS listener|edge-http|$TENANT_HTTP_LISTENER_ARN"
   short=router
 fi

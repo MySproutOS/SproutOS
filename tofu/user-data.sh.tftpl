@@ -109,6 +109,21 @@ LAMBDA_WEB_ADAPTER_LAYER_VERSION=${lambda_web_adapter_layer_version}
 # secret; it is in every ARN this instance already holds.
 AWS_ACCOUNT_ID=${aws_account_id}
 ROUTER_PORT=8080
+%{ if service == "router" ~}
+# Bound every control-plane pool. One connection per Rust listener is enough because credentials
+# are checked once per accepted tenant connection; six independently autoscaled routers must not
+# each grow six default-sized pools beyond the control-plane RDS ceiling.
+ROUTER_ROUTE_DB_POOL=1
+VALKEY_PROXY_DB_POOL=1
+SEARCH_PROXY_DB_POOL=1
+PG_PROXY_DB_POOL=1
+LLM_PROXY_DB_POOL=1
+FORWARD_PROXY_DB_POOL=1
+%{ endif ~}
+# Queue wakes are control-plane coordination. The router writes them to \`VALKEY_URL\` and its
+# dispatcher drains that same store; without this switch tenant enqueues succeed but no Lambda
+# worker is ever invoked.
+VALKEY_PROXY_MASTER_QUEUE=1
 # The LLM proxy's port, matching \`aws_lb_target_group.llm\`. Unset, \`listeners::llm\` returns without
 # binding — which is the right behaviour for a router that has no proxy secret, and the wrong one
 # here: it would start, pass its own health check on the other listeners, and answer nothing on this
@@ -124,6 +139,10 @@ SITE_METERING_SPOOL_DIR=/var/lib/sproutos/site-metering
 # Search query observations and hourly primary-storage samples are isolated from the other
 # emitters, while remaining on the router's persistent state volume.
 SEARCH_METERING_SPOOL_DIR=/var/lib/sproutos/search-metering
+# Mutable object requests and delivered bytes are financial events. The storage endpoint refuses
+# to start in production unless it can reserve a durable record before forwarding to S3.
+STORAGE_METERING_SPOOL_DIR=/var/lib/sproutos/storage-metering
+STORAGE_METERING_REQUIRED=1
 # Request and response bytes leaving AWS for Daytona use an isolated durable source. Keeping this
 # off tmpfs is what makes a router restart a retry rather than a free transfer.
 FORWARD_PROXY_METERING_SPOOL_DIR=/var/lib/sproutos/sandbox-egress-metering
@@ -140,6 +159,9 @@ API_PORT=3001
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
 NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
+EMAIL_TRANSPORT=sesv2
+EMAIL_FROM=notifications@${control_plane_domain}
+DASHBOARD_ORIGIN=https://${control_plane_domain}
 
 # Where a sandbox reaches the LLM proxy. Read by the chat route and by sandbox provisioning, and it
 # goes into the sandbox's environment — so it has to be the address as seen from *outside* this VPC,
@@ -149,7 +171,9 @@ NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
 # no listener rule, no target group, no \`LLM_PROXY_LISTEN\`. Set here so the value comes from the
 # deployment that owns the domain rather than from a constant that happened to be written first.
 LLM_PROXY_URL=https://${llm_subdomain}.${control_plane_domain}
-SANDBOX_FORWARD_PROXY_URL=https://${egress_subdomain}.${control_plane_domain}
+# Temporary Daytona compatibility path: HTTPS destination traffic remains encrypted inside
+# CONNECT, while Daytona chains to the authenticated platform proxy over cleartext HTTP.
+SANDBOX_FORWARD_PROXY_URL=http://${egress_subdomain}.${control_plane_domain}:3128
 METERING_INGEST_URL=https://api.${control_plane_domain}/v1/internal/metering/events
 
 # Separate topics because their failure policies differ: runtime logs may be dropped to protect a

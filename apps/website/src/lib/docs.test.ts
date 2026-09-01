@@ -18,7 +18,23 @@ describe("the documentation", () => {
     expect(GENERATED_DOCS).toHaveLength(markdown.length)
     for (const generated of GENERATED_DOCS) {
       expect(markdown.some((source) => source.includes(`slug: ${generated.slug}`))).toBe(true)
-      expect(markdown.some((source) => source.includes(generated.content))).toBe(true)
+
+      /*
+        The index no longer carries the Markdown source — it carries the plain text Markdoc
+        produced, because the raw source is a server-side concern and this module is imported by a
+        client component. So the check is that the derivation ran and landed on this page's own
+        content, rather than that two copies of one string match.
+
+        An empty `text` is the failure worth naming: it is what a traversal that mishandles the
+        shape of the tree produces, and it turns search into a box that finds nothing while looking
+        like it works.
+      */
+      expect(generated.text.length).toBeGreaterThan(0)
+      const source = markdown.find((file) => file.includes(`slug: ${generated.slug}`))!
+      for (const heading of generated.headings) {
+        expect(source).toContain(heading.title)
+        expect(heading.id.length).toBeGreaterThan(0)
+      }
     }
   })
   it("covers what the brief asks for", () => {
@@ -29,9 +45,11 @@ describe("the documentation", () => {
     expect(slugs).toContain("limits")
     expect(slugs).toContain("billing")
     expect(slugs).toContain("connecting")
+    expect(slugs).toContain("database-migrations")
     expect(slugs).toContain("navigation")
     expect(slugs).toContain("oauth-applications")
     expect(slugs).toContain("github-action")
+    expect(slugs).toContain("object-storage")
   })
 
   it("says the thing the docs exist to say", () => {
@@ -64,6 +82,31 @@ describe("the documentation", () => {
     expect(text).toContain("sandbox time or model usage")
     expect(text).not.toContain("sprout_os_deploy")
     expect(text).not.toContain("sproutos-apps")
+  })
+
+  it("makes production migrations a customer-owned GitHub Actions dependency", () => {
+    const migrations = docBySlug("database-migrations")
+    const text = searchableText(migrations!)
+
+    expect(text).toContain("dedicated sproutos migrator project")
+    expect(text).toContain("migration-directory")
+    expect(text).toContain("needs: migrate")
+    expect(text).toContain("directly in ci")
+    expect(text).toContain("does not scan a repository")
+    expect(text).toContain("does not retry")
+    expect(text).toContain("does not replace the github actions migration job")
+  })
+
+  it("documents the object-storage SDK and billing boundary", () => {
+    const storage = docBySlug("object-storage")
+    const text = searchableText(storage!)
+
+    expect(text).toContain("s3_endpoint")
+    expect(text).toContain("forcepathstyle")
+    expect(text).toContain("path-style")
+    expect(text).toContain("presigned urls")
+    expect(text).toContain("48 hours")
+    expect(text).toContain("static deployment")
   })
 
   it("has a unique slug per page", () => {

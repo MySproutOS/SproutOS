@@ -20,6 +20,8 @@
 
 import { ServiceNotConfiguredError } from "./types"
 
+const NEON_REQUEST_TIMEOUT_MS = 30_000
+
 export type NeonConfig = {
   apiKey: string
   /** `https://console.neon.tech/api/v2`. */
@@ -79,6 +81,7 @@ async function call<T>(
 ): Promise<T> {
   const response = await fetch(`${config.apiUrl}${path}`, {
     method,
+    signal: AbortSignal.timeout(NEON_REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       Accept: "application/json",
@@ -146,6 +149,11 @@ export type NeonConsumptionPeriod = {
   consumption: NeonConsumptionTimeframe[]
 }
 export type NeonProjectConsumption = { project_id: string; periods: NeonConsumptionPeriod[] }
+export type NeonBranchConsumption = {
+  project_id: string
+  branch_id: string
+  periods: NeonConsumptionPeriod[]
+}
 
 export function neonApi(config: NeonConfig) {
   async function sleep(ms: number): Promise<void> {
@@ -331,6 +339,62 @@ export function neonApi(config: NeonConfig) {
     return projects
   }
 
+  async function branchConsumption(input: {
+    projectIds: string[]
+    branchIds?: string[]
+    from: Date
+    to: Date
+  }): Promise<NeonBranchConsumption[]> {
+    if (input.projectIds.length === 0 || input.projectIds.length > 100) {
+      throw new RangeError("Neon branch consumption accepts between 1 and 100 project ids")
+    }
+    if (input.branchIds !== undefined && input.branchIds.length > 100) {
+      throw new RangeError("Neon branch consumption accepts at most 100 branch ids")
+    }
+    if (
+      !Number.isFinite(input.from.getTime()) ||
+      !Number.isFinite(input.to.getTime()) ||
+      input.from >= input.to
+    ) {
+      throw new RangeError("Neon branch consumption requires a valid, increasing time range")
+    }
+
+    const branches: NeonBranchConsumption[] = []
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const query = new URLSearchParams({
+        from: input.from.toISOString(),
+        to: input.to.toISOString(),
+        granularity: "hourly",
+        org_id: config.orgId,
+        metrics: NEON_CONSUMPTION_METRICS.join(","),
+        project_ids: input.projectIds.join(","),
+        limit: "1000",
+      })
+      if (input.branchIds !== undefined && input.branchIds.length > 0) {
+        query.set("branch_ids", input.branchIds.join(","))
+      }
+      if (cursor !== undefined) query.set("cursor", cursor)
+      const response = await call<{
+        branches: NeonBranchConsumption[]
+        pagination?: { cursor?: string | null }
+      }>(config, "GET", `/consumption_history/v2/branches?${query.toString()}`)
+      branches.push(...response.branches)
+      const next = response.pagination?.cursor ?? undefined
+      if (next !== undefined && seenCursors.has(next)) {
+        throw new NeonApiError(
+          200,
+          "/consumption_history/v2/branches",
+          `repeated pagination cursor ${JSON.stringify(next)}`,
+        )
+      }
+      if (next !== undefined) seenCursors.add(next)
+      cursor = next
+    } while (cursor !== undefined)
+    return branches
+  }
+
   /**
    * Branch a database, copy-on-write.
    *
@@ -382,6 +446,7 @@ export function neonApi(config: NeonConfig) {
   }
 
   return {
+    branchConsumption,
     createBranch,
     createProject,
     deleteBranch,
