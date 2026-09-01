@@ -264,11 +264,21 @@ Only after recording that live proof should #192 merge and deploy its missing/eq
 failure. A normal `tofu plan` keeps both delivery switches disabled, so it cannot silently introduce
 a missing SSM reference.
 
-The independent Google credential may be staged later: first use a metadata-only SSM check to prove
-its exact `/sproutos/android-worker` name is a `SecureString`, then save a plan with
-`android_developer_registration_delivery_enabled=true`, verify it appears once in only the worker
-and as one exact execution-role ARN, and apply that reviewed plan. Do not combine this optional step
-with the signer-token prerequisite for #192.
+The independent Google credential may be staged later. Upload only it with
+`ANDROID_WORKER_ONLY=1 bin/put-app-secrets.sh`, then use a metadata-only SSM check to prove its exact
+`/sproutos/android-worker` name is a `SecureString`. Save the narrow execution-role plan with both
+`android_custody_delivery_enabled=true` and
+`android_developer_registration_delivery_enabled=true`: the first switch must remain enabled or a
+new plan would remove the already-live signer-token permissions. Verify the plan retains the two
+exact custody ARNs and adds exactly one worker-key ARN with no path wildcard, then apply that exact
+saved plan.
+
+Only after the parameter and execution-role permission are live may the versioned
+`deploy/ecs/web-task-definition.json` contract include the worker key. It must occur exactly once in
+the ordinary `worker`, never in `website`, `api`, or the separate ACME task. Persist that contract
+before calling the rollout complete; a one-off registered task revision would be silently replaced
+by the next normal deployment. Do not combine this later worker-key rollout with the signer-token
+prerequisite for #192.
 
 After applying both exact saved production plans, verify the live bucket's versioning, public-access
 block, SSE-KMS key ARN, bucket-key setting, lifecycle, and deny policy; verify the KMS key rotation

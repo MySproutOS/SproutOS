@@ -134,6 +134,16 @@ if [ "$ANDROID_BUCKET_REFERENCES" -ne 2 ]; then
   echo 'android signing infrastructure invariant failed: the API and worker need the dedicated bucket name rather than the general build bucket' >&2
   exit 1
 fi
+ANDROID_DEVELOPER_RELEASE_SECRETS=$(jq -c \
+  '[.containerDefinitions[] as $container | $container.secrets[]? |
+    select(.name == "ANDROID_DEVELOPER_ID_STATUS_API_KEY") |
+    {container: $container.name, valueFrom}]' \
+  "$WEB_TASK")
+EXPECTED_ANDROID_DEVELOPER_RELEASE_SECRETS='[{"container":"worker","valueFrom":"arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API_KEY"}]'
+if [ "$ANDROID_DEVELOPER_RELEASE_SECRETS" != "$EXPECTED_ANDROID_DEVELOPER_RELEASE_SECRETS" ]; then
+  echo 'android signing infrastructure invariant failed: the versioned task must inject the exact Status API key ARN once into only the ordinary worker' >&2
+  exit 1
+fi
 require '"taskRoleArn": "arn:aws:iam::471112590391:role/sproutos-task"' "$WEB_TASK" \
   'the versioned task template must keep the application task role'
 require '"executionRoleArn": "arn:aws:iam::471112590391:role/sproutos-ecs-execution"' "$WEB_TASK" \

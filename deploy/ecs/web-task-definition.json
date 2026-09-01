@@ -757,6 +757,10 @@
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/SERVICE_VALKEY_ADMIN_URL"
         },
         {
+          "name": "ANDROID_DEVELOPER_ID_STATUS_API_KEY",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API_KEY"
+        },
+        {
           "name": "VALKEY_PROXY_ACL_ROOT_KEY",
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/VALKEY_PROXY_ACL_ROOT_KEY"
         }
