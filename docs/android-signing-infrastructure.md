@@ -253,7 +253,7 @@ probe_signer_auth() {
     curl --silent --output /dev/null --write-out '%{http_code}' --config - \
       --header 'Content-Type: application/json' \
       --request POST 'https://api.sproutos.me/v1/apk-signing/fail' \
-      --data '{"job_id":"00000000-0000-7000-8000-000000000000","signer_id":"custody-preflight","error":"preflight"}'
+      --data '{"job_id":"00000000-0000-7000-8000-000000000000","signer_id":"custody-preflight","claim_token":"0000000000000000000000000000000000000000000000000000000000000000","error":"preflight"}'
 }
 [[ "$(probe_signer_auth "$APK_SIGNER_OPERATOR_TOKEN")" == 401 ]]
 [[ "$(probe_signer_auth "$APK_SIGNER_TOKEN")" == 400 ]]
