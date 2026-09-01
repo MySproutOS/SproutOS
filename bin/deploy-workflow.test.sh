@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKFLOW="$ROOT/.github/workflows/deploy.yml"
+DOCKERFILE="$ROOT/apps/website/Dockerfile"
 
 grep -q "vars.ECS_WEB_ENABLED == 'true'" "$WORKFLOW"
 grep -q 'bin/deploy-ecs-web.sh --cutover' "$WORKFLOW"
@@ -31,6 +32,19 @@ grep -q 'needs: \[release, image, preflight\]' "$WORKFLOW"
 grep -q 'needs: \[release, preflight, ecs_web\]' "$WORKFLOW"
 grep -q 'https://api.${CONTROL_PLANE_DOMAIN}/ready' "$WORKFLOW"
 grep -q 'name: Verify the deployed production system' "$WORKFLOW"
+
+# The production ECS image rebuilds Next inside Docker rather than consuming the tarball build.
+# Build-step env does not cross that boundary: all public values baked into HTML must be passed as
+# BuildKit arguments and made available to `next build` in the Docker build stage.
+for variable in NEXT_PUBLIC_ASSET_BASE NEXT_PUBLIC_API_URL NEXT_PUBLIC_HOST_URL; do
+  grep -q "^[[:space:]]*$variable=" "$WORKFLOW"
+  grep -q "^ARG $variable$" "$DOCKERFILE"
+done
+grep -q '^ENV NEXT_PUBLIC_ASSET_BASE=\$NEXT_PUBLIC_ASSET_BASE' "$DOCKERFILE"
+grep -q 'NEXT_PUBLIC_API_URL=\$NEXT_PUBLIC_API_URL' "$DOCKERFILE"
+grep -q 'NEXT_PUBLIC_HOST_URL=\$NEXT_PUBLIC_HOST_URL' "$DOCKERFILE"
+grep -q 'rel=\\"canonical\\" href=\\"${NEXT_PUBLIC_HOST_URL}/docs/cli\\"' "$DOCKERFILE"
+[ "$(grep -c "Production documentation contains the localhost metadata fallback" "$WORKFLOW")" -eq 1 ]
 
 # These checked-in task templates are the deployed website/API/worker contract. Updating only the
 # EC2/OpenTofu environment would leave sandbox creation on the previous proxy URL after every ECS

@@ -61,9 +61,23 @@ COPY . .
 # Override any host artifact in the build context with the one built for the image's exact ABI.
 COPY --from=sprout-node-build /out/sprout-node.linux-arm64-gnu.node \
   /src/packages/sprout-node/sprout-node.linux-arm64-gnu.node
+# Next resolves canonical, Open Graph, API, and asset URLs while prerendering. The image build is
+# separate from the legacy tarball build in deploy.yml, so its values must cross the Docker build
+# boundary explicitly; workflow step environment variables are not inherited by BuildKit.
+ARG NEXT_PUBLIC_ASSET_BASE
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_HOST_URL
+ENV NEXT_PUBLIC_ASSET_BASE=$NEXT_PUBLIC_ASSET_BASE \
+    NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_HOST_URL=$NEXT_PUBLIC_HOST_URL
 # The native addon was built in the Rust stage above. `--only` prevents Turbo from trying to run
 # its Cargo-backed package script again in this intentionally Node-only stage.
 RUN pnpm run build --filter=website --filter=@api/internal --only
+# Prove the image contains production metadata before it can be published. A successful Next build
+# is not enough: it also succeeds with the localhost development fallback baked into every page.
+RUN grep -F "rel=\"canonical\" href=\"${NEXT_PUBLIC_HOST_URL}/docs/cli\"" \
+      apps/website/.next/server/app/docs/cli.html \
+    && ! grep -F "http://localhost:3000" apps/website/.next/server/app/docs/cli.html
 
 # The production dependency tree, resolved here so it is resolved for *this* platform. A tree built
 # on a developer's macOS laptop puts `darwin-arm64` binaries into an image bound for Linux, and
