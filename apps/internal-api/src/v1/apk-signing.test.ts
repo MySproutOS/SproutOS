@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { createHash } from "node:crypto"
 import {
   assertSignerCredentialConfiguration,
+  boundedRegistrationError,
   callbackIdempotencyKey,
   signerAuthorized,
   signerOperatorAuthorized,
@@ -141,9 +142,8 @@ describe("signer callback idempotency", () => {
           version_code: 2,
           version_name: "0.2.0",
           certificate_sha256: "c".repeat(64),
-          developer_console_account: "developerAccounts/123",
         },
-        "bcde482511c29bca8a009add26dfbba0a994b551191b2f386a3401a7c4ec4646",
+        "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
       ],
       [
         {
@@ -159,5 +159,11 @@ describe("signer callback idempotency", () => {
       expect(createHash("sha256").update(JSON.stringify(payload)).digest("hex")).toBe(key)
       expect(callbackIdempotencyKey(key, payload)).toBe(key)
     }
+  })
+})
+
+describe("client identity operator status", () => {
+  it("bounds registration errors returned to the signer operator", () => {
+    expect(boundedRegistrationError("x".repeat(3000))).toHaveLength(2000)
   })
 })

@@ -101,10 +101,11 @@ On the dedicated signing host, provision these outside OpenTofu and outside AWS:
 - Android SDK Build Tools (`aapt2`, `apksigner`, and `zipalign`) and a Java `keytool`;
 - an HTTPS `APK_SIGNER_API_URL`.
 
-The host is outbound-only. Do not open an inbound port, install an AWS credential, or place the
-master identity in SSM, Secrets Manager, S3, an image, or this repository. OAuth consent,
-refresh-token custody, package registration, and ownership proof run only on the on-prem signer.
-Never invent or upload its refresh token to AWS or CI.
+The host is outbound-only. Do not open an inbound port, install an AWS or Google credential, or
+place the master identity in SSM, Secrets Manager, S3, an image, or this repository. After key
+provisioning, an operator copies only the public package name and certificate fingerprint from the
+signer/control-plane status into Play Console's manual Add key flow. Package registration does not
+run on the signing host.
 
 ## Retention and recovery
 

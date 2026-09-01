@@ -366,10 +366,10 @@ export const getV1OrgsByOrgSlugRepositoriesResponseTransformer = async (
 export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransformer = async (
   data: any,
 ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponse> => {
-  if (data.developerConsoleLastCheckedAt) {
-    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  if (data.registrationLastCheckedAt) {
+    data.registrationLastCheckedAt = new Date(data.registrationLastCheckedAt)
   }
-  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.registrationNextCheckAt = new Date(data.registrationNextCheckAt)
   data.jobs = data.jobs.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
     return item
@@ -380,10 +380,10 @@ export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponseTransform
 export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponse> => {
-  if (data.developerConsoleLastCheckedAt) {
-    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  if (data.registrationLastCheckedAt) {
+    data.registrationLastCheckedAt = new Date(data.registrationLastCheckedAt)
   }
-  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.registrationNextCheckAt = new Date(data.registrationNextCheckAt)
   data.jobs = data.jobs.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
     return item
@@ -394,10 +394,10 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponseTransform
 export const postV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponseTransformer = async (
   data: any,
 ): Promise<PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponse> => {
-  if (data.developerConsoleLastCheckedAt) {
-    data.developerConsoleLastCheckedAt = new Date(data.developerConsoleLastCheckedAt)
+  if (data.registrationLastCheckedAt) {
+    data.registrationLastCheckedAt = new Date(data.registrationLastCheckedAt)
   }
-  data.developerConsoleNextCheckAt = new Date(data.developerConsoleNextCheckAt)
+  data.registrationNextCheckAt = new Date(data.registrationNextCheckAt)
   data.jobs = data.jobs.map((item: any) => {
     item.createdAt = new Date(item.createdAt)
     return item

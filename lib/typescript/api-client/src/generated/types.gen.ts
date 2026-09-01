@@ -2509,16 +2509,16 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidSetupResponses = {
     androidAppId: string
     packageName: string
     state: "configuring" | "ready_for_signing" | "ready" | "failed"
-    developerConsoleState: string
-    developerConsoleProviderState:
+    registrationState: string
+    registrationProviderState:
       | "NOT_REGISTERED"
       | "REGISTERED"
       | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
       | null
-    developerConsoleCheckAttempts: number
-    developerConsoleLastCheckedAt: Date | null
-    developerConsoleNextCheckAt: Date
-    developerConsoleLastFailure: string | null
+    registrationCheckAttempts: number
+    registrationLastCheckedAt: Date | null
+    registrationNextCheckAt: Date
+    registrationLastFailure: string | null
     certificateSha256: string | null
     verifiedSetupCommit: string | null
     latestGoodDeploymentId: string | null
@@ -2569,16 +2569,16 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdAndroidStatusResponses = {
     androidAppId: string
     packageName: string
     state: "configuring" | "ready_for_signing" | "ready" | "failed"
-    developerConsoleState: string
-    developerConsoleProviderState:
+    registrationState: string
+    registrationProviderState:
       | "NOT_REGISTERED"
       | "REGISTERED"
       | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
       | null
-    developerConsoleCheckAttempts: number
-    developerConsoleLastCheckedAt: Date | null
-    developerConsoleNextCheckAt: Date
-    developerConsoleLastFailure: string | null
+    registrationCheckAttempts: number
+    registrationLastCheckedAt: Date | null
+    registrationNextCheckAt: Date
+    registrationLastFailure: string | null
     certificateSha256: string | null
     verifiedSetupCommit: string | null
     latestGoodDeploymentId: string | null
@@ -2635,16 +2635,16 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyResponses = {
     androidAppId: string
     packageName: string
     state: "configuring" | "ready_for_signing" | "ready" | "failed"
-    developerConsoleState: string
-    developerConsoleProviderState:
+    registrationState: string
+    registrationProviderState:
       | "NOT_REGISTERED"
       | "REGISTERED"
       | "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"
       | null
-    developerConsoleCheckAttempts: number
-    developerConsoleLastCheckedAt: Date | null
-    developerConsoleNextCheckAt: Date
-    developerConsoleLastFailure: string | null
+    registrationCheckAttempts: number
+    registrationLastCheckedAt: Date | null
+    registrationNextCheckAt: Date
+    registrationLastFailure: string | null
     certificateSha256: string | null
     verifiedSetupCommit: string | null
     latestGoodDeploymentId: string | null
@@ -6948,6 +6948,65 @@ export type PostV1StoreListingsBySlugEventsResponses = {
 export type PostV1StoreListingsBySlugEventsResponse =
   PostV1StoreListingsBySlugEventsResponses[keyof PostV1StoreListingsBySlugEventsResponses]
 
+export type PostV1TemplatesResolveData = {
+  body?: {
+    template_id: string
+    upstream_commit: string
+    target:
+      | "linux_amd64_musl"
+      | "linux_arm64_musl"
+      | "darwin_amd64"
+      | "darwin_arm64"
+      | "windows_amd64"
+  }
+  path?: never
+  query?: never
+  url: "/v1/templates/resolve"
+}
+
+export type PostV1TemplatesResolveErrors = {
+  /**
+   * No matching signed template
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1TemplatesResolveError =
+  PostV1TemplatesResolveErrors[keyof PostV1TemplatesResolveErrors]
+
+export type PostV1TemplatesResolveResponses = {
+  /**
+   * Immutable plugin and protocol coordinates
+   */
+  200: {
+    template_id: string
+    upstream_commit: string
+    plugin_reference: string
+    plugin_digest: string
+    target:
+      | "linux_amd64_musl"
+      | "linux_arm64_musl"
+      | "darwin_amd64"
+      | "darwin_arm64"
+      | "windows_amd64"
+    provenance: {
+      repository: string
+      workflow: string
+      git_ref: string
+      source_commit: string
+      oidc_issuer: string
+      workflow_identity: string
+      github_hosted_runner: boolean
+    }
+    request: {
+      [key: string]: unknown
+    }
+  }
+}
+
+export type PostV1TemplatesResolveResponse =
+  PostV1TemplatesResolveResponses[keyof PostV1TemplatesResolveResponses]
+
 export type GetV1UserMePreferencesData = {
   body?: never
   path?: never
@@ -7788,15 +7847,16 @@ export type PostV1ApkSigningCompleteData = {
     | {
         job_id: string
         signer_id: string
+        claim_token: string
         kind: "provision_key"
         encrypted_key_object_key: string
         encrypted_key_object_version: string
         certificate_sha256: string
-        developer_console_state: "pending_registration"
       }
     | {
         job_id: string
         signer_id: string
+        claim_token: string
         kind: "sign_release"
         signed_key: string
         signed_object_version: string
@@ -7810,6 +7870,7 @@ export type PostV1ApkSigningCompleteData = {
     | {
         job_id: string
         signer_id: string
+        claim_token: string
         kind: "provision_client_key"
         encrypted_key_object_key: "keys/client/signing.keystore.enc"
         encrypted_key_object_version: string
@@ -7818,6 +7879,7 @@ export type PostV1ApkSigningCompleteData = {
     | {
         job_id: string
         signer_id: string
+        claim_token: string
         kind: "sign_client_release"
         signed_key: string
         signed_object_version: string
@@ -7859,8 +7921,8 @@ export type PostV1ApkSigningFailData = {
   body?: {
     job_id: string
     signer_id: string
+    claim_token: string
     error: string
-    developer_console_state?: "ownership_required" | "failed"
   }
   path?: never
   query?: never

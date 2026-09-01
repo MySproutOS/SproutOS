@@ -24,7 +24,6 @@ async function status(organizationId: string, projectId: string) {
   const android = await fetchAndroidApp(db).getForProject(projectId, [
     "id",
     "packageName",
-    "developerConsoleAccount",
     "developerConsoleState",
     "developerConsoleProviderState",
     "developerConsoleCheckAttempts",
@@ -56,13 +55,12 @@ async function status(organizationId: string, projectId: string) {
           : android.certificateSha256 !== null
             ? ("ready_for_signing" as const)
             : ("configuring" as const),
-    developerConsoleState: android.developerConsoleState,
-    developerConsoleAccount: android.developerConsoleAccount,
-    developerConsoleProviderState: android.developerConsoleProviderState,
-    developerConsoleCheckAttempts: android.developerConsoleCheckAttempts,
-    developerConsoleLastCheckedAt: android.developerConsoleLastCheckedAt?.toISOString() ?? null,
-    developerConsoleNextCheckAt: android.developerConsoleNextCheckAt.toISOString(),
-    developerConsoleLastFailure: android.developerConsoleLastFailure,
+    registrationState: android.developerConsoleState,
+    registrationProviderState: android.developerConsoleProviderState,
+    registrationCheckAttempts: android.developerConsoleCheckAttempts,
+    registrationLastCheckedAt: android.developerConsoleLastCheckedAt?.toISOString() ?? null,
+    registrationNextCheckAt: android.developerConsoleNextCheckAt.toISOString(),
+    registrationLastFailure: android.developerConsoleLastFailure,
     certificateSha256: android.certificateSha256,
     verifiedSetupCommit: android.verifiedSetupCommit,
     latestGoodDeploymentId: android.latestGoodDeploymentId,

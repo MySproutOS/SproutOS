@@ -197,9 +197,6 @@ export async function recordDeveloperConsoleState(
     if (input.claimToken !== undefined) {
       update = update.where("developerConsoleClaimToken", "=", input.claimToken)
     }
-    if (input.state === "registered") {
-      update = update.where("developerConsoleAccount", "is not", null)
-    }
     const updated = await update.returning("id").executeTakeFirst()
     if (updated === undefined) return false
     await reconcileLatestReleaseVisibility(trx, input.androidAppId)
@@ -488,7 +485,6 @@ export async function completeKeyProvision(
     keyObjectKey: string
     keyObjectVersion: string
     certificateSha256: string
-    developerConsoleState: "pending_registration"
     idempotencyKey: string
   },
 ): Promise<boolean> {
@@ -562,7 +558,6 @@ export async function completeSigning(
     versionCode: number
     versionName: string
     certificateSha256: string
-    developerConsoleAccount: string
     idempotencyKey: string
   },
 ): Promise<boolean> {
@@ -581,7 +576,6 @@ export async function completeSigning(
         "androidSignerJob.callbackClaimToken",
         "androidApp.packageName",
         "androidApp.certificateSha256",
-        "androidApp.developerConsoleAccount",
         "androidApp.lastAcceptedVersionCode",
         "androidApp.developerConsoleState",
         "androidApp.verifiedSetupCommit",
@@ -601,8 +595,6 @@ export async function completeSigning(
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
       job.certificateSha256 !== input.certificateSha256 ||
-      (job.developerConsoleAccount !== null &&
-        job.developerConsoleAccount !== input.developerConsoleAccount) ||
       input.versionCode <= job.lastAcceptedVersionCode ||
       input.signedKey !== `signed/${job.androidAppId}/${input.jobId}.apk`
     )
@@ -630,7 +622,6 @@ export async function completeSigning(
       .set({
         lastAcceptedVersionCode: input.versionCode,
         latestGoodDeploymentId: job.deploymentId,
-        developerConsoleAccount: input.developerConsoleAccount,
         lastError: null,
         updatedAt: new Date(),
       })
@@ -648,7 +639,6 @@ export async function failSigning(
     signerId: string
     claimToken: string
     error: string
-    developerConsoleState?: "ownership_required" | "failed"
     maxAttempts?: number
     idempotencyKey: string
   },
@@ -703,7 +693,7 @@ export async function failSigning(
           lastError: input.error.slice(0, 2000),
           ...(job.kind === "provision_key"
             ? {
-                developerConsoleState: input.developerConsoleState ?? "failed",
+                developerConsoleState: "failed",
                 developerConsoleError: input.error.slice(0, 2000),
               }
             : {}),

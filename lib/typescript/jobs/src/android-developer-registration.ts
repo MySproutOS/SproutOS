@@ -295,12 +295,7 @@ export function reconcileAndroidDeveloperRegistrationsJob(
     }
     const clientIdentity = await db
       .selectFrom("clientSigningIdentity")
-      .select([
-        "certificateSha256",
-        "developerConsoleAccount",
-        "developerConsoleState",
-        "developerConsoleLastCheckedAt",
-      ])
+      .select(["certificateSha256", "developerConsoleState", "developerConsoleLastCheckedAt"])
       .where("packageName", "=", CLIENT_PACKAGE_NAME)
       .executeTakeFirst()
     const clientNow = new Date()
@@ -311,7 +306,6 @@ export function reconcileAndroidDeveloperRegistrationsJob(
     if (
       clientIdentity !== undefined &&
       clientIdentity.certificateSha256 !== null &&
-      clientIdentity.developerConsoleAccount !== null &&
       (clientIdentity.developerConsoleLastCheckedAt === null ||
         clientNow.getTime() - clientIdentity.developerConsoleLastCheckedAt.getTime() >= clientDelay)
     ) {

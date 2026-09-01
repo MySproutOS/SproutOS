@@ -33,9 +33,9 @@ describe.skipIf(!reachable)("Android signing schema", () => {
     }
   })
 
-  it("stores both independent publication gates and the non-secret owning account", async () => {
-    const result = await sql<{ columnName: string }>`
-      select column_name
+  it("retains the deprecated nullable account column only for rolling compatibility", async () => {
+    const result = await sql<{ columnName: string; isNullable: string }>`
+      select column_name, is_nullable
       from information_schema.columns
       where table_schema = current_schema()
         and table_name = 'android_app'
@@ -52,6 +52,9 @@ describe.skipIf(!reachable)("Android signing schema", () => {
       "developer_console_state",
       "verified_setup_commit",
     ])
+    expect(
+      result.rows.find((row) => row.columnName === "developer_console_account")?.isNullable,
+    ).toBe("YES")
   })
 
   it("rejects registered state when the provider proof is NULL", async () => {
@@ -106,7 +109,6 @@ describe.skipIf(!reachable)("Android signing schema", () => {
           certificateSha256: "a".repeat(64),
           keyObjectKey: `keys/${androidAppId}/signing.keystore.enc`,
           keyObjectVersion: "v1",
-          developerConsoleAccount: "developerAccounts/123",
           developerConsoleProviderState: null,
         })
         .execute()
@@ -123,21 +125,5 @@ describe.skipIf(!reachable)("Android signing schema", () => {
       await db.deleteFrom("organization").where("id", "=", organizationId).execute()
       await db.deleteFrom("user").where("id", "=", userId).execute()
     }
-  })
-
-  it("makes a signer-selected Android Developer Console account write-once", async () => {
-    const row = await db
-      .selectFrom("androidApp")
-      .select("id")
-      .where("developerConsoleAccount", "is not", null)
-      .executeTakeFirst()
-    if (row === undefined) return
-    await expect(
-      db
-        .updateTable("androidApp")
-        .set({ developerConsoleAccount: "developerAccounts/999999" })
-        .where("id", "=", row.id)
-        .execute(),
-    ).rejects.toThrow("developer_console_account is immutable once set")
   })
 })

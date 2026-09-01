@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use android_signer::api::SignerApi;
+use android_signer::api::{ClientIdentityStatus, SignerApi};
 use android_signer::crypto::MasterIdentity;
-use android_signer::developer_console::{
-    DEFAULT_TOKEN_URL, DeveloperConsoleConfig, GoogleDeveloperConsole, write_refresh_token,
-};
 use android_signer::process::{AndroidTools as _, CommandAndroidTools};
 use android_signer::state::StateStore;
 use android_signer::{CLIENT_PACKAGE_NAME, Signer, SignerConfig, apk};
@@ -30,7 +27,7 @@ enum Command {
     Run(RuntimeArgs),
     /// Claim and process at most one job. Useful for installation smoke tests.
     Once(RuntimeArgs),
-    /// Idempotently request the one immutable catalogue-client key and print only public state.
+    /// Print the catalogue-client fingerprint for Play Console's manual Add key flow.
     ClientIdentity(ClientApiArgs),
     /// Validate and durably queue an unsigned catalogue-client APK for the on-prem signer.
     QueueClientRelease {
@@ -42,26 +39,6 @@ enum Command {
         android_sdk_root: Option<PathBuf>,
         #[arg(long, env = "APK_SIGNER_MAX_APK_BYTES", default_value_t = 536_870_912)]
         max_apk_bytes: u64,
-    },
-    /// Print the one-time Google consent URL. The URL contains no client secret.
-    GoogleOauthUrl {
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID")]
-        client_id: String,
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REDIRECT_URI")]
-        redirect_uri: String,
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_STATE_FILE")]
-        state_file: PathBuf,
-    },
-    /// Read an authorization code from stdin and save the offline refresh token mode 0600.
-    GoogleOauthExchange {
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID")]
-        client_id: String,
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REDIRECT_URI")]
-        redirect_uri: String,
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE")]
-        output: PathBuf,
-        #[arg(long, env = "APK_SIGNER_GOOGLE_OAUTH_STATE_FILE")]
-        state_file: PathBuf,
     },
 }
 
@@ -123,10 +100,8 @@ async fn main() -> anyhow::Result<()> {
         Command::ClientIdentity(args) => {
             let api = client_api(args)?;
             let identity = api.ensure_client_identity().await?;
-            println!("package_name={}", identity.package_name);
-            println!("state={}", identity.state);
-            if let Some(fingerprint) = identity.certificate_sha256 {
-                println!("certificate_sha256={fingerprint}");
+            for line in client_identity_lines(&identity) {
+                println!("{line}");
             }
             Ok(())
         }
@@ -187,53 +162,26 @@ async fn main() -> anyhow::Result<()> {
             println!("unsigned_sha256={digest}");
             Ok(())
         }
-        Command::GoogleOauthUrl {
-            client_id,
-            redirect_uri,
-            state_file,
-        } => {
-            println!(
-                "{}",
-                DeveloperConsoleConfig::begin_authorization(
-                    &client_id,
-                    &redirect_uri,
-                    &state_file,
-                    std::time::SystemTime::now(),
-                )?
-            );
-            Ok(())
-        }
-        Command::GoogleOauthExchange {
-            client_id,
-            redirect_uri,
-            output,
-            state_file,
-        } => {
-            let client_secret = std::env::var("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET")
-                .context("APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET is not set")?;
-            let mut callback_url = String::new();
-            std::io::stdin().read_line(&mut callback_url)?;
-            let code = DeveloperConsoleConfig::consume_authorization_callback(
-                &state_file,
-                &client_id,
-                &redirect_uri,
-                callback_url.trim(),
-                std::time::SystemTime::now(),
-            )?;
-            let token = DeveloperConsoleConfig::exchange_authorization_code(
-                &client_id,
-                &client_secret,
-                &code,
-                &redirect_uri,
-                &std::env::var("APK_SIGNER_GOOGLE_OAUTH_TOKEN_URL")
-                    .unwrap_or_else(|_| DEFAULT_TOKEN_URL.to_owned()),
-            )
-            .await?;
-            write_refresh_token(&output, &token)?;
-            println!("stored Google OAuth refresh token at {}", output.display());
-            Ok(())
-        }
     }
+}
+
+fn client_identity_lines(identity: &ClientIdentityStatus) -> Vec<String> {
+    let mut lines = vec![
+        format!("package_name={}", identity.package_name),
+        format!("state={}", identity.state),
+        format!("registration_state={}", identity.registration_state),
+    ];
+    if let Some(provider_state) = &identity.registration_provider_state {
+        lines.push(format!("registration_provider_state={provider_state}"));
+    }
+    if let Some(error) = &identity.registration_error {
+        lines.push(format!("registration_error={}", error.escape_default()));
+    }
+    if let Some(fingerprint) = &identity.certificate_sha256 {
+        lines.push(format!("play_console_add_key_fingerprint={fingerprint}"));
+        lines.push(format!("certificate_sha256={fingerprint}"));
+    }
+    lines
 }
 
 fn client_api(args: ClientApiArgs) -> anyhow::Result<SignerApi> {
@@ -249,9 +197,6 @@ async fn runtime(args: RuntimeArgs) -> anyhow::Result<Signer<SignerApi, CommandA
     // Read the credential here rather than through clap so it is never represented in help output
     // or a command line visible to another local user.
     let token = std::env::var("APK_SIGNER_TOKEN").context("APK_SIGNER_TOKEN is not set")?;
-    // Validate custody configuration before claiming anything. A signer without registration
-    // authority must stay down instead of consuming release attempts that can never be published.
-    let _developer_console = GoogleDeveloperConsole::new(DeveloperConsoleConfig::from_env()?)?;
     let api = SignerApi::new(args.api_url, token, args.signer_id)?;
     let identity = MasterIdentity::load(&args.master_identity)?;
     let state = StateStore::open(args.state_dir)?;
@@ -266,4 +211,64 @@ async fn runtime(args: RuntimeArgs) -> anyhow::Result<Signer<SignerApi, CommandA
             poll_interval: Duration::from_secs(args.poll_seconds),
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity(
+        registration_state: &str,
+        provider_state: Option<&str>,
+        error: Option<&str>,
+        certificate: Option<&str>,
+    ) -> ClientIdentityStatus {
+        ClientIdentityStatus {
+            package_name: CLIENT_PACKAGE_NAME.into(),
+            state: "ready".into(),
+            registration_state: registration_state.into(),
+            registration_provider_state: provider_state.map(str::to_owned),
+            registration_error: error.map(str::to_owned),
+            certificate_sha256: certificate.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn pending_identity_does_not_print_a_play_fingerprint_before_provisioning() {
+        let lines = client_identity_lines(&identity("pending_registration", None, None, None));
+        assert!(lines.contains(&"registration_state=pending_registration".into()));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.starts_with("play_console_add_key_fingerprint="))
+        );
+    }
+
+    #[test]
+    fn registered_identity_prints_provider_proof_and_the_per_app_fingerprint() {
+        let fingerprint = "a".repeat(64);
+        let lines = client_identity_lines(&identity(
+            "registered",
+            Some("REGISTERED"),
+            None,
+            Some(&fingerprint),
+        ));
+        assert!(lines.contains(&"registration_provider_state=REGISTERED".into()));
+        assert!(lines.contains(&format!("play_console_add_key_fingerprint={fingerprint}")));
+    }
+
+    #[test]
+    fn wrong_certificate_state_exposes_bounded_provider_error_safely() {
+        let fingerprint = "b".repeat(64);
+        let lines = client_identity_lines(&identity(
+            "pending_registration",
+            Some("REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"),
+            Some("wrong certificate\nstop"),
+            Some(&fingerprint),
+        ));
+        assert!(lines.contains(
+            &"registration_provider_state=REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT".into()
+        ));
+        assert!(lines.contains(&"registration_error=wrong certificate\\nstop".into()));
+    }
 }

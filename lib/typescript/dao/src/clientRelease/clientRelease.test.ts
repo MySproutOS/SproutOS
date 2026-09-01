@@ -21,13 +21,11 @@ beforeAll(async () => {
         keyObjectKey: "keys/client/signing.keystore.enc",
         keyObjectVersion: "dao-test",
         certificateSha256: "a".repeat(64),
-        developerConsoleAccount: "developerAccounts/123",
         developerConsoleState: "registered",
         developerConsoleProviderState: "REGISTERED",
       })
       .onConflict((conflict) =>
         conflict.column("packageName").doUpdateSet({
-          developerConsoleAccount: "developerAccounts/123",
           developerConsoleState: "registered",
           developerConsoleProviderState: "REGISTERED",
         }),
@@ -116,18 +114,5 @@ describe("client releases", () => {
         .execute(),
     ).rejects.toThrow("client_signing_identity_registered_identity_check")
     expect(await fetchClientRelease(db).latest(["versionCode"])).toBeUndefined()
-  })
-
-  it("makes the selected developer account immutable after the first signer callback", async ({
-    skip,
-  }) => {
-    if (!reachable) skip()
-    await expect(
-      db
-        .updateTable("clientSigningIdentity")
-        .set({ developerConsoleAccount: "developerAccounts/999" })
-        .where("packageName", "=", SPROUTOS_ANDROID_PACKAGE)
-        .execute(),
-    ).rejects.toThrow("developer_console_account is immutable once set")
   })
 })

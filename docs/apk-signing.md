@@ -32,27 +32,22 @@ backed.
 
 ## Runtime configuration
 
-| Variable                                     | Meaning                                                     |
-| -------------------------------------------- | ----------------------------------------------------------- |
-| `APK_SIGNER_API_URL`                         | Public control-plane origin; HTTPS required except loopback |
-| `APK_SIGNER_TOKEN`                           | Bearer credential; required and never accepted on argv      |
-| `APK_SIGNER_OPERATOR_TOKEN`                  | Separate credential for client identity/release commands    |
-| `APK_SIGNER_OPERATOR_ID`                     | API-configured audit principal for those operator commands  |
-| `APK_SIGNER_ID`                              | Stable machine label used for queue ownership               |
-| `APK_SIGNER_MASTER_IDENTITY_PATH`            | Durable RSA PKCS#8 master identity                          |
-| `APK_SIGNER_STATE_DIR`                       | Durable mode-`0700` crash-recovery journal                  |
-| `APK_SIGNER_ANDROID_SDK_ROOT`                | SDK root containing `build-tools/<version>`                 |
-| `APK_SIGNER_KEYTOOL`                         | Optional explicit `keytool` path                            |
-| `APK_SIGNER_AAPT2`                           | Optional explicit `aapt2` path                              |
-| `APK_SIGNER_ZIPALIGN`                        | Optional explicit `zipalign` path                           |
-| `APK_SIGNER_APKSIGNER`                       | Optional explicit `apksigner` path                          |
-| `APK_SIGNER_POLL_SECONDS`                    | Idle poll interval, default 30                              |
-| `APK_SIGNER_MAX_APK_BYTES`                   | Hard download ceiling, default 512 MiB                      |
-| `APK_SIGNER_GOOGLE_OAUTH_CLIENT_ID`          | Google Web Server OAuth client ID; signer host only         |
-| `APK_SIGNER_GOOGLE_OAUTH_CLIENT_SECRET`      | Google OAuth client secret; signer host only                |
-| `APK_SIGNER_GOOGLE_OAUTH_STATE_FILE`         | Mode-`0600` single-use consent state; signer host only      |
-| `APK_SIGNER_GOOGLE_OAUTH_REFRESH_TOKEN_FILE` | Mode-`0600` offline token; signer host only                 |
-| `APK_SIGNER_ANDROID_DEVELOPER_ACCOUNT`       | Selected verified `developerAccounts/*` resource            |
+| Variable                          | Meaning                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `APK_SIGNER_API_URL`              | Public control-plane origin; HTTPS required except loopback |
+| `APK_SIGNER_TOKEN`                | Bearer credential; required and never accepted on argv      |
+| `APK_SIGNER_OPERATOR_TOKEN`       | Separate credential for client identity/release commands    |
+| `APK_SIGNER_OPERATOR_ID`          | API-configured audit principal for those operator commands  |
+| `APK_SIGNER_ID`                   | Stable machine label used for queue ownership               |
+| `APK_SIGNER_MASTER_IDENTITY_PATH` | Durable RSA PKCS#8 master identity                          |
+| `APK_SIGNER_STATE_DIR`            | Durable mode-`0700` crash-recovery journal                  |
+| `APK_SIGNER_ANDROID_SDK_ROOT`     | SDK root containing `build-tools/<version>`                 |
+| `APK_SIGNER_KEYTOOL`              | Optional explicit `keytool` path                            |
+| `APK_SIGNER_AAPT2`                | Optional explicit `aapt2` path                              |
+| `APK_SIGNER_ZIPALIGN`             | Optional explicit `zipalign` path                           |
+| `APK_SIGNER_APKSIGNER`            | Optional explicit `apksigner` path                          |
+| `APK_SIGNER_POLL_SECONDS`         | Idle poll interval, default 30                              |
+| `APK_SIGNER_MAX_APK_BYTES`        | Hard download ceiling, default 512 MiB                      |
 
 Initialize once, back up the result, then run under a service manager:
 
@@ -156,59 +151,36 @@ does not add the `client_release` consumed by `/download` and catalogue self-upd
 independent status check returns `REGISTERED` for the exact `com.sproutos.store` certificate.
 Retries reuse the same job and object identities.
 
-## Android Developer Console dependency
+## Google Play Console registration
 
-Ur LLC's existing verified Google Play Console identity is used for Play and off-Play distribution;
-do not create or pay for a second developer account. Google's current Android Developer Console API
-explicitly supports app distributors and automated CI/CD package-name registration. The integration
-must call `ListDeveloperAccounts` after consent and persist the selected verified account rather than
-inventing an account identifier.
+Ur LLC's existing Google Play Console organization is the authority for Play and off-Play package
+identity; do not create or pay for a second developer account. The signer deliberately has no
+Google credential and makes no Google API call. It provisions each private signing identity,
+returns the public SHA-256 certificate fingerprint, and signs APKs. An operator uses that exact
+package name and fingerprint with Play Console's manual **Add key** flow.
 
-The Google Play Android Developer API (`androidpublisher.googleapis.com`) is the publishing API; its
-public REST surface is not this package-name verification flow. SproutOS currently performs no Play
-publication operation, so it must not request the
-`https://www.googleapis.com/auth/androidpublisher` scope. Android developer verification uses only
-`https://www.googleapis.com/auth/androiddeveloperconsole`.
+For the fixed catalogue client, run `client-identity` after its provisioning job completes and add
+the reported `com.sproutos.store` fingerprint. For a customer app, use the package name and
+certificate fingerprint reported by the Android app status API. A fingerprint is public identity
+material, not a private signing key; the PKCS#12 envelope and master identity never leave signer
+custody.
 
-The official Android Developer Console API requires OAuth 2.0 Web Server authorization with scope
-`https://www.googleapis.com/auth/androiddeveloperconsole`; service accounts, workload identity,
-and API keys are unsupported. Its documented automated path uses one-time consent with
-`access_type=offline`, a securely stored refresh token, `CreateAndroidPackage`,
-`GetAndroidPackageRegistrationPolicy`, `CreateAndroidPackageKey`, and—when required—
-`VerifyAndroidPackageKeyOwnership` or `JustifyAndroidPackageKeyRegistration`.
+Any future Google Play track or publication automation through the Google Play Android Developer
+API belongs in the control plane, not on the signing host. That publishing API does not automate
+this verification registration. Registration remains a manual Play Console operation unless a
+separately reviewed provider contract is adopted. Do not restore OAuth client secrets, refresh
+tokens, account discovery, or package-key registration to `android-signer`.
 
-Create the Web Server OAuth client once, then complete offline consent on the signer host. The URL
-command creates a cryptographically random, mode-`0600` setup-state record bound to the OAuth client
-and exact loopback redirect URI. The state expires after ten minutes and is consumed before any
-token exchange. Paste the complete callback URL—not a bare authorization code—into the exchange
-command. It strictly validates the callback origin, path, state, expiry, duplicates, and provider
-errors, then creates the refresh-token file mode `0600`; neither file is replaceable:
+A new package normally needs only its public fingerprint. If Play instead requests an ownership APK
+containing `assets/adi-registration.properties` for an existing package or additional key, stop.
+The current signer has no operator command that can create that proof without weakening custody.
+Use a future, explicitly reviewed custody-safe operator workflow; never export or regenerate the
+managed key, never substitute a debug key, and never hand-edit and upload an unverified APK.
 
-```bash
-cargo run -p android-signer -- google-oauth-url
-printf '%s\n' "$COMPLETE_LOOPBACK_CALLBACK_URL" | \
-  cargo run -p android-signer -- google-oauth-exchange
-```
-
-The consent URL requests only `https://www.googleapis.com/auth/androiddeveloperconsole`,
-`access_type=offline`, and `prompt=consent`. Runtime refreshes short-lived access tokens on demand.
-The authenticated discovery document supplies current REST paths and accepted request fields; the
-signer fails closed if required methods or schemas disappear rather than calling guessed paths.
-
-For every signed release the signer lists verified developer accounts, selects the configured
-account (or the sole verified account), idempotently lists or creates the package name and key, and
-reads the registration policy. For an existing package name it creates a temporary copy of the raw
-APK containing the opaque `verificationToken` at exactly
-`assets/adi-registration.properties` with no newline, signs it with the managed app key, verifies
-the certificate, and submits it through `VerifyAndroidPackageKeyOwnership`. The token, OAuth
-secrets, and proof APK never leave the signer host. When Google requires a justification, the
-signer uses only the explicitly configured operator rationale and never invents one.
-
-The control plane separately reconciles this certificate and package through Google's Android
-Developer ID Status API. It neither registers packages nor holds OAuth credentials. It stores only
-provider state, timestamps, and bounded errors. Neither a signer callback nor successful APK
-signing can publish a tenant or catalogue-client release: publication remains gated until the
-independent status API returns `REGISTERED`.
+The control plane independently reconciles the exact certificate and package through Google's
+Android Developer ID Status API. It stores only provider state, timestamps, and bounded errors.
+Neither a signer callback nor successful APK signing can publish a tenant or catalogue-client
+release: publication remains gated until that independent status API returns `REGISTERED`.
 
 The registration reconciler keeps `android_app` in `pending_registration` until the exact package
 and certificate return `REGISTERED`. A different certificate fails closed, successful identities
@@ -221,20 +193,22 @@ the signer. When it is absent, no registration can advance to `registered`.
 
 ### Callback and checkpoint cutover
 
-The registration-aware completion callback requires `developer_console_account`, and new durable
-`sign.json` checkpoints contain that account. Deploy this as a coordinated signer/control-plane
-cutover: stop new APK release submission, stop the signer after all running `sign_release` and
-`sign_client_release` jobs have completed and its state directory has no corresponding in-flight
-checkpoints, deploy the migration/API/worker, deploy the new signer, then resume submission. Key
-provision jobs do not carry this field and may be retried normally.
+The callback contract is not rolling-compatible with a running old signer: old provision callbacks
+send `developer_console_state`, old sign callbacks send `developer_console_account`, and old failure
+callbacks may send the removed registration field. Their idempotency hashes cover those exact old
+JSON bodies, so a new API cannot merely clean the fields and accept the hash.
 
-Do not start the new signer over an old signed-release checkpoint: the old checkpoint cannot prove
-which verified developer account performed registration. If a crash prevents a clean drain, keep
-the immutable raw APK and key object, explicitly fail/requeue that job through the operator recovery
-path, and let the new signer repeat registration and signing. Never synthesize the missing account
-in the control plane. The database makes the first signer-selected account write-once, and both
-callback handlers reject any later account mismatch.
+Pause all APK submissions, fully drain every old provision, sign, and failure callback, and then
+stop the old signer. Only after the queue and old signer checkpoints prove no old callback remains
+may operators deploy the expand migration plus new API/worker, deploy the new signer, and resume
+submissions. The expand migration deliberately retains nullable deprecated account columns for old
+API/worker binary compatibility. A later contract migration may drop them only after deployment
+inventory proves every old task is gone.
 
-Official references: [Android Developer Console API](https://developer.android.com/developer-verification/guides/developer-console-api),
-[Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
+Do not delete the signer state directory during cutover. Existing durable key and signed-APK
+checkpoints remain readable: the new signer ignores the obsolete account member, rebinds every
+immutable claim field, and rereads the signed APK digest before reuse. Never regenerate a key or
+discard a verified-good checkpoint merely to simplify the cutover.
+
+Official references: [Android Developer ID Status API](https://developer.android.com/developer-verification/guides/check-registration-status),
 and [Play Console package-name registration](https://support.google.com/googleplay/android-developer/answer/16761053).

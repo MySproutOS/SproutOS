@@ -7,7 +7,6 @@
 pub mod api;
 pub mod apk;
 pub mod crypto;
-pub mod developer_console;
 pub mod process;
 pub mod state;
 
@@ -15,9 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use api::{ClaimedJob, CompleteRequest, DeveloperConsoleState, SignerApi};
+use api::{ClaimedJob, CompleteRequest, SignerApi};
 use crypto::MasterIdentity;
-use developer_console::{DeveloperConsoleConfig, GoogleDeveloperConsole, RegistrationStep};
 use process::{AndroidTools, CommandAndroidTools};
 use reqwest::header::CONTENT_TYPE;
 use sha2::{Digest as _, Sha256};
@@ -164,9 +162,6 @@ where
             encrypted_key_object_key: job.encrypted_key_object_key,
             encrypted_key_object_version: version,
             certificate_sha256: checkpoint.certificate_sha256,
-            // Package-name registration needs the first unsigned APK for ownership proof, so key
-            // provisioning remains pending and the release-signing path performs registration.
-            developer_console_state: DeveloperConsoleState::PendingRegistration,
         })
     }
 
@@ -276,10 +271,6 @@ where
             bail!("the protected key certificate does not match the app record")
         }
 
-        let developer_console_account = self
-            .register_package(&job.package_name, &key, &unsigned, temp.path())
-            .await?;
-
         let signed = temp.path().join("signed.apk");
         self.tools.sign(&unsigned, &signed, &key)?;
         apk::validate_zip_structure(&signed)?;
@@ -306,7 +297,6 @@ where
                 unsigned_digest: job.unsigned_digest.clone(),
                 encrypted_key_object_key: job.encrypted_key_object_key.clone(),
                 encrypted_key_object_version: job.encrypted_key_object_version.clone(),
-                developer_console_account,
                 signed_key: job.signed_key.clone(),
                 signed_digest,
                 size_bytes,
@@ -323,54 +313,6 @@ where
             "the signed APK bucket did not return x-amz-version-id; versioning is required",
         )?;
         Ok(checkpoint.completion(self.api.signer_id(), &job, version))
-    }
-
-    async fn register_package(
-        &self,
-        package_name: &str,
-        key: &crypto::AppSigningSecret,
-        unsigned_apk: &Path,
-        temporary_directory: &Path,
-    ) -> anyhow::Result<String> {
-        let console = GoogleDeveloperConsole::new(DeveloperConsoleConfig::from_env()?)?;
-        let certificate_der_base64 = self.tools.certificate_der_base64(key)?;
-        let outcome = console
-            .begin_registration(
-                package_name,
-                &key.certificate_sha256,
-                &certificate_der_base64,
-            )
-            .await
-            .context("Android package-name registration failed")?;
-        match outcome.step {
-            RegistrationStep::Registered => {
-                info!(%package_name, "Android package name is registered");
-            }
-            RegistrationStep::PendingReview => {
-                info!(%package_name, "Android package-name registration is pending provider review");
-            }
-            RegistrationStep::OwnershipRequired {
-                key_name,
-                mut token,
-            } => {
-                let proof_unsigned = temporary_directory.join("ownership-unsigned.apk");
-                let proof_signed = temporary_directory.join("ownership-signed.apk");
-                apk::add_registration_token(unsigned_apk, &proof_unsigned, &token)?;
-                token.zeroize();
-                self.tools.sign(&proof_unsigned, &proof_signed, key)?;
-                apk::validate_zip_structure(&proof_signed)?;
-                let proof_certificate = self.tools.verify_signed(&proof_signed)?;
-                if proof_certificate != key.certificate_sha256 {
-                    bail!("ownership proof APK certificate does not match the managed key")
-                }
-                console
-                    .verify_ownership(&key_name, &proof_signed)
-                    .await
-                    .context("Android package-key ownership verification failed")?;
-                info!(%package_name, "submitted managed-key ownership proof to Android Developer Console");
-            }
-        }
-        Ok(outcome.developer_account)
     }
 
     async fn sign_client_release(
@@ -414,7 +356,6 @@ where
                 version_code,
                 version_name,
                 certificate_sha256,
-                developer_console_account,
             } => {
                 if version_name.len() > 100 {
                     bail!("catalogue-client APK versionName exceeds 100 bytes")
@@ -431,7 +372,6 @@ where
                     version_code,
                     version_name,
                     certificate_sha256,
-                    developer_console_account,
                 })
             }
             _ => unreachable!("sign_release always returns its matching completion"),

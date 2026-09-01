@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write as _};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
@@ -8,7 +8,6 @@ use sha2::{Digest as _, Sha256};
 use zip::ZipArchive;
 
 const MAX_APK_ENTRIES: usize = 100_000;
-const REGISTRATION_ASSET: &str = "assets/adi-registration.properties";
 
 /// Parse enough of the ZIP container to reject archives wrapped around an APK, traversal entries,
 /// symlinks, and already-signed JAR metadata before any Android tool sees customer bytes.
@@ -211,46 +210,6 @@ pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
     Ok(hex::encode(digest.finalize()))
 }
 
-/// Copy an unsigned APK while adding Google's opaque ownership token as the exact asset required
-/// by Android developer verification. The token is intentionally not persisted by this helper.
-pub fn add_registration_token(
-    source: &Path,
-    destination: &Path,
-    token: &str,
-) -> anyhow::Result<()> {
-    if token.is_empty() || token.contains(['\r', '\n']) {
-        bail!("Android Developer Console ownership token is malformed")
-    }
-    validate_unsigned_zip_structure(source)?;
-    let mut archive = ZipArchive::new(File::open(source)?)?;
-    let mut output = zip::ZipWriter::new(File::create(destination)?);
-    for index in 0..archive.len() {
-        let mut entry = archive.by_index(index)?;
-        if entry.name() == REGISTRATION_ASSET {
-            continue;
-        }
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(entry.compression())
-            .unix_permissions(entry.unix_mode().unwrap_or(0o644));
-        if entry.is_dir() {
-            output.add_directory(entry.name(), options)?;
-        } else {
-            output.start_file(entry.name(), options)?;
-            std::io::copy(&mut entry, &mut output)?;
-        }
-    }
-    output.start_file(
-        REGISTRATION_ASSET,
-        zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored)
-            .unix_permissions(0o644),
-    )?;
-    // The official sample is the opaque snippet alone: no property name and no trailing newline.
-    output.write_all(token.as_bytes())?;
-    output.finish()?.sync_all()?;
-    validate_unsigned_zip_structure(destination)
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write as _};
@@ -379,25 +338,5 @@ mod tests {
                 .to_string()
                 .contains("APK Signing Block")
         );
-    }
-
-    #[test]
-    fn ownership_apk_contains_only_the_exact_opaque_token() {
-        let source = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(
-            source.path(),
-            apk(&[("AndroidManifest.xml", b"binary"), ("classes.dex", b"dex")]).into_inner(),
-        )
-        .unwrap();
-        let destination = tempfile::NamedTempFile::new().unwrap();
-        add_registration_token(source.path(), destination.path(), "OPAQUE-TOKEN").unwrap();
-        let mut archive = ZipArchive::new(File::open(destination.path()).unwrap()).unwrap();
-        let mut token = String::new();
-        archive
-            .by_name(REGISTRATION_ASSET)
-            .unwrap()
-            .read_to_string(&mut token)
-            .unwrap();
-        assert_eq!(token, "OPAQUE-TOKEN");
     }
 }

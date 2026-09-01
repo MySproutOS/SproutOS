@@ -92,11 +92,6 @@ async function queuedRelease(versionCode = 1) {
 }
 
 async function markRegistrationVerified() {
-  await db
-    .updateTable("clientSigningIdentity")
-    .set({ developerConsoleAccount: "developerAccounts/123" })
-    .where("packageName", "=", CLIENT_PACKAGE_NAME)
-    .execute()
   await reconcileClientDeveloperRegistration(db, "REGISTERED")
 }
 
@@ -202,13 +197,12 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
       versionCode: 7,
       versionName: "1.0.0",
       certificateSha256: CERTIFICATE,
-      developerConsoleAccount: "developerAccounts/123",
       idempotencyKey: KEY_2,
     }
     expect(
       await completeClientSigning(db, {
         ...completion,
-        developerConsoleAccount: "developerAccounts/999",
+        certificateSha256: "9".repeat(64),
         idempotencyKey: KEY_1,
       }),
     ).toBe(false)
@@ -287,7 +281,6 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
         versionCode: 2,
         versionName: "2",
         certificateSha256: CERTIFICATE,
-        developerConsoleAccount: "developerAccounts/123",
         idempotencyKey: KEY_2,
       }),
     ).toBe(true)
@@ -381,7 +374,6 @@ describe.runIf(reachable)("the catalogue-client signer state machine", () => {
         versionCode: 11,
         versionName: "11",
         certificateSha256: CERTIFICATE,
-        developerConsoleAccount: "developerAccounts/123",
         idempotencyKey: KEY_2,
       }),
     ).toBe(true)

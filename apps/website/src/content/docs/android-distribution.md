@@ -38,6 +38,18 @@ Setup creates or imports the project's signing identity through the protected si
 a custody operation: back up any permitted recovery material according to your organization policy,
 restrict who can rotate it, and never commit keystores, passwords, or exported private keys.
 
+Setup and signing do not register the application with Google. A SproutOS operator adds the exact
+application id and public certificate fingerprint to the existing Play Console organization using
+its manual **Add key** flow. The signer has no Google credential and never exposes the private key.
+`sprout android status` shows the public fingerprint and registration state. A signed release stays
+hidden until Google's independent Android Developer ID Status API reports `REGISTERED` for that
+exact application id and fingerprint.
+
+A new package normally needs only that fingerprint. If Play asks for an ownership APK containing
+`assets/adi-registration.properties` for an existing package or additional key, stop and contact
+SproutOS operations for a future custody-safe workflow. Never export or regenerate the protected
+key, substitute a debug key, or build the proof APK outside the signer custody boundary.
+
 Before the first public release, record and independently compare the certificate fingerprint:
 
 ```shell
