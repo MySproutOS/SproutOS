@@ -117,6 +117,7 @@ export type InstallationTokenRequest =
         | "sandbox-clone"
         | "sandbox-push"
         | "catalogue-template-push"
+        | "repository-snapshot-push"
         | "upkeep-inspect"
         | "upkeep-sync"
         | "upkeep-resolution"
@@ -189,6 +190,7 @@ function resolveInstallationTokenScope(
     case "agent-push":
     case "sandbox-push":
     case "catalogue-template-push":
+    case "repository-snapshot-push":
       return exactRepositoryScope(request, { contents: "write", workflows: "write" })
     case "upkeep-sync":
       return exactRepositoryScope(request, {

@@ -111,6 +111,48 @@ export type ProvisionGitHub = {
   credential: GitHubCredential
 }
 
+type SnapshotCredentialResolvers = {
+  installation: typeof organizationGitHubCredential
+  user: typeof userGitHubCredential
+}
+
+/**
+ * Resolve the credential that can fill a repository immediately after SproutOS creates it.
+ *
+ * An installation restricted to selected repositories can create a new organization repository,
+ * but GitHub does not automatically add that repository to the installation's selection. The
+ * broad provisioning token therefore cannot be reused for the first push. Ask GitHub for an exact
+ * repository-scoped token; when the new repository is outside the installation, fall back to the
+ * initiating user's repository-scoped OAuth credential.
+ */
+export async function snapshotWriteCredential(
+  db: Kysely<DB>,
+  input: {
+    organizationId: string
+    userId: string
+    ownerLogin: string
+    repositoryId: number
+    provisionCredential: GitHubCredential
+  },
+  resolvers: SnapshotCredentialResolvers = {
+    installation: organizationGitHubCredential,
+    user: userGitHubCredential,
+  },
+): Promise<GitHubCredential> {
+  if (input.provisionCredential.kind !== "installation") return input.provisionCredential
+
+  const credential =
+    (await resolvers.installation(
+      db,
+      input.organizationId,
+      { purpose: "repository-snapshot-push", repositoryId: input.repositoryId },
+      input.ownerLogin,
+    )) ?? (await resolvers.user(db, input.userId))
+
+  if (credential === undefined) throw new NoUsableCredentialError()
+  return credential
+}
+
 export async function runProvision(
   db: Kysely<DB>,
   payload: ProvisionPayload,
@@ -248,6 +290,16 @@ export async function runProvision(
         })
         .where("id", "=", repository.id)
         .execute()
+      const populatedCredential =
+        repository.upstreamStrategy === "snapshot_copy"
+          ? await snapshotWriteCredential(db, {
+              organizationId: repository.organizationId,
+              userId: payload.userId,
+              ownerLogin: created.ownerLogin,
+              repositoryId: created.id,
+              provisionCredential: usableCredential,
+            })
+          : usableCredential
       if (repository.upstreamStrategy === "snapshot_copy") {
         if (repository.upstreamFullName === null) {
           throw new Error("snapshot copy has no upstream repository")
@@ -258,12 +310,12 @@ export async function runProvision(
           branch: created.defaultBranch,
           upstreamFullName: repository.upstreamFullName,
           upstreamBranch: repository.upstreamDefaultBranch ?? "main",
-          token: usableCredential.token,
+          token: populatedCredential.token,
         })
       }
       await headShaWhenPopulated(
         client,
-        usableCredential,
+        populatedCredential,
         created.ownerLogin,
         created.name,
         created.defaultBranch,
