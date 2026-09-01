@@ -677,6 +677,10 @@
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/KAFKA_USAGE_EVENT_SASL_USERNAME"
         },
         {
+          "name": "LLM_PROXY_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/LLM_PROXY_SECRET"
+        },
+        {
           "name": "LOG_EXTENSION_CANARY_PROJECT_IDS",
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/LOG_EXTENSION_CANARY_PROJECT_IDS"
         },

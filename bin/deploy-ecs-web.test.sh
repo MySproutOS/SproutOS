@@ -196,7 +196,11 @@ fi
 jq -e --arg image "$IMAGE" '
   .family == "sproutos-web" and
   ([.containerDefinitions[].name] | sort == ["api", "website", "worker"]) and
-  all(.containerDefinitions[]; .image == $image)
+  all(.containerDefinitions[]; .image == $image) and
+  (.containerDefinitions[]
+    | select(.name == "worker")
+    | .secrets[]
+    | select(.name == "LLM_PROXY_SECRET"))
 ' "$CAPTURE/task-1.json" >/dev/null
 jq -e --arg image "$IMAGE" '
   .family == "sproutos-web-migrate" and
