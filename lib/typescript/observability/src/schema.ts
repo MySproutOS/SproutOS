@@ -394,6 +394,11 @@ export function kafkaConfigured(): boolean {
   return (process.env.KAFKA_BROKERS ?? "") !== ""
 }
 
+/** The broker address ClickHouse itself can reach, which may differ from the app-side address. */
+export function clickhouseKafkaBrokers(): string {
+  return process.env.CLICKHOUSE_KAFKA_BROKER ?? process.env.KAFKA_BROKERS ?? ""
+}
+
 export async function ensureSchema(): Promise<void> {
   const client = clickhouse()
   const database = process.env.CLICKHOUSE_DATABASE ?? "observability"
@@ -426,14 +431,14 @@ export async function ensureSchema(): Promise<void> {
   await client.command({ query: "drop table if exists runtime_log_queue" })
   await client.command({
     query: runtimeLogQueueDdl(
-      process.env.KAFKA_BROKERS ?? "",
+      clickhouseKafkaBrokers(),
       process.env.KAFKA_RUNTIME_LOG_TOPIC ?? "runtime-logs",
     ),
   })
   await client.command({ query: RUNTIME_LOG_MV_DDL })
   await client.command({
     query: usageEventQueueDdl(
-      process.env.KAFKA_BROKERS ?? "",
+      clickhouseKafkaBrokers(),
       process.env.KAFKA_USAGE_EVENT_TOPIC ?? "usage-events",
       database,
     ),

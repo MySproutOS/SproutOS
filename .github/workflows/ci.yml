@@ -159,6 +159,9 @@ jobs:
       CLICKHOUSE_USER: sproutos
       CLICKHOUSE_PASSWORD: sproutos
       KAFKA_BROKERS: localhost:29092
+      # The runner reaches Kafka through its published port; the ClickHouse service container uses
+      # the service-network address when ensureSchema refreshes its Kafka-engine tables.
+      CLICKHOUSE_KAFKA_BROKER: kafka:9092
       # Kafka is present here, so the site-usage durability test is not allowed to disappear behind
       # its local-development skip.
       REQUIRE_KAFKA: "1"
@@ -424,6 +427,7 @@ jobs:
       SEARCH_ADMIN_PASSWORD: L0cal!Windmill-Quartz-83
       SEARCH_PROXY_SECURITY_ROOT_KEY: local-search-security-root-key-32-bytes
       KAFKA_BROKERS: localhost:29092
+      CLICKHOUSE_KAFKA_BROKER: kafka:9092
       CLICKHOUSE_URL: http://localhost:28123
       # This job provides Kafka, so a skipped producer test here is a real silent skip and must fail.
       REQUIRE_KAFKA: "1"

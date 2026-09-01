@@ -4,6 +4,7 @@ import { v7 } from "uuid"
 import { afterAll, describe, expect, it } from "vitest"
 import { clickhouse, observabilityConfigured } from "./client"
 import {
+  clickhouseKafkaBrokers,
   usageBackupManifestDdl,
   usageEventDeadLetterDdl,
   usageEventDeadLetterViewDdl,
@@ -29,6 +30,17 @@ if (!reachable && process.env.CI !== undefined) {
 }
 
 describe("the raw usage-event schema", () => {
+  it("lets a containerized ClickHouse use its own broker address", () => {
+    const previous = process.env.CLICKHOUSE_KAFKA_BROKER
+    process.env.CLICKHOUSE_KAFKA_BROKER = "kafka:9092"
+    try {
+      expect(clickhouseKafkaBrokers()).toBe("kafka:9092")
+    } finally {
+      if (previous === undefined) delete process.env.CLICKHOUSE_KAFKA_BROKER
+      else process.env.CLICKHOUSE_KAFKA_BROKER = previous
+    }
+  })
+
   it("keeps the boot schema identical to the schema installed on a fresh OVH host", () => {
     const path = join(import.meta.dirname, "../../../../ovh/clickhouse-init/02-usage-events.sql")
     const file = readFileSync(path, "utf8")
