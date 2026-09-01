@@ -42,6 +42,7 @@ therefore requires `--yes` for destructive operations.
 ```text
 sprout auth login|logout|status
 sprout org list|use
+sprout region list
 sprout project list|get|create|update|delete
 sprout env list|set|unset
 sprout service list|create|get|delete
@@ -52,6 +53,21 @@ sprout android setup|status|verify
 sprout api <method> <path>
 sprout template resolve|apply|verify
 ```
+
+Creating a project requires an active region. Discover the values from the authenticated control
+plane instead of hard-coding one:
+
+```shell
+sprout region list
+sprout project create --name my-site --region us-east-1 --blank
+```
+
+`project create` leaves repository visibility, root directory, and Dockerfile path out of the
+request unless you specify them. That preserves the signed App Store listing or server defaults.
+Use `--store <listing-id>` to install a listing, optionally with `--owner`, `--repository-name`,
+`--private`/`--public`, and `--template-input-file <json-or->`. Template inputs are accepted only
+for signed App Store listings; `-` reads the JSON array from stdin without putting secret values in
+the process arguments.
 
 `sprout api` accepts only a relative path beginning with `/`; absolute and scheme-relative URLs are
 rejected before the stored bearer credential is read. This prevents an arbitrary host from being

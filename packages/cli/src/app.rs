@@ -330,18 +330,31 @@ fn destructive_prompt(command: &Command) -> String {
 }
 
 fn read_stdin_value(command: &Command) -> Result<Option<String>> {
-    if matches!(
+    let trim_trailing_newline = matches!(
         command,
         Command::Env(EnvArgs {
             command: EnvCommand::Set { stdin: true, .. }
         })
-    ) {
+    );
+    let reads_stdin = trim_trailing_newline
+        || matches!(
+            command,
+            Command::Project(ProjectArgs {
+                command: ProjectCommand::Create(ProjectCreateArgs {
+                    template_input_file: Some(path),
+                    ..
+                })
+            }) if path.as_os_str() == "-"
+        );
+    if reads_stdin {
         let mut value = String::new();
         std::io::stdin()
             .read_to_string(&mut value)
             .map_err(|error| CliError::Configuration(error.to_string()))?;
-        while value.ends_with(['\n', '\r']) {
-            value.pop();
+        if trim_trailing_newline {
+            while value.ends_with(['\n', '\r']) {
+                value.pop();
+            }
         }
         return Ok(Some(value));
     }

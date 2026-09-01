@@ -60,6 +60,9 @@ pub fn command_name(command: &Command) -> &'static str {
         Command::Org(OrgArgs {
             command: OrgCommand::Use { .. },
         }) => "org.use",
+        Command::Region(RegionArgs {
+            command: RegionCommand::List,
+        }) => "region.list",
         Command::Project(ProjectArgs {
             command: ProjectCommand::List { .. },
         }) => "project.list",
@@ -148,6 +151,9 @@ pub fn plan(
         Command::Org(OrgArgs {
             command: OrgCommand::List,
         }) => api(Method::Get, "/v1/orgs", None),
+        Command::Region(RegionArgs {
+            command: RegionCommand::List,
+        }) => api(Method::Get, "/v1/regions", None),
         Command::Project(ProjectArgs {
             command:
                 ProjectCommand::List {
@@ -177,37 +183,124 @@ pub fn plan(
         Command::Project(ProjectArgs {
             command: ProjectCommand::Create(args),
         }) => {
-            let source = if let Some(id) = &args.source.store {
-                serde_json::json!({"type": "store", "storeListingId": id})
-            } else if let Some(id) = &args.source.repository_id {
-                serde_json::json!({"type": "repository", "repositoryId": id})
-            } else if let Some(id) = &args.source.github_repo_id {
-                serde_json::json!({"type": "repository", "githubRepoId": id})
+            let visibility = if args.source.private {
+                Some(true)
+            } else if args.source.public {
+                Some(false)
             } else {
-                let mut source =
-                    serde_json::json!({"type": "blank", "private": args.source.private});
+                None
+            };
+            let mut source = if let Some(id) = &args.source.store {
+                let mut source = serde_json::json!({"type": "store", "storeListingId": id});
                 insert_option(&mut source, "ownerLogin", args.source.owner.clone());
                 insert_option(
                     &mut source,
                     "repositoryName",
                     args.source.repository_name.clone(),
                 );
+                insert_option(&mut source, "private", visibility);
+                source
+            } else if let Some(id) = &args.source.repository_id {
+                serde_json::json!({"type": "repository", "repositoryId": id})
+            } else if let Some(id) = &args.source.github_repo_id {
+                serde_json::json!({"type": "repository", "githubRepoId": id})
+            } else {
+                let mut source = serde_json::json!({"type": "blank"});
+                insert_option(&mut source, "ownerLogin", args.source.owner.clone());
+                insert_option(
+                    &mut source,
+                    "repositoryName",
+                    args.source.repository_name.clone(),
+                );
+                insert_option(&mut source, "private", visibility);
+                insert_option(
+                    &mut source,
+                    "templateOwner",
+                    args.source.template_owner.clone(),
+                );
+                insert_option(
+                    &mut source,
+                    "templateRepo",
+                    args.source.template_repo.clone(),
+                );
                 source
             };
+            insert_option(
+                &mut source,
+                "upstreamFullName",
+                args.source.upstream.clone(),
+            );
             let mut body = serde_json::json!({
                 "name": args.name,
+                "region": args.region,
                 "kind": enum_name(args.kind),
-                "rootDir": args.root_dir,
-                "dockerfilePath": args.dockerfile_path,
                 "source": source,
             });
+            insert_option(&mut body, "description", args.description.clone());
             insert_option(&mut body, "slug", args.slug.clone());
+            insert_option(&mut body, "rootDir", args.root_dir.clone());
+            insert_option(&mut body, "dockerfilePath", args.dockerfile_path.clone());
             insert_option(
                 &mut body,
                 "productionBranch",
                 args.production_branch.clone(),
             );
+            insert_option(
+                &mut body,
+                "agentCredentialId",
+                args.agent_credential.clone(),
+            );
+            if args.auto_update {
+                body["autoUpdateEnabled"] = Value::Bool(true);
+            } else if args.no_auto_update {
+                body["autoUpdateEnabled"] = Value::Bool(false);
+            }
+            insert_option(
+                &mut body,
+                "autoUpdateCadence",
+                args.auto_update_cadence.map(enum_name),
+            );
+            insert_option(
+                &mut body,
+                "autoUpdateMode",
+                args.auto_update_mode.map(enum_name),
+            );
+            if args.sync_upstream_now {
+                body["syncUpstreamNow"] = Value::Bool(true);
+            }
+            insert_option(&mut body, "scaleMode", args.scale.map(enum_name));
+            insert_option(&mut body, "idempotencyKey", args.idempotency_key.clone());
+            if args.group {
+                body["isGroup"] = Value::Bool(true);
+            }
             insert_option(&mut body, "parentProjectId", args.parent_project.clone());
+            if let Some(path) = &args.template_input_file {
+                let input = if path.as_os_str() == "-" {
+                    stdin_value.clone().ok_or_else(|| {
+                        CliError::InvalidInput(
+                            "--template-input-file - did not receive JSON on stdin".into(),
+                        )
+                    })?
+                } else {
+                    // The file contents can contain customer secrets. Never include them in an
+                    // error, human output, or the request URL.
+                    std::fs::read_to_string(path).map_err(|error| {
+                        CliError::Configuration(format!(
+                            "could not read template input file {}: {error}",
+                            path.display()
+                        ))
+                    })?
+                };
+                let inputs: Value = serde_json::from_str(&input).map_err(|error| {
+                    CliError::InvalidInput(format!("template input file is not JSON: {error}"))
+                })?;
+                if !inputs.is_array() {
+                    return Err(CliError::InvalidInput(
+                        "template input file must contain a JSON array".into(),
+                    ));
+                }
+                body["templateInputs"] = inputs;
+            }
             api(Method::Post, org_path(org, "/projects")?, Some(body))
         }
         Command::Project(ProjectArgs {
@@ -215,6 +308,12 @@ pub fn plan(
         }) => {
             let mut body = serde_json::json!({});
             insert_option(&mut body, "name", args.name.clone());
+            if args.clear_description {
+                body["description"] = Value::Null;
+            } else {
+                insert_option(&mut body, "description", args.description.clone());
+            }
+            insert_option(&mut body, "region", args.region.clone());
             insert_option(&mut body, "slug", args.slug.clone());
             insert_option(&mut body, "rootDir", args.root_dir.clone());
             insert_option(&mut body, "dockerfilePath", args.dockerfile_path.clone());
@@ -224,10 +323,48 @@ pub fn plan(
                 args.production_branch.clone(),
             );
             insert_option(&mut body, "scaleMode", args.scale.map(enum_name));
+            if args.no_agent_credential {
+                body["agentCredentialId"] = Value::Null;
+            } else {
+                insert_option(
+                    &mut body,
+                    "agentCredentialId",
+                    args.agent_credential.clone(),
+                );
+            }
+            if args.auto_update {
+                body["autoUpdateEnabled"] = Value::Bool(true);
+            } else if args.no_auto_update {
+                body["autoUpdateEnabled"] = Value::Bool(false);
+            }
+            insert_option(
+                &mut body,
+                "autoUpdateCadence",
+                args.auto_update_cadence.map(enum_name),
+            );
+            insert_option(
+                &mut body,
+                "autoUpdateMode",
+                args.auto_update_mode.map(enum_name),
+            );
             if args.no_parent {
                 body["parentProjectId"] = Value::Null;
             } else {
                 insert_option(&mut body, "parentProjectId", args.parent_project.clone());
+            }
+            if args.group {
+                body["isGroup"] = Value::Bool(true);
+            } else if args.no_group {
+                body["isGroup"] = Value::Bool(false);
+            }
+            if args.no_primary_child {
+                body["primaryChildProjectId"] = Value::Null;
+            } else {
+                insert_option(
+                    &mut body,
+                    "primaryChildProjectId",
+                    args.primary_child.clone(),
+                );
             }
             api(
                 Method::Patch,
@@ -447,6 +584,14 @@ fn enum_name(value: impl std::fmt::Debug) -> String {
     format!("{value:?}")
         .to_ascii_lowercase()
         .replace("objectstorage", "object_storage")
+        .replace("automerge", "auto_merge")
+        .replace("oneweek", "one_week")
+        .replace("onemonth", "one_month")
+        .replace("threemonths", "three_months")
+        .replace("sixmonths", "six_months")
+        .replace("ninemonths", "nine_months")
+        .replace("oneyear", "one_year")
+        .replace("twoyears", "two_years")
 }
 
 #[cfg(test)]
@@ -483,6 +628,8 @@ mod tests {
             "create",
             "--name",
             "Blog",
+            "--region",
+            "us-east-1",
             "--slug",
             "blog",
             "--store",
@@ -497,13 +644,105 @@ mod tests {
             request.body.unwrap(),
             serde_json::json!({
                 "name": "Blog",
+                "region": "us-east-1",
                 "slug": "blog",
                 "kind": "site",
-                "rootDir": ".",
-                "dockerfilePath": "Dockerfile",
                 "source": {"type": "store", "storeListingId": "01a-listing"}
             })
         );
+    }
+
+    #[test]
+    fn blank_projects_preserve_server_private_and_build_defaults() {
+        let cli = Cli::parse_from([
+            "sprout",
+            "--org",
+            "acme",
+            "project",
+            "create",
+            "--name",
+            "Worker",
+            "--region",
+            "us-east-1",
+            "--blank",
+        ]);
+        let body = plan(&cli.command, cli.org.as_deref(), None)
+            .unwrap()
+            .unwrap()
+            .body
+            .unwrap();
+        assert_eq!(body["region"], "us-east-1");
+        assert!(body["source"].get("private").is_none());
+        assert!(body.get("rootDir").is_none());
+        assert!(body.get("dockerfilePath").is_none());
+    }
+
+    #[test]
+    fn region_list_uses_the_active_region_endpoint() {
+        let cli = Cli::parse_from(["sprout", "region", "list"]);
+        assert_eq!(
+            plan(&cli.command, None, None).unwrap().unwrap(),
+            ApiRequest {
+                method: Method::Get,
+                path: "/v1/regions".into(),
+                body: None,
+            }
+        );
+    }
+
+    #[test]
+    fn project_create_serializes_current_update_and_template_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let inputs = directory.path().join("inputs.json");
+        std::fs::write(
+            &inputs,
+            r#"[{"key":"admin_password","value":"redaction-canary","secret":true},{"key":"port","value":3000,"secret":false}]"#,
+        )
+        .unwrap();
+        let cli = Cli::parse_from([
+            "sprout",
+            "--org",
+            "acme",
+            "project",
+            "create",
+            "--name",
+            "App",
+            "--description",
+            "Useful app",
+            "--region",
+            "us-east-1",
+            "--store",
+            "01a-listing",
+            "--owner",
+            "MySproutOS",
+            "--repository-name",
+            "app",
+            "--public",
+            "--auto-update",
+            "--auto-update-cadence",
+            "one_month",
+            "--auto-update-mode",
+            "auto_merge",
+            "--sync-upstream-now",
+            "--scale",
+            "warm",
+            "--idempotency-key",
+            "acceptance-1",
+            "--template-input-file",
+            inputs.to_str().unwrap(),
+        ]);
+        let request = plan(&cli.command, cli.org.as_deref(), None)
+            .unwrap()
+            .unwrap();
+        assert!(!request.path.contains("redaction-canary"));
+        let body = request.body.unwrap();
+        assert_eq!(body["region"], "us-east-1");
+        assert_eq!(body["source"]["private"], false);
+        assert_eq!(body["autoUpdateCadence"], "one_month");
+        assert_eq!(body["autoUpdateMode"], "auto_merge");
+        assert_eq!(body["syncUpstreamNow"], true);
+        assert_eq!(body["templateInputs"][0]["secret"], true);
+        assert_eq!(body["templateInputs"][1]["value"], 3000);
     }
 
     #[test]

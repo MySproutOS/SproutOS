@@ -319,6 +319,26 @@ Use \`SPROUTOS_TOKEN\` only for a trusted headless environment. Human login uses
 operating-system credential store. Commands provide stable \`--json\` output for agents and scripts;
 destructive commands require confirmation or \`--yes\`.
 
+Creating any project requires a currently available region. Discover it from the active control
+plane, then pass the exact code; do not infer one from an old example:
+
+\`\`\`shell
+sprout region list
+sprout project create --name my-site --region us-east-1 --blank
+\`\`\`
+
+Leave \`--root-dir\`, \`--dockerfile-path\`, visibility, and destination fields out unless the user
+asked to override them. Omitting them preserves the server or signed App Store listing defaults.
+For a store project use \`--store <listing-id>\`; declared setup values belong in a JSON array passed
+with \`--template-input-file\`. Use \`--template-input-file -\` and stdin for secrets so they do not
+enter shell history or the process list. Store inputs cannot replace the signed template structure.
+
+For Android, upload exactly one raw unsigned APK with \`--preset android --version-code <integer>\`.
+The protected signer owns the key. Never commit a keystore, upload a signed APK or AAB, change the
+application id after release, or call a shell-only APK install proof complete: acceptance must cover
+the visible authenticated catalogue, listing, install, launch, and higher-version in-place update
+flow through Mobile MCP.
+
 ## Deployment templates are catalogue-owned
 
 App Store eligibility and deployment behavior come only from the signed

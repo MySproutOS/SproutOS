@@ -45,6 +45,7 @@ pub struct Cli {
 pub enum Command {
     Auth(AuthArgs),
     Org(OrgArgs),
+    Region(RegionArgs),
     Project(ProjectArgs),
     Env(EnvArgs),
     Service(ServiceArgs),
@@ -91,6 +92,18 @@ pub enum OrgCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct RegionArgs {
+    #[command(subcommand)]
+    pub command: RegionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RegionCommand {
+    /// List regions currently accepting new projects.
+    List,
+}
+
+#[derive(Debug, Args)]
 pub struct ProjectArgs {
     #[command(subcommand)]
     pub command: ProjectCommand,
@@ -121,17 +134,46 @@ pub struct ProjectCreateArgs {
     #[arg(long)]
     pub name: String,
     #[arg(long)]
+    pub description: Option<String>,
+    /// Active workload region from `sprout region list`.
+    #[arg(long)]
+    pub region: String,
+    #[arg(long)]
     pub slug: Option<String>,
     #[arg(long, value_enum, default_value_t = ProjectKind::Site)]
     pub kind: ProjectKind,
-    #[arg(long, default_value = ".")]
-    pub root_dir: String,
-    #[arg(long, default_value = "Dockerfile")]
-    pub dockerfile_path: String,
+    /// Override the source or App Store listing root directory.
+    #[arg(long)]
+    pub root_dir: Option<String>,
+    /// Override the source or App Store listing Dockerfile path.
+    #[arg(long)]
+    pub dockerfile_path: Option<String>,
     #[arg(long)]
     pub production_branch: Option<String>,
     #[arg(long)]
+    pub agent_credential: Option<String>,
+    #[arg(long, conflicts_with = "no_auto_update")]
+    pub auto_update: bool,
+    #[arg(long, conflicts_with = "auto_update")]
+    pub no_auto_update: bool,
+    #[arg(long, value_enum)]
+    pub auto_update_cadence: Option<AutoUpdateCadence>,
+    #[arg(long, value_enum)]
+    pub auto_update_mode: Option<AutoUpdateMode>,
+    /// Queue the first PR-gated upstream comparison immediately.
+    #[arg(long)]
+    pub sync_upstream_now: bool,
+    #[arg(long, value_enum)]
+    pub scale: Option<ScaleMode>,
+    #[arg(long)]
+    pub idempotency_key: Option<String>,
+    #[arg(long)]
+    pub group: bool,
+    #[arg(long)]
     pub parent_project: Option<String>,
+    /// JSON array of signed-template inputs. Use `-` to read from stdin.
+    #[arg(long, requires = "store")]
+    pub template_input_file: Option<PathBuf>,
     #[command(flatten)]
     pub source: ProjectSourceArgs,
 }
@@ -155,24 +197,23 @@ pub struct ProjectSourceArgs {
         required_unless_present_any = ["store", "repository_id", "github_repo_id"]
     )]
     pub blank: bool,
-    #[arg(
-        long,
-        requires = "blank",
-        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
-    )]
+    /// Destination owner for a blank repository or App Store fork.
+    #[arg(long)]
     pub owner: Option<String>,
-    #[arg(
-        long,
-        requires = "blank",
-        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
-    )]
+    /// Destination name for a blank repository or App Store fork.
+    #[arg(long)]
     pub repository_name: Option<String>,
-    #[arg(
-        long,
-        requires = "blank",
-        conflicts_with_all = ["store", "repository_id", "github_repo_id"]
-    )]
+    #[arg(long, conflicts_with = "public")]
     pub private: bool,
+    #[arg(long, conflicts_with = "private")]
+    pub public: bool,
+    #[arg(long, requires_all = ["blank", "template_repo"])]
+    pub template_owner: Option<String>,
+    #[arg(long, requires_all = ["blank", "template_owner"])]
+    pub template_repo: Option<String>,
+    /// Upstream owner/repository for an existing repository that GitHub cannot identify as a fork.
+    #[arg(long, conflicts_with_all = ["blank", "store"])]
+    pub upstream: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -186,6 +227,12 @@ pub struct ProjectUpdateArgs {
     pub project: String,
     #[arg(long)]
     pub name: Option<String>,
+    #[arg(long, conflicts_with = "clear_description")]
+    pub description: Option<String>,
+    #[arg(long, conflicts_with = "description")]
+    pub clear_description: bool,
+    #[arg(long)]
+    pub region: Option<String>,
     #[arg(long)]
     pub slug: Option<String>,
     #[arg(long)]
@@ -194,18 +241,57 @@ pub struct ProjectUpdateArgs {
     pub dockerfile_path: Option<String>,
     #[arg(long)]
     pub production_branch: Option<String>,
+    #[arg(long, conflicts_with = "no_agent_credential")]
+    pub agent_credential: Option<String>,
+    #[arg(long, conflicts_with = "agent_credential")]
+    pub no_agent_credential: bool,
+    #[arg(long, conflicts_with = "no_auto_update")]
+    pub auto_update: bool,
+    #[arg(long, conflicts_with = "auto_update")]
+    pub no_auto_update: bool,
+    #[arg(long, value_enum)]
+    pub auto_update_cadence: Option<AutoUpdateCadence>,
+    #[arg(long, value_enum)]
+    pub auto_update_mode: Option<AutoUpdateMode>,
     #[arg(long, value_enum)]
     pub scale: Option<ScaleMode>,
     #[arg(long)]
     pub parent_project: Option<String>,
     #[arg(long, conflicts_with = "parent_project")]
     pub no_parent: bool,
+    #[arg(long, conflicts_with = "no_group")]
+    pub group: bool,
+    #[arg(long, conflicts_with = "group")]
+    pub no_group: bool,
+    #[arg(long, conflicts_with = "no_primary_child")]
+    pub primary_child: Option<String>,
+    #[arg(long, conflicts_with = "primary_child")]
+    pub no_primary_child: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum ScaleMode {
     Cold,
     Warm,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum AutoUpdateMode {
+    Suggest,
+    AutoMerge,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum AutoUpdateCadence {
+    OneWeek,
+    OneMonth,
+    ThreeMonths,
+    SixMonths,
+    NineMonths,
+    OneYear,
+    TwoYears,
 }
 
 #[derive(Debug, Args)]
@@ -492,16 +578,54 @@ pub fn validate(cli: &Cli) -> Result<()> {
         ));
     }
     if let Command::Project(ProjectArgs {
+        command: ProjectCommand::Create(args),
+    }) = &cli.command
+    {
+        let store_or_blank = args.source.store.is_some() || args.source.blank;
+        if !store_or_blank
+            && (args.source.owner.is_some()
+                || args.source.repository_name.is_some()
+                || args.source.private
+                || args.source.public)
+        {
+            return Err(CliError::InvalidInput(
+                "repository destination and visibility options are accepted only with --blank or --store"
+                    .into(),
+            ));
+        }
+        if args.source.upstream.is_some()
+            && args.source.repository_id.is_none()
+            && args.source.github_repo_id.is_none()
+        {
+            return Err(CliError::InvalidInput(
+                "--upstream is accepted only with --repository-id or --github-repo-id".into(),
+            ));
+        }
+    }
+    if let Command::Project(ProjectArgs {
         command: ProjectCommand::Update(args),
     }) = &cli.command
         && args.name.is_none()
+        && args.description.is_none()
+        && !args.clear_description
+        && args.region.is_none()
         && args.slug.is_none()
         && args.root_dir.is_none()
         && args.dockerfile_path.is_none()
         && args.production_branch.is_none()
+        && args.agent_credential.is_none()
+        && !args.no_agent_credential
+        && !args.auto_update
+        && !args.no_auto_update
+        && args.auto_update_cadence.is_none()
+        && args.auto_update_mode.is_none()
         && args.scale.is_none()
         && args.parent_project.is_none()
         && !args.no_parent
+        && !args.group
+        && !args.no_group
+        && args.primary_child.is_none()
+        && !args.no_primary_child
     {
         return Err(CliError::InvalidInput(
             "project update needs at least one changed field".into(),
@@ -633,6 +757,7 @@ mod tests {
         for command in [
             "auth",
             "org",
+            "region",
             "project",
             "env",
             "service",
@@ -663,9 +788,19 @@ mod tests {
             &["sprout", "auth", "status"],
             &["sprout", "org", "list"],
             &["sprout", "org", "use", "example"],
+            &["sprout", "region", "list"],
             &["sprout", "project", "list"],
             &["sprout", "project", "get", "p"],
-            &["sprout", "project", "create", "--name", "n", "--blank"],
+            &[
+                "sprout",
+                "project",
+                "create",
+                "--name",
+                "n",
+                "--region",
+                "us-east-1",
+                "--blank",
+            ],
             &["sprout", "project", "update", "p", "--name", "n"],
             &["sprout", "project", "delete", "p"],
             &["sprout", "env", "list", "p"],
@@ -726,6 +861,8 @@ mod tests {
             "create",
             "--name",
             "n",
+            "--region",
+            "us-east-1",
             "--blank",
             "--owner",
             "MySproutOS",
@@ -740,19 +877,38 @@ mod tests {
 
     #[test]
     fn project_source_still_requires_exactly_one_source() {
-        assert!(Cli::try_parse_from(["sprout", "project", "create", "--name", "n"]).is_err());
         assert!(
             Cli::try_parse_from([
-                "sprout", "project", "create", "--name", "n", "--blank", "--store", "listing",
+                "sprout",
+                "project",
+                "create",
+                "--name",
+                "n",
+                "--region",
+                "us-east-1",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "sprout",
+                "project",
+                "create",
+                "--name",
+                "n",
+                "--region",
+                "us-east-1",
+                "--blank",
+                "--store",
+                "listing",
             ])
             .is_err()
         );
     }
 
     #[test]
-    fn blank_repository_modifiers_conflict_with_every_nonblank_source() {
+    fn repository_destination_modifiers_are_allowed_only_for_blank_or_store_sources() {
         let sources: &[&[&str]] = &[
-            &["--store", "listing"],
             &["--repository-id", "repository"],
             &["--github-repo-id", "123"],
         ];
@@ -765,17 +921,60 @@ mod tests {
         for source in sources {
             for modifier in modifiers {
                 let args = [
-                    &["sprout", "project", "create", "--name", "n"][..],
+                    &[
+                        "sprout",
+                        "project",
+                        "create",
+                        "--name",
+                        "n",
+                        "--region",
+                        "us-east-1",
+                    ][..],
                     *source,
                     *modifier,
                 ]
                 .concat();
-                assert!(
-                    Cli::try_parse_from(&args).is_err(),
-                    "accepted source {source:?} with blank modifier {modifier:?}",
-                );
+                let parsed = Cli::try_parse_from(&args).unwrap();
+                assert!(validate(&parsed).is_err());
             }
         }
+
+        let store = Cli::parse_from([
+            "sprout",
+            "project",
+            "create",
+            "--name",
+            "n",
+            "--region",
+            "us-east-1",
+            "--store",
+            "listing",
+            "--owner",
+            "MySproutOS",
+            "--repository-name",
+            "example",
+            "--private",
+        ]);
+        validate(&store).unwrap();
+    }
+
+    #[test]
+    fn project_privacy_flags_are_mutually_exclusive() {
+        assert!(
+            Cli::try_parse_from([
+                "sprout",
+                "project",
+                "create",
+                "--name",
+                "n",
+                "--region",
+                "us-east-1",
+                "--blank",
+                "--private",
+                "--public",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
