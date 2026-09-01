@@ -85,9 +85,10 @@ load neither. Install only `APK_SIGNER_TOKEN` in the signer service environment.
 `APK_SIGNER_OPERATOR_TOKEN` to a bounded human operator command; do not persist it in the service
 unit, shell history, CI, or the signer's runtime environment.
 
-`ANDROID_DEVELOPER_ID_STATUS_API_KEY` is independent. It is uploaded through the normal out-of-state
-secret script to `/sproutos/android-worker` only when that Google integration is ready, and reaches
-only the worker when
+`ANDROID_DEVELOPER_ID_STATUS_API_KEY` is independent. Upload only it from the out-of-state
+secret source with `ANDROID_WORKER_ONLY=1 bin/put-app-secrets.sh`; the strict mode refuses a missing
+value and does not refresh unrelated application or custody parameters. It is stored under
+`/sproutos/android-worker` only when that Google integration is ready, and reaches only the worker when
 `android_developer_registration_delivery_enabled=true` is explicitly planned. Its default is
 `false`; neither its absence nor its rollout can block delivery of the two credentials #192 needs.
 
