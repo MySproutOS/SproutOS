@@ -13,6 +13,7 @@ TOFU_BIN=${TOFU_BIN:-tofu}
 AWS_REGION=${AWS_REGION:-us-east-1}
 NAME_PREFIX=${NAME_PREFIX:-sproutos}
 PARAMETER_PATH="/${NAME_PREFIX}/android-custody"
+RELEASE_TASK_DEFINITION_FILE=${RELEASE_TASK_DEFINITION_FILE:-"$ROOT/deploy/ecs/web-task-definition.json"}
 
 if [ "$#" -lt 1 ]; then
   echo "usage: $0 PLAN_FILE [additional tofu plan arguments...]" >&2
@@ -63,12 +64,18 @@ done
   -var=android_developer_registration_delivery_enabled=false \
   -out="$PLAN_FILE"
 
+if [ ! -f "$RELEASE_TASK_DEFINITION_FILE" ]; then
+  echo "Android custody delivery refused: release task definition is missing: $RELEASE_TASK_DEFINITION_FILE" >&2
+  exit 1
+fi
+
 plan_json=$(mktemp)
 chmod 600 "$plan_json"
 trap 'rm -f "$plan_json"' EXIT
 "$TOFU_BIN" -chdir="$ROOT/tofu" show -json "$PLAN_FILE" >"$plan_json"
 
-PLAN_JSON="$plan_json" PARAMETER_PATH="$PARAMETER_PATH" AWS_REGION="$AWS_REGION" \
+PLAN_JSON="$plan_json" RELEASE_TASK_DEFINITION_FILE="$RELEASE_TASK_DEFINITION_FILE" \
+  PARAMETER_PATH="$PARAMETER_PATH" AWS_REGION="$AWS_REGION" \
   AWS_ACCOUNT_ID="$account_id" python3 <<'PYTHON'
 import json
 import fnmatch
@@ -78,16 +85,10 @@ import sys
 with open(os.environ["PLAN_JSON"], encoding="utf-8") as source:
     plan = json.load(source)
 
-task = next(
-    (
-        change["change"]["after"]
-        for change in plan.get("resource_changes", [])
-        if change.get("address") == "aws_ecs_task_definition.web"
-    ),
-    None,
-)
-if not task or not task.get("container_definitions"):
-    sys.exit("Android custody delivery refused: saved plan has no web task definition.")
+with open(os.environ["RELEASE_TASK_DEFINITION_FILE"], encoding="utf-8") as source:
+    task = json.load(source)
+if not task.get("containerDefinitions"):
+    sys.exit("Android custody delivery refused: release task definition has no containers.")
 
 execution = next(
     (
@@ -102,7 +103,7 @@ if not execution or not execution.get("policy"):
 
 containers = {
     container["name"]: container
-    for container in json.loads(task["container_definitions"])
+    for container in task["containerDefinitions"]
 }
 expected = {
     "APK_SIGNER_TOKEN": "api",

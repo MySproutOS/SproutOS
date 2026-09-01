@@ -392,6 +392,14 @@
         {
           "name": "STRIPE_WEBHOOK_SECRET",
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/STRIPE_WEBHOOK_SECRET"
+        },
+        {
+          "name": "APK_SIGNER_OPERATOR_TOKEN",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN"
+        },
+        {
+          "name": "APK_SIGNER_TOKEN",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/android-custody/APK_SIGNER_TOKEN"
         }
       ],
       "dockerSecurityOptions": ["no-new-privileges"],
