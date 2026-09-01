@@ -185,6 +185,39 @@ expected_ordinary_put=$'/sproutos/android-worker/ANDROID_DEVELOPER_ID_STATUS_API
   exit 1
 }
 
+# A worker-only delivery must require and write exactly the independent Status API key. It must not
+# refresh an application secret merely because the same local source contains one.
+: >"$AWS_PUT_CALLS"
+cat >"$WORK_DIR/worker-missing.env" <<'ENV'
+GITHUB_OAUTH_CLIENT_ID=unrelated
+ENV
+if ANDROID_WORKER_ONLY=1 "$ROOT/bin/put-app-secrets.sh" \
+  "$WORK_DIR/worker-missing.env" >/dev/null 2>&1; then
+  echo "delivery test failed: worker-only upload accepted a missing Status API key" >&2
+  exit 1
+fi
+[ ! -s "$AWS_PUT_CALLS" ] || {
+  echo "delivery test failed: worker-only missing-key refusal wrote a parameter" >&2
+  exit 1
+}
+
+cat >"$WORK_DIR/worker-only.env" <<'ENV'
+ANDROID_DEVELOPER_ID_STATUS_API_KEY=worker-only
+GITHUB_OAUTH_CLIENT_ID=must-not-be-copied
+APK_SIGNER_TOKEN=must-not-be-copied
+ENV
+ANDROID_WORKER_ONLY=1 "$ROOT/bin/put-app-secrets.sh" "$WORK_DIR/worker-only.env" >/dev/null
+[ "$(sort "$AWS_PUT_CALLS")" = "$expected_ordinary_put" ] || {
+  echo "delivery test failed: worker-only upload did not write only the isolated Status API key" >&2
+  exit 1
+}
+
+if ANDROID_CUSTODY_ONLY=1 ANDROID_WORKER_ONLY=1 \
+  "$ROOT/bin/put-app-secrets.sh" "$WORK_DIR/worker-only.env" >/dev/null 2>&1; then
+  echo "delivery test failed: mutually exclusive Android upload modes were accepted" >&2
+  exit 1
+fi
+
 missing="/sproutos/android-custody/APK_SIGNER_OPERATOR_TOKEN"
 if MISSING_ANDROID_PARAMETER="$missing" \
   "$ROOT/bin/plan-android-custody-delivery.sh" "$WORK_DIR/missing.plan" >/dev/null 2>&1; then
