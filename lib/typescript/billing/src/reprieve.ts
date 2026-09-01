@@ -36,6 +36,7 @@ export type ReprieveDecision =
       reason: "balance_restored" | "auto_charge_succeeded"
       balance: MicroUsd
     }
+  | { outcome: "deferred"; reason: "auto_charge_pending" }
   | { outcome: "delete"; reason: "still_unpaid" | "auto_charge_failed" | "auto_charge_disabled" }
 
 /**
@@ -66,6 +67,7 @@ export async function decideReprieve(
   organizationId: string,
   settings: AutoChargeSettings,
   autoCharge: AutoCharger,
+  requiredReserve: MicroUsd = 0n,
 ): Promise<ReprieveDecision> {
   /*
     Read first, and read now.
@@ -75,7 +77,7 @@ export async function decideReprieve(
   */
   const balance = await availableBalance(db, organizationId)
 
-  if (balance > 0n) {
+  if (balance > requiredReserve) {
     return { outcome: "reprieved", reason: "balance_restored", balance }
   }
 
@@ -100,9 +102,11 @@ export async function decideReprieve(
   // Re-read rather than assuming the charge landed as credit. The charger reports success when the
   // payment succeeded; what matters here is whether the ledger now shows money.
   const afterCharge = await availableBalance(db, organizationId)
-  if (afterCharge > 0n) {
+  if (afterCharge > requiredReserve) {
     return { outcome: "reprieved", reason: "auto_charge_succeeded", balance: afterCharge }
   }
 
-  return { outcome: "delete", reason: "still_unpaid" }
+  // Stripe confirms an off-session PaymentIntent before its webhook posts the corresponding
+  // double-entry credit. Destruction must wait for that durable ledger write instead of racing it.
+  return { outcome: "deferred", reason: "auto_charge_pending" }
 }

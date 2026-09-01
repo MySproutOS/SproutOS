@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import type { Insertable, Kysely, Selectable, Updateable } from "kysely"
+import { sql, type Insertable, type Kysely, type Selectable, type Updateable } from "kysely"
 import { v7 } from "uuid"
 import type { PartialBy } from "../utils/types"
 
@@ -78,11 +78,13 @@ export function crudProject(db: Kysely<DB>) {
     organizationId: string,
     id: string,
   ): Promise<Selectable<DB["project"]> | undefined> {
-    const now = new Date()
-
     return await db
       .updateTable("project")
-      .set({ deletedAt: now, updatedAt: now, state: "deleting" })
+      .set({
+        deletedAt: sql<Date>`transaction_timestamp()`,
+        updatedAt: sql<Date>`transaction_timestamp()`,
+        state: "deleting",
+      })
       .where("id", "=", id)
       .where("organizationId", "=", organizationId)
       .where("deletedAt", "is", null)

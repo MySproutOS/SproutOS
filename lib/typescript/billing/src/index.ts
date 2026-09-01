@@ -48,6 +48,7 @@ export {
 } from "./topup"
 export {
   NoActivePriceBookError,
+  organizationBurnPerDay,
   rateProjectsForOrganization,
   RETIRED_UNBILLABLE_DIMENSIONS,
   startOfMonth,

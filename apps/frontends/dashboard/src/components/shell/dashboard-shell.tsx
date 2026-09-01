@@ -3,6 +3,7 @@ import { useEffect } from "react"
 import { Sheet, SheetContent, SheetTitle } from "@ui/base/ui/sheet"
 import { SidebarBody, Sidebar } from "@frontends/dashboard/components/shell/sidebar"
 import { SidebarProvider, useSidebar } from "@frontends/dashboard/components/shell/sidebar-context"
+import { RetentionAlert } from "@frontends/dashboard/components/billing/retention-alert"
 
 function MobileSidebar({ orgSlug }: { orgSlug: string }) {
   const { mobileOpen, setMobileOpen } = useSidebar()
@@ -39,6 +40,7 @@ export function DashboardShell({ orgSlug }: { orgSlug: string }) {
         <Sidebar orgSlug={orgSlug} />
         <MobileSidebar orgSlug={orgSlug} />
         <div className="flex min-w-0 flex-1 flex-col">
+          <RetentionAlert orgSlug={orgSlug} />
           <Outlet />
         </div>
       </div>

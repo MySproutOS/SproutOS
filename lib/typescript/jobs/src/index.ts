@@ -94,6 +94,7 @@ export {
   provisionSandbox,
   requestSandboxDestroy,
   requestSandboxStart,
+  OrganizationUsageSuspendedError,
   SandboxDeletingError,
   reapSandboxes,
   reapExpiredDatabaseBranches,

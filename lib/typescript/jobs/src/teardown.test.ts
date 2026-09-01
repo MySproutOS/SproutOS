@@ -46,6 +46,7 @@ const certificateInvalidations: string[] = []
 let certificateVersionPages = 0
 const destroyedServices: string[] = []
 const destroyedSandboxes: string[] = []
+const finalizedMetering: Date[] = []
 
 const lambdaClients = {
   lambda: {
@@ -98,6 +99,10 @@ const lambdaClients = {
     const sandboxId = (job.payload as { sandboxId: string }).sandboxId
     destroyedSandboxes.push(sandboxId)
     await context.db.deleteFrom("sandbox").where("id", "=", sandboxId).execute()
+  },
+  finalizeMetering: ({ cutoff }: { cutoff: Date }) => {
+    finalizedMetering.push(cutoff)
+    return Promise.resolve()
   },
   static: {
     bucket: "tenant-static",
@@ -366,6 +371,8 @@ describe("tearing down a deleted project", () => {
     // certificate material. Waiting for that lease to expire would leave a deleted project live,
     // while the issuer's conditional writes already prevent it from resurrecting this row.
     await handler()(job({ projectId }), context())
+    expect(finalizedMetering).toHaveLength(1)
+    expect(finalizedMetering[0]).toBeInstanceOf(Date)
     expect(certificateCleanup).toContain("DeleteObjectsCommand")
 
     const deployments = await db

@@ -52,9 +52,11 @@ export default function TermsPage() {
           than folded into the price.
         </p>
         <p>
-          <strong className="text-foreground">We stop before you go negative.</strong> When we
-          project that continuing would take your balance past zero, we stop serving your projects.
-          We do not let a balance run negative and then invoice you for it.
+          <strong className="text-foreground">We reserve credit before you go negative.</strong> We
+          protect an estimate of the amount needed to retain your hosted provider data for 48 hours.
+          When your remaining credit reaches that reserve, we suspend active use—including sites and
+          functions, deployments, workflows, agents, sandboxes, and database, cache, search, queue,
+          and object-storage access—so new usage cannot consume the reserve.
         </p>
         <p>
           You may enable automatic top-up and set a ceiling on how much we may charge beyond your
@@ -65,14 +67,25 @@ export default function TermsPage() {
 
       <Section heading="Deletion after non-payment">
         <p>
-          If your credit runs out, your projects stop serving immediately and your data is retained
-          for <strong className="text-foreground">48 hours</strong>. After that it is deleted from
-          every backend and cannot be recovered.
+          When your available credit reaches the protected reserve, active service is suspended and
+          hosted provider data is retained for a minimum of{" "}
+          <strong className="text-foreground">48 hours</strong>. Deletion may begin after the stated
+          deadline; operational delay does not extend the recovery window. Once deletion begins,
+          data may be removed progressively from databases, caches, search, object storage, static
+          hosting, sandboxes, deployments, logs, and other providers and cannot be recovered.
         </p>
         <p>
           Before deleting anything we check your balance again, and if you have enabled automatic
           top-up we attempt that charge first. Adding credit at any point during those 48 hours
-          stops the deletion. We notify you when service stops and again before the deadline.
+          stops the deletion only if the restored balance also covers the newly measured reserve. We
+          notify billing contacts as credit becomes critical, when service stops, during the final
+          24 hours, after a reprieve, and after provider-data deletion completes.
+        </p>
+        <p>
+          Nonpayment cleanup preserves your organization and project configuration, billing and
+          audit evidence, and GitHub repositories. SproutOS does not delete GitHub repositories as
+          part of nonpayment cleanup or account, organization, group, or project deletion. Keeping a
+          repository does not preserve hosted databases or other provider data.
         </p>
       </Section>
 

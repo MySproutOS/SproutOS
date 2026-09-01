@@ -333,6 +333,8 @@ export function provisionProject(db: Kysely<DB>) {
       repositoryId: project.repositoryId,
       kind: "delete",
       state: "queued",
+      deletionReason: "user_requested",
+      serviceCutoffAt: project.deletedAt,
       steps: JSON.stringify(initialSteps("delete")),
     })
 

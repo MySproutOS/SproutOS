@@ -12,7 +12,7 @@ import {
 } from "@lib/billing"
 import { groupedOverhead, rateTimesQuantity } from "@lib/billing/money"
 import { RETIRED_UNBILLABLE_DIMENSIONS, startOfMonth } from "@lib/billing/usage"
-import { crudAuditLog, fetchStatement } from "@lib/dao"
+import { crudAuditLog, fetchCreditRetentionState, fetchStatement } from "@lib/dao"
 import { db } from "@sproutos/db"
 import { sql } from "kysely"
 import { Hono } from "hono"
@@ -77,11 +77,43 @@ const app = new Hono()
       // Both figures come from one read. Calling availableBalance twice returned the same
       // number — it already subtracts holds — so the held figure was always zero.
       const { posted, held, available } = await balances(db, organization.id)
+      const retention = await fetchCreditRetentionState(db).getOne(organization.id, [
+        "reserveMicroUsd",
+        "status",
+        "warningStage",
+        "exhaustedAt",
+        "deleteAfter",
+        "deletionStartedAt",
+        "deletionCompletedAt",
+      ])
+      const reserve = BigInt(retention?.reserveMicroUsd ?? 0)
+      const spendable = available > reserve ? available - reserve : 0n
+      const requiredReload = available > reserve ? 0n : reserve - available + 1n
 
       return c.json({
         balanceMicroUsd: posted.toString(),
         heldMicroUsd: held.toString(),
         availableMicroUsd: available.toString(),
+        retentionReserveMicroUsd: reserve.toString(),
+        spendableAboveReserveMicroUsd: spendable.toString(),
+        requiredReloadMicroUsd: requiredReload.toString(),
+        retentionStatus: (retention?.status ?? "active") as
+          | "active"
+          | "suspended"
+          | "deleting"
+          | "data_deleted",
+        warningStage: (retention?.warningStage ?? "safe") as
+          | "safe"
+          | "warning"
+          | "critical"
+          | "suspended"
+          | "deletion_imminent"
+          | "deleting"
+          | "data_deleted",
+        exhaustedAt: retention?.exhaustedAt?.toISOString() ?? null,
+        deleteAfter: retention?.deleteAfter?.toISOString() ?? null,
+        deletionStartedAt: retention?.deletionStartedAt?.toISOString() ?? null,
+        deletionCompletedAt: retention?.deletionCompletedAt?.toISOString() ?? null,
         currency: "USD",
       })
     },

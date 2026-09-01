@@ -1032,6 +1032,13 @@ resource "aws_iam_policy" "application" {
         Resource = "*"
       },
       {
+        # Transactional retention and billing notices. The identity is domain-scoped and the
+        # application uses SES v2's SendEmail API; no bulk or identity-management permission.
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail"]
+        Resource = aws_sesv2_email_identity.sproutos.arn
+      },
+      {
         # The last write of a static release: one atomic hostname-to-digest pointer at the edge.
         Effect = "Allow"
         Action = [

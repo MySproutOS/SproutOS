@@ -26,6 +26,7 @@
     "@lib/analyzer": "workspace:*",
     "@lib/billing": "workspace:*",
     "@lib/dao": "workspace:*",
+    "@lib/email": "workspace:*",
     "@lib/envelope": "workspace:*",
     "@lib/github": "workspace:*",
     "@lib/lambda": "workspace:*",

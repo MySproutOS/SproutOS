@@ -415,6 +415,18 @@
       "command": ["node", "/opt/sproutos/api/worker.js"],
       "environment": [
         {
+          "name": "EMAIL_TRANSPORT",
+          "value": "sesv2"
+        },
+        {
+          "name": "EMAIL_FROM",
+          "value": "notifications@sproutos.me"
+        },
+        {
+          "name": "DASHBOARD_ORIGIN",
+          "value": "https://sproutos.me"
+        },
+        {
           "name": "DATABASE_POOL_MAX",
           "value": "4"
         },

@@ -2,10 +2,12 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
+  GetAdminUsersResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
   GetV1OrgsByOrgSlugApiKeysResponse,
+  GetV1OrgsByOrgSlugBillingBalanceResponse,
   GetV1OrgsByOrgSlugBillingStatementsByStatementIdResponse,
   GetV1OrgsByOrgSlugBillingStatementsResponse,
   GetV1OrgsByOrgSlugBillingTransactionsResponse,
@@ -50,6 +52,7 @@ import type {
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
+  PostAdminUsersImpersonateResponse,
   PostV1AuthCliTokenResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
@@ -803,6 +806,24 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponseTransfo
   return data
 }
 
+export const getV1OrgsByOrgSlugBillingBalanceResponseTransformer = async (
+  data: any,
+): Promise<GetV1OrgsByOrgSlugBillingBalanceResponse> => {
+  if (data.exhaustedAt) {
+    data.exhaustedAt = new Date(data.exhaustedAt)
+  }
+  if (data.deleteAfter) {
+    data.deleteAfter = new Date(data.deleteAfter)
+  }
+  if (data.deletionStartedAt) {
+    data.deletionStartedAt = new Date(data.deletionStartedAt)
+  }
+  if (data.deletionCompletedAt) {
+    data.deletionCompletedAt = new Date(data.deletionCompletedAt)
+  }
+  return data
+}
+
 export const getV1OrgsByOrgSlugBillingTransactionsResponseTransformer = async (
   data: any,
 ): Promise<GetV1OrgsByOrgSlugBillingTransactionsResponse> => {
@@ -964,5 +985,25 @@ export const getV1UserMeImpersonationResponseTransformer = async (
   if (data.expiresAt) {
     data.expiresAt = new Date(data.expiresAt)
   }
+  return data
+}
+
+export const getAdminUsersResponseTransformer = async (
+  data: any,
+): Promise<GetAdminUsersResponse> => {
+  data.items = data.items.map((item: any) => {
+    if (item.deletedAt) {
+      item.deletedAt = new Date(item.deletedAt)
+    }
+    item.createdAt = new Date(item.createdAt)
+    return item
+  })
+  return data
+}
+
+export const postAdminUsersImpersonateResponseTransformer = async (
+  data: any,
+): Promise<PostAdminUsersImpersonateResponse> => {
+  data.expiresAt = new Date(data.expiresAt)
   return data
 }

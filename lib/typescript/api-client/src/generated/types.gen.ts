@@ -5597,6 +5597,22 @@ export type GetV1OrgsByOrgSlugBillingBalanceResponses = {
     balanceMicroUsd: string
     heldMicroUsd: string
     availableMicroUsd: string
+    retentionReserveMicroUsd: string
+    spendableAboveReserveMicroUsd: string
+    requiredReloadMicroUsd: string
+    retentionStatus: "active" | "suspended" | "deleting" | "data_deleted"
+    warningStage:
+      | "safe"
+      | "warning"
+      | "critical"
+      | "suspended"
+      | "deletion_imminent"
+      | "deleting"
+      | "data_deleted"
+    exhaustedAt: Date | null
+    deleteAfter: Date | null
+    deletionStartedAt: Date | null
+    deletionCompletedAt: Date | null
     currency: string
   }
 }
@@ -7861,3 +7877,73 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type GetAdminUsersData = {
+  body?: never
+  path?: never
+  query?: {
+    q?: string
+    limit?: number
+    cursor?: string
+  }
+  url: "/admin/users"
+}
+
+export type GetAdminUsersResponses = {
+  /**
+   * Users
+   */
+  200: {
+    items: Array<{
+      id: string
+      email: string
+      name: string | null
+      githubLogin: string | null
+      isAdmin: boolean
+      deletedAt: Date | null
+      organizationCount: number
+      createdAt: Date
+    }>
+    nextCursor: string | null
+  }
+}
+
+export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
+
+export type PostAdminUsersImpersonateData = {
+  body?: {
+    userId: string
+    reason: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/users/impersonate"
+}
+
+export type PostAdminUsersImpersonateErrors = {
+  /**
+   * The target cannot be impersonated
+   */
+  400: ErrorResponseT
+  /**
+   * No such user
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminUsersImpersonateError =
+  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
+
+export type PostAdminUsersImpersonateResponses = {
+  /**
+   * The session cookie is now the target user's
+   */
+  200: {
+    userId: string
+    email: string
+    expiresAt: Date
+  }
+}
+
+export type PostAdminUsersImpersonateResponse =
+  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

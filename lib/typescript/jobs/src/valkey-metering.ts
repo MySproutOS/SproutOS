@@ -25,6 +25,8 @@ export type ValkeyMeteringOptions = {
   observedAt?: Date
   backendServiceIds?: string[]
   redis?: Redis
+  /** Deletion-only settlement: sample even inside the normal cadence and close a stale tail. */
+  final?: boolean
 }
 
 /** Sum only keys in the engine-enforced namespace, including full nested-value memory. */
@@ -105,11 +107,13 @@ export async function meterValkeyQueues(
     ])
     .where("backendService.kind", "=", "valkey")
     .where("backendService.deletedAt", "is", null)
-    .where((eb) =>
-      eb.or([
-        eb("valkeyMeteringState.sampledAt", "is", null),
-        eb("valkeyMeteringState.sampledAt", "<=", dueBefore),
-      ]),
+    .$if(options.final !== true, (query) =>
+      query.where((eb) =>
+        eb.or([
+          eb("valkeyMeteringState.sampledAt", "is", null),
+          eb("valkeyMeteringState.sampledAt", "<=", dueBefore),
+        ]),
+      ),
     )
 
   if (options.backendServiceIds !== undefined) {
@@ -140,7 +144,7 @@ export async function meterValkeyQueues(
         memoryBytes: await sampleTenantValkeyMemory(redis, candidate.backendServiceId),
         observedAt,
       }
-      emitted += await persistSample(db, candidate, sample)
+      emitted += await persistSample(db, candidate, sample, options.final === true)
     }
   } finally {
     if (ownsRedis) redis.disconnect()
@@ -152,6 +156,7 @@ async function persistSample(
   db: Kysely<DB>,
   candidate: Candidate,
   sample: ValkeyMemorySample,
+  final: boolean,
 ): Promise<number> {
   return await db.transaction().execute(async (trx) => {
     const previous = await trx
@@ -168,7 +173,7 @@ async function persistSample(
       const elapsedMs = sample.observedAt.getTime() - previous.sampledAt.getTime()
       // A missing observation is lost usage, not permission to extrapolate an arbitrarily long
       // interval. Reset the baseline and resume with the next successfully bracketed sample.
-      if (elapsedMs <= VALKEY_METERING_MAX_GAP_MS) {
+      if (final || elapsedMs <= VALKEY_METERING_MAX_GAP_MS) {
         const quantity = sampledByteSeconds(
           BigInt(previous.memoryBytes),
           sample.memoryBytes,

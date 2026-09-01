@@ -434,6 +434,46 @@ describe.skipIf(!reachable)("metering ingest", () => {
     expect(storedFor(batch.events[0].externalId)).toHaveLength(1)
   })
 
+  it("accepts delayed pre-cutoff usage and excludes impossible post-suspension usage", async () => {
+    const cutoff = new Date()
+    await db
+      .insertInto("creditRetentionState")
+      .values({
+        organizationId,
+        reserveMicroUsd: 1n,
+        status: "suspended",
+        warningStage: "suspended",
+        generation: v7(),
+        exhaustedAt: cutoff,
+        deleteAfter: new Date(cutoff.getTime() + 48 * 60 * 60 * 1000),
+      })
+      .onConflict((conflict) =>
+        conflict.column("organizationId").doUpdateSet({
+          status: "suspended",
+          warningStage: "suspended",
+          exhaustedAt: cutoff,
+        }),
+      )
+      .execute()
+
+    try {
+      const batch = batchOf([
+        { occurredAt: cutoff.getTime() - 1 },
+        { occurredAt: cutoff.getTime() + 1 },
+      ])
+      const response = await post(batch)
+      expect(response.status).toBe(202)
+      expect(response.json.accepted).toBe(1)
+      expect(storedFor(batch.events[0].externalId)).toHaveLength(1)
+      expect(storedFor(batch.events[1].externalId)).toHaveLength(0)
+    } finally {
+      await db
+        .deleteFrom("creditRetentionState")
+        .where("organizationId", "=", organizationId)
+        .execute()
+    }
+  })
+
   it("rejects a malformed event rather than storing a partial one", async () => {
     const batch = batchOf([{}])
     const response = await app.request("/v1/internal/metering/events", {
