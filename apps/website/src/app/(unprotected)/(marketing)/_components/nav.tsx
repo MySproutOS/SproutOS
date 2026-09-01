@@ -23,6 +23,7 @@ import { MenuIcon } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { NAV } from "./nav-items"
+import { StarButton } from "./star-button"
 
 /**
  * The marketing header.
@@ -31,7 +32,7 @@ import { NAV } from "./nav-items"
  * developers side and no useful single destination. The tree comes from `NAV` so the mobile sheet
  * and the footer cannot drift from it.
  */
-export function Nav() {
+export function Nav({ stars }: { stars: number | null }) {
   const [scrolled, setScrolled] = useState(false)
 
   useEffect(() => {
@@ -91,7 +92,9 @@ export function Nav() {
           <NavigationMenuPopup />
         </NavigationMenu>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          <StarButton stars={stars} size="sm" className="hidden sm:inline-flex" />
+          <span aria-hidden="true" className="hidden h-5 w-px bg-border sm:block" />
           <Button
             size="sm"
             variant="ghost"
@@ -99,7 +102,7 @@ export function Nav() {
             render={<Link href="/login">Log In</Link>}
           />
           <Button size="sm" render={<Link href="/login">Sign up</Link>} />
-          <MobileNav />
+          <MobileNav stars={stars} />
         </div>
       </div>
     </header>
@@ -110,7 +113,7 @@ export function Nav() {
  * Below `lg` the dropdown row is hidden, so without this there is no navigation at all on a phone —
  * which is how `/docs`, `/download` and `/legal` were unreachable on mobile even after they existed.
  */
-function MobileNav() {
+function MobileNav({ stars }: { stars: number | null }) {
   const [open, setOpen] = useState(false)
 
   // A link inside the sheet navigates without unmounting it, so every link closes it on the way out.
@@ -157,6 +160,9 @@ function MobileNav() {
             >
               Log In
             </Link>
+            <div className="pt-2">
+              <StarButton stars={stars} size="sm" />
+            </div>
           </nav>
         </SheetBody>
       </SheetContent>

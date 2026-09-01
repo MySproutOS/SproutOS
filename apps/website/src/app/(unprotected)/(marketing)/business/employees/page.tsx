@@ -1,4 +1,4 @@
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import { Reveal, RevealItem } from "@ui/spa-shared/reveal"
 import type { Metadata } from "next"
 import Link from "next/link"
@@ -66,7 +66,7 @@ export default function EmployeesPage() {
               SproutOS is small enough to skip both conversations.
             </p>
             <div className="mt-8">
-              <LoginWithGitHubButton size="xl" />
+              <Button size="xl" render={<Link href="/login">Get started</Link>} />
             </div>
           </Reveal>
         </div>

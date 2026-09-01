@@ -1,3 +1,4 @@
+import Image from "next/image"
 import Link from "next/link"
 import type { ReactNode } from "react"
 
@@ -80,4 +81,41 @@ export function CodeBlock({ language, children }: { language?: string; children:
   )
 }
 
-export const MARKDOC_COMPONENTS = { Heading, DocLink, CodeBlock }
+/**
+ * A figure in a post.
+ *
+ * `width`/`height` are required by the Markdoc tag precisely so `next/image` can reserve the space
+ * before the file arrives — an image that pushes the paragraph you are reading down the screen is
+ * the worst thing a blog post can do.
+ */
+export function PostImage({
+  src,
+  alt,
+  width,
+  height,
+  caption,
+}: {
+  src: string
+  alt: string
+  width: number
+  height: number
+  caption?: string
+}) {
+  return (
+    <figure>
+      <Image
+        src={src}
+        alt={alt}
+        width={width}
+        height={height}
+        className="rounded-xl border rule-soft"
+        sizes="(min-width: 768px) 42rem, 100vw"
+      />
+      {caption === undefined ? null : (
+        <figcaption className="text-sm text-muted-foreground">{caption}</figcaption>
+      )}
+    </figure>
+  )
+}
+
+export const MARKDOC_COMPONENTS = { Heading, DocLink, CodeBlock, PostImage }

@@ -2,7 +2,7 @@ import { fetchStoreListing } from "@lib/dao/storeListing/fetch"
 import { fetchStoreListingScreenshot } from "@lib/dao/storeListingScreenshot/fetch"
 import { fetchStoreListingTag } from "@lib/dao/storeListingTag/fetch"
 import { db } from "@sproutos/db"
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
@@ -99,9 +99,16 @@ export default async function ListingPage({ params }: Params) {
 
             <div className="w-full shrink-0 rounded-2xl border rule-soft bg-card/60 p-5 lg:w-80">
               <p className="eyebrow mb-3">Make it yours</p>
-              <LoginWithGitHubButton className="w-full" next={`/store/${listing.slug}`}>
-                Fork this app
-              </LoginWithGitHubButton>
+              <Button
+                className="w-full"
+                render={
+                  // `next` survives the round trip: `sign-in-form.tsx` reads it from searchParams
+                  // and returns here rather than to the dashboard.
+                  <Link href={`/login?next=${encodeURIComponent(`/store/${listing.slug}`)}`}>
+                    Fork this app
+                  </Link>
+                }
+              />
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground text-pretty">
                 Forking copies {listing.name} into your own GitHub account and deploys it with its
                 own database. Nothing is shared with the original.

@@ -1,4 +1,4 @@
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import { Reveal } from "@ui/spa-shared/reveal"
 import type { Metadata } from "next"
 import Link from "next/link"
@@ -161,7 +161,7 @@ export default function WebsitesPage() {
 
       <section className="border-t rule-soft py-20 sm:py-28">
         <Reveal className="container-page flex justify-center">
-          <LoginWithGitHubButton size="xl" variant="outline" />
+          <Button size="xl" variant="outline" render={<Link href="/login">Get started</Link>} />
         </Reveal>
       </section>
     </>

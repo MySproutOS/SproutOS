@@ -75,3 +75,54 @@ export function GoogleMark({ className }: { className?: string }) {
     </svg>
   )
 }
+
+/**
+ * The Android robot, simplified to a 24px grid.
+ *
+ * Not the Google Play badge: the client is deliberately not on Play — `/download` walks through the
+ * sideload permission instead — so a Play badge would say something untrue. The robot names the
+ * platform, which is what we mean, and Google licenses it under CC BY for exactly that.
+ */
+export function AndroidMark({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className} {...props}>
+      <path
+        d="M7.5 6.5 6 4.2M16.5 6.5 18 4.2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M5.5 10.5a6.5 6.5 0 0 1 13 0v.5h-13Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="9.6" cy="8.4" r="0.85" fill="currentColor" />
+      <circle cx="14.4" cy="8.4" r="0.85" fill="currentColor" />
+      <rect
+        x="5.5"
+        y="12.4"
+        width="13"
+        height="7.2"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  )
+}
+
+/** A five-pointed star, for the repository star count. Stroke-only so it inherits `currentColor`. */
+export function StarMark({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={className} {...props}>
+      <path
+        d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6L8 1.8Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}

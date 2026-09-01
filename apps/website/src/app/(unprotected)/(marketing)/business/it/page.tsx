@@ -1,4 +1,4 @@
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import { Reveal } from "@ui/spa-shared/reveal"
 import type { Metadata } from "next"
 import Link from "next/link"
@@ -119,7 +119,7 @@ export default function ItPage() {
             .
           </p>
           <div className="mt-9">
-            <LoginWithGitHubButton size="xl">Get your team early access</LoginWithGitHubButton>
+            <Button size="xl" render={<Link href="/login">Get your team early access</Link>} />
           </div>
         </Reveal>
       </section>

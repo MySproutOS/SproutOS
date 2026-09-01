@@ -1,9 +1,10 @@
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import Link from "next/link"
+import { StarButton } from "../star-button"
 import { CostReceipt } from "./cost-receipt"
 import { Reveal } from "@ui/spa-shared/reveal"
 
-export function Hero() {
+export function Hero({ stars }: { stars: number | null }) {
   return (
     <section id="top" className="relative overflow-hidden pt-16 pb-20 sm:pt-24 sm:pb-28">
       <div aria-hidden="true" className="soil-grid pointer-events-none absolute inset-0 -z-10" />
@@ -27,18 +28,18 @@ export function Hero() {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <LoginWithGitHubButton size="xl" />
+              <Button size="xl" render={<Link href="/login">Get started</Link>} />
               <Link
                 href="/personalize"
                 className="rounded-md px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
               >
                 See how it works
               </Link>
+              <StarButton stars={stars} />
             </div>
 
             <p className="mt-5 font-mono text-xs text-muted-foreground">
-              Sign in with GitHub · <span className="tnum text-primary">$1</span> minimum · No card
-              to look around
+              <span className="tnum text-primary">$1</span> minimum · No card to look around
             </p>
 
             <p className="mt-3 font-mono text-xs text-muted-foreground">
