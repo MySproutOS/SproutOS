@@ -76,7 +76,7 @@ reject 'aws_iam_role\.(instance|router|acme_worker)' \
 API_PARAMETERS=$(sed -n '/ecs_api_parameter_names = \[/,/^  ]/p' "$ECS_TF")
 WEBSITE_PARAMETERS=$(sed -n '/ecs_website_parameter_names = \[/,/^  ]/p' "$ECS_TF")
 WORKER_PARAMETERS=$(sed -n '/ecs_worker_base_parameter_names = \[/,/^  ]/p' "$ECS_TF")
-ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /p' "$ECS_TF")
+ACME_PARAMETERS=$(sed -n '/ecs_acme_worker_parameter_names = /,/^  ])/p' "$ECS_TF")
 ANDROID_API_PARAMETERS=$(sed -n '/ecs_android_api_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 ANDROID_WORKER_PARAMETERS=$(sed -n '/ecs_android_worker_parameter_names = /,/^  ] : \[\]/p' "$ECS_TF")
 NORMAL_UPLOAD_KEYS=$(sed -n '/^KEYS=(/,/^)/p' "$ROOT/bin/put-app-secrets.sh")
@@ -166,8 +166,12 @@ require 'Resource[[:space:]]*=[[:space:]]*local.ecs_acme_parameter_arns' \
   'the ACME execution role must remain scoped to its separate ordinary-secret list'
 require 'execution_role_arn[[:space:]]*=[[:space:]]*aws_iam_role.acme_execution.arn' "$ECS_TF" \
   'the ACME task must not share the web execution role'
-require 'ecs_acme_worker_parameter_names[[:space:]]*=[[:space:]]*local.ecs_worker_base_parameter_names' "$ECS_TF" \
-  'the ACME task must exclude the independently gated Google credential'
+require 'ecs_acme_worker_parameter_names[[:space:]]*=[[:space:]]*concat\(local.ecs_worker_base_parameter_names' "$ECS_TF" \
+  'the isolated worker must extend only the ordinary worker secret list'
+require '"STRIPE_SECRET_KEY"' <(printf '%s\n' "$ACME_PARAMETERS") \
+  'the isolated nonpayment reaper needs Stripe for its final automatic reload attempt'
+reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ACME_PARAMETERS") \
+  'the isolated worker must still exclude the independently gated Google credential'
 require 'ANDROID_CUSTODY_PARAMETER_PATH' "$ROOT/bin/put-app-secrets.sh" \
   'signer credentials must use their isolated Parameter Store path'
 require '/sproutos/android-custody' "$ROOT/bin/put-app-secrets.sh" \

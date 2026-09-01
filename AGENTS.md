@@ -27,7 +27,7 @@ pnpm run format        # Oxfmt, config at oxfmt.config.mts
 
 # Local services: Postgres 25281, Valkey 41023, LocalStack 4566, Kafka 29092
 docker compose up -d
-bin/bootstrap-localstack.sh                        # create the dev KMS CMK, buckets, SES identity
+bin/bootstrap-localstack.sh                        # create the dev KMS CMK and buckets
 bin/bootstrap-kafka.sh                             # create the runtime-log topic
 
 # Database
@@ -190,9 +190,10 @@ Some load-bearing details those skills assume:
 Copy `.template.env` to `.env`. Local development needs Docker; `DATABASE_URL` points at the
 compose Postgres on **25281**.
 
-LocalStack covers KMS, S3, Secrets Manager, SSM, Kinesis, and **SES v1** on its free Hobby plan —
-which is why the mailer is written against `@aws-sdk/client-ses`, not `client-sesv2`. It reads
-**`LOCALSTACK_AUTH_TOKEN`** and nothing else; a `LOCALSTACK_PAT` variable is silently ignored.
+LocalStack covers KMS, S3, Secrets Manager, SSM, and Kinesis. Local email goes to MailHog over
+SMTP; production email uses `@aws-sdk/client-sesv2` against AWS SES v2. Do not route email through
+LocalStack. LocalStack reads **`LOCALSTACK_AUTH_TOKEN`** and nothing else; a `LOCALSTACK_PAT`
+variable is silently ignored.
 State does not persist across restarts on the free plan, so `bin/bootstrap-localstack.sh` is
 idempotent and cheap to re-run. EKS, ECR, ALB, and CloudFront are **not** available locally at any
 free tier — the deployment layer in `tofu/` is validated with `tofu validate` and `tflint`, not run.

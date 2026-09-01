@@ -74,6 +74,9 @@ export async function requestSandboxStart(
   },
 ): Promise<Selectable<DB["sandbox"]>> {
   return await db.transaction().execute(async (tx) => {
+    if ((await organizationUsageSuspensionCutoff(tx, input.organizationId)) !== null) {
+      throw new OrganizationUsageSuspendedError(input.organizationId)
+    }
     let sandbox = await fetchSandbox(tx).forUserForUpdate(
       input.organizationId,
       input.projectId,
@@ -143,6 +146,30 @@ export class SandboxDeletingError extends Error {
   }
 }
 
+export class OrganizationUsageSuspendedError extends Error {
+  override readonly name = "OrganizationUsageSuspendedError"
+
+  constructor(readonly organizationId: string) {
+    super(`organization ${organizationId} is suspended for insufficient credit`)
+  }
+}
+
+async function organizationUsageSuspensionCutoff(
+  db: Kysely<DB>,
+  organizationId: string,
+): Promise<Date | null> {
+  const retention = await db
+    .selectFrom("creditRetentionState")
+    .select(["status", "exhaustedAt", "deletionStartedAt"])
+    .where("organizationId", "=", organizationId)
+    .executeTakeFirst()
+  const suspended =
+    retention?.status === "suspended" ||
+    retention?.status === "deleting" ||
+    retention?.status === "data_deleted"
+  return suspended ? (retention.exhaustedAt ?? retention.deletionStartedAt ?? new Date()) : null
+}
+
 export async function requestSandboxDestroy(
   db: Kysely<DB>,
   input: { organizationId: string; projectId: string; userId: string },
@@ -190,8 +217,11 @@ export async function requestSandboxDestroy(
  * consults a vendor billing API. That is ADR 0014's rule — money never rides the telemetry path —
  * and it also means a provider outage cannot silently stop the meter.
  */
-export const meterSandboxes: JobHandler = async (_job, { db }) => {
-  const due = await db
+export async function meterSandboxUsage(
+  db: Kysely<DB>,
+  options: { projectIds?: string[]; sandboxIds?: string[]; through?: Date } = {},
+): Promise<number> {
+  let dueQuery = db
     .selectFrom("sandbox")
     .select("id")
     .where("sandbox.state", "in", ["starting", "running", "idle", "stopped", "deleting"])
@@ -201,7 +231,15 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
     // Every concurrent sweep takes row locks in the same order, so two multi-sandbox sweeps cannot
     // deadlock by each holding the row the other plans to claim next.
     .orderBy("id")
-    .execute()
+  if (options.projectIds !== undefined) {
+    if (options.projectIds.length === 0) return 0
+    dueQuery = dueQuery.where("sandbox.projectId", "in", options.projectIds)
+  }
+  if (options.sandboxIds !== undefined) {
+    if (options.sandboxIds.length === 0) return 0
+    dueQuery = dueQuery.where("sandbox.id", "in", options.sandboxIds)
+  }
+  const due = await dueQuery.execute()
 
   let metered = 0
 
@@ -250,7 +288,7 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
         a concurrent meter whose row lock this transaction just waited for.
       */
       const clock = await sql<{ now: Date }>`select clock_timestamp() as now`.execute(tx)
-      const databaseNow = clock.rows[0]?.now
+      const databaseNow = options.through ?? clock.rows[0]?.now
       if (databaseNow === undefined) throw new Error("Postgres returned no clock timestamp")
       // Daytona's provider backstop stops an ordinary sandbox at this same idle deadline. If its
       // webhook/reconciliation arrives late, billing to the sweep time would charge for a machine
@@ -336,6 +374,11 @@ export const meterSandboxes: JobHandler = async (_job, { db }) => {
   }
 
   if (metered > 0) console.info(`[jobs] metered ${metered} sandboxes`)
+  return metered
+}
+
+export const meterSandboxes: JobHandler = async (_job, { db }) => {
+  await meterSandboxUsage(db)
 }
 
 /**
@@ -568,7 +611,7 @@ export async function findSandboxPostgresServiceId(
   return await fetchSandbox(db).postgresServiceIdForScope(projectId)
 }
 
-type SandboxPayload = { sandboxId?: string }
+type SandboxPayload = { sandboxId?: string; meterThrough?: string }
 
 function daytona(): DaytonaSandboxClient {
   return daytonaClientFromEnv()
@@ -665,7 +708,8 @@ export function provisionSandbox(
   drop: typeof dropDevBranch = dropDevBranch,
   branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
 ): JobHandler {
-  return async (job, { db }) => {
+  return async (job, context) => {
+    const { db } = context
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
 
@@ -691,6 +735,16 @@ export function provisionSandbox(
 
     // Deleted between enqueue and claim. Nothing to provision and nothing to report.
     if (sandbox === undefined) return
+
+    const suspensionCutoff = await organizationUsageSuspensionCutoff(db, sandbox.organizationId)
+    if (suspensionCutoff !== null) {
+      await stopSandbox(
+        makeDriver,
+        drop,
+        branchConfig,
+      )({ ...job, payload: { sandboxId, meterThrough: suspensionCutoff.toISOString() } }, context)
+      return
+    }
 
     if (
       sandbox.state === "running" ||
@@ -863,7 +917,8 @@ export function startSandbox(
   drop: typeof dropDevBranch = dropDevBranch,
   branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
 ): JobHandler {
-  return async (job, { db }) => {
+  return async (job, context) => {
+    const { db } = context
     const { sandboxId } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
 
@@ -881,6 +936,15 @@ export function startSandbox(
       sandbox.state === "stopped" ||
       sandbox.state === "deleting"
     ) {
+      return
+    }
+    const suspensionCutoff = await organizationUsageSuspensionCutoff(db, sandbox.organizationId)
+    if (suspensionCutoff !== null) {
+      await stopSandbox(
+        makeDriver,
+        drop,
+        branchConfig,
+      )({ ...job, payload: { sandboxId, meterThrough: suspensionCutoff.toISOString() } }, context)
       return
     }
     if (sandbox.externalId === null) {
@@ -954,7 +1018,7 @@ export function stopSandbox(
   branchConfig: typeof neonPostgresConfigFromEnv = neonPostgresConfigFromEnv,
 ): JobHandler {
   return async (job, context) => {
-    const { sandboxId } = job.payload as SandboxPayload
+    const { sandboxId, meterThrough } = job.payload as SandboxPayload
     if (sandboxId === undefined) throw new Error(`${job.kind} needs a sandboxId`)
     const { db } = context
 
@@ -973,7 +1037,10 @@ export function stopSandbox(
       writes `stopped` the tail between the last run and now becomes unbillable — and unlike a
       failed insert, nothing is left to notice it. Metering everything is cheap and idempotent.
     */
-    await meterSandboxes(job, context)
+    await meterSandboxUsage(db, {
+      sandboxIds: [sandbox.id],
+      through: meterThrough === undefined ? undefined : new Date(meterThrough),
+    })
 
     if (sandbox.externalId !== null) {
       try {

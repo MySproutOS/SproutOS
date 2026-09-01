@@ -57,6 +57,7 @@ describe("PLATFORM_HANDLERS", () => {
         JOB_KINDS.tearDownPreview,
         JOB_KINDS.cleanUpStaticPreview,
         JOB_KINDS.tearDownAccount,
+        JOB_KINDS.deleteNonpaymentData,
         JOB_KINDS.tearDownProject,
       ].toSorted(),
     )

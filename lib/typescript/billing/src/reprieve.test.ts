@@ -203,13 +203,25 @@ describe.runIf(reachable)("decideReprieve", () => {
   })
 
   it("does not trust a charge that reported success but left no credit", async () => {
-    // The charger reports whether the payment succeeded. What decides this is whether the ledger
-    // now shows money — a payment that succeeded and did not land as credit is not a reprieve.
+    // The PaymentIntent can succeed before its webhook posts credit. Keep the data while that
+    // durable write is in flight; the deletion job retries this decision afterward.
     const organizationId = await organization(0n)
 
     expect(await decideReprieve(db, organizationId, ON, () => Promise.resolve(true))).toEqual({
-      outcome: "delete",
-      reason: "still_unpaid",
+      outcome: "deferred",
+      reason: "auto_charge_pending",
     })
+  })
+
+  it("requires restored credit to exceed the freshly measured retention reserve", async () => {
+    const belowReserve = await organization(100n)
+    const aboveReserve = await organization(201n)
+
+    await expect(
+      decideReprieve(db, belowReserve, OFF, () => Promise.resolve(false), 200n),
+    ).resolves.toMatchObject({ outcome: "delete" })
+    await expect(
+      decideReprieve(db, aboveReserve, OFF, () => Promise.resolve(false), 200n),
+    ).resolves.toMatchObject({ outcome: "reprieved", reason: "balance_restored" })
   })
 })

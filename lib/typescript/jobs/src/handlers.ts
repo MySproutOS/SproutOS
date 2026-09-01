@@ -79,6 +79,12 @@ import {
   ANDROID_REGISTRATION_RECONCILE_KIND,
   reconcileAndroidDeveloperRegistrationsJob,
 } from "./android-developer-registration"
+import {
+  deleteNonpaymentData,
+  NONPAYMENT_RETENTION_KINDS,
+  scanNonpaymentRetention,
+  sendRetentionNotices,
+} from "./nonpayment-retention"
 
 /**
  * The ten-minute window a scheduled rollup belongs to, as an idempotency key component.
@@ -109,6 +115,9 @@ export const JOB_KINDS = {
   chargeUsage: "billing.charge_usage",
   generateStatements: "billing.generate_statements",
   refreshCreditStates: REFRESH_CREDIT_STATES_KIND,
+  scanNonpaymentRetention: NONPAYMENT_RETENTION_KINDS.scan,
+  deleteNonpaymentData: NONPAYMENT_RETENTION_KINDS.delete,
+  sendRetentionNotices: NONPAYMENT_RETENTION_KINDS.sendNotices,
   purgeExpiredAgentEvents: "agent.purge_events",
   purgeDeletedTenants: "platform.purge_deleted",
   reconcileSearchSecurity: "platform.reconcile_search_security",
@@ -425,6 +434,7 @@ export const ACME_HANDLERS: Record<string, JobHandler> = {
   // Account teardown invokes project teardown inline before anonymising the user. It therefore
   // needs the same certificate-object and tenant-DNS authority as a direct project teardown.
   [JOB_KINDS.tearDownAccount]: tearDownAccount,
+  [JOB_KINDS.deleteNonpaymentData]: deleteNonpaymentData(),
   [JOB_KINDS.customDomainScan]: scanCustomDomains(),
   [JOB_KINDS.customDomainReconcile]: reconcileCustomDomain(),
   [JOB_KINDS.reconcilePlatformEdgeCertificate]: reconcilePlatformEdgeCertificate(),
@@ -446,6 +456,8 @@ export const PLATFORM_HANDLERS: Record<string, JobHandler> = {
   [JOB_KINDS.chargeUsage]: chargeUsageJob,
   [JOB_KINDS.generateStatements]: generateStatementsJob,
   [JOB_KINDS.refreshCreditStates]: refreshCreditStates(),
+  [JOB_KINDS.scanNonpaymentRetention]: scanNonpaymentRetention,
+  [JOB_KINDS.sendRetentionNotices]: sendRetentionNotices(),
   [JOB_KINDS.purgeExpiredAgentEvents]: purgeExpiredAgentEvents,
   [JOB_KINDS.purgeDeletedTenants]: purgeDeletedTenants,
   [JOB_KINDS.reconcileSearchSecurity]: reconcileSearchSecurityJob,
@@ -527,6 +539,17 @@ export function parseWorkerFlag(name: string, value: string | undefined): boolea
  */
 export async function scheduleRecurring(db: Kysely<DB>, now: Date = new Date()): Promise<void> {
   const hour = now.toISOString().slice(0, 13)
+
+  await enqueue(db, {
+    kind: JOB_KINDS.scanNonpaymentRetention,
+    idempotencyKey: `${JOB_KINDS.scanNonpaymentRetention}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
+  await enqueue(db, {
+    kind: JOB_KINDS.sendRetentionNotices,
+    idempotencyKey: `${JOB_KINDS.sendRetentionNotices}:${now.toISOString().slice(0, 16)}`,
+    maxAttempts: 5,
+  })
 
   await scheduleDeploymentCatalogueReconciliation(db, now)
 

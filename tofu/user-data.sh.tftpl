@@ -159,6 +159,9 @@ API_PORT=3001
 # redirect it is sent against the one on the application.
 NEXT_PUBLIC_HOST_URL=https://${control_plane_domain}
 NEXT_PUBLIC_API_URL=https://api.${control_plane_domain}
+EMAIL_TRANSPORT=sesv2
+EMAIL_FROM=notifications@${control_plane_domain}
+DASHBOARD_ORIGIN=https://${control_plane_domain}
 
 # Where a sandbox reaches the LLM proxy. Read by the chat route and by sandbox provisioning, and it
 # goes into the sandbox's environment — so it has to be the address as seen from *outside* this VPC,

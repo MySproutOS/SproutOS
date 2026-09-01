@@ -424,10 +424,16 @@ export interface CreditLedgerEntry {
 
 export interface CreditRetentionState {
   deleteAfter: Timestamp | null
+  deletionCompletedAt: Timestamp | null
+  deletionStartedAt: Timestamp | null
   exhaustedAt: Timestamp | null
+  generation: string | null
   organizationId: string
+  reserveMeasuredAt: Timestamp | null
   reserveMicroUsd: Generated<Int8>
+  status: Generated<string>
   updatedAt: Generated<Timestamp>
+  warningStage: Generated<string>
 }
 
 export interface CreditTransaction {
@@ -952,6 +958,7 @@ export interface ProjectFile {
 export interface ProjectJob {
   attempt: Generated<number>
   createdAt: Generated<Timestamp>
+  deletionReason: string | null
   details: Generated<Json>
   errorCode: string | null
   errorMessage: string | null
@@ -963,6 +970,8 @@ export interface ProjectJob {
   progress: Generated<number>
   projectId: string | null
   repositoryId: string | null
+  retentionCutoffAt: Timestamp | null
+  serviceCutoffAt: Timestamp | null
   startedAt: Timestamp | null
   state: Generated<string>
   steps: Generated<Json>
@@ -1101,6 +1110,21 @@ export interface RepositoryCommitter {
   lastSeenAt: Generated<Timestamp>
   login: string | null
   repositoryId: string
+}
+
+export interface RetentionNoticeDelivery {
+  attempts: Generated<number>
+  createdAt: Generated<Timestamp>
+  generation: string
+  id: string
+  lastError: string | null
+  organizationId: string
+  recipient: string
+  sentAt: Timestamp | null
+  stage: string
+  status: Generated<string>
+  updatedAt: Generated<Timestamp>
+  userId: string | null
 }
 
 export interface Role {
@@ -1598,6 +1622,7 @@ export interface DB {
   repoAnalysis: RepoAnalysis
   repository: Repository
   repositoryCommitter: RepositoryCommitter
+  retentionNoticeDelivery: RetentionNoticeDelivery
   role: Role
   roleStatement: RoleStatement
   sandbox: Sandbox

@@ -1,5 +1,10 @@
 import { crudAuditLog, crudSandbox, fetchProject, fetchSandbox, sandboxScopeFor } from "@lib/dao"
-import { requestSandboxDestroy, requestSandboxStart, SandboxDeletingError } from "@lib/jobs"
+import {
+  OrganizationUsageSuspendedError,
+  requestSandboxDestroy,
+  requestSandboxStart,
+  SandboxDeletingError,
+} from "@lib/jobs"
 import {
   daytonaClientFromEnv,
   SandboxNotFoundError,
@@ -19,9 +24,11 @@ import { ErrorSchemaResponse } from "../utils/common.serializer"
 import {
   throwBadRequest,
   throwConflict,
+  throwError,
   throwInternalServerError,
   throwNotFound,
 } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
 import { requireArray } from "../utils/require-array"
 import { auditContext } from "../utils/request-context"
 import { validator } from "../utils/validator"
@@ -189,6 +196,10 @@ const app = new Hono()
         },
         403: { description: "Caller lacks sandbox:write", ...errorResponse },
         404: { description: "No such project", ...errorResponse },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         409: { description: "The previous sandbox is being deleted", ...errorResponse },
       },
     }),
@@ -211,6 +222,14 @@ const app = new Hono()
           idleTimeoutS: IDLE_TIMEOUT_S,
         })
       } catch (error) {
+        if (error instanceof OrganizationUsageSuspendedError) {
+          return throwError(
+            c,
+            402,
+            ErrorCode.InsufficientCredit,
+            "Add credit before starting a sandbox. Hosted data is protected for 48 hours while active use is suspended.",
+          )
+        }
         if (error instanceof SandboxDeletingError) {
           return throwConflict(c, "The previous sandbox is still being deleted")
         }

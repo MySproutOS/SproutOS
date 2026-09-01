@@ -13,6 +13,7 @@ import {
   reapSandboxes,
   requestSandboxDestroy,
   requestSandboxStart,
+  OrganizationUsageSuspendedError,
   SANDBOX_KINDS,
   SandboxDeletingError,
   startSandbox,
@@ -92,6 +93,10 @@ beforeEach(async () => {
     )
     await tx.deleteFrom("backgroundJob").where("organizationId", "=", organizationId).execute()
     await tx.deleteFrom("sandbox").where("projectId", "=", projectId).execute()
+    await tx
+      .deleteFrom("creditRetentionState")
+      .where("organizationId", "=", organizationId)
+      .execute()
   })
 })
 
@@ -677,6 +682,37 @@ describe("reconcileSandboxes", () => {
       db.selectFrom("sandbox").select("state").where("id", "=", sandbox.id).executeTakeFirst(),
     ).resolves.toEqual({ state: "stopped" })
   })
+
+  it("settles a nonpayment stop exactly at its suspension cutoff", async ({ skip }) => {
+    if (!reachable) skip()
+    const meteredThrough = new Date(Date.now() - 10_000)
+    const suspensionCutoff = new Date(meteredThrough.getTime() + 5_000)
+    const sandbox = await crudSandbox(db).create({
+      projectId,
+      userId,
+      externalId: `daytona-nonpayment-stop-${v7()}`,
+      provider: "daytona",
+      state: "running",
+      meteredThrough,
+      lastActivityAt: meteredThrough,
+    })
+
+    await stopSandbox(() => ({ stop: () => Promise.resolve() }) as never)(
+      {
+        id: v7(),
+        kind: SANDBOX_KINDS.stop,
+        payload: { sandboxId: sandbox.id, meterThrough: suspensionCutoff.toISOString() },
+      } as never,
+      context,
+    )
+
+    const encodedCutoff = suspensionCutoff.toISOString().replace("T", " ").replace("Z", "")
+    expect((await eventsFor(sandbox.id)).map((event) => event.window_end)).toEqual([
+      encodedCutoff,
+      encodedCutoff,
+      encodedCutoff,
+    ])
+  })
 })
 
 describe("startSandbox", () => {
@@ -868,6 +904,31 @@ describe("startSandbox", () => {
 })
 
 describe("sandbox lifecycle requests", () => {
+  it("refuses a new sandbox while nonpayment retention has suspended active use", async ({
+    skip,
+  }) => {
+    if (!reachable) skip()
+    const exhaustedAt = new Date()
+    await db
+      .insertInto("creditRetentionState")
+      .values({
+        organizationId,
+        status: "suspended",
+        warningStage: "suspended",
+        generation: v7(),
+        exhaustedAt,
+        deleteAfter: new Date(exhaustedAt.getTime() + 48 * 60 * 60 * 1000),
+      })
+      .execute()
+
+    await expect(
+      requestSandboxStart(db, { organizationId, projectId, userId, idleTimeoutS: 900 }),
+    ).rejects.toBeInstanceOf(OrganizationUsageSuspendedError)
+    await expect(
+      db.selectFrom("sandbox").select("id").where("projectId", "=", projectId).execute(),
+    ).resolves.toEqual([])
+  })
+
   it("creates one row and one provision job under concurrent first starts", async ({ skip }) => {
     if (!reachable) skip()
 

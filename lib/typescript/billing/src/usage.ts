@@ -143,3 +143,17 @@ export async function rateProjectsForOrganization(
 
   return byProject
 }
+
+/** Average daily rated project cost for reserve-aware customer warnings. */
+export async function organizationBurnPerDay(
+  db: Kysely<DB> | Transaction<DB>,
+  organizationId: string,
+  at: Date = new Date(),
+): Promise<MicroUsd> {
+  const since = startOfMonth(at)
+  const projects = await rateProjectsForOrganization(db, organizationId, since, at)
+  let total = 0n
+  for (const usage of projects.values()) total += usage.total
+  const elapsedDays = Math.max(1, Math.ceil((at.getTime() - since.getTime()) / 86_400_000))
+  return total / BigInt(elapsedDays)
+}

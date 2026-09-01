@@ -1,5 +1,5 @@
 import type { DB } from "@sproutos/db"
-import type { Kysely, Transaction } from "kysely"
+import { sql, type Kysely, type Transaction } from "kysely"
 import { crudProjectJob, initialSteps } from "../projectJob/crud"
 
 export type PreparedProjectTeardown = { projectId: string; projectJobId: string }
@@ -117,7 +117,9 @@ async function prepareOne(
     .where("isGroup", "=", false)
     .where("state", "!=", "deleted")
     .execute()
-  const now = new Date()
+  const clock = await sql<{ now: Date }>`select transaction_timestamp() as now`.execute(tx)
+  const now = clock.rows[0]?.now
+  if (now === undefined) throw new Error("Postgres returned no deletion cutoff")
 
   await tx
     .updateTable("project")
@@ -162,6 +164,8 @@ async function prepareOne(
       repositoryId: project.repositoryId,
       kind: "delete",
       state: "queued",
+      deletionReason: "user_requested",
+      serviceCutoffAt: now,
       steps: JSON.stringify(initialSteps("delete")),
     })
     teardowns.push({ projectId: project.id, projectJobId: job.id })

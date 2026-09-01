@@ -118,7 +118,11 @@ locals {
     "VALKEY_PROXY_ACL_ROOT_KEY",
   ]
 
-  ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names
+  ecs_acme_worker_parameter_names = concat(local.ecs_worker_base_parameter_names, [
+    # The privileged nonpayment teardown performs the final configured auto-reload before it may
+    # destroy provider data.
+    "STRIPE_SECRET_KEY",
+  ])
 
   ecs_website_parameter_secrets = [for name in local.ecs_website_parameter_names : {
     name      = name
